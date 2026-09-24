@@ -107,7 +107,7 @@ const DOSAGE_FORMS = [
   'TABLET', 'TABLETS', 'TAB', 'TABS', 'DT',
   'CAPSULE', 'CAPSULES', 'CAP', 'CAPS',
   'SYRUP', 'SYP', 'SUSPENSION', 'SUSP',
-  'INJECTION', 'INJ', 'IV', 'IM',
+  'INJECTION', 'INJ', 'IV', 'IM', 'VACCINE', 'AMPOULE', 'AMP', 'VIAL', 'INFUSION',
   'CREAM', 'GEL', 'OINTMENT', 'OINT',
   'DROPS', 'DROP', 'EYE DROPS', 'EAR DROPS',
   'INHALER', 'RESPULES', 'ROTACAPS', 'ROTACAP',
@@ -167,13 +167,16 @@ export class CatalogImageService {
   public extractDosageForm(text: string): string | null {
     if (!text) return null;
     const upper = text.replace(/[-_.]/g, ' ').toUpperCase();
+    if (/\b(VACCINE|VAC|AMPOULE|AMP|VIAL|INFUSION)\b/i.test(upper)) {
+      return 'INJECTION';
+    }
     for (const form of DOSAGE_FORMS) {
       const regex = new RegExp(`\\b${form}\\b`, 'i');
       if (regex.test(upper)) {
         if (form.startsWith('TAB') || form === 'DT') return 'TABLET';
         if (form.startsWith('CAP')) return 'CAPSULE';
         if (form.startsWith('SYP') || form.startsWith('SYRUP') || form.startsWith('SUSP')) return 'SYRUP';
-        if (form.startsWith('INJ') || form === 'IV' || form === 'IM') return 'INJECTION';
+        if (form.startsWith('INJ') || form === 'IV' || form === 'IM' || form === 'VACCINE' || form === 'AMPOULE' || form === 'AMP' || form === 'VIAL' || form === 'INFUSION') return 'INJECTION';
         if (form === 'GEL' || form === 'CREAM' || form.startsWith('OINT')) return 'TOPICAL';
         if (form.startsWith('DROP')) return 'DROPS';
         if (form.startsWith('INH') || form.startsWith('ROTA') || form.startsWith('RESP')) return 'INHALER';
@@ -237,6 +240,13 @@ export class CatalogImageService {
         if (mfgClean.includes('PATANJALI')) return 'PATANJALI';
       }
       return '';
+    }
+
+    // Short 2-3 letter acronyms (e.g. HB, TT, DPT, BCG, MMR, OPV, IPV, OR, BT, DT) must include the next token
+    // so HB VAC or HB SET is preserved and never collapsed to raw "HB".
+    const SHORT_ACRONYMS = new Set(['HB', 'TT', 'DPT', 'BCG', 'MMR', 'OPV', 'IPV', 'OR', 'BT', 'DT']);
+    if (SHORT_ACRONYMS.has(words[0].toUpperCase()) && words.length > 1) {
+      return `${words[0].toUpperCase()} ${words[1].toUpperCase()}`;
     }
 
     // If first word is an umbrella brand (e.g. BAIDYANATH, DABUR, HIMALAYA, FLAMINGO), prefer the formulation name in subsequent words
@@ -600,10 +610,13 @@ export class CatalogImageService {
         dosageFormScore = -40;
       } else if (candNameForm && candNameForm !== medForm) {
         dosageFormConflict = true;
-        dosageFormScore = -40;
+        dosageFormScore = -50;
       } else if (candPathForm && candPathForm !== medForm) {
         dosageFormConflict = true;
-        dosageFormScore = -40;
+        dosageFormScore = -50;
+      } else if (candForm && candForm !== medForm) {
+        dosageFormConflict = true;
+        dosageFormScore = -50;
       } else if (candForm === medForm) {
         dosageFormMatch = true;
         dosageFormScore = 15;
@@ -1761,40 +1774,108 @@ export class CatalogImageService {
     }
 
     if (!medicineId && medicineName) {
-      // Clean brand word for prefix search
+      // Normalize letters/digits boundary to accurately tokenize brand, strength, and modifiers
+      const normQuery = medicineName
+        .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+        .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+        .toUpperCase();
+      const reqNumbers: string[] = normQuery.match(/\b\d+(?:\.\d+)?\b/g) || [];
+      const reqModifiers: string[] = normQuery.match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
       const brandWord = medicineName.replace(/[^a-zA-Z0-9\s]/g, ' ').trim().split(/\s+/)[0] || '';
+
       if (brandWord.length >= 3) {
-        const prefixMed = await db.get(
-          'SELECT id, name FROM medicines WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 1',
+        const candidates: Array<{ id: number; name: string }> = await db.all(
+          'SELECT id, name FROM medicines WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 60',
           [`${brandWord}%`]
-        ).catch(() => null);
-        if (prefixMed) {
-          medicineId = prefixMed.id;
-          medicineName = prefixMed.name;
+        ).catch(() => []);
+
+        let bestCandidate: { id: number; name: string } | null = null;
+        let bestScore = -1;
+
+        for (const cand of candidates) {
+          const normCand = cand.name
+            .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+            .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+            .toUpperCase();
+          const candNumbers: string[] = normCand.match(/\b\d+(?:\.\d+)?\b/g) || [];
+          const candModifiers: string[] = normCand.match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+
+          if (reqNumbers.length > 0) {
+            const matchesAllReq = reqNumbers.every(n => candNumbers.includes(n));
+            if (!matchesAllReq) continue;
+            const standardStrengths: string[] = ['5', '10', '20', '25', '40', '50', '80', '100', '150', '200', '250', '300', '400', '500', '650', '800', '1000'];
+            const hasConflict = candNumbers.some(cn => standardStrengths.includes(cn) && !reqNumbers.includes(cn));
+            if (hasConflict) continue;
+          }
+
+          const missingMod = reqModifiers.some(m => !candModifiers.includes(m));
+          if (missingMod) continue;
+          if (reqModifiers.length === 0 && candModifiers.length > 0) continue;
+
+          let score = 10;
+          if (reqModifiers.length === candModifiers.length) score += 20;
+          if (reqNumbers.length === candNumbers.length) score += 20;
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestCandidate = cand;
+          }
+        }
+
+        if (bestCandidate) {
+          medicineId = bestCandidate.id;
+          medicineName = bestCandidate.name;
         }
       }
     }
 
-    let resolved = medicineId ? await this.resolveProductImage(medicineId).catch(() => null) : null;
-
-    // If missing from local storage, attempt on-demand CDN search & download!
-    if (!resolved && medicineId) {
-      try {
-        console.log(`[CatalogImageService] Visual reference image missing for ${medicineName} (ID: ${medicineId}). Triggering on-demand harvest...`);
-        const downloaded = await this.searchAndDownloadCandidate(medicineId, 1);
-        if (downloaded) {
-          resolved = await this.resolveProductImage(medicineId).catch(() => null);
-        }
-      } catch (err: any) {
-        console.warn(`[CatalogImageService] On-demand CDN download attempt note for ${medicineName}:`, err?.message || err);
-      }
-    }
-
-    if (!resolved || !resolved.url) {
+    if (!medicineId) {
       return null;
     }
 
-    const diskPath = this.getDiskPath(resolved.url);
+    // Only allow verified or approved catalog images for WhatsApp dispatch
+    let row = await db.get(
+      `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'VERIFIED')
+       ORDER BY is_primary DESC, id DESC LIMIT 1`,
+      [medicineId]
+    ).catch(() => null);
+
+    if (!row && medicineName) {
+      row = await db.get(
+        `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+         FROM catalog_images 
+         WHERE (product_name = ? OR LOWER(product_name) = LOWER(?)) AND is_active = 1 AND verification_status IN ('APPROVED', 'VERIFIED')
+         ORDER BY is_primary DESC, id DESC LIMIT 1`,
+        [medicineName, medicineName]
+      ).catch(() => null);
+    }
+
+    // Static verified public products fallback check
+    if (!row && medicineName) {
+      const cleanSlug = medicineName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const candidates = [`${cleanSlug}-combo.jpg`, `${cleanSlug}-front.jpg`, `${cleanSlug}.jpg`, `${cleanSlug}.webp`];
+      for (const cand of candidates) {
+        const diskPath = path.join(process.cwd(), 'frontend', 'public', 'products', cand);
+        if (fs.existsSync(diskPath) && fs.statSync(diskPath).size > 1000) {
+          row = {
+            id: 0,
+            image_path: `/products/${cand}`,
+            thumbnail_path: `/products/${cand}`,
+            verification_status: 'APPROVED',
+            updated_at: new Date().toISOString()
+          };
+          break;
+        }
+      }
+    }
+
+    if (!row || !row.image_path) {
+      return null;
+    }
+
+    const diskPath = this.getDiskPath(row.image_path);
     if (!diskPath || !fs.existsSync(diskPath)) {
       return null;
     }

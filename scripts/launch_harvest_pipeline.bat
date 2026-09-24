@@ -23,9 +23,10 @@ echo   [3] Choose Specific Company Catalog to Complete (e.g. Cipla, Zydus...)
 echo   [4] Run Continuous Harvester (All Companies Sequentially to 100%%)
 echo   [5] Dedicated Batch OCR Worker Only (Watch Mode)
 echo   [6] View Company Catalog Status and Progress Dashboard
-echo   [7] Exit
+echo   [7] Re-Audit & Clean Existing Disk Images (frontend/public/products)
+echo   [8] Exit
 echo.
-set /p CHOICE="Enter choice [1-7]: "
+set /p CHOICE="Enter choice [1-8]: "
 
 if "%CHOICE%"=="1" goto MODE1
 if "%CHOICE%"=="2" goto MODE2
@@ -34,6 +35,7 @@ if "%CHOICE%"=="4" goto MODE4
 if "%CHOICE%"=="5" goto MODE5
 if "%CHOICE%"=="6" goto MODE6
 if "%CHOICE%"=="7" goto MODE7
+if "%CHOICE%"=="8" goto MODE8
 goto MENU
 
 :MODE1
@@ -89,4 +91,12 @@ pause
 goto MENU
 
 :MODE7
+cls
+echo Running Comprehensive Packaging Audit and Cleaning on Disk and DB...
+npx tsx scripts/audit_and_correct_catalog_images.mjs
+echo.
+pause
+goto MENU
+
+:MODE8
 exit /b

@@ -547,6 +547,10 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
     setTargetSlotForCandidate(slotId);
     setCandidateTrayOpen(true);
     setSearchingCandidates(true);
+    setTimeout(() => {
+      const tray = document.getElementById('candidate-online-tray');
+      if (tray) tray.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 150);
     try {
       const query = selectedMedicine.medicine_name || selectedMedicine.product_name;
       const refId = slotMap[slotId]?.id || selectedMedicine.id;
@@ -555,7 +559,13 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
         setCandidates(res.candidates);
         if (res.candidates.length === 0) {
           toastEvent.trigger('No online candidates found. Try custom URL or upload.', 'info');
+        } else {
+          toastEvent.trigger(`Found ${res.candidates.length} online candidate(s) below.`, 'success');
         }
+        setTimeout(() => {
+          const tray = document.getElementById('candidate-online-tray');
+          if (tray) tray.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 100);
       }
     } catch (err: any) {
       toastEvent.trigger('Search candidates error: ' + err.message, 'error');
@@ -2264,7 +2274,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
 
                   {/* INLINE ONLINE CANDIDATES DRAWER */}
                   {candidateTrayOpen && (
-                    <div className="p-4 rounded-2xl bg-bg2 border border-sky/40 space-y-3 shadow-md animate-in slide-in-from-bottom-2">
+                    <div id="candidate-online-tray" className="p-4 rounded-2xl bg-bg2 border border-sky/40 space-y-3 shadow-md animate-in slide-in-from-bottom-2 scroll-mt-6">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Sparkles size={16} className="text-sky" />

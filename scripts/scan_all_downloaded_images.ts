@@ -35,7 +35,7 @@ function extractDosageForm(text: string): string | null {
   if (/\b(TAB|TABLET|TABLETS|CAPLET)\b/.test(u)) return 'TABLET';
   if (/\b(CAP|CAPSULE|CAPSULES|SOFTGEL)\b/.test(u)) return 'CAPSULE';
   if (/\b(SYP|SYRUP|SUSP|SUSPENSION|LIQUID|SOLUTION)\b/.test(u)) return 'SYRUP';
-  if (/\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(u)) return 'INJECTION';
+  if (/\b(INJ|INJECTION|VIAL|AMPOULE|AMP|INFUSION|VAC|VACCINE)\b/.test(u)) return 'INJECTION';
   if (/\b(EYE DROP|EAR DROP|DROPS?)\b/.test(u)) return 'DROPS';
   if (/\b(CREAM|OINT|OINTMENT|GEL|LOTION)\b/.test(u)) return 'TOPICAL';
   return null;

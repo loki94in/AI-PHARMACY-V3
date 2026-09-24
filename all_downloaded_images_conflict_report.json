@@ -1,1 +1,147 @@
-[]
+[
+  {
+    "filename": "alfa-synthocal-tab-candidate-1790242857423.jpg",
+    "imageId": 1295,
+    "medicineId": 152134,
+    "medicineName": "ALFA SYNTHOCAL TAB",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'TABLET' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "amlodac-at-50-5-mg-tablet-10-candidate-1790241804647.jpg",
+    "imageId": 908,
+    "medicineId": 100770,
+    "medicineName": "AMLODAC AT 50/5 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '50/5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "hb-vac-0-5ml-candidate-1790242469312.jpg",
+    "imageId": 1157,
+    "medicineId": 132941,
+    "medicineName": "HB VAC 0.5ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'TABLET'",
+      "Strength Mismatch: Medicine requires '0.5ML' but packaging shows '5ML'"
+    ]
+  },
+  {
+    "filename": "hb-vac-10ml-candidate-1790242380747.jpg",
+    "imageId": 1118,
+    "medicineId": 128233,
+    "medicineName": "HB VAC 10ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'CAPSULE'"
+    ]
+  },
+  {
+    "filename": "hb-vac-1ml-candidate-1790244676271.jpg",
+    "imageId": 1971,
+    "medicineId": 240528,
+    "medicineName": "HB VAC 1ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'TABLET'"
+    ]
+  },
+  {
+    "filename": "imol-plus-400-325-25-mg-strip-of-10-tablets-candidate-1790245444496.jpg",
+    "imageId": 2252,
+    "medicineId": 540768,
+    "medicineName": "IMOL PLUS 400/325/25 MG STRIP OF 10 TABLETS",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '325/25MG' but packaging shows '25MG'"
+    ]
+  },
+  {
+    "filename": "losacar-a-50-5-mg-tablet-7-candidate-1790243778555.jpg",
+    "imageId": 1660,
+    "medicineId": 198540,
+    "medicineName": "LOSACAR A 50/5 MG TABLET 7",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '50/5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "losacar-h-50-12-5-mg-tablet-10-candidate-1790241426039.jpg",
+    "imageId": 736,
+    "medicineId": 82796,
+    "medicineName": "LOSACAR H 50/12.5 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '50/12.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "new-imol-plus-400-500-25mg-strip-of-10-tablets-candidate-1790242611300.jpg",
+    "imageId": 1219,
+    "medicineId": 141274,
+    "medicineName": "NEW IMOL PLUS 400/500/25MG STRIP OF 10 TABLETS",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '500/25MG' but packaging shows '25MG'"
+    ]
+  },
+  {
+    "filename": "ocid-d-10-20-mg-capsule-15-candidate-1790243695499.jpg",
+    "imageId": 1640,
+    "medicineId": 194489,
+    "medicineName": "OCID D 10/20 MG CAPSULE 15",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '10/20MG' but packaging shows '20MG'"
+    ]
+  },
+  {
+    "filename": "odimont-lc-10-5-mg-tablet-15-candidate-1790245134507.jpg",
+    "imageId": 2115,
+    "medicineId": 524482,
+    "medicineName": "ODIMONT LC 10/5 MG TABLET 15",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '10/5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "r-loc-d-10-150-mg-tablet-10-candidate-1790241169101.jpg",
+    "imageId": 587,
+    "medicineId": 68839,
+    "medicineName": "R-LOC D 10/150 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '10/150MG' but packaging shows '150MG'"
+    ]
+  },
+  {
+    "filename": "tioform-hfa-6-9-mcg-inhaler-120-mdi-candidate-1790242761986.jpg",
+    "imageId": 1258,
+    "medicineId": 148388,
+    "medicineName": "TIOFORM HFA 6/9 MCG INHALER 120 MDI",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '6/9MCG' but packaging shows '9MCG'"
+    ]
+  },
+  {
+    "filename": "trigan-d-20-500-mg-tablet-20-candidate-1790240936783.jpg",
+    "imageId": 437,
+    "medicineId": 55452,
+    "medicineName": "TRIGAN D 20/500 MG TABLET 20",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '20/500MG' but packaging shows '500MG'"
+    ]
+  },
+  {
+    "filename": "u-free-capsule-candidate-1790242312283.jpg",
+    "imageId": 1091,
+    "medicineId": 125172,
+    "medicineName": "U FREE CAPSULE",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'CAPSULE' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "zynac-sp-100-500-15-mg-tablet-10-candidate-1790243616749.jpg",
+    "imageId": 1604,
+    "medicineId": 191070,
+    "medicineName": "ZYNAC-SP 100/500/15 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '500/15MG' but packaging shows '15MG'"
+    ]
+  }
+]

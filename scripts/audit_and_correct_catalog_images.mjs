@@ -34,15 +34,15 @@ console.log('--- STEP 1: AUDITING ALL ACTIVE CATALOG PRODUCT IMAGES ---');
 console.log('===========================================================');
 
 const rows = db.prepare(`
-  SELECT ci.id, ci.medicine_id, ci.product_name, ci.image_path, ci.company_name, 
+  SELECT ci.id, ci.medicine_id, ci.product_name, ci.image_path, ci.company_name, ci.source_url,
          ci.verification_status, ci.confidence_score, ci.is_active, ci.is_primary,
          m.name as med_name, m.manufacturer as med_mfg, m.strength as med_strength, m.packaging as med_packaging
   FROM catalog_images ci
   JOIN medicines m ON m.id = ci.medicine_id
-  WHERE ci.is_active = 1
+  WHERE ci.verification_status != 'REJECTED'
 `).all();
 
-console.log(`Found ${rows.length} active images in database to evaluate.`);
+console.log(`Found ${rows.length} candidate/active images in database to evaluate.`);
 
 const toDeactivate = [];
 let dosageFormConflicts = 0;
@@ -96,6 +96,7 @@ for (const r of rows) {
       med_id: r.medicine_id,
       med_name: r.med_name,
       prod_name: r.product_name,
+      source_url: r.source_url,
       reason: `[AUTO-AUDIT REJECTED] ${match.reason}`,
       type: 'DOSAGE_CONFLICT'
     });
@@ -106,6 +107,7 @@ for (const r of rows) {
       med_id: r.medicine_id,
       med_name: r.med_name,
       prod_name: r.product_name,
+      source_url: r.source_url,
       reason: `[AUTO-AUDIT REJECTED] ${match.reason}`,
       type: 'STRENGTH_CONFLICT'
     });
@@ -116,6 +118,7 @@ for (const r of rows) {
       med_id: r.medicine_id,
       med_name: r.med_name,
       prod_name: r.product_name,
+      source_url: r.source_url,
       reason: `[AUTO-AUDIT REJECTED] ${match.reason}`,
       type: 'BRAND_MISMATCH'
     });
@@ -146,7 +149,12 @@ const deactivateStmt = db.prepare(`
 const historyStmt = db.prepare(`
   INSERT INTO image_review_history (
     product_image_id, medicine_id, previous_status, new_status, action, reason, performed_by
-  ) VALUES (?, ?, 'APPROVED', 'REJECTED', 'AUTO_AUDIT_PURGE', ?, 'audit_engine')
+  ) VALUES (?, ?, 'ACTIVE', 'REJECTED', 'AUTO_AUDIT_PURGE', ?, 'audit_engine')
+`);
+
+const rejectionStmt = db.prepare(`
+  INSERT OR IGNORE INTO catalog_image_rejections (medicine_id, rejected_image_url, reason, rejected_source)
+  VALUES (?, ?, ?, 'auto_audit_engine')
 `);
 
 const deactTx = db.transaction((items) => {
@@ -154,6 +162,9 @@ const deactTx = db.transaction((items) => {
     deactivateStmt.run(item.reason, item.id);
     try {
       historyStmt.run(item.id, item.med_id, item.reason);
+      if (item.source_url) {
+        rejectionStmt.run(item.med_id, item.source_url, item.reason);
+      }
     } catch {}
   }
 });

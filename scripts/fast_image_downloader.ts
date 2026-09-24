@@ -357,7 +357,16 @@ async function main() {
 
         // Check 3: Pre-indexed local files on PC in frontend/public/products/<company-slug>/
         const compFolderMap = diskIndex.companyMap.get(companySlug);
-        const matchingLocalFiles = (compFolderMap && compFolderMap.get(medSlug)) || diskIndex.globalSlugMap.get(medSlug);
+        const candidateFiles = (compFolderMap && compFolderMap.get(medSlug)) || diskIndex.globalSlugMap.get(medSlug);
+
+        // Filter local files through multi-signal confidence validation to prevent linking mismatched packaging
+        const matchingLocalFiles = candidateFiles ? candidateFiles.filter(item => {
+          const match = catalogImageService.computeConfidence(
+            { name: med.name, manufacturer: company, strength: med.strength, packaging: med.packaging },
+            { name: med.name, manufacturer: company, imagePath: item.relPath }
+          );
+          return !match.signals.dosageFormConflict && match.signals.brandMatch && match.confidenceScore >= 40;
+        }) : [];
 
         if (matchingLocalFiles && matchingLocalFiles.length > 0) {
           // Register the existing genuine packaging files into SQLite catalog_images if not already registered

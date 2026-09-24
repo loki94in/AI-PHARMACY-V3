@@ -231,9 +231,9 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
   }
 
   const FORMULATION_MODIFIERS = new Set([
-    'p', 'sp', 'd', 'l', 'm', 'h', 'o', 'am', 'cv', 'az', 'cl', 'plus', 'forte', 'advance',
+    'p', 'sp', 'd', 'l', 'la', 'm', 'h', 'o', 'am', 'cv', 'az', 'cl', 'plus', 'forte', 'advance',
     'max', 'super', 'gold', 'pro', 'kid', 'jr', 'junior', 'ds', 'ls', 'dx', 'cr',
-    'sr', 'mr', 'xl', 'er', 'tr', 'od', 'bd', 'xt', 'ct', 'th', 'tc', 'ap', 'dp'
+    'sr', 'mr', 'xl', 'er', 'tr', 'od', 'bd', 'xt', 'ct', 'th', 'tc', 'ap', 'dp', 'f'
   ]);
 
   const tokenize = (name: string): { brand: string; modifiers: Set<string>; strengths: Set<string> } => {
@@ -323,6 +323,71 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
   }
 
   return candidates;
+}
+
+/**
+ * Sorts and filters medicine candidates so that exact requested dosage strengths (e.g. '20' from 'Inderal la 20')
+ * and formulation modifiers strictly rank at the very top, while mismatching variants (e.g. 40mg, 10mg) are penalized.
+ */
+export function sortAndFilterByRequestedStrength(
+  items: Array<{ name: string; mrp: number | null }>,
+  query: string
+): Array<{ name: string; mrp: number | null }> {
+  if (!items || items.length <= 1 || !query) return items;
+
+  // Run formulation filter first to eliminate wrong modifier/strength bleed if exact matches exist
+  const formulationFiltered = filterCandidatesByFormulation(query, items);
+  if (formulationFiltered && formulationFiltered.length > 0) {
+    items = formulationFiltered;
+  }
+
+  const cleanQuery = query
+    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-zA-Z])/g, '$1 $2');
+  const queryNumbers: string[] = cleanQuery.match(/\b\d+(?:\.\d+)?\b/g) || [];
+  const queryModifiers: string[] = query.toUpperCase().match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+
+  if (queryNumbers.length === 0 && queryModifiers.length === 0) return items;
+
+  const scored = items.map(item => {
+    const cleanItemName = item.name
+      .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+      .replace(/(\d)([a-zA-Z])/g, '$1 $2');
+    const itemNumbers: string[] = cleanItemName.match(/\b\d+(?:\.\d+)?\b/g) || [];
+    const itemModifiers: string[] = item.name.toUpperCase().match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+
+    let score = 0;
+
+    if (queryNumbers.length > 0) {
+      const matchesAllNumbers = queryNumbers.every(qn => itemNumbers.includes(qn));
+      if (matchesAllNumbers) {
+        score += 100;
+        if (itemNumbers.length === queryNumbers.length) {
+          score += 40;
+        }
+      } else {
+        score -= 80;
+      }
+    }
+
+    if (queryModifiers.length > 0) {
+      const matchesAllModifiers = queryModifiers.every(qm => itemModifiers.includes(qm));
+      if (matchesAllModifiers) {
+        score += 60;
+      } else {
+        score -= 40;
+      }
+    } else {
+      if (itemModifiers.length > 0) {
+        score -= 20;
+      }
+    }
+
+    return { item, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map(s => s.item);
 }
 
 function formatTime12h(timeStr: string): string {
@@ -1296,6 +1361,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         console.warn('[Intent Service] Mapped catalog query error:', err);
       }
 
+      if (mappedRows && mappedRows.length > 0) {
+        mappedRows = sortAndFilterByRequestedStrength(mappedRows, query);
+      }
+
       if (!mappedRows || mappedRows.length === 0) {
         await db.run(
           `UPDATE wa_pending_clarifications SET step = 'awaiting_owner_selection', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
@@ -1927,6 +1996,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         console.warn('[Intent Service] Mapped catalog query note:', err);
       }
 
+      if (mappedCatalogHits && mappedCatalogHits.length > 0) {
+        mappedCatalogHits = sortAndFilterByRequestedStrength(mappedCatalogHits, medQuery);
+      }
+
       // Broadcast live match results to admin WaRequestsPanel UI
       if (liveHitsForBroadcast.length > 0) {
         try {
@@ -1988,13 +2061,15 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
            WHERE phone = ?`,
           [singleMed.name, singleMed.name, singleMrpVal2, medQuery, pending.phone]
         );
-        const confirmPrompt = `💊 Medicine selected:\n*${singleMed.name}*${mrpStr}\n\n👉 *Please check the photo above to verify this is the exact product you need.*\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
-        
+
         let imageFile: { mimetype: string; data: string; filename: string } | null = null;
         try {
           const { catalogImageService } = await import('./catalogImageService.js');
           imageFile = await catalogImageService.getProductImageFileForWhatsApp(singleMed.name);
         } catch (_) {}
+
+        const photoPrompt = imageFile ? `\n\n👉 *Please check the photo above to verify this is the exact product you need.*` : '';
+        const confirmPrompt = `💊 Medicine selected:\n*${singleMed.name}*${mrpStr}${photoPrompt}\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(
@@ -2211,9 +2286,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             }
 
             if (newMappedHits.length > 0) {
-              const totalNew = newMappedHits.length;
+              const sortedHits = sortAndFilterByRequestedStrength(newMappedHits, newQuery);
+              const totalNew = sortedHits.length;
               const totalNewPages = Math.ceil(totalNew / PAGE_SIZE);
-              const initialSlice = newMappedHits.slice(0, PAGE_SIZE);
+              const initialSlice = sortedHits.slice(0, PAGE_SIZE);
               const optionsList = initialSlice.map((opt, i) => {
                 const mrpVal = parseMrp(opt.mrp);
                 const mrpStr = mrpVal != null ? `MRP: ₹${mrpVal.toFixed(2)}` : 'MRP: N/A';
@@ -2227,7 +2303,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
                 `UPDATE wa_pending_clarifications
                  SET suggested_name = ?, original_query = ?, mrp = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
                  WHERE phone = ?`,
-                [newMappedHits[0].name, newQuery, newMappedHits[0].mrp, JSON.stringify({ allOptions: newMappedHits, page: 0 }), pending.phone]
+                [sortedHits[0].name, newQuery, sortedHits[0].mrp, JSON.stringify({ allOptions: sortedHits, page: 0 }), pending.phone]
               );
 
               const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
@@ -2249,13 +2325,15 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           [chosenMedicine, chosenMedicine, chosenMrp, pending.phone]
         );
         const mrpStr = chosenMrp ? `\n🏷️ MRP: ₹${chosenMrp.toFixed(2)}` : '';
-        const confirmPrompt = `💊 Medicine selected:\n*${chosenMedicine}*${mrpStr}\n\n👉 *Please check the photo above to verify this is the exact product you need.*\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
 
         let imageFile: { mimetype: string; data: string; filename: string } | null = null;
         try {
           const { catalogImageService } = await import('./catalogImageService.js');
           imageFile = await catalogImageService.getProductImageFileForWhatsApp(chosenMedicine);
         } catch (_) {}
+
+        const photoPrompt = imageFile ? `\n\n👉 *Please check the photo above to verify this is the exact product you need.*` : '';
+        const confirmPrompt = `💊 Medicine selected:\n*${chosenMedicine}*${mrpStr}${photoPrompt}\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(
@@ -2317,9 +2395,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         );
         const unitMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
         const mrpDetails = unitMrp ? `\n🏷️ MRP: ₹${unitMrp.toFixed(2)} per ${finalUnit}\n💰 Total MRP: ₹${(unitMrp * finalQty).toFixed(2)}` : '';
-        const confirmPrompt = `Please confirm your request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${finalQty} ${finalUnit}${mrpDetails}${distLine}\n\n👉 *Please check the photo above to verify this is the exact packaging you need.*\nReply *1* (or *YES*) to confirm.`;
 
-        // Pre-resolve product image file (local or on-demand CDN harvest)
+        // Pre-resolve product image file
         let imageFile: { mimetype: string; data: string; filename: string } | null = null;
         try {
           const { catalogImageService } = await import('./catalogImageService.js');
@@ -2327,6 +2404,9 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         } catch (imgErr) {
           console.warn('[Intent Service] Image lookup for confirmation prompt note:', imgErr);
         }
+
+        const photoPrompt = imageFile ? `\n\n👉 *Please check the photo above to verify this is the exact packaging you need.*` : '';
+        const confirmPrompt = `Please confirm your request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${finalQty} ${finalUnit}${mrpDetails}${distLine}${photoPrompt}\n\nReply *1* (or *YES*) to confirm.`;
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(
@@ -2429,13 +2509,15 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         );
         const unitMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
         const mrpDetails = unitMrp ? `\n🏷️ MRP: ₹${unitMrp.toFixed(2)} per ${adjustedQty.unit || 'strip'}\n💰 Total MRP: ₹${(unitMrp * adjustedQty.quantity).toFixed(2)}` : '';
-        const confirmPrompt = `Updated request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || 'strip'}${mrpDetails}${distLine}\n\n👉 *Please check the photo above to verify this is the exact packaging you need.*\nReply *1* (or *YES*) to confirm.`;
 
         let imageFile: { mimetype: string; data: string; filename: string } | null = null;
         try {
           const { catalogImageService } = await import('./catalogImageService.js');
           imageFile = await catalogImageService.getProductImageFileForWhatsApp(pending.suggested_name);
         } catch (_) {}
+
+        const photoPrompt = imageFile ? `\n\n👉 *Please check the photo above to verify this is the exact packaging you need.*` : '';
+        const confirmPrompt = `Updated request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || 'strip'}${mrpDetails}${distLine}${photoPrompt}\n\nReply *1* (or *YES*) to confirm.`;
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(
