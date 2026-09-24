@@ -40,6 +40,7 @@ data/search_screenshots/
 data/temp_ocr/
 data/audit_images/
 data/search-cache.json
+data/*.tmp.*
 
 # ─── Media Uploads & Temp files ──────────────────────────────────────────────
 uploads/

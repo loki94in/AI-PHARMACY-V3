@@ -1,32 +1,742 @@
 [
   {
-    "filename": "activkids-immuno-boosters-4-6-years-choco-bite-30-candidate-1790250723148.jpg",
-    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\activkids-immuno-boosters-4-6-years-choco-bite-30-candidate-1790250723148.jpg",
-    "imageId": 26476,
-    "medicineId": 202373,
-    "medicineName": "ACTIVKIDS IMMUNO BOOSTERS 4-6 YEARS CHOCO BITE 30",
+    "filename": "3-mix-cream-7-5gm-candidate-1790268557261.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\3-mix-cream-7-5gm-candidate-1790268557261.jpg",
+    "imageId": 28104,
+    "medicineId": 149987,
+    "medicineName": "3 MIX CREAM 7.5GM",
     "reasons": [
-      "Suffix Bleed: packaging contains 'JUNIOR' not in medicine name"
+      "Strength Mismatch: Medicine requires '7.5GM' but packaging shows '5GM'"
     ]
   },
   {
-    "filename": "duova-12-18-mcg-inhaler-30-mdi-candidate-1790251069536.jpg",
-    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\duova-12-18-mcg-inhaler-30-mdi-candidate-1790251069536.jpg",
-    "imageId": 26551,
-    "medicineId": 222369,
-    "medicineName": "DUOVA 12/18 MCG INHALER 30 MDI",
+    "filename": "abixim-o-200-200-mg-tablet-10-s-candidate-1790269786630.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\abixim-o-200-200-mg-tablet-10-s-candidate-1790269786630.jpg",
+    "imageId": 28194,
+    "medicineId": 190239,
+    "medicineName": "ABIXIM O 200/200 MG TABLET 10'S",
     "reasons": [
-      "Strength Mismatch: Medicine requires '12/18MCG' but packaging shows '18MCG'"
+      "Strength Mismatch: Medicine requires '200/200MG' but packaging shows '200MG'"
     ]
   },
   {
-    "filename": "spasmonil-10-325-mg-tablet-10-candidate-1790250592669.jpg",
-    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\spasmonil-10-325-mg-tablet-10-candidate-1790250592669.jpg",
-    "imageId": 26453,
-    "medicineId": 195375,
-    "medicineName": "SPASMONIL 10/325 MG TABLET 10",
+    "filename": "anafortan-25-300-mg-tablet-10-candidate-1790268281218.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\anafortan-25-300-mg-tablet-10-candidate-1790268281218.jpg",
+    "imageId": 28088,
+    "medicineId": 140851,
+    "medicineName": "ANAFORTAN 25/300 MG TABLET 10",
     "reasons": [
-      "Strength Mismatch: Medicine requires '10/325MG' but packaging shows '325MG'"
+      "Strength Mismatch: Medicine requires '25/300MG' but packaging shows '300MG'"
+    ]
+  },
+  {
+    "filename": "aquagest-25mg-injection-1-119ml-candidate-1790259641108.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\aquagest-25mg-injection-1-119ml-candidate-1790259641108.jpg",
+    "imageId": 27476,
+    "medicineId": 521349,
+    "medicineName": "AQUAGEST 25MG INJECTION 1.119ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "bevatas-100-mg-injection-4-ml-candidate-1790256986572.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\bevatas-100-mg-injection-4-ml-candidate-1790256986572.jpg",
+    "imageId": 26993,
+    "medicineId": 61360,
+    "medicineName": "BEVATAS 100 MG INJECTION 4 ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "bevatas-400-mg-injection-16-ml-candidate-1790257945191.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\bevatas-400-mg-injection-16-ml-candidate-1790257945191.jpg",
+    "imageId": 27133,
+    "medicineId": 148376,
+    "medicineName": "BEVATAS 400 MG INJECTION 16 ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "breathe-well-inhaler-0-5-ml-candidate-1790251442083.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\breathe-well-inhaler-0-5-ml-candidate-1790251442083.jpg",
+    "imageId": 26627,
+    "medicineId": 246051,
+    "medicineName": "BREATHE WELL INHALER 0.5 ML",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.5ML' but packaging shows '5ML'"
+    ]
+  },
+  {
+    "filename": "candycop-bubblegum-flavour-toothpaste-70gm-candidate-1790264269106.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\candycop-bubblegum-flavour-toothpaste-70gm-candidate-1790264269106.jpg",
+    "imageId": 27713,
+    "medicineId": 15343,
+    "medicineName": "CANDYCOP BUBBLEGUM FLAVOUR TOOTHPASTE 70GM",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'PAEDIATRIC' not in medicine name"
+    ]
+  },
+  {
+    "filename": "candycop-toothpaste-70gm-candidate-1790264385161.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\candycop-toothpaste-70gm-candidate-1790264385161.jpg",
+    "imageId": 27730,
+    "medicineId": 21975,
+    "medicineName": "CANDYCOP TOOTHPASTE 70GM",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'PAEDIATRIC' not in medicine name"
+    ]
+  },
+  {
+    "filename": "cd-pro-1-500-10-mg-tablet-10-candidate-1790268263921.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\cd-pro-1-500-10-mg-tablet-10-candidate-1790268263921.jpg",
+    "imageId": 28085,
+    "medicineId": 140518,
+    "medicineName": "CD PRO 1/500/10 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '500/10MG' but packaging shows '10MG'"
+    ]
+  },
+  {
+    "filename": "cd-pro-2-500-10-mg-tablet-10-candidate-1790265596364.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\cd-pro-2-500-10-mg-tablet-10-candidate-1790265596364.jpg",
+    "imageId": 27884,
+    "medicineId": 67953,
+    "medicineName": "CD PRO 2/500/10 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '500/10MG' but packaging shows '10MG'"
+    ]
+  },
+  {
+    "filename": "cefi-xl-d-rf-100-500-mg-tablet-10-candidate-1790265271036.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\cefi-xl-d-rf-100-500-mg-tablet-10-candidate-1790265271036.jpg",
+    "imageId": 27862,
+    "medicineId": 55521,
+    "medicineName": "CEFI XL D RF 100/500 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '100/500MG' but packaging shows '500MG'"
+    ]
+  },
+  {
+    "filename": "cerom-1-5gm-vial-of-1-injection-candidate-1790266110819.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\cerom-1-5gm-vial-of-1-injection-candidate-1790266110819.jpg",
+    "imageId": 27914,
+    "medicineId": 82755,
+    "medicineName": "CEROM 1.5GM VIAL OF 1 INJECTION",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '1.5GM' but packaging shows '5GM'"
+    ]
+  },
+  {
+    "filename": "diabetrol-3p-7-5mg-tab-candidate-1790269861095.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\diabetrol-3p-7-5mg-tab-candidate-1790269861095.jpg",
+    "imageId": 28199,
+    "medicineId": 192634,
+    "medicineName": "DIABETROL 3P 7.5MG TAB",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '7.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "diclofam-plus-50-500-mg-tablet-10-candidate-1790266683963.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\diclofam-plus-50-500-mg-tablet-10-candidate-1790266683963.jpg",
+    "imageId": 27950,
+    "medicineId": 100048,
+    "medicineName": "DICLOFAM PLUS 50/500 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '50/500MG' but packaging shows '500MG'"
+    ]
+  },
+  {
+    "filename": "duolin-cfc-free-100-20-mcg-inhaler-200-mdi-candidate-1790251353619.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\duolin-cfc-free-100-20-mcg-inhaler-200-mdi-candidate-1790251353619.jpg",
+    "imageId": 26610,
+    "medicineId": 240377,
+    "medicineName": "DUOLIN CFC FREE 100/20 MCG INHALER 200 MDI",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '100/20MCG' but packaging shows '20MCG'"
+    ]
+  },
+  {
+    "filename": "enace-d-2-5mg-strip-of-30-tablets-candidate-1790268708813.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\enace-d-2-5mg-strip-of-30-tablets-candidate-1790268708813.jpg",
+    "imageId": 28117,
+    "medicineId": 155703,
+    "medicineName": "ENACE D 2.5MG STRIP OF 30 TABLETS",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '2.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "endokine-300mcg-inj-1ml-candidate-1790256821014.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\endokine-300mcg-inj-1ml-candidate-1790256821014.jpg",
+    "imageId": 26969,
+    "medicineId": 25481,
+    "medicineName": "ENDOKINE 300MCG INJ 1ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "ensure-choco-powder-53-4gm-candidate-1790264650049.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\ensure-choco-powder-53-4gm-candidate-1790264650049.jpg",
+    "imageId": 27774,
+    "medicineId": 33318,
+    "medicineName": "ENSURE CHOCO POWDER 53.4GM",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '53.4GM' but packaging shows '4GM'"
+    ]
+  },
+  {
+    "filename": "ensure-fos-choco-powder-53-4gm-candidate-1790266675993.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\ensure-fos-choco-powder-53-4gm-candidate-1790266675993.jpg",
+    "imageId": 27949,
+    "medicineId": 99775,
+    "medicineName": "ENSURE FOS CHOCO POWDER 53.4GM",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '53.4GM' but packaging shows '4GM'"
+    ]
+  },
+  {
+    "filename": "ensure-fos-vanilla-powder-53-4gm-candidate-1790268594800.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\ensure-fos-vanilla-powder-53-4gm-candidate-1790268594800.jpg",
+    "imageId": 28107,
+    "medicineId": 151675,
+    "medicineName": "ENSURE FOS VANILLA POWDER 53.4GM",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '53.4GM' but packaging shows '4GM'"
+    ]
+  },
+  {
+    "filename": "epofit-10000iu-inj-pfs-candidate-1790258797646.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\epofit-10000iu-inj-pfs-candidate-1790258797646.jpg",
+    "imageId": 27300,
+    "medicineId": 207459,
+    "medicineName": "EPOFIT 10000IU INJ PFS",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "equal-org-as-sach-candidate-1790264884419.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\equal-org-as-sach-candidate-1790264884419.jpg",
+    "imageId": 27815,
+    "medicineId": 41082,
+    "medicineName": "EQUAL ORG AS SACH",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'BABY' not in medicine name"
+    ]
+  },
+  {
+    "filename": "equal-org-as-tab-candidate-1790264906085.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\equal-org-as-tab-candidate-1790264906085.jpg",
+    "imageId": 27820,
+    "medicineId": 41726,
+    "medicineName": "EQUAL ORG AS TAB",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'BABY' not in medicine name"
+    ]
+  },
+  {
+    "filename": "equal-sucralosetab-candidate-1790265020144.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\equal-sucralosetab-candidate-1790265020144.jpg",
+    "imageId": 27842,
+    "medicineId": 46186,
+    "medicineName": "EQUAL SUCRALOSETAB",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'BABY' not in medicine name"
+    ]
+  },
+  {
+    "filename": "erypeg-100mcg-inj-candidate-1790256866702.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\erypeg-100mcg-inj-candidate-1790256866702.jpg",
+    "imageId": 26976,
+    "medicineId": 39620,
+    "medicineName": "ERYPEG 100MCG INJ",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "esgipyrin-50-325-mg-tablet-10-candidate-1790268350138.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\esgipyrin-50-325-mg-tablet-10-candidate-1790268350138.jpg",
+    "imageId": 28094,
+    "medicineId": 143672,
+    "medicineName": "ESGIPYRIN 50/325 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '50/325MG' but packaging shows '325MG'"
+    ]
+  },
+  {
+    "filename": "esgipyrin-np-100-500-mg-tablet-10-candidate-1790266696088.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\esgipyrin-np-100-500-mg-tablet-10-candidate-1790266696088.jpg",
+    "imageId": 27951,
+    "medicineId": 100282,
+    "medicineName": "ESGIPYRIN NP 100/500 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '100/500MG' but packaging shows '500MG'"
+    ]
+  },
+  {
+    "filename": "fertolet-2-5mg-tablet-10-s-candidate-1790251656651.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\fertolet-2-5mg-tablet-10-s-candidate-1790251656651.jpg",
+    "imageId": 26674,
+    "medicineId": 519623,
+    "medicineName": "FERTOLET 2.5MG TABLET 10'S",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '2.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "fightox-875-125-mg-tablet-10-candidate-1790269185527.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\fightox-875-125-mg-tablet-10-candidate-1790269185527.jpg",
+    "imageId": 28148,
+    "medicineId": 169609,
+    "medicineName": "FIGHTOX 875/125 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '875/125MG' but packaging shows '125MG'"
+    ]
+  },
+  {
+    "filename": "fightox-kid-200-28-5-mg-tablet-10-candidate-1790267594649.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\fightox-kid-200-28-5-mg-tablet-10-candidate-1790267594649.jpg",
+    "imageId": 28025,
+    "medicineId": 123107,
+    "medicineName": "FIGHTOX KID 200/28.5 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '200/28.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "fightox-lb-kid-250-125-mg-tablet-6-candidate-1790269594255.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\fightox-lb-kid-250-125-mg-tablet-6-candidate-1790269594255.jpg",
+    "imageId": 28176,
+    "medicineId": 183923,
+    "medicineName": "FIGHTOX LB KID 250/125 MG TABLET 6",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '250/125MG' but packaging shows '125MG'"
+    ]
+  },
+  {
+    "filename": "folisurge-1200-iu-injection-1-92-ml-candidate-1790257801704.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\folisurge-1200-iu-injection-1-92-ml-candidate-1790257801704.jpg",
+    "imageId": 27113,
+    "medicineId": 135900,
+    "medicineName": "FOLISURGE 1200 IU INJECTION 1.92 ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "folisurge-75iu-inj-candidate-1790257068447.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\folisurge-75iu-inj-candidate-1790257068447.jpg",
+    "imageId": 27010,
+    "medicineId": 70195,
+    "medicineName": "FOLISURGE 75IU INJ",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "gel-mps-mint-flavour-strip-of-8-chewable-tablets-candidate-1790257083053.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\gel-mps-mint-flavour-strip-of-8-chewable-tablets-candidate-1790257083053.jpg",
+    "imageId": 27011,
+    "medicineId": 71821,
+    "medicineName": "GEL MPS MINT FLAVOUR STRIP OF 8 CHEWABLE TABLETS",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'TABLET' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "gel-mps-tablet-10-candidate-1790257903988.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\gel-mps-tablet-10-candidate-1790257903988.jpg",
+    "imageId": 27128,
+    "medicineId": 143520,
+    "medicineName": "GEL MPS TABLET 10",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'TABLET' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "genticyn-pead-20mg-vial-of-2ml-injection-candidate-1790266520278.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\genticyn-pead-20mg-vial-of-2ml-injection-candidate-1790266520278.jpg",
+    "imageId": 27943,
+    "medicineId": 94757,
+    "medicineName": "GENTICYN PEAD 20MG VIAL OF 2ML INJECTION",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'PAEDIATRIC' not in medicine name"
+    ]
+  },
+  {
+    "filename": "gledepa-met-xr-10-1000mg-tablet-7-s-candidate-1790268247483.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\gledepa-met-xr-10-1000mg-tablet-7-s-candidate-1790268247483.jpg",
+    "imageId": 28084,
+    "medicineId": 140363,
+    "medicineName": "GLEDEPA MET XR 10/1000MG TABLET 7'S",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '10/1000MG' but packaging shows '1000MG'"
+    ]
+  },
+  {
+    "filename": "gtn-sorbitrate-0-5mg-tablet-candidate-1790266765682.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\gtn-sorbitrate-0-5mg-tablet-candidate-1790266765682.jpg",
+    "imageId": 27964,
+    "medicineId": 102644,
+    "medicineName": "GTN SORBITRATE 0.5MG TABLET",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "hifenac-d-mega-bon-100-325mg-strip-of-15-tablets-candidate-1790258556100.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\hifenac-d-mega-bon-100-325mg-strip-of-15-tablets-candidate-1790258556100.jpg",
+    "imageId": 27248,
+    "medicineId": 190998,
+    "medicineName": "HIFENAC D MEGA BON 100/325MG STRIP OF 15 TABLETS",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '100/325MG' but packaging shows '325MG'"
+    ]
+  },
+  {
+    "filename": "influvac-2018-2019-vaccine-0-5ml-candidate-1790264114163.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\influvac-2018-2019-vaccine-0-5ml-candidate-1790264114163.jpg",
+    "imageId": 27686,
+    "medicineId": 4344,
+    "medicineName": "INFLUVAC 2018/2019 VACCINE 0.5ML",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.5ML' but packaging shows '5ML'"
+    ]
+  },
+  {
+    "filename": "intacept-25-mg-injection-0-5-ml-candidate-1790257591135.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\intacept-25-mg-injection-0-5-ml-candidate-1790257591135.jpg",
+    "imageId": 27084,
+    "medicineId": 120337,
+    "medicineName": "INTACEPT 25 MG INJECTION 0.5 ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "intalfa-5miu-inj-candidate-1790257819569.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\intalfa-5miu-inj-candidate-1790257819569.jpg",
+    "imageId": 27117,
+    "medicineId": 137526,
+    "medicineName": "INTALFA 5MIU INJ",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "levolin-plus-juniour-expectorant-100ml-candidate-1790252150051.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\levolin-plus-juniour-expectorant-100ml-candidate-1790252150051.jpg",
+    "imageId": 26869,
+    "medicineId": 541341,
+    "medicineName": "LEVOLIN PLUS JUNIOUR EXPECTORANT 100ML",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'JR' not in medicine name"
+    ]
+  },
+  {
+    "filename": "levolin-plus-syp-candidate-1790252150996.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\levolin-plus-syp-candidate-1790252150996.jpg",
+    "imageId": 26870,
+    "medicineId": 541342,
+    "medicineName": "LEVOLIN PLUS SYP",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'JR' not in medicine name"
+    ]
+  },
+  {
+    "filename": "mabtas-500mg-injection-50ml-candidate-1790257491554.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\mabtas-500mg-injection-50ml-candidate-1790257491554.jpg",
+    "imageId": 27069,
+    "medicineId": 111574,
+    "medicineName": "MABTAS 500MG INJECTION 50ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "mabtas-n-500-mg-injection-50-ml-candidate-1790258480504.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\mabtas-n-500-mg-injection-50-ml-candidate-1790258480504.jpg",
+    "imageId": 27228,
+    "medicineId": 186868,
+    "medicineName": "MABTAS N 500 MG INJECTION 50 ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "mabtas-t-500-mg-injection-50-ml-candidate-1790257894863.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\mabtas-t-500-mg-injection-50-ml-candidate-1790257894863.jpg",
+    "imageId": 27125,
+    "medicineId": 142890,
+    "medicineName": "MABTAS T 500 MG INJECTION 50 ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "mama-s-best-choco-powder-400gm-candidate-1790267962163.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\mama-s-best-choco-powder-400gm-candidate-1790267962163.jpg",
+    "imageId": 28050,
+    "medicineId": 131717,
+    "medicineName": "MAMA`S BEST CHOCO POWDER 400GM",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'BABY' not in medicine name"
+    ]
+  },
+  {
+    "filename": "megaclox-250-250-mg-capsule-10-candidate-1790251755642.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\megaclox-250-250-mg-capsule-10-candidate-1790251755642.jpg",
+    "imageId": 26694,
+    "medicineId": 525514,
+    "medicineName": "MEGACLOX 250/250 MG CAPSULE 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '250/250MG' but packaging shows '250MG'"
+    ]
+  },
+  {
+    "filename": "meroplan-s-1-5gm-inj-candidate-1790269343027.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\meroplan-s-1-5gm-inj-candidate-1790269343027.jpg",
+    "imageId": 28159,
+    "medicineId": 174200,
+    "medicineName": "MEROPLAN S 1.5GM INJ",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '1.5GM' but packaging shows '5GM'"
+    ]
+  },
+  {
+    "filename": "moza-2-5mg-tablet-candidate-1790259084579.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\moza-2-5mg-tablet-candidate-1790259084579.jpg",
+    "imageId": 27361,
+    "medicineId": 225076,
+    "medicineName": "MOZA 2.5MG TABLET",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '2.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "neomec-oral-liquid-vet-100ml-candidate-1790259357969.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\neomec-oral-liquid-vet-100ml-candidate-1790259357969.jpg",
+    "imageId": 27419,
+    "medicineId": 243987,
+    "medicineName": "NEOMEC ORAL LIQUID VET 100ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'SYRUP' but packaging is 'INJECTION'"
+    ]
+  },
+  {
+    "filename": "neomec-oral-liquid-vet-1ltr-candidate-1790259237543.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\neomec-oral-liquid-vet-1ltr-candidate-1790259237543.jpg",
+    "imageId": 27393,
+    "medicineId": 236107,
+    "medicineName": "NEOMEC ORAL LIQUID VET 1LTR",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'SYRUP' but packaging is 'INJECTION'"
+    ]
+  },
+  {
+    "filename": "neukine-300mcg-pfs-inj-candidate-1790259257145.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\neukine-300mcg-pfs-inj-candidate-1790259257145.jpg",
+    "imageId": 27395,
+    "medicineId": 237473,
+    "medicineName": "NEUKINE 300MCG PFS INJ",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "nilol-hd-25-10-mg-tablet-10-candidate-1790257597145.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\nilol-hd-25-10-mg-tablet-10-candidate-1790257597145.jpg",
+    "imageId": 27086,
+    "medicineId": 120819,
+    "medicineName": "NILOL HD 25/10 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '25/10MG' but packaging shows '10MG'"
+    ]
+  },
+  {
+    "filename": "nimucet-100-325-mg-tablet-10-candidate-1790258308484.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\nimucet-100-325-mg-tablet-10-candidate-1790258308484.jpg",
+    "imageId": 27190,
+    "medicineId": 174622,
+    "medicineName": "NIMUCET 100/325 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '100/325MG' but packaging shows '325MG'"
+    ]
+  },
+  {
+    "filename": "novaclox-new-250-250-mg-capsule-10-candidate-1790251166769.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\novaclox-new-250-250-mg-capsule-10-candidate-1790251166769.jpg",
+    "imageId": 26576,
+    "medicineId": 227722,
+    "medicineName": "NOVACLOX NEW 250/250 MG CAPSULE 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '250/250MG' but packaging shows '250MG'"
+    ]
+  },
+  {
+    "filename": "onza-2-5mg-tab-candidate-1790266341340.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\onza-2-5mg-tab-candidate-1790266341340.jpg",
+    "imageId": 27928,
+    "medicineId": 89136,
+    "medicineName": "ONZA 2.5MG TAB",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '2.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "onza-7-5mg-tab-candidate-1790269985234.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\onza-7-5mg-tab-candidate-1790269985234.jpg",
+    "imageId": 28215,
+    "medicineId": 197178,
+    "medicineName": "ONZA 7.5MG TAB",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '7.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "pcm-i-v-inj-100ml-candidate-1790257393836.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\pcm-i-v-inj-100ml-candidate-1790257393836.jpg",
+    "imageId": 27061,
+    "medicineId": 104476,
+    "medicineName": "PCM I.V. INJ 100ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "pexep-xr-25mg-tab-candidate-1790257508541.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\pexep-xr-25mg-tab-candidate-1790257508541.jpg",
+    "imageId": 27072,
+    "medicineId": 112903,
+    "medicineName": "PEXEP XR 25MG TAB",
+    "reasons": [
+      "Suffix Bleed: packaging contains 'CR' not in medicine name"
+    ]
+  },
+  {
+    "filename": "pregabid-nt-75-10-mg-strip-of-10-tablets-candidate-1790258569804.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\pregabid-nt-75-10-mg-strip-of-10-tablets-candidate-1790258569804.jpg",
+    "imageId": 27251,
+    "medicineId": 191674,
+    "medicineName": "PREGABID NT 75/10 MG STRIP OF 10 TABLETS",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '75/10MG' but packaging shows '10MG'"
+    ]
+  },
+  {
+    "filename": "pro-retina-softgel-candidate-1790264804439.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\pro-retina-softgel-candidate-1790264804439.jpg",
+    "imageId": 27795,
+    "medicineId": 38025,
+    "medicineName": "PRO RETINA SOFTGEL",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'CAPSULE' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "quiet-0-25-mg-tablet-10-candidate-1790268373217.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\quiet-0-25-mg-tablet-10-candidate-1790268373217.jpg",
+    "imageId": 28095,
+    "medicineId": 144292,
+    "medicineName": "QUIET 0.25 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.25MG' but packaging shows '25MG'"
+    ]
+  },
+  {
+    "filename": "quiet-0-25mg-tab-candidate-1790265453634.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\quiet-0-25mg-tab-candidate-1790265453634.jpg",
+    "imageId": 27877,
+    "medicineId": 62816,
+    "medicineName": "QUIET 0.25MG TAB",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.25MG' but packaging shows '25MG'"
+    ]
+  },
+  {
+    "filename": "quiet-0-5-mg-tablet-10-candidate-1790266754549.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\quiet-0-5-mg-tablet-10-candidate-1790266754549.jpg",
+    "imageId": 27963,
+    "medicineId": 102204,
+    "medicineName": "QUIET 0.5 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "rengraf-0-5-mg-capsule-10-candidate-1790265219972.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\rengraf-0-5-mg-capsule-10-candidate-1790265219972.jpg",
+    "imageId": 27854,
+    "medicineId": 53047,
+    "medicineName": "RENGRAF 0.5 MG CAPSULE 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "rokfos-5m-injection-100ml-candidate-1790251411929.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\rokfos-5m-injection-100ml-candidate-1790251411929.jpg",
+    "imageId": 26623,
+    "medicineId": 244157,
+    "medicineName": "ROKFOS 5M INJECTION 100ML",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'INJECTION' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "roline-cap-candidate-1790260535562.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\roline-cap-candidate-1790260535562.jpg",
+    "imageId": 27596,
+    "medicineId": 62946,
+    "medicineName": "ROLINE CAP",
+    "reasons": [
+      "Dosage Form Conflict: Medicine is 'CAPSULE' but packaging is 'SYRUP'"
+    ]
+  },
+  {
+    "filename": "safexim-o-200-200-mg-tablet-10-candidate-1790265292190.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\safexim-o-200-200-mg-tablet-10-candidate-1790265292190.jpg",
+    "imageId": 27866,
+    "medicineId": 56362,
+    "medicineName": "SAFEXIM O 200/200 MG TABLET 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '200/200MG' but packaging shows '200MG'"
+    ]
+  },
+  {
+    "filename": "supermet-xl-12-5-mg-tablet-xl-10-candidate-1790266938120.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\supermet-xl-12-5-mg-tablet-xl-10-candidate-1790266938120.jpg",
+    "imageId": 27978,
+    "medicineId": 106614,
+    "medicineName": "SUPERMET XL 12.5 MG TABLET XL 10",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '12.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "szetalo-plus-10-0-5mg-strip-of-15-tablets-candidate-1790265319457.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\szetalo-plus-10-0-5mg-strip-of-15-tablets-candidate-1790265319457.jpg",
+    "imageId": 27870,
+    "medicineId": 57211,
+    "medicineName": "SZETALO PLUS 10/0.5MG STRIP OF 15 TABLETS",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '10/0.5MG' but packaging shows '5MG'"
+    ]
+  },
+  {
+    "filename": "urimax-0-4mg-bottle-of-30-capsules-candidate-1790252284053.jpg",
+    "fullPath": "E:\\CURRENT PROJECT ON WORKING\\AI PHARMACY v2\\frontend\\public\\products\\urimax-0-4mg-bottle-of-30-capsules-candidate-1790252284053.jpg",
+    "imageId": 26948,
+    "medicineId": 544948,
+    "medicineName": "URIMAX 0.4MG BOTTLE OF 30 CAPSULES",
+    "reasons": [
+      "Strength Mismatch: Medicine requires '0.4MG' but packaging shows '4MG'"
     ]
   }
 ]

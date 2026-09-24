@@ -1,0 +1,40 @@
+{
+  "last_updated": "2026-09-24T15:57:04.894Z",
+  "products": {
+    "77": {
+      "status": "not_found_pharmeasy",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FUNGIZONE IV 50 MG INJECTION 10 ML",
+      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
+      "checked_at": "2026-09-24T15:56:33.567Z"
+    },
+    "216": {
+      "status": "not_found_all_cdns",
+      "company": "CIPLA LIMITED",
+      "product_name": "ACIVIR 200MG",
+      "reason": "Exhausted across PharmEasy, Tata 1mg, and Dawa India. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-24T15:57:04.894Z"
+    },
+    "882": {
+      "status": "not_found_pharmeasy",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "KWICK HEAL BAND AID BANDAGE 1 CM",
+      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
+      "checked_at": "2026-09-24T15:56:21.585Z"
+    },
+    "997": {
+      "status": "not_found_pharmeasy",
+      "company": "ZEE LABORATORIES LTD",
+      "product_name": "QZEST FORTE STRIP OF 30 TABLETS",
+      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
+      "checked_at": "2026-09-24T15:56:28.313Z"
+    },
+    "2129": {
+      "status": "not_found_pharmeasy",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "LEUPO 11.25 MG INJECTION 1 ML",
+      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
+      "checked_at": "2026-09-24T15:56:26.647Z"
+    }
+  }
+}

@@ -986,7 +986,7 @@ async function fetchTata1mgImages(queries: string[], rawMedName: string): Promis
   return null;
 }
 
-async function fetchCdnImages(queries: string[], rawMedName: string): Promise<any | null> {
+async function fetchPharmEasyImages(queries: string[], rawMedName: string): Promise<any | null> {
   for (const q of queries) {
     const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(q)}&page=1`;
     try {
@@ -1028,7 +1028,6 @@ async function fetchCdnImages(queries: string[], rawMedName: string): Promise<an
       for (const img of damImages) {
         const face = img.face || 'default';
         if (!imageMap[face] && img.url) {
-          // Verify no consumer watermarking on DAM URL
           const rawUrl = img.url.split('?')[0];
           imageMap[face] = rawUrl;
         }
@@ -1042,22 +1041,116 @@ async function fetchCdnImages(queries: string[], rawMedName: string): Promise<an
         return {
           name: best.name,
           slug: best.slug || slugify(best.name),
-          images: imageMap
+          images: imageMap,
+          source: 'pharmeasy_clean'
         };
       }
     } catch {
       // try next query
     }
   }
+  return null;
+}
 
-  // 2. Automatic Fallback: Tata 1mg Zero-Watermark Studio CDN (rescuing hospital/fertility/specialty meds)
-  return await fetchTata1mgImages(queries, rawMedName);
+async function fetchDawaIndiaImages(queries: string[], rawMedName: string): Promise<any | null> {
+  for (const q of queries) {
+    const url = `https://api.davaindia.com/products?search=${encodeURIComponent(q)}`;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://www.davaindia.com/'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (!response.ok) continue;
+      const data: any = await response.json();
+      const prods = data?.data || [];
+      if (prods.length === 0) continue;
+
+      const matched = prods.filter((c: any) => {
+        const title = c.title || c.name || '';
+        const rawImgs = Array.isArray(c.images)
+          ? c.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
+          : (c.thumbnail ? [c.thumbnail] : []);
+        if (rawImgs.length === 0) return false;
+        if (!isBrandMatch(rawMedName, title)) return false;
+        if (hasDosageConflict(rawMedName, title)) return false;
+        if (hasStrengthConflict(rawMedName, title)) return false;
+        if (hasModifierConflict(rawMedName, title)) return false;
+        return true;
+      });
+
+      if (matched.length === 0) continue;
+
+      const best = matched[0];
+      const title = best.title || best.name || '';
+      const rawImgs = Array.isArray(best.images)
+        ? best.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
+        : (best.thumbnail ? [best.thumbnail] : []);
+
+      const imageMap: Record<string, string> = {};
+      const faces = ['front', 'back', 'combo', 'side'];
+      for (let idx = 0; idx < rawImgs.length; idx++) {
+        const cleanUrl = rawImgs[idx].split('?')[0];
+        const face = faces[idx] || `angle_${idx + 1}`;
+        imageMap[face] = cleanUrl;
+      }
+
+      if (Object.keys(imageMap).length > 0) {
+        console.log(`    🔍 Rescued from Dawa India Generic CDN: "${title}" (${Object.keys(imageMap).length} angles)`);
+        return {
+          name: title,
+          slug: slugify(title),
+          images: imageMap,
+          source: 'davaindia_clean'
+        };
+      }
+    } catch {
+      // try next query
+    }
+  }
+  return null;
+}
+
+async function fetchCdnImages(
+  queries: string[],
+  rawMedName: string,
+  sourceMode: 'all' | 'pharmeasy' | '1mg' | 'davaindia' = 'all'
+): Promise<any | null> {
+  // 1. PharmEasy Clean CDN
+  if (sourceMode === 'all' || sourceMode === 'pharmeasy') {
+    const pe = await fetchPharmEasyImages(queries, rawMedName);
+    if (pe) return pe;
+    if (sourceMode === 'pharmeasy') return null;
+  }
+
+  // 2. Tata 1mg Zero-Watermark Studio CDN
+  if (sourceMode === 'all' || sourceMode === '1mg') {
+    const mg = await fetchTata1mgImages(queries, rawMedName);
+    if (mg) return mg;
+    if (sourceMode === '1mg') return null;
+  }
+
+  // 3. Dawa India Generic Packshot CDN
+  if (sourceMode === 'all' || sourceMode === 'davaindia') {
+    const dava = await fetchDawaIndiaImages(queries, rawMedName);
+    if (dava) return dava;
+    if (sourceMode === 'davaindia') return null;
+  }
+
+  return null;
 }
 
 async function downloadBuffer(url: string): Promise<Buffer | null> {
   try {
+    const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0' };
+    if (url.includes('davaindia.com')) {
+      headers['Referer'] = 'https://www.davaindia.com/';
+    }
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
+      headers,
       signal: AbortSignal.timeout(10000)
     });
     if (!res.ok) return null;
@@ -1090,7 +1183,9 @@ async function printStatus() {
   const totalAngles = db.prepare('SELECT COUNT(*) as c FROM catalog_images').get() as any;
   const stateKeys = Object.keys(state.products || {});
   const successCount = stateKeys.filter(k => state.products[k].status === 'success').length;
-  const notFoundCount = stateKeys.filter(k => state.products[k].status === 'not_found').length;
+  const notFoundPe = stateKeys.filter(k => state.products[k].status === 'not_found_pharmeasy').length;
+  const notFound1mg = stateKeys.filter(k => state.products[k].status === 'not_found_1mg').length;
+  const notFoundAll = stateKeys.filter(k => state.products[k].status === 'not_found_all_cdns' || state.products[k].status === 'not_found').length;
   const geminiRejectedCount = stateKeys.filter(k => state.products[k].status === 'gemini_rejected').length;
 
   console.log('\n===============================================================');
@@ -1100,7 +1195,9 @@ async function printStatus() {
   console.log(`Total Verified Image Angles Saved      : ${totalAngles?.c || 0}`);
   console.log(`Evaluated State Records                : ${stateKeys.length}`);
   console.log(`  - Successfully Verified & Saved      : ${successCount}`);
-  console.log(`  - Not Available on Pharma CDN        : ${notFoundCount}`);
+  console.log(`  - Routed to T2 (Not Found on PharmEasy): ${notFoundPe}`);
+  console.log(`  - Routed to T3 (Not Found on Tata 1mg) : ${notFound1mg}`);
+  console.log(`  - Exhausted All CDNs (Queued for Rev): ${notFoundAll}`);
   if (geminiRejectedCount > 0) {
     console.log(`  - Rejected by Gemini Vision Gate     : ${geminiRejectedCount}`);
   }
@@ -1119,6 +1216,7 @@ async function main() {
   let retryFailed = false;
   let retryRejected = false;
   let shardStr = '';
+  let sourceMode: 'all' | 'pharmeasy' | '1mg' | 'davaindia' = 'all';
   let idleShutdownMin = 0;
   let shutdownOnComplete = false;
   let useGemini = false;
@@ -1138,6 +1236,12 @@ async function main() {
     else if (args[i].startsWith('--pool=')) poolNumber = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--terminal=') || args[i].startsWith('--term=')) {
       terminalIndex = parseInt(args[i].split('=')[1], 10);
+    }
+    else if (args[i].startsWith('--source=')) {
+      const sm = args[i].split('=')[1].toLowerCase().trim();
+      if (['pharmeasy', '1mg', 'davaindia', 'all'].includes(sm)) {
+        sourceMode = sm as any;
+      }
     }
     else if (args[i].startsWith('--shard=')) shardStr = args[i].split('=')[1].trim();
     else if (args[i].startsWith('--top=')) topCount = parseInt(args[i].split('=')[1], 10);
@@ -1163,6 +1267,18 @@ async function main() {
     }
   }
 
+  // Smart routing terminal defaults:
+  // Terminal 1 -> PharmEasy
+  // Terminal 2 -> Tata 1mg (Watermark-free studio photos)
+  // Terminal 3 -> Dawa India (Generic formulations)
+  if (terminalIndex === 1 && sourceMode === 'all') {
+    sourceMode = 'pharmeasy';
+  } else if (terminalIndex === 2 && sourceMode === 'all') {
+    sourceMode = '1mg';
+  } else if (terminalIndex === 3 && sourceMode === 'all') {
+    sourceMode = 'davaindia';
+  }
+
   console.log('===============================================================');
   console.log('    MASTER PRODUCT IMAGE HARVESTER & AI OCR VERIFICATION');
   console.log('===============================================================\n');
@@ -1183,19 +1299,15 @@ async function main() {
   if (customKeys.length > 0) {
     geminiKeys = customKeys;
   } else if (terminalIndex >= 1 && terminalIndex <= 3) {
-    // Dedicated 3-terminal mode: 8 keys per terminal, shard 1/3, 2/3, 3/3
+    // Dedicated 3-terminal mode: 8 keys per terminal, isolated smart source routing
     useGemini = true;
-    if (!shardStr) {
-      shardStr = `${terminalIndex}/3`;
-    }
     if (verifiedWorkingKeys.length >= 24) {
       const startIndex = (terminalIndex - 1) * 8;
       geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + 8);
       spareKey = verifiedWorkingKeys[24]; // 25th key as spare
     }
     if (!companyFilter) {
-      // In 3-terminal mode, all 3 terminals process the same company list together,
-      // sharding the medicines of each company evenly!
+      // In 3-terminal smart routing mode, all terminals process companies in lockstep
       companyQueue = loadAllCompaniesFromCsv();
     }
   } else if (terminalIndex >= 4 && terminalIndex <= 12) {
@@ -1230,6 +1342,14 @@ async function main() {
     const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
     geminiKeys = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
   }
+
+  const SOURCE_LABELS: Record<string, string> = {
+    all: '🌐 Full Smart Relay Cascade (PharmEasy ➡️ Tata 1mg ➡️ Dawa India ➡️ Pharmacist Review)',
+    pharmeasy: '🟢 Terminal 1: PharmEasy CDN Source (Auto-relaying missing items to T2)',
+    '1mg': '🟠 Terminal 2: Tata 1mg Studio Source (Zero-watermark, auto-relaying missing items to T3)',
+    davaindia: '🔵 Terminal 3: Dawa India Generic Source (Auto-forwarding exhausted items to Human Review)'
+  };
+  console.log(`📡 Sourcing Mode  : ${SOURCE_LABELS[sourceMode] || sourceMode}`);
 
   if (useGemini) {
     console.log(`🤖 Google Gemini Flash Vision: ACTIVE (100% label confirmation).`);
@@ -1315,30 +1435,56 @@ async function main() {
     const currentCompany = queueToProcess[cIdx];
     let companyMeds: any[] = [];
 
-    if (currentCompany === '__ALL_MEDICINES__') {
-      const whereClauses = ["name NOT LIKE 'test%'", "name NOT LIKE '%dummy%'", "name NOT LIKE 'sample%'", "name NOT LIKE '1st aid%'"];
-      const params: any[] = [];
-      if (nameFilter) {
-        whereClauses.push("name LIKE ?");
-        params.push(`%${nameFilter}%`);
-      }
-      let q = `SELECT id, name, canonical_name, manufacturer, packaging FROM medicines WHERE ${whereClauses.join(' AND ')} ORDER BY id ASC`;
-      if (limit > 0) q += ` LIMIT ${limit}`;
-      companyMeds = db.prepare(q).all(...params);
-    } else {
-      let q = `
-        SELECT id, name, canonical_name, manufacturer, packaging 
-        FROM medicines 
-        WHERE name NOT LIKE 'test%'
-          AND name NOT LIKE '%dummy%'
-          AND name NOT LIKE 'sample%'
-          AND name NOT LIKE '1st aid%'
-          AND manufacturer LIKE ?
-        ORDER BY id ASC
-      `;
-      if (limit > 0) q += ` LIMIT ${limit}`;
-      companyMeds = db.prepare(q).all(`%${currentCompany}%`);
+    const whereClauses = [
+      "m.name NOT LIKE 'test%'",
+      "m.name NOT LIKE '%dummy%'",
+      "m.name NOT LIKE 'sample%'",
+      "m.name NOT LIKE '1st aid%'"
+    ];
+
+    // AUTO-SKIP: Instantly skip medicines that already have active verified images in database (<1ms)
+    if (!force) {
+      whereClauses.push("NOT EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1)");
     }
+
+    const params: any[] = [];
+    if (currentCompany !== '__ALL_MEDICINES__') {
+      whereClauses.push("m.manufacturer LIKE ?");
+      params.push(`%${currentCompany}%`);
+    }
+    if (nameFilter) {
+      whereClauses.push("m.name LIKE ?");
+      params.push(`%${nameFilter}%`);
+    }
+
+    let orderBy = "m.id ASC";
+    if (!force && !retryFailed) {
+      if (sourceMode === '1mg') {
+        // T2 (Tata 1mg): Prioritize items routed from PharmEasy (not_found_pharmeasy), skip items already evaluated on 1mg
+        whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('not_found_1mg', 'not_found_all_cdns', 'gemini_rejected'))");
+        orderBy = "CASE WHEN chs.status = 'not_found_pharmeasy' THEN 0 ELSE 1 END, m.id ASC";
+      } else if (sourceMode === 'davaindia') {
+        // T3 (Dawa India): Prioritize items routed from 1mg (not_found_1mg), skip items already evaluated on all CDNs
+        whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('not_found_all_cdns', 'gemini_rejected'))");
+        orderBy = "CASE WHEN chs.status = 'not_found_1mg' THEN 0 WHEN chs.status = 'not_found_pharmeasy' THEN 1 ELSE 2 END, m.id ASC";
+      } else if (sourceMode === 'pharmeasy') {
+        // T1 (PharmEasy): Skip items already evaluated on PharmEasy
+        whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('not_found_pharmeasy', 'not_found_1mg', 'not_found_all_cdns', 'gemini_rejected'))");
+      } else {
+        // Full cascade: skip items successfully completed or already exhausted across all CDNs
+        whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('success', 'not_found_all_cdns', 'gemini_rejected'))");
+      }
+    }
+
+    let q = `
+      SELECT m.id, m.name, m.canonical_name, m.manufacturer, m.packaging, chs.status as harvest_status
+      FROM medicines m
+      LEFT JOIN catalog_harvest_state chs ON chs.medicine_id = m.id
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY ${orderBy}
+    `;
+    if (limit > 0) q += ` LIMIT ${limit}`;
+    companyMeds = db.prepare(q).all(...params);
 
     if (companyMeds.length === 0) continue;
 
@@ -1365,7 +1511,17 @@ async function main() {
       const sqlState = checkSqliteStateStmt.get(med.id) as any;
       const status = jsonState?.status || sqlState?.status;
       if (status && !force && !retryFailed) {
-        if (status === 'success' || status === 'not_found' || status === 'no_authentic_match_on_cdn') {
+        if (status === 'success') continue;
+        if (sourceMode === 'pharmeasy' && ['not_found_pharmeasy', 'not_found_1mg', 'not_found_all_cdns'].includes(status)) {
+          continue;
+        }
+        if (sourceMode === '1mg' && ['not_found_1mg', 'not_found_all_cdns'].includes(status)) {
+          continue;
+        }
+        if (sourceMode === 'davaindia' && status === 'not_found_all_cdns') {
+          continue;
+        }
+        if (sourceMode === 'all' && ['not_found_all_cdns', 'not_found'].includes(status)) {
           continue;
         }
         if (status === 'gemini_rejected' && !retryRejected) {
@@ -1403,10 +1559,47 @@ async function main() {
     const medName = med.name || med.canonical_name;
     const mfg = med.manufacturer || 'Unknown';
 
-    // REAL-TIME SKIP GUARD: If another terminal or earlier run already verified this medicine, skip in <1ms!
+    // REAL-TIME SKIP GUARD 1: If another terminal or earlier run already verified this medicine, skip in <1ms!
     if (!force && checkDbStmt.get(medId)) {
-      console.log(`⏩ [ID ${medId}] "${medName}" already has active verified images in database. Skipping.`);
+      console.log(`⏩ [ID ${medId}] "${medName}" already has active verified images in database. Skipping (<1ms).`);
       continue;
+    }
+
+    // REAL-TIME SKIP GUARD 2: If files already exist on disk, skip in <1ms!
+    const compSlug = slugify(med.manufacturer || currentCompany || 'general');
+    const checkBaseSlug = slugify(medName);
+    const frontInSubfolder = path.join(TARGET_FRONTEND, compSlug, `${checkBaseSlug}-front.jpg`);
+    const boxFrontInSubfolder = path.join(TARGET_FRONTEND, compSlug, `${checkBaseSlug}-box-front.jpg`);
+    const frontOnDisk = path.join(TARGET_FRONTEND, `${checkBaseSlug}-front.jpg`);
+    const boxFrontOnDisk = path.join(TARGET_FRONTEND, `${checkBaseSlug}-box-front.jpg`);
+    if (!force && (
+      (fs.existsSync(frontInSubfolder) && fs.statSync(frontInSubfolder).size > 1000) ||
+      (fs.existsSync(boxFrontInSubfolder) && fs.statSync(boxFrontInSubfolder).size > 1000) ||
+      (fs.existsSync(frontOnDisk) && fs.statSync(frontOnDisk).size > 1000) ||
+      (fs.existsSync(boxFrontOnDisk) && fs.statSync(boxFrontOnDisk).size > 1000)
+    )) {
+      console.log(`⏩ [ID ${medId}] "${medName}" already has images on disk. Skipping (<1ms).`);
+      continue;
+    }
+
+    // REAL-TIME SKIP GUARD 3: Concurrency check against SQLite state table
+    if (!force && !retryFailed) {
+      const liveSqlState = checkSqliteStateStmt.get(medId) as any;
+      if (liveSqlState?.status) {
+        if (liveSqlState.status === 'success') {
+          console.log(`⏩ [ID ${medId}] "${medName}" verified by another terminal (success). Skipping (<1ms).`);
+          continue;
+        }
+        if (sourceMode === 'pharmeasy' && ['not_found_pharmeasy', 'not_found_1mg', 'not_found_all_cdns'].includes(liveSqlState.status)) {
+          continue;
+        }
+        if (sourceMode === '1mg' && ['not_found_1mg', 'not_found_all_cdns'].includes(liveSqlState.status)) {
+          continue;
+        }
+        if (sourceMode === 'davaindia' && liveSqlState.status === 'not_found_all_cdns') {
+          continue;
+        }
+      }
     }
 
     processed++;
@@ -1417,14 +1610,32 @@ async function main() {
     console.log(`🎯 ID ${medId}: "${medName}" (${mfg})`);
     console.log(`    Querying CDN for: "${searchQueries[0]}"...`);
 
-    const cdnResult = await fetchCdnImages(searchQueries, medName);
+    const cdnResult = await fetchCdnImages(searchQueries, medName, sourceMode);
     if (!cdnResult || Object.keys(cdnResult.images).length === 0) {
-      console.log(`    ⚠️ No verified match found on pharma CDN.\n`);
+      let notFoundStatus = 'not_found_all_cdns';
+      let notFoundReason = 'Exhausted across all CDNs. Queued for human review.';
+
+      if (sourceMode === 'pharmeasy') {
+        notFoundStatus = 'not_found_pharmeasy';
+        notFoundReason = 'No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).';
+        console.log(`    ⚠️ No verified match on PharmEasy CDN ➡️ Smart routing to Terminal 2 (Tata 1mg)\n`);
+      } else if (sourceMode === '1mg') {
+        notFoundStatus = 'not_found_1mg';
+        notFoundReason = 'No match found on Tata 1mg CDN. Smart routed to T3 (Dawa India).';
+        console.log(`    ⚠️ No verified match on Tata 1mg CDN ➡️ Smart routing to Terminal 3 (Dawa India)\n`);
+      } else if (sourceMode === 'davaindia') {
+        notFoundStatus = 'not_found_all_cdns';
+        notFoundReason = 'Exhausted across PharmEasy, Tata 1mg, and Dawa India. Queued for Pharmacist Human Review.';
+        console.log(`    ⚠️ No verified match on Dawa India CDN ➡️ Forwarded to Pharmacist Human Review (/catalog/images)\n`);
+      } else {
+        console.log(`    ⚠️ No verified match across any pharma CDN ➡️ Forwarded to Pharmacist Human Review (/catalog/images)\n`);
+      }
+
       recordProductState(db, medId, {
-        status: 'not_found',
+        status: notFoundStatus,
         company: mfg,
         product_name: medName,
-        reason: 'No match found on pharma CDN'
+        reason: notFoundReason
       });
       await new Promise(r => setTimeout(r, delayMs));
       continue;
@@ -1708,7 +1919,7 @@ async function main() {
         medicine_id, company_name, product_name, image_path, thumbnail_path, image_source,
         confidence_score, matching_method, verification_status, ocr_text, is_active,
         image_type, is_primary, slot_number, phash
-      ) VALUES (?, ?, ?, ?, ?, 'pharma_dam_cdn', ?, ?, 'APPROVED', ?, 1, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, 1, ?, ?, ?, ?)
     `);
 
     for (let aIdx = 0; aIdx < finalAngles.length; aIdx++) {
@@ -1720,6 +1931,7 @@ async function main() {
         cdnResult.name,
         ang.relPath,
         ang.relPath,
+        cdnResult.source || 'pharma_dam_cdn',
         ang.brandConfidence,
         finalMatchingMethod,
         ang.ocrTextSnippet,
@@ -1743,7 +1955,8 @@ async function main() {
       angles_saved: downloadedAngles.length,
       primary_face: downloadedAngles[0].face,
       primary_confidence: downloadedAngles[0].brandConfidence,
-      verified_by: finalMatchingMethod
+      verified_by: finalMatchingMethod,
+      source: cdnResult.source || 'pharma_dam_cdn'
     });
 
     // Auto-commit milestone every 1,000 new images in database (shared across all terminals)

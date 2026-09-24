@@ -272,6 +272,34 @@ export class CatalogImageService {
   }
 
   /**
+   * Sanitizes and cleans CDN URLs to guarantee 100% watermark-free, high-resolution original packaging photography.
+   * Strips dynamic Cloudinary / Gumlet watermark transformations and e-commerce thumbnail cropping.
+   */
+  public cleanseCdnImageUrl(rawUrl: string | null | undefined): string {
+    if (!rawUrl) return '';
+    let clean = rawUrl.trim();
+
+    // 1. Tata 1mg Gumlet / Cloudinary CDN: strip watermark transformation layer & upscale to w_800,h_800
+    if (clean.includes('onemg.gumlet.io') || clean.includes('cloudinary.com')) {
+      clean = clean
+        .replace(/l_watermark_[^/]+\//g, '')
+        .replace(/w_\d+,h_\d+/g, 'w_800,h_800');
+    }
+
+    // 2. PharmEasy CDN: ensure clean master assets (strip thumbnail sizing query params)
+    if (clean.includes('pharmeasy.in')) {
+      clean = clean.replace(/\?.*$/, '');
+    }
+
+    // 3. Davaindia / Generic India CDN: strip query tracking
+    if (clean.includes('davaindia.com')) {
+      clean = clean.split('?')[0];
+    }
+
+    return clean;
+  }
+
+  /**
    * Smart face prioritization:
    * Prioritizes front + back combined packaging view with the medicine name clearly visible:
    * 1. Official 'combo' image from CDN (pre-combined front & back / box & strip with printed text).
@@ -1345,67 +1373,206 @@ export class CatalogImageService {
       }
     }
 
-    const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
-
-    let products: any[] = [];
-    try {
-      const resp = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (resp.ok) {
-        const json = await resp.json();
-        products = json?.data?.products || [];
+    // Multi-tier query variants for progressive fallback
+    const queryVariants = this.generateAccurateQueries(med.name, med.manufacturer);
+    if (cleanQuery && !queryVariants.includes(cleanQuery)) {
+      queryVariants.unshift(cleanQuery);
+    }
+    if (med.generic_name && med.generic_name.trim().length > 3) {
+      const genericClean = med.generic_name.replace(/\[.*?\]/g, '').trim();
+      const genericQuery = strength ? `${genericClean} ${strength}` : genericClean;
+      if (!queryVariants.includes(genericQuery)) {
+        queryVariants.push(genericQuery);
       }
-    } catch (err: any) {
-      console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
-      return null;
     }
 
-    if (products.length === 0) return null;
-
-    // Filter candidates that have images and are not blacklisted
     let selectedCandidate: any = null;
     let selectedImageUrl: string | null = null;
     let selectedFace: string = 'combined';
     let selectedStitchSecondaryUrl: string | undefined = undefined;
+    let selectedSource: 'pharmeasy' | '1mg' | 'davaindia' = 'pharmeasy';
 
-    for (const prod of products) {
-      // Vetting check: verify brand match, no strength conflict, no formulation modifier conflict, and no device/dosage conflict
-      const matchCheck = this.computeConfidence(med, {
-        name: prod.name,
-        manufacturer: prod.manufacturer
-      });
-      if (
-        matchCheck.verificationStatus === 'REJECTED' ||
-        matchCheck.signals.strengthConflict ||
-        !matchCheck.signals.brandMatch ||
-        matchCheck.signals.modifierConflict ||
-        matchCheck.signals.dosageFormConflict
-      ) {
-        continue;
+    // ── Tier 1: PharmEasy Clean CDN ──
+    for (const q of queryVariants) {
+      if (selectedCandidate) break;
+      const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(q)}&page=1`;
+      try {
+        const resp = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (!resp.ok) continue;
+        const json = await resp.json();
+        const products = json?.data?.products || [];
+
+        for (const prod of products) {
+          const matchCheck = this.computeConfidence(med, {
+            name: prod.name,
+            manufacturer: prod.manufacturer
+          });
+          if (
+            matchCheck.verificationStatus === 'REJECTED' ||
+            matchCheck.signals.strengthConflict ||
+            !matchCheck.signals.brandMatch ||
+            matchCheck.signals.modifierConflict ||
+            matchCheck.signals.dosageFormConflict
+          ) {
+            continue;
+          }
+
+          const damImages = prod.damImages || [];
+          const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
+          if (!bestFace || !bestFace.url) continue;
+
+          const candidateUrl = this.cleanseCdnImageUrl(bestFace.url);
+          if (rejectedUrls.has(candidateUrl)) continue;
+
+          selectedCandidate = prod;
+          selectedImageUrl = candidateUrl;
+          selectedFace = bestFace.face;
+          selectedStitchSecondaryUrl = bestFace.stitchSecondaryUrl ? this.cleanseCdnImageUrl(bestFace.stitchSecondaryUrl) : undefined;
+          selectedSource = 'pharmeasy';
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`[CatalogImageService] PharmEasy online search error for "${q}":`, err.message);
       }
+    }
 
-      const damImages = prod.damImages || [];
-      const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
-      if (!bestFace || !bestFace.url) continue;
+    // ── Tier 2: Tata 1mg Clean CDN (NO WATERMARK) ──
+    if (!selectedCandidate) {
+      for (const q of queryVariants) {
+        if (selectedCandidate) break;
+        try {
+          const mgUrl = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(q)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+          const mgResp = await fetch(mgUrl, {
+            headers: {
+              'accept': 'application/vnd.healthkartplus.v4+json',
+              'x-access-key': '1mg_client_access_key',
+              'x-platform': 'desktop-0.0.1',
+              'x-city': 'Gurgaon',
+              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            },
+            signal: AbortSignal.timeout(7000)
+          });
 
-      const candidateUrl = bestFace.url.split('?')[0];
-      if (rejectedUrls.has(candidateUrl)) {
-        continue; // Skip previously rejected URL
+          if (!mgResp.ok) continue;
+          const mgJson: any = await mgResp.json();
+          const prods = mgJson?.data?.search_results || [];
+
+          for (const p of prods) {
+            const rawUrls = p.cropped_image_urls || (p.image ? [p.image] : (p.image_url ? [p.image_url] : []));
+            if (!rawUrls || rawUrls.length === 0) continue;
+
+            const cleanPrimary = this.cleanseCdnImageUrl(rawUrls[0]);
+            if (rejectedUrls.has(cleanPrimary)) continue;
+
+            const matchCheck = this.computeConfidence(med, {
+              name: p.name,
+              manufacturer: p.manufacturer_name || p.company_name
+            });
+            if (
+              matchCheck.verificationStatus === 'REJECTED' ||
+              matchCheck.signals.strengthConflict ||
+              !matchCheck.signals.brandMatch ||
+              matchCheck.signals.modifierConflict ||
+              matchCheck.signals.dosageFormConflict
+            ) {
+              continue;
+            }
+
+            let secondaryUrl: string | undefined = undefined;
+            if (rawUrls.length > 1) {
+              const cleanSecondary = this.cleanseCdnImageUrl(rawUrls[1]);
+              if (!rejectedUrls.has(cleanSecondary) && cleanSecondary !== cleanPrimary) {
+                secondaryUrl = cleanSecondary;
+              }
+            }
+
+            selectedCandidate = {
+              name: p.name,
+              manufacturer: p.manufacturer_name || p.company_name || 'Tata 1mg'
+            };
+            selectedImageUrl = cleanPrimary;
+            selectedFace = secondaryUrl ? 'combo-stitched' : 'front';
+            selectedStitchSecondaryUrl = secondaryUrl;
+            selectedSource = '1mg';
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`[CatalogImageService] 1mg online search error for "${q}":`, err.message);
+        }
       }
+    }
 
-      selectedCandidate = prod;
-      selectedImageUrl = candidateUrl;
-      selectedFace = bestFace.face;
-      selectedStitchSecondaryUrl = bestFace.stitchSecondaryUrl;
-      break;
+    // ── Tier 3: Dawa India / Davaindia Generic Indian Formulations (NO WATERMARK) ──
+    if (!selectedCandidate) {
+      for (const q of queryVariants) {
+        if (selectedCandidate) break;
+        try {
+          const davaUrl = `https://api.davaindia.com/products?search=${encodeURIComponent(q)}`;
+          const davaResp = await fetch(davaUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://www.davaindia.com/'
+            },
+            signal: AbortSignal.timeout(7000)
+          });
+
+          if (!davaResp.ok) continue;
+          const davaJson: any = await davaResp.json();
+          const prods = davaJson?.data || [];
+
+          for (const p of prods) {
+            const rawImgs = Array.isArray(p.images)
+              ? p.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
+              : (p.thumbnail ? [p.thumbnail] : []);
+            if (rawImgs.length === 0) continue;
+
+            const cleanPrimary = this.cleanseCdnImageUrl(rawImgs[0]);
+            if (rejectedUrls.has(cleanPrimary)) continue;
+
+            const matchCheck = this.computeConfidence(med, {
+              name: p.title || p.name,
+              manufacturer: 'Dawa India'
+            });
+            if (
+              matchCheck.verificationStatus === 'REJECTED' ||
+              matchCheck.signals.strengthConflict ||
+              matchCheck.signals.modifierConflict ||
+              matchCheck.signals.dosageFormConflict
+            ) {
+              continue;
+            }
+
+            let secondaryUrl: string | undefined = undefined;
+            if (rawImgs.length > 1) {
+              const cleanSecondary = this.cleanseCdnImageUrl(rawImgs[1]);
+              if (!rejectedUrls.has(cleanSecondary) && cleanSecondary !== cleanPrimary) {
+                secondaryUrl = cleanSecondary;
+              }
+            }
+
+            selectedCandidate = {
+              name: p.title || p.name,
+              manufacturer: 'Dawa India'
+            };
+            selectedImageUrl = cleanPrimary;
+            selectedFace = secondaryUrl ? 'combo-stitched' : 'front';
+            selectedStitchSecondaryUrl = secondaryUrl;
+            selectedSource = 'davaindia';
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`[CatalogImageService] Dawa India search error for "${q}":`, err.message);
+        }
+      }
     }
 
     if (!selectedCandidate || !selectedImageUrl) {
-      console.log(`[CatalogImageService] No un-rejected candidate found for medicine ${med.name}`);
+      console.log(`[CatalogImageService] No un-rejected candidate found across PharmEasy, 1mg, or Dawa India for medicine ${med.name}`);
       return null;
     }
 
@@ -1424,15 +1591,22 @@ export class CatalogImageService {
     try {
       let buffer: Buffer;
 
+      const fetchHeaders: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      };
+      if (selectedImageUrl.includes('davaindia.com')) {
+        fetchHeaders['Referer'] = 'https://www.davaindia.com/';
+      }
+
       if (selectedStitchSecondaryUrl) {
         try {
           const [res1, res2] = await Promise.all([
             fetch(selectedImageUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              headers: fetchHeaders,
               signal: AbortSignal.timeout(10000)
             }),
             fetch(selectedStitchSecondaryUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              headers: fetchHeaders,
               signal: AbortSignal.timeout(10000)
             })
           ]);
@@ -1449,7 +1623,7 @@ export class CatalogImageService {
         } catch (e: any) {
           console.warn('[CatalogImageService] Error stitching dual packaging images, using primary:', e.message);
           const fallbackRes = await fetch(selectedImageUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            headers: fetchHeaders,
             signal: AbortSignal.timeout(10000)
           });
           if (!fallbackRes.ok) return null;
@@ -1457,7 +1631,7 @@ export class CatalogImageService {
         }
       } else {
         const imgRes = await fetch(selectedImageUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          headers: fetchHeaders,
           signal: AbortSignal.timeout(10000)
         });
         if (!imgRes.ok) return null;
@@ -1504,7 +1678,7 @@ export class CatalogImageService {
           selectedCandidate.name,
           relPath,
           relPath,
-          'pharmeasy',
+          selectedSource,
           selectedImageUrl,
           hash,
           matchResult.confidenceScore,
@@ -2488,214 +2662,35 @@ export class CatalogImageService {
 
     for (const med of targetMeds) {
       try {
-        const queries = this.generateAccurateQueries(med.name, med.manufacturer);
-        let matchedCandidate: any = null;
-        let matchedImageUrl: string | null = null;
-        let matchedStitchSecondaryUrl: string | undefined = undefined;
-        let bestScoreResult: MatchScoreResult | null = null;
-
-        // Query rejections blacklist
-        const rejections = await db.all(
-          'SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?',
-          [med.id]
-        );
-        const rejectedUrls = new Set(rejections.map(r => r.rejected_image_url).filter(Boolean));
-        const rejectedHashes = new Set(rejections.map(r => r.rejected_image_hash).filter(Boolean));
-
-        for (const query of queries) {
-          const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
-          try {
-            const resp = await fetch(url, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-              signal: AbortSignal.timeout(6000)
-            });
-            if (!resp.ok) continue;
-            const json = await resp.json();
-            const products = json?.data?.products || [];
-
-            for (const prod of products) {
-              const matchRes = this.computeConfidence(med, {
-                name: prod.name,
-                manufacturer: prod.manufacturer
-              });
-
-              // Strictly reject brand mismatches, strength conflicts, or formulation modifier conflicts
-              if (
-                matchRes.verificationStatus === 'REJECTED' ||
-                !matchRes.signals.brandMatch ||
-                matchRes.signals.strengthConflict ||
-                matchRes.signals.modifierConflict
-              ) {
-                continue;
-              }
-
-              const damImages = prod.damImages || [];
-              const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
-              if (!bestFace || !bestFace.url) continue;
-
-              const candidateUrl = bestFace.url.split('?')[0];
-              if (rejectedUrls.has(candidateUrl)) continue;
-
-              if (matchRes.confidenceScore >= 75) {
-                matchedCandidate = prod;
-                matchedImageUrl = candidateUrl;
-                matchedStitchSecondaryUrl = bestFace.stitchSecondaryUrl;
-                bestScoreResult = matchRes;
-                break;
-              }
-            }
-          } catch (_) {}
-
-          if (matchedCandidate) break;
-          await new Promise(r => setTimeout(r, 100)); // anti-hammer pacing
-        }
-
-        if (!matchedCandidate || !matchedImageUrl || !bestScoreResult) {
+        const record = await this.searchAndDownloadCandidate(med.id);
+        if (record) {
+          repaired++;
+          results.push({
+            medicine_id: med.id,
+            name: med.name,
+            status: record.verification_status || 'REPAIRED',
+            matched_name: record.product_name,
+            reason: record.verification_reason || 'Multi-source candidate verified and saved'
+          });
+        } else {
           failed++;
           results.push({
             medicine_id: med.id,
             name: med.name,
             status: 'NOT_FOUND',
-            reason: 'No high-confidence non-conflicting online image candidate found'
+            reason: 'No high-confidence non-conflicting online image candidate found across PharmEasy, 1mg, or Dawa India'
           });
-          continue;
         }
-
-        // Download candidate image
-        const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
-        const filename = `${slug}-${Date.now()}.jpg`;
-        const frontendDir = path.resolve(process.cwd(), 'frontend/public/products');
-        const uploadsDir = path.resolve(process.cwd(), 'uploads/products');
-
-        fs.mkdirSync(frontendDir, { recursive: true });
-        fs.mkdirSync(uploadsDir, { recursive: true });
-
-        const frontendPath = path.join(frontendDir, filename);
-        const uploadsPath = path.join(uploadsDir, filename);
-
-        let buffer: Buffer;
-        if (matchedStitchSecondaryUrl) {
-          try {
-            const [res1, res2] = await Promise.all([
-              fetch(matchedImageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) }),
-              fetch(matchedStitchSecondaryUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) })
-            ]);
-            if (res1.ok && res2.ok) {
-              const [b1, b2] = [Buffer.from(await res1.arrayBuffer()), Buffer.from(await res2.arrayBuffer())];
-              buffer = await this.stitchImagesSideBySide(b1, b2);
-            } else if (res1.ok) {
-              buffer = Buffer.from(await res1.arrayBuffer());
-            } else {
-              failed++;
-              results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
-              continue;
-            }
-          } catch (_) {
-            const res1 = await fetch(matchedImageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
-            if (!res1.ok) {
-              failed++;
-              results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
-              continue;
-            }
-            buffer = Buffer.from(await res1.arrayBuffer());
-          }
-        } else {
-          const imgRes = await fetch(matchedImageUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            signal: AbortSignal.timeout(8000)
-          });
-          if (!imgRes.ok) {
-            failed++;
-            results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
-            continue;
-          }
-          buffer = Buffer.from(await imgRes.arrayBuffer());
-        }
-        const hash = crypto.createHash('sha256').update(buffer).digest('hex');
-        if (rejectedHashes.has(hash)) {
-          failed++;
-          results.push({ medicine_id: med.id, name: med.name, status: 'HASH_BLACKLISTED' });
-          continue;
-        }
-
-        fs.writeFileSync(frontendPath, buffer);
-        fs.writeFileSync(uploadsPath, buffer);
-
-        const relPath = `/products/${filename}`;
-        const isHighConfidence = bestScoreResult.verificationStatus === 'HIGH_CONFIDENCE' || bestScoreResult.confidenceScore >= 80;
-        const status = isHighConfidence ? 'HIGH_CONFIDENCE' : 'PENDING_REVIEW';
-        const isActive = isHighConfidence ? 1 : 0;
-
-        await db.run('BEGIN TRANSACTION');
-        if (isActive === 1) {
-          await db.run('UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?', [med.id]);
-        }
-
-        await db.run(
-          `INSERT INTO catalog_images (
-             medicine_id, company_name, product_name, image_path, thumbnail_path,
-             image_source, source_url, image_hash, confidence_score, matching_method,
-             verification_status, verification_reason, is_active
-           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, ?, ?, 'ai_multi_signal', ?, ?, ?)`,
-          [
-            med.id,
-            med.manufacturer || null,
-            matchedCandidate.name,
-            relPath,
-            relPath,
-            matchedImageUrl,
-            hash,
-            bestScoreResult.confidenceScore,
-            status,
-            bestScoreResult.reason,
-            isActive
-          ]
-        );
-        await db.run('COMMIT');
-
-        // Also keep legacy state file in sync
-        try {
-          const stateFile = path.resolve(process.cwd(), 'data/image_download_state.json');
-          if (fs.existsSync(stateFile)) {
-            const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-            if (!state.products) state.products = {};
-            state.products[med.name] = {
-              status: 'success',
-              matched_name: matchedCandidate.name,
-              slug,
-              images: {
-                front: {
-                  fileName: filename,
-                  url: relPath,
-                  uploadsUrl: `/uploads/products/${filename}`,
-                  bytes: buffer.length
-                }
-              },
-              verified: isHighConfidence,
-              updated_at: new Date().toISOString()
-            };
-            state.last_updated = new Date().toISOString();
-            fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
-          }
-        } catch (_) {}
-
-        repaired++;
-        results.push({
-          medicine_id: med.id,
-          name: med.name,
-          status,
-          matched_name: matchedCandidate.name,
-          reason: bestScoreResult.reason
-        });
       } catch (err: any) {
         failed++;
         results.push({
           medicine_id: med.id,
           name: med.name,
           status: 'ERROR',
-          reason: err.message
+          reason: err?.message || 'Download error'
         });
       }
+      await new Promise(r => setTimeout(r, 100)); // anti-hammer pacing
     }
 
     eventService.broadcast('catalog_image_updated', {
@@ -3336,11 +3331,7 @@ export class CatalogImageService {
             let chosenUrl = rawUrls[0];
             if (imageType === 'back' && rawUrls.length > 1) chosenUrl = rawUrls[1];
 
-            const cleanUrl = chosenUrl
-              .replace(/l_watermark_[^/]+\//g, '')
-              .replace(/w_\d+,h_\d+/g, 'w_800,h_800')
-              .split('?')[0];
-
+            const cleanUrl = this.cleanseCdnImageUrl(chosenUrl);
             if (rejectedUrls.has(cleanUrl)) continue;
 
             const scoreResult = this.computeConfidence(med, {
@@ -3363,6 +3354,57 @@ export class CatalogImageService {
         }
       } catch (err: any) {
         console.warn(`[CatalogImageService] 1mg online search error for "${cleanQuery}":`, err.message);
+      }
+    }
+
+    // Tertiary Source Fallback: Dawa India Generic Clean Catalog
+    if (candidates.length === 0 || candidates.every(c => c.verificationStatus === 'REJECTED')) {
+      try {
+        const davaUrl = `https://api.davaindia.com/products?search=${encodeURIComponent(cleanQuery)}`;
+        const davaResp = await fetch(davaUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.davaindia.com/'
+          },
+          signal: AbortSignal.timeout(8000)
+        });
+
+        if (davaResp.ok) {
+          const davaJson: any = await davaResp.json();
+          const prods = davaJson?.data || [];
+
+          for (const p of prods) {
+            const rawImgs = Array.isArray(p.images)
+              ? p.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
+              : (p.thumbnail ? [p.thumbnail] : []);
+            if (rawImgs.length === 0) continue;
+
+            let chosenUrl = rawImgs[0];
+            if (imageType === 'back' && rawImgs.length > 1) chosenUrl = rawImgs[1];
+
+            const cleanUrl = this.cleanseCdnImageUrl(chosenUrl);
+            if (rejectedUrls.has(cleanUrl)) continue;
+
+            const scoreResult = this.computeConfidence(med, {
+              name: p.title || p.name,
+              manufacturer: 'Dawa India'
+            });
+
+            candidates.push({
+              id: String(p._id || cleanUrl),
+              name: p.title || p.name,
+              manufacturer: 'Dawa India',
+              imageUrl: cleanUrl,
+              source: 'davaindia',
+              confidenceScore: scoreResult.confidenceScore,
+              verificationStatus: scoreResult.verificationStatus,
+              reason: scoreResult.reason,
+              signals: scoreResult.signals
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[CatalogImageService] Dawa India search error for "${cleanQuery}":`, err.message);
       }
     }
 
@@ -3416,8 +3458,16 @@ export class CatalogImageService {
     const frontendPath = path.join(frontendDir, filename);
     const uploadsPath = path.join(uploadsDir, filename);
 
-    const imgRes = await fetch(candidateUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    const cleanCandidateUrl = this.cleanseCdnImageUrl(candidateUrl);
+    const downloadHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    };
+    if (cleanCandidateUrl.includes('davaindia.com')) {
+      downloadHeaders['Referer'] = 'https://www.davaindia.com/';
+    }
+
+    const imgRes = await fetch(cleanCandidateUrl, {
+      headers: downloadHeaders,
       signal: AbortSignal.timeout(10000)
     });
     if (!imgRes.ok) {
