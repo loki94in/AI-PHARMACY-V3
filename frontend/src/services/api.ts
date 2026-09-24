@@ -2032,6 +2032,67 @@ export const api = {
   rejectAllForMedicine: (medicineId: number, reason = 'Rejected via stream - incorrect image', verified_by = 'admin') =>
     apiClient.post<{ success: boolean; message: string; rejected: number; medicineId: number }>(`/catalog/images/medicine/${medicineId}/reject-all`, { reason, verified_by }).then(res => res.data),
 
+  // Medicine Visual Reference & Verification APIs
+  getMedicineVisualReference: (medicineId: number) =>
+    apiClient.get<{
+      success: boolean;
+      medicine: {
+        id: number;
+        name: string;
+        generic_name?: string | null;
+        manufacturer?: string | null;
+        dosage_form?: string | null;
+        strength?: string | null;
+        mrp?: number | null;
+        packaging?: string | null;
+      };
+      has_image: boolean;
+      auto_pulled: boolean;
+      primaryUrl: string | null;
+      images: Record<string, { url: string; type: string; is_primary: boolean }>;
+      gallery: Array<{
+        id: number;
+        url: string;
+        type: string;
+        verification_status: string;
+        is_primary: boolean;
+        is_active: boolean;
+      }>;
+    }>(`/catalog/images/medicine/${medicineId}/visual-reference`).then(res => res.data),
+
+  sendMedicineVisualReference: (data: {
+    phone: string;
+    medicineId: number;
+    imageId?: number;
+    imageUrl?: string;
+    customNote?: string;
+    livePhoto?: { mimetype: string; data: string; filename?: string };
+    customerName?: string;
+  }) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      queueId?: number;
+      has_image: boolean;
+      is_pending_review: boolean;
+      owner_notified: boolean;
+    }>('/catalog/images/send-visual-reference', data).then(res => res.data),
+
+  searchMedicines: (search: string, limit = 15) =>
+    apiClient.get<{
+      data: Array<{
+        id: number;
+        name: string;
+        generic_name?: string | null;
+        manufacturer?: string | null;
+        dosage_form?: string | null;
+        strength?: string | null;
+        mrp?: number | null;
+        packaging?: string | null;
+      }>;
+      totalItems: number;
+    }>('/medicines', { params: { search, limit } }).then(res => res.data),
+
   // 3-UPI QR Code System & Delivery Configuration (§13, §15)
   getPaymentQrs: () =>
     apiClient.get<{ success: boolean; configs: Array<{ id: string; label: string; payee_name: string; upi_id: string; qr_image_url?: string; is_active: boolean }> }>('/settings/payment-qrs').then(res => res.data),

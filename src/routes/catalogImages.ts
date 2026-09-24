@@ -1,6 +1,9 @@
 import express from 'express';
+import path from 'path';
+import fs from 'fs';
 import { catalogImageService } from '../services/catalogImageService.js';
 import { dbManager } from '../database/connection.js';
+import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 
 const router = express.Router();
 
@@ -637,6 +640,250 @@ router.get('/:id/history', async (req, res) => {
   } catch (err: any) {
     console.error('[CatalogImages API] Error fetching history:', err);
     res.status(500).json({ success: false, error: err.message || 'Failed to fetch history' });
+  }
+});
+
+/**
+ * GET /api/catalog/images/medicine/:medicineId/visual-reference
+ * Resolves verified visual packaging reference for a medicine.
+ * Checks storage first; if missing, auto-pulls from CDN (PharmEasy / 1mg / etc.)
+ * If missing on CDN as well, returns clean fallback (has_image: false) without errors.
+ */
+router.get('/medicine/:medicineId/visual-reference', async (req, res) => {
+  try {
+    const medicineId = parseInt(req.params.medicineId, 10);
+    if (!medicineId) return res.status(400).json({ success: false, error: 'Invalid medicineId' });
+
+    const db = await dbManager.getConnection();
+    const med = await db.get(
+      'SELECT id, name, generic_name, manufacturer, dosage_form, strength, mrp, packaging FROM medicines WHERE id = ?',
+      [medicineId]
+    );
+    if (!med) return res.status(404).json({ success: false, error: 'Medicine not found' });
+
+    // 1. Check local storage first
+    let gallery = await catalogImageService.getMedicineGallery(medicineId);
+    let resolved = await catalogImageService.resolveProductImages(medicineId);
+
+    // 2. If no active image in storage, attempt auto-pull from CDN
+    let autoPulled = false;
+    if (!resolved.primaryUrl && gallery.length === 0) {
+      try {
+        console.log(`[VisualReference] No local image for ${med.name} (#${medicineId}). Auto-pulling from CDN...`);
+        const candidate = await catalogImageService.searchAndDownloadCandidate(medicineId);
+        if (candidate) {
+          autoPulled = true;
+          gallery = await catalogImageService.getMedicineGallery(medicineId);
+          resolved = await catalogImageService.resolveProductImages(medicineId);
+        }
+      } catch (cdnErr: any) {
+        console.warn(`[VisualReference] CDN auto-pull failed for medicine ${medicineId}:`, cdnErr?.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      medicine: med,
+      has_image: !!resolved.primaryUrl,
+      auto_pulled: autoPulled,
+      primaryUrl: resolved.primaryUrl,
+      images: resolved.images,
+      gallery: gallery.map((img: any) => ({
+        id: img.id,
+        url: img.image_path || img.thumbnail_path,
+        type: img.image_type || 'combined',
+        verification_status: img.verification_status,
+        is_primary: !!img.is_primary,
+        is_active: !!img.is_active
+      }))
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error resolving visual reference:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to resolve visual reference' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/send-visual-reference
+ * Dispatches medicine visual packaging reference + safety disclaimer to customer WhatsApp.
+ * Also alerts owner/admin if image is pending review so human can verify and promote for refills.
+ */
+router.post('/send-visual-reference', async (req, res) => {
+  try {
+    const {
+      phone,
+      medicineId,
+      imageId,
+      imageUrl,
+      customNote,
+      livePhoto,
+      customerName
+    } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ success: false, error: 'Recipient phone number is required' });
+    }
+    if (!medicineId) {
+      return res.status(400).json({ success: false, error: 'medicineId is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    const med = await db.get(
+      'SELECT id, name, generic_name, manufacturer, dosage_form, strength, mrp, packaging FROM medicines WHERE id = ?',
+      [medicineId]
+    );
+    if (!med) return res.status(404).json({ success: false, error: 'Medicine not found' });
+
+    let finalFileObj: { mimetype: string; data: string; filename?: string } | undefined = undefined;
+    let isPendingReview = false;
+    let usedImageRecord: any = null;
+
+    // A) If a live camera photo was taken on counter
+    if (livePhoto && livePhoto.data) {
+      try {
+        const uploadsDir = path.resolve(process.cwd(), 'uploads/products');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+        const filename = `counter-live-${medicineId}-${Date.now()}.jpg`;
+        const diskPath = path.join(uploadsDir, filename);
+        fs.writeFileSync(diskPath, Buffer.from(livePhoto.data, 'base64'));
+
+        const webPath = `/uploads/products/${filename}`;
+        const ins = await db.run(
+          `INSERT INTO catalog_images (medicine_id, image_path, thumbnail_path, image_source, verification_status, is_active, is_primary, match_source, created_at, updated_at)
+           VALUES (?, ?, ?, 'counter_camera', 'PENDING_REVIEW', 1, 1, 'manual', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [medicineId, webPath, webPath]
+        );
+
+        finalFileObj = {
+          mimetype: livePhoto.mimetype || 'image/jpeg',
+          data: livePhoto.data,
+          filename: filename
+        };
+        isPendingReview = true;
+        usedImageRecord = { id: ins.lastID, image_path: webPath, verification_status: 'PENDING_REVIEW', image_source: 'counter_camera' };
+      } catch (camErr: any) {
+        console.error('[VisualReference] Failed to save live counter photo:', camErr);
+      }
+    } else {
+      // B) Using catalog image (either specific imageId, or passed imageUrl, or primary)
+      if (imageId) {
+        usedImageRecord = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+      }
+      if (!usedImageRecord && imageUrl) {
+        usedImageRecord = await db.get('SELECT * FROM catalog_images WHERE image_path = ? OR thumbnail_path = ? LIMIT 1', [imageUrl, imageUrl]);
+      }
+      if (!usedImageRecord) {
+        usedImageRecord = await db.get(
+          'SELECT * FROM catalog_images WHERE medicine_id = ? AND is_active = 1 ORDER BY is_primary DESC, id DESC LIMIT 1',
+          [medicineId]
+        );
+      }
+
+      if (usedImageRecord) {
+        if (usedImageRecord.verification_status === 'PENDING_REVIEW') {
+          isPendingReview = true;
+        }
+
+        const relativePath = (usedImageRecord.image_path || usedImageRecord.thumbnail_path || '').replace(/^[/\\]+/, '');
+        const fullDiskPath = path.resolve(process.cwd(), relativePath);
+
+        if (fs.existsSync(fullDiskPath)) {
+          const buf = fs.readFileSync(fullDiskPath);
+          const ext = path.extname(fullDiskPath).toLowerCase();
+          const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+          finalFileObj = {
+            mimetype: mime,
+            data: buf.toString('base64'),
+            filename: path.basename(fullDiskPath)
+          };
+        }
+      }
+    }
+
+    // Build the clinical verification message with mandatory safety disclaimer note
+    const specLines: string[] = [];
+    if (med.strength || med.dosage_form) {
+      specLines.push(`• *Strength / Form:* ${[med.strength, med.dosage_form].filter(Boolean).join(' ')}`);
+    }
+    if (med.generic_name) {
+      specLines.push(`• *Composition:* ${med.generic_name}`);
+    }
+    if (med.manufacturer) {
+      specLines.push(`• *Manufacturer:* ${med.manufacturer}`);
+    }
+    if (med.mrp) {
+      specLines.push(`• *MRP:* ₹${med.mrp}`);
+    }
+
+    const greeting = customerName ? `Hello ${customerName}, ` : 'Hello, ';
+    const noteBlock = customNote && customNote.trim() ? `\n📝 *Pharmacist Note:* ${customNote.trim()}\n` : '';
+
+    const messageText = 
+`📋 *Medicine Verification / Visual Reference*
+${greeting}please check if this packaging matches what you need:
+
+💊 *${med.name}*
+${specLines.join('\n')}${noteBlock}
+⚠️ *Note:* Packaging artwork, colors, or strip designs may vary across manufacturer batches. Please verify the active medicine name and strength printed on your physical strip.
+
+👉 *Please reply to confirm if this is the correct medicine.*`;
+
+    // Dispatch to Customer WhatsApp
+    const queueId = await whatsappQueueWorker.enqueue(
+      phone,
+      messageText,
+      'customer_medicine_clarification',
+      customerName || 'Customer',
+      undefined,
+      undefined,
+      finalFileObj
+    );
+
+    // Human-in-the-Loop Admin Notification:
+    // If the image is unverified / pending review, alert the store owner on WhatsApp so they can verify in-app
+    let ownerNotified = false;
+    if (isPendingReview || usedImageRecord?.verification_status === 'PENDING_REVIEW') {
+      try {
+        const ownerRow = await db.get(
+          "SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' ORDER BY (CASE WHEN key = 'owner_whatsapp_number' THEN 1 ELSE 2 END) ASC LIMIT 1"
+        );
+        const ownerPhone = ownerRow?.value?.replace(/\\D/g, '');
+        const cleanCustPhone = phone.replace(/\\D/g, '');
+
+        if (ownerPhone && ownerPhone !== cleanCustPhone && ownerPhone.length >= 10) {
+          const ownerAlertMsg = 
+`📸 *Visual Reference Review Alert*
+Medicine: *${med.name}*
+Customer: ${customerName || 'Customer'} (${phone})
+Status: *Pending Review (${usedImageRecord?.image_source || 'CDN/Camera'})*
+
+👉 Please verify packaging in App: *Database ➔ Catalog Images* so this verified image is permanently cached for future refills.`;
+
+          await whatsappQueueWorker.enqueue(
+            ownerPhone,
+            ownerAlertMsg,
+            'admin_escalation',
+            'Store Owner'
+          );
+          ownerNotified = true;
+        }
+      } catch (ownerErr) {
+        console.warn('[VisualReference] Could not notify owner WhatsApp:', ownerErr);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Visual reference sent successfully',
+      queueId,
+      has_image: !!finalFileObj,
+      is_pending_review: isPendingReview,
+      owner_notified: ownerNotified
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error sending visual reference:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to send visual reference' });
   }
 });
 

@@ -18,6 +18,7 @@ import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { EnquiriesSection } from './EnquiriesSection';
+import { MedicineVisualReferenceModal } from '../../components/MedicineVisualReferenceModal';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -2710,6 +2711,7 @@ const WhatsAppSection: React.FC = () => {
   const [tmplCategory, setTmplCategory] = useState('General');
   const [tmplBody, setTmplBody] = useState('');
   const [savingTmpl, setSavingTmpl] = useState(false);
+  const [showVisualRefModal, setShowVisualRefModal] = useState(false);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -3611,6 +3613,15 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
                     <Package size={14} />
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => setShowVisualRefModal(true)}
+                    className="p-2 rounded-xl bg-bg border border-border text-muted hover:text-emerald-500 transition-all active:scale-95"
+                    title="Send Medicine Visual Reference"
+                  >
+                    <Pill size={14} />
+                  </button>
+
                   <input
                     type="text"
                     placeholder="Type WhatsApp message..."
@@ -3641,6 +3652,28 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
         </div>
       </div>
       )} {/* end isReady ternary */}
+
+      {/* Medicine Visual Reference Modal */}
+      {showVisualRefModal && activeChat && (
+        <MedicineVisualReferenceModal
+          isOpen={showVisualRefModal}
+          onClose={() => setShowVisualRefModal(false)}
+          recipientPhone={activeChat.resolvedNumber || activeChat.id.split('@')[0]}
+          recipientName={activeChat.name !== activeChat.id.split('@')[0] ? activeChat.name : undefined}
+          onSuccess={() => {
+            loadChats();
+            if (activeChatRef.current) {
+              apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChatRef.current.id)}/messages?limit=500`)
+                .then(res => {
+                  if (Array.isArray(res.data) && res.data.length > 0) {
+                    setMessages(res.data);
+                    setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+                  }
+                });
+            }
+          }}
+        />
+      )}
 
       {/* Template Manager Modal */}
       {showManageModal && (
