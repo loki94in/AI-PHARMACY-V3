@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown, Truck } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown, Truck, Package } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent, whatsappQueueEvent } from '../services/events';
 import { useStore } from '../context/StoreContext';
+import { MarketClosureModal } from './MarketClosureModal';
+import { ClosureStockBufferModal } from './ClosureStockBufferModal';
 
 // Indian Public & National Holidays (2025-2027 reference)
 const INDIAN_HOLIDAYS: Record<string, string> = {
@@ -111,6 +113,29 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   const calendarPopoverRef = useRef<HTMLDivElement>(null);
   const [calendarViewDate, setCalendarViewDate] = useState<Date>(() => new Date());
 
+  // Market & Pharmacy Closure Management States
+  const [isClosureModalOpen, setIsClosureModalOpen] = useState<boolean>(false);
+  const [isBufferModalOpen, setIsBufferModalOpen] = useState<boolean>(false);
+  const [closureConfig, setClosureConfig] = useState<any>(null);
+  const [bufferCount, setBufferCount] = useState<number>(0);
+
+  const loadClosureStatus = useCallback(() => {
+    api.getMarketClosureStatus()
+      .then((res: any) => {
+        if (res?.config) {
+          setClosureConfig(res.config);
+          if (res.config.enabled) {
+            api.getMarketClosureBuffer()
+              .then((buf: any) => setBufferCount(buf?.items?.length || 0))
+              .catch(() => {});
+          } else {
+            setBufferCount(0);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Click outside listener for calendar popover
   useEffect(() => {
     if (!isCalendarOpen) return;
@@ -162,9 +187,16 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           }
         }
       } catch (_) {}
+      loadClosureStatus();
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [loadClosureStatus]);
+
+  useEffect(() => {
+    const handleRefresh = () => loadClosureStatus();
+    window.addEventListener('refresh-pharmarack-cart', handleRefresh);
+    return () => window.removeEventListener('refresh-pharmarack-cart', handleRefresh);
+  }, [loadClosureStatus]);
 
   // Save paused dates to localStorage & backend
   const updatePausedDates = (newDates: string[]) => {
@@ -477,6 +509,57 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
               ))}
             </div>
           </div>
+
+          {/* Market Closure Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsClosureModalOpen(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs ${
+              closureConfig?.enabled && closureConfig?.type === 'market_closed'
+                ? 'bg-amber-500/20 text-amber-500 border border-amber-500/50 hover:bg-amber-500/30'
+                : 'bg-bg border border-border text-muted hover:text-text hover:bg-bg2'
+            }`}
+            title="Configure Wholesale Market Holiday / Distributor Closure"
+          >
+            <Truck size={12} className={closureConfig?.enabled && closureConfig?.type === 'market_closed' ? 'text-amber-500' : 'text-muted'} />
+            <span>
+              {closureConfig?.enabled && closureConfig?.type === 'market_closed' && closureConfig?.startDate
+                ? `Market Closed (${closureConfig.startDate.slice(5)}${closureConfig.endDate && closureConfig.endDate !== closureConfig.startDate ? ` - ${closureConfig.endDate.slice(5)}` : ''})`
+                : 'Market Closed'}
+            </span>
+          </button>
+
+          {/* Store Closure Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsClosureModalOpen(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs ${
+              closureConfig?.enabled && closureConfig?.type === 'pharmacy_closed'
+                ? 'bg-rose-500/20 text-rose-500 border border-rose-500/50 hover:bg-rose-500/30'
+                : 'bg-bg border border-border text-muted hover:text-text hover:bg-bg2'
+            }`}
+            title="Configure Pharmacy Store Closure / Holiday"
+          >
+            <Store size={12} className={closureConfig?.enabled && closureConfig?.type === 'pharmacy_closed' ? 'text-rose-500' : 'text-muted'} />
+            <span>
+              {closureConfig?.enabled && closureConfig?.type === 'pharmacy_closed' && closureConfig?.startDate
+                ? `Store Closed (${closureConfig.startDate.slice(5)}${closureConfig.endDate && closureConfig.endDate !== closureConfig.startDate ? ` - ${closureConfig.endDate.slice(5)}` : ''})`
+                : 'Store Closed'}
+            </span>
+          </button>
+
+          {/* Closure Stock Buffer Review Button */}
+          {closureConfig?.enabled && bufferCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsBufferModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-black bg-amber-500/20 text-amber-500 border border-amber-500/50 hover:bg-amber-500/30 transition-all cursor-pointer shadow-2xs animate-pulse"
+              title="Review interactive checklist of upcoming refill medicines affected by market closure"
+            >
+              <Package size={12} />
+              <span>Buffer Review ({bufferCount})</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -906,6 +989,26 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           })}
         </div>
       </div>
+
+      {/* Market & Pharmacy Closure Configuration Modal */}
+      <MarketClosureModal
+        isOpen={isClosureModalOpen}
+        onClose={() => setIsClosureModalOpen(false)}
+        onConfigSaved={() => {
+          loadClosureStatus();
+          window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        }}
+      />
+
+      {/* Closure Stock Buffer Review Checklist Modal (Human-in-the-Loop) */}
+      <ClosureStockBufferModal
+        isOpen={isBufferModalOpen}
+        onClose={() => setIsBufferModalOpen(false)}
+        onCartUpdated={() => {
+          loadClosureStatus();
+          window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        }}
+      />
 
     </div>
   );

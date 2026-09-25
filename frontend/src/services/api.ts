@@ -1296,6 +1296,11 @@ export const api = {
   getPharmarackAutoRefillSuggestions: () => apiClient.get('/pharmarack/auto-refill-suggestions').then(res => res.data),
   getPrecalculatedMetrics: (params?: { low_stock_only?: boolean; heavy_sell_only?: boolean; limit?: number }) => apiClient.get('/inventory/precalculated-metrics', { params }).then(res => res.data),
   getPharmarackLiveCartSummary: () => apiClient.get('/pharmarack/live-cart-summary').then(res => res.data),
+  getMarketClosureStatus: () => apiClient.get('/pharmarack/closure-status').then(res => res.data),
+  saveMarketClosureStatus: (data: { enabled: boolean; type: 'market_closed' | 'pharmacy_closed'; startDate: string; endDate: string; reason?: string; lookaheadDays?: number }) => apiClient.post('/pharmarack/closure-status', data).then(res => res.data),
+  getMarketClosureBuffer: () => apiClient.get('/pharmarack/closure-buffer').then(res => res.data),
+  stageClosureNotices: (refillIds: number[], customTemplate?: string) => apiClient.post('/pharmarack/stage-closure-notices', { refillIds, customTemplate }).then(res => res.data),
+  addClosureBufferToCart: (items: Array<{ medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>) => apiClient.post('/pharmarack/add-closure-buffer-to-cart', { items }).then(res => res.data),
   launchPharmarackLoginWindow: () => apiClient.post('/pharmarack/login-window').then(res => res.data),
   
   // Composition Enrichment

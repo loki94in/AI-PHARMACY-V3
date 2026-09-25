@@ -76,4 +76,53 @@ Enable a multi-tiered, human-in-the-loop reminder system for refills and patient
 - `node scripts/quick-update.mjs`: Knowledge graph synchronized.
 - Ready for clean commit and push to main.
 
+---
+
+## 7. Market Closed & Store Closed Advance Buffer & Patient Notification System
+
+### A. Business Context & Problem Solved
+- During wholesale market closures (e.g. festivals, holidays, distributor strikes, Sunday shutdowns) or pharmacy holidays (e.g. renovation, family event, local holiday):
+  1. The pharmacy cannot place or receive distributor orders for several days.
+  2. Patients whose chronic medicine refills fall inside or immediately after the closure period risk running out of stock.
+  3. The pharmacy needs to forecast upcoming patient refilling demand (default 7 days) and calculate stock shortfalls before wholesale dispatches stop.
+  4. The owner needs a human-in-the-loop interactive review checklist to selectively order buffer quantities into the Pharmarack cart and stage patient WhatsApp refill notices.
+
+### B. Backend Architecture (`src/services/marketClosureService.ts` & `src/routes/pharmarack.ts`)
+- **Settings Store (`app_settings`)**:
+  - Key: `pharmacy_market_closure_config` stores closure type (`market_closed` vs `pharmacy_closed`), `enabled`, `startDate`, `endDate`, `lookaheadDays` (3-14 days), and optional `reason`.
+- **Buffer Analysis (`getBufferAnalysis`)**:
+  - Scans `patient_refills` where `next_refill_date` falls in `[startDate, endDate + lookaheadDays]`.
+  - Calculates current stock in `inventory_master` (strips + loose units).
+  - Determines shortfalls, recommended reorder quantities, and recent distributor purchase info (`store_id`, `store_name`, `ptr`).
+- **Human-in-the-Loop Notification Staging (`stageClosureNotices`)**:
+  - Consolidates patient refill items per phone number.
+  - Inserts notification records into `automation_notifications` with `status: 'staged'`, `needs_confirmation: 1`, and `reference_id: config.startDate`.
+  - STRICT GUARD: Zero autonomous sending. All notices require pharmacist review & click to send.
+- **Buffer to Cart Conversion (`addBufferItemsToCart`)**:
+  - Inserts selected shortfall items into `special_orders` table with `status: 'pending'`, `source: 'closure_buffer'`, immediately appearing in Pharmarack Cart.
+- **REST Endpoints (`src/routes/pharmarack.ts`)**:
+  - `GET /api/pharmarack/closure-status`
+  - `POST /api/pharmarack/closure-status`
+  - `GET /api/pharmarack/closure-buffer`
+  - `POST /api/pharmarack/stage-closure-notices`
+  - `POST /api/pharmarack/add-closure-buffer-to-cart`
+
+### C. Frontend Implementation
+- **API Client (`frontend/src/services/api.ts`)**:
+  - Typed helper methods for closure status, buffer analysis, staging notices, and cart additions.
+- **Closure Configuration Modal (`frontend/src/components/MarketClosureModal.tsx`)**:
+  - Allows selecting Market Closed (Wholesale shutdown) or Store Closed (Pharmacy holiday).
+  - Date picker for start/end dates, lookahead window slider (3 to 14 days), and custom reason.
+  - Semantic theme tokens, theme-safe toggle switch.
+- **Stock Buffer Review Checklist (`frontend/src/components/ClosureStockBufferModal.tsx`)**:
+  - Interactive table displaying affected patient name, refill date, required qty, stock on hand, shortfall, and editable reorder quantity.
+  - Batch checkboxes for granular selection.
+  - "Add Selected to Cart" -> immediately creates Pharmarack Cart orders.
+  - "Stage WhatsApp Notices" -> stages advance notices for patient communication without auto-dispatching.
+- **Calendar & Cart Toolbar Integration (`frontend/src/components/PharmarackCartCalendar.tsx`)**:
+  - Header buttons: `Market Closed` & `Store Closed`.
+  - Amber `Buffer Review (X)` badge button showing active shortfall count.
+  - Status banner when closure mode is enabled.
+
+
 

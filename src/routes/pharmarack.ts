@@ -17,6 +17,7 @@ import { pharmarackCatalogCache, scoreProductName } from '../services/pharmarack
 import { startupSyncCoordinator } from '../services/startupSyncCoordinator.js';
 import { findChromePath as findChromiumPath, copyProfileFolder as copyChromeProfileFolder } from '../utils/chromeBrowser.js';
 import { sanitizePharmarackQuery } from '../services/intentKeywords.js';
+import { marketClosureService } from '../services/marketClosureService.js';
 
 const execAsync = promisify(exec);
 
@@ -3384,6 +3385,66 @@ const handleManualReauth = async (_req: express.Request, res: express.Response) 
 router.post('/trigger-reauth', handleManualReauth);
 router.post('/login', handleManualReauth);
 router.post('/refresh-token', handleManualReauth);
+
+// --- Market & Store Closure Management Endpoints ---
+
+// GET /api/pharmarack/closure-status
+router.get('/closure-status', async (_req, res) => {
+  try {
+    const config = await marketClosureService.getConfig();
+    res.json({ success: true, config });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/pharmarack/closure-status
+router.post('/closure-status', async (req, res) => {
+  try {
+    const config = await marketClosureService.saveConfig(req.body);
+    res.json({ success: true, config });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/pharmarack/closure-buffer
+router.get('/closure-buffer', async (_req, res) => {
+  try {
+    const result = await marketClosureService.getBufferAnalysis();
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/pharmarack/stage-closure-notices
+router.post('/stage-closure-notices', async (req, res) => {
+  try {
+    const { refillIds, customTemplate } = req.body;
+    if (!Array.isArray(refillIds) || refillIds.length === 0) {
+      return res.status(400).json({ error: 'refillIds array is required' });
+    }
+    const result = await marketClosureService.stageClosureNotices(refillIds, customTemplate);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/pharmarack/add-closure-buffer-to-cart
+router.post('/add-closure-buffer-to-cart', async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+    const result = await marketClosureService.addBufferItemsToCart(items);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 export default router;
 
