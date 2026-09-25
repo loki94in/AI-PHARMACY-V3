@@ -18,10 +18,10 @@ set COMPANY_NAME=%~1
 
 if not "%COMPANY_NAME%"=="" (
   echo Targeting Single Company across all terminals: "%COMPANY_NAME%"
-  set CMD_BASE=npx tsx scripts/harvest_top100_company_images.ts --company="%COMPANY_NAME%" --no-gemini --source=all --delay=300
+  set CMD_BASE=npx tsx scripts/harvest_top100_company_images.ts --company="%COMPANY_NAME%" --no-gemini --source=all --delay=300 --retry-failed
 ) else (
   echo Mode: Sharding All 10,592 Companies Evenly Across 12 Independent Terminals
-  set CMD_BASE=npx tsx scripts/harvest_top100_company_images.ts --no-gemini --source=all --delay=300
+  set CMD_BASE=npx tsx scripts/harvest_top100_company_images.ts --no-gemini --source=all --delay=300 --retry-failed
 )
 
 echo.

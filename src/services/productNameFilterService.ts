@@ -179,8 +179,9 @@ export function extractFormulationModifiers(name: string): Set<string> {
   const clean = name
     .replace(/['’]s\b/gi, ' ')
     .replace(/\b\d+\s*x\s*\d+\b/gi, ' ')
+    .replace(/\+/g, ' PLUS ')
     .toUpperCase()
-    .replace(/[-_.,/()\[\]+|'"]/g, ' ');
+    .replace(/[-_.,/()\[\]|'"]/g, ' ');
   const words = clean.split(/\s+/).filter(Boolean);
   const found = new Set<string>();
 

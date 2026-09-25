@@ -3241,7 +3241,7 @@ export class CatalogImageService {
     // If PharmEasy has no candidates or for additional high-quality angles
     if (candidates.length === 0 || candidates.every(c => c.verificationStatus === 'REJECTED')) {
       try {
-        const mgUrl = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(cleanQuery)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+        const mgUrl = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(cleanQuery)}&city=Gurgaon&page_number=0&per_page=20&types=sku,allopathy&sort=relevance`;
         const mgResp = await fetch(mgUrl, {
           headers: {
             'accept': 'application/vnd.healthkartplus.v4+json',

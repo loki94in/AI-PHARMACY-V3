@@ -406,7 +406,7 @@ function normalizeTokens(text: string): string {
 
 function extractModifiers(name: string): Set<string> {
   if (!name) return new Set();
-  const clean = normalizeTokens(name).toUpperCase().replace(/[-_.,/()\[\]+|'"]/g, ' ');
+  const clean = normalizeTokens(name).replace(/\+/g, ' PLUS ').toUpperCase().replace(/[-_.,/()\[\]|'"]/g, ' ');
   const words = clean.split(/\s+/).filter(Boolean);
   const found = new Set<string>();
   for (let i = 0; i < words.length; i++) {
@@ -452,15 +452,37 @@ function hasModifierConflict(name1: string, name2: string): boolean {
 
 const PACK_QUANTITIES = new Set([2, 4, 5, 6, 7, 8, 10, 14, 15, 20, 21, 24, 28, 30, 50, 60, 90, 100, 120, 150, 180, 200]);
 
-function extractStrengthTokens(name: string): Array<{ val: number; unit?: string }> {
-  const norm = normalizeTokens(name).toUpperCase();
-  const tokens: Array<{ val: number; unit?: string }> = [];
+function extractStrengthTokens(name: string): Array<{ val: number; unit?: string; normVal: number; baseUnit: string }> {
+  let norm = normalizeTokens(name).toUpperCase();
+  // Strip container capacity / packaging volume so e.g. "TUBE OF 60GM", "BOTTLE OF 200ML", "VIAL OF 10ML" is not misidentified as active drug strength
+  norm = norm.replace(/\b(TUBE|BOTTLE|VIAL|STRIP|PACK|JAR|BOX|TIN)\s+OF\s+[\d\.]+\s*(GM|ML|G|MG)?\b/gi, ' ')
+             .replace(/\b(STRIP|BOTTLE|BOX|PACK|BLISTER|VIAL|TUBE)\s+OF\s+\d+\b/gi, ' ');
+  const tokens: Array<{ val: number; unit?: string; normVal: number; baseUnit: string }> = [];
+
+  const toNorm = (val: number, unit?: string) => {
+    const u = (unit || '').toLowerCase().trim();
+    if (u === 'mcg' || u === 'ug') return { normVal: val / 1000, baseUnit: 'mg' };
+    if (u === 'gm' || u === 'g') return { normVal: val * 1000, baseUnit: 'mg' };
+    if (u === 'l' || u === 'ltr') return { normVal: val * 1000, baseUnit: 'ml' };
+    return { normVal: val, baseUnit: u || 'mg' };
+  };
+
+  // 0. SPF factor match (e.g. "SPF 30", "SPF 50", "SPF 30+")
+  const regexSpf = /\bSPF\s*(\d+)\b/gi;
+  let spfMatch: RegExpExecArray | null;
+  while ((spfMatch = regexSpf.exec(norm)) !== null) {
+    const val = parseFloat(spfMatch[1]);
+    tokens.push({ val, unit: 'spf', normVal: val, baseUnit: 'spf' });
+  }
 
   // 1. Explicit unit match (e.g. 500mg, 20mcg, 5%, 10ml, 1gm)
   const regexUnit = /\b(\d+(?:\.\d+)?)\s*(MG|MCG|IU|%|ML|GM)\b/gi;
   let match: RegExpExecArray | null;
   while ((match = regexUnit.exec(norm)) !== null) {
-    tokens.push({ val: parseFloat(match[1]), unit: match[2].toLowerCase() });
+    const val = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+    const { normVal, baseUnit } = toNorm(val, unit);
+    tokens.push({ val, unit, normVal, baseUnit });
   }
 
   // 2. Standalone dosage number before dosage form (e.g. "Ciplar-LA 20 Tablet", "Norflox 400 Tablet", "Derinide 200 Respicaps")
@@ -473,8 +495,8 @@ function extractStrengthTokens(name: string): Array<{ val: number; unit?: string
       if (tokens.length > 0 && PACK_QUANTITIES.has(val)) {
         continue;
       }
-      if (!tokens.some(t => Math.abs(t.val - val) < 0.001)) {
-        tokens.push({ val });
+      if (!tokens.some(t => Math.abs(t.normVal - val) < 0.001)) {
+        tokens.push({ val, normVal: val, baseUnit: 'mg' });
       }
     }
   }
@@ -485,8 +507,8 @@ function extractStrengthTokens(name: string): Array<{ val: number; unit?: string
     const prevWord = words[0].toUpperCase();
     if (!/^(PACK|STRIP|BOX|BOTTLE|TAB|CAP|SYP|INJ|\d+)$/i.test(prevWord)) {
       const val = parseFloat(words[1]);
-      if (!isNaN(val) && val >= 0.5 && val <= 5000 && !tokens.some(t => Math.abs(t.val - val) < 0.001)) {
-        tokens.push({ val });
+      if (!isNaN(val) && val >= 0.5 && val <= 5000 && !tokens.some(t => Math.abs(t.normVal - val) < 0.001)) {
+        tokens.push({ val, normVal: val, baseUnit: 'mg' });
       }
     }
   }
@@ -501,25 +523,24 @@ function hasStrengthConflict(name1: string, name2: string): boolean {
   if (s1.length === 0 || s2.length === 0) return false;
 
   // Direct sum / combination equivalence (e.g. 625 === 500 + 125, or 1000 === 500 + 500)
-  const sum1 = s1.reduce((acc, t) => acc + t.val, 0);
-  const sum2 = s2.reduce((acc, t) => acc + t.val, 0);
+  const sum1 = s1.reduce((acc, t) => acc + t.normVal, 0);
+  const sum2 = s2.reduce((acc, t) => acc + t.normVal, 0);
   if (Math.abs(sum1 - sum2) <= 0.01) {
     return false;
   }
-  if (s1.length === 1 && s2.length > 1 && Math.abs(s1[0].val - sum2) <= 0.01) {
+  if (s1.length === 1 && s2.length > 1 && Math.abs(s1[0].normVal - sum2) <= 0.01) {
     return false;
   }
-  if (s2.length === 1 && s1.length > 1 && Math.abs(s2[0].val - sum1) <= 0.01) {
+  if (s2.length === 1 && s1.length > 1 && Math.abs(s2[0].normVal - sum1) <= 0.01) {
     return false;
   }
 
   for (const t1 of s1) {
-    const matching = s2.find(t2 => Math.abs(t2.val - t1.val) <= 0.001);
+    const matching = s2.find(t2 => Math.abs(t2.normVal - t1.normVal) <= 0.001 && t1.baseUnit === t2.baseUnit);
     if (!matching) {
-      if (s2.length > 1 && Math.abs(t1.val - sum2) <= 0.01) continue;
+      if (s2.length > 1 && Math.abs(t1.normVal - sum2) <= 0.01) continue;
       return true; // Value mismatch (e.g. 8 vs 20, 800 vs 400)
     }
-    if (t1.unit && matching.unit && t1.unit !== matching.unit) return true; // Unit clash
   }
   return false;
 }
@@ -634,11 +655,13 @@ function hasDosageConflict(q: string, c: string): boolean {
 
 function isBrandMatch(query: string, candidateName: string): boolean {
   let cleanQ = query.toLowerCase()
+    .replace(/\+/g, ' plus ')
     .replace(/\bever\s+yuth\b/gi, 'everyuth')
     .replace(/\bsugar\s+free\b/gi, 'sugarfree')
     .replace(/[^a-z0-9\s]/g, ' ')
     .trim();
   let cleanCand = candidateName.toLowerCase()
+    .replace(/\+/g, ' plus ')
     .replace(/\bever\s+yuth\b/gi, 'everyuth')
     .replace(/\bsugar\s+free\b/gi, 'sugarfree')
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -716,54 +739,57 @@ function isBrandMatch(query: string, candidateName: string): boolean {
 
 function generateSearchQueries(rawName: string): string[] {
   let cleaned = rawName.replace(/\(.*?\)/g, ' ').replace(/\[.*?\]/g, ' ');
+  // Strip wholesale container packaging descriptions:
+  cleaned = cleaned.replace(/\b(STRIP|BOTTLE|BOX|PACK|BLISTER|VIAL|TUBE|TIN|JAR)\s+OF\s+[\w\s\.\/]+?\b(TABLETS?|CAPSULES?|TABS?|CAPS?|GEL|CREAM|OINTMENT|LOTION|SOLUTION|SUSPENSION|SYRUP|POWDER|DROPS?|INJECTION|GUMS?|ML|GM|G|MG|MCG)\b/gi, ' ');
+  cleaned = cleaned.replace(/\b(TUBE|VIAL|BOTTLE|STRIP|TIN|JAR)\s+OF\s+[\d\.]+\s*(GM|ML|MG|G)?\b/gi, ' ');
   cleaned = cleaned.replace(/\b(STRIP OF \d+ (TABLETS|CAPSULES)|BOTTLE OF \d+ (TABLETS|ML)|NO'S|\d+\s*NO'S|\d+'S)\b/gi, ' ');
   cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup|inj|injection|oint|ointment|crm|cream|gel|lotion|drops?)\b/gi, ' ');
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  const queries: string[] = [cleaned];
+  const queries: string[] = [];
 
-  // 1. Normalized decimal strength (e.g. "0.50 MG" -> "0.5 MG", "1.0 GM" -> "1 GM")
-  const normDecimal = cleaned.replace(/\b(\d+)\.0+(\s*(?:mg|mcg|ml|gm|iu|%))\b/gi, '$1$2')
-                             .replace(/\b(\d+\.[1-9]+)0+(\s*(?:mg|mcg|ml|gm|iu|%))\b/gi, '$1$2');
-  if (normDecimal !== cleaned) {
-    queries.push(normDecimal);
-    queries.push(normDecimal.replace(/(\d+(?:\.\d+)?)\s*(mg|mcg|ml|gm|iu|%)\b/gi, '$1').trim());
-  }
-
-  // 2. Try without dosage unit (e.g. "CIPLOX 500MG" -> "CIPLOX 500")
-  const withoutUnit = cleaned.replace(/(\d+(?:\.\d+)?)\s*(mg|mcg|ml|gm|iu|%)\b/gi, '$1').trim();
-  if (withoutUnit && withoutUnit !== cleaned) {
-    queries.push(withoutUnit);
-  }
-
-  // 3. Try Brand + normalized strength number
   const strengthMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:mg|mcg|ml|gm|iu|%|\b)/i);
   const words = cleaned.split(/\s+/).filter(Boolean);
   if (words.length >= 1) {
     const brand = words[0];
+    const mods = words.filter(t => FORMULATION_MODIFIERS.has(t.toUpperCase()));
+
+    // 1. Highest precision: Brand + Modifiers + Strength (e.g. "PAN D 40", "OFREX TZ 500")
+    if (mods.length > 0 && strengthMatch) {
+      queries.push(`${brand} ${mods.join(' ')} ${parseFloat(strengthMatch[1])}`);
+    }
+
+    // 2. High precision: Brand + Strength (e.g. "RIVELA 30", "URILOSIN 0.4", "CIPLOX 500")
     if (strengthMatch) {
       const num = parseFloat(strengthMatch[1]);
       queries.push(`${brand} ${num}`);
     }
 
-    // 4. Try Brand + Modifiers (e.g. "OFREX TZ", "PAN D")
-    const mods = words.filter(t => FORMULATION_MODIFIERS.has(t.toUpperCase()));
+    // 3. Brand + Modifiers (e.g. "PAN D", "OFREX TZ")
     if (mods.length > 0) {
       queries.push(`${brand} ${mods.join(' ')}`);
-      if (strengthMatch) {
-        queries.push(`${brand} ${mods.join(' ')} ${parseFloat(strengthMatch[1])}`);
-      }
     }
 
-    // 5. Try first two words if word 2 is not a pure number
-    if (words.length >= 2 && !/^\d+$/.test(words[1]) && !['MG', 'ML', 'GM', 'TAB', 'CAP', 'INJ'].includes(words[1].toUpperCase())) {
+    // 4. Brand + Second Word if distinctive (e.g. "SUGAR FREE", "EVERYUTH SCRUB")
+    if (words.length >= 2 && !/^\d+$/.test(words[1]) && !['MG', 'ML', 'GM', 'TAB', 'CAP', 'INJ', 'PLUS'].includes(words[1].toUpperCase())) {
       queries.push(`${brand} ${words[1]}`);
     }
 
-    // 6. Distinctive brand only (>= 4 letters)
+    // 5. Distinctive brand only (>= 4 letters)
     if (brand.length >= 4 && !['TABLET', 'CAPSULE', 'INJECTION', 'CREAM', 'LOTION'].includes(brand.toUpperCase())) {
       queries.push(brand);
     }
+  }
+
+  // 6. Cleaned full string
+  if (cleaned.length >= 3) {
+    queries.push(cleaned);
+  }
+
+  // 7. Try without dosage unit
+  const withoutUnit = cleaned.replace(/(\d+(?:\.\d+)?)\s*(mg|mcg|ml|gm|iu|%)\b/gi, '$1').trim();
+  if (withoutUnit && withoutUnit !== cleaned) {
+    queries.push(withoutUnit);
   }
 
   return Array.from(new Set(queries.filter(q => q && q.length >= 3)));
@@ -935,7 +961,7 @@ function recordProductState(
 
 async function fetchTata1mgImages(queries: string[], rawMedName: string): Promise<any | null> {
   for (const q of queries) {
-    const url = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(q)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+    const url = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(q)}&city=Gurgaon&page_number=0&per_page=20&types=sku,allopathy&sort=relevance`;
     try {
       const response = await fetch(url, {
         headers: {
@@ -1007,13 +1033,40 @@ async function fetchPharmEasyImages(queries: string[], rawMedName: string): Prom
         signal: AbortSignal.timeout(8000)
       });
 
-      if (!response.ok) continue;
-      const data: any = await response.json();
-      const prods = data?.data?.products || [];
+      let prods: any[] = [];
+      if (response.ok) {
+        const data: any = await response.json();
+        prods = data?.data?.products || [];
+      }
+
+      // OTC / universal fallback if prescription search is empty
+      if (prods.length === 0) {
+        try {
+          const htmlResp = await fetch(`https://pharmeasy.in/search/all?name=${encodeURIComponent(q)}`, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html'
+            },
+            signal: AbortSignal.timeout(6000)
+          });
+          if (htmlResp.ok) {
+            const html = await htmlResp.text();
+            const nextMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+            if (nextMatch) {
+              const parsed = JSON.parse(nextMatch[1]);
+              const list = parsed?.props?.pageProps?.productList || [];
+              if (list.length > 0) {
+                prods = list;
+              }
+            }
+          }
+        } catch {}
+      }
+
       if (prods.length === 0) continue;
 
       const matched = prods.filter((c: any) => {
-        const hasImg = (c.damImages && c.damImages.length > 0) || Boolean(c.image);
+        const hasImg = (c.damImages && c.damImages.length > 0) || (c.images && c.images.length > 0) || Boolean(c.image);
         if (!hasImg) return false;
         if (!isBrandMatch(rawMedName, c.name)) return false;
         if (hasDosageConflict(rawMedName, c.name)) return false;
@@ -1025,8 +1078,8 @@ async function fetchPharmEasyImages(queries: string[], rawMedName: string): Prom
       if (matched.length === 0) continue;
 
       matched.sort((a: any, b: any) => {
-        const aCount = a.damImages?.length || (a.image ? 1 : 0);
-        const bCount = b.damImages?.length || (b.image ? 1 : 0);
+        const aCount = a.damImages?.length || a.images?.length || (a.image ? 1 : 0);
+        const bCount = b.damImages?.length || b.images?.length || (b.image ? 1 : 0);
         return bCount - aCount;
       });
 
@@ -1034,15 +1087,21 @@ async function fetchPharmEasyImages(queries: string[], rawMedName: string): Prom
       const damImages = best.damImages || [];
       const imageMap: Record<string, string> = {};
 
-      for (const img of damImages) {
-        const face = img.face || 'default';
-        if (!imageMap[face] && img.url) {
-          const rawUrl = img.url.split('?')[0];
-          imageMap[face] = rawUrl;
+      if (damImages.length > 0) {
+        for (const img of damImages) {
+          const face = img.face || 'default';
+          if (!imageMap[face] && img.url) {
+            const rawUrl = img.url.split('?')[0];
+            imageMap[face] = rawUrl;
+          }
         }
-      }
-
-      if (Object.keys(imageMap).length === 0 && best.image) {
+      } else if (best.images && best.images.length > 0) {
+        const faces = ['front', 'back', 'combo', 'side'];
+        for (let idx = 0; idx < best.images.length; idx++) {
+          const face = faces[idx] || `angle_${idx + 1}`;
+          imageMap[face] = best.images[idx].split('?')[0];
+        }
+      } else if (best.image) {
         imageMap['front'] = best.image.split('?')[0];
       }
 

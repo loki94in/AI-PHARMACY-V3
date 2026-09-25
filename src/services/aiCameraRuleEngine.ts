@@ -386,6 +386,20 @@ export function extractMultiSaltDrugStrength(text: string): DrugStrengthResult {
     }
   }
 
+  // 1b. SPF factor: e.g. "SPF 30", "SPF 50", "SPF 30+"
+  const spfMatch = text.match(/\bSPF\s*(\d+)\b/i);
+  if (spfMatch) {
+    const nVal = parseFloat(spfMatch[1]);
+    if (!isNaN(nVal)) {
+      result.numericVal = nVal;
+      result.sumVal = nVal;
+      result.components = [nVal];
+      result.unit = 'SPF';
+      result.strength = `SPF${nVal}`;
+      return result;
+    }
+  }
+
   // 2. Standard single strength: e.g. "625mg", "650 mg", "40 mg", "100iu"
   const singleMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(MG|MCG|GM|G|IU|%)\b/i);
   if (singleMatch) {
@@ -433,25 +447,33 @@ export function extractMultiSaltDrugStrength(text: string): DrugStrengthResult {
 export function areMultiSaltStrengthsEqual(s1: DrugStrengthResult, s2: DrugStrengthResult): boolean {
   if (!s1.strength || !s2.strength) return false;
 
-  // Direct numeric equality
-  if (s1.numericVal !== null && s2.numericVal !== null) {
+  const n1 = s1.numericVal !== null ? normalizeMetricUnits(s1.numericVal, s1.unit) : null;
+  const n2 = s2.numericVal !== null ? normalizeMetricUnits(s2.numericVal, s2.unit) : null;
+
+  // Direct numeric equality with metric unit normalization (e.g. 0.4mg == 400mcg, 1gm == 1000mg)
+  if (n1 !== null && n2 !== null && n1.baseUnit === n2.baseUnit) {
+    if (Math.abs(n1.normalizedValue - n2.normalizedValue) <= 0.001) return true;
+  } else if (s1.numericVal !== null && s2.numericVal !== null) {
     if (Math.abs(s1.numericVal - s2.numericVal) <= 0.001) return true;
   }
 
   // Multi-salt sum equality: e.g. 500+125 (sumVal: 625) matches catalog "625MG"
-  if (s1.sumVal !== null && s2.numericVal !== null) {
-    if (Math.abs(s1.sumVal - s2.numericVal) <= 0.001) return true;
+  const sum1 = s1.sumVal !== null ? normalizeMetricUnits(s1.sumVal, s1.unit).normalizedValue : null;
+  const sum2 = s2.sumVal !== null ? normalizeMetricUnits(s2.sumVal, s2.unit).normalizedValue : null;
+
+  if (sum1 !== null && n2 !== null) {
+    if (Math.abs(sum1 - n2.normalizedValue) <= 0.001) return true;
   }
-  if (s2.sumVal !== null && s1.numericVal !== null) {
-    if (Math.abs(s2.sumVal - s1.numericVal) <= 0.001) return true;
+  if (sum2 !== null && n1 !== null) {
+    if (Math.abs(sum2 - n1.normalizedValue) <= 0.001) return true;
   }
 
-  // Constituent component equality
-  if (s1.components.length > 0 && s2.numericVal !== null) {
-    if (s1.components.some(c => Math.abs(c - s2.numericVal!) <= 0.001)) return true;
+  // Constituent component equality with metric unit normalization
+  if (s1.components.length > 0 && n2 !== null) {
+    if (s1.components.some(c => Math.abs(normalizeMetricUnits(c, s1.unit).normalizedValue - n2.normalizedValue) <= 0.001)) return true;
   }
-  if (s2.components.length > 0 && s1.numericVal !== null) {
-    if (s2.components.some(c => Math.abs(c - s1.numericVal!) <= 0.001)) return true;
+  if (s2.components.length > 0 && n1 !== null) {
+    if (s2.components.some(c => Math.abs(normalizeMetricUnits(c, s2.unit).normalizedValue - n1.normalizedValue) <= 0.001)) return true;
   }
 
   return s1.strength === s2.strength;
@@ -467,7 +489,14 @@ export function areMultiSaltStrengthsConflicting(s1: DrugStrengthResult, s2: Dru
   // If they are equal or match via combination sum, they DO NOT conflict!
   if (areMultiSaltStrengthsEqual(s1, s2)) return false;
 
-  // Genuine conflict: numbers differ and sum doesn't match
+  const n1 = s1.numericVal !== null ? normalizeMetricUnits(s1.numericVal, s1.unit) : null;
+  const n2 = s2.numericVal !== null ? normalizeMetricUnits(s2.numericVal, s2.unit) : null;
+
+  // Genuine conflict: normalized numbers differ and sum doesn't match
+  if (n1 !== null && n2 !== null && n1.baseUnit === n2.baseUnit) {
+    return Math.abs(n1.normalizedValue - n2.normalizedValue) > 0.001;
+  }
+
   if (s1.numericVal !== null && s2.numericVal !== null) {
     return true;
   }
@@ -488,15 +517,15 @@ export function extractTradeSuffix(text: string): string | null {
 /**
  * Rule 70: Metric Unit Normalization
  */
-export function normalizeMetricUnits(value: number, unit: string): { normalizedValue: number; baseUnit: string } {
-  const u = (unit || '').toUpperCase();
-  if (u === 'MCG') {
+export function normalizeMetricUnits(value: number, unit?: string | null): { normalizedValue: number; baseUnit: string } {
+  const u = (unit || '').toUpperCase().trim();
+  if (u === 'MCG' || u === 'UG' || u === 'MICROGRAM') {
     return { normalizedValue: value / 1000, baseUnit: 'MG' };
   }
-  if (u === 'G' || u === 'GM') {
+  if (u === 'G' || u === 'GM' || u === 'GRAM' || u === 'GRAMS') {
     return { normalizedValue: value * 1000, baseUnit: 'MG' };
   }
-  if (u === 'L') {
+  if (u === 'L' || u === 'LTR' || u === 'LITER') {
     return { normalizedValue: value * 1000, baseUnit: 'ML' };
   }
   return { normalizedValue: value, baseUnit: u || 'MG' };
