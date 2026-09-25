@@ -1117,9 +1117,9 @@ export class ProductNameFilterService {
       try {
         const { pharmarackCatalogCache } = await import('./pharmarackCatalogCache.js');
         catalogResults = await pharmarackCatalogCache.searchCatalog(normalizedOcr, dosageForm, mrp, mrpTolerance);
-        if (catalogResults.mapped.length > 0 || catalogResults.nonMapped.length > 0) {
+        if (catalogResults && (catalogResults.mapped?.length > 0 || catalogResults.nonMapped?.length > 0)) {
           // Add catalog product names to matches
-          for (const p of [...catalogResults.mapped, ...catalogResults.nonMapped]) {
+          for (const p of [...(catalogResults.mapped || []), ...(catalogResults.nonMapped || [])]) {
             if (!allMatches.includes(p.name)) {
               allMatches.push(p.name);
             }
@@ -1142,7 +1142,7 @@ export class ProductNameFilterService {
       sources: {
         local: localMatches.length > 0,
         internet: internetMatches.length > 0,
-        catalog: !!catalogResults && (catalogResults.mapped.length > 0 || catalogResults.nonMapped.length > 0)
+        catalog: !!(catalogResults?.mapped?.length || catalogResults?.nonMapped?.length)
       },
       confidence: averageConfidence,
       fallbackUsed,

@@ -45,7 +45,7 @@ const NOISE_WORDS = new Set([
   'please', 'plz', 'pls', 'bhai', 'sir', 'ji', 'health', 'medical',
   'pharmacy', 'store', 'shop', 'the', 'and', 'or', 'of', 'for', 'is',
   'me', 'mujhe', 'mera', 'mere', 'ko', 'ka', 'ki', 'ke', 'se', 'hai',
-  'hain', 'ho', 'ek', 'do_', 'teen', 'char', 'aur', 'ya', 'bhi',
+  'hain', 'ho', 'ek', 'do', 'do_', 'teen', 'char', 'aur', 'ya', 'bhi',
   'hello', 'hi', 'hey', 'good', 'morning', 'evening', 'night',
   'thank', 'thanks', 'thankyou', 'ok', 'okay', 'yes', 'no', 'urgently',
   'urgent', 'jaldi', 'abhi', 'aaj', 'kal', 'today', 'tomorrow',
@@ -255,7 +255,8 @@ function parseTokenList(words: string[]): {
   rawIntentWords: string[];
   isValidMedicineName: boolean;
 } {
-  const lowerWords = words.map(w => w.toLowerCase());
+  const cleanTokens = words.map(w => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '')).filter(Boolean);
+  const lowerWords = cleanTokens.map(w => w.toLowerCase());
 
   // Detect intent
   const foundIntentWords: string[] = [];
@@ -274,10 +275,15 @@ function parseTokenList(words: string[]): {
     const num = parseInt(lowerWords[i], 10);
     if (!isNaN(num) && num > 0 && num <= 999) {
       // Check if next word is a unit
-      if (i + 1 < lowerWords.length && QUANTITY_UNITS[lowerWords[i + 1]]) {
+      const nextUnit = lowerWords[i + 1] ? QUANTITY_UNITS[lowerWords[i + 1]] : '';
+      const isTabletOrCap = nextUnit === 'tablet' || nextUnit === 'capsule';
+      if (i + 1 < lowerWords.length && nextUnit && !(isTabletOrCap && num > 30)) {
         quantity = num;
-        unit = QUANTITY_UNITS[lowerWords[i + 1]];
+        unit = nextUnit;
         quantityIndices.add(i);
+        quantityIndices.add(i + 1);
+      } else if (isTabletOrCap && num > 30) {
+        // High number preceding tablet/capsule (e.g. "Dolo 650 tablets", "Pan 40 tab") — num is strength, not quantity
         quantityIndices.add(i + 1);
       } else if (quantity === 0) {
         // Standalone number — could be quantity or part of medicine name (e.g., "novastat 20")
@@ -297,14 +303,14 @@ function parseTokenList(words: string[]): {
 
   // Extract medicine name: everything that's NOT a quantity, unit, intent, or noise word
   const medicineWords: string[] = [];
-  for (let i = 0; i < words.length; i++) {
+  for (let i = 0; i < cleanTokens.length; i++) {
     if (quantityIndices.has(i)) continue;
     const lower = lowerWords[i];
     if (INTENT_WORDS_EN.has(lower) || INTENT_WORDS_HI.has(lower) || INTENT_WORDS_MR.has(lower)) continue;
     if (QUANTITY_UNITS[lower]) continue;
     if (NOISE_WORDS.has(lower)) continue;
     // Keep the original case for the medicine name
-    medicineWords.push(words[i]);
+    medicineWords.push(cleanTokens[i]);
   }
 
   const medicineName = medicineWords.join(' ').trim();

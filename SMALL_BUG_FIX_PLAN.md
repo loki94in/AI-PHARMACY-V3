@@ -7,6 +7,31 @@
 
 ## Fixed
 
+### [Fixed] P1-34 — WhatsApp Customer Medicine Response Streamlining: Single Medicine & Distributor Flow (15-Option List Dump Suppression)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the WhatsApp customer bot flow, when a customer inquired about or selected a medicine, the bot dumped a large numbered dropdown-style list of 10 to 15 alternative medicines (e.g. `1️⃣ DOLO 650`, `2️⃣ DOLOPAR`, ...). The user requested that the bot suppress this list and send only the exact selected medicine's details and distributor name (`medicine details and distributor only, nothing else`). |
+| **Root cause** | 1. In `src/services/whatsappIntentService.ts`, when a medicine query had multiple matches or clarification steps (`awaiting_medicine`, `awaiting_dosage_clarification`, `searchAndBroadcast`), the service formatted an `optionsList` with up to 15 items and sent it to the customer.<br>2. The service was not resolving or displaying the mapped distributor name and ETA for the selected item.<br>3. In `src/services/intentKeywords.ts`, queries like `"Do you have Dolo 650 tablets?"` had `"Do"` in the medicine candidate name because `"do"` was not included in `NOISE_WORDS` (which had `"do_"`), and drug strengths (e.g. 650) immediately preceding `"tablets"` were misparsed as quantity (`quantity = 650`).<br>4. In `src/services/productNameFilterService.ts`, empty catalog results caused an unchecked property access on `catalogResults.mapped.length`. |
+| **How it was fixed** | 1. **Single Medicine & Distributor Clarification:** Updated `whatsappIntentService.ts` to suppress the 10-15 numbered list dumps across all clarification stages (`awaiting_dosage_clarification`, `awaiting_medicine`, `awaiting_selection`, `searchAndBroadcast`). The bot now resolves the single distributor via `resolveSingleDistributorForMedicine` and sends only the single product name, MRP, distributor name, and genuine packaging photo.<br>2. **Human-in-the-Loop Safeguard:** Preserved full state in `wa_pending_clarifications` and routed all order confirmations to `automation_notifications` and the pharmacist's WA Requests panel for 1-click human review and approval prior to order dispatch.<br>3. **Token & Noise Parser Fix:** Added `"do"` to `NOISE_WORDS`, stripped surrounding punctuation from tokens, and prevented drug strengths (>30) preceding tablet/capsule from being misparsed as order quantities in `intentKeywords.ts`.<br>4. **Defensive Catalog Handling:** Added safe optional chaining in `productNameFilterService.ts` for catalog result arrays. |
+| **Priority** | P1 |
+| **What not to touch** | Pagination state persistence in `options_json`, manual pharmacist review queue, and 10–15s safe anti-ban pacing floor. |
+| **Verified by** | `npm test tests/whatsappPipeline.test.ts` (4 of 4 tests PASS, including text inquiry and V2 scan gate); `npm run guardrails` PASS (0 violations, clean `tsc --noEmit`); `node scripts/quick-update.mjs` synced. |
+
+
+
+### [Fixed] P1-33 — WhatsApp Queue Halts After First Message (Anti-Ban Pacing Break Bug)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When marking multiple orders "Ready" (e.g. 3 items in queue), the app sent the 1st WhatsApp message to the customer, but then stopped completely and never sent the remaining 2 messages. The messages stayed visible in the queue in pending status. |
+| **Root cause** | In `src/services/whatsappQueueWorker.ts`, the queue worker enforces a 10–15s safe anti-ban delay between consecutive sends using `interruptibleSleep`. Line 1282 checked `if (!completedFullDelay || this.isPaused) break;`. When subsequent orders triggered `forceNext()` (or when user clicked "Send Next Now"), `cancelActiveDelay()` aborted the sleep early (`completedFullDelay = false`). This caused the worker to break out of the `while (true)` loop and terminate permanently instead of proceeding to dispatch the next message. |
+| **How it was fixed** | 1. Added `skipNextPacingDelay` flag to `WhatsAppQueueWorker`.<br>2. Updated `forceNext()` to set `skipNextPacingDelay = true`, ensuring fast-tracked items bypass the delay safely.<br>3. Changed the loop break condition in `processQueueInternal()` to strictly break only `if (this.isPaused)`. When sleep is interrupted or completed, the worker naturally continues to the next pending item, preserving safe 10–15s anti-ban spacing while guaranteeing all queued messages send sequentially without stopping. |
+| **Priority** | P1 |
+| **What not to touch** | 10–15s anti-ban safe pacing floor, outbox delivery verification, manual pause/resume controls. |
+| **Verified by** | TypeScript compilation (`tsc --noEmit`); `npm run guardrails` (PASS, 0 violations); `node scripts/quick-update.mjs` synced. |
+
+
 ### [Fixed] P1-32 — Zero-Download Local Packaging Disk Linker (22,700+ Images) & Human-Approval Immunity Shield
 
 | Field | Content |

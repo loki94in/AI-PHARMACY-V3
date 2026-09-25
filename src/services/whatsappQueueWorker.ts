@@ -78,6 +78,7 @@ class WhatsAppQueueWorker {
   private pacingMinMs = 10000;
   private pacingMaxMs = 15000;
   private cancelPacingSleep: (() => void) | null = null;
+  private skipNextPacingDelay = false;
   private lastHeartbeatTime: number | null = null;
   private detectedOutageInterval: { start: number; end: number } | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -383,6 +384,7 @@ class WhatsAppQueueWorker {
   /** Immediately process the next pending queue item without waiting for the delay countdown */
   public async forceNext(): Promise<boolean> {
     this.ensureLoopStarted();
+    this.skipNextPacingDelay = true;
     this.cancelActiveDelay();
     const db = await dbManager.getConnection();
     const now = Date.now();
@@ -1269,20 +1271,21 @@ class WhatsAppQueueWorker {
 
         const hasMoreItems = (remainingCheck?.cnt || 0) > 0;
 
-        // 10–12 second pacing delay before next item if more items remain
-        if (hasMoreItems && !this.isPaused && this.pacingMaxMs > 0) {
+        // 10–12 second pacing delay before next item if more items remain (unless forceNext requested immediate dispatch)
+        if (hasMoreItems && !this.isPaused && this.pacingMaxMs > 0 && !this.skipNextPacingDelay) {
           const delayRange = this.pacingMaxMs - this.pacingMinMs;
           const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
           this.nextDispatchTimestamp = Date.now() + randomDelay;
           this.broadcastQueueState(true);
           
           console.log(`[WhatsAppQueueWorker] Pacing delay: ${Math.round(randomDelay/1000)}s before next send...`);
-          const completedFullDelay = await this.interruptibleSleep(randomDelay);
+          await this.interruptibleSleep(randomDelay);
           this.nextDispatchTimestamp = null;
-          if (!completedFullDelay || this.isPaused) {
+          if (this.isPaused) {
             break;
           }
         }
+        this.skipNextPacingDelay = false;
       }
 
       return true;
