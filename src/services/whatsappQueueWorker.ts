@@ -2,6 +2,7 @@ import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed, checkPhoneWhatsAppRegistered, ensureSessionHealth } from '../whatsappClient.js';
 import { whatsappDeliveryRegister, CHATBOT_CONVERSATIONAL_TYPES } from './whatsappDeliveryRegister.js';
+import { nonWaFallbackService } from './nonWaFallbackService.js';
 
 const SERVER_BOOT_TIME = Date.now();
 
@@ -993,6 +994,16 @@ class WhatsAppQueueWorker {
                 message: `⚠️ Skipped WhatsApp to ${item.target_name || item.number}: Not registered on WhatsApp`
               });
             } catch (_) {}
+            // Non-WhatsApp fallback: create call task + alert pharmacy owner
+            const taskType = item.type === 'credit_reminder' ? 'credit' : 'refill';
+            nonWaFallbackService.handleFallback({
+              taskType,
+              patientName: item.target_name || 'Patient',
+              patientPhone: item.number,
+              referenceId: String(item.id),
+              details: item.message ? item.message.slice(0, 200) : `${taskType} reminder`,
+              detailsJson: { queueItemId: item.id, type: item.type, message: item.message?.slice(0, 500) }
+            }, db).catch(e => console.warn('[WhatsAppQueueWorker] NonWaFallback error:', e));
             continue;
           }
         }

@@ -175,6 +175,12 @@ class TriggerSchedulerService {
               await checkAllRefills(database);
               await checkOverdueCreditNotes(database);
 
+              // Reactivate rescheduled call tasks that are now due (v69)
+              try {
+                const { nonWaFallbackService } = await import('./nonWaFallbackService.js');
+                await nonWaFallbackService.processDueRescheduledTasks(database);
+              } catch (_) {}
+
               try {
                 const { bouncedAlertService } = await import('./bouncedAlertService.js');
                 await bouncedAlertService.checkAndSendBouncedProductsAlert();

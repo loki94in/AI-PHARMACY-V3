@@ -484,6 +484,20 @@ export async function sendMorningScheduleBriefingToAdmin(db: Database): Promise<
       }
     }
 
+    // Staged reminders breakdown
+    const stagedRows = await db.all(`
+      SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
+      FROM automation_notifications an
+      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+    `).catch(() => []);
+    const autoStagedCount = stagedRows.filter((r: any) => r.reminder_mode === 'auto').length;
+    const manualStagedCount = stagedRows.filter((r: any) => r.reminder_mode !== 'auto').length;
+    const stagedSummaryLine = stagedRows.length > 0
+      ? `🔔 *Staged Reminders for Review*: ${stagedRows.length} total (${autoStagedCount} Auto, ${manualStagedCount} Manual Review)`
+      : `🔔 *Staged Reminders*: None pending review`;
+
     const messageText = `☀️ *Morning Schedule & Refill Briefing* — ${storeName}
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
@@ -494,13 +508,55 @@ ${refillsBlock}
 📦 *WhatsApp & Special Orders*:
 ${ordersBlock}
 
-🔒 *Customer Communication*: Customer reminders remain STAGED in Quick Assist for manual review.`;
+${stagedSummaryLine}
+
+🔒 *Customer Communication*: Reminders remain STAGED in CRM / Quick Assist. Pharmacist approval required before dispatch.`;
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_morning_briefing', 'Admin / Store Owner');
     console.log(`[RefillService] Morning schedule briefing sent to owner ${adminWhatsapp}.`);
   } catch (err) {
     console.error('[RefillService] Failed to send morning schedule briefing to admin:', err);
+  }
+}
+
+/**
+ * Notifies the pharmacy admin WhatsApp with a briefing when new patient reminders are staged.
+ */
+export async function notifyAdminStagedReminders(db: Database): Promise<void> {
+  try {
+    const alertSetting = await db.get("SELECT value FROM app_settings WHERE key = 'reminder_admin_preview_enabled'");
+    if (alertSetting?.value === 'false') return;
+
+    const { waAdminEscalationService } = await import('./waAdminEscalationService.js');
+    const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber(db);
+    if (!adminWhatsapp) return;
+
+    const stagedRows = await db.all(`
+      SELECT an.*,
+             COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
+      FROM automation_notifications an
+      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+    `);
+
+    if (stagedRows.length === 0) return;
+
+    const autoCount = stagedRows.filter((r: any) => r.patient_reminder_mode === 'auto').length;
+    const manualCount = stagedRows.filter((r: any) => r.patient_reminder_mode === 'manual').length;
+    const storeName = await getConfiguredPharmacyName(db) || 'Pharmacy';
+
+    const msg = `🔔 *Refill Reminder Alert* — ${storeName}\n\n` +
+      `${stagedRows.length} patient reminder(s) are staged and waiting for review:\n` +
+      `• ${autoCount} set to Auto 🤖\n` +
+      `• ${manualCount} set to Manual 👆\n\n` +
+      `Review & dispatch in CRM → Refills or Quick Assist.`;
+
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+    await whatsappQueueWorker.enqueue(adminWhatsapp, msg, 'admin_morning_briefing', 'Admin / Store Owner');
+  } catch (err) {
+    console.error('[RefillService] Failed to notify admin of staged reminders:', err);
   }
 }
 

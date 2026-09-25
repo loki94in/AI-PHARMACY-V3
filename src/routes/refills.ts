@@ -558,7 +558,8 @@ router.get('/panel', async (req, res) => {
     // resolved in a SECOND pass restricted to only the medicines on this page — the old
     // query aggregated + window-sorted the ENTIRE inventory_master twice per request.
     let query = `SELECT pr.*, m.name as medicine_name, m.packaging, m.pack_size, m.sell_price, m.mrp as medicine_mrp,
-                COALESCE(pr.language, cc.language, cp.language, 'en') as language
+                COALESCE(pr.language, cc.language, cp.language, 'en') as language,
+                COALESCE(pr.reminder_mode, cc.reminder_mode, cp.reminder_mode, 'manual') as reminder_mode
         FROM patient_refills pr
         JOIN medicines m ON pr.medicine_id = m.id
         LEFT JOIN customers cc ON cc.id = pr.customer_id AND cc.phone IS NOT NULL AND cc.phone != ''
@@ -622,6 +623,7 @@ router.get('/panel', async (req, res) => {
           patient_name: row.patient_name,
           patient_phone: row.patient_phone,
           language: row.language || 'en',
+          reminder_mode: row.reminder_mode || 'manual',
           next_refill_date: row.next_refill_date,
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
@@ -643,6 +645,7 @@ router.get('/panel', async (req, res) => {
           medicine_name: row.medicine_name,
           quantity_needed: (row.quantity_needed !== undefined && row.quantity_needed !== null) ? row.quantity_needed : 3, // default refill quantity: 3
           refill_interval_days: row.refill_interval_days || 30,
+          reminder_mode: row.reminder_mode || 'manual',
           in_stock_qty: stock?.in_stock_qty || 0,
           stock_verified_override: row.stock_verified_override || 0,
           acknowledged: row.acknowledged || 0,
@@ -1840,6 +1843,227 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error('Failed to delete refill:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update reminder mode (auto vs manual) for all refills and customer profile of a patient
+router.put('/patient-reminder-mode', async (req, res) => {
+  const { patient_phone, customer_id, reminder_mode } = req.body;
+  if (!patient_phone && !customer_id) {
+    return res.status(400).json({ error: 'patient_phone or customer_id is required' });
+  }
+  const mode = reminder_mode === 'auto' ? 'auto' : 'manual';
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const cleanPhone = String(patient_phone || '').trim();
+
+    if (customer_id) {
+      await db.run('UPDATE customers SET reminder_mode = ? WHERE id = ?', [mode, customer_id]);
+    } else if (cleanPhone) {
+      await db.run('UPDATE customers SET reminder_mode = ? WHERE phone = ?', [mode, cleanPhone]);
+    }
+
+    if (cleanPhone) {
+      await db.run('UPDATE patient_refills SET reminder_mode = ? WHERE patient_phone = ?', [mode, cleanPhone]);
+    }
+    if (customer_id) {
+      await db.run('UPDATE patient_refills SET reminder_mode = ? WHERE customer_id = ?', [mode, customer_id]);
+    }
+
+    eventService.broadcast('refill_updated', { at: Date.now(), reminder_mode: mode, patient_phone: cleanPhone });
+
+    res.json({ success: true, message: `Reminder mode updated to ${mode}`, reminder_mode: mode });
+  } catch (err: any) {
+    console.error('Failed to update patient reminder mode:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// Update reminder mode for an individual refill item
+router.put('/:id/reminder-mode', async (req, res) => {
+  const { id } = req.params;
+  const { reminder_mode } = req.body;
+  const mode = reminder_mode === 'auto' ? 'auto' : 'manual';
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const result = await db.run('UPDATE patient_refills SET reminder_mode = ? WHERE id = ?', [mode, id]);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Refill not found' });
+    }
+    eventService.broadcast('refill_updated', { at: Date.now(), refill_id: id, reminder_mode: mode });
+    res.json({ success: true, message: `Refill reminder mode updated to ${mode}`, reminder_mode: mode });
+  } catch (err: any) {
+    console.error('Failed to update refill reminder mode:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// Fetch summary of all staged refill notifications with auto vs manual breakdown
+router.get('/staged-summary', async (_req, res) => {
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const rows = await db.all(`
+      SELECT an.*,
+             COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
+      FROM automation_notifications an
+      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      WHERE an.type IN ('refill_collection', 'refill_reminder')
+        AND an.status = 'staged'
+      ORDER BY an.id DESC
+    `);
+
+    // Deduplicate by recipient to provide clean grouped list
+    const patientMap = new Map<string, any>();
+    for (const r of rows) {
+      const key = (r.recipient_phone || r.recipient_name || String(r.id)).trim();
+      if (!patientMap.has(key)) {
+        patientMap.set(key, {
+          id: r.id,
+          recipient_name: r.recipient_name,
+          recipient_phone: r.recipient_phone,
+          message: r.message,
+          type: r.type,
+          reference_id: r.reference_id,
+          created_at: r.created_at,
+          reminder_mode: r.patient_reminder_mode || 'manual'
+        });
+      }
+    }
+
+    const items = Array.from(patientMap.values());
+    const autoCount = items.filter(i => i.reminder_mode === 'auto').length;
+    const manualCount = items.filter(i => i.reminder_mode === 'manual').length;
+
+    res.json({
+      total_staged: items.length,
+      auto_count: autoCount,
+      manual_count: manualCount,
+      staged_items: items
+    });
+  } catch (err: any) {
+    console.error('Failed to fetch staged reminders summary:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// Human-approved 1-click batch dispatch of all Auto-mode staged reminders
+router.post('/dispatch-staged-auto', async (_req, res) => {
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const stagedRows = await db.all(`
+      SELECT an.*,
+             COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
+      FROM automation_notifications an
+      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      WHERE an.type IN ('refill_collection', 'refill_reminder')
+        AND an.status = 'staged'
+    `);
+
+    const autoItems = stagedRows.filter(r => (r.patient_reminder_mode || 'manual') === 'auto');
+    if (autoItems.length === 0) {
+      return res.json({ success: true, dispatched_count: 0, message: 'No staged auto reminders found.' });
+    }
+
+    let dispatched = 0;
+    for (const item of autoItems) {
+      if (!item.recipient_phone || !item.message) continue;
+      const cleanPhone = normalizeWhatsAppPhone(item.recipient_phone);
+      if (!cleanPhone) continue;
+
+      const queueId = await whatsappQueueWorker.enqueue(
+        cleanPhone,
+        item.message,
+        item.type || 'refill_reminder',
+        item.recipient_name || 'Customer'
+      );
+
+      // Update notification status to queued
+      await db.run(
+        `UPDATE automation_notifications SET status = 'queued', needs_confirmation = 0 WHERE id = ?`,
+        [item.id]
+      );
+
+      // If reference_id points to refills, update reminder_status and status
+      if (item.reference_id) {
+        const ids = String(item.reference_id).split(',').map(s => Number(s.trim())).filter(Boolean);
+        for (const refId of ids) {
+          await db.run(
+            `UPDATE patient_refills
+             SET status = 'notified', reminder_status = 'QUEUED', reminder_job_id = ?
+             WHERE id = ?`,
+            [queueId, refId]
+          );
+        }
+      }
+      dispatched++;
+    }
+
+    eventService.broadcast('refill_updated', { at: Date.now(), dispatched_auto_count: dispatched });
+
+    res.json({
+      success: true,
+      dispatched_count: dispatched,
+      message: `Dispatched ${dispatched} auto-mode reminder(s) to WhatsApp queue.`
+    });
+  } catch (err: any) {
+    console.error('Failed to dispatch staged auto reminders:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// Send an immediate briefing of staged reminders to the pharmacy/owner WhatsApp number
+router.post('/send-staged-briefing', async (_req, res) => {
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const { waAdminEscalationService } = await import('../services/waAdminEscalationService.js');
+    const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber(db);
+    if (!adminWhatsapp) {
+      return res.status(400).json({ error: 'No pharmacy owner WhatsApp number configured in Settings.' });
+    }
+
+    const { getConfiguredPharmacyName } = await import('../services/storeSettingsService.js');
+    const storeName = await getConfiguredPharmacyName(db) || 'Pharmacy';
+
+    const stagedRows = await db.all(`
+      SELECT an.*,
+             COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
+      FROM automation_notifications an
+      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      WHERE an.type IN ('refill_collection', 'refill_reminder')
+        AND an.status = 'staged'
+    `);
+
+    if (stagedRows.length === 0) {
+      return res.json({ success: true, message: 'No reminders currently staged.' });
+    }
+
+    const autoCount = stagedRows.filter(r => (r.patient_reminder_mode || 'manual') === 'auto').length;
+    const manualCount = stagedRows.filter(r => (r.patient_reminder_mode || 'manual') === 'manual').length;
+
+    const summaryLines = stagedRows.slice(0, 8).map((r, i) => {
+      const modeIcon = r.patient_reminder_mode === 'auto' ? '🤖 Auto' : '👆 Manual';
+      return `${i + 1}. *${r.recipient_name || 'Customer'}* (${modeIcon})\n   _${(r.message || '').slice(0, 80)}..._`;
+    }).join('\n\n');
+
+    const msg = `📋 *Staged Patient Reminders Briefing* — ${storeName}\n\n` +
+      `Total Staged: *${stagedRows.length}* (${autoCount} Auto, ${manualCount} Manual Review)\n\n` +
+      `${summaryLines}\n\n` +
+      (stagedRows.length > 8 ? `_...and ${stagedRows.length - 8} more in app_\n\n` : '') +
+      `👉 Review & approve staged messages in *CRM → Refills* or click *Send All Auto* in the app.`;
+
+    await whatsappQueueWorker.enqueue(adminWhatsapp, msg, 'admin_morning_briefing', 'Pharmacy Admin');
+    res.json({ success: true, message: `Staged reminders briefing sent to store WhatsApp (${adminWhatsapp})` });
+  } catch (err: any) {
+    console.error('Failed to send staged briefing to admin:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
   }
 });
 

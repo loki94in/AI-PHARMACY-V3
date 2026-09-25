@@ -1666,9 +1666,9 @@ const InvestigationCenter = () => {
                   containerRef={parentRef}
                   className="border-t border-glass-border/30"
                   header={
-                    <tr className="flex items-center min-w-[1750px] bg-bg2/90 backdrop-blur-sm border-b border-glass-border/40 text-muted font-bold text-[10px] select-none py-2.5 sticky top-0 z-10">
-                      {/* Medicine Header — always visible */}
-                      <th className="px-4 text-left min-w-[180px] flex-1 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">
+                    <tr className="flex items-center w-full min-w-full bg-bg2/90 backdrop-blur-sm border-b border-glass-border/40 text-muted font-bold text-[10px] select-none py-2.5 sticky top-0 z-10">
+                      {/* Medicine Header — always visible, expands to absorb space when columns are hidden */}
+                      <th className="px-4 text-left min-w-[240px] flex-1 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">
                         Medicine
                       </th>
                       {col('batch') && (
@@ -1729,10 +1729,10 @@ const InvestigationCenter = () => {
                           ref={rowVirtualizer.measureElement}
                           start={virtualRow.start}
                           size={virtualRow.size}
-                          className={`min-w-[1750px] border-b border-glass-border/15 border-l-2 ${accentClass} hover:bg-primary/3 transition-colors`}
+                          className={`w-full min-w-full border-b border-glass-border/15 border-l-2 ${accentClass} hover:bg-primary/3 transition-colors`}
                         >
-                          {/* Medicine Cell */}
-                          <td className="p-2 border-r border-glass-border/15 flex-1 min-w-[180px] text-text truncate" title={item.medicine_name}>
+                          {/* Medicine Cell — expands with flex-1 */}
+                          <td className="p-2 border-r border-glass-border/15 flex-1 min-w-[240px] text-text truncate" title={item.medicine_name}>
                             <div className="flex items-center gap-2.5 truncate">
                               <span className="shrink-0 p-1.5 rounded-lg bg-bg3/60 border border-glass-border/25">
                                 {getTypeIcon(item.type, item.return_type)}
@@ -1743,15 +1743,6 @@ const InvestigationCenter = () => {
                                   {item.type === 'Return' ? `${item.return_type} return` : item.type}
                                 </span>
                               </div>
-                              <span className={`text-[8px] font-black tracking-wider uppercase px-1.5 py-0.5 rounded-md border shrink-0 ${
-                                item.type === 'Sale' ? 'bg-sky-500/10 border-sky-500/20 text-sky-400' :
-                                item.type === 'Purchase' ? 'bg-green/10 border-green/20 text-green' :
-                                item.type === 'Adjustment' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' :
-                                item.return_type === 'purchase' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
-                                'bg-purple-500/10 border-purple-500/20 text-purple-400'
-                              }`}>
-                                {item.type}
-                              </span>
                             </div>
                           </td>
                           {col('batch') && <td className="p-2 border-r border-glass-border/15 w-28 shrink-0 font-mono font-bold text-muted truncate text-xs">{item.batch_no || 'N/A'}</td>}

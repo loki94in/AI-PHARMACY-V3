@@ -19,6 +19,7 @@ import { useModalEscape } from '../../services/keyboardShortcuts';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { EnquiriesSection } from './EnquiriesSection';
 import { MedicineVisualReferenceModal } from '../../components/MedicineVisualReferenceModal';
+import { CallTaskBoard, CallTaskBadge } from '../../components/CallTaskBoard';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -45,6 +46,7 @@ interface RefillPatient {
   patient_name: string;
   patient_phone: string;
   language?: string;
+  reminder_mode?: 'auto' | 'manual';
   next_refill_date: string;
   reminder_status?: string;
   reminder_sent_at?: string | null;
@@ -54,6 +56,7 @@ interface RefillPatient {
     medicine_name: string;
     quantity_needed: number;
     refill_interval_days?: number;
+    reminder_mode?: 'auto' | 'manual';
     in_stock_qty: number;
     is_ready: number;
     acknowledged: number;
@@ -193,6 +196,7 @@ function formatDate(dateStr: string | undefined) {
 
 const TABS = [
   { key: 'refills', label: 'Refills', icon: <Repeat2 size={15} /> },
+  { key: 'call_tasks', label: 'Call Reminders', icon: <Phone size={15} /> },
   { key: 'enquiries', label: 'Enquiries', icon: <MessageSquare size={15} /> },
   { key: 'special_orders', label: 'Special Requests', icon: <ClipboardList size={15} /> },
   { key: 'credit', label: 'Customer Credit', icon: <Users size={15} /> },
@@ -267,6 +271,25 @@ const RefillsSection: React.FC = () => {
   const [addPatientName, setAddPatientName] = useState('');
   const [addPatientPhone, setAddPatientPhone] = useState('');
   const [addLanguage, setAddLanguage] = useState<'en' | 'hi' | 'mr'>('en');
+  const [addReminderMode, setAddReminderMode] = useState<'manual' | 'auto'>('manual');
+  
+  // Staged reminders & Mode automation state
+  const [stagedSummary, setStagedSummary] = useState<{
+    total_staged: number;
+    auto_count: number;
+    manual_count: number;
+    staged_items: Array<{
+      id: number;
+      recipient_name: string;
+      recipient_phone: string;
+      message: string;
+      reminder_mode: 'auto' | 'manual';
+    }>;
+  } | null>(null);
+  const [dispatchingAuto, setDispatchingAuto] = useState(false);
+  const [sendingBriefing, setSendingBriefing] = useState(false);
+  const [showStagedDetails, setShowStagedDetails] = useState(false);
+  const [actioningNotifId, setActioningNotifId] = useState<number | null>(null);
   
   // Frequency state: preset vs custom
   const [freqMode, setFreqMode] = useState<'preset' | 'custom'>('preset');
@@ -327,6 +350,7 @@ const RefillsSection: React.FC = () => {
       setAddPatientName(parsed.name);
       setAddPatientPhone(existingPat.patient_phone);
       setAddLanguage((existingPat.language as RefillLanguage) || 'en');
+      setAddReminderMode(existingPat.reminder_mode || 'manual');
       const interval = existingPat.medicines[0]?.refill_interval_days || 30;
       setFreqMode('preset');
       setAddInterval(interval);
@@ -346,6 +370,7 @@ const RefillsSection: React.FC = () => {
       setAddPatientName('');
       setAddPatientPhone('');
       setAddLanguage('en');
+      setAddReminderMode('manual');
       setAddInterval(30);
       setFreqMode('preset');
       setMedicineRows([emptyRow()]);
@@ -365,6 +390,7 @@ const RefillsSection: React.FC = () => {
     setAddPatientName(parsed.name);
     setAddPatientPhone(selectedPatient.patient_phone);
     setAddLanguage((selectedPatient.language as RefillLanguage) || 'en');
+    setAddReminderMode(selectedPatient.reminder_mode || 'manual');
     const interval = selectedPatient.medicines[0]?.refill_interval_days || 30;
     setFreqMode('preset');
     setAddInterval(interval);
@@ -467,6 +493,107 @@ const RefillsSection: React.FC = () => {
     }
     finally { setLoading(false); }
   }, [loadPatientFulfillments, loadPatientInvoices]);
+
+  const loadStagedSummary = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/refills/staged-summary');
+      if (res.data) setStagedSummary(res.data);
+    } catch (_) {}
+  }, []);
+
+  const handleTogglePatientReminderMode = async (patient: RefillPatient, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const newMode = (patient.reminder_mode || 'manual') === 'auto' ? 'manual' : 'auto';
+    // Optimistic UI update
+    setData(prev => prev.map(p => {
+      if (p.patient_phone === patient.patient_phone) {
+        return { ...p, reminder_mode: newMode };
+      }
+      return p;
+    }));
+    if (selectedPatient?.patient_phone === patient.patient_phone) {
+      setSelectedPatient(prev => prev ? { ...prev, reminder_mode: newMode } : null);
+    }
+
+    try {
+      await apiClient.put('/refills/patient-reminder-mode', {
+        patient_phone: patient.patient_phone,
+        customer_id: patient.customer_id,
+        reminder_mode: newMode
+      });
+      toastEvent.trigger(
+        `Reminder mode for ${patient.patient_name || 'Patient'} set to ${newMode === 'auto' ? '🤖 Auto' : '👆 Manual (Review)'}`,
+        'success',
+        '/crm'
+      );
+      refillEvent.triggerRefresh();
+      loadStagedSummary();
+    } catch {
+      toastEvent.trigger('Failed to update reminder mode', 'error', '/crm');
+      load(true);
+    }
+  };
+
+  const handleDispatchStagedAuto = async () => {
+    setDispatchingAuto(true);
+    try {
+      const res = await apiClient.post('/refills/dispatch-staged-auto');
+      toastEvent.trigger(res.data?.message || 'Auto reminders dispatched!', 'success', '/crm');
+      refillEvent.triggerRefresh();
+      await loadStagedSummary();
+      await load(true);
+    } catch {
+      toastEvent.trigger('Failed to dispatch auto reminders', 'error', '/crm');
+    } finally {
+      setDispatchingAuto(false);
+    }
+  };
+
+  const handleSendStagedBriefing = async () => {
+    setSendingBriefing(true);
+    try {
+      const res = await apiClient.post('/refills/send-staged-briefing');
+      toastEvent.trigger(res.data?.message || 'Briefing sent to store WhatsApp!', 'success', '/crm');
+    } catch (err) {
+      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to send briefing', 'error', '/crm');
+    } finally {
+      setSendingBriefing(false);
+    }
+  };
+
+  const handleDismissStagedItem = async (id: number) => {
+    setActioningNotifId(id);
+    try {
+      await api.cancelNotification(id);
+      toastEvent.trigger('Staged reminder dismissed', 'info', '/crm');
+      await loadStagedSummary();
+    } catch {
+      toastEvent.trigger('Failed to dismiss reminder', 'error', '/crm');
+    } finally {
+      setActioningNotifId(null);
+    }
+  };
+
+  const handleSendSingleStagedItem = async (item: { id: number; recipient_phone: string; message: string; recipient_name: string }) => {
+    setActioningNotifId(item.id);
+    try {
+      await api.enqueueSingleWhatsApp({
+        number: item.recipient_phone,
+        message: item.message,
+        type: 'refill_reminder',
+        targetName: item.recipient_name
+      });
+      await api.manualNotification(item.id);
+      toastEvent.trigger(`Reminder queued for ${item.recipient_name}!`, 'success', '/crm');
+      whatsappQueueEvent.triggerUpdated();
+      await loadStagedSummary();
+      await load(true);
+    } catch {
+      toastEvent.trigger('Failed to queue reminder', 'error', '/crm');
+    } finally {
+      setActioningNotifId(null);
+    }
+  };
 
   const handleUpdateFrequency = async () => {
     if (!editingRefill) return;
@@ -584,9 +711,13 @@ const RefillsSection: React.FC = () => {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- module-cache hydration loader, silent retries
     load();
-    const unsub = refillEvent.subscribeRefresh(() => load(true));
+    loadStagedSummary();
+    const unsub = refillEvent.subscribeRefresh(() => {
+      load(true);
+      loadStagedSummary();
+    });
     return () => unsub();
-  }, [load]);
+  }, [load, loadStagedSummary]);
 
   useEffect(() => {
     const handleSync = () => {
@@ -895,6 +1026,14 @@ const RefillsSection: React.FC = () => {
         );
         toastEvent.trigger(`Refill registered for ${fullPatientName} (${validRows.length} medicine${validRows.length > 1 ? 's' : ''}, every ${intervalDays} days)`, 'success', '/crm');
       }
+
+      // Persist reminder mode preference for this patient
+      await apiClient.put('/refills/patient-reminder-mode', {
+        patient_phone: addPatientPhone.trim(),
+        customer_id: editingPatient?.customer_id,
+        reminder_mode: addReminderMode
+      }).catch(() => {});
+
       setShowAddModal(false);
       setEditingPatient(null);
       setRefillSalutation('Mr.');
@@ -1034,6 +1173,106 @@ const RefillsSection: React.FC = () => {
         </div>
       </div>
 
+      {/* ── Staged Reminders & Pharmacy Alert Banner ── */}
+      {stagedSummary && stagedSummary.total_staged > 0 && (
+        <div className="p-3 bg-bg2 border border-primary/30 rounded-2xl flex flex-col gap-2 shadow-sm shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
+              </span>
+              <div>
+                <span className="text-xs font-bold text-text">
+                  {stagedSummary.total_staged} Staged Reminder{stagedSummary.total_staged > 1 ? 's' : ''} Pending Review
+                </span>
+                <span className="text-[11px] text-muted ml-2">
+                  ({stagedSummary.auto_count} Auto 🤖, {stagedSummary.manual_count} Manual 👆)
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {stagedSummary.auto_count > 0 && (
+                <button
+                  type="button"
+                  onClick={handleDispatchStagedAuto}
+                  disabled={dispatchingAuto}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                  title="Human approval: One-click batch dispatch of all Auto-mode patient reminders"
+                >
+                  <Zap size={13} className={dispatchingAuto ? 'animate-spin' : ''} />
+                  <span>{dispatchingAuto ? 'Dispatching...' : `Approve & Send Auto (${stagedSummary.auto_count})`}</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSendStagedBriefing}
+                disabled={sendingBriefing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-bg3 border border-border text-text hover:text-primary rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                title="Send current staged summary to store owner WhatsApp number first"
+              >
+                <Phone size={13} className={sendingBriefing ? 'animate-pulse text-primary' : 'text-primary'} />
+                <span>{sendingBriefing ? 'Sending...' : 'Alert Store WhatsApp'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowStagedDetails(prev => !prev)}
+                className="px-2.5 py-1.5 bg-bg3 border border-border text-muted hover:text-text rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                {showStagedDetails ? 'Hide' : 'Review Staged'}
+              </button>
+            </div>
+          </div>
+
+          {/* Expandable Staged Items List */}
+          {showStagedDetails && (
+            <div className="mt-2 pt-2 border-t border-border grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+              {stagedSummary.staged_items.map(item => (
+                <div key={item.id} className="p-2.5 bg-bg border border-border rounded-xl flex flex-col justify-between gap-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-text truncate">{item.recipient_name}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                      item.reminder_mode === 'auto'
+                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
+                    }`}>
+                      {item.reminder_mode === 'auto' ? '🤖 Auto' : '👆 Manual'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted line-clamp-2">{item.message}</p>
+                  <div className="flex items-center justify-between pt-1 border-t border-border/50">
+                    <span className="text-[10px] text-muted">{item.recipient_phone}</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleDismissStagedItem(item.id)}
+                        disabled={actioningNotifId === item.id}
+                        className="px-2 py-0.5 rounded text-[10px] text-muted hover:text-red-400 cursor-pointer"
+                        title="Dismiss/Disapprove this staged reminder"
+                      >
+                        Dismiss
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSendSingleStagedItem(item)}
+                        disabled={actioningNotifId === item.id}
+                        className="px-2 py-0.5 rounded bg-primary hover:bg-primary/90 text-white font-bold text-[10px] cursor-pointer"
+                        title="Send this reminder now via WhatsApp"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Main Unified Resizable Split-View Container (Matching WhatsApp & Credit) ── */}
       <div className="flex-1 min-h-0 flex bg-bg2 border border-border rounded-2xl overflow-hidden shadow-sm">
         {/* Left: Patient List Panel (Resizable Width) */}
@@ -1155,6 +1394,18 @@ const RefillsSection: React.FC = () => {
                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border/60 shrink-0 font-normal">
                             {patient.language === 'hi' ? '🇮🇳 HI' : patient.language === 'mr' ? '🇮🇳 MR' : '🇬🇧 EN'}
                           </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleTogglePatientReminderMode(patient, e)}
+                            className={`text-[9px] px-1.5 py-0.2 rounded border shrink-0 font-bold transition-all cursor-pointer ${
+                              (patient.reminder_mode || 'manual') === 'auto'
+                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+                                : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'
+                            }`}
+                            title="Click to toggle: Auto dispatch 🤖 vs Manual review 👆"
+                          >
+                            {(patient.reminder_mode || 'manual') === 'auto' ? '🤖 Auto' : '👆 Manual'}
+                          </button>
                         </div>
                         <div className="text-[10px] text-muted flex items-center gap-1.5 mt-0.5 truncate">
                           <span>📱 {patient.patient_phone}</span>
@@ -1223,6 +1474,18 @@ const RefillsSection: React.FC = () => {
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-bg3 text-text border border-border">
                         {selectedPatient.language === 'hi' ? '🇮🇳 HI' : selectedPatient.language === 'mr' ? '🇮🇳 MR' : '🇬🇧 EN'}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePatientReminderMode(selectedPatient)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                          (selectedPatient.reminder_mode || 'manual') === 'auto'
+                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+                            : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'
+                        }`}
+                        title="Click to toggle reminder dispatch mode for this patient"
+                      >
+                        {(selectedPatient.reminder_mode || 'manual') === 'auto' ? '🤖 Auto Dispatch' : '👆 Manual Approval'}
+                      </button>
                     </div>
                     <div className="text-xs text-muted mt-0.5 flex items-center gap-3 flex-wrap">
                       <span className="flex items-center gap-1 font-mono text-text">
@@ -1839,6 +2102,40 @@ const RefillsSection: React.FC = () => {
                   >
                     <span>🇮🇳</span>
                     <span>मराठी (Marathi)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Reminder Dispatch Mode (Per-Patient Automation Control) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
+                  <Zap size={11} className="text-primary" />
+                  Reminder Mode (Per-Customer Control)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddReminderMode('manual')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      addReminderMode === 'manual'
+                        ? 'bg-sky-500/15 border-sky-500/40 text-sky-400 shadow-sm'
+                        : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
+                    }`}
+                  >
+                    <span>👆</span>
+                    <span>Manual Approval (Safe)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddReminderMode('auto')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      addReminderMode === 'auto'
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-sm'
+                        : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
+                    }`}
+                  >
+                    <span>🤖</span>
+                    <span>Auto Dispatch</span>
                   </button>
                 </div>
               </div>
@@ -6653,6 +6950,7 @@ const CRM: React.FC = () => {
               >
                 <span className={isActive ? 'text-primary' : 'text-muted'}>{tab.icon}</span>
                 <span>{tab.label}</span>
+                {tab.key === 'call_tasks' && <CallTaskBadge />}
               </button>
             );
           })}
@@ -6662,6 +6960,11 @@ const CRM: React.FC = () => {
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'refills' && <RefillsSection />}
+        {activeTab === 'call_tasks' && (
+          <div className="p-4 h-full overflow-y-auto bg-bg2 rounded-2xl border border-border">
+            <CallTaskBoard />
+          </div>
+        )}
         {activeTab === 'enquiries' && <EnquiriesSection />}
         {activeTab === 'special_orders' && <SpecialOrdersSection />}
         {activeTab === 'credit' && <CustomerCreditSection />}

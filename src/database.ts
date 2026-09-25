@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 68;
+const CURRENT_SCHEMA_VERSION = 70;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -462,11 +462,54 @@ async function ensureOrderTimingSchema(db: any) {
     ['return_window_days', '15'],
     ['return_window_mode', 'calendar_days'],
     ['refill_pause_recalculation_enabled', 'true'],
-    ['refill_pause_affects_date', 'true']
+    ['refill_pause_affects_date', 'true'],
+    // Non-WhatsApp patient fallback settings (v69)
+    ['non_wa_fallback_mode', 'both'],
+    ['non_wa_fallback_alert_phone', ''],
+    ['non_wa_fallback_enabled', 'true'],
+    // Staged refill reminder & mode settings (v70)
+    ['default_refill_reminder_mode', 'manual'],
+    ['reminder_admin_preview_enabled', 'true']
   ];
   for (const [k, v] of defaultTimingSettings) {
     await db.run('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)', [k, v]);
   }
+
+  // Schema v69: patient_call_tasks table (non-WhatsApp fallback call board)
+  try {
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS patient_call_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_type TEXT NOT NULL CHECK (task_type IN ('refill', 'credit')),
+        patient_name TEXT NOT NULL,
+        patient_phone TEXT NOT NULL,
+        reference_id TEXT,
+        details_json TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'rescheduled', 'dismissed')),
+        call_outcome TEXT,
+        reschedule_date TEXT,
+        notes TEXT,
+        owner_wa_sent INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+  } catch (_) { }
+
+  // Schema v70: reminder_mode on patient_refills and customers
+  try {
+    const prCols = await db.all('PRAGMA table_info(patient_refills)');
+    if (prCols.length > 0 && !prCols.some((c: any) => c.name.toLowerCase() === 'reminder_mode')) {
+      await db.run("ALTER TABLE patient_refills ADD COLUMN reminder_mode TEXT DEFAULT 'manual'");
+    }
+    const custCols = await db.all('PRAGMA table_info(customers)');
+    if (custCols.length > 0 && !custCols.some((c: any) => c.name.toLowerCase() === 'reminder_mode')) {
+      await db.run("ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'");
+    }
+  } catch (_) { }
 }
 
 /**
@@ -698,6 +741,30 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_snap ON sales_invoices(customer_name_snapshot);
           CREATE INDEX IF NOT EXISTS idx_sale_items_med_snap ON sale_items(medicine_name_snapshot);
         `);
+
+        // Ensure patient_call_tasks table exists on fast-boot (v69)
+        try {
+          await db.run(`
+            CREATE TABLE IF NOT EXISTS patient_call_tasks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_type TEXT NOT NULL CHECK (task_type IN ('refill', 'credit')),
+              patient_name TEXT NOT NULL,
+              patient_phone TEXT NOT NULL,
+              reference_id TEXT,
+              details_json TEXT,
+              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'rescheduled', 'dismissed')),
+              call_outcome TEXT,
+              reschedule_date TEXT,
+              notes TEXT,
+              owner_wa_sent INTEGER DEFAULT 0,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+          await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
+          await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
+          await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+        } catch (_) { }
 
         // Ensure multi-device & velocity metrics tables exist on fast-boot
         try {
@@ -2521,6 +2588,8 @@ export async function ensureSchema(dbPath: string) {
       ['return_items', 'loose', 'ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0'],
       ['return_items', 'ded_per', 'ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0'],
       ['return_items', 'cd_value', 'ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0'],
+      ['patient_refills', 'reminder_mode', "ALTER TABLE patient_refills ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
+      ['customers', 'reminder_mode', "ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
     ];
 
     // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs

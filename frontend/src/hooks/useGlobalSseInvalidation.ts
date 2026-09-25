@@ -39,6 +39,7 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   audit_updated: [['audit-latest'], ['audit-history'], ['audit-mutations']],
   prescription_scan_complete: [['prescription-scans'], ['prescription-detail']],
   enquiry_updated: [['enquiries'], ['enquiry-panel'], ['medicine-enquiries']],
+  call_tasks_updated: [['call-tasks'], ['call-tasks-count']],
 };
 
 // SSE event type -> DOM CustomEvents dispatched for non-react-query consumers

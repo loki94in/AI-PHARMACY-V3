@@ -54,7 +54,8 @@ import {
   Sparkles,
   ExternalLink,
   Globe,
-  Copy
+  Copy,
+  Phone
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -3664,10 +3665,17 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
     // 10. Patient Chronic Refill Evaluator
     triggerRefillsEnabled: rawSettings.trigger_refills_enabled !== 'false',
     triggerRefillsCheckTime: rawSettings.trigger_refills_check_time || '09:00',
+    defaultRefillReminderMode: rawSettings.default_refill_reminder_mode || 'manual',
+    reminderAdminPreviewEnabled: rawSettings.reminder_admin_preview_enabled !== 'false',
 
     // 11. Pharmarack Cart Auto-Send Cutoff
     triggerPharmarackCartSendEnabled: rawSettings.trigger_pharmarack_cart_send_enabled !== 'false',
     triggerPharmarackCartSendTime: rawSettings.trigger_pharmarack_cart_send_time || '11:00',
+
+    // 12. Non-WhatsApp Patient Fallback
+    nonWaFallbackEnabled: rawSettings.non_wa_fallback_enabled !== 'false',
+    nonWaFallbackMode: rawSettings.non_wa_fallback_mode || 'both',
+    nonWaFallbackAlertPhone: rawSettings.non_wa_fallback_alert_phone || '',
   });
 
   const [saving, setSaving] = useState(false);
@@ -3703,8 +3711,14 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
         trigger_doctor_report_time: formData.triggerDoctorReportTime,
         trigger_refills_enabled: formData.triggerRefillsEnabled ? 'true' : 'false',
         trigger_refills_check_time: formData.triggerRefillsCheckTime,
+        default_refill_reminder_mode: formData.defaultRefillReminderMode,
+        reminder_admin_preview_enabled: formData.reminderAdminPreviewEnabled ? 'true' : 'false',
         trigger_pharmarack_cart_send_enabled: formData.triggerPharmarackCartSendEnabled ? 'true' : 'false',
         trigger_pharmarack_cart_send_time: formData.triggerPharmarackCartSendTime,
+        // Non-WhatsApp patient fallback (v69)
+        non_wa_fallback_enabled: formData.nonWaFallbackEnabled ? 'true' : 'false',
+        non_wa_fallback_mode: formData.nonWaFallbackMode,
+        non_wa_fallback_alert_phone: formData.nonWaFallbackAlertPhone,
       };
 
       await api.saveSettings(payload);
@@ -4111,6 +4125,104 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
               onChange={(e) => setFormData({ ...formData, triggerRefillsCheckTime: e.target.value })}
               className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
             />
+          </div>
+
+          <div className="pt-2 border-t border-border/40 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-bold text-text">Default Dispatch Mode</div>
+                <div className="text-[10px] text-muted">Initial mode for newly enrolled refill patients</div>
+              </div>
+              <div className="flex items-center bg-bg rounded-lg p-0.5 border border-border text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, defaultRefillReminderMode: 'manual' })}
+                  className={`px-2 py-1 rounded-md font-bold transition-all ${
+                    formData.defaultRefillReminderMode === 'manual'
+                      ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30'
+                      : 'text-muted hover:text-text'
+                  }`}
+                >
+                  Manual 👆
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, defaultRefillReminderMode: 'auto' })}
+                  className={`px-2 py-1 rounded-md font-bold transition-all ${
+                    formData.defaultRefillReminderMode === 'auto'
+                      ? 'bg-primary/20 text-primary border border-primary/30'
+                      : 'text-muted hover:text-text'
+                  }`}
+                >
+                  Auto 🤖
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-bold text-text">Alert Pharmacy WhatsApp First</div>
+                <div className="text-[10px] text-muted">Send staged refill briefing to store number before dispatch</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.reminderAdminPreviewEnabled}
+                  onChange={(e) => setFormData({ ...formData, reminderAdminPreviewEnabled: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-bg3 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-zinc-100 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-100 after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Trigger 10b: Non-WhatsApp Patient Fallback */}
+        <div className="p-4 rounded-2xl bg-bg3/30 border border-border space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Phone size={16} className="text-orange-400" />
+              <span className="text-xs font-bold text-text">Non-WhatsApp Patient Fallback</span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                id="non-wa-fallback-enabled"
+                checked={formData.nonWaFallbackEnabled}
+                onChange={(e) => setFormData({ ...formData, nonWaFallbackEnabled: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-bg3 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-zinc-100 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-100 after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-400"></div>
+            </label>
+          </div>
+          <p className="text-[11px] text-muted">When a refill or credit patient does not have WhatsApp, create a call task for counter staff and/or alert the pharmacy owner to call them manually.</p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-semibold text-text whitespace-nowrap w-24">Channel:</label>
+              <select
+                id="non-wa-fallback-mode"
+                value={formData.nonWaFallbackMode}
+                onChange={(e) => setFormData({ ...formData, nonWaFallbackMode: e.target.value })}
+                className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary flex-1"
+              >
+                <option value="both">Both — In-App Call Board + Owner WhatsApp Alert</option>
+                <option value="board">In-App Call Board Only</option>
+                <option value="owner">Owner WhatsApp Alert Only</option>
+                <option value="off">Disabled</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-semibold text-text whitespace-nowrap w-24">Alert Phone:</label>
+              <input
+                id="non-wa-fallback-alert-phone"
+                type="tel"
+                value={formData.nonWaFallbackAlertPhone}
+                onChange={(e) => setFormData({ ...formData, nonWaFallbackAlertPhone: e.target.value })}
+                placeholder="Owner WhatsApp number (e.g. 9876543210)"
+                className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary flex-1"
+              />
+            </div>
+            <p className="text-[10px] text-muted">Leave Alert Phone blank to use the Admin WhatsApp number configured above.</p>
           </div>
         </div>
 
