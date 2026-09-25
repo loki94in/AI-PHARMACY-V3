@@ -54,7 +54,7 @@ const NOISE_WORDS = new Set([
   'hii', 'hiii', 'heyy', 'heyya', 'helloo', 'yoo', 'ola', 'namaste', 'namaskar',
   'ram', 'shubh', 'pranam', 'gm', 'gn', 'tc', 'bye', 'gd', 'mrng', 'evng',
   // Marathi / Hindi conversational and question words
-  'aahe', 'ahe', 'ahae', 'na', 're', 'pan', 'pn', 'ca', 'cha', 'ta', 'te', 'ti', 'to',
+  'aahe', 'ahe', 'ahae', 'na', 're', 'pn', 'ca', 'cha', 'ta', 'te', 'ti', 'to',
   'nhi', 'nahi', 'nahy', 'nakot', 'navhate', 'havey', 'have', 'pahije', 'pahijey',
   'kya', 'kab', 'kaha', 'kaise', 'kon', 'koni', 'kona', 'konala', 'kasa', 'kashi', 'kase', 'kasala',
   'yevo', 'yeu', 'yeto', 'yete', 'yetat', 'gheu', 'gheto', 'ghete', 'ghetat', 'havat', 'hvae', 'haye',
@@ -137,7 +137,7 @@ export function isPromotionalOrBroadcastMessage(text: string): boolean {
   const lower = raw.toLowerCase();
 
   // 1. Marketing headlines & promotional phrases
-  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|rate list|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily)|flat\s+\d+%\s+off|up\s+to\s+\d+%\s+off|\d+%\s+discount|buy\s+\d+\s+get\s+\d+|bogo|exclusive\s+offers?|festive\s+offers?|special\s+offers?|best\s+deals?|mega\s+offer|bumper\s+offer|todays?\s+offer|today'?s\s+deal|deal\s+of\s+the\s+day)\b/i;
+  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily)|flat\s+\d+%\s+off|up\s+to\s+\d+%\s+off|\d+%\s+discount|buy\s+\d+\s+get\s+\d+|bogo|exclusive\s+offers?|festive\s+offers?|special\s+offers?|best\s+deals?|mega\s+offer|bumper\s+offer|todays?\s+offer|today'?s\s+deal|deal\s+of\s+the\s+day)\b/i;
   if (PROMO_PHRASES_REGEX.test(lower)) return true;
 
   // 2. Greeting / festive broadcasts
@@ -184,7 +184,7 @@ export interface MedicineCandidate {
 // Conjunction words that separate TWO medicine requests inside one mixed
 // conversational sentence ("dolo 650 aur telma 40 chahiye").
 const SEGMENT_SPLIT_WORDS = new Set([
-  'aur', 'and', 'bhi', 'also', 'plus', 'or', 'ya', 'ani', 'athva', '&', '+'
+  'aur', 'and', 'bhi', 'also', 'or', 'ya', 'ani', 'athva', '&'
 ]);
 
 // Safety cap so one pasted list can never fan out into an unbounded search loop.
@@ -308,6 +308,18 @@ function parseTokenList(words: string[]): {
     const lower = lowerWords[i];
     if (INTENT_WORDS_EN.has(lower) || INTENT_WORDS_HI.has(lower) || INTENT_WORDS_MR.has(lower)) continue;
     if (QUANTITY_UNITS[lower]) continue;
+    // Handle conversational Marathi particle 'pan' ("also") when trailing an already extracted medicine
+    if (lower === 'pan') {
+      const isPrecededByMedicine = medicineWords.length > 0;
+      const next = lowerWords[i + 1];
+      const isFollowedBySpecifier = next && (
+        /^(?:d|40|20|l|dsr|mps|it|iv|plus|tab|tablet|cap|capsule|inj|injection|\d+)$/i.test(next) ||
+        (!NOISE_WORDS.has(next) && !INTENT_WORDS_EN.has(next) && !INTENT_WORDS_HI.has(next) && !INTENT_WORDS_MR.has(next) && !QUANTITY_UNITS[next])
+      );
+      if (isPrecededByMedicine && !isFollowedBySpecifier) {
+        continue;
+      }
+    }
     if (NOISE_WORDS.has(lower)) continue;
     // Keep the original case for the medicine name
     medicineWords.push(cleanTokens[i]);
@@ -379,14 +391,17 @@ export function extractMedicineCandidates(text: string): MedicineCandidate[] {
   const results: MedicineCandidate[] = [];
   const seen = new Set<string>();
 
-  // Strip keycap emojis (1️⃣, 2️⃣, etc.) and numbered list bullets (1., 1), 1-) so they are not parsed as order quantities
+  // Strip keycap emojis (1️⃣, 2️⃣, etc.) and normalize inline numbered list bullets so they are not parsed as order quantities
   const sanitizedText = text
     .replace(/[0-9]️⃣|[\u0030-\u0039]\uFE0F?\u20E3/gu, '')
-    .replace(/^[\s*•\->#]*\d+[.)\-]+\s*/gm, '');
+    // Normalize inline numbered list bullets (e.g. " 1. ", " 2) ", " 3- ") onto comma-separated boundaries
+    .replace(/(?:^|\s+)(\d+[.)\-\]]\s+)/g, ',\n$1');
 
   const roughParts = sanitizedText.replace(/\r?\n/g, ',').split(/[,;•|]+/);
   for (const part of roughParts) {
-    const words = part.trim().split(/\s+/).filter(Boolean);
+    // Strip leading list bullets/numbers on each part (e.g. "1.", "1)", "1 -", "•") so they are not parsed as quantities
+    const cleanedPart = part.replace(/^[\s*•\->#]*\d+[.)\-]+\s*/, '').trim();
+    const words = cleanedPart.split(/\s+/).filter(Boolean);
     if (words.length === 0) continue;
 
     // Further split on conjunction tokens ("aur", "and", "bhi", …)
@@ -611,5 +626,191 @@ export function sanitizePharmarackQuery(rawName: string): string {
   }
 
   return coreWords.slice(0, 3).join(' ');
+}
+
+// ─── Fuzzy Local Medicine Search ─────────────────────────────────────────────
+// Used when Pharmarack returns 0 results: searches the local medicines master
+// table using a 3-layer cascade so misspellings like "tazalok bete 25"
+// still surface "Tazloc Beta 25" for the customer to confirm.
+
+/**
+ * Minimal Levenshtein distance between two strings (pure JS, no deps).
+ * Capped at maxDist+1 for early exit — keeps the full-scan fast.
+ */
+export function levenshtein(a: string, b: string, maxDist = 3): number {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  const prev: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const curr: number[] = new Array(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = a[i - 1] === b[j - 1]
+        ? prev[j - 1]
+        : 1 + Math.min(prev[j - 1], prev[j], curr[j - 1]);
+    }
+    prev.splice(0, prev.length, ...curr);
+  }
+  return prev[b.length];
+}
+
+/**
+ * Extracts the first 3-char prefix of each word that is >= 3 chars long.
+ * "tazalok bete 25" → ["taz", "bet"] — used for fast DB LIKE prefix queries.
+ */
+export function extractPrefixFragments(query: string): string[] {
+  return query
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !/^\d+$/.test(w))
+    .map(w => w.slice(0, 3));
+}
+
+/**
+ * Score a medicine name against a raw query using per-token Levenshtein.
+ * Threshold scales with word length so longer misspellings aren't unfairly skipped:
+ *   ≤ 5 chars → max 1 edit  |  6–8 chars → max 2 edits  |  9+ chars → max 3 edits
+ *
+ * CRITICAL: when the query has 2+ significant alpha tokens, ALL of them must
+ * match something in the candidate. This prevents "BETA 0.5MG TAB" from
+ * scoring perfectly on query "tezlock beta" just because "beta" matched.
+ * Lower score = better match. Returns Infinity if any required token is missed.
+ */
+function scoreFuzzyMatch(queryTokens: string[], candidateName: string): number {
+  const candTokens = candidateName.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  let totalScore = 0;
+  let matchedCount = 0;
+  let missCount = 0;
+
+  // Count significant (alpha, ≥ 3 chars) query tokens
+  const significantTokens = queryTokens.filter(t => t.length >= 3 && !/^\d+$/.test(t));
+
+  for (const qt of significantTokens) {
+    // Scale threshold with query token length
+    const maxDist = qt.length <= 5 ? 1 : qt.length <= 8 ? 2 : 3;
+    let best = Infinity;
+    for (const ct of candTokens) {
+      if (ct.length < 3 || /^\d+$/.test(ct)) continue;
+      const dist = levenshtein(qt, ct, maxDist);
+      if (dist < best) best = dist;
+    }
+    if (best <= maxDist) {
+      totalScore += best;
+      matchedCount++;
+    } else {
+      missCount++;
+    }
+  }
+
+  // ── Concatenated-word fallback ──────────────────────────────────────────────
+  // Activates ONLY when the normal path found 0 matches AND the query is a
+  // single long token (>10 chars) that looks like a concatenated medicine name
+  // (e.g. "tazalockbeta25"). Compares the whole blob against the candidate's
+  // tokens joined together — never runs for normal spaced queries.
+  if (matchedCount === 0 && significantTokens.length === 1 && significantTokens[0].length > 10) {
+    const qt = significantTokens[0];
+    // Join all candidate tokens (alpha + numeric) to reconstruct a compact form
+    // e.g. "Tazloc Beta 25" → "tazlocbeta25"
+    const joined = candTokens.join('');
+    if (joined.length === 0) return Infinity;
+    // Fast length check — reject if lengths are too far apart
+    const lengthDiff = Math.abs(qt.length - joined.length);
+    const maxJoinDist = 3; // strict: prevents false positives
+    if (lengthDiff > maxJoinDist) return Infinity;
+    const dist = levenshtein(qt, joined, maxJoinDist);
+    // Return a slightly elevated score so spaced queries always rank above blobs
+    return dist <= maxJoinDist ? dist + 0.5 : Infinity;
+  }
+  // ── End concatenated-word fallback ─────────────────────────────────────────
+
+  if (matchedCount === 0) return Infinity;
+
+  // For multi-word queries: ALL significant tokens must match — no silent skips
+  if (significantTokens.length >= 2 && missCount > 0) return Infinity;
+
+  return totalScore / matchedCount;
+}
+
+/**
+ * Fuzzy-search the local medicines master table for names similar to `query`.
+ * 4-layer cascade:
+ *   1. Full-phrase prefix LIKE — "tazloc beta%" (fast index scan)
+ *   2. Per-token 3-char prefix LIKE — "taz%", "bet%" (catches first-3-char matches)
+ *   2b.Per-token substring LIKE — "%tazalok%" (catches when first chars are right but different)
+ *   3. Last-resort: 5-char fragment LIKE — "%tazal%" (when all above fail)
+ *   4. Levenshtein re-rank with length-proportional threshold
+ *
+ * Returns up to `limit` medicine names sorted by similarity.
+ */
+export async function fuzzySearchLocalMedicines(
+  db: any,
+  query: string,
+  limit = 5
+): Promise<string[]> {
+  if (!query || query.trim().length < 2) return [];
+
+  const clean = query.replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
+  const queryTokens = clean.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
+  const alphaTokens = queryTokens.filter(w => !/^\d+$/.test(w));
+  if (alphaTokens.length === 0) return [];
+
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+
+  const addRows = (rows: { name: string }[]) => {
+    for (const r of rows) {
+      if (!seen.has(r.name)) { seen.add(r.name); candidates.push(r.name); }
+    }
+  };
+
+  try {
+    // Layer 1: full-phrase prefix — "tazloc%"
+    addRows(await db.all(
+      `SELECT name FROM medicines WHERE name LIKE ? ORDER BY name ASC LIMIT 30`,
+      [`${alphaTokens[0]}%`]
+    ).catch(() => []));
+
+    // Layer 2: per-token 3-char prefix — "taz%", "bet%"
+    const prefixes = extractPrefixFragments(clean);
+    for (const prefix of prefixes) {
+      if (prefix.length < 3) continue;
+      addRows(await db.all(
+        `SELECT name FROM medicines WHERE name LIKE ? ORDER BY name ASC LIMIT 30`,
+        [`${prefix}%`]
+      ).catch(() => []));
+    }
+
+    // Layer 2b: per-token substring — "%tazalok%" (catches when prefix was wrong)
+    for (const token of alphaTokens) {
+      if (token.length < 4) continue;
+      addRows(await db.all(
+        `SELECT name FROM medicines WHERE name LIKE ? ORDER BY name ASC LIMIT 20`,
+        [`%${token}%`]
+      ).catch(() => []));
+    }
+
+    // Layer 3: last-resort 5-char inner fragment — "%tazal%" (if still no candidates)
+    if (candidates.length === 0) {
+      for (const token of alphaTokens) {
+        if (token.length < 4) continue;
+        const fragment = token.slice(0, 5);
+        addRows(await db.all(
+          `SELECT name FROM medicines WHERE name LIKE ? ORDER BY name ASC LIMIT 20`,
+          [`%${fragment}%`]
+        ).catch(() => []));
+      }
+    }
+
+    // Layer 4: Levenshtein re-rank with length-proportional threshold
+    const scored: Array<{ name: string; score: number }> = candidates
+      .map(name => ({ name, score: scoreFuzzyMatch(queryTokens, name) }))
+      .filter(c => c.score < Infinity)
+      .sort((a, b) => a.score - b.score);
+
+    return scored.slice(0, limit).map(c => c.name);
+  } catch (_) {
+    return [];
+  }
 }
 

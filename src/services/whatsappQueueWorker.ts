@@ -1192,7 +1192,7 @@ class WhatsAppQueueWorker {
               // If store desync persists, hold in 'review_required' for human review rather than dropping permanently.
               const newStatus = (isDistributorReminder && isTemporaryError) 
                 ? 'failed_offline' 
-                : (isStoreDesync && newRetryCount >= 3)
+                : ((isStoreDesync || isTemporaryError) && newRetryCount >= 3)
                   ? 'review_required'
                   : (newRetryCount >= 3 ? 'failed_perm' : 'failed_offline');
 
@@ -1203,9 +1203,11 @@ class WhatsAppQueueWorker {
               }
 
               console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? ' [retryable availability]' : '/3'}): ${errMsg}`);
+              // Back off retries by 30 seconds so this item does not head-of-line block the rest of the queue
+              const retryScheduledAt = (newStatus === 'failed_offline') ? (now + 30000) : item.scheduled_at;
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
-                [newStatus, newRetryCount, errMsg, item.id]
+                "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ?, scheduled_at = ? WHERE id = ?",
+                [newStatus, newRetryCount, errMsg, retryScheduledAt, item.id]
               );
               await db.run(
                 "UPDATE automation_notifications SET status = 'failed', error_message = ? WHERE reference_id = ? OR reference_id = ?",
@@ -1228,7 +1230,7 @@ class WhatsAppQueueWorker {
                 eventService.broadcast('automation_hub_updated', { type: 'failed', id: item.id, error: errMsg });
               } catch (_) {}
 
-              // Log failure notification into automation_notifications if permanently failed
+              // Log failure notification into automation_notifications if permanently failed or needs review
               if (newStatus === 'failed_perm' || newStatus === 'review_required') {
                 try {
                   await db.run(
@@ -1253,9 +1255,20 @@ class WhatsAppQueueWorker {
                 });
               }
 
-              if (isTemporaryError) {
-                // Halt current drain cycle on temporary availability/network failure
+              const isActualDisconnection = errMsg.includes('client not ready') || 
+                                            errMsg.includes('disconnected') || 
+                                            errMsg.includes('Session closed') ||
+                                            !(await getWhatsAppStatus()).isReady;
+
+              if (isActualDisconnection) {
+                this.lastWasOffline = true;
+                // Halt current drain cycle only if WhatsApp is actually disconnected
                 break;
+              } else {
+                // Transient send error on this specific message (e.g. contact sync, timeout).
+                // Pause 3s to let Puppeteer/browser settle, but DO NOT abandon the remaining queue!
+                console.log(`[WhatsAppQueueWorker] Transient send error on #${item.id}. Pausing 3s before continuing remaining queue items...`);
+                await new Promise(r => setTimeout(r, 3000));
               }
             }
           }
@@ -1271,18 +1284,25 @@ class WhatsAppQueueWorker {
 
         const hasMoreItems = (remainingCheck?.cnt || 0) > 0;
 
-        // 10–12 second pacing delay before next item if more items remain (unless forceNext requested immediate dispatch)
-        if (hasMoreItems && !this.isPaused && this.pacingMaxMs > 0 && !this.skipNextPacingDelay) {
-          const delayRange = this.pacingMaxMs - this.pacingMinMs;
-          const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
-          this.nextDispatchTimestamp = Date.now() + randomDelay;
-          this.broadcastQueueState(true);
-          
-          console.log(`[WhatsAppQueueWorker] Pacing delay: ${Math.round(randomDelay/1000)}s before next send...`);
-          await this.interruptibleSleep(randomDelay);
-          this.nextDispatchTimestamp = null;
-          if (this.isPaused) {
-            break;
+        // Safe anti-ban pacing delay before next item if more items remain.
+        // Even if user clicked "Send Now" in UI (skipNextPacingDelay = true), enforce a 2.5s safe minimum
+        // so Puppeteer page context and WhatsApp Web websocket never collide.
+        if (hasMoreItems && !this.isPaused) {
+          const delayRange = Math.max(0, this.pacingMaxMs - this.pacingMinMs);
+          const baseDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
+          const actualDelay = this.skipNextPacingDelay ? 2500 : baseDelay;
+          this.skipNextPacingDelay = false;
+
+          if (actualDelay > 0 && this.pacingMaxMs > 0) {
+            this.nextDispatchTimestamp = Date.now() + actualDelay;
+            this.broadcastQueueState(true);
+            
+            console.log(`[WhatsAppQueueWorker] Pacing delay: ${Math.round(actualDelay/1000)}s before next send...`);
+            await this.interruptibleSleep(actualDelay);
+            this.nextDispatchTimestamp = null;
+            if (this.isPaused) {
+              break;
+            }
           }
         }
         this.skipNextPacingDelay = false;

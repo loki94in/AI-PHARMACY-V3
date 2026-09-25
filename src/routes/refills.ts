@@ -1452,8 +1452,6 @@ router.post('/:id/send', async (req, res) => {
       ['refill_reminder', patientName, cleanPhone, msg, 'queued', String(id)]
     );
 
-    await whatsappQueueWorker.forceNext().catch(() => {});
-
     res.json({
       success: true,
       queueId,
@@ -1587,8 +1585,6 @@ router.post('/send-grouped', async (req, res) => {
       );
     }
 
-    await whatsappQueueWorker.forceNext().catch(() => {});
-
     res.json({
       success: true,
       queueId,
@@ -1712,8 +1708,6 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
       );
     }
 
-    await whatsappQueueWorker.forceNext().catch(() => {});
-
     res.json({ success: true, queueId, reminder_status: 'QUEUED', message: 'Tomorrow reminder queued successfully via WhatsApp Queue' });
   } catch (err: any) {
     console.error('Failed to send tomorrow reminder:', err);
@@ -1821,8 +1815,6 @@ router.post('/send-reminder-now', async (req, res) => {
         ['refill_reminder', patientName, cleanPhone, msg, 'queued', String(r.id)]
       );
     }
-
-    await whatsappQueueWorker.forceNext().catch(() => {});
 
     res.json({ success: true, queueId, reminder_status: 'QUEUED', message: 'Refill reminder queued via WhatsApp' });
   } catch (err: any) {

@@ -416,28 +416,30 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
   const last10 = cleanPhone.slice(-10);
   const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1000;
 
-  // 60-minute duplicate safeguard: suppress duplicate arrival messages within 60 minutes unless forceResend is set
-  if (!options?.forceResend) {
-    const recentQueue = await db.get(
-      `SELECT id, created_at FROM whatsapp_send_queue
-       WHERE (number LIKE ? OR number LIKE ?)
-         AND type = 'special_order'
-         AND status NOT IN ('cancelled', 'failed_perm')
-         AND created_at >= ?
-       ORDER BY created_at DESC LIMIT 1`,
-      [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
-    );
-
-    if (recentQueue) {
-      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (already queued within 60m, queue ID: ${recentQueue.id}).`);
-      return false;
-    }
-  }
-
   const custRow = await db.get('SELECT language FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
   const lang = custRow?.language || 'en';
 
   const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db, lang);
+
+  // 60-minute duplicate safeguard: suppress duplicate arrival messages for the SAME medicine/order within 60 minutes
+  // unless forceResend or skipDedupe is set. Does NOT suppress different medicines for the same customer.
+  if (!options?.forceResend && !options?.skipDedupe) {
+    const recentQueue = await db.get(
+      `SELECT id, created_at FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'special_order'
+         AND message = ?
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last10}%`, `%${formattedPhone}%`, msg, sixtyMinutesAgoMs]
+    );
+
+    if (recentQueue) {
+      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same medicine already queued within 60m, queue ID: ${recentQueue.id}).`);
+      return false;
+    }
+  }
 
   let pdfPath: string | undefined = undefined;
   try {
@@ -466,8 +468,6 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
 
   // Pre-warm / wake WhatsApp if sleeping so it is ready immediately
   void ensureWhatsAppReady(30_000).catch(() => {});
-  // User clicked: clear pacing countdown so the tick appears immediately in the queue UI
-  void whatsappQueueWorker.forceNext().catch(() => {});
 
   await db.run(
     `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
@@ -663,7 +663,6 @@ router.post('/batch-notify-arrival', async (req, res) => {
 
     // Pre-warm / wake WhatsApp if sleeping so it is ready immediately
     void ensureWhatsAppReady(30_000).catch(() => {});
-    void whatsappQueueWorker.forceNext().catch(() => {});
 
     // Update orders in SQLite
     for (const ord of orders) {
@@ -1101,7 +1100,6 @@ router.put('/:id', async (req, res) => {
         );
 
         paymentQrSent = true;
-        void whatsappQueueWorker.forceNext().catch(() => {});
         console.log(`[Orders] Auto-sent payment QR to ${formattedQrPhone} for ${soCode} after distributor assigned: ${newDistributor}`);
       } catch (qrErr: any) {
         console.error('[Orders] Failed to auto-send payment QR on distributor assignment:', qrErr?.message || qrErr);
@@ -1178,11 +1176,16 @@ router.put('/:id', async (req, res) => {
     if (newStatus === 'Cancelled') {
       try {
         const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
-        cartAdjustment = await adjustSpecialOrderInLiveCart({
-          product: newProduct || existing.product,
-          qty: newQty || existing.qty,
-          distributor: newDistributor || existing.pharmarack_distributor
-        });
+        cartAdjustment = await Promise.race([
+          adjustSpecialOrderInLiveCart({
+            product: newProduct || existing.product,
+            qty: newQty || existing.qty,
+            distributor: newDistributor || existing.pharmarack_distributor,
+            productCode: newProductCode || existing.pharmarack_product_code,
+            storeId: newStoreId || existing.pharmarack_store_id
+          }),
+          new Promise(r => setTimeout(() => r(null), 1500))
+        ]);
       } catch (cartErr) {
         console.warn('[Orders] Could not auto-adjust live cart on order cancel:', cartErr);
       }
@@ -1254,11 +1257,16 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
     if (status === 'Cancelled') {
       try {
         const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
-        cartAdjustment = await adjustSpecialOrderInLiveCart({
-          product: existing.product,
-          qty: existing.qty,
-          distributor: existing.pharmarack_distributor
-        });
+        cartAdjustment = await Promise.race([
+          adjustSpecialOrderInLiveCart({
+            product: existing.product,
+            qty: existing.qty,
+            distributor: existing.pharmarack_distributor,
+            productCode: existing.pharmarack_product_code,
+            storeId: existing.pharmarack_store_id
+          }),
+          new Promise(r => setTimeout(() => r(null), 1500))
+        ]);
       } catch (cartErr) {
         console.warn('[Orders] Could not auto-adjust live cart on order status Cancelled:', cartErr);
       }
@@ -1299,11 +1307,16 @@ router.delete('/:id', async (req, res) => {
     let cartAdjustment: any = null;
     try {
       const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
-      cartAdjustment = await adjustSpecialOrderInLiveCart({
-        product: existing.product,
-        qty: existing.qty,
-        distributor: existing.pharmarack_distributor
-      });
+      cartAdjustment = await Promise.race([
+        adjustSpecialOrderInLiveCart({
+          product: existing.product,
+          qty: existing.qty,
+          distributor: existing.pharmarack_distributor,
+          productCode: existing.pharmarack_product_code,
+          storeId: existing.pharmarack_store_id
+        }),
+        new Promise(r => setTimeout(() => r(null), 1500))
+      ]);
     } catch (cartErr) {
       console.warn('[Orders] Could not auto-adjust live cart on order delete:', cartErr);
     }

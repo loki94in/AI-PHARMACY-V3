@@ -391,10 +391,6 @@ router.post('/enqueue-single', async (req, res) => {
       explicitScheduledAt
     );
 
-    // User-clicked send: clear any pacing countdown and dispatch immediately so the
-    // UI flips Pending -> Sent without waiting out the safe-pacing delay.
-    await whatsappQueueWorker.forceNext();
-
     res.json({
       success: true,
       queueId,

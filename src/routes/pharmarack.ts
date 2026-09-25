@@ -1710,6 +1710,31 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
     let resolvedPtr = Number(ptr || 0);
     let resolvedMrp = Number(mrp || 0);
 
+    // Step A0: Instant local DB lookup from special_orders table if ProductCode is missing
+    if (!resolvedProductCode && productName) {
+      try {
+        const db = await dbManager.getConnection();
+        const row = await db.get(
+          `SELECT pharmarack_product_code, pharmarack_product_id, pharmarack_store_id, pharmarack_distributor, mrp, ptr 
+           FROM special_orders 
+           WHERE (pharmarack_product_code IS NOT NULL AND pharmarack_product_code != '')
+             AND (product = ? OR pharmarack_product_name = ?)
+           ORDER BY id DESC LIMIT 1`,
+          [productName.trim(), productName.trim()]
+        );
+        if (row && row.pharmarack_product_code) {
+          resolvedProductCode = row.pharmarack_product_code;
+          if (!resolvedProductId && row.pharmarack_product_id) resolvedProductId = Number(row.pharmarack_product_id);
+          if (!storeId && row.pharmarack_store_id) (item as any).storeId = Number(row.pharmarack_store_id);
+          if (!resolvedPtr && row.ptr) resolvedPtr = Number(row.ptr);
+          if (!resolvedMrp && row.mrp) resolvedMrp = Number(row.mrp);
+          console.log(`[Pharmarack Delete Worker] Resolved productCode "${resolvedProductCode}" instantly from special_orders DB for "${productName}".`);
+        }
+      } catch (dbErr) {
+        console.warn('[Pharmarack Delete Worker] Local DB resolution warning:', dbErr);
+      }
+    }
+
     // Step A: Search enrichment ONLY if ProductCode is missing/empty.
     // Never overwrite an existing valid productCode or look across different stores!
     if (!resolvedProductCode && token) {
@@ -1731,7 +1756,7 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
           const searchRes = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
             method: 'POST',
             body: JSON.stringify(searchPayload),
-            signal: AbortSignal.timeout(6000) // Increased buffer for slow connections
+            signal: AbortSignal.timeout(4000)
           });
           if (searchRes.ok) {
             const searchData: any = await searchRes.json().catch(() => null);
@@ -1754,56 +1779,93 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
 
     // Step B: Official Pharmarack live cart item deletion via DeleteUserCartDetailByStoreIdV2 (GET)
     if (resolvedProductCode) {
-      try {
-        const deleteUrl = new URL('https://pharmretail-api.pharmarack.com/cart/api/v1/DeleteUserCartDetailByStoreIdV2');
-        deleteUrl.searchParams.set('StoreId', String(storeId));
-        deleteUrl.searchParams.set('ProductCode', String(resolvedProductCode));
+      const deleteUrl = new URL('https://pharmretail-api.pharmarack.com/cart/api/v1/DeleteUserCartDetailByStoreIdV2');
+      deleteUrl.searchParams.set('StoreId', String(storeId));
+      deleteUrl.searchParams.set('ProductCode', String(resolvedProductCode));
 
-        const secRes = await fetchPharmarack(deleteUrl.toString(), {
-          method: 'GET',
-          signal: AbortSignal.timeout(10000)
-        });
+      for (let attempt = 1; attempt <= 2 && !deleteSuccess; attempt++) {
+        try {
+          if (attempt > 1) {
+            console.log(`[Pharmarack Delete Worker] Retrying delete for "${productName || resolvedProductCode}" (attempt ${attempt})...`);
+            await new Promise(r => setTimeout(r, 1500));
+          }
 
-        if (secRes.ok) {
-          const secJson: any = await secRes.json().catch(() => ({}));
-          const rawList = secJson.IList || secJson.data || secJson.Data;
-          if (Array.isArray(rawList)) {
-            // Check if the item still exists under target storeId in returned live cart
-            const targetStore = rawList.find((s: any) => Number(s.StoreId || s.storeId) === Number(storeId));
-            if (!targetStore) {
-              // Store is empty or removed entirely -> item definitely removed
-              deleteSuccess = true;
+          const secRes = await fetchPharmarack(deleteUrl.toString(), {
+            method: 'GET',
+            signal: AbortSignal.timeout(25000)
+          });
+
+          if (secRes.ok) {
+            const secJson: any = await secRes.json().catch(() => ({}));
+            const rawList = secJson.IList || secJson.data || secJson.Data;
+            if (Array.isArray(rawList)) {
+              // Check if the item still exists under target storeId in returned live cart
+              const targetStore = rawList.find((s: any) => Number(s.StoreId || s.storeId) === Number(storeId));
+              if (!targetStore) {
+                // Store is empty or removed entirely -> item definitely removed
+                deleteSuccess = true;
+              } else {
+                const rawItems = targetStore.lineItems || targetStore.LineItems || targetStore.items || targetStore.Items || targetStore.CartItemList || [];
+                const stillExists = rawItems.some((it: any) => {
+                  const codeMatch = String(it.ProductCode || it.productCode || '') === String(resolvedProductCode);
+                  const nameMatch = productName && (it.ProductName || it.productName || '').trim().toLowerCase() === productName.trim().toLowerCase();
+                  return codeMatch || nameMatch;
+                });
+                deleteSuccess = !stillExists;
+                if (stillExists) {
+                  lastError = `Item still returned in distributor cart by upstream server`;
+                }
+              }
             } else {
-              const rawItems = targetStore.lineItems || targetStore.LineItems || targetStore.items || targetStore.Items || targetStore.CartItemList || [];
-              const stillExists = rawItems.some((it: any) => {
-                const codeMatch = String(it.ProductCode || it.productCode || '') === String(resolvedProductCode);
-                const nameMatch = productName && (it.ProductName || it.productName || '').trim().toLowerCase() === productName.trim().toLowerCase();
-                return codeMatch || nameMatch;
-              });
-              deleteSuccess = !stillExists;
-              if (stillExists) {
-                lastError = `Item still returned in distributor cart by upstream server`;
+              // Fallback for non-array responses: check status code
+              const isSecOk = secJson && (
+                secJson.StatusCode === 200 || 
+                secJson.statusCode === 200 || 
+                secJson.status === 'success' || 
+                secJson.success === true
+              );
+              if (isSecOk) {
+                deleteSuccess = true;
+              } else {
+                lastError = secJson?.message || secJson?.Message || 'Upstream delete failed';
               }
             }
           } else {
-            // Fallback for non-array responses: check status code
-            const isSecOk = secJson && (
-              secJson.StatusCode === 200 || 
-              secJson.statusCode === 200 || 
-              secJson.status === 'success' || 
-              secJson.success === true
-            );
-            if (isSecOk) {
-              deleteSuccess = true;
-            } else {
-              lastError = secJson?.message || secJson?.Message || 'Upstream delete failed';
+            lastError = `DeleteUserCartDetailByStoreIdV2 returned HTTP ${secRes.status}`;
+          }
+        } catch (err: any) {
+          lastError = err?.message || String(err);
+        }
+      }
+
+      // If delete was not confirmed (e.g. timeout during bulky response serialization), verify via quick cart probe
+      if (!deleteSuccess) {
+        try {
+          const probe = await probeUserCartDetails(8000);
+          if (probe.ok && probe.data) {
+            const rawList = probe.data.IList || probe.data.data || probe.data.Data;
+            if (Array.isArray(rawList)) {
+              const targetStore = rawList.find((s: any) => Number(s.StoreId || s.storeId) === Number(storeId));
+              if (!targetStore) {
+                deleteSuccess = true;
+                console.log(`[Pharmarack Delete Worker] Post-delete probe confirmed distributor cart empty for "${productName || resolvedProductCode}".`);
+              } else {
+                const rawItems = targetStore.lineItems || targetStore.LineItems || targetStore.items || targetStore.Items || targetStore.CartItemList || [];
+                const stillExists = rawItems.some((it: any) => {
+                  const codeMatch = String(it.ProductCode || it.productCode || '') === String(resolvedProductCode);
+                  const nameMatch = productName && (it.ProductName || it.productName || '').trim().toLowerCase() === productName.trim().toLowerCase();
+                  return codeMatch || nameMatch;
+                });
+                if (!stillExists) {
+                  deleteSuccess = true;
+                  console.log(`[Pharmarack Delete Worker] Post-delete probe confirmed item "${productName || resolvedProductCode}" removed from live cart.`);
+                }
+              }
             }
           }
-        } else {
-          lastError = `DeleteUserCartDetailByStoreIdV2 returned HTTP ${secRes.status}`;
+        } catch (probeErr) {
+          console.warn('[Pharmarack Delete Worker] Post-delete cart verification probe error:', probeErr);
         }
-      } catch (err: any) {
-        lastError = err.message;
       }
     } else {
       lastError = 'Missing ProductCode for cart item deletion';
@@ -1849,11 +1911,26 @@ router.post('/delete-cart-item', async (req, res) => {
   try {
     const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
     pharmarackDeleteChain = task;
-    const success = await task;
-    if (success) {
-      return res.json({ success: true, message: 'Item deleted from Pharmarack live cart' });
+
+    // Race task with a 2.5s responsiveness window so the client/UI never hangs
+    const raceResult = await Promise.race([
+      task.then(res => ({ completed: true, success: res })),
+      new Promise<{ completed: false }>(r => setTimeout(() => r({ completed: false }), 2500))
+    ]);
+
+    if (raceResult.completed) {
+      if (raceResult.success) {
+        return res.json({ success: true, message: 'Item deleted from Pharmarack live cart' });
+      } else {
+        return res.status(500).json({ success: false, error: 'Failed to delete item from Pharmarack live cart' });
+      }
     } else {
-      return res.status(500).json({ success: false, error: 'Failed to delete item from Pharmarack live cart' });
+      // Completed in background — frontend stays responsive and receives SSE when done
+      return res.status(202).json({
+        success: true,
+        background: true,
+        message: 'Cart deletion queued and processing in background'
+      });
     }
   } catch (err: any) {
     console.error('[Pharmarack Delete Worker] Runner error:', err);
@@ -1881,6 +1958,8 @@ export async function adjustSpecialOrderInLiveCart(order: {
   product: string;
   qty?: number;
   distributor?: string | null;
+  productCode?: string | null;
+  storeId?: number | null;
 }): Promise<SpecialOrderCartAdjustmentResult> {
   try {
     const rawProd = (order.product || '').trim();
@@ -1899,19 +1978,37 @@ export async function adjustSpecialOrderInLiveCart(order: {
     let matchedItem: any = null;
     let matchedDist: any = null;
 
-    // Pass 1: Match by distributor + exact normalized product name
-    for (const dist of cart.distributors) {
-      const distNorm = normalize(dist.storeName || '');
-      const distMatches = !targetDistNorm || distNorm.includes(targetDistNorm) || targetDistNorm.includes(distNorm);
-      for (const it of dist.items || []) {
-        const itNorm = normalize(it.productName || '');
-        if (itNorm === targetNorm && distMatches) {
-          matchedItem = it;
-          matchedDist = dist;
-          break;
+    // Pass 0: Direct match by productCode and storeId if provided
+    if (order.productCode) {
+      for (const dist of cart.distributors) {
+        if (!order.storeId || Number(dist.storeId) === Number(order.storeId)) {
+          for (const it of dist.items || []) {
+            if (String(it.productCode || it.ProductCode || '') === String(order.productCode)) {
+              matchedItem = it;
+              matchedDist = dist;
+              break;
+            }
+          }
         }
+        if (matchedItem) break;
       }
-      if (matchedItem) break;
+    }
+
+    // Pass 1: Match by distributor + exact normalized product name
+    if (!matchedItem) {
+      for (const dist of cart.distributors) {
+        const distNorm = normalize(dist.storeName || '');
+        const distMatches = !targetDistNorm || distNorm.includes(targetDistNorm) || targetDistNorm.includes(distNorm);
+        for (const it of dist.items || []) {
+          const itNorm = normalize(it.productName || '');
+          if (itNorm === targetNorm && distMatches) {
+            matchedItem = it;
+            matchedDist = dist;
+            break;
+          }
+        }
+        if (matchedItem) break;
+      }
     }
 
     // Pass 2: Match by exact normalized product name across any distributor
@@ -1954,10 +2051,10 @@ export async function adjustSpecialOrderInLiveCart(order: {
     // Branch A: Entire requested quantity or more is cancelled -> Remove item completely from live cart
     if (currentCartQty <= requestedQty) {
       const deleteItem: PharmarackDeleteQueueItem = {
-        storeId: Number(matchedItem.storeId),
+        storeId: Number(matchedItem.storeId || order.storeId),
         productId: matchedItem.productId,
-        productCode: matchedItem.productCode,
-        productName: matchedItem.productName,
+        productCode: matchedItem.productCode || order.productCode,
+        productName: matchedItem.productName || rawProd,
         company: matchedItem.company,
         packaging: matchedItem.packaging,
         ptr: matchedItem.ptr,
@@ -1967,7 +2064,11 @@ export async function adjustSpecialOrderInLiveCart(order: {
 
       const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
       pharmarackDeleteChain = task;
-      await task;
+      // Non-blocking race: wait up to 2.5s for fast response, otherwise continue in background
+      await Promise.race([
+        task.catch(() => {}),
+        new Promise(r => setTimeout(r, 2500))
+      ]);
 
       return {
         action: 'removed',

@@ -131,6 +131,26 @@ describe('WhatsApp Intent Keywords Parsing Tests', () => {
       const res = extractMedicineCandidates('dolo 650 aur DOLO 650');
       expect(res).toHaveLength(1);
     });
+
+    test('retains Pan D and Pan 40 without noise stripping when requested with other medicines', () => {
+      const res1 = extractMedicineCandidates('Dolo 650, Pan D');
+      expect(res1.map(c => c.medicineName.toLowerCase())).toEqual(['dolo 650', 'pan d']);
+
+      const res2 = extractMedicineCandidates('1. Dolo 650, 2. Pan 40');
+      expect(res2.map(c => c.medicineName.toLowerCase())).toEqual(['dolo 650', 'pan 40']);
+      expect(res2[0].quantity).toBe(1);
+      expect(res2[1].quantity).toBe(1);
+    });
+
+    test('retains Combiflam Plus without splitting on plus', () => {
+      const res = extractMedicineCandidates('Combiflam Plus and Dolo 650');
+      expect(res.map(c => c.medicineName.toLowerCase())).toEqual(['combiflam plus', 'dolo 650']);
+    });
+
+    test('correctly parses inline space-separated numbered lists', () => {
+      const res = extractMedicineCandidates('1) Pan D 2) Azithral 500');
+      expect(res.map(c => c.medicineName.toLowerCase())).toEqual(['pan d', 'azithral 500']);
+    });
   });
 
   describe('Refill Confirmation Intent Keyword Detection', () => {

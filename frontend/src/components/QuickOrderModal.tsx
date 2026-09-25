@@ -764,30 +764,29 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Auto stage current input if cart is empty but something is typed
+    // Auto stage current input if something is typed, regardless of whether cart already has items
     const finalItems = [...cart];
+    if (product.trim()) {
+      if (qty >= 1) {
+        finalItems.push({
+          product: product.trim(),
+          qty: qty,
+          distributor: selectedDistributor || undefined,
+          rate: selectedRate !== '' ? Number(selectedRate) : undefined,
+          mrp: selectedMrp !== '' ? Number(selectedMrp) : undefined,
+          mapped: selectedMapped !== null ? selectedMapped : undefined,
+          scheme: selectedScheme || undefined,
+          productId: selectedProductId || undefined,
+          storeId: selectedStoreId || undefined,
+          productCode: selectedProductCode || undefined,
+          company: selectedCompany || undefined
+        });
+      }
+    }
+
     if (finalItems.length === 0) {
-      if (!product.trim()) {
-        toastEvent.trigger('Please stage at least one product name first.', 'error');
-        return;
-      }
-      if (qty < 1) {
-        toastEvent.trigger('Quantity must be at least 1.', 'error');
-        return;
-      }
-      finalItems.push({
-        product: product.trim(),
-        qty: qty,
-        distributor: selectedDistributor || undefined,
-        rate: selectedRate !== '' ? Number(selectedRate) : undefined,
-        mrp: selectedMrp !== '' ? Number(selectedMrp) : undefined,
-        mapped: selectedMapped !== null ? selectedMapped : undefined,
-        scheme: selectedScheme || undefined,
-        productId: selectedProductId || undefined,
-        storeId: selectedStoreId || undefined,
-        productCode: selectedProductCode || undefined,
-        company: selectedCompany || undefined
-      });
+      toastEvent.trigger('Please stage at least one product name first.', 'error');
+      return;
     }
 
     // Capture customer & priority details (Customer details optional / store default)
