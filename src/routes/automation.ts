@@ -213,6 +213,143 @@ router.get('/notifications', async (req, res) => {
   }
 });
 
+// Daily notification summary (sent count today, staged count, sent map, and today's log)
+router.get('/notifications/daily-summary', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    
+    // Count sent today across all types
+    const sentTodayRow = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM automation_notifications 
+      WHERE status IN ('sent', 'sent_manually', 'delivered') 
+        AND (DATE(created_at) = DATE('now', 'localtime') OR DATE(resolved_at) = DATE('now', 'localtime'))
+    `);
+    
+    const stagedCountRow = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM automation_notifications 
+      WHERE status = 'staged'
+    `);
+
+    // Phones sent today with latest timestamp
+    const sentPhones = await db.all(`
+      SELECT recipient_phone, recipient_name, MAX(created_at) as last_sent_at, message, type
+      FROM automation_notifications
+      WHERE status IN ('sent', 'sent_manually', 'delivered')
+        AND (DATE(created_at) = DATE('now', 'localtime') OR DATE(resolved_at) = DATE('now', 'localtime'))
+      GROUP BY recipient_phone
+    `);
+
+    // Full log for today (sent, staged, cancelled)
+    const todayLog = await db.all(`
+      SELECT id, type, recipient_name, recipient_phone, message, status, created_at, resolved_at, reference_id
+      FROM automation_notifications
+      WHERE DATE(created_at) = DATE('now', 'localtime')
+         OR DATE(resolved_at) = DATE('now', 'localtime')
+         OR status = 'staged'
+      ORDER BY created_at DESC
+      LIMIT 100
+    `);
+
+    res.json({
+      success: true,
+      sentTodayCount: sentTodayRow?.count || 0,
+      stagedCount: stagedCountRow?.count || 0,
+      sentPhones,
+      todayLog
+    });
+  } catch (err: any) {
+    console.error('Failed to get daily notification summary:', err);
+    res.status(500).json({ error: 'Failed to get daily notification summary: ' + err.message });
+  }
+});
+
+// Snooze single notification by days (default +1 day)
+router.post('/notifications/:id/snooze', async (req, res) => {
+  const { id } = req.params;
+  const days = Math.max(1, parseInt(req.body?.days || '1', 10));
+  try {
+    const db = await dbManager.getConnection();
+    const existing = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [id]);
+    if (!existing) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    await db.run(
+      `UPDATE automation_notifications 
+       SET status = 'snoozed', 
+           lifecycle_status = 'snoozed',
+           error_message = ? 
+       WHERE id = ?`,
+      [`Snoozed by ${days} day(s) until tomorrow`, id]
+    );
+
+    // If associated with patient_refills, shift next_refill_date by +days
+    if (existing.reference_id && (existing.type === 'refill_collection' || existing.type === 'refill_reminder')) {
+      const refIds = String(existing.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
+      for (const refId of refIds) {
+        await db.run(
+          `UPDATE patient_refills 
+           SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
+               reminder_status = 'NOT_SENT'
+           WHERE id = ?`,
+          [`+${days} day`, refId]
+        ).catch(() => {});
+      }
+    }
+
+    res.json({ success: true, message: `Notification snoozed for ${days} day(s)` });
+  } catch (err: any) {
+    console.error('Failed to snooze notification:', err);
+    res.status(500).json({ error: 'Failed to snooze notification: ' + err.message });
+  }
+});
+
+// Snooze group of notifications
+router.post('/notifications/group/snooze', async (req, res) => {
+  const { ids, days = 1 } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required' });
+  }
+  const snoozeDays = Math.max(1, parseInt(String(days), 10));
+
+  try {
+    const db = await dbManager.getConnection();
+    for (const notifId of ids) {
+      const existing = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [notifId]);
+      if (!existing) continue;
+
+      await db.run(
+        `UPDATE automation_notifications 
+         SET status = 'snoozed', 
+             lifecycle_status = 'snoozed',
+             error_message = ? 
+         WHERE id = ?`,
+        [`Snoozed by ${snoozeDays} day(s)`, notifId]
+      );
+
+      if (existing.reference_id && (existing.type === 'refill_collection' || existing.type === 'refill_reminder')) {
+        const refIds = String(existing.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
+        for (const refId of refIds) {
+          await db.run(
+            `UPDATE patient_refills 
+             SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
+                 reminder_status = 'NOT_SENT'
+             WHERE id = ?`,
+            [`+${snoozeDays} day`, refId]
+          ).catch(() => {});
+        }
+      }
+    }
+
+    res.json({ success: true, message: `Snoozed ${ids.length} notification(s) for ${snoozeDays} day(s)` });
+  } catch (err: any) {
+    console.error('Failed to batch snooze notifications:', err);
+    res.status(500).json({ error: 'Failed to batch snooze: ' + err.message });
+  }
+});
+
 // Retry sending a notification
 router.post('/notifications/:id/retry', async (req, res) => {
   const { id } = req.params;

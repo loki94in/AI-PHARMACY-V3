@@ -58,7 +58,9 @@ import {
   Clock as ClockIcon,
   AlertTriangle as AlertIcon,
   MessageSquare as MessageSquareIcon,
-  Send as SendIcon
+  Send as SendIcon,
+  Calendar,
+  RotateCw,
 } from 'lucide-react';
 
 
@@ -78,6 +80,7 @@ import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
 import type { QuickAssistEditGroup } from './QuickAssistOrderEditModal';
+import { DailyCommunicationsModal, type DailyLogItem } from './DailyCommunicationsModal';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -2583,6 +2586,82 @@ const QuickAssistSidebar = memo(({
   const [expandedRefillKeys, setExpandedRefillKeys] = useState<Set<string>>(new Set());
   const [expandedWebsiteOrderKeys, setExpandedWebsiteOrderKeys] = useState<Set<string>>(new Set());
   const [expandedSpecialOrderKeys, setExpandedSpecialOrderKeys] = useState<Set<string>>(new Set());
+  const [expandedStagedKeys, setExpandedStagedKeys] = useState<Set<string>>(new Set());
+  const [snoozingKeys, setSnoozingKeys] = useState<Set<string>>(new Set());
+  const [isDailyModalOpen, setIsDailyModalOpen] = useState<boolean>(false);
+  const [dailySummary, setDailySummary] = useState<{
+    sentTodayCount: number;
+    stagedCount: number;
+    sentPhones: Array<{ recipient_phone: string; last_sent_at: string; recipient_name?: string }>;
+    todayLog: DailyLogItem[];
+  }>({
+    sentTodayCount: 0,
+    stagedCount: 0,
+    sentPhones: [],
+    todayLog: []
+  });
+
+  const loadDailySummary = useCallback(() => {
+    api.getDailyNotificationSummary()
+      .then(res => {
+        if (res && res.success) {
+          setDailySummary({
+            sentTodayCount: res.sentTodayCount || 0,
+            stagedCount: res.stagedCount || 0,
+            sentPhones: res.sentPhones || [],
+            todayLog: (res.todayLog as any) || []
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (expanded) {
+      loadDailySummary();
+    }
+  }, [expanded, loadDailySummary, notifications]);
+
+  const toggleStagedKey = (key: string) => {
+    setExpandedStagedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSnoozeStagedGroup = async (group: {
+    key: string;
+    recipient_name: string;
+    messages: Array<{ id: number }>;
+  }) => {
+    if (snoozingKeys.has(group.key)) return;
+    setSnoozingKeys(prev => new Set(prev).add(group.key));
+    try {
+      const ids = group.messages.map(m => m.id);
+      await api.snoozeNotificationGroup(ids, 1);
+      toastEvent.trigger(`Snoozed reminder for ${group.recipient_name} by 1 day`, 'info');
+      refillEvent.triggerRefresh();
+      loadDailySummary();
+      onActionComplete();
+    } catch (err: unknown) {
+      console.error('Failed to snooze staged group:', err);
+      toastEvent.trigger('Failed to snooze reminder', 'error');
+    } finally {
+      setSnoozingKeys(prev => {
+        const next = new Set(prev);
+        next.delete(group.key);
+        return next;
+      });
+    }
+  };
+
+  const getAlreadySentInfo = (phone?: string) => {
+    if (!phone) return null;
+    const cleanP = phone.replace(/\D/g, '').slice(-10);
+    return dailySummary.sentPhones.find(p => (p.recipient_phone || '').replace(/\D/g, '').slice(-10) === cleanP);
+  };
   const [imageReviewCount, setImageReviewCount] = useState<number>(0);
 
   useEffect(() => {
@@ -2808,6 +2887,7 @@ const QuickAssistSidebar = memo(({
 
       toastEvent.trigger(`Consolidated WhatsApp message queued for ${group.recipient_name}!`, 'success');
       refillEvent.triggerRefresh();
+      loadDailySummary();
       onActionComplete();
     } catch (err: unknown) {
       console.error('Failed to send staged message group:', err);
@@ -2858,6 +2938,7 @@ const QuickAssistSidebar = memo(({
 
       toastEvent.trigger('Staged message dismissed', 'info');
       refillEvent.triggerRefresh();
+      loadDailySummary();
       onActionComplete();
     } catch (err) {
       console.error('Failed to dismiss staged notification:', err);
@@ -3973,60 +4054,150 @@ const QuickAssistSidebar = memo(({
 
         {/* Staged Messages */}
         <div>
-          <div className="flex items-center gap-2 mb-2 text-xs font-bold uppercase tracking-wider text-purple-300">
-            <MessageSquareIcon size={14} className="text-purple-500" />
-            <span>Staged Messages ({groupedNotifications.length})</span>
+          <div className="flex items-center justify-between mb-2 text-xs font-bold uppercase tracking-wider text-purple-300">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <MessageSquareIcon size={14} className="text-purple-500 shrink-0" />
+              <span className="truncate">Staged Messages ({groupedNotifications.length})</span>
+              {dailySummary.sentTodayCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-400 text-[9px] font-mono font-bold shrink-0 border border-emerald-500/20">
+                  {dailySummary.sentTodayCount} Sent
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDailyModalOpen(true)}
+              className="text-[9px] font-black text-purple-300 hover:text-purple-200 hover:underline uppercase tracking-widest cursor-pointer flex items-center gap-1 shrink-0"
+              title="Open Daily Communications & Sent History Log"
+            >
+              <span>Daily Log</span>
+            </button>
           </div>
           {groupedNotifications.length === 0 ? (
-            <p className="text-xs text-muted/60 pl-2">No staged messages</p>
+            <div className="flex items-center justify-between pl-2 py-1">
+              <p className="text-xs text-muted/60">No staged messages</p>
+              {dailySummary.sentTodayCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsDailyModalOpen(true)}
+                  className="text-[10px] font-bold text-emerald-400 hover:underline cursor-pointer"
+                >
+                  View {dailySummary.sentTodayCount} sent today
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col gap-2.5">
               {groupedNotifications.map(group => {
                 const isSending = sendingNotifKeys.has(group.key);
+                const isSnoozing = snoozingKeys.has(group.key);
+                const isExpanded = expandedStagedKeys.has(group.key);
+                const alreadySent = getAlreadySentInfo(group.recipient_phone);
+
                 return (
-                  <div key={group.key} className="p-3 rounded-xl bg-purple-500/[0.05] border border-purple-500/25 flex flex-col gap-2 min-w-0 overflow-hidden shadow-xs">
-                    <div className="flex items-center justify-between gap-2 min-w-0">
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <span className="font-semibold text-text truncate">{group.recipient_name}</span>
-                        {group.messages.length > 1 && (
-                          <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
-                            {group.messages.length} meds
+                  <div
+                    key={group.key}
+                    className="p-3 rounded-xl border flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs bg-purple-500/[0.05] border-purple-500/25"
+                  >
+                    {/* Header (Click to toggle expansion / fold & unfold preview) */}
+                    <div
+                      onClick={() => toggleStagedKey(group.key)}
+                      className="flex items-start justify-between gap-1.5 min-w-0 cursor-pointer select-none"
+                    >
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className="font-bold text-xs text-text truncate" title={group.recipient_name}>
+                            {group.recipient_name}
                           </span>
-                        )}
+                          {group.messages.length > 1 ? (
+                            <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
+                              {group.messages.length} meds
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
+                              Refill
+                            </span>
+                          )}
+                          {alreadySent && (
+                            <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 text-[9px] font-bold shrink-0 border border-amber-500/25">
+                              ⚠️ Sent Today
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-muted truncate mt-0.5 font-mono">
+                          <span>{group.recipient_phone}</span>
+                          {alreadySent && (
+                            <span className="text-amber-400 font-sans truncate">
+                              • Last: {(() => {
+                                try {
+                                  return new Date(alreadySent.last_sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                } catch (_) {
+                                  return alreadySent.last_sent_at;
+                                }
+                              })()}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <span className="text-[10px] text-purple-300 font-bold font-mono truncate shrink-0 max-w-[110px]">{group.recipient_phone}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${isExpanded ? 'rotate-180 text-purple-400' : ''}`} />
+                      </div>
                     </div>
 
-                    <p className="text-[11px] text-text/85 leading-snug italic bg-bg2 p-2.5 rounded-lg border border-border break-words font-medium">
-                      "{group.consolidatedMessage}"
-                    </p>
+                    {/* Collapsible preview of message */}
+                    {isExpanded ? (
+                      <p className="text-[11px] text-text/85 leading-snug italic bg-bg2 p-2 rounded-lg border border-border break-words font-medium">
+                        "{group.consolidatedMessage}"
+                      </p>
+                    ) : (
+                      <p
+                        onClick={() => toggleStagedKey(group.key)}
+                        className="text-[10px] text-muted italic truncate cursor-pointer hover:text-text"
+                        title={group.consolidatedMessage}
+                      >
+                        "{group.consolidatedMessage}"
+                      </p>
+                    )}
 
-                    <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-border">
+                    {/* Action Buttons Footer: Pause (+1d), Cancel, Send / Re-Send */}
+                    <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-border min-w-0">
                       <button
                         type="button"
-                        onClick={() => handleDismissStagedNotificationGroup(group)}
-                        className="py-1 px-2.5 rounded bg-bg3 hover:bg-bg border border-border text-muted hover:text-text text-[9px] font-bold uppercase transition-colors cursor-pointer flex items-center gap-1"
-                        title="Dismiss staged message without sending"
+                        disabled={isSnoozing || isSending}
+                        onClick={() => handleSnoozeStagedGroup(group)}
+                        className="flex-1 py-1 px-2 rounded bg-bg3 hover:bg-amber-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap min-w-0"
+                        title="Pause / Snooze reminder to tomorrow (+1 day)"
                       >
-                        <X size={10} /> Dismiss
+                        {isSnoozing ? <Loader2 size={11} className="animate-spin" /> : <Calendar size={11} />}
+                        Pause (+1d)
                       </button>
 
                       <button
                         type="button"
-                        disabled={isSending}
+                        disabled={isSending || isSnoozing}
+                        onClick={() => handleDismissStagedNotificationGroup(group)}
+                        className="flex-1 py-1 px-2 rounded bg-bg3 hover:bg-red-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap min-w-0"
+                        title="Cancel and dismiss staged message"
+                      >
+                        <X size={11} />
+                        Cancel
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isSending || isSnoozing}
                         onClick={() => handleSendStagedNotificationGroup(group)}
-                        className="py-1 px-2.5 rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9px] font-black tracking-wide uppercase transition-colors shadow-sm cursor-pointer flex items-center gap-1 shrink-0"
-                        title="Send consolidated WhatsApp message to customer"
+                        className="flex-1 py-1 px-2 rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer whitespace-nowrap min-w-0"
+                        title={alreadySent ? "Re-send WhatsApp reminder to customer" : "Send consolidated WhatsApp message to customer"}
                       >
                         {isSending ? (
-                          <>
-                            <Loader2 size={10} className="animate-spin" /> Sending...
-                          </>
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : alreadySent ? (
+                          <RotateCw size={11} />
                         ) : (
-                          <>
-                            <SendIcon size={10} /> Send WhatsApp
-                          </>
+                          <SendIcon size={11} />
                         )}
+                        {alreadySent ? "Re-Send" : "Send"}
                       </button>
                     </div>
                   </div>
@@ -4035,6 +4206,7 @@ const QuickAssistSidebar = memo(({
             </div>
           )}
         </div>
+
 
         {/* 4. Catalogue Image Verification Queue */}
         {imageReviewCount > 0 && (
@@ -4097,6 +4269,20 @@ const QuickAssistSidebar = memo(({
               refillEvent.triggerRefresh();
               window.dispatchEvent(new CustomEvent('refresh-special-orders'));
               window.dispatchEvent(new CustomEvent('refresh-refills'));
+              onActionComplete();
+            }}
+          />
+        )}
+        {isDailyModalOpen && (
+          <DailyCommunicationsModal
+            isOpen={isDailyModalOpen}
+            onClose={() => setIsDailyModalOpen(false)}
+            dailyLog={dailySummary.todayLog}
+            sentTodayCount={dailySummary.sentTodayCount}
+            stagedCount={dailySummary.stagedCount}
+            onRefresh={() => {
+              loadDailySummary();
+              refillEvent.triggerRefresh();
               onActionComplete();
             }}
           />

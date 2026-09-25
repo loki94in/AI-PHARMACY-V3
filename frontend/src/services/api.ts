@@ -1594,6 +1594,34 @@ export const api = {
   retryNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/retry`).then(res => res.data),
   cancelNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/cancel`).then(res => res.data),
   manualNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/manual`).then(res => res.data),
+  getDailyNotificationSummary: () =>
+    apiClient.get<{
+      success: boolean;
+      sentTodayCount: number;
+      stagedCount: number;
+      sentPhones: Array<{
+        recipient_phone: string;
+        recipient_name?: string;
+        last_sent_at: string;
+        message?: string;
+        type?: string;
+      }>;
+      todayLog: Array<{
+        id: number;
+        type: string;
+        recipient_name: string;
+        recipient_phone: string;
+        message: string;
+        status: string;
+        created_at: string;
+        resolved_at?: string;
+        reference_id?: string;
+      }>;
+    }>('/automation/notifications/daily-summary').then(res => res.data),
+  snoozeNotification: (id: number, days?: number) =>
+    apiClient.post<{ success: boolean; message: string }>(`/automation/notifications/${id}/snooze`, { days }).then(res => res.data),
+  snoozeNotificationGroup: (ids: number[], days?: number) =>
+    apiClient.post<{ success: boolean; message: string }>('/automation/notifications/group/snooze', { ids, days }).then(res => res.data),
   getAutomationCatalog: () => apiClient.get<Array<{ id: string; label: string; description: string; enabled: boolean }>>('/automation/catalog').then(res => res.data),
   setAutomationToggle: (id: string, enabled: boolean) => apiClient.post<{ success: boolean }>(`/automation/catalog/${id}/toggle`, { enabled }).then(res => res.data),
   getAutomationHubSummary: () => apiClient.get<AutomationHubSummary>('/automation/hub-summary').then(res => res.data),
