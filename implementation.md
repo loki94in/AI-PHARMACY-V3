@@ -69,8 +69,11 @@ Enable a multi-tiered, human-in-the-loop reminder system for refills and patient
 - `frontend/src/pages/Settings/index.tsx`: Trigger 10 default mode and pharmacy WhatsApp briefing toggles.
 - `frontend/src/pages/Investigation/index.tsx`: Medicine column space expansion and removal of cramped duplicate badge.
 - `src/services/nonWaFallbackService.ts`: Non-WhatsApp communication fallback creating staff call tasks.
-- `src/routes/callTasks.ts` & `frontend/src/components/CallTaskBoard.tsx`: Patient call task queue and interactive board.
+- `src/routes/callTasks.ts` & `frontend/src/components/CallTaskBoard.tsx`: Patient call task queue and interactive board (fixed relative import path `../services/api`).
 - `data/top100_harvest_state.json`: Preserved and merged product harvest catalog state (13,005 items).
-- `npm run guardrails`: Verified and passing.
+- `frontend/src/pages/POS/index.tsx`: 1-batch-per-row architecture with auto-spillover. When requested loose or strip quantity exceeds the current batch's capacity, the active batch row is capped at its stock and a new row is automatically generated for the next unexpired batch. Added `priorityBatchNo`, `priorityInventoryId`, and loose-first allocation.
+- `npm run guardrails`: Verified and passing (tsc --noEmit clean).
 - `node scripts/quick-update.mjs`: Knowledge graph synchronized.
 - Ready for clean commit and push to main.
+
+

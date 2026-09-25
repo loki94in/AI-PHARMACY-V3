@@ -13,7 +13,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../../services/api';
+import { apiClient } from '../services/api';
 import { Phone, CheckCircle, Clock, X, RefreshCw, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface CallTask {

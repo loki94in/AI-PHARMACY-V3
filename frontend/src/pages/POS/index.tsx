@@ -805,6 +805,8 @@ export function allocateMedicineBatches(params: {
   fallbackItem?: Partial<CartRow>;
   compactInventory: CompactInventoryItem[];
   editingInvoiceId?: number | null;
+  priorityBatchNo?: string;
+  priorityInventoryId?: number | string;
 }): CartRow[] {
   const { medicineId, medicineName, compactInventory, editingInvoiceId, requestedQty, requestedLooseQty } = params;
   const pSize = Math.max(1, params.packSize || params.fallbackItem?.packSize || params.fallbackItem?.pack_size || 1);
@@ -883,12 +885,29 @@ export function allocateMedicineBatches(params: {
     return [];
   }
 
-  // 3. Sort active batches by FEFO (First Expiry, First Out):
-  // Full strips first, then loose-only. Earliest expiry first.
+  // 3. Sort active batches:
+  // - Priority batch (e.g. actively edited row batch) strictly comes first!
+  // - For loose-only requests, opened loose stock is prioritized before sealed strips.
+  // - FEFO: Earliest expiry first.
   activeBatches.sort((a, b) => {
-    const aHasStrips = (a.stock_qty || 0) > 0 ? 0 : 1;
-    const bHasStrips = (b.stock_qty || 0) > 0 ? 0 : 1;
-    if (aHasStrips !== bHasStrips) return aHasStrips - bHasStrips;
+    if (params.priorityBatchNo || params.priorityInventoryId) {
+      const aMatch = (params.priorityBatchNo && (a.batch_no === params.priorityBatchNo || (a as any).batch === params.priorityBatchNo)) ||
+                     (params.priorityInventoryId !== undefined && (String(a.inventory_id || a.id) === String(params.priorityInventoryId)));
+      const bMatch = (params.priorityBatchNo && (b.batch_no === params.priorityBatchNo || (b as any).batch === params.priorityBatchNo)) ||
+                     (params.priorityInventoryId !== undefined && (String(b.inventory_id || b.id) === String(params.priorityInventoryId)));
+      if (aMatch && !bMatch) return -1;
+      if (!aMatch && bMatch) return 1;
+    }
+
+    if (requestedLooseQty > 0 && requestedQty === 0) {
+      const aHasLoose = (a.loose_quantity || 0) > 0 ? 0 : 1;
+      const bHasLoose = (b.loose_quantity || 0) > 0 ? 0 : 1;
+      if (aHasLoose !== bHasLoose) return aHasLoose - bHasLoose;
+    } else {
+      const aHasStrips = (a.stock_qty || 0) > 0 ? 0 : 1;
+      const bHasStrips = (b.stock_qty || 0) > 0 ? 0 : 1;
+      if (aHasStrips !== bHasStrips) return aHasStrips - bHasStrips;
+    }
     
     const parseExpToTimestamp = (str: string) => {
       if (!str) return 9999999999999;
@@ -2592,10 +2611,25 @@ const POS = () => {
       requestedQty,
       requestedLooseQty,
       packSize,
-      fallbackItem: medicineItems[0],
+      fallbackItem: targetItem || medicineItems[0],
       compactInventory,
-      editingInvoiceId
+      editingInvoiceId,
+      priorityBatchNo: targetItem?.batch || targetItem?.batch_no,
+      priorityInventoryId: targetItem?.inventory_id || (typeof targetItem?.id === 'number' && targetItem.id < 1000000000 ? targetItem.id : undefined)
     });
+
+    if (newMedRows.length > medicineItems.length) {
+      const addedBatches = newMedRows
+        .filter(r => !medicineItems.some(old => (old.batch || old.batch_no) === (r.batch || r.batch_no)))
+        .map(r => r.batch || r.batch_no)
+        .filter(Boolean);
+      if (addedBatches.length > 0) {
+        toastEvent.trigger(
+          `Batch limit exceeded: Auto-created new row for next batch (${addedBatches.join(', ')})`,
+          "info"
+        );
+      }
+    }
 
     if (newMedRows.length === 0) {
       toastEvent.trigger("This medicine is completely out of stock or expired", "error");
@@ -2732,7 +2766,9 @@ const POS = () => {
         packSize: Number(med.packSize || med.pack_size || 1),
         fallbackItem: newItem as Partial<CartRow>,
         compactInventory,
-        editingInvoiceId
+        editingInvoiceId,
+        priorityBatchNo: med.batch || (med as any).batch_no,
+        priorityInventoryId: med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : undefined)
       });
 
       if (allocated.length > 0) {
@@ -2993,7 +3029,9 @@ const POS = () => {
       requestedLooseQty: defaultLooseQty,
       packSize: med.pack_size || 1,
       compactInventory,
-      editingInvoiceId
+      editingInvoiceId,
+      priorityBatchNo: med.batch_no || (med as any).batch,
+      priorityInventoryId: med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : undefined)
     });
 
     updateCart(prev => {
