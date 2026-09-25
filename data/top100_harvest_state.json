@@ -1,40 +1,30 @@
 {
-  "last_updated": "2026-09-24T15:57:04.894Z",
+  "last_updated": "2026-09-25T05:15:45.605Z",
   "products": {
-    "77": {
-      "status": "not_found_pharmeasy",
-      "company": "ABBOTT HEALTHCARE PVT LTD",
-      "product_name": "FUNGIZONE IV 50 MG INJECTION 10 ML",
-      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
-      "checked_at": "2026-09-24T15:56:33.567Z"
-    },
     "216": {
+      "status": "success",
+      "company": "CIPLA LIMITED",
+      "product_name": "Acivir Dt 200Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "source": "pharmeasy_clean",
+      "checked_at": "2026-09-25T05:15:45.605Z"
+    },
+    "246": {
       "status": "not_found_all_cdns",
       "company": "CIPLA LIMITED",
-      "product_name": "ACIVIR 200MG",
-      "reason": "Exhausted across PharmEasy, Tata 1mg, and Dawa India. Queued for Pharmacist Human Review.",
-      "checked_at": "2026-09-24T15:57:04.894Z"
+      "product_name": "NICOCHEW 2 MG GUM 10",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:15:21.300Z"
     },
-    "882": {
-      "status": "not_found_pharmeasy",
-      "company": "ZYDUS CADILA HEALTHCARE LTD",
-      "product_name": "KWICK HEAL BAND AID BANDAGE 1 CM",
-      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
-      "checked_at": "2026-09-24T15:56:21.585Z"
-    },
-    "997": {
-      "status": "not_found_pharmeasy",
-      "company": "ZEE LABORATORIES LTD",
-      "product_name": "QZEST FORTE STRIP OF 30 TABLETS",
-      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
-      "checked_at": "2026-09-24T15:56:28.313Z"
-    },
-    "2129": {
-      "status": "not_found_pharmeasy",
-      "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "LEUPO 11.25 MG INJECTION 1 ML",
-      "reason": "No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).",
-      "checked_at": "2026-09-24T15:56:26.647Z"
+    "803": {
+      "status": "not_found_all_cdns",
+      "company": "CIPLA LIMITED",
+      "product_name": "RIVELA SPF 30 PLUS TUBE OF 60GM SUNSCREEN GEL",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:15:26.632Z"
     }
   }
 }
