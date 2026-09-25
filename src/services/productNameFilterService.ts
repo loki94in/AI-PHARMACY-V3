@@ -207,6 +207,11 @@ export function extractFormulationModifiers(name: string): Set<string> {
   return found;
 }
 
+export const BENIGN_DELIVERY_MODIFIERS = new Set([
+  'DT', 'MD', 'SL', 'OD', 'DISPERSIBLE',
+  'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA'
+]);
+
 export function hasFormulationModifierConflict(name1: string, name2: string): boolean {
   if (!name1 || !name2) return false;
   const mods1 = extractFormulationModifiers(name1);
@@ -215,16 +220,25 @@ export function hasFormulationModifierConflict(name1: string, name2: string): bo
   // Both have no modifiers (e.g. plain DYTOR 10 vs plain DYTOR 20) -> no modifier conflict
   if (mods1.size === 0 && mods2.size === 0) return false;
 
-  // One is plain and the other is modified (e.g. DYTOR vs DYTOR PLUS or DYTOR COMBIKIT; PAN vs PAN D)
-  if (mods1.size === 0 && mods2.size > 0) return true;
-  if (mods2.size === 0 && mods1.size > 0) return true;
+  // One is plain and the other has modifiers
+  // Allow benign delivery/dispersibility modifiers (e.g. ACIVIR 200 vs ACIVIR DT 200)
+  if (mods1.size === 0 && mods2.size > 0) {
+    const nonBenign = Array.from(mods2).filter(m => !BENIGN_DELIVERY_MODIFIERS.has(m));
+    return nonBenign.length > 0;
+  }
+  if (mods2.size === 0 && mods1.size > 0) {
+    const nonBenign = Array.from(mods1).filter(m => !BENIGN_DELIVERY_MODIFIERS.has(m));
+    return nonBenign.length > 0;
+  }
 
   // Both have modifiers -> ensure equivalent/matching modifier set (e.g. TELMA H vs TELMA AM)
   for (const m1 of mods1) {
+    if (BENIGN_DELIVERY_MODIFIERS.has(m1)) continue;
     const matched = Array.from(mods2).some(m2 => areFormulationModifiersEquivalent(m1, m2));
     if (!matched) return true;
   }
   for (const m2 of mods2) {
+    if (BENIGN_DELIVERY_MODIFIERS.has(m2)) continue;
     const matched = Array.from(mods1).some(m1 => areFormulationModifiersEquivalent(m1, m2));
     if (!matched) return true;
   }

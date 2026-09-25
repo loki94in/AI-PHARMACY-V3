@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-25T05:15:45.605Z",
+  "last_updated": "2026-09-25T05:22:25.799Z",
   "products": {
     "216": {
       "status": "success",
@@ -25,6 +25,118 @@
       "product_name": "RIVELA SPF 30 PLUS TUBE OF 60GM SUNSCREEN GEL",
       "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
       "checked_at": "2026-09-25T05:15:26.632Z"
+    },
+    "1992": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "KWICK AID BANDAID BANDAGE 1.25 CM",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:21:56.414Z"
+    },
+    "4761": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "COLOCHICINE 0.5 MG TABLET 10",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:21:58.399Z"
+    },
+    "42553": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "TELMISARTAN 40MG TAB GENERICS",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:01.050Z"
+    },
+    "58137": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ATENOLOL 50MG TAB GENERICS 10`S",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:03.495Z"
+    },
+    "58504": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "FLUOXETINE CAPSULE 10",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:04.658Z"
+    },
+    "60591": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NEUROMET 500 MCG INJECTION 1 ML",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:06.507Z"
+    },
+    "60885": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NATUROGEST VT 200MG TAB",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:08.471Z"
+    },
+    "62344": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "LANS OD 30MG CAPSULE",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:10.398Z"
+    },
+    "62710": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADIZONE 1GM INJ",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:12.462Z"
+    },
+    "63104": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "MYCOREST 50MG TAB",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:13.509Z"
+    },
+    "63201": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GLISTA OD 2 MG TABLET 30",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:16.378Z"
+    },
+    "63607": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "EUGLIM-M 1/500 MG TABLET 2",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:18.851Z"
+    },
+    "68839": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "R-LOC D 10/150 MG TABLET 10",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:21.371Z"
+    },
+    "72907": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "TELI H 80MG TABLET",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:24.314Z"
+    },
+    "73611": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZOBID MP INJ VET 30ML",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:25.198Z"
+    },
+    "73917": {
+      "status": "not_found_all_cdns",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VASONIT OD 30MG TAB",
+      "reason": "Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.",
+      "checked_at": "2026-09-25T05:22:25.799Z"
     }
   }
 }

@@ -1390,7 +1390,7 @@ export class CatalogImageService {
     let selectedImageUrl: string | null = null;
     let selectedFace: string = 'combined';
     let selectedStitchSecondaryUrl: string | undefined = undefined;
-    let selectedSource: 'pharmeasy' | '1mg' | 'davaindia' = 'pharmeasy';
+    let selectedSource: 'pharmeasy' | '1mg' = 'pharmeasy';
 
     // ── Tier 1: PharmEasy Clean CDN ──
     for (const q of queryVariants) {
@@ -1507,72 +1507,8 @@ export class CatalogImageService {
       }
     }
 
-    // ── Tier 3: Dawa India / Davaindia Generic Indian Formulations (NO WATERMARK) ──
-    if (!selectedCandidate) {
-      for (const q of queryVariants) {
-        if (selectedCandidate) break;
-        try {
-          const davaUrl = `https://api.davaindia.com/products?search=${encodeURIComponent(q)}`;
-          const davaResp = await fetch(davaUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Referer': 'https://www.davaindia.com/'
-            },
-            signal: AbortSignal.timeout(7000)
-          });
-
-          if (!davaResp.ok) continue;
-          const davaJson: any = await davaResp.json();
-          const prods = davaJson?.data || [];
-
-          for (const p of prods) {
-            const rawImgs = Array.isArray(p.images)
-              ? p.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
-              : (p.thumbnail ? [p.thumbnail] : []);
-            if (rawImgs.length === 0) continue;
-
-            const cleanPrimary = this.cleanseCdnImageUrl(rawImgs[0]);
-            if (rejectedUrls.has(cleanPrimary)) continue;
-
-            const matchCheck = this.computeConfidence(med, {
-              name: p.title || p.name,
-              manufacturer: 'Dawa India'
-            });
-            if (
-              matchCheck.verificationStatus === 'REJECTED' ||
-              matchCheck.signals.strengthConflict ||
-              matchCheck.signals.modifierConflict ||
-              matchCheck.signals.dosageFormConflict
-            ) {
-              continue;
-            }
-
-            let secondaryUrl: string | undefined = undefined;
-            if (rawImgs.length > 1) {
-              const cleanSecondary = this.cleanseCdnImageUrl(rawImgs[1]);
-              if (!rejectedUrls.has(cleanSecondary) && cleanSecondary !== cleanPrimary) {
-                secondaryUrl = cleanSecondary;
-              }
-            }
-
-            selectedCandidate = {
-              name: p.title || p.name,
-              manufacturer: 'Dawa India'
-            };
-            selectedImageUrl = cleanPrimary;
-            selectedFace = secondaryUrl ? 'combo-stitched' : 'front';
-            selectedStitchSecondaryUrl = secondaryUrl;
-            selectedSource = 'davaindia';
-            break;
-          }
-        } catch (err: any) {
-          console.warn(`[CatalogImageService] Dawa India search error for "${q}":`, err.message);
-        }
-      }
-    }
-
     if (!selectedCandidate || !selectedImageUrl) {
-      console.log(`[CatalogImageService] No un-rejected candidate found across PharmEasy, 1mg, or Dawa India for medicine ${med.name}`);
+      console.log(`[CatalogImageService] No un-rejected candidate found across PharmEasy or Tata 1mg for medicine ${med.name}`);
       return null;
     }
 
@@ -1594,9 +1530,6 @@ export class CatalogImageService {
       const fetchHeaders: Record<string, string> = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       };
-      if (selectedImageUrl.includes('davaindia.com')) {
-        fetchHeaders['Referer'] = 'https://www.davaindia.com/';
-      }
 
       if (selectedStitchSecondaryUrl) {
         try {
@@ -3357,56 +3290,6 @@ export class CatalogImageService {
       }
     }
 
-    // Tertiary Source Fallback: Dawa India Generic Clean Catalog
-    if (candidates.length === 0 || candidates.every(c => c.verificationStatus === 'REJECTED')) {
-      try {
-        const davaUrl = `https://api.davaindia.com/products?search=${encodeURIComponent(cleanQuery)}`;
-        const davaResp = await fetch(davaUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://www.davaindia.com/'
-          },
-          signal: AbortSignal.timeout(8000)
-        });
-
-        if (davaResp.ok) {
-          const davaJson: any = await davaResp.json();
-          const prods = davaJson?.data || [];
-
-          for (const p of prods) {
-            const rawImgs = Array.isArray(p.images)
-              ? p.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
-              : (p.thumbnail ? [p.thumbnail] : []);
-            if (rawImgs.length === 0) continue;
-
-            let chosenUrl = rawImgs[0];
-            if (imageType === 'back' && rawImgs.length > 1) chosenUrl = rawImgs[1];
-
-            const cleanUrl = this.cleanseCdnImageUrl(chosenUrl);
-            if (rejectedUrls.has(cleanUrl)) continue;
-
-            const scoreResult = this.computeConfidence(med, {
-              name: p.title || p.name,
-              manufacturer: 'Dawa India'
-            });
-
-            candidates.push({
-              id: String(p._id || cleanUrl),
-              name: p.title || p.name,
-              manufacturer: 'Dawa India',
-              imageUrl: cleanUrl,
-              source: 'davaindia',
-              confidenceScore: scoreResult.confidenceScore,
-              verificationStatus: scoreResult.verificationStatus,
-              reason: scoreResult.reason,
-              signals: scoreResult.signals
-            });
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[CatalogImageService] Dawa India search error for "${cleanQuery}":`, err.message);
-      }
-    }
 
     // Sort descending by confidence
     candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
@@ -3462,9 +3345,6 @@ export class CatalogImageService {
     const downloadHeaders: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     };
-    if (cleanCandidateUrl.includes('davaindia.com')) {
-      downloadHeaders['Referer'] = 'https://www.davaindia.com/';
-    }
 
     const imgRes = await fetch(cleanCandidateUrl, {
       headers: downloadHeaders,

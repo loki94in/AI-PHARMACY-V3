@@ -383,10 +383,15 @@ const FORMULATION_MODIFIERS = new Set([
 
 const RELEASE_MODIFIERS = new Set(['SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA']);
 
+export const BENIGN_DELIVERY_MODIFIERS = new Set([
+  'DT', 'MD', 'SL', 'OD', 'DISPERSIBLE',
+  'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA'
+]);
+
 function areModifiersEquivalent(mod1: string, mod2: string): boolean {
   if (mod1 === mod2) return true;
   if ((mod1 === 'FORT' && mod2 === 'FORTE') || (mod1 === 'FORTE' && mod2 === 'FORT')) return true;
-  if (RELEASE_MODIFIERS.has(mod1) && RELEASE_MODIFIERS.has(mod2)) return true;
+  if (BENIGN_DELIVERY_MODIFIERS.has(mod1) && BENIGN_DELIVERY_MODIFIERS.has(mod2)) return true;
   return false;
 }
 
@@ -423,20 +428,22 @@ function hasModifierConflict(name1: string, name2: string): boolean {
   const m1 = extractModifiers(name1);
   const m2 = extractModifiers(name2);
   if (m1.size === 0 && m2.size === 0) return false;
-  // If one has release modifiers and the other doesn't, allow it
+  // If one has benign delivery/dispersibility modifiers and the other doesn't, allow it
   if (m1.size === 0 && m2.size > 0) {
-    const nonRelease = Array.from(m2).filter(m => !RELEASE_MODIFIERS.has(m));
-    return nonRelease.length > 0;
+    const nonBenign = Array.from(m2).filter(m => !BENIGN_DELIVERY_MODIFIERS.has(m));
+    return nonBenign.length > 0;
   }
   if (m2.size === 0 && m1.size > 0) {
-    const nonRelease = Array.from(m1).filter(m => !RELEASE_MODIFIERS.has(m));
-    return nonRelease.length > 0;
+    const nonBenign = Array.from(m1).filter(m => !BENIGN_DELIVERY_MODIFIERS.has(m));
+    return nonBenign.length > 0;
   }
   for (const mod1 of m1) {
+    if (BENIGN_DELIVERY_MODIFIERS.has(mod1)) continue;
     const hasMatch = Array.from(m2).some(mod2 => areModifiersEquivalent(mod1, mod2));
     if (!hasMatch) return true;
   }
   for (const mod2 of m2) {
+    if (BENIGN_DELIVERY_MODIFIERS.has(mod2)) continue;
     const hasMatch = Array.from(m1).some(mod1 => areModifiersEquivalent(mod1, mod2));
     if (!hasMatch) return true;
   }
@@ -680,7 +687,9 @@ function isBrandMatch(query: string, candidateName: string): boolean {
   if (candNextWord && FORMULATION_MODIFIERS.has(candNextWord)) {
     const qTokensUpper = cleanQ.toUpperCase().split(/\s+/);
     if (!qTokensUpper.includes(candNextWord)) {
-      return false; // Plain medicine or different variant must NEVER match candidate with a variant modifier!
+      if (!BENIGN_DELIVERY_MODIFIERS.has(candNextWord)) {
+        return false; // Plain medicine or different variant must NEVER match candidate with a variant modifier!
+      }
     }
   }
 
@@ -1052,72 +1061,10 @@ async function fetchPharmEasyImages(queries: string[], rawMedName: string): Prom
   return null;
 }
 
-async function fetchDawaIndiaImages(queries: string[], rawMedName: string): Promise<any | null> {
-  for (const q of queries) {
-    const url = `https://api.davaindia.com/products?search=${encodeURIComponent(q)}`;
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://www.davaindia.com/'
-        },
-        signal: AbortSignal.timeout(8000)
-      });
-
-      if (!response.ok) continue;
-      const data: any = await response.json();
-      const prods = data?.data || [];
-      if (prods.length === 0) continue;
-
-      const matched = prods.filter((c: any) => {
-        const title = c.title || c.name || '';
-        const rawImgs = Array.isArray(c.images)
-          ? c.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
-          : (c.thumbnail ? [c.thumbnail] : []);
-        if (rawImgs.length === 0) return false;
-        if (!isBrandMatch(rawMedName, title)) return false;
-        if (hasDosageConflict(rawMedName, title)) return false;
-        if (hasStrengthConflict(rawMedName, title)) return false;
-        if (hasModifierConflict(rawMedName, title)) return false;
-        return true;
-      });
-
-      if (matched.length === 0) continue;
-
-      const best = matched[0];
-      const title = best.title || best.name || '';
-      const rawImgs = Array.isArray(best.images)
-        ? best.images.map((im: any) => im.objectUrl || im.preSignedUrl).filter(Boolean)
-        : (best.thumbnail ? [best.thumbnail] : []);
-
-      const imageMap: Record<string, string> = {};
-      const faces = ['front', 'back', 'combo', 'side'];
-      for (let idx = 0; idx < rawImgs.length; idx++) {
-        const cleanUrl = rawImgs[idx].split('?')[0];
-        const face = faces[idx] || `angle_${idx + 1}`;
-        imageMap[face] = cleanUrl;
-      }
-
-      if (Object.keys(imageMap).length > 0) {
-        console.log(`    🔍 Rescued from Dawa India Generic CDN: "${title}" (${Object.keys(imageMap).length} angles)`);
-        return {
-          name: title,
-          slug: slugify(title),
-          images: imageMap,
-          source: 'davaindia_clean'
-        };
-      }
-    } catch {
-      // try next query
-    }
-  }
-  return null;
-}
-
 async function fetchCdnImages(
   queries: string[],
   rawMedName: string,
-  sourceMode: 'all' | 'pharmeasy' | '1mg' | 'davaindia' = 'all'
+  sourceMode: 'all' | 'pharmeasy' | '1mg' = 'all'
 ): Promise<any | null> {
   // 1. PharmEasy Clean CDN
   if (sourceMode === 'all' || sourceMode === 'pharmeasy') {
@@ -1133,22 +1080,12 @@ async function fetchCdnImages(
     if (sourceMode === '1mg') return null;
   }
 
-  // 3. Dawa India Generic Packshot CDN
-  if (sourceMode === 'all' || sourceMode === 'davaindia') {
-    const dava = await fetchDawaIndiaImages(queries, rawMedName);
-    if (dava) return dava;
-    if (sourceMode === 'davaindia') return null;
-  }
-
   return null;
 }
 
 async function downloadBuffer(url: string): Promise<Buffer | null> {
   try {
     const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0' };
-    if (url.includes('davaindia.com')) {
-      headers['Referer'] = 'https://www.davaindia.com/';
-    }
     const res = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(10000)
@@ -1239,7 +1176,7 @@ async function main() {
     }
     else if (args[i].startsWith('--source=')) {
       const sm = args[i].split('=')[1].toLowerCase().trim();
-      if (['pharmeasy', '1mg', 'davaindia', 'all'].includes(sm)) {
+      if (['pharmeasy', '1mg', 'all'].includes(sm)) {
         sourceMode = sm as any;
       }
     }
@@ -1257,6 +1194,7 @@ async function main() {
     else if (args[i].startsWith('--idle-shutdown-min=')) idleShutdownMin = parseInt(args[i].split('=')[1], 10);
     else if (args[i] === '--shutdown-on-complete') shutdownOnComplete = true;
     else if (args[i] === '--gemini') useGemini = true;
+    else if (args[i] === '--no-gemini') useGemini = false;
     else if (args[i].startsWith('--keys=')) {
       const parsedKeys = args[i].split('=')[1].split(/[,;]+/).map(k => k.trim()).filter(Boolean);
       if (parsedKeys.length > 0) customKeys = parsedKeys;
@@ -1267,29 +1205,17 @@ async function main() {
     }
   }
 
-  // Smart routing terminal defaults:
-  // Terminal 1 -> PharmEasy
-  // Terminal 2 -> Tata 1mg (Watermark-free studio photos)
-  // Terminal 3 -> Dawa India (Generic formulations)
-  if (terminalIndex === 1 && sourceMode === 'all') {
-    sourceMode = 'pharmeasy';
-  } else if (terminalIndex === 2 && sourceMode === 'all') {
-    sourceMode = '1mg';
-  } else if (terminalIndex === 3 && sourceMode === 'all') {
-    sourceMode = 'davaindia';
-  }
-
   console.log('===============================================================');
-  console.log('    MASTER PRODUCT IMAGE HARVESTER & AI OCR VERIFICATION');
+  console.log('    MASTER PRODUCT IMAGE HARVESTER & DUAL CDN RELAY');
   console.log('===============================================================\n');
 
   let geminiKeys: string[] = [];
   let spareKey: string | undefined = undefined;
 
-  // Load verified working keys from data/working_gemini_keys.json if present
+  // Load verified working keys from data/working_gemini_keys.json if present and requested
   const WORKING_KEYS_FILE = path.join(ROOT_DIR, 'data', 'working_gemini_keys.json');
   let verifiedWorkingKeys: string[] = [];
-  if (fs.existsSync(WORKING_KEYS_FILE)) {
+  if (useGemini && fs.existsSync(WORKING_KEYS_FILE)) {
     try {
       verifiedWorkingKeys = JSON.parse(fs.readFileSync(WORKING_KEYS_FILE, 'utf8'));
     } catch {}
@@ -1298,56 +1224,35 @@ async function main() {
 
   if (customKeys.length > 0) {
     geminiKeys = customKeys;
-  } else if (terminalIndex >= 1 && terminalIndex <= 3) {
-    // Dedicated 3-terminal mode: 8 keys per terminal, isolated smart source routing
     useGemini = true;
-    if (verifiedWorkingKeys.length >= 24) {
-      const startIndex = (terminalIndex - 1) * 8;
-      geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + 8);
-      spareKey = verifiedWorkingKeys[24]; // 25th key as spare
-    }
+  } else if (terminalIndex >= 1 && terminalIndex <= 12) {
+    // 12-terminal mode: Shards companies disjointly across all 12 terminals
     if (!companyFilter) {
-      // In 3-terminal smart routing mode, all terminals process companies in lockstep
-      companyQueue = loadAllCompaniesFromCsv();
+      companyQueue = loadCompaniesFromCsv(terminalIndex);
     }
-  } else if (terminalIndex >= 4 && terminalIndex <= 12) {
-    // Legacy 12-terminal mode
-    useGemini = true;
-    shardStr = '';
-    if (verifiedWorkingKeys.length >= 24) {
+    if (useGemini && verifiedWorkingKeys.length >= 24) {
       const startIndex = (terminalIndex - 1) * 2;
       const keyCount = (terminalIndex === 12 && verifiedWorkingKeys.length >= 25) ? 3 : 2;
       geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + keyCount);
     }
-    if (!companyFilter) {
-      companyQueue = loadCompaniesFromCsv(terminalIndex);
-    }
-  } else if (poolNumber >= 1 && poolNumber <= 5 && verifiedWorkingKeys.length >= 25) {
-    // 5 isolated pools of 5 verified keys each!
+  } else if (poolNumber >= 1 && poolNumber <= 5 && verifiedWorkingKeys.length >= 25 && useGemini) {
     const startIndex = (poolNumber - 1) * 5;
     geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + 5);
-  } else if (poolNumber >= 1 && poolNumber <= 4) {
-    const poolEnv = process.env[`GEMINI_API_KEYS_POOL_${poolNumber}`];
-    spareKey = process.env[`GEMINI_SPARE_KEY_POOL_${poolNumber}`];
-    if (poolEnv) {
-      geminiKeys = poolEnv.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
-    }
   }
 
   if (companyFilter) {
     companyQueue = companyFilter.split(/[,;|]+/).map(c => c.trim()).filter(Boolean);
   }
 
-  if (geminiKeys.length === 0) {
+  if (useGemini && geminiKeys.length === 0) {
     const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
     geminiKeys = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
   }
 
   const SOURCE_LABELS: Record<string, string> = {
-    all: '🌐 Full Smart Relay Cascade (PharmEasy ➡️ Tata 1mg ➡️ Dawa India ➡️ Pharmacist Review)',
-    pharmeasy: '🟢 Terminal 1: PharmEasy CDN Source (Auto-relaying missing items to T2)',
-    '1mg': '🟠 Terminal 2: Tata 1mg Studio Source (Zero-watermark, auto-relaying missing items to T3)',
-    davaindia: '🔵 Terminal 3: Dawa India Generic Source (Auto-forwarding exhausted items to Human Review)'
+    all: '🌐 Dual-Engine CDN Cascade (PharmEasy ➡️ Tata 1mg ➡️ Pharmacist Review)',
+    pharmeasy: '🟢 PharmEasy CDN Source (Auto-relaying missing items to Tata 1mg)',
+    '1mg': '🟠 Tata 1mg Studio Source (Zero-watermark, auto-forwarding to Human Review)'
   };
   console.log(`📡 Sourcing Mode  : ${SOURCE_LABELS[sourceMode] || sourceMode}`);
 
@@ -1460,18 +1365,14 @@ async function main() {
     let orderBy = "m.id ASC";
     if (!force && !retryFailed) {
       if (sourceMode === '1mg') {
-        // T2 (Tata 1mg): Prioritize items routed from PharmEasy (not_found_pharmeasy), skip items already evaluated on 1mg
+        // Tata 1mg: Prioritize items routed from PharmEasy (not_found_pharmeasy), skip items already evaluated on 1mg
         whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('not_found_1mg', 'not_found_all_cdns', 'gemini_rejected'))");
         orderBy = "CASE WHEN chs.status = 'not_found_pharmeasy' THEN 0 ELSE 1 END, m.id ASC";
-      } else if (sourceMode === 'davaindia') {
-        // T3 (Dawa India): Prioritize items routed from 1mg (not_found_1mg), skip items already evaluated on all CDNs
-        whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('not_found_all_cdns', 'gemini_rejected'))");
-        orderBy = "CASE WHEN chs.status = 'not_found_1mg' THEN 0 WHEN chs.status = 'not_found_pharmeasy' THEN 1 ELSE 2 END, m.id ASC";
       } else if (sourceMode === 'pharmeasy') {
-        // T1 (PharmEasy): Skip items already evaluated on PharmEasy
+        // PharmEasy: Skip items already evaluated on PharmEasy
         whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('not_found_pharmeasy', 'not_found_1mg', 'not_found_all_cdns', 'gemini_rejected'))");
       } else {
-        // Full cascade: skip items successfully completed or already exhausted across all CDNs
+        // Full dual cascade: skip items successfully completed or already exhausted across all CDNs
         whereClauses.push("(chs.status IS NULL OR chs.status NOT IN ('success', 'not_found_all_cdns', 'gemini_rejected'))");
       }
     }
@@ -1516,9 +1417,6 @@ async function main() {
           continue;
         }
         if (sourceMode === '1mg' && ['not_found_1mg', 'not_found_all_cdns'].includes(status)) {
-          continue;
-        }
-        if (sourceMode === 'davaindia' && status === 'not_found_all_cdns') {
           continue;
         }
         if (sourceMode === 'all' && ['not_found_all_cdns', 'not_found'].includes(status)) {
@@ -1596,9 +1494,6 @@ async function main() {
         if (sourceMode === '1mg' && ['not_found_1mg', 'not_found_all_cdns'].includes(liveSqlState.status)) {
           continue;
         }
-        if (sourceMode === 'davaindia' && liveSqlState.status === 'not_found_all_cdns') {
-          continue;
-        }
       }
     }
 
@@ -1613,22 +1508,20 @@ async function main() {
     const cdnResult = await fetchCdnImages(searchQueries, medName, sourceMode);
     if (!cdnResult || Object.keys(cdnResult.images).length === 0) {
       let notFoundStatus = 'not_found_all_cdns';
-      let notFoundReason = 'Exhausted across all CDNs. Queued for human review.';
+      let notFoundReason = 'Exhausted across PharmEasy and Tata 1mg. Queued for human review.';
 
       if (sourceMode === 'pharmeasy') {
         notFoundStatus = 'not_found_pharmeasy';
-        notFoundReason = 'No match found on PharmEasy CDN. Smart routed to T2 (Tata 1mg).';
-        console.log(`    ⚠️ No verified match on PharmEasy CDN ➡️ Smart routing to Terminal 2 (Tata 1mg)\n`);
+        notFoundReason = 'No match found on PharmEasy CDN. Smart routed to Tata 1mg.';
+        console.log(`    ⚠️ No verified match on PharmEasy CDN ➡️ Smart routing to Tata 1mg\n`);
       } else if (sourceMode === '1mg') {
-        notFoundStatus = 'not_found_1mg';
-        notFoundReason = 'No match found on Tata 1mg CDN. Smart routed to T3 (Dawa India).';
-        console.log(`    ⚠️ No verified match on Tata 1mg CDN ➡️ Smart routing to Terminal 3 (Dawa India)\n`);
-      } else if (sourceMode === 'davaindia') {
         notFoundStatus = 'not_found_all_cdns';
-        notFoundReason = 'Exhausted across PharmEasy, Tata 1mg, and Dawa India. Queued for Pharmacist Human Review.';
-        console.log(`    ⚠️ No verified match on Dawa India CDN ➡️ Forwarded to Pharmacist Human Review (/catalog/images)\n`);
+        notFoundReason = 'No match found on Tata 1mg CDN. Queued for Pharmacist Human Review.';
+        console.log(`    ⚠️ No verified match on Tata 1mg CDN ➡️ Forwarded to Pharmacist Human Review (/catalog/images)\n`);
       } else {
-        console.log(`    ⚠️ No verified match across any pharma CDN ➡️ Forwarded to Pharmacist Human Review (/catalog/images)\n`);
+        notFoundStatus = 'not_found_all_cdns';
+        notFoundReason = 'Exhausted across PharmEasy and Tata 1mg. Queued for Pharmacist Human Review.';
+        console.log(`    ⚠️ No verified match across PharmEasy and Tata 1mg ➡️ Forwarded to Pharmacist Human Review (/catalog/images)\n`);
       }
 
       recordProductState(db, medId, {

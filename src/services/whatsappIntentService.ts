@@ -3212,12 +3212,18 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       );
     }
 
+    const soDetailRow = await db.get('SELECT product, pharmarack_mrp FROM special_orders WHERE id = ?', [orderId]).catch(() => null);
+    const displayProduct = soDetailRow?.product || medicineName;
+    const mrpInfoLine = soDetailRow?.pharmarack_mrp != null && soDetailRow.pharmarack_mrp > 0
+      ? `\n🏷️ *MRP*: ₹${Number(soDetailRow.pharmarack_mrp).toFixed(2)} per ${targetRow.unit || 'strip'}`
+      : '';
+
     // Send customer message with ₹50 UPI QR (Spec §11)
     const custQrMsg =
       `✅ *Medicine & Supplier Confirmed*\n\n` +
       `🆔 *Special Order*: ${soCode}\n` +
-      `💊 *Medicine*: ${medicineName}\n` +
-      `📦 *Quantity*: ${targetRow.quantity}\n\n` +
+      `💊 *Medicine*: ${displayProduct}\n` +
+      `📦 *Quantity*: ${targetRow.quantity} ${targetRow.unit || 'strip'}${mrpInfoLine}\n\n` +
       `🔐 *Booking Advance Amount*: ₹50.00\n\n` +
       `Please pay the ₹50.00 booking amount using the QR card attached above.\n\n` +
       `🏦 *UPI ID*: ${activeQr.upi_id.trim()}\n` +
