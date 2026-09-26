@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { ReorderRecentItem } from '../types/api';
 
 // Vite handles the proxy in dev mode to http://localhost:3000
 const API_URL = '/api';
