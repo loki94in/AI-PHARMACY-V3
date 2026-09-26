@@ -70,6 +70,12 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error) => {
+    // Intentionally cancelled/aborted requests (e.g. keystroke debouncing via AbortController)
+    // must reject immediately without triggering transient retry loops or verification diagnostics.
+    if (axios.isCancel(error) || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return Promise.reject(error);
+    }
+
     const config = error.config;
 
     // If 503 Service Initializing, retry with backoff. A truly fresh install
@@ -1114,7 +1120,7 @@ export const api = {
   getPrescription: (saleId: number | string) =>
     apiClient.get(`/sales/${saleId}/prescription`).then(res => res.data),
 
-  getPatients: (params?: { q?: string; limit?: number }) => apiClient.get('/crm/patients', { params }).then(r => r.data),
+  getPatients: (params?: { q?: string; limit?: number; pos?: boolean; hasHistory?: boolean }) => apiClient.get('/crm/patients', { params }).then(r => r.data),
   
   // Migration Endpoints
   uploadMigrationFile: (file: File) => {

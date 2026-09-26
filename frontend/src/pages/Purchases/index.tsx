@@ -3851,7 +3851,7 @@ const Purchases: React.FC = () => {
                             </div>
                           )}
                           {activeSearchIndex === index && searchResults.length > 0 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[460px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
+                            <div className={`absolute z-[9999] w-[460px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -3884,7 +3884,7 @@ const Purchases: React.FC = () => {
                               </div>
 
                               {/* SCROLLABLE MATCHING RESULTS */}
-                              <div className="max-h-60 overflow-y-auto flex-1">
+                              <div ref={searchResultsRef} data-scrollable="true" className="max-h-60 overflow-y-auto flex-1">
                               {item.original_name && (
                                 <div className="px-4 py-2 bg-blue-500/10 border-b border-glass-border/30 text-xs text-blue-300 font-bold select-none flex items-center gap-1.5 font-mono">
                                   📄 Original Bill Name: {item.original_name}

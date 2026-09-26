@@ -25,17 +25,32 @@ const router = express.Router();
 // Get patients
 router.get('/patients', async (req, res) => {
   const { q, limit } = req.query;
+  const isPosMode = req.query.pos === 'true' || req.query.hasHistory === 'true';
   try {
     const db = await dbManager.getConnection();
     let query = 'SELECT * FROM customers';
     const params = [];
     
-    if (q) {
-      query += ' WHERE name LIKE ? OR phone LIKE ?';
-      params.push(`%${q}%`, `%${q}%`);
+    if (isPosMode) {
+      query = `
+        SELECT c.* FROM customers c
+        WHERE (
+          EXISTS (SELECT 1 FROM sales_invoices si WHERE si.customer_id = c.id)
+          OR EXISTS (SELECT 1 FROM patient_refills pr WHERE pr.customer_id = c.id AND pr.is_active = 1)
+        )
+      `;
+      if (q) {
+        query += ' AND (c.name LIKE ? OR c.phone LIKE ?)';
+        params.push(`%${q}%`, `%${q}%`);
+      }
+      query += ' ORDER BY c.id DESC';
+    } else {
+      if (q) {
+        query += ' WHERE name LIKE ? OR phone LIKE ?';
+        params.push(`%${q}%`, `%${q}%`);
+      }
+      query += ' ORDER BY id DESC';
     }
-    
-    query += ' ORDER BY id DESC';
     
     if (limit) {
       const limitVal = parseInt(limit as string, 10);
@@ -91,7 +106,13 @@ router.get('/patients', async (req, res) => {
 
     if (q && patients.length === 0) {
       try {
-        const allCustomers = await db.all('SELECT id, name, phone, address FROM customers LIMIT 300');
+        const candidateQuery = isPosMode
+          ? `SELECT c.id, c.name, c.phone, c.address FROM customers c
+             WHERE EXISTS (SELECT 1 FROM sales_invoices si WHERE si.customer_id = c.id)
+                OR EXISTS (SELECT 1 FROM patient_refills pr WHERE pr.customer_id = c.id AND pr.is_active = 1)
+             LIMIT 300`
+          : 'SELECT id, name, phone, address FROM customers LIMIT 300';
+        const allCustomers = await db.all(candidateQuery);
         const candidateNames = allCustomers.map((c: any) => c.name);
         const { findSimilarNames } = await import('../services/similarityService.js');
         const similarNames = findSimilarNames(q as string, candidateNames, 4, 0.25);

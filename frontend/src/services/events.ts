@@ -9,11 +9,20 @@ export interface ToastEventDetail {
 
 export const toastEvent = {
   trigger: (message: string, type: 'success' | 'error' | 'info' | 'mail' | 'automation' = 'info', link?: string, distributor?: string, qty?: string | number) => {
-    window.dispatchEvent(
-      new CustomEvent<ToastEventDetail>('app-show-toast', {
-        detail: { message, type, link, distributor, qty },
-      })
-    );
+    const dispatch = () => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent<ToastEventDetail>('app-show-toast', {
+            detail: { message, type, link, distributor, qty },
+          })
+        );
+      }
+    };
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(dispatch);
+    } else {
+      setTimeout(dispatch, 0);
+    }
   },
   subscribe: (callback: (detail: ToastEventDetail) => void) => {
     const handler = (e: Event) => {

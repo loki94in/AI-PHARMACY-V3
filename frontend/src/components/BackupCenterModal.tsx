@@ -14,7 +14,10 @@ import {
   X,
   AlertTriangle,
   RotateCcw,
-  } from 'lucide-react';
+  CheckCircle2,
+  ExternalLink,
+  UploadCloud,
+} from 'lucide-react';
 import { apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -49,6 +52,14 @@ interface BackupStatus {
   availableArchives: Archive[];
   localBackupStatus: string;
   gdriveStatus: string;
+  hasGdriveAuth?: boolean;
+  gdriveEnabled?: boolean;
+  gdriveAccount?: string;
+  gdriveFolderName?: string;
+  lastGdriveUpload?: string;
+  gdriveError?: string;
+  emailBackupEnabled?: boolean;
+  triggerBackupTime?: string;
   telegramStatus: string;
   lastBackupDate: string;
   lastUploadDate: string;
@@ -234,6 +245,86 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const [testingGdrive, setTestingGdrive] = useState(false);
+  const [uploadingGdrive, setUploadingGdrive] = useState(false);
+
+  const handleToggleGdrive = async (enabled: boolean) => {
+    setActionLoading(true);
+    try {
+      const { data } = await apiClient.post('/utilities/backup/gdrive/toggle', { enabled });
+      toastEvent.trigger(data.message || 'Google Drive setting updated', 'success');
+      refreshStatus();
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiErrorShape;
+      toastEvent.trigger(apiErr.response?.data?.error || 'Failed to update Google Drive auto-backup', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleEmailBackup = async (enabled: boolean) => {
+    setActionLoading(true);
+    try {
+      const { data } = await apiClient.post('/utilities/backup/email-toggle', { enabled });
+      toastEvent.trigger(data.message || 'Email backup setting updated', 'success');
+      refreshStatus();
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiErrorShape;
+      toastEvent.trigger(apiErr.response?.data?.error || 'Failed to update email backup', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleTestGdrive = async () => {
+    setTestingGdrive(true);
+    try {
+      const { data } = await apiClient.post('/utilities/backup/gdrive/test');
+      if (data.success) {
+        toastEvent.trigger(`Google Drive connection OK! Folder: '${data.folderName}' (${data.email})`, 'success');
+        refreshStatus();
+      } else {
+        toastEvent.trigger(data.error || 'Google Drive connection test failed', 'error');
+      }
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiErrorShape;
+      toastEvent.trigger(apiErr.response?.data?.error || 'Google Drive connection test failed', 'error');
+    } finally {
+      setTestingGdrive(false);
+    }
+  };
+
+  const handleUploadGdriveNow = async () => {
+    setUploadingGdrive(true);
+    try {
+      const { data } = await apiClient.post('/utilities/backup/gdrive/upload-now');
+      if (data.success) {
+        toastEvent.trigger(data.message || 'Uploaded to Google Drive successfully', 'success');
+        refreshStatus();
+      } else {
+        toastEvent.trigger(data.error || 'Upload to Google Drive failed', 'error');
+      }
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiErrorShape;
+      toastEvent.trigger(apiErr.response?.data?.error || 'Failed to upload backup to Google Drive', 'error');
+    } finally {
+      setUploadingGdrive(false);
+    }
+  };
+
+  const handleConnectGoogle = () => {
+    const authUrl = '/api/email/auth/google';
+    const onAuthMessage = (event: MessageEvent) => {
+      if (event.data === 'google-auth-success') {
+        window.removeEventListener('message', onAuthMessage);
+        toastEvent.trigger('Google Account connected successfully!', 'success');
+        refreshStatus();
+      }
+    };
+    window.addEventListener('message', onAuthMessage);
+    window.open(authUrl, '_blank', 'width=600,height=700');
+  };
+
   return (
     <div className={`flex flex-col ${isInline ? 'w-full' : 'max-h-[90vh] overflow-hidden'}`}>
       {/* Header if not inline */}
@@ -321,9 +412,12 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
               <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
                 <Cloud className="text-green" size={18} />
               </div>
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-[10px] text-muted uppercase font-bold tracking-wider">Google Drive</p>
-                <p className="text-sm font-bold text-text">{status.gdriveStatus}</p>
+                <p className="text-sm font-bold text-text truncate">{status.gdriveStatus}</p>
+                {status.gdriveAccount && (
+                  <p className="text-[10px] text-muted truncate">{status.gdriveAccount}</p>
+                )}
               </div>
             </div>
 
@@ -336,6 +430,139 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
                 <p className="text-sm font-bold text-text">{status.telegramStatus}</p>
               </div>
             </div>
+          </div>
+
+          {/* Google Drive Automated Cloud Protection Section */}
+          <div className="bg-bg3 border border-glass-border rounded-xl p-4 space-y-4 text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-glass-border/40 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-green/10 border border-green/20 flex items-center justify-center text-green shrink-0">
+                  <Cloud size={20} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-text flex items-center gap-2">
+                    Google Drive Auto-Backup & Offsite Protection
+                    {status.hasGdriveAuth ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-green/10 border border-green/20 text-green font-bold flex items-center gap-1">
+                        <CheckCircle2 size={10} /> Connected
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber/10 border border-amber/20 text-amber font-bold">
+                        Setup Required
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[11px] text-muted">
+                    Automated zero-loss SQLite hot-snapshot cloud sync (covers all Bills, Sales, Purchases, Patients, CRM & Stock).
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                {!status.hasGdriveAuth ? (
+                  <button
+                    onClick={handleConnectGoogle}
+                    className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-sm"
+                  >
+                    <ExternalLink size={12} />
+                    Connect Google Drive
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleTestGdrive}
+                      disabled={testingGdrive || actionLoading}
+                      className="px-3 py-1.5 bg-bg2 hover:bg-bg border border-glass-border text-text rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={testingGdrive ? 'animate-spin' : ''} />
+                      Test Connection
+                    </button>
+                    <button
+                      onClick={handleUploadGdriveNow}
+                      disabled={uploadingGdrive || actionLoading}
+                      className="px-3 py-1.5 bg-green text-white hover:bg-green/90 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                    >
+                      <UploadCloud size={13} className={uploadingGdrive ? 'animate-bounce' : ''} />
+                      {uploadingGdrive ? 'Uploading...' : 'Upload to Drive Now'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Google Drive Details & Switches */}
+            {status.hasGdriveAuth ? (
+              <div className="space-y-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-bg2/60 p-2.5 rounded-lg border border-glass-border/30">
+                    <span className="text-[10px] text-muted uppercase tracking-wider block">Google Account</span>
+                    <span className="font-semibold text-text truncate block">{status.gdriveAccount || 'Authorized'}</span>
+                  </div>
+                  <div className="bg-bg2/60 p-2.5 rounded-lg border border-glass-border/30">
+                    <span className="text-[10px] text-muted uppercase tracking-wider block">Drive Folder</span>
+                    <span className="font-semibold text-text truncate block">{status.gdriveFolderName || 'AI Pharmacy Backups'}</span>
+                  </div>
+                  <div className="bg-bg2/60 p-2.5 rounded-lg border border-glass-border/30">
+                    <span className="text-[10px] text-muted uppercase tracking-wider block">Last Cloud Sync</span>
+                    <span className="font-semibold text-text truncate block">{status.lastGdriveUpload || 'Never'}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-glass-border/20">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!status.gdriveEnabled}
+                      onChange={(e) => handleToggleGdrive(e.target.checked)}
+                      disabled={actionLoading}
+                      className="rounded border-border text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-text block">Enable Daily Nightly Auto-Upload to Google Drive</span>
+                      <span className="text-[11px] text-muted block">Uploads every night at {status.triggerBackupTime || '21:59'} (keeps latest 30 daily copies)</span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!status.emailBackupEnabled}
+                      onChange={(e) => handleToggleEmailBackup(e.target.checked)}
+                      disabled={actionLoading}
+                      className="rounded border-border text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-semibold text-text block">Email Backup Copy</span>
+                      <span className="text-[11px] text-muted block">Sends copy to inbox via App Password</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber/5 border border-amber/20 rounded-lg p-3 text-xs text-text space-y-1">
+                <p className="font-semibold text-amber flex items-center gap-1.5">
+                  <AlertTriangle size={13} />
+                  Google Drive Backup is not connected yet
+                </p>
+                <p className="text-[11px] text-muted">
+                  Click <strong>Connect Google Drive</strong> above to link your Google account. Once linked, point-in-time database snapshots will be securely backed up offsite every night.
+                </p>
+              </div>
+            )}
+
+            {/* Error display if any */}
+            {status.gdriveError && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2.5 text-xs text-red-400 flex items-center justify-between">
+                <span>Last Cloud Sync Alert: {status.gdriveError}</span>
+                <button
+                  onClick={handleTestGdrive}
+                  className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[10px] font-bold"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Storage Locations & Schedule Details */}

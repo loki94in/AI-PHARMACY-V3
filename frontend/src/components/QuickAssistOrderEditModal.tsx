@@ -245,7 +245,7 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
 
   return createPortal(
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           e.preventDefault();

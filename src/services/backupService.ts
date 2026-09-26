@@ -82,7 +82,36 @@ export async function createBackup(reason: string = 'Manual'): Promise<{ filenam
   // Enforce retention limit
   enforceRetention();
 
+  // Trigger Google Drive upload and email dispatch if enabled
+  try {
+    const { backupRecoveryService } = await import('./backupRecoveryService.js');
+    const gdriveEnabled = await backupRecoveryService.getSetting('backup_gdrive_enabled', 'false') === 'true';
+    if (gdriveEnabled) {
+      void backupRecoveryService.uploadFileToGoogleDrive(backupPath, filename);
+    }
+    void backupRecoveryService.dispatchBackupEmailIfConfigured(backupPath, filename);
+  } catch (cloudErr) {
+    console.warn('[Backup] Cloud sync hook warning (non-fatal):', cloudErr);
+  }
+
   return { filename };
+}
+
+/**
+ * Upload an existing local backup file to Google Drive on demand.
+ */
+export async function uploadBackupFileToGoogleDrive(filename: string): Promise<{ success: boolean; fileId?: string; error?: string }> {
+  const sanitized = path.basename(filename);
+  let filePath = path.join(BACKUP_DIR, sanitized);
+  if (!fs.existsSync(filePath)) {
+    const archivesPath = path.join(BACKUP_DIR, 'archives', sanitized);
+    if (fs.existsSync(archivesPath)) filePath = archivesPath;
+  }
+  if (!fs.existsSync(filePath)) {
+    return { success: false, error: 'Backup file not found on disk' };
+  }
+  const { backupRecoveryService } = await import('./backupRecoveryService.js');
+  return backupRecoveryService.uploadFileToGoogleDrive(filePath, sanitized);
 }
 
 /**

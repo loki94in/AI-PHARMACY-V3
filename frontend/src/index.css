@@ -295,6 +295,15 @@ select option.bg-\[\#18181b\],
 .bg-black\/80, .light .bg-black\/80 {
   background-color: rgba(0, 0, 0, 0.35) !important;
 }
+.bg-black\/70, .light .bg-black\/70 {
+  background-color: rgba(0, 0, 0, 0.30) !important;
+}
+.bg-black\/60, .light .bg-black\/60 {
+  background-color: rgba(0, 0, 0, 0.26) !important;
+}
+.bg-black\/50, .light .bg-black\/50 {
+  background-color: rgba(0, 0, 0, 0.22) !important;
+}
 
 /* ═══════════════════════════════════════════
    BORDER OVERRIDES FOR POPUPS

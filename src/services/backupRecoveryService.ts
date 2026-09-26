@@ -44,7 +44,7 @@ export class BackupRecoveryService {
   /**
    * Helper to retrieve a key-value setting from app_settings.
    */
-  private async getSetting(key: string, defaultValue: string): Promise<string> {
+  public async getSetting(key: string, defaultValue: string = ''): Promise<string> {
     try {
       const db = await dbManager.getConnection();
       const row = await db.get('SELECT value FROM app_settings WHERE key = ?', [key]);
@@ -57,7 +57,7 @@ export class BackupRecoveryService {
   /**
    * Helper to save a key-value setting.
    */
-  private async setSetting(key: string, value: string): Promise<void> {
+  public async setSetting(key: string, value: string): Promise<void> {
     try {
       const db = await dbManager.getConnection();
       await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [key, value]);
@@ -310,20 +310,21 @@ export class BackupRecoveryService {
   }
 
   /**
-   * Upload to Google Drive using standard OAuth2 and multipart API requests.
+   * Refreshes Google OAuth access token using saved refresh token.
    */
-  private async uploadToGoogleDrive(filePath: string, filename: string): Promise<boolean> {
+  public async getGoogleOAuthAccessToken(): Promise<{ accessToken: string | null; error?: string }> {
     try {
       const clientId = process.env.GOOGLE_CLIENT_ID || await this.getSetting('google_client_id', '');
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET || await this.getSetting('google_client_secret', '');
       const refreshToken = await this.getSetting('gmail_oauth_refresh_token', '');
 
       if (!clientId || !clientSecret || !refreshToken) {
-        console.warn('[Backup] Google Drive upload skipped: Credentials incomplete.');
-        return false;
+        return {
+          accessToken: null,
+          error: 'Google OAuth credentials incomplete. Please click "Connect Google Drive" in Settings to authenticate.'
+        };
       }
 
-      // Refresh Access Token
       const tokenRes = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
         client_id: clientId,
         client_secret: clientSecret,
@@ -333,24 +334,118 @@ export class BackupRecoveryService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
 
-      const accessToken = tokenRes.data.access_token;
+      const accessToken = tokenRes.data?.access_token;
       if (!accessToken) {
-        console.error('[Backup] Failed to refresh Google access token.');
-        return false;
+        return { accessToken: null, error: 'Google did not return an access token.' };
+      }
+      return { accessToken };
+    } catch (err: any) {
+      const errMsg = err.response?.data?.error_description || err.response?.data?.error || err.message;
+      return { accessToken: null, error: `Google OAuth refresh failed: ${errMsg}` };
+    }
+  }
+
+  /**
+   * Find or create the dedicated backup folder in Google Drive.
+   */
+  public async getOrCreateDriveFolder(accessToken: string, folderName: string = 'AI Pharmacy Backups'): Promise<string | null> {
+    try {
+      const safeName = folderName.replace(/'/g, "\\'");
+      const q = encodeURIComponent(`name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+      const searchRes = await axios.get(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      const existing = searchRes.data?.files;
+      if (existing && existing.length > 0) {
+        return existing[0].id;
       }
 
-      // Perform Multipart Upload
-      const fileBuffer = fs.readFileSync(filePath);
-      
-      const metadata = {
-        name: filename,
-        mimeType: 'application/zip'
-      };
+      // Create folder if not found
+      const createRes = await axios.post('https://www.googleapis.com/drive/v3/files', {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder'
+      }, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
 
-      const boundary = 'foo_bar_boundary';
+      return createRes.data?.id || null;
+    } catch (err: any) {
+      console.warn('[Backup] Google Drive folder resolution warning:', err.response?.data || err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Prune older backups in Google Drive folder, keeping latest keepCount copies.
+   */
+  private async pruneGoogleDriveOldBackups(accessToken: string, folderId: string, keepCount: number = 30): Promise<void> {
+    try {
+      const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+      const listRes = await axios.get(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&fields=files(id,name,createdTime)&pageSize=100`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const files = listRes.data?.files || [];
+      if (files.length > keepCount) {
+        const toDelete = files.slice(keepCount);
+        for (const f of toDelete) {
+          try {
+            await axios.delete(`https://www.googleapis.com/drive/v3/files/${f.id}`, {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            console.log(`[Backup] Pruned old Google Drive backup: ${f.name}`);
+          } catch (_) {}
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Backup] Cloud retention pruning warning:', err.response?.data || err.message);
+    }
+  }
+
+  /**
+   * Upload any backup file (.db.gz, .zip, .db) to Google Drive.
+   */
+  public async uploadFileToGoogleDrive(filePath: string, filename: string): Promise<{ success: boolean; fileId?: string; error?: string }> {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: `File not found on disk: ${filePath}` };
+      }
+
+      const { accessToken, error: authError } = await this.getGoogleOAuthAccessToken();
+      if (!accessToken) {
+        await this.setSetting('backup_last_gdrive_error', authError || 'Authentication failed');
+        return { success: false, error: authError };
+      }
+
+      const folderName = await this.getSetting('backup_gdrive_folder_name', 'AI Pharmacy Backups');
+      const folderId = await this.getOrCreateDriveFolder(accessToken, folderName);
+
+      // Determine mimeType
+      let mimeType = 'application/octet-stream';
+      if (filename.endsWith('.gz') || filename.endsWith('.db.gz')) {
+        mimeType = 'application/gzip';
+      } else if (filename.endsWith('.zip')) {
+        mimeType = 'application/zip';
+      } else if (filename.endsWith('.db')) {
+        mimeType = 'application/x-sqlite3';
+      }
+
+      const metadata: Record<string, any> = {
+        name: filename,
+        mimeType
+      };
+      if (folderId) {
+        metadata.parents = [folderId];
+      }
+
+      const fileBuffer = fs.readFileSync(filePath);
+      const boundary = 'foo_bar_boundary_' + Date.now();
       const multipartBody = Buffer.concat([
         Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`),
-        Buffer.from(`\r\n--${boundary}\r\nContent-Type: application/zip\r\n\r\n`),
+        Buffer.from(`\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
         fileBuffer,
         Buffer.from(`\r\n--${boundary}--`),
       ]);
@@ -363,11 +458,123 @@ export class BackupRecoveryService {
         }
       });
 
-      return uploadRes.status === 200 && !!uploadRes.data.id;
+      if (uploadRes.status === 200 && uploadRes.data?.id) {
+        const fileId = uploadRes.data.id;
+        const nowIso = new Date().toISOString();
+        await this.setSetting('backup_last_gdrive_upload', nowIso);
+        await this.setSetting('backup_last_gdrive_error', '');
+        console.log(`[Backup] Uploaded ${filename} to Google Drive (${folderName}) successfully with fileId ${fileId}`);
+
+        // Cloud retention: prune older backups in Drive folder (keep newest 30)
+        if (folderId) {
+          void this.pruneGoogleDriveOldBackups(accessToken, folderId, 30);
+        }
+
+        const notifsEnabled = await this.getSetting('backup_notifications_enabled', 'true') === 'true';
+        if (notifsEnabled) {
+          this.broadcastNotification('backup_upload_gdrive', `Google Drive backup uploaded: ${filename}`);
+        }
+
+        return { success: true, fileId };
+      } else {
+        const errText = `Upload returned status ${uploadRes.status}`;
+        await this.setSetting('backup_last_gdrive_error', errText);
+        return { success: false, error: errText };
+      }
     } catch (err: any) {
-      console.error('[Backup] Google Drive multipart upload failed:', err.response?.data || err.message);
+      const errMsg = err.response?.data?.error?.message || err.response?.data?.error_description || err.message;
+      console.error('[Backup] Google Drive upload error for ' + filename + ':', errMsg);
+      await this.setSetting('backup_last_gdrive_error', errMsg);
+      return { success: false, error: errMsg };
+    }
+  }
+
+  /**
+   * Test Google Drive connection and folder access.
+   */
+  public async testGoogleDriveConnection(): Promise<{ success: boolean; email?: string; folderId?: string; folderName?: string; error?: string }> {
+    try {
+      const { accessToken, error } = await this.getGoogleOAuthAccessToken();
+      if (!accessToken) {
+        return { success: false, error };
+      }
+
+      // Check authenticated user
+      let email = await this.getSetting('gmail_user', '');
+      try {
+        const userRes = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (userRes.data?.email) {
+          email = userRes.data.email;
+          await this.setSetting('gmail_user', email);
+        }
+      } catch (_) {}
+
+      // Check or create folder
+      const folderName = await this.getSetting('backup_gdrive_folder_name', 'AI Pharmacy Backups');
+      const folderId = await this.getOrCreateDriveFolder(accessToken, folderName);
+
+      return {
+        success: true,
+        email: email || 'Connected Google Account',
+        folderId: folderId || undefined,
+        folderName
+      };
+    } catch (err: any) {
+      const errMsg = err.response?.data?.error?.message || err.message;
+      return { success: false, error: errMsg };
+    }
+  }
+
+  /**
+   * Dispatches backup archive via email if enabled and credentials configured.
+   */
+  public async dispatchBackupEmailIfConfigured(filePath: string, filename: string): Promise<boolean> {
+    try {
+      const emailEnabled = await this.getSetting('backup_email_backup_enabled', 'false') === 'true';
+      if (!emailEnabled) return false;
+
+      const gmailUser = await this.getSetting('gmail_user', '');
+      const gmailPass = await this.getSetting('gmail_pass', '');
+      if (!gmailUser || !gmailPass) return false;
+
+      const { createTransport } = await import('nodemailer');
+      const transporter = createTransport({
+        service: 'gmail',
+        auth: { user: gmailUser, pass: gmailPass }
+      });
+
+      const stats = fs.statSync(filePath);
+      const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+
+      await transporter.sendMail({
+        from: `"AI Pharmacy OS Backup" <${gmailUser}>`,
+        to: gmailUser,
+        subject: `[AI Pharmacy Backup] Database Snapshot — ${new Date().toLocaleDateString('en-IN')}`,
+        text: `Automated database backup attached.\n\nFile: ${filename}\nSize: ${sizeMB} MB\nDate: ${new Date().toLocaleString('en-IN')}\n\nThis backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inventory records.`,
+        attachments: [
+          {
+            filename,
+            path: filePath
+          }
+        ]
+      });
+
+      console.log(`[Backup] Dispatched backup email with attachment to ${gmailUser}`);
+      return true;
+    } catch (err: any) {
+      console.warn('[Backup] Backup email dispatch warning (non-fatal):', err?.message);
       return false;
     }
+  }
+
+  /**
+   * Backward-compatible uploadToGoogleDrive wrapper.
+   */
+  private async uploadToGoogleDrive(filePath: string, filename: string): Promise<boolean> {
+    const res = await this.uploadFileToGoogleDrive(filePath, filename);
+    return res.success;
   }
 
   /**
@@ -475,15 +682,12 @@ export class BackupRecoveryService {
   }
 
   /**
-   * Lists all local backup archives.
+   * Lists all local backup archives and database snapshot files.
    */
   public listArchives(uploadLogMap?: Record<string, { gdrive?: boolean; telegram?: boolean }>): { filename: string; date: string; sizeBytes: number; source: string }[] {
-    if (!fs.existsSync(ARCHIVES_DIR)) return [];
-
     let uploadLog: Record<string, { gdrive?: boolean; telegram?: boolean }> = uploadLogMap || {};
     if (!uploadLogMap) {
       try {
-        // Direct load if DB is initialized
         const db = new Database(getDbPath(), { readonly: true });
         const row = db.prepare("SELECT value FROM app_settings WHERE key = 'backup_upload_log'").get() as any;
         uploadLog = JSON.parse(row?.value || '{}');
@@ -491,32 +695,46 @@ export class BackupRecoveryService {
       } catch {}
     }
 
-    return fs.readdirSync(ARCHIVES_DIR)
-      .filter(f => f.startsWith('archive_') && f.endsWith('.zip'))
-      .map(filename => {
-        const filePath = path.join(ARCHIVES_DIR, filename);
-        const stats = fs.statSync(filePath);
-        
-        // Extract date YYYY-MM-DD from archive_YYYY-MM-DD.zip or archive_manual_YYYY-MM-DD_timestamp.zip
-        let rawDate = filename.replace(/^archive_/, '').replace(/\.zip$/, '');
-        if (rawDate.startsWith('manual_')) {
-          rawDate = rawDate.replace(/^manual_/, '');
-        }
-        const dateMatch = rawDate.match(/^(\d{4}-\d{2}-\d{2})/);
-        const date = dateMatch ? dateMatch[1] : stats.mtime.toISOString().split('T')[0];
-        
-        const sources = ['Local'];
-        if (uploadLog[filename]?.gdrive) sources.push('Google Drive');
-        if (uploadLog[filename]?.telegram) sources.push('Telegram');
+    const items: { filename: string; date: string; sizeBytes: number; source: string }[] = [];
+    const seen = new Set<string>();
 
-        return {
-          filename,
-          date,
-          sizeBytes: stats.size,
-          source: sources.join(', ')
-        };
-      })
-      .sort((a, b) => b.filename.localeCompare(a.filename));
+    const scanForArchives = (dir: string) => {
+      if (!fs.existsSync(dir)) return;
+      try {
+        const files = fs.readdirSync(dir);
+        for (const filename of files) {
+          if (seen.has(filename)) continue;
+          if (!filename.endsWith('.zip') && !filename.endsWith('.db.gz') && !filename.endsWith('.db')) continue;
+          if (!filename.startsWith('archive_') && !filename.startsWith('app_backup_') && !filename.startsWith('snapshot_')) continue;
+
+          try {
+            const filePath = path.join(dir, filename);
+            const stats = fs.statSync(filePath);
+            if (!stats.isFile()) continue;
+
+            const dateMatch = filename.match(/(\d{4}-\d{2}-\d{2})/);
+            const date = dateMatch ? dateMatch[1] : stats.mtime.toISOString().split('T')[0];
+
+            const sources = ['Local Storage'];
+            if (uploadLog[filename]?.gdrive) sources.push('Google Drive');
+            if (uploadLog[filename]?.telegram) sources.push('Telegram');
+
+            items.push({
+              filename,
+              date,
+              sizeBytes: stats.size,
+              source: sources.join(', ')
+            });
+            seen.add(filename);
+          } catch (_) {}
+        }
+      } catch (_) {}
+    };
+
+    scanForArchives(ARCHIVES_DIR);
+    scanForArchives(BACKUP_DIR);
+
+    return items.sort((a, b) => b.filename.localeCompare(a.filename));
   }
 
   /**

@@ -189,7 +189,7 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
       aria-modal="true"
       data-modal="daily-communications"
       onClick={onClose}
-      className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -420,7 +420,7 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
         {confirmResendItem && (
           <div
             onClick={() => setConfirmResendItem(null)}
-            className="absolute inset-0 z-submodal bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+            className="absolute inset-0 z-submodal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
           >
             <div
               onClick={(e) => e.stopPropagation()}

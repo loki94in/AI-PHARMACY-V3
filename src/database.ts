@@ -3730,6 +3730,11 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_enabled', 'true')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_local_enabled', 'true')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_id', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_name', 'AI Pharmacy Backups')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_email_backup_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_last_gdrive_upload', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_last_gdrive_error', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_telegram_enabled', 'false')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_startup_restore_check', 'true')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_daily_compression', 'true')");

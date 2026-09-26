@@ -284,7 +284,10 @@ router.get('/backup/status', async (req, res) => {
     const rows = await db.all(
       `SELECT key, value FROM app_settings WHERE key IN (
         'backup_local_enabled', 'backup_gdrive_enabled', 'backup_telegram_enabled',
-        'backup_auto_enabled', 'backup_is_paused', 'backup_upload_log'
+        'backup_auto_enabled', 'backup_is_paused', 'backup_upload_log',
+        'backup_gdrive_folder_name', 'backup_gdrive_folder_id', 'backup_email_backup_enabled',
+        'backup_last_gdrive_upload', 'backup_last_gdrive_error', 'gmail_user', 'gmail_oauth_refresh_token',
+        'trigger_backup_time'
       )`
     );
     const settingsMap: Record<string, string> = {};
@@ -294,8 +297,16 @@ router.get('/backup/status', async (req, res) => {
 
     const localEnabled = (settingsMap['backup_local_enabled'] ?? 'true') === 'true';
     const gdriveEnabled = (settingsMap['backup_gdrive_enabled'] ?? 'false') === 'true';
+    const emailBackupEnabled = (settingsMap['backup_email_backup_enabled'] ?? 'false') === 'true';
     const telegramEnabled = (settingsMap['backup_telegram_enabled'] ?? 'false') === 'true';
     const isPaused = (settingsMap['backup_is_paused'] ?? 'false') === 'true';
+
+    const hasGdriveAuth = !!(settingsMap['gmail_oauth_refresh_token'] || process.env.GOOGLE_REFRESH_TOKEN);
+    const gdriveAccount = settingsMap['gmail_user'] || '';
+    const gdriveFolderName = settingsMap['backup_gdrive_folder_name'] || 'AI Pharmacy Backups';
+    const lastGdriveUpload = settingsMap['backup_last_gdrive_upload'] || 'Never';
+    const gdriveError = settingsMap['backup_last_gdrive_error'] || '';
+    const triggerBackupTime = settingsMap['trigger_backup_time'] || '21:59';
 
     let uploadLog: Record<string, { gdrive?: boolean; telegram?: boolean }> = {};
     try {
@@ -305,13 +316,13 @@ router.get('/backup/status', async (req, res) => {
     const archives = backupRecoveryService.listArchives(uploadLog);
     const lastArchive = archives[0];
     
-    let lastUploadDate = 'Never';
+    let lastUploadDate = lastGdriveUpload !== 'Never' ? lastGdriveUpload : 'Never';
     let lastBackupDate = 'Never';
 
     if (lastArchive) {
       lastBackupDate = lastArchive.date;
       const log = uploadLog[lastArchive.filename];
-      if (log && (log.gdrive || log.telegram)) {
+      if (log && (log.gdrive || log.telegram) && lastUploadDate === 'Never') {
         lastUploadDate = lastArchive.date;
       }
     }
@@ -348,12 +359,32 @@ router.get('/backup/status', async (req, res) => {
       nextScheduledBackup = `In ${frequency}`;
     }
 
+    // Compute friendly Google Drive status label
+    let gdriveStatusLabel = 'Not Connected';
+    if (hasGdriveAuth) {
+      if (isPaused) {
+        gdriveStatusLabel = 'Paused';
+      } else if (gdriveEnabled) {
+        gdriveStatusLabel = 'Enabled';
+      } else {
+        gdriveStatusLabel = 'Connected (Off)';
+      }
+    }
+
     res.json({
       success: true,
       showRestorePopup: false,
       availableArchives: archives,
       localBackupStatus: localEnabled ? (isPaused ? 'Paused' : 'Enabled') : 'Disabled',
-      gdriveStatus: gdriveEnabled ? (isPaused ? 'Paused' : 'Enabled') : 'Disabled',
+      gdriveStatus: gdriveStatusLabel,
+      hasGdriveAuth,
+      gdriveEnabled,
+      gdriveAccount,
+      gdriveFolderName,
+      lastGdriveUpload,
+      gdriveError,
+      emailBackupEnabled,
+      triggerBackupTime,
       telegramStatus: telegramEnabled ? (isPaused ? 'Paused' : 'Enabled') : 'Disabled',
       lastBackupDate,
       lastUploadDate,
@@ -362,7 +393,7 @@ router.get('/backup/status', async (req, res) => {
       preupdateBackups,
       backupStorageLocations: {
         local: 'backup/archives',
-        gdrive: gdriveEnabled ? 'Google Drive Cloud Storage' : 'Not Configured',
+        gdrive: hasGdriveAuth ? `Google Drive (${gdriveFolderName})` : 'Not Connected',
         telegram: telegramEnabled ? 'Telegram Bot Notifications' : 'Not Configured'
       },
       isPaused
@@ -479,6 +510,83 @@ router.post('/backup/toggle-pause', async (req, res) => {
     res.json({ success: true, message: newVal ? 'Automatic backup paused' : 'Automatic backup resumed', isPaused: newVal });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to toggle pause: ' + err.message });
+  }
+});
+
+// POST /api/utilities/backup/gdrive/toggle
+router.post('/backup/gdrive/toggle', async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const db = await dbManager.getConnection();
+    const val = enabled ? 'true' : 'false';
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', ?)", [val]);
+    res.json({ success: true, enabled: val === 'true', message: `Google Drive auto-backup ${val === 'true' ? 'enabled' : 'disabled'}` });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to toggle Google Drive backup: ' + err.message });
+  }
+});
+
+// POST /api/utilities/backup/gdrive/test
+router.post('/backup/gdrive/test', async (req, res) => {
+  try {
+    const result = await backupRecoveryService.testGoogleDriveConnection();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'Google Drive test failed: ' + err.message });
+  }
+});
+
+// POST /api/utilities/backup/gdrive/upload-now
+router.post('/backup/gdrive/upload-now', async (req, res) => {
+  try {
+    const { createBackup } = await import('../services/backupService.js');
+    const result = await createBackup('Manual Drive Upload');
+    const BACKUP_DIR = config.backupDir;
+    const filePath = path.join(BACKUP_DIR, result.filename);
+    const uploadRes = await backupRecoveryService.uploadFileToGoogleDrive(filePath, result.filename);
+    if (!uploadRes.success) {
+      return res.status(500).json({ error: uploadRes.error || 'Google Drive upload failed' });
+    }
+    res.json({
+      success: true,
+      filename: result.filename,
+      fileId: uploadRes.fileId,
+      message: `Database successfully backed up and uploaded to Google Drive as ${result.filename}!`
+    });
+  } catch (err: any) {
+    console.error('[Backup] Drive upload-now error:', err);
+    res.status(500).json({ error: 'Manual cloud backup failed: ' + err.message });
+  }
+});
+
+// POST /api/utilities/backup/email-toggle
+router.post('/backup/email-toggle', async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const db = await dbManager.getConnection();
+    const val = enabled ? 'true' : 'false';
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_email_backup_enabled', ?)", [val]);
+    res.json({ success: true, enabled: val === 'true', message: `Email backup dispatch ${val === 'true' ? 'enabled' : 'disabled'}` });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to toggle email backup: ' + err.message });
+  }
+});
+
+// POST /api/utilities/backup/gdrive/folder
+router.post('/backup/gdrive/folder', async (req, res) => {
+  try {
+    const { folderName } = req.body;
+    if (!folderName || !String(folderName).trim()) {
+      return res.status(400).json({ error: 'Folder name is required' });
+    }
+    const safeName = String(folderName).trim();
+    const db = await dbManager.getConnection();
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_name', ?)", [safeName]);
+    // Reset folder ID so it auto-resolves with the new name
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_id', '')");
+    res.json({ success: true, folderName: safeName, message: `Google Drive backup folder set to '${safeName}'` });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update folder name: ' + err.message });
   }
 });
 

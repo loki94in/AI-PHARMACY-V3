@@ -56,7 +56,8 @@ import {
   ExternalLink,
   Globe,
   Copy,
-  Phone
+  Phone,
+  Cloud
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -3241,6 +3242,8 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
 
 function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<string, string>; refetchSettings: () => void }) {
   const [backupFrequency, setBackupFrequency] = useState(rawSettings.backup_frequency || 'off');
+  const [gdriveEnabled, setGdriveEnabled] = useState(rawSettings.backup_gdrive_enabled === 'true');
+  const [emailBackupEnabled, setEmailBackupEnabled] = useState(rawSettings.backup_email_backup_enabled === 'true');
   const [savingFreq, setSavingFreq] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showSystemResetModal, setShowSystemResetModal] = useState(false);
@@ -3251,11 +3254,17 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
   useModalEscape(showBackupModal, () => setShowBackupModal(false));
   useModalEscape(showSystemResetModal, () => setShowSystemResetModal(false));
 
+  const hasGdriveAuth = !!(rawSettings.gmail_oauth_refresh_token || rawSettings.gmail_user);
+
   const handleSaveBackupSchedule = async () => {
     setSavingFreq(true);
     try {
-      await apiClient.post('/settings/save', { backup_frequency: backupFrequency });
-      toastEvent.trigger('Backup schedule updated', 'success');
+      await apiClient.post('/settings/save', {
+        backup_frequency: backupFrequency,
+        backup_gdrive_enabled: gdriveEnabled ? 'true' : 'false',
+        backup_email_backup_enabled: emailBackupEnabled ? 'true' : 'false'
+      });
+      toastEvent.trigger('Backup configuration updated', 'success');
       refetchSettings();
     } catch (err) {
       const e = err as LocalApiError;
@@ -3281,7 +3290,7 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
       {/* Database Backup Center */}
       <div className="space-y-4">
         <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2 border-b border-border pb-2">
-          <Database size={16} /> Automated Database Backup & Snapshot Center
+          <Database size={16} /> Automated Database Backup & Google Drive Cloud Protection
         </h2>
 
         <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-4">
@@ -3304,17 +3313,52 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
               <button
                 onClick={handleSaveBackupSchedule}
                 disabled={savingFreq}
-                className="px-4 py-2 bg-primary text-primary-foreground font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer"
+                className="px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer"
               >
-                Save Schedule
+                Save Configuration
               </button>
               <button
                 onClick={() => setShowBackupModal(true)}
-                className="px-4 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer"
+                className="px-4 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer flex items-center gap-1.5"
               >
-                Open Full Backup & Restore Vault
+                <Cloud size={14} className="text-green" />
+                Open Cloud Backup Vault
               </button>
             </div>
+          </div>
+
+          {/* Quick Cloud Options */}
+          <div className="pt-3 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={gdriveEnabled}
+                onChange={(e) => setGdriveEnabled(e.target.checked)}
+                className="rounded border-border text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+              />
+              <div>
+                <span className="font-bold text-text flex items-center gap-1.5">
+                  <Cloud size={13} className="text-green" />
+                  Auto-Upload to Google Drive on Schedule
+                </span>
+                <span className="text-[11px] text-muted block">
+                  {hasGdriveAuth ? `Account: ${rawSettings.gmail_user || 'Linked'}` : 'Requires Google Account connection in Backup Vault'}
+                </span>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={emailBackupEnabled}
+                onChange={(e) => setEmailBackupEnabled(e.target.checked)}
+                className="rounded border-border text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+              />
+              <div>
+                <span className="font-semibold text-text block">Email Backup Attachment</span>
+                <span className="text-[11px] text-muted block">Sends copy to inbox via App Password</span>
+              </div>
+            </label>
           </div>
         </div>
       </div>

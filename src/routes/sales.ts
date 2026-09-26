@@ -3501,6 +3501,9 @@ router.get('/patient-refill-medicines', async (req, res) => {
 
     res.json({
       success: true,
+      has_scheduled_refill: scheduledRefills.length > 0,
+      scheduled_refill_count: scheduledRefills.length,
+      past_purchase_count: pastSaleMedicines.length,
       customer: customer ? {
         id: customer.id,
         name: customer.name,

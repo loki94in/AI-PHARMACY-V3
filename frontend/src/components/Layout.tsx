@@ -25,6 +25,8 @@ import {
   ExternalLink,
   Info,
   ChevronRight,
+  ArrowLeft,
+  ArrowRight,
   Mail as MailIcon,
   Smartphone,
   ClipboardPlus,
@@ -2072,6 +2074,33 @@ const Topbar = memo(({
           >
             <Menu size={20} />
           </button>
+          {/* In-App Browser Navigation Controls (Back & Forward) */}
+          <div className="flex items-center gap-0.5 bg-bg2/80 border border-border/70 rounded-xl p-0.5 shrink-0 shadow-xs">
+            <button
+              type="button"
+              onClick={() => {
+                if (window.history.length > 1) {
+                  navigate(-1);
+                } else {
+                  navigate('/dashboard');
+                }
+              }}
+              title="Go Back (Alt + Left Arrow)"
+              aria-label="Go Back"
+              className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 active:scale-95 transition-all cursor-pointer"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(1)}
+              title="Go Forward (Alt + Right Arrow)"
+              aria-label="Go Forward"
+              className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 active:scale-95 transition-all cursor-pointer"
+            >
+              <ArrowRight size={16} />
+            </button>
+          </div>
           <LiveHeaderClock />
           {catalogJob && (
             <div className="flex items-center gap-2.5 px-3 py-1 bg-primary/10 border border-primary/20 rounded-xl text-primary animate-pulse">
