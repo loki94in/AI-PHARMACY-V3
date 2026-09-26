@@ -649,12 +649,12 @@ router.get('/catalog-search', async (req, res) => {
     if (rows.length < 15 && q.length >= 2) {
       try {
         const cleanToken = q.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
-        const tokens = cleanToken.split(/\s+/).filter(t => t.length >= 1);
-        if (cleanToken.length >= 2) {
-          // ponytail: single-token → prefix match (uses FTS5 B-tree); phrase match `"token"` bypasses the index.
-          let ftsQuery = tokens.length > 1
-            ? tokens.map(t => `${t}*`).join(' AND ')
-            : `${cleanToken}*`;
+        // Trigram tokenization strictly requires at least 3 characters per token to avoid SQLite syntax errors
+        const trigramTokens = cleanToken.split(/\s+/).filter(t => t.length >= 3);
+        if (trigramTokens.length > 0) {
+          const ftsQuery = trigramTokens.length > 1
+            ? trigramTokens.map(t => `${t}*`).join(' AND ')
+            : `${trigramTokens[0]}*`;
           const ftsRows = await db.all(
             `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name,
                     COALESCE(m.total_stock, 0) as stock_qty, COALESCE(m.total_loose_stock, 0) as loose_qty,
@@ -674,27 +674,10 @@ router.get('/catalog-search', async (req, res) => {
           }
         }
       } catch (_) {
-        // Fallback to indexed prefix or limited like if FTS5 is not ready
-        const fallbackLike = qTokens.length > 1 ? `%${qTokens.join('%')}%` : `%${q}%`;
-        const fallbackRows = await db.all(
-          `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
-                  COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
-                  last_purchase_ptr, last_distributor_name, last_purchase_date,
-                  lowest_purchase_ptr, lowest_distributor_name
-           FROM medicines
-           WHERE name LIKE ?
-           ORDER BY name ASC LIMIT 30`,
-          [fallbackLike]
-        ).catch(() => []);
-        for (const r of fallbackRows) {
-          if (!seenIds.has(r.id)) {
-            seenIds.add(r.id);
-            rows.push(r);
-          }
-        }
+        // Trigram index safely caught; avoid unindexed full-table scans across 100k+ records
       }
 
-      // Pass 2b: Numeric / MRP or Shorthand pattern matching if still < 15
+      // Pass 2b: Exact Numeric / MRP matching if still < 15 and query is numeric
       if (rows.length < 15) {
         const isNumeric = /^\d+(\.\d+)?$/.test(q);
         if (isNumeric) {
@@ -704,35 +687,14 @@ router.get('/catalog-search', async (req, res) => {
                     last_purchase_ptr, last_distributor_name, last_purchase_date,
                     lowest_purchase_ptr, lowest_distributor_name
              FROM medicines
-             WHERE mrp = ? OR name LIKE ? OR strength LIKE ?
+             WHERE mrp = ?
              ORDER BY name ASC LIMIT 20`,
-            [Number(q), `%${q}%`, `%${q}%`]
+            [Number(q)]
           ).catch(() => []);
           for (const r of numRows) {
             if (!seenIds.has(r.id)) {
               seenIds.add(r.id);
               rows.push(r);
-            }
-          }
-        } else {
-          const letters = q.replace(/[^a-zA-Z0-9]/g, ' ').split(/\s+/).filter(Boolean);
-          if (letters.length >= 2 && letters.length <= 4) {
-            const pattern = letters.map(l => `${l}%`).join(' ');
-            const acrRows = await db.all(
-              `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
-                      COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
-                      last_purchase_ptr, last_distributor_name, last_purchase_date,
-                      lowest_purchase_ptr, lowest_distributor_name
-               FROM medicines
-               WHERE name LIKE ?
-               ORDER BY name ASC LIMIT 20`,
-              [`${pattern}`]
-            ).catch(() => []);
-            for (const r of acrRows) {
-              if (!seenIds.has(r.id)) {
-                seenIds.add(r.id);
-                rows.push(r);
-              }
             }
           }
         }

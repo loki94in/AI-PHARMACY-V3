@@ -833,8 +833,11 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
         toastEvent.trigger(`Medicine "${form.name}" updated successfully across 26 fields!`, 'success');
       }
 
-      invalidateAfterStockWrite(queryClient);
-      api.getCompactInventory().catch(() => {});
+      if (isCreateMode) {
+        queryClient.invalidateQueries({ queryKey: ['database-medicines'], refetchType: 'none' });
+      } else {
+        invalidateAfterStockWrite(queryClient);
+      }
 
       setSaving(false);
       if (onSave) onSave(savedResult);

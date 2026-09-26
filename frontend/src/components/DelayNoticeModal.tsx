@@ -196,7 +196,7 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
+    <div className="fixed inset-0 z-global-modal bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
       <div className="bg-bg2 border border-border rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-text">
         {/* Modal Header */}
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">

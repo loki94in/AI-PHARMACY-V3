@@ -2357,6 +2357,7 @@ const POS = () => {
 
   // Universal Edit state
   const [editMedicineId, setEditMedicineId] = useState<number | null>(null);
+  const [newMedicineInitialName, setNewMedicineInitialName] = useState<string | null>(null);
   const [intelligenceMedicineId, setIntelligenceMedicineId] = useState<number | null>(null);
   const [showIntelligenceModal, setShowIntelligenceModal] = useState<boolean>(false);
   const [expandedSubstitutes, setExpandedSubstitutes] = useState<Record<number, boolean>>({});
@@ -3399,6 +3400,7 @@ const POS = () => {
   useModalEscape(!!zoomedImage, () => setZoomedImage(null));
   useModalEscape(showCamera, () => setShowCamera(false));
   useModalEscape(!!editMedicineId, () => setEditMedicineId(null));
+  useModalEscape(!!newMedicineInitialName, () => setNewMedicineInitialName(null));
 
   const handleCompleteSale = async (overridePhone?: string, isDirectSave: boolean = false) => {
     if (isSavingBillRef.current) return;
@@ -4458,6 +4460,14 @@ const POS = () => {
                         if (docEl) { docEl.focus(); (docEl as HTMLInputElement).select?.(); }
                         return;
                       }
+                      if (e.altKey && e.key.toLowerCase() === 'n') {
+                        if (searchTerm.trim().length > 0) {
+                          e.preventDefault();
+                          setNewMedicineInitialName(searchTerm.trim());
+                          setShowSearchDropdown(false);
+                          return;
+                        }
+                      }
                       if (e.key === 'ArrowDown') {
                         if (searchResults.length > 0) {
                           e.preventDefault();
@@ -4480,6 +4490,10 @@ const POS = () => {
                             setSearchHighlightIndex(-1);
                             setShowSearchDropdown(false);
                           }
+                        } else if (searchTerm.trim().length >= 2) {
+                          e.preventDefault();
+                          setNewMedicineInitialName(searchTerm.trim());
+                          setShowSearchDropdown(false);
                         }
                       } else if (e.key === 'Tab' && !e.shiftKey) {
                         setShowSearchDropdown(false);
@@ -4518,31 +4532,151 @@ const POS = () => {
                       <X size={15} />
                     </button>
                   </div>
-                  {showSearchDropdown && searchTerm.trim().length >= 3 && searchResults.length === 0 && (
-                    <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden max-h-80 overflow-y-auto shadow-2xl [will-change:scroll-position]">
-                      {suggestions.length > 0 && (
-                        <div className="p-3 border-b border-border/30 bg-violet-500/5">
-                        <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
-                        <div className="flex gap-2 flex-wrap">
-                          {suggestions.map((sug) => (
-                            <button
-                              key={sug.medicine_id}
-                              type="button"
-                              onClick={() => {
-                                setSearchTerm(sug.name);
-                              }}
-                              className="px-2.5 py-1.5 text-[18px] rounded-lg bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/20 transition-all font-medium"
-                            >
-                              {sug.name}
-                            </button>
-                          ))}
-                        </div>
+                  {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length === 0 && (
+                    <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
+                      {/* PINNED TOP SECTION: Always visible New Medicine Creation Header */}
+                      <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewMedicineInitialName(searchTerm.trim());
+                            setShowSearchDropdown(false);
+                          }}
+                          className="flex-1 text-left px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
+                          title="Register this medicine as a new master database entry with full rates"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                              <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-xs text-emerald-300 truncate">
+                                ✨ Register "{searchTerm.trim()}" as New Medicine
+                              </div>
+                              <div className="text-[10px] text-muted truncate">
+                                Master database entry with rates, salts & composition
+                              </div>
+                            </div>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 flex-shrink-0 ml-2">
+                            Alt+N / Enter
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addToCart({
+                              id: Date.now(),
+                              name: searchTerm.trim(),
+                              batch: '',
+                              expiry: '',
+                              mrp: 0,
+                              costPrice: 0,
+                              salts: 'Custom Manual Entry',
+                              packSize: 1,
+                              quantity: 0
+                            });
+                            setSearchTerm('');
+                            setShowSearchDropdown(false);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+                          title="Quick-add directly to cart as manual item"
+                        >
+                          <Zap size={13} />
+                          <span>Quick Add</span>
+                        </button>
                       </div>
-                    )}
-                    <div className="p-3 border-b border-border/30 text-[15px] font-bold text-muted uppercase tracking-wider bg-bg3/55">
-                      ⚠️ No matching inventory found
+
+                      <div className="max-h-64 overflow-y-auto flex-1">
+                        {suggestions.length > 0 && (
+                          <div className="p-3 border-b border-border/30 bg-violet-500/5">
+                            <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
+                            <div className="flex gap-2 flex-wrap">
+                              {suggestions.map((sug) => (
+                                <button
+                                  key={sug.medicine_id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSearchTerm(sug.name);
+                                  }}
+                                  className="px-2.5 py-1.5 text-[18px] rounded-lg bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/20 transition-all font-medium"
+                                >
+                                  {sug.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div className="p-3 border-b border-border/30 text-xs font-bold text-muted uppercase tracking-wider bg-bg3/55">
+                          ⚠️ No matching inventory found in stock
+                        </div>
+
+                        {searchingOnline && (
+                          <div className="flex items-center justify-center p-4 text-xs text-muted gap-2 border-t border-border/20 bg-bg3/20">
+                            <Loader2 size={15} className="animate-spin text-sky" />
+                            <span>Searching internet for active compositions...</span>
+                          </div>
+                        )}
+
+                        {onlineResults.length > 0 && (
+                          <>
+                            <div className="p-3 bg-bg3/55 border-t border-border/30 text-xs font-bold text-sky uppercase tracking-wider">
+                              🌐 Internet Suggestion (Auto-Enrich to Database)
+                            </div>
+                            {onlineResults.map((sug, sidx) => (
+                              <button
+                                key={`online_${sidx}`}
+                                type="button"
+                                onClick={() => handleSelectOnlineSuggestion(sug)}
+                                className="flex items-center justify-between p-3.5 hover:bg-bg3 border-b border-border/10 text-left transition-all text-sm w-full group"
+                              >
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-semibold text-text group-hover:text-sky transition-all">{sug.name}</span>
+                                  <span className="text-xs text-muted font-normal">Active Salts: <strong className="text-text">{sug.api_reference || '—'}</strong></span>
+                                  {sug.manufacturer && <span className="text-xs text-muted font-normal">Mfr: {sug.manufacturer}</span>}
+                                </div>
+                                <span className="text-xs bg-sky/10 border border-sky/20 text-sky py-1 px-2.5 rounded-lg font-bold group-hover:bg-sky group-hover:text-white transition-all">✨ Import & Add</span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-col">
+                )}
+                
+                {/* Search results dropdown */}
+                {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
+                  <div ref={searchResultsRef} className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
+                    {/* PINNED TOP SECTION: Always visible New Medicine Creation & Quick Add Header */}
+                    <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewMedicineInitialName(searchTerm.trim());
+                          setShowSearchDropdown(false);
+                        }}
+                        className="flex-1 text-left px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
+                        title="Register this medicine as a new master database entry with full rates"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-xs text-emerald-300 truncate">
+                              ✨ Register "{searchTerm.trim()}" as New Medicine
+                            </div>
+                            <div className="text-[10px] text-muted truncate">
+                              Master database entry with rates, salts & composition
+                            </div>
+                          </div>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 flex-shrink-0 ml-2">
+                          Alt+N
+                        </span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => {
@@ -4560,51 +4694,15 @@ const POS = () => {
                           setSearchTerm('');
                           setShowSearchDropdown(false);
                         }}
-                        className="flex items-center justify-between p-3.5 hover:bg-bg3 border-b border-border/20 text-left transition-all text-[18px] w-full group"
+                        className="px-3 py-2 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+                        title="Quick-add directly to cart as manual item"
                       >
-                        <div className="flex flex-col gap-1">
-                          <span className="font-semibold text-text group-hover:text-primary transition-all">Add "{searchTerm.trim()}" directly to cart (Quick Add)</span>
-                          <span className="text-[15px] text-muted font-normal">Added as custom entry — please input real rate, batch, and expiry</span>
-                        </div>
-                        <span className="text-[16px] bg-primary/10 border border-primary/20 text-primary py-1.5 px-3 rounded-lg font-bold group-hover:bg-primary group-hover:text-white transition-all">+ Add</span>
+                        <Zap size={13} />
+                        <span>Quick Add</span>
                       </button>
-
-                      {searchingOnline && (
-                        <div className="flex items-center justify-center p-4 text-[18px] text-muted gap-2 border-t border-border/20 bg-bg3/20">
-                          <Loader2 size={15} className="animate-spin text-sky" />
-                          <span>Searching internet for active compositions...</span>
-                        </div>
-                      )}
-
-                      {onlineResults.length > 0 && (
-                        <>
-                          <div className="p-3 bg-bg3/55 border-t border-border/30 text-[15px] font-bold text-sky uppercase tracking-wider">
-                            🌐 Internet Suggestion (Auto-Enrich to Database)
-                          </div>
-                          {onlineResults.map((sug, sidx) => (
-                            <button
-                              key={`online_${sidx}`}
-                              type="button"
-                              onClick={() => handleSelectOnlineSuggestion(sug)}
-                              className="flex items-center justify-between p-3.5 hover:bg-bg3 border-b border-border/10 text-left transition-all text-[18px] w-full group"
-                            >
-                              <div className="flex flex-col gap-1">
-                                <span className="font-semibold text-text group-hover:text-sky transition-all">{sug.name}</span>
-                                <span className="text-[15px] text-muted font-normal">Active Salts: <strong className="text-text">{sug.api_reference || '—'}</strong></span>
-                                {sug.manufacturer && <span className="text-[15px] text-muted font-normal">Mfr: {sug.manufacturer}</span>}
-                              </div>
-                              <span className="text-[16px] bg-sky/10 border border-sky/20 text-sky py-1.5 px-3 rounded-lg font-bold group-hover:bg-sky group-hover:text-white transition-all">✨ Import & Add</span>
-                            </button>
-                          ))}
-                        </>
-                      )}
                     </div>
-                  </div>
-                )}
-                
-                {/* Search results dropdown */}
-                {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
-                  <div ref={searchResultsRef} className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden max-h-80 overflow-y-auto shadow-2xl [will-change:scroll-position]">
+
+                    <div className="max-h-72 overflow-y-auto flex-1 divide-y divide-border/10">
                     {suggestions.length > 0 && (
                       <div className="p-3 border-b border-border/30 bg-violet-500/5">
                         <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
@@ -5154,6 +5252,25 @@ const POS = () => {
                                     }
                                     return;
                                   }
+                                  if (e.altKey && (e.key === 'n' || e.key === 'N')) {
+                                    e.preventDefault();
+                                    const term = rowSearchTerm.trim();
+                                    if (term) {
+                                      setNewMedicineInitialName(term);
+                                      setActiveRowSearchIndex(null);
+                                      setRowSearchTerm('');
+                                      setRowSearchResults([]);
+                                    }
+                                    return;
+                                  }
+                                  if (e.key === 'Enter' && rowSearchResults.length === 0 && rowSearchTerm.trim().length >= 2) {
+                                    e.preventDefault();
+                                    setNewMedicineInitialName(rowSearchTerm.trim());
+                                    setActiveRowSearchIndex(null);
+                                    setRowSearchTerm('');
+                                    setRowSearchResults([]);
+                                    return;
+                                  }
                                   if (activeRowSearchIndex !== idx || rowSearchResults.length === 0) return;
                                   if (e.key === 'ArrowDown') {
                                     e.preventDefault();
@@ -5177,95 +5294,134 @@ const POS = () => {
                                 placeholder={item.isEmptyRow ? "Search medicine..." : "Change medicine..."}
                               />
                               
-                              {activeRowSearchIndex === cart.indexOf(item) && rowSearchTerm.trim().length >= 2 && rowSearchResults.length > 0 && (
+                              {activeRowSearchIndex === cart.indexOf(item) && rowSearchTerm.trim().length >= 2 && (
                                 <div 
                                   ref={rowSearchResultsRef} 
-                                  className={`absolute left-0 right-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden max-h-56 overflow-y-auto w-[360px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] ${
+                                  className={`absolute left-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden w-[380px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] flex flex-col ${
                                     rowSearchDropUp
                                       ? 'bottom-full mb-1'
                                       : 'top-full mt-1'
                                   }`}
                                 >
-                                  {rowSearchResults.map((med, mIdx) => {
-                                    const rowPendingMatches = specialOrders.filter(
-                                      o => o.product.toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim() ||
-                                           (med.medicine_name || '').toLowerCase().includes(o.product.toLowerCase().trim())
-                                    );
-                                    const rowHasPending = rowPendingMatches.length > 0;
-                                    const isRowHighlighted = rowSearchHighlightIndex === mIdx;
-                                    const locTag = med.location || med.rack || (med as any).shelf || '';
-                                    return (
-                                      <button
-                                        key={med.inventory_id || med.id || `row_med_${mIdx}`}
-                                        type="button"
-                                        data-highlighted={isRowHighlighted ? "true" : "false"}
-                                        onMouseEnter={() => setRowSearchHighlightIndex(mIdx)}
-                                        onClick={() => {
-                                          const idx = cart.indexOf(item);
-                                          fetchDetailsAndChangeRowMedicine(idx, med);
-                                        }}
-                                        className={`flex flex-col p-2.5 hover:bg-bg3 border-b border-border/10 text-left transition-all text-sm w-full cursor-pointer ${isRowHighlighted ? 'bg-primary/20 border-l-4 border-primary text-text font-bold ring-1 ring-primary/40' : ''}`}
-                                      >
-                                        <div className="flex items-center justify-between gap-1">
-                                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                                            <span className="font-semibold text-text truncate">{med.medicine_name}</span>
-                                            {isRowHighlighted && (
-                                              <span className="text-[11px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm shrink-0">
-                                                ↵ Select
-                                              </span>
-                                            )}
-                                            {rowHasPending && (
-                                              <span className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-500 px-1.5 py-0.5 rounded text-xs font-bold animate-pulse">
-                                                ⚠️ {rowPendingMatches[0].requester} ({rowPendingMatches[0].qty})
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="flex items-center gap-1 shrink-0">
-                                            {locTag && (
-                                              <span className="text-[11px] bg-bg3/80 border border-border/40 text-muted px-1.5 py-0.5 rounded font-mono font-bold" title="Store Location / Rack">
-                                                📍 {locTag}
-                                              </span>
-                                            )}
-                                            {med.medicine_id && (
-                                              <button
-                                                type="button"
-                                                title="Quick Edit in Universal Medicine Editor"
-                                                onMouseDown={(e) => {
-                                                  e.stopPropagation();
-                                                  setEditMedicineId(Number(med.medicine_id));
-                                                }}
-                                                className="p-1 rounded bg-bg3/60 hover:bg-bg3 border border-border/40 text-muted hover:text-text transition-all shrink-0 cursor-pointer"
-                                              >
-                                                <Edit size={12} />
-                                              </button>
-                                            )}
+                                  {/* PINNED TOP HEADER: Always visible New Medicine Creation Header */}
+                                  <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm shrink-0">
+                                    <button
+                                      type="button"
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        setNewMedicineInitialName(rowSearchTerm.trim());
+                                        setActiveRowSearchIndex(null);
+                                        setRowSearchTerm('');
+                                        setRowSearchResults([]);
+                                      }}
+                                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
+                                      title="Register this medicine as a new master database entry with full rates"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                          <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="font-bold text-xs text-emerald-300 truncate">
+                                            ✨ Register "{rowSearchTerm.trim()}" as New
                                           </div>
                                         </div>
-                                        <span className="text-[13px] text-muted font-mono mt-0.5">Batch: {med.batch_no} | Exp: {med.expiry_date}</span>
-                                        <span className="text-[13px] text-green font-bold font-mono mt-0.5">
-                                          MRP: ₹{Math.round(med.mrp ?? 0)} | Stock: {(() => {
-                                            const packSize = Number(med.pack_size || 1);
-                                            const totalUnits = Number(med.quantity || 0) * packSize + Number(med.loose_quantity ?? med.loose_qty ?? 0);
-                                            const cartUnits = cart.reduce((sum, c) => {
-                                              const isSameMed = c.medicine_id === med.medicine_id || 
-                                                (c.name || c.medicine_name || '').toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim();
-                                              if (isSameMed && !c.isEmptyRow) {
-                                                const cQty = c.qty ?? c.quantity ?? 0;
-                                                const cLoose = c.looseQty ?? c.loose_qty ?? 0;
-                                                return sum + (cQty * packSize) + cLoose;
-                                              }
-                                              return sum;
-                                            }, 0);
-                                            const remainingUnits = Math.max(0, totalUnits - cartUnits);
-                                            const remainingPacks = Math.floor(remainingUnits / packSize);
-                                            const remainingLoose = remainingUnits % packSize;
-                                            const hasLoose = Number(med.loose_quantity ?? 0) > 0 || Number(med.loose_qty ?? 0) > 0 || remainingLoose > 0;
-                                            return `${remainingPacks} Str${hasLoose ? ` / ${remainingLoose} Tab` : ''}`;
-                                          })()}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
+                                      </div>
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 flex-shrink-0 ml-1.5">
+                                        Alt+N
+                                      </span>
+                                    </button>
+                                  </div>
+
+                                  {rowSearchResults.length > 0 ? (
+                                    <div className="max-h-56 overflow-y-auto flex-1 divide-y divide-border/10">
+                                      {rowSearchResults.map((med, mIdx) => {
+                                        const rowPendingMatches = specialOrders.filter(
+                                          o => o.product.toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim() ||
+                                               (med.medicine_name || '').toLowerCase().includes(o.product.toLowerCase().trim())
+                                        );
+                                        const rowHasPending = rowPendingMatches.length > 0;
+                                        const isRowHighlighted = rowSearchHighlightIndex === mIdx;
+                                        const locTag = med.location || med.rack || (med as any).shelf || '';
+                                        return (
+                                          <button
+                                            key={med.inventory_id || med.id || `row_med_${mIdx}`}
+                                            type="button"
+                                            data-highlighted={isRowHighlighted ? "true" : "false"}
+                                            onMouseEnter={() => setRowSearchHighlightIndex(mIdx)}
+                                            onMouseDown={(e) => {
+                                              e.preventDefault();
+                                              const idx = cart.indexOf(item);
+                                              fetchDetailsAndChangeRowMedicine(idx, med);
+                                            }}
+                                            className={`flex flex-col p-2.5 hover:bg-bg3 border-b border-border/10 text-left transition-all text-sm w-full cursor-pointer ${isRowHighlighted ? 'bg-primary/20 border-l-4 border-primary text-text font-bold ring-1 ring-primary/40' : ''}`}
+                                          >
+                                            <div className="flex items-center justify-between gap-1">
+                                              <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                                <span className="font-semibold text-text truncate">{med.medicine_name}</span>
+                                                {isRowHighlighted && (
+                                                  <span className="text-[11px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm shrink-0">
+                                                    ↵ Select
+                                                  </span>
+                                                )}
+                                                {rowHasPending && (
+                                                  <span className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-500 px-1.5 py-0.5 rounded text-xs font-bold animate-pulse">
+                                                    ⚠️ {rowPendingMatches[0].requester} ({rowPendingMatches[0].qty})
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="flex items-center gap-1 shrink-0">
+                                                {locTag && (
+                                                  <span className="text-[11px] bg-bg3/80 border border-border/40 text-muted px-1.5 py-0.5 rounded font-mono font-bold" title="Store Location / Rack">
+                                                    📍 {locTag}
+                                                  </span>
+                                                )}
+                                                {med.medicine_id && (
+                                                  <button
+                                                    type="button"
+                                                    title="Quick Edit in Universal Medicine Editor"
+                                                    onMouseDown={(e) => {
+                                                      e.stopPropagation();
+                                                      setEditMedicineId(Number(med.medicine_id));
+                                                    }}
+                                                    className="p-1 rounded bg-bg3/60 hover:bg-bg3 border border-border/40 text-muted hover:text-text transition-all shrink-0 cursor-pointer"
+                                                  >
+                                                    <Edit size={12} />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </div>
+                                            <span className="text-[13px] text-muted font-mono mt-0.5">Batch: {med.batch_no} | Exp: {med.expiry_date}</span>
+                                            <span className="text-[13px] text-green font-bold font-mono mt-0.5">
+                                              MRP: ₹{Math.round(med.mrp ?? 0)} | Stock: {(() => {
+                                                const packSize = Number(med.pack_size || 1);
+                                                const totalUnits = Number(med.quantity || 0) * packSize + Number(med.loose_quantity ?? med.loose_qty ?? 0);
+                                                const cartUnits = cart.reduce((sum, c) => {
+                                                  const isSameMed = c.medicine_id === med.medicine_id || 
+                                                    (c.name || c.medicine_name || '').toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim();
+                                                  if (isSameMed && !c.isEmptyRow) {
+                                                    const cQty = c.qty ?? c.quantity ?? 0;
+                                                    const cLoose = c.looseQty ?? c.loose_qty ?? 0;
+                                                    return sum + (cQty * packSize) + cLoose;
+                                                  }
+                                                  return sum;
+                                                }, 0);
+                                                const remainingUnits = Math.max(0, totalUnits - cartUnits);
+                                                const remainingPacks = Math.floor(remainingUnits / packSize);
+                                                const remainingLoose = remainingUnits % packSize;
+                                                const hasLoose = Number(med.loose_quantity ?? 0) > 0 || Number(med.loose_qty ?? 0) > 0 || remainingLoose > 0;
+                                                return `${remainingPacks} Str${hasLoose ? ` / ${remainingLoose} Tab` : ''}`;
+                                              })()}
+                                            </span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="p-3 text-center text-xs text-muted">
+                                      No stock match found in inventory.
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -6529,6 +6685,47 @@ const POS = () => {
         </Suspense>
       )}
 
+      {newMedicineInitialName !== null && (
+        <Suspense fallback={<ModalSkeleton />}>
+          <UniversalMedicineEditModal 
+            mode="create"
+            medicineId={null}
+            initialData={{ name: newMedicineInitialName } as any}
+            onClose={() => setNewMedicineInitialName(null)} 
+            onSave={async (savedMed) => {
+              setNewMedicineInitialName(null);
+              if (savedMed?.id) {
+                try {
+                  const details = await api.getMedicineQuickDetails(savedMed.id);
+                  const newPackSize = details.pack_size || 1;
+                  fetchDetailsAndAddToCart({
+                    id: savedMed.id,
+                    inventory_id: savedMed.id,
+                    medicine_id: savedMed.id,
+                    medicine_name: details.name || savedMed.name,
+                    mrp: details.mrp || savedMed.mrp || 0,
+                    sell_price: details.sell_price || savedMed.sell_price || null,
+                    cost_price: details.cost_price || savedMed.rate || null,
+                    pack_size: newPackSize,
+                    manufacturer: details.manufacturer || savedMed.manufacturer || '',
+                    api_reference: details.api_reference || (savedMed as any).composition || '',
+                    quantity: 1,
+                    loose_quantity: 0
+                  } as any);
+                  setSearchTerm('');
+                  setSearchResults([]);
+                  setShowSearchDropdown(false);
+                  toastEvent.trigger(`✓ Created and added "${details.name || savedMed.name}" to cart!`, 'success');
+                } catch (err) {
+                  console.error('Failed to auto-add new medicine to cart:', err);
+                  toastEvent.trigger('✓ Medicine saved to master database!', 'success');
+                }
+              }
+            }}
+          />
+        </Suspense>
+      )}
+
       {/* Composition Intelligence & Substitute History Modal */}
       <CompositionIntelligenceModal
         medicineId={intelligenceMedicineId}
@@ -6553,7 +6750,7 @@ const POS = () => {
       {/* Clinical Interactions Review Modal */}
       {showInteractionsModal && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
           onClick={() => setShowInteractionsModal(false)}
         >
           <div 

@@ -1165,7 +1165,7 @@ export default function WebsiteOrders() {
 
       {/* WhatsApp Payment Screenshot Review Modal (Human-in-the-Loop) */}
       {selectedScreenshot && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-bg border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">

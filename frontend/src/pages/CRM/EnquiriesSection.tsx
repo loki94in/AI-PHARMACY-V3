@@ -371,7 +371,7 @@ export const EnquiriesSection: React.FC = () => {
 
       {/* New Enquiry Modal */}
       {isNewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-bg border border-border rounded-2xl w-full max-w-md p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between border-b border-border pb-2.5">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">

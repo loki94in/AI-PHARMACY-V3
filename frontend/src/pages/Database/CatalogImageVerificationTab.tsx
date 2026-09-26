@@ -2527,7 +2527,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* MARK INCORRECT REASON MODAL (Full Reason Options) */}
       {/* ============================================================ */}
       {incorrectModalItem && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center gap-2 text-amber-400">
               <AlertTriangle size={20} />
@@ -2627,7 +2627,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* AUDIT LOG HISTORY DRAWER */}
       {/* ============================================================ */}
       {historyDrawerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex justify-end">
+        <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-sm flex justify-end">
           <div className="w-full max-w-md bg-bg2 border-l border-border h-full flex flex-col p-5 shadow-2xl animate-in slide-in-from-right">
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
@@ -2705,7 +2705,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* REJECT CONFIRMATION MODAL */}
       {/* ============================================================ */}
       {rejectingImage && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
             <div className="flex items-center gap-2 text-rose-400">
               <XCircle size={20} />
@@ -2747,7 +2747,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* REPLACE IMAGE MODAL */}
       {/* ============================================================ */}
       {replacingSlot && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-text">
@@ -2805,7 +2805,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* ONLINE PACKAGING CANDIDATES MODAL (PharmEasy + Tata 1mg) */}
       {/* ============================================================ */}
       {candidateTrayOpen && selectedMedicine && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95 max-h-[88vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2.5">
@@ -2946,7 +2946,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* CONNECT TO MASTER MEDICINE MODAL */}
       {/* ============================================================ */}
       {relinkModalImage && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-primary">

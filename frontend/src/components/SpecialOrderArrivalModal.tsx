@@ -268,7 +268,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
   const delayedCount = orders.length - arrivedCount;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-200">
       <div className="bg-bg2 border border-glass-border rounded-3xl shadow-2xl shadow-emerald-500/10 w-full max-w-2xl flex flex-col max-h-[92vh] overflow-hidden text-text transition-all">
         
         {/* Top Accent Gradient Bar */}

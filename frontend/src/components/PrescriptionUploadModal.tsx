@@ -424,7 +424,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-bg3/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+      className="fixed inset-0 z-global-modal bg-bg3/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
       onClick={onClose}
     >
       <div

@@ -472,7 +472,7 @@ export function PortalAccountsManager() {
 
       {/* Modal: Create / Generate Account */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
@@ -584,7 +584,7 @@ export function PortalAccountsManager() {
 
       {/* Modal: Override / Edit PIN */}
       {overrideModalAcc && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
@@ -666,7 +666,7 @@ export function PortalAccountsManager() {
 
       {/* Modal: Session History & Usage Auditing */}
       {sessionModalAcc && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-bg2 border border-border rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-border pb-3 shrink-0">
               <div>

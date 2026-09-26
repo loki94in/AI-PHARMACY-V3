@@ -260,8 +260,9 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
     if (!it) return;
     setMedEditorIndex(index);
     setMedEditorInitialData(null);
+    const typedSearch = (lineSearchTerms[index] || '').trim();
     setMedEditorOcrData({
-      potentialName: itemNameOf(it),
+      potentialName: typedSearch || itemNameOf(it),
       manufacturer: it.manufacturer || '',
       mrp: Number(it.mrp) > 0 ? Number(it.mrp) : undefined,
       rate: Number(it.rate ?? it.cost_price) > 0 ? Number(it.rate ?? it.cost_price) : undefined,
@@ -734,6 +735,12 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
                                       placeholder="Search master to link (type ≥ 3 chars)..."
                                       value={lineSearchTerms[index] || ''}
                                       onChange={(e) => handleLineSearch(index, e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.altKey && (e.key === 'n' || e.key === 'N')) {
+                                          e.preventDefault();
+                                          openNewMedicineEditor(index);
+                                        }
+                                      }}
                                       className="w-full pl-7 pr-2 py-1.5 bg-bg border border-border rounded-lg text-xs focus:border-primary focus:outline-none"
                                     />
                                   </div>
@@ -745,21 +752,53 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
                                     <Plus size={13} /> New Medicine
                                   </button>
                                 </div>
-                                {(lineSearchResults[index]?.length || 0) > 0 && (
-                                  <div className="absolute z-dropdown left-0 right-20 mt-1 bg-bg border border-glass-border rounded-xl shadow-xl max-h-52 overflow-y-auto scrollbar-custom">
-                                    {(lineSearchResults[index] || []).map((med) => (
+                                {(lineSearchTerms[index]?.trim().length || 0) >= 3 && (
+                                  <div className="absolute z-dropdown left-0 right-0 mt-1 bg-bg border border-glass-border rounded-xl shadow-xl overflow-hidden flex flex-col max-h-60">
+                                    {/* PINNED TOP HEADER: Always visible New Medicine Creation */}
+                                    <div className="p-1.5 border-b border-border/40 bg-bg/95 backdrop-blur-sm shrink-0">
                                       <button
-                                        key={med.id}
                                         type="button"
-                                        onMouseDown={() => handlePickSearchResult(index, med)}
-                                        className="w-full text-left px-3 py-2 hover:bg-bg3 transition-colors border-b border-border last:border-0"
+                                        onMouseDown={() => openNewMedicineEditor(index)}
+                                        className="w-full text-left px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
+                                        title="Register this medicine as a new master database entry with full rates"
                                       >
-                                        <div className="text-xs font-bold truncate">{med.name}</div>
-                                        <div className="text-[10px] text-muted truncate">
-                                          {med.manufacturer || ''}{med.mrp ? ` • MRP ₹${med.mrp}` : ''}
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                            <Plus size={12} className="text-emerald-400" />
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="font-bold text-xs text-emerald-300 truncate">
+                                              ✨ Register "{lineSearchTerms[index]?.trim()}" as New Medicine
+                                            </div>
+                                          </div>
                                         </div>
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 shrink-0 ml-1.5">
+                                          Alt+N
+                                        </span>
                                       </button>
-                                    ))}
+                                    </div>
+
+                                    {(lineSearchResults[index]?.length || 0) > 0 ? (
+                                      <div className="overflow-y-auto max-h-48 divide-y divide-border/20 scrollbar-custom">
+                                        {(lineSearchResults[index] || []).map((med) => (
+                                          <button
+                                            key={med.id}
+                                            type="button"
+                                            onMouseDown={() => handlePickSearchResult(index, med)}
+                                            className="w-full text-left px-3 py-2 hover:bg-bg3 transition-colors cursor-pointer"
+                                          >
+                                            <div className="text-xs font-bold truncate">{med.name}</div>
+                                            <div className="text-[10px] text-muted truncate">
+                                              {med.manufacturer || ''}{med.mrp ? ` • MRP ₹${med.mrp}` : ''}
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="p-3 text-center text-xs text-muted">
+                                        No matching medicine found in master database.
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>

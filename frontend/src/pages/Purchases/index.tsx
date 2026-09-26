@@ -1771,7 +1771,7 @@ const Purchases: React.FC = () => {
           setSearchSearching(false);
         }
       }
-    }, 60);
+    }, 180);
   };
 
   useEffect(() => {
@@ -3677,6 +3677,11 @@ const Purchases: React.FC = () => {
                                     handleRowInputKeyDown(e, index, 'medicine_name');
                                     return;
                                   }
+                                  if (e.altKey && e.key.toLowerCase() === 'n') {
+                                    e.preventDefault();
+                                    openAddMedicineModal(index);
+                                    return;
+                                  }
                                   if (e.key === 'ArrowDown') {
                                     e.preventDefault();
                                     setSearchHighlightIndex(i => Math.min(i + 1, searchResults.length));
@@ -3804,27 +3809,24 @@ const Purchases: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          {activeSearchIndex === index && searchSearching && searchResults.length === 0 && item.medicine_name.trim().length >= 2 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-3 left-0 [will-change:scroll-position] ${
-                              purchaseSearchDropUp
-                                ? 'bottom-full mb-1'
-                                : 'top-full mt-1'
-                            }`}>
-                              <div className="flex items-center gap-2 text-xs text-muted font-semibold">
-                                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                                Searching Master Database for &ldquo;{item.medicine_name.trim()}&rdquo;&hellip;
-                              </div>
-                            </div>
-                          )}
-                          {activeSearchIndex === index && !searchSearching && searchResults.length === 0 && item.medicine_name.trim().length >= 2 && (
+                          {activeSearchIndex === index && searchResults.length === 0 && item.medicine_name.trim().length >= 2 && (
                             <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-2 left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
                             }`}>
                               <div className="px-3 py-1.5 text-xs text-muted font-medium border-b border-glass-border/30 flex items-center justify-between">
-                                <span>No match in Master Database</span>
-                                <span className="text-[10px] text-amber-400 font-mono font-semibold">New Item</span>
+                                {searchSearching ? (
+                                  <span className="flex items-center gap-1.5 text-primary font-semibold">
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    Searching Master Database&hellip;
+                                  </span>
+                                ) : (
+                                  <span>No match in Master Database</span>
+                                )}
+                                <span className={`text-[10px] font-mono font-semibold ${searchSearching ? 'text-primary' : 'text-amber-400'}`}>
+                                  {searchSearching ? 'Live Query' : 'New Item'}
+                                </span>
                               </div>
                               <button
                                 type="button"
@@ -3849,11 +3851,40 @@ const Purchases: React.FC = () => {
                             </div>
                           )}
                           {activeSearchIndex === index && searchResults.length > 0 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl max-h-64 overflow-y-auto left-0 [will-change:scroll-position] ${
+                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[460px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
                             }`}>
+                              {/* PINNED TOP SECTION: Always visible New Medicine Creation Header */}
+                              <div className="p-2 border-b border-glass-border/30 bg-bg/80 backdrop-blur-sm flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openAddMedicineModal(index)}
+                                  className="w-full text-left px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group"
+                                  title="Register this medicine as a new master database entry"
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                    <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                      <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-bold text-emerald-300 truncate">
+                                        ✨ Register &ldquo;{item.medicine_name.trim() || item.original_name || 'New Medicine'}&rdquo; as New
+                                      </div>
+                                      <div className="text-[10px] text-muted truncate">
+                                        Directly add to Master Database with full rates
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] px-2 py-0.5 rounded bg-bg3 text-muted font-mono border border-glass-border flex-shrink-0 ml-2">
+                                    Alt+N / Click
+                                  </span>
+                                </button>
+                              </div>
+
+                              {/* SCROLLABLE MATCHING RESULTS */}
+                              <div className="max-h-60 overflow-y-auto flex-1">
                               {item.original_name && (
                                 <div className="px-4 py-2 bg-blue-500/10 border-b border-glass-border/30 text-xs text-blue-300 font-bold select-none flex items-center gap-1.5 font-mono">
                                   📄 Original Bill Name: {item.original_name}
@@ -3936,29 +3967,7 @@ const Purchases: React.FC = () => {
                                   </div>
                                 </button>
                               ))}
-                              <button
-                                type="button"
-                                data-highlighted={searchHighlightIndex === searchResults.length ? "true" : "false"}
-                                onMouseEnter={() => setSearchHighlightIndex(searchResults.length)}
-                                onClick={() => openAddMedicineModal(index)}
-                                className={`w-full text-left px-4 py-2.5 text-emerald-400 font-semibold border-t border-glass-border/30 flex items-center justify-between transition-all ${
-                                  searchHighlightIndex === searchResults.length 
-                                    ? 'bg-emerald-500/25 border-l-4 border-emerald-400 ring-1 ring-emerald-500/40 shadow-sm' 
-                                    : 'hover:bg-emerald-500/15'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0 flex-1">
-                                  <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
-                                    <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                                  </div>
-                                  <span className="truncate text-xs">
-                                    Add <strong className="underline decoration-emerald-400/50">{item.medicine_name || item.original_name || 'New Medicine'}</strong> to Master Database
-                                  </span>
-                                </div>
-                                <span className="text-[10px] text-muted font-mono">
-                                  New Master Entry
-                                </span>
-                              </button>
+                              </div>
                             </div>
                           )}
                     </div>

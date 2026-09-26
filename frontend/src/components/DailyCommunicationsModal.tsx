@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -50,6 +50,22 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
   const [resendingId, setResendingId] = useState<number | null>(null);
   const [actioningId, setActioningId] = useState<number | null>(null);
   const [confirmResendItem, setConfirmResendItem] = useState<DailyLogItem | null>(null);
+
+  // Auto-close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (confirmResendItem) {
+          setConfirmResendItem(null);
+        } else {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose, confirmResendItem]);
 
   const filteredItems = useMemo(() => {
     return (dailyLog || []).filter(item => {
@@ -156,8 +172,17 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="bg-bg border border-border w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div
+      role="dialog"
+      aria-modal="true"
+      data-modal="daily-communications"
+      onClick={onClose}
+      className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-bg border border-border w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      >
         
         {/* Header */}
         <div className="px-6 py-4 border-b border-border bg-bg2 flex items-center justify-between shrink-0">
@@ -381,8 +406,14 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
 
         {/* Confirmation Modal for Re-Sending */}
         {confirmResendItem && (
-          <div className="absolute inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-bg border border-border p-5 rounded-2xl max-w-md w-full shadow-2xl space-y-4">
+          <div
+            onClick={() => setConfirmResendItem(null)}
+            className="absolute inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="bg-bg border border-border p-5 rounded-2xl max-w-md w-full shadow-2xl space-y-4"
+            >
               <div className="flex items-center gap-3 text-amber-400">
                 <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/25">
                   <ShieldAlert size={22} />

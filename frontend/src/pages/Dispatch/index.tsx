@@ -2459,7 +2459,7 @@ const Dispatch = () => {
       )}
 
       {showTemplateModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-global-modal flex items-center justify-center p-4">
           <div className="glass-panel p-6 rounded-2xl max-w-lg w-full bg-bg2 border border-glass-border shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-glass-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
@@ -2519,7 +2519,7 @@ const Dispatch = () => {
       )}
 
       {showManualOrderModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-global-modal flex items-center justify-center p-4">
           <div className="glass-panel p-6 rounded-2xl max-w-md w-full bg-bg2 border border-glass-border shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-glass-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">

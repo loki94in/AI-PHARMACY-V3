@@ -303,7 +303,6 @@ router.post('/medicines', async (req, res) => {
     const id = result.lastID;
     const savedMed = await db.get('SELECT * FROM medicines WHERE id = ?', [id]);
     await dbManager.close();
-    inventoryCache.invalidate();
     res.json({ success: true, data: savedMed });
   } catch (error) {
     await dbManager.close();

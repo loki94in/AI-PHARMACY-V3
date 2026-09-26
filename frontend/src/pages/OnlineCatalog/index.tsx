@@ -700,7 +700,7 @@ export default function OnlineCatalog() {
 
       {/* ── QR Code Popup Modal ────────────────────────────────────── */}
       {showQrModal && portalFullUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
           <div className="bg-bg2 border border-border rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
@@ -756,7 +756,7 @@ export default function OnlineCatalog() {
 
       {/* ── Cloudflare Token & Permanent Domain Modal ─────────────── */}
       {showConfigModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
           <div className="bg-bg2 border border-border rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">

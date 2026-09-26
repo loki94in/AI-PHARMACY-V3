@@ -2562,6 +2562,9 @@ const QuickAssistSidebar = memo(({
   notifications,
   specialOrders = [],
   onActionComplete,
+  dailySummary,
+  onOpenDailyModal,
+  onRefreshDailyLog,
 }: {
   expanded: boolean;
   setExpanded: (val: boolean) => void;
@@ -2569,6 +2572,14 @@ const QuickAssistSidebar = memo(({
   notifications: AutomationNotification[];
   specialOrders?: SpecialOrder[];
   onActionComplete: () => void;
+  dailySummary: {
+    sentTodayCount: number;
+    stagedCount: number;
+    sentPhones: Array<{ recipient_phone: string; last_sent_at: string; recipient_name?: string }>;
+    todayLog: DailyLogItem[];
+  };
+  onOpenDailyModal: () => void;
+  onRefreshDailyLog: () => void;
 }) => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -2588,39 +2599,12 @@ const QuickAssistSidebar = memo(({
   const [expandedSpecialOrderKeys, setExpandedSpecialOrderKeys] = useState<Set<string>>(new Set());
   const [expandedStagedKeys, setExpandedStagedKeys] = useState<Set<string>>(new Set());
   const [snoozingKeys, setSnoozingKeys] = useState<Set<string>>(new Set());
-  const [isDailyModalOpen, setIsDailyModalOpen] = useState<boolean>(false);
-  const [dailySummary, setDailySummary] = useState<{
-    sentTodayCount: number;
-    stagedCount: number;
-    sentPhones: Array<{ recipient_phone: string; last_sent_at: string; recipient_name?: string }>;
-    todayLog: DailyLogItem[];
-  }>({
-    sentTodayCount: 0,
-    stagedCount: 0,
-    sentPhones: [],
-    todayLog: []
-  });
-
-  const loadDailySummary = useCallback(() => {
-    api.getDailyNotificationSummary()
-      .then(res => {
-        if (res && res.success) {
-          setDailySummary({
-            sentTodayCount: res.sentTodayCount || 0,
-            stagedCount: res.stagedCount || 0,
-            sentPhones: res.sentPhones || [],
-            todayLog: (res.todayLog as any) || []
-          });
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (expanded) {
-      loadDailySummary();
+      onRefreshDailyLog();
     }
-  }, [expanded, loadDailySummary, notifications]);
+  }, [expanded, onRefreshDailyLog, notifications]);
 
   const toggleStagedKey = (key: string) => {
     setExpandedStagedKeys(prev => {
@@ -2643,7 +2627,7 @@ const QuickAssistSidebar = memo(({
       await api.snoozeNotificationGroup(ids, 1);
       toastEvent.trigger(`Snoozed reminder for ${group.recipient_name} by 1 day`, 'info');
       refillEvent.triggerRefresh();
-      loadDailySummary();
+      onRefreshDailyLog();
       onActionComplete();
     } catch (err: unknown) {
       console.error('Failed to snooze staged group:', err);
@@ -2702,7 +2686,7 @@ const QuickAssistSidebar = memo(({
   };
 
   useOnClickOutside(sidebarRef, (event) => {
-    // Do not collapse sidebar if an edit or arrival modal is currently open
+    // Do not collapse sidebar if an edit or arrival modal or daily modal is currently open
     if (arrivalModalGroup || editingGroup) {
       return;
     }
@@ -2887,7 +2871,7 @@ const QuickAssistSidebar = memo(({
 
       toastEvent.trigger(`Consolidated WhatsApp message queued for ${group.recipient_name}!`, 'success');
       refillEvent.triggerRefresh();
-      loadDailySummary();
+      onRefreshDailyLog();
       onActionComplete();
     } catch (err: unknown) {
       console.error('Failed to send staged message group:', err);
@@ -2938,7 +2922,7 @@ const QuickAssistSidebar = memo(({
 
       toastEvent.trigger('Staged message dismissed', 'info');
       refillEvent.triggerRefresh();
-      loadDailySummary();
+      onRefreshDailyLog();
       onActionComplete();
     } catch (err) {
       console.error('Failed to dismiss staged notification:', err);
@@ -3413,7 +3397,9 @@ const QuickAssistSidebar = memo(({
           <span className="text-sm font-bold text-text uppercase tracking-wider truncate">Quick Assist</span>
         </div>
         <button
-          onClick={() => setExpanded(false)}
+          onClick={() => {
+            setExpanded(false);
+          }}
           className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer shrink-0"
           title="Collapse"
         >
@@ -4066,7 +4052,7 @@ const QuickAssistSidebar = memo(({
             </div>
             <button
               type="button"
-              onClick={() => setIsDailyModalOpen(true)}
+              onClick={() => onOpenDailyModal()}
               className="text-[9px] font-black text-purple-300 hover:text-purple-200 hover:underline uppercase tracking-widest cursor-pointer flex items-center gap-1 shrink-0"
               title="Open Daily Communications & Sent History Log"
             >
@@ -4079,7 +4065,7 @@ const QuickAssistSidebar = memo(({
               {dailySummary.sentTodayCount > 0 && (
                 <button
                   type="button"
-                  onClick={() => setIsDailyModalOpen(true)}
+                  onClick={() => onOpenDailyModal()}
                   className="text-[10px] font-bold text-emerald-400 hover:underline cursor-pointer"
                 >
                   View {dailySummary.sentTodayCount} sent today
@@ -4269,20 +4255,6 @@ const QuickAssistSidebar = memo(({
               refillEvent.triggerRefresh();
               window.dispatchEvent(new CustomEvent('refresh-special-orders'));
               window.dispatchEvent(new CustomEvent('refresh-refills'));
-              onActionComplete();
-            }}
-          />
-        )}
-        {isDailyModalOpen && (
-          <DailyCommunicationsModal
-            isOpen={isDailyModalOpen}
-            onClose={() => setIsDailyModalOpen(false)}
-            dailyLog={dailySummary.todayLog}
-            sentTodayCount={dailySummary.sentTodayCount}
-            stagedCount={dailySummary.stagedCount}
-            onRefresh={() => {
-              loadDailySummary();
-              refillEvent.triggerRefresh();
               onActionComplete();
             }}
           />
@@ -4544,6 +4516,43 @@ export const Layout = ({
     } catch { }
   }, [isSidebarExpanded]);
 
+  // Daily Communications Modal state — lifted here so modal renders at root level
+  // (avoids z-index / overflow-hidden stacking context issues from sidebar)
+  const [isDailyModalOpen, setIsDailyModalOpen] = useState(false);
+  const [dailySummary, setDailySummary] = useState<{
+    sentTodayCount: number;
+    stagedCount: number;
+    sentPhones: Array<{ recipient_phone: string; last_sent_at: string; recipient_name?: string }>;
+    todayLog: DailyLogItem[];
+  }>({
+    sentTodayCount: 0,
+    stagedCount: 0,
+    sentPhones: [],
+    todayLog: []
+  });
+
+  const loadDailySummary = useCallback(() => {
+    api.getDailyNotificationSummary()
+      .then(res => {
+        if (res && res.success) {
+          setDailySummary({
+            sentTodayCount: res.sentTodayCount || 0,
+            stagedCount: res.stagedCount || 0,
+            sentPhones: res.sentPhones || [],
+            todayLog: (res.todayLog as any) || []
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Close daily modal whenever the sidebar collapses
+  useEffect(() => {
+    if (!isSidebarExpanded) {
+      setIsDailyModalOpen(false);
+    }
+  }, [isSidebarExpanded]);
+
   const fetchStagedNotifications = useCallback(async () => {
     try {
       const notifications = await api.getAutomationNotifications({ status: 'staged' });
@@ -4802,6 +4811,7 @@ export const Layout = ({
   const openConnectModal = useCallback(() => setShowConnectModal(true), []);
   const openWaQueuePopover = useCallback(() => setShowWaQueuePopover(true), []);
   const openMobileNav = useCallback(() => setMobileNavOpen(true), []);
+  const openDailyModal = useCallback(() => setIsDailyModalOpen(true), []);
   const handleQuickAssistActionComplete = useCallback(() => {
     fetchStagedNotifications();
     refetchSpecialOrders();
@@ -4867,6 +4877,9 @@ export const Layout = ({
             notifications={stagedNotifications}
             specialOrders={specialOrdersList}
             onActionComplete={handleQuickAssistActionComplete}
+            dailySummary={dailySummary}
+            onOpenDailyModal={openDailyModal}
+            onRefreshDailyLog={loadDailySummary}
           />
         </div>
 
@@ -4940,6 +4953,21 @@ export const Layout = ({
               isStartupMode={isBackupStartupMode}
             />
           </Suspense>
+        )}
+
+        {/* Daily Communications Modal — rendered at root to escape sidebar stacking context */}
+        {isDailyModalOpen && (
+          <DailyCommunicationsModal
+            isOpen={isDailyModalOpen}
+            onClose={() => setIsDailyModalOpen(false)}
+            dailyLog={dailySummary.todayLog}
+            sentTodayCount={dailySummary.sentTodayCount}
+            stagedCount={dailySummary.stagedCount}
+            onRefresh={() => {
+              loadDailySummary();
+              handleQuickAssistActionComplete();
+            }}
+          />
         )}
 
         {/* Subtle background glow */}

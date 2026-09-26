@@ -664,7 +664,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Single Item Approval Modal */}
       {approvingItem && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
           <div className="bg-bg2 border border-border rounded-2xl p-5 max-w-lg w-full shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
@@ -788,7 +788,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Bulk Approval Modal */}
       {showBulkApproveModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
           <div className="bg-bg2 border border-border rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
@@ -885,7 +885,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Reject Modal */}
       {rejectingItem && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
           <div className="bg-bg2 border border-border rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
@@ -937,7 +937,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Audit History Modal */}
       {showAuditModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
           <div className="bg-bg2 border border-border rounded-2xl p-5 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
