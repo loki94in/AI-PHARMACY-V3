@@ -503,7 +503,6 @@ async function auditSettings(db: Db): Promise<CategoryResult> {
     `SELECT value FROM app_settings
      WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name')
        AND value IS NOT NULL AND TRIM(value) != ''
-       AND TRIM(value) != 'XYZ MEDICAL' AND TRIM(value) != 'XYZ Pharmacy'
      LIMIT 1`
   );
   if (!configured) {

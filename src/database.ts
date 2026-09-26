@@ -687,6 +687,8 @@ export async function ensureSchema(dbPath: string) {
     await db.run('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)');
     await db.run('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('daily_briefing_template', 'detailed')");
 
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
     try {
@@ -3669,7 +3671,7 @@ export async function ensureSchema(dbPath: string) {
       const storeCount = await db.get("SELECT COUNT(*) as count FROM stores");
       if (!storeCount || storeCount.count === 0) {
         await db.run(
-          "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
+          "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'AI Pharmacy', 'STORE-A', '', '', 1, 1)"
         );
       }
 
@@ -3679,8 +3681,6 @@ export async function ensureSchema(dbPath: string) {
        WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name') 
          AND value IS NOT NULL 
          AND TRIM(value) != '' 
-         AND TRIM(value) != 'XYZ MEDICAL' 
-         AND TRIM(value) != 'XYZ Pharmacy'
        ORDER BY CASE key 
          WHEN 'shop_name' THEN 1 
          WHEN 'store_name' THEN 2 
@@ -3700,7 +3700,6 @@ export async function ensureSchema(dbPath: string) {
     }
 
     // Insert default settings if they don't exist
-    await db.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_user', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_pass', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_host', '')");
@@ -3749,6 +3748,7 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
 
     // WhatsApp Admin Auto-Escalation defaults
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
@@ -3760,8 +3760,9 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
 
-    // Google Maps store location link default
-    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8')");
+    // Google Maps store location link default (clean default for production)
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', '')");
+    await db.run("UPDATE app_settings SET value = '' WHERE key = 'google_maps_url' AND value = 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8'");
 
     // Pharmacy Timetable & Schedule Defaults
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_open_time', '09:00')");
@@ -4020,7 +4021,7 @@ export async function ensureSchema(dbPath: string) {
         { name: 'Payment Dues Reminder', category: 'Patients', body: 'Dear {{name}}, your bill invoice #{{invoice}} of ₹{{amount}} is due. Kindly let us know if you need assistance with payment.' },
         { name: 'Stock Availability Inquiry', category: 'Distributors', body: 'Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you.' },
         { name: 'General Reply', category: 'General', body: 'Hello! Thank you for contacting AI Pharmacy. How can we help you today?' },
-        { name: 'Store Location & Directions', category: 'General', body: 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!' }
+        { name: 'Store Location & Directions', category: 'General', body: 'Hello {{name}}, our pharmacy is located at:\n📍 {{address}}\nDirections: {{google_maps_url}}\nWe look forward to serving you!' }
       ];
       for (const t of seedTemplates) {
         await db.run(
@@ -4035,10 +4036,17 @@ export async function ensureSchema(dbPath: string) {
         const now = Date.now();
         await db.run(
           'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-          ['Store Location & Directions', 'General', 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!', now, now]
+          ['Store Location & Directions', 'General', 'Hello {{name}}, our pharmacy is located at:\n📍 {{address}}\nDirections: {{google_maps_url}}\nWe look forward to serving you!', now, now]
         );
       }
     }
+
+    // Auto-clean any legacy hardcoded test maps link in templates
+    try {
+      await db.run(
+        "UPDATE whatsapp_message_templates SET body = REPLACE(body, 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8', '{{google_maps_url}}') WHERE body LIKE '%https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8%'"
+      );
+    } catch (_) {}
 
 
 

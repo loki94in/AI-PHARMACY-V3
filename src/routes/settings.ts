@@ -135,7 +135,16 @@ router.post('/', async (req, res) => {
       for (const pk of phoneKeys) {
         await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [pk, saveValue]);
       }
-      await db.run('UPDATE stores SET phone = ? WHERE id = 1 AND (phone IS NULL OR phone = "" OR phone = "918080888041")', [saveValue]).catch(() => {});
+      await db.run('UPDATE stores SET phone = ? WHERE id = 1', [saveValue]).catch(() => {});
+    }
+
+    // Synchronize address alias keys
+    const addressKeys = ['address', 'shop_address', 'store_address', 'pharmacy_address'];
+    if (addressKeys.includes(key) && saveValue) {
+      for (const ak of addressKeys) {
+        await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [ak, saveValue]);
+      }
+      await db.run('UPDATE stores SET address = ? WHERE id = 1', [saveValue]).catch(() => {});
     }
 
     // Synchronize drug licence alias keys
@@ -189,7 +198,15 @@ router.post('/save-single', async (req, res) => {
       for (const pk of phoneKeys) {
         await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [pk, saveValue]);
       }
-      await db.run('UPDATE stores SET phone = ? WHERE id = 1 AND (phone IS NULL OR phone = "" OR phone = "918080888041")', [saveValue]).catch(() => {});
+      await db.run('UPDATE stores SET phone = ? WHERE id = 1', [saveValue]).catch(() => {});
+    }
+
+    const addressKeys = ['address', 'shop_address', 'store_address', 'pharmacy_address'];
+    if (addressKeys.includes(key) && saveValue) {
+      for (const ak of addressKeys) {
+        await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [ak, saveValue]);
+      }
+      await db.run('UPDATE stores SET address = ? WHERE id = 1', [saveValue]).catch(() => {});
     }
 
     if (key === 'owner_whatsapp_number' && saveValue) {
@@ -1234,6 +1251,40 @@ router.delete('/holidays/:id', async (req, res) => {
   } catch (error: any) {
     console.error('Delete holiday error:', error);
     res.status(500).json({ error: 'Failed to delete holiday' });
+  }
+});
+
+// POST send test operational briefing
+router.post('/send-test-briefing', async (req, res) => {
+  try {
+    const { template } = req.body || {};
+    const db = await dbManager.getConnection();
+    const { sendMorningScheduleBriefingToAdmin } = await import('../services/refillService.js');
+    const result = await sendMorningScheduleBriefingToAdmin(db, template);
+    if (!result.success) {
+      return res.status(400).json({ error: result.message });
+    }
+    // Also trigger queue force-next so it dispatches immediately without delay
+    const { whatsappQueueWorker } = await import('../services/whatsappQueueWorker.js');
+    await whatsappQueueWorker.forceNext().catch(() => {});
+    res.json({ success: true, message: result.message });
+  } catch (error: any) {
+    console.error('Send test briefing error:', error);
+    res.status(500).json({ error: 'Failed to send test briefing: ' + error.message });
+  }
+});
+
+// GET preview of operational briefing templates
+router.get('/briefing-templates/preview', async (req, res) => {
+  try {
+    const { template } = req.query;
+    const db = await dbManager.getConnection();
+    const { buildDailyOperationalBriefing } = await import('../services/refillService.js');
+    const result = await buildDailyOperationalBriefing(db, typeof template === 'string' ? template : undefined);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error('Briefing preview error:', error);
+    res.status(500).json({ error: 'Failed to build briefing preview: ' + error.message });
   }
 });
 

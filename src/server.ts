@@ -669,9 +669,9 @@ server.on('error', (err: any) => {
       // Check if background automation is enabled in store settings
       await db.run('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)');
       const autoRow = await db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'");
-      const isAutoEnabled = autoRow && autoRow.value === 'true';
+      const isAutoEnabled = !autoRow || autoRow.value === 'true';
 
-      // ── Phase 3: Lightweight workers (gated on automation_enabled === 'true') ──
+      // ── Phase 3: Lightweight workers (gated on automation_enabled !== 'false') ──
       setImmediate(async () => {
         console.log('[Boot:Phase3] Evaluating lightweight workers & startup evaluation...');
 
@@ -720,6 +720,21 @@ server.on('error', (err: any) => {
                 console.error('[Boot:Phase3] Startup catch-up daily check failed:', err);
               }
             }
+          }
+
+          // Morning schedule & refill operational briefing to Store Owner WhatsApp (catch-up on boot if not sent today)
+          try {
+            const d = new Date();
+            const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const lastBriefingRow = await db.get("SELECT value FROM app_settings WHERE key = 'last_morning_briefing_date'");
+            if (!lastBriefingRow || lastBriefingRow.value !== todayStr) {
+              const { sendMorningScheduleBriefingToAdmin } = await import('./services/refillService.js');
+              await sendMorningScheduleBriefingToAdmin(db);
+              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_morning_briefing_date', ?)", [todayStr]);
+            }
+          } catch (briefingErr) {
+            bootWorkerFailures++;
+            console.error('[Boot:Phase3] Morning schedule briefing startup error:', briefingErr);
           }
 
           // Credit overdue catch-up check

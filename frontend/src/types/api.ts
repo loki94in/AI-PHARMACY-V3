@@ -225,3 +225,28 @@ export interface WhatsAppReadinessState {
   lastError: string | null;
   hasSavedSession: boolean;
 }
+
+export interface ReorderRecentItem {
+  medicineName: string;
+  lastOrderedDate: string;
+  lastQty: number;
+  lastDistributorName: string;
+  storeId?: number | null;
+  storeName?: string;
+  orderId?: number;
+  productCode?: string;
+  productId?: number;
+  ptr?: number;
+  mrp?: number;
+  packaging?: string;
+  receiptStatus?: 'RECEIVED' | 'PENDING_INWARD';
+  receivedInvoiceNo?: string;
+  receivedDate?: string;
+  highestStockDistributor?: {
+    storeId: number;
+    storeName: string;
+    productName: string;
+    availability: number;
+    ptr: number;
+  } | null;
+}

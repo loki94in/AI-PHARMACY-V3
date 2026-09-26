@@ -188,8 +188,20 @@ class TriggerSchedulerService {
                 console.error('[Trigger: Daily Check] Bounced alert error:', bErr);
               }
 
+              // Send Morning Schedule Briefing to Store Owner WhatsApp (09:00 AM or scheduled time)
               const d = new Date();
               const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              try {
+                const lastBriefingRow = await database.get("SELECT value FROM app_settings WHERE key = 'last_morning_briefing_date'");
+                if (!lastBriefingRow || lastBriefingRow.value !== todayStr) {
+                  const { sendMorningScheduleBriefingToAdmin } = await import('./refillService.js');
+                  await sendMorningScheduleBriefingToAdmin(database);
+                  await database.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_morning_briefing_date', ?)", [todayStr]);
+                }
+              } catch (bErr) {
+                console.error('[Trigger: Daily Check] Morning briefing error:', bErr);
+              }
+
               await database.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_daily_check_date', ?)", [todayStr]);
             } catch (err) {
               console.error('[Trigger: Daily Check] Execution failed:', err);

@@ -25,16 +25,7 @@ export async function getConfiguredPharmacyName(dbInstance?: any): Promise<strin
     );
 
     if (row && row.value && row.value.trim()) {
-      const val = row.value.trim();
-      const lower = val.toLowerCase();
-      if (
-        lower === 'xyz medical' ||
-        lower === 'xyz pharmacy' ||
-        lower === 'xyz'
-      ) {
-        return null;
-      }
-      return val;
+      return row.value.trim();
     }
   } catch (err) {
     console.warn('[StoreSettings] Error resolving configured pharmacy name:', err);
@@ -57,14 +48,12 @@ export async function getStoreMedicalName(dbInstance?: any, storeId?: number): P
       }
     }
 
-    // Primary lookup: shop_name, store_name, pharmacy_name, medical_name (excluding legacy placeholders)
+    // Primary lookup: shop_name, store_name, pharmacy_name, medical_name
     const row = await db.get(
       `SELECT value FROM app_settings 
        WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name') 
          AND value IS NOT NULL 
          AND TRIM(value) != '' 
-         AND TRIM(value) != 'XYZ MEDICAL' 
-         AND TRIM(value) != 'XYZ Pharmacy'
        ORDER BY CASE key 
          WHEN 'shop_name' THEN 1 
          WHEN 'store_name' THEN 2 
@@ -75,22 +64,6 @@ export async function getStoreMedicalName(dbInstance?: any, storeId?: number): P
 
     if (row && row.value && row.value.trim()) {
       return row.value.trim();
-    }
-
-    // Secondary lookup: any non-empty value
-    const fallbackRow = await db.get(
-      `SELECT value FROM app_settings 
-       WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name') 
-         AND value IS NOT NULL 
-         AND TRIM(value) != '' 
-       LIMIT 1`
-    );
-
-    if (fallbackRow && fallbackRow.value && fallbackRow.value.trim()) {
-      const val = fallbackRow.value.trim();
-      if (val !== 'XYZ MEDICAL' && val !== 'XYZ Pharmacy') {
-        return val;
-      }
     }
   } catch (err) {
     console.warn('[StoreSettings] Error resolving store medical name:', err);
@@ -284,6 +257,33 @@ export async function getEmailRetentionDays(dbInstance?: any): Promise<number> {
     console.warn('[StoreSettings] Error resolving email retention days:', err);
   }
   return 14;
+}
+
+/**
+ * Resolves the configured pharmacy store address from app_settings dynamically.
+ */
+export async function getStoreAddress(dbInstance?: any): Promise<string> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get(
+      `SELECT value FROM app_settings 
+       WHERE key IN ('shop_address', 'store_address', 'pharmacy_address', 'address') 
+         AND value IS NOT NULL 
+         AND TRIM(value) != '' 
+       ORDER BY CASE key 
+         WHEN 'shop_address' THEN 1 
+         WHEN 'store_address' THEN 2 
+         WHEN 'pharmacy_address' THEN 3 
+         ELSE 4 END 
+       LIMIT 1`
+    );
+    if (row && row.value && row.value.trim()) {
+      return row.value.trim();
+    }
+  } catch (err) {
+    console.warn('[StoreSettings] Error resolving store address:', err);
+  }
+  return '';
 }
 
 /**

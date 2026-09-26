@@ -1773,7 +1773,18 @@ export const api = {
 
   // Pharmarack Reorder Recent API
   getPharmarackReorderRecent: (months?: number) =>
-    apiClient.get<{ success: boolean; items: { medicineName: string; lastOrderedDate: string; lastQty: number; lastDistributorName: string }[] }>('/pharmarack/reorder-recent', { params: months ? { months } : {} }).then(res => res.data),
+    apiClient.get<{ success: boolean; items: ReorderRecentItem[] }>('/pharmarack/reorder-recent', { params: months ? { months } : {} }).then(res => res.data),
+
+  getPharmarackOrderById: (orderId: number | string) =>
+    apiClient.get<{ success: boolean; order: any }>(`/pharmarack/order-by-id/${orderId}`).then(res => res.data),
+
+  checkMedicineStock: (medicineName: string) =>
+    apiClient.get<{
+      success: boolean;
+      medicineName: string;
+      highestStockDistributor: { storeId: number; storeName: string; productName: string; availability: number; ptr: number } | null;
+      alternateDistributors: Array<{ storeId: number; storeName: string; productName: string; availability: number; ptr: number }>;
+    }>('/pharmarack/check-medicine-stock', { params: { name: medicineName } }).then(res => res.data),
 
   // Multi-Store & Central/Local Sync APIs
   getStores: (includeInactive = false) => apiClient.get('/stores', { params: { include_inactive: includeInactive } }).then(res => {
@@ -2240,6 +2251,7 @@ export { catalogApi } from '../api/catalogApi';
 export { pricingApi } from '../api/pricingApi';
 export { customerApi } from '../api/customerApi';
 export { authApi } from '../api/authApi';
+export type { ReorderRecentItem } from '../types/api';
 
 
 

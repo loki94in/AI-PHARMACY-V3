@@ -8,6 +8,7 @@
 import path from 'path';
 import fs from 'fs';
 import { dbManager } from '../database/connection.js';
+import { getStoreMedicalName } from './storeSettingsService.js';
 import { getAppDataDir } from '../config/index.js';
 import QRCode from 'qrcode';
 import { createCanvas, loadImage } from 'canvas';
@@ -177,12 +178,9 @@ class PaymentQrService {
   async getStoreName(): Promise<string> {
     try {
       const db = await dbManager.getConnection();
-      const row = await db.get(
-        "SELECT value FROM app_settings WHERE key IN ('pharmacy_name', 'shop_name') AND value IS NOT NULL AND value != '' LIMIT 1"
-      );
-      return row?.value || 'TANMAY MEDICAL';
+      return await getStoreMedicalName(db);
     } catch {
-      return 'TANMAY MEDICAL';
+      return 'AI PHARMACY';
     }
   }
 

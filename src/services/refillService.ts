@@ -419,104 +419,294 @@ export async function cleanupStagedRefillNotifications(
  * Summarizes today's refills, special orders, and whether today has pause/holiday rules.
  * Does NOT send any automated messages to patients.
  */
-export async function sendMorningScheduleBriefingToAdmin(db: Database): Promise<void> {
+/**
+ * Compiles the Daily Operational Briefing message according to the selected or configured template.
+ * Supported templates:
+ * - 'detailed' (DEFAULT, Template 4): Itemized medicines with quantities and stock badges
+ * - 'compact' (Template 1): Grouped by patient without long medicine names
+ * - 'checklist' (Template 2): Action checklist format with [ ] checkboxes
+ * - 'executive' (Template 3): Ultra-short KPI metrics summary
+ */
+export async function buildDailyOperationalBriefing(db: Database, requestedTemplate?: string): Promise<{ template: string; messageText: string }> {
+  let templateKey: string = requestedTemplate || '';
+  if (!templateKey) {
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'daily_briefing_template'").catch(() => null);
+    templateKey = (row?.value as string) || 'detailed';
+  }
+  if (!['detailed', 'compact', 'checklist', 'executive'].includes(templateKey)) {
+    templateKey = 'detailed';
+  }
+
+  const { getPharmacyOperatingSchedule, getConfiguredPharmacyName } = await import('./storeSettingsService.js');
+  const storeName = await getConfiguredPharmacyName(db) || 'Pharmacy';
+  const operatingSchedule = await getPharmacyOperatingSchedule(db);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayDayName = dayNames[new Date().getDay()];
+  const isWeeklyOff = (operatingSchedule.weeklyOff || '').toLowerCase() === todayDayName.toLowerCase();
+  const isHoliday = (operatingSchedule.closedDates || []).includes(todayStr);
+
+  let statusLine = '🟢 Open as usual';
+  if (isHoliday) {
+    statusLine = '🔴 Holiday / Closed today';
+  } else if (isWeeklyOff) {
+    statusLine = `🟡 Weekly Off (${todayDayName})`;
+  }
+
+  // Refill summary (7 days)
+  const refillRows = await db.all(`
+    SELECT pr.patient_name,
+           MIN(DATE(pr.next_refill_date)) as earliest_due,
+           COUNT(pr.id) as med_count,
+           SUM(CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END) as in_stock_count,
+           SUM(CASE WHEN (pr.is_ready = 0 AND COALESCE(inv.total_qty, 0) < COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END) as out_of_stock_count
+    FROM patient_refills pr
+    LEFT JOIN (
+      SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
+      FROM inventory_master
+      GROUP BY medicine_id
+    ) inv ON inv.medicine_id = pr.medicine_id
+    WHERE pr.is_active = 1
+      AND pr.status IN ('pending', 'notified', 'staged')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+    GROUP BY pr.patient_name
+    ORDER BY earliest_due ASC, pr.patient_name ASC
+    LIMIT 15
+  `).catch(() => []);
+
+  // Detailed refill items (with medicine names & quantities)
+  const refillDetailRows = await db.all(`
+    SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
+           MIN(DATE(pr.next_refill_date)) as due_date,
+           CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
+    FROM patient_refills pr
+    JOIN medicines m ON pr.medicine_id = m.id
+    LEFT JOIN (
+      SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
+      FROM inventory_master
+      GROUP BY medicine_id
+    ) inv ON inv.medicine_id = pr.medicine_id
+    WHERE pr.is_active = 1
+      AND pr.status IN ('pending', 'notified', 'staged')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+    ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
+    LIMIT 20
+  `).catch(() => []);
+
+  // Pending call tasks
+  const pendingCallTasks = await db.get(
+    "SELECT COUNT(*) as count FROM patient_call_tasks WHERE status IN ('pending', 'rescheduled')"
+  ).catch(() => ({ count: 0 }));
+  const callCount = Number(pendingCallTasks?.count || 0);
+
+  // Active special orders
+  const specialOrders = await db.all(
+    `SELECT requester, product, qty, status
+     FROM special_orders
+     WHERE status IN ('Confirmed', 'Pending', 'Ready') AND DATE(date) >= DATE('now', 'localtime', '-7 days')
+     ORDER BY date DESC LIMIT 5`
+  ).catch(() => []);
+
+  // Batches expiring this month
+  const currentMonth = todayStr.slice(0, 7);
+  const expRow = await db.get(
+    `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
+    [currentMonth, `${currentMonth}%`]
+  ).catch(() => ({ count: 0 }));
+  const expCount = Number(expRow?.count || 0);
+
+  // Staged reminders breakdown
+  const stagedRows = await db.all(`
+    SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
+    FROM automation_notifications an
+    LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+    LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+    WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+  `).catch(() => []);
+  const autoStagedCount = stagedRows.filter((r: any) => r.reminder_mode === 'auto').length;
+  const manualStagedCount = stagedRows.filter((r: any) => r.reminder_mode !== 'auto').length;
+
+  const dueMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const formatDate = (ymd: string) => {
+    if (!ymd) return 'Due soon';
+    const parts = ymd.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]} ${dueMonthNames[parseInt(parts[1], 10) - 1] || parts[1]}`;
+    }
+    return ymd;
+  };
+
+  let ordersBlock = '• No pending special orders';
+  if (specialOrders.length > 0) {
+    ordersBlock = specialOrders.map((o: any, i: number) => `${i + 1}. *${o.requester || 'Customer'}*: ${o.product} × ${o.qty} [${o.status}]`).join('\n');
+  }
+
+  const callTasksLine = callCount > 0
+    ? `• ${callCount} patient call task(s) pending in CRM Call Board`
+    : `• No pending call tasks`;
+
+  const inventoryLine = expCount > 0
+    ? `• ${expCount} batch(es) expiring this month (${todayStr.slice(5, 7)}/${todayStr.slice(0, 4)}) — check for return`
+    : `• No batches expiring this month`;
+
+  const stagedSummaryLine = stagedRows.length > 0
+    ? `• ${stagedRows.length} reminder(s) staged in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual Review)`
+    : `• No reminders staged for review`;
+
+  let messageText = '';
+
+  if (templateKey === 'detailed') {
+    // TEMPLATE 4 (DEFAULT): Itemized detailed list with medicine names
+    const patientGroups = new Map<string, any[]>();
+    for (const row of refillDetailRows) {
+      const list = patientGroups.get(row.patient_name) || [];
+      list.push(row);
+      patientGroups.set(row.patient_name, list);
+    }
+
+    let t4Details = '• No refills due in next 7 days';
+    if (patientGroups.size > 0) {
+      let pIdx = 1;
+      const pBlocks: string[] = [];
+      for (const [pName, meds] of patientGroups.entries()) {
+        const dueStr = meds[0]?.due_date ? formatDate(meds[0].due_date) : '';
+        const medLines = meds.map(m => `   - ${m.medicine_name} × ${m.quantity_needed || 1} (${m.in_stock ? '✅ Stock' : '⏳ Hold'})`).join('\n');
+        pBlocks.push(`${pIdx++}. *${pName}* (Due ${dueStr}):\n${medLines}`);
+      }
+      t4Details = pBlocks.join('\n');
+    }
+
+    messageText = `☀️ *DAILY OPERATIONAL BRIEFING* — ${storeName}
+📅 *Date*: ${todayStr} (${todayDayName})
+🏪 *Store Status*: ${statusLine}
+
+📋 *REFILL PRESCRIPTIONS (Next 7 Days)*:
+${t4Details}
+
+📞 *CALL BOARD*:
+${callTasksLine}
+
+📦 *SPECIAL / WHATSAPP ORDERS*:
+${ordersBlock}
+
+⚠️ *INVENTORY TASKS*:
+${inventoryLine}
+
+🔔 *STAGED CUSTOMER MESSAGES*:
+${stagedSummaryLine}
+
+🔒 *Human-in-the-Loop*: Visit http://localhost:5173/crm to review & 1-click approve before dispatch.`;
+
+  } else if (templateKey === 'compact') {
+    // TEMPLATE 1: Compact worklist (no medicine names)
+    let t1Refills = '• No refills due in next 7 days';
+    if (refillRows.length > 0) {
+      t1Refills = refillRows.map((r: any, i: number) => {
+        const stockStatus = r.out_of_stock_count === 0 ? '✅ In Stock' : (r.in_stock_count === 0 ? '⏳ Hold for Stock' : '⚠️ Partial Stock');
+        const medUnit = Number(r.med_count) === 1 ? '1 med' : `${r.med_count} meds`;
+        return `${i + 1}. *${r.patient_name}* (Due ${formatDate(r.earliest_due)}) — ${medUnit} (${stockStatus})`;
+      }).join('\n');
+    }
+
+    messageText = `☀️ *DAILY OPERATIONAL BRIEFING* — ${storeName}
+📅 *Date*: ${todayStr} (${todayDayName})
+🏪 *Store Status*: ${statusLine}
+
+📋 *1. REFILLS WORKLIST (Next 7 Days)*:
+${t1Refills}
+
+📞 *2. CALL TASKS*:
+${callTasksLine}
+
+📦 *3. SPECIAL / WHATSAPP ORDERS*:
+${ordersBlock}
+
+⚠️ *4. INVENTORY TASKS*:
+${inventoryLine}
+
+🔔 *5. STAGED CUSTOMER MESSAGES*:
+${stagedSummaryLine}
+
+🔒 *Human-in-the-Loop*: Visit http://localhost:5173/crm to review & 1-click approve before dispatch.`;
+
+  } else if (templateKey === 'checklist') {
+    // TEMPLATE 2: Action checklist [ ]
+    const t2Items: string[] = [];
+    const holdRefills = refillRows.filter((r: any) => r.out_of_stock_count > 0);
+    if (holdRefills.length > 0) {
+      t2Items.push(`[ ] *URGENT REORDER*: ${holdRefills.map((r: any) => r.patient_name).join(', ')} (Stock Needed)`);
+    }
+    const inStockRefills = refillRows.filter((r: any) => r.out_of_stock_count === 0);
+    if (inStockRefills.length > 0) {
+      t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r: any) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(', ')}`);
+    }
+    if (callCount > 0) {
+      t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
+    }
+    if (expCount > 0) {
+      t2Items.push(`[ ] *EXPIRY PACKING*: Check & return ${expCount} batches expiring this month`);
+    }
+    if (specialOrders.length > 0) {
+      t2Items.push(`[ ] *SPECIAL ORDERS*: Follow up ${specialOrders.length} customer order(s)`);
+    }
+    if (stagedRows.length > 0) {
+      t2Items.push(`[ ] *APPROVE NOTIFICATIONS*: Review ${stagedRows.length} staged reminder(s) in CRM`);
+    }
+    if (t2Items.length === 0) {
+      t2Items.push(`[ ] All morning operational queues are clear!`);
+    }
+
+    messageText = `☀️ *MORNING ACTION CHECKLIST* — ${storeName}
+📅 *Date*: ${todayStr} (${todayDayName}) | ${statusLine}
+
+⚡ *TODAY'S OPERATIONAL TO-DO LIST*:
+${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}
+
+👉 *Action*: Open CRM http://localhost:5173/crm to review & check off tasks.`;
+
+  } else {
+    // TEMPLATE 3: Executive summary
+    const totalRefillsDue = refillRows.reduce((acc: number, r: any) => acc + (r.med_count || 1), 0);
+    messageText = `☀️ *DAILY EXECUTIVE SUMMARY* — ${storeName}
+📅 *Date*: ${todayStr} (${todayDayName}) | ${statusLine}
+
+📊 *Morning KPI Dashboard*:
+• 📋 Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+• 📞 Pending Calls: *${callCount}*
+• 📦 Special Orders: *${specialOrders.length}*
+• ⚠️ Expiring Batches: *${expCount}*
+• 🔔 Staged Reminders: *${stagedRows.length}*
+
+🔒 Pharmacist approval required before dispatch. Visit http://localhost:5173/crm`;
+  }
+
+  return { template: templateKey, messageText };
+}
+
+/**
+ * Sends a morning operational briefing strictly to the Store Owner's WhatsApp.
+ * Summarizes today's refills, special orders, and whether today has pause/holiday rules.
+ * Does NOT send any automated messages to patients.
+ */
+export async function sendMorningScheduleBriefingToAdmin(db: Database, templateKey?: string): Promise<{ success: boolean; message?: string }> {
   try {
     const { waAdminEscalationService } = await import('./waAdminEscalationService.js');
     const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber(db);
     if (!adminWhatsapp) {
       console.log('[RefillService] No store owner WhatsApp configured for morning schedule briefing.');
-      return;
+      return { success: false, message: 'No store owner WhatsApp configured in Settings.' };
     }
 
-    const { getPharmacyOperatingSchedule, getConfiguredPharmacyName } = await import('./storeSettingsService.js');
-    const storeName = await getConfiguredPharmacyName(db);
-    const operatingSchedule = await getPharmacyOperatingSchedule(db);
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const todayDayName = dayNames[new Date().getDay()];
-    const isWeeklyOff = (operatingSchedule.weeklyOff || '').toLowerCase() === todayDayName.toLowerCase();
-    const isHoliday = (operatingSchedule.closedDates || []).includes(todayStr);
-
-    let statusLine = '🟢 Open as usual';
-    if (isHoliday) {
-      statusLine = '🔴 Holiday / Closed today (Orders shifted to next open day)';
-    } else if (isWeeklyOff) {
-      statusLine = `🟡 Weekly Off (${todayDayName}) (Orders shifted to next open day)`;
-    }
-
-    // Due refills today
-    const dueRefills = await db.all(
-      `SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed, pr.is_ready, pr.hold_for_stock
-       FROM patient_refills pr
-       JOIN medicines m ON pr.medicine_id = m.id
-       WHERE pr.status = 'pending' AND pr.is_active = 1 AND DATE(pr.next_refill_date) <= DATE('now')
-       ORDER BY pr.patient_name ASC LIMIT 20`
-    );
-
-    // Active special orders today
-    const specialOrders = await db.all(
-      `SELECT requester, product, qty, status, pharmarack_distributor
-       FROM special_orders
-       WHERE (status = 'Confirmed' OR status = 'Pending' OR status = 'Ready') AND DATE(date) >= DATE('now', '-2 days')
-       ORDER BY date DESC LIMIT 20`
-    );
-
-    let refillsBlock = '• No pending refills for today';
-    if (dueRefills.length > 0) {
-      refillsBlock = dueRefills.slice(0, 8).map((r, i) => {
-        const stockBadge = r.is_ready ? '✅ In Stock' : (r.hold_for_stock ? '⏳ Hold for Stock' : '⚠️ Checking');
-        return `${i + 1}. *${r.patient_name}*: ${r.medicine_name} (${stockBadge})`;
-      }).join('\n');
-      if (dueRefills.length > 8) {
-        refillsBlock += `\n...and ${dueRefills.length - 8} more in Refills page`;
-      }
-    }
-
-    let ordersBlock = '• No pending special orders';
-    if (specialOrders.length > 0) {
-      ordersBlock = specialOrders.slice(0, 8).map((o, i) => {
-        const dist = o.pharmarack_distributor ? ` → ${o.pharmarack_distributor}` : '';
-        return `${i + 1}. *${o.requester || 'Customer'}*: ${o.product} × ${o.qty} [${o.status}]${dist}`;
-      }).join('\n');
-      if (specialOrders.length > 8) {
-        ordersBlock += `\n...and ${specialOrders.length - 8} more in Orders page`;
-      }
-    }
-
-    // Staged reminders breakdown
-    const stagedRows = await db.all(`
-      SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
-      FROM automation_notifications an
-      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
-      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
-      WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
-    `).catch(() => []);
-    const autoStagedCount = stagedRows.filter((r: any) => r.reminder_mode === 'auto').length;
-    const manualStagedCount = stagedRows.filter((r: any) => r.reminder_mode !== 'auto').length;
-    const stagedSummaryLine = stagedRows.length > 0
-      ? `🔔 *Staged Reminders for Review*: ${stagedRows.length} total (${autoStagedCount} Auto, ${manualStagedCount} Manual Review)`
-      : `🔔 *Staged Reminders*: None pending review`;
-
-    const messageText = `☀️ *Morning Schedule & Refill Briefing* — ${storeName}
-📅 *Date*: ${todayStr} (${todayDayName})
-🏪 *Store Status*: ${statusLine}
-
-📋 *Refills Due*:
-${refillsBlock}
-
-📦 *WhatsApp & Special Orders*:
-${ordersBlock}
-
-${stagedSummaryLine}
-
-🔒 *Customer Communication*: Reminders remain STAGED in CRM / Quick Assist. Pharmacist approval required before dispatch.`;
+    const { template, messageText } = await buildDailyOperationalBriefing(db, templateKey);
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_morning_briefing', 'Admin / Store Owner');
-    console.log(`[RefillService] Morning schedule briefing sent to owner ${adminWhatsapp}.`);
-  } catch (err) {
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_morning_briefing', 'Admin / Store Owner', undefined, undefined, undefined, { skipDedupe: true });
+    console.log(`[RefillService] Morning operational task briefing (${template}) sent to owner ${adminWhatsapp}.`);
+    return { success: true, message: `Briefing sent successfully using ${template} template.` };
+  } catch (err: any) {
     console.error('[RefillService] Failed to send morning schedule briefing to admin:', err);
+    return { success: false, message: err?.message || 'Failed to send briefing' };
   }
 }
 

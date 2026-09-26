@@ -1,4 +1,5 @@
 import { dbManager } from '../database/connection.js';
+import { getStoreMedicalName, getStorePhone, getStoreAddress, getStoreGoogleMapsUrl } from './storeSettingsService.js';
 
 const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
@@ -37,13 +38,19 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
   const storeMap: Record<string, string> = {};
   storeRows.forEach((r: any) => { storeMap[r.key] = r.value; });
 
+  const storeName = await getStoreMedicalName(db);
+  const storePhone = await getStorePhone(db);
+  const storeAddress = await getStoreAddress(db);
+  const storeMapUrl = await getStoreGoogleMapsUrl(db);
+
   const storeInfo = {
-    name: storeMap['pharmacy_name'] || 'Pune City Pharmacy',
-    tagline: storeMap['pharmacy_tagline'] || 'Genuine Medicines & 24/7 Online Refill Store',
-    phone: storeMap['pharmacy_phone'] || '+91 98765 43210',
-    whatsapp: storeMap['pharmacy_whatsapp'] || '919876543210',
-    address: storeMap['pharmacy_address'] || 'Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001',
-    hours: 'Open 8:00 AM – 11:00 PM (Orders accepted 24/7)',
+    name: storeName,
+    tagline: storeMap['pharmacy_tagline'] || '',
+    phone: storePhone,
+    whatsapp: storePhone.replace(/\D/g, ''),
+    address: storeAddress,
+    googleMapsUrl: storeMapUrl,
+    hours: storeMap['pharmacy_hours'] || '',
     deliveryAvailable: true,
   };
 

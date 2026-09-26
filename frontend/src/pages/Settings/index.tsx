@@ -22,6 +22,7 @@ import {
   Clock,
   RotateCcw,
   Shield,
+  ShieldCheck,
   AlertTriangle,
   X,
   FileText,
@@ -95,6 +96,7 @@ function normalizeSettingsTab(tabParam: string | null): string {
   if (lower === 'integrations' || lower === 'credentials') return 'integrations';
   if (lower === 'triggers' || lower === 'schedules' || lower === 'cron' || lower === 'automation') return 'triggers';
   if (lower === 'backups' || lower === 'data' || lower === 'maintenance') return 'backups';
+  if (lower === 'license' || lower === 'updates' || lower === 'binding' || lower === 'system') return 'license';
   return 'profile';
 }
 
@@ -110,13 +112,14 @@ export default function Settings() {
   const { data: rawSettings = {}, isLoading: loadingSettings, refetch: refetchSettings } = useSettingsQuery();
 
   const tabs = [
-    { id: 'profile', label: 'Store Profile', icon: Building2, desc: 'Pharmacy details, license & store layout' },
+    { id: 'profile', label: 'Store Profile', icon: Building2, desc: 'Pharmacy details, invoice layout & tax' },
     { id: 'orderTiming', label: 'Orders & Fulfilment Timing', icon: Clock, desc: 'Cutoff times, Sunday/holiday calendar & delivery windows' },
     { id: 'stores', label: 'Multi-Store & Sync', icon: StoreIcon, desc: 'Branch stores, offline sync & central management' },
     { id: 'staff', label: 'Staff & Security', icon: Shield, desc: 'Cashier accounts, admin access & devices' },
     { id: 'integrations', label: 'Integrations & Credentials', icon: Zap, desc: 'WhatsApp, Telegram, Gmail & Pharmarack' },
     { id: 'triggers', label: 'Trigger Schedules', icon: Clock, desc: 'Manage automated trigger times, intervals & cron frequencies' },
-    { id: 'backups', label: 'Data & Backups', icon: Database, desc: 'Database backups, fetch control & reset' }
+    { id: 'backups', label: 'Data & Backups', icon: Database, desc: 'Database backups, fetch control & reset' },
+    { id: 'license', label: 'License & Updates', icon: ShieldCheck, desc: 'Hardware binding, anti-piracy key & software updates' }
   ];
 
   const handleTabChange = (tabId: string) => {
@@ -178,15 +181,10 @@ export default function Settings() {
             {activeTab === 'integrations' && <IntegrationsCredentialsTab rawSettings={rawSettings} refetchSettings={refetchSettings} isVisible={isPageVisible} />}
             {activeTab === 'triggers' && <TriggerSchedulesTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}
             {activeTab === 'backups' && <DataBackupsTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}
+            {activeTab === 'license' && <LicenseAndUpdatesTab />}
           </>
         )}
       </div>
-
-      {/* App License & Machine Binding */}
-      <LicenseManagementCard />
-
-      {/* Software Update Card */}
-      <SoftwareUpdateCard />
     </div>
   );
 }
@@ -198,7 +196,7 @@ export default function Settings() {
 function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record<string, string>; refetchSettings: () => void }) {
   const [formData, setFormData] = useState({
     pharmacyName: rawSettings.pharmacy_name || rawSettings.shop_name || rawSettings.store_name || '',
-    address: rawSettings.address || '',
+    address: rawSettings.address || rawSettings.shop_address || rawSettings.store_address || '',
     googleMapsUrl: rawSettings.google_maps_url || rawSettings.store_map_link || rawSettings.maps_url || '',
     phone: rawSettings.phone || rawSettings.shop_phone || '',
     gstin: rawSettings.gstin || '',
@@ -449,6 +447,8 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
         shop_name: formData.pharmacyName,
         store_name: formData.pharmacyName,
         address: formData.address,
+        shop_address: formData.address,
+        store_address: formData.address,
         google_maps_url: formData.googleMapsUrl,
         phone: formData.phone,
         shop_phone: formData.phone,
@@ -492,6 +492,8 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
         shop_name: formData.pharmacyName,
         store_name: formData.pharmacyName,
         address: formData.address,
+        shop_address: formData.address,
+        store_address: formData.address,
         google_maps_url: formData.googleMapsUrl,
         phone: formData.phone,
         shop_phone: formData.phone,
@@ -557,7 +559,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
   const handleResetStoreProfile = () => {
     setFormData({
       pharmacyName: rawSettings.pharmacy_name || rawSettings.shop_name || rawSettings.store_name || '',
-      address: rawSettings.address || '',
+      address: rawSettings.address || rawSettings.shop_address || rawSettings.store_address || '',
       googleMapsUrl: rawSettings.google_maps_url || rawSettings.store_map_link || rawSettings.maps_url || '',
       phone: rawSettings.phone || rawSettings.shop_phone || '',
       gstin: rawSettings.gstin || '',
@@ -700,7 +702,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
                 value={formData.googleMapsUrl}
                 onChange={(e) => setFormData({ ...formData, googleMapsUrl: e.target.value.trim() })}
                 className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                placeholder="https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8"
+                placeholder="https://maps.app.goo.gl/your-store-location"
               />
               <p className="text-[10px] text-muted mt-1">
                 Customers will receive this direct navigation link in WhatsApp order arrival &amp; pickup messages.
@@ -3624,6 +3626,7 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
     // 1. Daily Operational Check
     triggerDailyCheckEnabled: rawSettings.trigger_daily_check_enabled !== 'false',
     triggerDailyCheckTime: rawSettings.trigger_daily_check_time || '09:00',
+    dailyBriefingTemplate: rawSettings.daily_briefing_template || 'detailed',
 
     // 2. Near-Expiry Stock Scan
     triggerExpiryScanEnabled: rawSettings.trigger_expiry_scan_enabled !== 'false',
@@ -3679,7 +3682,26 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
   });
 
   const [saving, setSaving] = useState(false);
+  const [sendingTestBriefing, setSendingTestBriefing] = useState(false);
   const queryClient = useQueryClient();
+
+  const handleSendTestBriefing = async () => {
+    setSendingTestBriefing(true);
+    try {
+      const res = await apiClient.post('/settings/send-test-briefing', {
+        template: formData.dailyBriefingTemplate
+      });
+      if (res.data?.success) {
+        toastEvent.trigger(res.data.message || 'Test briefing dispatched to store WhatsApp!', 'success');
+      } else {
+        toastEvent.trigger(res.data?.error || 'Failed to send test briefing', 'error');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to send test briefing', 'error');
+    } finally {
+      setSendingTestBriefing(false);
+    }
+  };
 
   const handleSaveTriggers = async () => {
     setSaving(true);
@@ -3688,6 +3710,7 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
         automation_enabled: formData.automationEnabled ? 'true' : 'false',
         trigger_daily_check_enabled: formData.triggerDailyCheckEnabled ? 'true' : 'false',
         trigger_daily_check_time: formData.triggerDailyCheckTime,
+        daily_briefing_template: formData.dailyBriefingTemplate || 'detailed',
         trigger_expiry_scan_enabled: formData.triggerExpiryScanEnabled ? 'true' : 'false',
         trigger_expiry_scan_time: formData.triggerExpiryScanTime,
         trigger_expiry_scan_days: formData.triggerExpiryScanDays,
@@ -3803,6 +3826,38 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
               onChange={(e) => setFormData({ ...formData, triggerDailyCheckTime: e.target.value })}
               className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
             />
+          </div>
+
+          {/* WhatsApp Briefing Template Selection & Live Test */}
+          <div className="pt-2 border-t border-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-text">WhatsApp Briefing Template:</label>
+              <button
+                type="button"
+                onClick={handleSendTestBriefing}
+                disabled={sendingTestBriefing}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {sendingTestBriefing ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                <span>Send Test Briefing</span>
+              </button>
+            </div>
+            <select
+              value={formData.dailyBriefingTemplate}
+              onChange={(e) => setFormData({ ...formData, dailyBriefingTemplate: e.target.value })}
+              className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary font-medium"
+            >
+              <option value="detailed">Template 4: Itemized Detail List (Default - Medicines & Qty)</option>
+              <option value="compact">Template 1: Compact Worklist (Patients & Stock Only)</option>
+              <option value="checklist">Template 2: Action Checklist ([ ] Priorities)</option>
+              <option value="executive">Template 3: Executive Summary (Counts & Status)</option>
+            </select>
+            <p className="text-[10px] text-muted">
+              {formData.dailyBriefingTemplate === 'detailed' && 'Includes full medicine brand names, quantities, and stock status for each patient.'}
+              {formData.dailyBriefingTemplate === 'compact' && 'Compact view showing patient names and medicine counts without long brand names.'}
+              {formData.dailyBriefingTemplate === 'checklist' && 'Numbered operational to-do checklist with priority task order.'}
+              {formData.dailyBriefingTemplate === 'executive' && 'Fast 5-line summary highlighting total counts, high alerts, and store status.'}
+            </p>
           </div>
         </div>
 
@@ -5425,6 +5480,30 @@ function SoftwareUpdateCard() {
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Sub-Tab 8: License & Software Updates ─────────────────────────────────────
+function LicenseAndUpdatesTab() {
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="bg-bg2 border border-border rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20">
+            <ShieldCheck size={22} />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-text">License, Machine Binding & Software Updates</h2>
+            <p className="text-xs text-muted mt-0.5">
+              Manage your hardware-locked anti-piracy activation, review machine fingerprint, and install real-time application updates.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <LicenseManagementCard />
+      <SoftwareUpdateCard />
     </div>
   );
 }

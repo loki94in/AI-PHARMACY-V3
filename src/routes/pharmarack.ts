@@ -2902,7 +2902,8 @@ router.get('/sent-orders/latest-map', async (req, res) => {
 /**
  * GET /api/pharmarack/reorder-recent
  * Query param: ?months=2|4|6|8 (defaults to configured reorder window setting)
- * Returns one entry per distinct medicine name sent to any distributor within the window.
+ * Returns entries of medicines sent to distributors with distributor attribution, inward receipt verification,
+ * and the app-default Highest Stock distributor from distributor_catalog.
  */
 router.get('/reorder-recent', async (req, res) => {
   try {
@@ -2919,26 +2920,211 @@ router.get('/reorder-recent', async (req, res) => {
       [`-${windowDays} days`]
     );
 
-    const byMedicine = new Map<string, { medicineName: string; lastOrderedDate: string; lastQty: number; lastDistributorName: string }>();
+    // Group by medicineName + storeId to allow reordering across different distributors
+    const byMedicine = new Map<string, {
+      medicineName: string;
+      lastOrderedDate: string;
+      lastQty: number;
+      lastDistributorName: string;
+      storeId: number | null;
+      storeName: string;
+      orderId: number;
+      productCode?: string;
+      productId?: number;
+      ptr?: number;
+      mrp?: number;
+      packaging?: string;
+      receiptStatus: 'RECEIVED' | 'PENDING_INWARD';
+      receivedInvoiceNo?: string;
+      receivedDate?: string;
+      highestStockDistributor: {
+        storeId: number;
+        storeName: string;
+        productName: string;
+        availability: number;
+        ptr: number;
+      } | null;
+    }>();
+
     for (const row of rows) {
       let items: any[] = [];
       try { items = JSON.parse(row.items_json || '[]'); } catch (_) { continue; }
       for (const item of items) {
-        const name = (item.productName || item.name || '').trim();
-        if (!name || byMedicine.has(name)) continue;
-        byMedicine.set(name, {
+        const name = (item.productName || item.product || item.name || '').trim();
+        if (!name) continue;
+        const comboKey = `${name.toLowerCase()}:::${row.store_id || row.store_name || ''}`;
+        if (byMedicine.has(comboKey)) continue;
+
+        byMedicine.set(comboKey, {
           medicineName: name,
           lastOrderedDate: row.order_date,
           lastQty: Number(item.qty || item.quantity || 1),
-          lastDistributorName: row.store_name || ''
+          lastDistributorName: row.store_name || '',
+          storeId: row.store_id || null,
+          storeName: row.store_name || '',
+          orderId: row.id,
+          productCode: item.productCode || item.product_code || '',
+          productId: Number(item.productId || item.product_id || 0),
+          ptr: Number(item.ptr || item.rate || 0),
+          mrp: Number(item.mrp || 0),
+          packaging: item.packaging || item.Packing || '',
+          receiptStatus: 'PENDING_INWARD',
+          highestStockDistributor: null
         });
       }
     }
 
-    res.json({ success: true, items: Array.from(byMedicine.values()) });
+    const itemsList = Array.from(byMedicine.values());
+
+    // Batch enrich receipt status from purchases & highest stock from distributor_catalog
+    if (itemsList.length > 0) {
+      // 1. Fetch recent purchase receipts
+      const purchaseRows = await db.all(
+        `SELECT pi.quantity, p.invoice_no, p.date, LOWER(m.name) as med_name
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         JOIN medicines m ON m.id = pi.medicine_id
+         WHERE p.date >= DATE('now', ?)`,
+        [`-${windowDays} days`]
+      );
+      const purchaseMap = new Map<string, { invoiceNo: string; date: string }>();
+      for (const p of purchaseRows) {
+        if (!purchaseMap.has(p.med_name)) {
+          purchaseMap.set(p.med_name, { invoiceNo: p.invoice_no, date: p.date });
+        }
+      }
+
+      // 2. Attach inward receipt status from purchase receipts
+      for (const item of itemsList) {
+        const normName = item.medicineName.toLowerCase();
+        const inward = purchaseMap.get(normName);
+        if (inward && (!item.lastOrderedDate || inward.date >= item.lastOrderedDate)) {
+          item.receiptStatus = 'RECEIVED';
+          item.receivedInvoiceNo = inward.invoiceNo;
+          item.receivedDate = inward.date;
+        }
+      }
+    }
+
+    res.json({ success: true, items: itemsList });
   } catch (err: any) {
     console.error('Error fetching recently reordered medicines:', err);
     res.status(500).json({ error: 'Failed to fetch recently reordered medicines: ' + err.message });
+  }
+});
+
+/**
+ * GET /api/pharmarack/check-medicine-stock
+ * Query param: ?name=MEDICINE_NAME
+ * On-demand stock check: queries distributor_catalog only for the single selected medicine.
+ */
+router.get('/check-medicine-stock', async (req, res) => {
+  try {
+    const rawName = ((req.query.name as string) || '').trim();
+    if (!rawName || rawName.length < 2) {
+      return res.status(400).json({ error: 'Medicine name is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    const cleanSearchName = rawName.replace(/\s*\([^)]*\)$/, '').trim();
+    const tokens = cleanSearchName.split(/\s+/).filter(t => t.length >= 2);
+    const searchPrefix = tokens.length > 0 ? tokens[0] : cleanSearchName;
+
+    const rows = await db.all(
+      `SELECT store_id, store_name, product_name, distributor_price, CAST(availability AS INTEGER) as avail
+       FROM distributor_catalog
+       WHERE product_name LIKE ?
+         AND CAST(availability AS INTEGER) > 0
+       ORDER BY CAST(availability AS INTEGER) DESC, distributor_price ASC
+       LIMIT 6`,
+      [`${searchPrefix}%`]
+    );
+
+    let highestStockDistributor: {
+      storeId: number;
+      storeName: string;
+      productName: string;
+      availability: number;
+      ptr: number;
+    } | null = null;
+
+    const alternateDistributors: Array<{
+      storeId: number;
+      storeName: string;
+      productName: string;
+      availability: number;
+      ptr: number;
+    }> = [];
+
+    if (rows && rows.length > 0) {
+      highestStockDistributor = {
+        storeId: rows[0].store_id,
+        storeName: rows[0].store_name,
+        productName: rows[0].product_name,
+        availability: rows[0].avail,
+        ptr: Number(rows[0].distributor_price || 0)
+      };
+
+      for (let i = 1; i < rows.length; i++) {
+        alternateDistributors.push({
+          storeId: rows[i].store_id,
+          storeName: rows[i].store_name,
+          productName: rows[i].product_name,
+          availability: rows[i].avail,
+          ptr: Number(rows[i].distributor_price || 0)
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      medicineName: rawName,
+      highestStockDistributor,
+      alternateDistributors
+    });
+  } catch (err: any) {
+    console.error('Error checking medicine stock:', err);
+    res.status(500).json({ error: 'Failed to check stock: ' + err.message });
+  }
+});
+
+/**
+ * GET /api/pharmarack/order-by-id/:orderId
+ * Fetches past order details and items by Order ID or invoice reference.
+ */
+router.get('/order-by-id/:orderId', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const orderId = req.params.orderId;
+
+    const row = await db.get(
+      'SELECT * FROM pharmarack_placed_orders WHERE id = ?',
+      [orderId]
+    );
+
+    if (!row) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    let items = [];
+    try { items = JSON.parse(row.items_json || '[]'); } catch (_) {}
+
+    res.json({
+      success: true,
+      order: {
+        id: row.id,
+        order_date: row.order_date,
+        store_id: row.store_id,
+        store_name: row.store_name,
+        items,
+        placed_at: row.placed_at,
+        batch_sent: row.batch_sent === 1,
+        batch_sent_at: row.batch_sent_at
+      }
+    });
+  } catch (err: any) {
+    console.error('Error fetching order by ID:', err);
+    res.status(500).json({ error: 'Failed to fetch order: ' + err.message });
   }
 });
 

@@ -639,6 +639,56 @@ async function syncWhatsappData(client: WAClient) {
         ]
       );
     }
+
+    // Process offline unread customer messages: send a friendly reopening greeting
+    // so customers who messaged while the store was offline/closed know we are now open,
+    // without re-running heavy OCR or triggering auto-order pipeline.
+    try {
+      const ownerRow = await db.get("SELECT value FROM app_settings WHERE key = 'owner_whatsapp_number'");
+      const ownerPhone = (ownerRow?.value || '').replace(/\D/g, '');
+      const { getStoreMedicalName } = await import('./services/storeSettingsService.js');
+      const storeName = await getStoreMedicalName(db);
+
+      for (const chat of chats) {
+        const chatId = chat.id._serialized;
+        if (chat.isGroup || (await isIgnoredCached(chatId))) continue;
+        if (!chat.unreadCount || chat.unreadCount <= 0) continue;
+        if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
+
+        let cleanNumber = chatId.split('@')[0].replace(/\D/g, '');
+        if (chatId.endsWith('@lid')) {
+          const mapping = await client.getContactLidAndPhone([chatId]).catch(() => null);
+          if (mapping?.[0]?.pn) cleanNumber = mapping[0].pn.replace(/\D/g, '');
+        }
+
+        if (!cleanNumber || cleanNumber.length < 10) continue;
+        if (ownerPhone && cleanNumber.endsWith(ownerPhone.slice(-10))) continue;
+
+        // Avoid re-greeting the same customer within 12 hours
+        const recentGreeting = await db.get(
+          `SELECT id FROM whatsapp_sent_register 
+           WHERE (phone = ? OR phone_last10 = ?) 
+             AND type = 'offline_reconnect_greeting' 
+             AND sent_at >= ? LIMIT 1`,
+          [cleanNumber, cleanNumber.slice(-10), Date.now() - 12 * 60 * 60 * 1000]
+        );
+
+        if (!recentGreeting) {
+          const greetingMsg = `☀️ *Good Morning from ${storeName}!*\n\nWe are now open. We noticed your message while our systems were offline.\n\nHow can we help you with your medicines or healthcare needs today?`;
+          const { whatsappQueueWorker } = await import('./services/whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(
+            cleanNumber,
+            greetingMsg,
+            'offline_reconnect_greeting',
+            chat.name || 'Customer'
+          );
+          console.log(`[WhatsApp Sync] Enqueued offline reopening greeting for ${cleanNumber} (${chat.name || 'Customer'}).`);
+        }
+      }
+    } catch (greetErr) {
+      console.warn('[WhatsApp Sync] Failed to process offline reconnect greetings:', greetErr);
+    }
+
     console.log('[WhatsApp] Background synchronization completed successfully.');
     eventService.broadcast('wa_chats_updated', { success: true });
   } catch (err) {
@@ -1091,24 +1141,6 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
             [cleanPhone]
           );
-
-          const existingOwner = await db.get("SELECT value FROM app_settings WHERE key = 'owner_whatsapp_number'");
-          if (!existingOwner || !existingOwner.value || !existingOwner.value.trim()) {
-            await db.run(
-              `INSERT INTO app_settings (key, value) VALUES ('owner_whatsapp_number', ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-              [cleanPhone]
-            );
-          }
-
-          const existingShopPhone = await db.get("SELECT value FROM app_settings WHERE key = 'shop_phone'");
-          if (!existingShopPhone || !existingShopPhone.value || !existingShopPhone.value.trim()) {
-            await db.run(
-              `INSERT INTO app_settings (key, value) VALUES ('shop_phone', ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-              [cleanPhone]
-            );
-          }
         }
       } catch (saveErr) {
         console.warn('[WhatsApp Persist] Failed to save connected state to app_settings:', saveErr);
