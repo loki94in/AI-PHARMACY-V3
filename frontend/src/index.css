@@ -643,3 +643,107 @@ button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primar
   animation: hubFadeSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: opacity, transform;
 }
+
+/* ═══════════════════════════════════════════
+   UNIFIED HIGH-PERFORMANCE GPU MOTION SYSTEM
+   Apple-spring bezier curves · Zero layout recalculation
+   Strictly transform3d + opacity · Reduced-motion safe
+   ═══════════════════════════════════════════ */
+:root {
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes springFadeIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0) scale3d(0.985, 0.985, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes rowScanPop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale3d(0.99, 0.99, 1);
+    background-color: rgba(16, 185, 129, 0.12);
+  }
+  50% {
+    background-color: rgba(16, 185, 129, 0.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+    background-color: transparent;
+  }
+}
+
+@keyframes modalBackdropFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalContentSpring {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale3d(0.96, 0.96, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes shimmerWave {
+  0% { transform: translate3d(-100%, 0, 0); }
+  100% { transform: translate3d(100%, 0, 0); }
+}
+
+/* Reusable Utility Classes */
+.motion-spring-enter {
+  animation: springFadeIn 0.2s var(--ease-spring) forwards;
+  will-change: opacity, transform;
+}
+
+.motion-row-pop {
+  animation: rowScanPop 0.32s var(--ease-spring) forwards;
+  will-change: opacity, transform, background-color;
+}
+
+.motion-modal-backdrop {
+  animation: modalBackdropFade 0.18s ease-out forwards;
+}
+
+.motion-modal-content {
+  animation: modalContentSpring 0.24s var(--ease-spring) forwards;
+  will-change: opacity, transform;
+}
+
+/* Fluid Hover Elevation for Cards & Action Buttons */
+.motion-card-hover {
+  transition: transform 0.18s var(--ease-spring), box-shadow 0.18s var(--ease-spring);
+  will-change: transform, box-shadow;
+}
+.motion-card-hover:hover {
+  transform: translate3d(0, -1.5px, 0);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+}
+
+/* Reduced Motion Safety Override */
+@media (prefers-reduced-motion: reduce) {
+  .motion-spring-enter,
+  .motion-row-pop,
+  .motion-modal-backdrop,
+  .motion-modal-content,
+  .animate-hub-enter,
+  .motion-card-hover {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transform: none !important;
+  }
+}

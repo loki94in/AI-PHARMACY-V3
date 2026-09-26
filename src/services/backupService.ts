@@ -461,19 +461,39 @@ export function stopScheduler(): void {
 }
 
 /**
- * Delete oldest backups if total exceeds MAX_BACKUPS.
+ * Delete oldest backups if total exceeds MAX_BACKUPS and clean orphaned uncompressed .db files.
  */
 function enforceRetention(): void {
   try {
+    // 1. Clean up any orphaned uncompressed temp .db files (keeping disk slim)
+    if (fs.existsSync(BACKUP_DIR)) {
+      const allFiles = fs.readdirSync(BACKUP_DIR);
+      for (const f of allFiles) {
+        if (f.startsWith('app_backup_') && f.endsWith('.db')) {
+          // If a corresponding .db.gz exists or the temp .db is older than 30 minutes, clean it up
+          const gzEquivalent = f + '.gz';
+          const fullPath = path.join(BACKUP_DIR, f);
+          try {
+            const stats = fs.statSync(fullPath);
+            const ageMs = Date.now() - stats.mtimeMs;
+            if (fs.existsSync(path.join(BACKUP_DIR, gzEquivalent)) || ageMs > 30 * 60 * 1000) {
+              fs.unlinkSync(fullPath);
+              console.log(`[Backup] Cleaned uncompressed leftover database: ${f}`);
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    // 2. Enforce MAX_BACKUPS retention
     const backups = listBackups(); // already sorted newest-first
     if (backups.length > MAX_BACKUPS) {
       const toDelete = backups.slice(MAX_BACKUPS);
       for (const b of toDelete) {
-        const filePath = path.join(BACKUP_DIR, b.filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
+        try {
+          deleteBackup(b.filename);
           console.log(`[Backup] Retention cleanup: deleted ${b.filename}`);
-        }
+        } catch (_) {}
       }
     }
   } catch (err) {

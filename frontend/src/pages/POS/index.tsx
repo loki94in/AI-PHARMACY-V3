@@ -23,6 +23,7 @@ import { rankAndSortMedicines } from '../../utils/searchRanker';
 import { combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
+import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 
 const getLocalDateString = (d: Date = new Date()) => {
   const yyyy = d.getFullYear();
@@ -1929,41 +1930,10 @@ const POS = () => {
     }, 80);
   }, []);
 
-  useEffect(() => {
-    if (patientHighlightIndex >= 0 && patientSuggestionsRef.current) {
-      const highlighted = patientSuggestionsRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [patientHighlightIndex]);
-
-  useEffect(() => {
-    if (doctorHighlightIndex >= 0 && doctorSuggestionsRef.current) {
-      const highlighted = doctorSuggestionsRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [doctorHighlightIndex]);
-
-  useEffect(() => {
-    if (searchHighlightIndex >= 0 && searchResultsRef.current) {
-      const highlighted = searchResultsRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [searchHighlightIndex]);
-
-  useEffect(() => {
-    if (rowSearchHighlightIndex >= 0 && rowSearchResultsRef.current) {
-      const highlighted = rowSearchResultsRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [rowSearchHighlightIndex]);
+  useDropdownAutoScroll(patientSuggestionsRef, patientHighlightIndex, showPatientSuggestions);
+  useDropdownAutoScroll(doctorSuggestionsRef, doctorHighlightIndex, isDoctorDropdownOpen);
+  useDropdownAutoScroll(searchResultsRef, searchHighlightIndex, showSearchDropdown);
+  useDropdownAutoScroll(rowSearchResultsRef, rowSearchHighlightIndex, activeRowSearchIndex !== null);
 
   useOnClickOutside(productSearchRef, () => {
     setSearchResults([]);
@@ -4156,7 +4126,7 @@ const POS = () => {
                             }}
                             className={`w-full text-left px-3 py-2 text-sm border-b border-border/10 transition-all flex items-center justify-between gap-2 ${
                               idx === patientHighlightIndex
-                                ? 'bg-primary/20 text-text font-bold'
+                                ? 'bg-primary/20 text-text font-bold border-l-4 border-primary ring-1 ring-primary/40'
                                 : hasCreditDue
                                 ? 'bg-amber-500/5 hover:bg-amber-500/10 text-text'
                                 : 'text-text hover:bg-primary/10'
@@ -4164,6 +4134,11 @@ const POS = () => {
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="font-semibold truncate">{c.name}</span>
+                              {idx === patientHighlightIndex && (
+                                <span className="text-[11px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm shrink-0">
+                                  ↵ Enter
+                                </span>
+                              )}
                               {c.active_refill === 1 && (
                                 <span
                                   className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-400 text-[11px] font-bold"
@@ -4335,13 +4310,18 @@ const POS = () => {
                               setDoctorHighlightIndex(-1);
                               focusCartMedicineInput();
                             }}
-                            className={`w-full text-left px-3 py-2 text-sm border-b border-border/10 transition-all font-semibold ${
+                            className={`w-full text-left px-3 py-2 text-sm border-b border-border/10 transition-all font-semibold flex items-center justify-between gap-2 ${
                               idx === doctorHighlightIndex
-                                ? 'bg-sky/20 text-text font-bold'
+                                ? 'bg-sky/25 text-text font-bold border-l-4 border-sky ring-1 ring-sky/40'
                                 : 'text-text hover:bg-sky/10'
                             }`}
                           >
-                            {doc.name}
+                            <span>{doc.name}</span>
+                            {idx === doctorHighlightIndex && (
+                              <span className="text-[11px] bg-sky text-white font-bold px-1.5 py-0.5 rounded shadow-sm shrink-0">
+                                ↵ Enter
+                              </span>
+                            )}
                           </button>
                         ))
                       ) : (
@@ -4539,7 +4519,7 @@ const POS = () => {
                     </button>
                   </div>
                   {showSearchDropdown && searchTerm.trim().length >= 3 && searchResults.length === 0 && (
-                    <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden max-h-80 overflow-y-auto shadow-2xl backdrop-blur-xl">
+                    <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden max-h-80 overflow-y-auto shadow-2xl [will-change:scroll-position]">
                       {suggestions.length > 0 && (
                         <div className="p-3 border-b border-border/30 bg-violet-500/5">
                         <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
@@ -4624,7 +4604,7 @@ const POS = () => {
                 
                 {/* Search results dropdown */}
                 {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
-                  <div ref={searchResultsRef} className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden max-h-80 overflow-y-auto shadow-2xl backdrop-blur-xl">
+                  <div ref={searchResultsRef} className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden max-h-80 overflow-y-auto shadow-2xl [will-change:scroll-position]">
                     {suggestions.length > 0 && (
                       <div className="p-3 border-b border-border/30 bg-violet-500/5">
                         <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
@@ -4696,7 +4676,7 @@ const POS = () => {
                               } ${
                                 isLowStockAlert ? 'bg-amber-500/5 hover:bg-amber-500/10 border-l-2 border-amber-500' : ''
                               } ${
-                                isHighlighted ? 'bg-primary/10 border-l-2 border-primary' : ''
+                                isHighlighted ? 'bg-primary/20 border-l-4 border-primary text-text font-bold ring-1 ring-primary/40' : ''
                               }`}
                             >
                               <div className="flex flex-col gap-1">
@@ -4767,7 +4747,13 @@ const POS = () => {
                                   >
                                     <Edit size={14} />
                                   </button>
-                                  <span className="text-[16px] bg-primary/10 border border-primary/20 text-primary py-1.5 px-3 rounded-lg font-bold group-hover:bg-primary group-hover:text-white transition-all">+ Add</span>
+                                  {isHighlighted ? (
+                                    <span className="text-[14px] bg-primary text-white py-1.5 px-3 rounded-lg font-bold flex items-center gap-1 shadow-sm">
+                                      ↵ Enter
+                                    </span>
+                                  ) : (
+                                    <span className="text-[16px] bg-primary/10 border border-primary/20 text-primary py-1.5 px-3 rounded-lg font-bold group-hover:bg-primary group-hover:text-white transition-all">+ Add</span>
+                                  )}
                                 </div>
                               </div>
                             </button>
@@ -4783,8 +4769,9 @@ const POS = () => {
                         const isOutOfStock = med.is_out_of_stock || (med.quantity !== undefined && (med.quantity - cartQty) <= 0);
 
                         if (isOutOfStock) {
+                          const isOosHighlighted = searchHighlightIndex === searchResults.indexOf(med);
                           return (
-                            <div key={`oos_${med.medicine_id}`} className="flex flex-col border-b border-border/10 animate-in fade-in duration-200">
+                            <div key={`oos_${med.medicine_id}`} data-highlighted={isOosHighlighted ? "true" : "false"} className={`flex flex-col border-b border-border/10 animate-in fade-in duration-200 ${isOosHighlighted ? 'bg-primary/15 border-l-4 border-primary ring-1 ring-primary/40' : ''}`}>
                               <div className="p-3 bg-red-500/5 text-[18px] w-full flex flex-col gap-1 border-l-2 border-red-500">
                                  <div className="flex items-center justify-between">
                                    <div>
@@ -5085,7 +5072,7 @@ const POS = () => {
                     }
 
                     return (
-                      <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass}`}>
+                      <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''}`}>
                         {/* Medicine Search/Change */}
                         <td className="py-1 px-2.5 min-w-[190px] relative">
                           <div className="flex items-center">
@@ -5193,7 +5180,7 @@ const POS = () => {
                               {activeRowSearchIndex === cart.indexOf(item) && rowSearchTerm.trim().length >= 2 && rowSearchResults.length > 0 && (
                                 <div 
                                   ref={rowSearchResultsRef} 
-                                  className={`absolute left-0 right-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden max-h-56 overflow-y-auto w-[360px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] backdrop-blur-xl ${
+                                  className={`absolute left-0 right-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden max-h-56 overflow-y-auto w-[360px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] ${
                                     rowSearchDropUp
                                       ? 'bottom-full mb-1'
                                       : 'top-full mt-1'
@@ -5217,11 +5204,16 @@ const POS = () => {
                                           const idx = cart.indexOf(item);
                                           fetchDetailsAndChangeRowMedicine(idx, med);
                                         }}
-                                        className={`flex flex-col p-2.5 hover:bg-bg3 border-b border-border/10 text-left transition-all text-sm w-full cursor-pointer ${isRowHighlighted ? 'bg-primary/20 border-l-2 border-primary text-text' : ''}`}
+                                        className={`flex flex-col p-2.5 hover:bg-bg3 border-b border-border/10 text-left transition-all text-sm w-full cursor-pointer ${isRowHighlighted ? 'bg-primary/20 border-l-4 border-primary text-text font-bold ring-1 ring-primary/40' : ''}`}
                                       >
                                         <div className="flex items-center justify-between gap-1">
                                           <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                                             <span className="font-semibold text-text truncate">{med.medicine_name}</span>
+                                            {isRowHighlighted && (
+                                              <span className="text-[11px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm shrink-0">
+                                                ↵ Select
+                                              </span>
+                                            )}
                                             {rowHasPending && (
                                               <span className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-500 px-1.5 py-0.5 rounded text-xs font-bold animate-pulse">
                                                 ⚠️ {rowPendingMatches[0].requester} ({rowPendingMatches[0].qty})

@@ -221,13 +221,76 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
 export { sanitizePharmarackQuery };
 
 /**
+ * Checks if two dosage forms are clinically compatible.
+ * Strict Bidirectional Shield: Solid orals (Tablet/Capsule) NEVER match Liquid orals (Syrup/Suspension),
+ * Topicals (Gel/Cream/Ointment), or Injections/Drops.
+ */
+export function areDosageFormsCompatible(form1: string | null, form2: string | null): boolean {
+  if (!form1 || !form2) return true;
+  const f1 = form1.toLowerCase().trim();
+  const f2 = form2.toLowerCase().trim();
+  if (f1 === f2) return true;
+
+  // Solid oral: Tablet, Capsule
+  const isSolidOral = (f: string) => f.includes('tab') || f.includes('cap');
+  // Liquid oral: Syrup, Suspension, Solution, Elixir, Liquid, Drops
+  const isLiquidOral = (f: string) => f.includes('syrup') || f.includes('syp') || f.includes('susp') || f.includes('liquid') || f.includes('solution') || f.includes('elixir');
+  // Topicals: Gel, Cream, Ointment, Lotion
+  const isTopical = (f: string) => f.includes('gel') || f.includes('cream') || f.includes('oint') || f.includes('lotion');
+  // Drops: Eye, Ear, Nasal drops
+  const isDrops = (f: string) => f.includes('drop');
+  // Injection / Infusion
+  const isInjection = (f: string) => f.includes('inj') || f.includes('infusion');
+  // Inhaler / Respule
+  const isInhaler = (f: string) => f.includes('inh') || f.includes('respule') || f.includes('rotacap');
+
+  if (isSolidOral(f1) && !isSolidOral(f2)) return false;
+  if (!isSolidOral(f1) && isSolidOral(f2)) return false;
+
+  if (isLiquidOral(f1) && !isLiquidOral(f2)) return false;
+  if (!isLiquidOral(f1) && isLiquidOral(f2)) return false;
+
+  if (isTopical(f1) && !isTopical(f2)) return false;
+  if (!isTopical(f1) && isTopical(f2)) return false;
+
+  if (isDrops(f1) && !isDrops(f2)) return false;
+  if (!isDrops(f1) && isDrops(f2)) return false;
+
+  if (isInjection(f1) && !isInjection(f2)) return false;
+  if (!isInjection(f1) && isInjection(f2)) return false;
+
+  if (isInhaler(f1) && !isInhaler(f2)) return false;
+  if (!isInhaler(f1) && isInhaler(f2)) return false;
+
+  return true;
+}
+
+/**
  * Filters Pharmarack candidate medicines to strictly match requested formulation modifiers
  * (e.g. 'P', 'SP', 'PLUS', 'D', 'AM', 'H', 'CV') and strengths, eliminating mismatched
  * single-salt or alternate variants (e.g. rejecting 'ZERODOL 100 MG' when 'ZERODOL P' is requested).
+ * Also enforces the Dosage Form Shield (Syrup != Tab, Gel != Spray).
  */
 export function filterCandidatesByFormulation(targetName: string, candidates: any[]): any[] {
   if (!targetName || !Array.isArray(candidates) || candidates.length === 0) {
     return candidates || [];
+  }
+
+  // Dosage Form Shield: If target medicine has a detectable dosage form (e.g. Syrup, Tablet, Gel),
+  // reject candidates whose dosage form is incompatible (e.g. reject Tablets if customer ordered Syrup).
+  const targetForm = detectDosageForm(targetName);
+  let formFilteredCandidates = candidates;
+  if (targetForm) {
+    const compatible = candidates.filter(c => {
+      const cName = c.name || c.productName || c.product || c.shortName || '';
+      const cForm = c.dosage_form || c.dosageForm || detectDosageForm(cName);
+      return areDosageFormsCompatible(targetForm, cForm);
+    });
+    formFilteredCandidates = compatible;
+  }
+
+  if (formFilteredCandidates.length === 0) {
+    return [];
   }
 
   const FORMULATION_MODIFIERS = new Set([
@@ -271,7 +334,7 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
 
   if (targetTokens.modifiers.size > 0 || targetTokens.strengths.size > 0) {
     const exactMatches: any[] = [];
-    for (const c of candidates) {
+    for (const c of formFilteredCandidates) {
       const cName = c.name || c.productName || c.product || c.shortName || '';
       const cTokens = tokenize(cName);
 
@@ -322,7 +385,7 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
     }
   }
 
-  return candidates;
+  return formFilteredCandidates;
 }
 
 /**
@@ -2706,7 +2769,19 @@ async function proceedWithConfirmedProcurement(
 ): Promise<boolean> {
   const medName = pending.suggested_name;
   const medQty = pending.quantity || 1;
-  const medUnit = pending.unit || 'strip';
+  let medUnit = pending.unit;
+  if (!medUnit || medUnit === 'strip') {
+    const detectedForm = detectDosageForm(medName);
+    if (detectedForm === 'Syrup' || detectedForm === 'Suspension' || detectedForm === 'Drops' || detectedForm === 'Lotion') {
+      medUnit = 'bottle';
+    } else if (detectedForm === 'Gel' || detectedForm === 'Cream' || detectedForm === 'Ointment') {
+      medUnit = 'tube';
+    } else if (detectedForm === 'Injection') {
+      medUnit = 'vial';
+    } else {
+      medUnit = medUnit || 'strip';
+    }
+  }
 
   // 2-Stage Timed Search Workflow:
   // Step 1: Search 1st word (e.g. "dolo")
@@ -2758,7 +2833,8 @@ async function proceedWithConfirmedProcurement(
 
   if (rawPharmarackItems.length === 0) {
     try {
-      const cat = await searchCatalog(pharmaQuery || medName);
+      const detectedForm = detectDosageForm(medName);
+      const cat = await searchCatalog(pharmaQuery || medName, detectedForm || undefined);
       rawPharmarackItems = [...(cat.mapped || []), ...(cat.nonMapped || [])];
       if (rawPharmarackItems.length > 0) searchFailed = false;
     } catch (_) {}

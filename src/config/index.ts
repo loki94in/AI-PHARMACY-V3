@@ -53,15 +53,31 @@ function migrateLegacyPackagedDataIfNeeded(oldRoot: string, newRoot: string): vo
 }
 
 export const getAppDataDir = (): string => {
+  // 1. Explicit override via DATA_DIR environment variable
+  if (process.env.DATA_DIR && process.env.DATA_DIR.trim()) {
+    const customDir = path.resolve(process.env.DATA_DIR.trim());
+    try {
+      fs.mkdirSync(customDir, { recursive: true });
+      return customDir;
+    } catch (err) {
+      console.warn(`[Config] Failed to initialize custom DATA_DIR "${customDir}":`, err);
+    }
+  }
+
   if (isPackagedApp()) {
-    // Windows: store writable data under %LOCALAPPDATA% — not beside the exe in Program Files.
-    if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
-      const newDir = path.join(process.env.LOCALAPPDATA, 'AI Pharmacy OS');
-      const legacyDir = path.dirname(process.execPath);
-      migrateLegacyPackagedDataIfNeeded(legacyDir, newDir);
+    const exeDir = path.dirname(process.execPath);
+    const localAppData = process.env.LOCALAPPDATA ? path.resolve(process.env.LOCALAPPDATA) : '';
+    const isInsideLocalAppData = localAppData && exeDir.toLowerCase().startsWith(localAppData.toLowerCase());
+
+    // When installed under %LOCALAPPDATA% on Windows, maintain legacy directory
+    if (process.platform === 'win32' && isInsideLocalAppData && localAppData) {
+      const newDir = path.join(localAppData, 'AI Pharmacy OS');
+      migrateLegacyPackagedDataIfNeeded(exeDir, newDir);
       return newDir;
     }
-    return path.dirname(process.execPath);
+
+    // When installed on D:, E:, or any custom/portable drive, keep data beside the exe on that drive
+    return exeDir;
   }
   // In development/source mode, we resolve relative to the project root.
   // We walk up to find the root folder containing THIS project's package.json

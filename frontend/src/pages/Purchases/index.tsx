@@ -3,6 +3,7 @@ import {} from '../../hooks/useDeferredEffect';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Edit, Camera, CheckCircle, Mail, Package, X, Plus, BookOpen, AlertTriangle, ShieldAlert, Factory, RefreshCw, ExternalLink, Loader2 } from 'lucide-react';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
+import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { api, apiClient, getCompactInventoryCache, ensureCompactInventoryReady, getCompactInventoryIndex, type CompactInventoryItem } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
 
@@ -1435,16 +1436,8 @@ const Purchases: React.FC = () => {
   const [, setLastSavedInvoiceNo] = useState('');
   const [, setLastSavedItems] = useState<{ name?: string; batch?: string }[]>([]);
   const searchResultsRef = useRef<HTMLDivElement>(null);
+  const distributorDropdownRef = useRef<HTMLDivElement>(null);
   const [purchaseSearchDropUp, setPurchaseSearchDropUp] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (searchHighlightIndex >= 0 && searchResultsRef.current) {
-      const highlighted = searchResultsRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [searchHighlightIndex]);
 
   // Old batches dropdown state; history rows themselves live in the module-level
   // medicineHistoryCache. activeBatchRequestRef drops stale dropdown responses.
@@ -1455,14 +1448,9 @@ const Purchases: React.FC = () => {
   const activeBatchRequestRef = useRef<string>('');
   const batchDropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (batchHighlightIndex >= 0 && batchDropdownRef.current) {
-      const highlighted = batchDropdownRef.current.querySelector('[data-batch-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [batchHighlightIndex]);
+  useDropdownAutoScroll(searchResultsRef, searchHighlightIndex, activeSearchIndex !== null);
+  useDropdownAutoScroll(batchDropdownRef, batchHighlightIndex, activeBatchRowIndex !== null, '[data-batch-highlighted="true"]');
+  useDropdownAutoScroll(distributorDropdownRef, distributorHighlightIndex, showDistributorDropdown);
 
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -3207,7 +3195,7 @@ const Purchases: React.FC = () => {
                   autoComplete="off"
                 />
                 {showDistributorDropdown && distributorSearch.trim().length >= 2 && (
-                  <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 overflow-y-auto shadow-2xl">
+                  <div ref={distributorDropdownRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 overflow-y-auto shadow-2xl">
                     <div className="px-3 py-1.5 bg-bg3 border-b border-glass-border/40 flex items-center justify-between">
                       <span className="text-[11px] font-bold text-muted uppercase tracking-wider">Distributor List ({filteredDistributors.length})</span>
                       <button
@@ -3817,7 +3805,7 @@ const Purchases: React.FC = () => {
                             )}
                           </div>
                           {activeSearchIndex === index && searchSearching && searchResults.length === 0 && item.medicine_name.trim().length >= 2 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-3 left-0 backdrop-blur-xl ${
+                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-3 left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -3829,7 +3817,7 @@ const Purchases: React.FC = () => {
                             </div>
                           )}
                           {activeSearchIndex === index && !searchSearching && searchResults.length === 0 && item.medicine_name.trim().length >= 2 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-2 left-0 backdrop-blur-xl ${
+                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-2 left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -3861,7 +3849,7 @@ const Purchases: React.FC = () => {
                             </div>
                           )}
                           {activeSearchIndex === index && searchResults.length > 0 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl max-h-64 overflow-y-auto left-0 backdrop-blur-xl ${
+                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl max-h-64 overflow-y-auto left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -3940,8 +3928,8 @@ const Purchases: React.FC = () => {
                                     <div className="text-right flex-shrink-0 flex flex-col items-end">
                                       <div className="font-mono text-sm font-bold">₹{medicine.mrp}</div>
                                       {idx === searchHighlightIndex && (
-                                        <span className="text-[10px] text-primary font-mono font-semibold flex items-center gap-0.5 mt-0.5">
-                                          ↵ Select
+                                        <span className="text-[11px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-0.5 mt-0.5">
+                                          ↵ Enter
                                         </span>
                                       )}
                                     </div>
@@ -4044,7 +4032,6 @@ const Purchases: React.FC = () => {
 
                       return (
                         <div 
-                          ref={batchDropdownRef}
                           className="absolute left-0 top-full mt-1 z-dropdown min-w-[280px] max-w-[340px] bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150"
                         >
                           <div className="px-3 py-1.5 bg-bg3 border-b border-glass-border/40 flex items-center justify-between">
@@ -4056,7 +4043,7 @@ const Purchases: React.FC = () => {
                             )}
                           </div>
 
-                          <div className="max-h-52 overflow-y-auto divide-y divide-glass-border/20">
+                          <div ref={batchDropdownRef} className="max-h-52 overflow-y-auto divide-y divide-glass-border/20 [will-change:scroll-position]">
                             {rowBatchesLoading && rowBatchesList.length === 0 ? (
                               <div className="p-3 text-center text-xs text-muted">
                                 Fetching past batches...

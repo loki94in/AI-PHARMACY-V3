@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense, useMemo } from 'react';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
+import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
@@ -497,14 +498,7 @@ const Returns: React.FC = () => {
   const [searchHighlightIndex, setSearchHighlightIndex] = useState(-1);
   const searchResultsRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (searchHighlightIndex >= 0 && searchResultsRef.current) {
-      const highlighted = searchResultsRef.current.querySelector('[data-highlighted="true"]') as HTMLElement;
-      if (highlighted) {
-        highlighted.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      }
-    }
-  }, [searchHighlightIndex]);
+  useDropdownAutoScroll(searchResultsRef, searchHighlightIndex, activeSearchIndex !== null);
 
   const activeSearchRef = useRef<HTMLDivElement>(null);
   useOnClickOutside(activeSearchRef, () => {
@@ -2310,10 +2304,17 @@ const Returns: React.FC = () => {
                                             data-highlighted={idx === searchHighlightIndex ? "true" : "false"}
                                             onClick={() => selectMedicineForManualItem(result, originalIndex)}
                                             className={`w-full text-left px-3 py-2 hover:bg-bg3 text-text text-xs border-b border-border/30 last:border-0 cursor-pointer transition-colors ${
-                                              idx === searchHighlightIndex ? 'bg-primary/10 border-l-4 border-primary' : ''
+                                              idx === searchHighlightIndex ? 'bg-primary/20 border-l-4 border-primary ring-1 ring-primary/40 font-bold' : ''
                                             }`}
                                           >
-                                            <div className="font-bold text-text">{result.medicine_name}</div>
+                                            <div className="flex items-center justify-between gap-2">
+                                              <div className="font-bold text-text truncate">{result.medicine_name}</div>
+                                              {idx === searchHighlightIndex && (
+                                                <span className="text-[10px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm shrink-0">
+                                                  ↵ Enter
+                                                </span>
+                                              )}
+                                            </div>
                                             <div className="text-[10px] text-muted font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
                                               <span>Batch: <strong className="text-text">{result.batch_no}</strong></span>
                                               <span>| Cost: ₹{result.cost_price}</span>

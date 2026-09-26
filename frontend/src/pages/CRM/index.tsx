@@ -10,6 +10,7 @@ import {
 import { toastEvent, specialOrdersEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
+import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils/date';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
@@ -4339,6 +4340,9 @@ const SpecialOrdersSection: React.FC = () => {
   const [showPrDropdown, setShowPrDropdown] = useState(false);
   const [activePrIndex, setActivePrIndex] = useState(0);
   const [loadingPr, setLoadingPr] = useState(false);
+  const prDropdownRef = useRef<HTMLDivElement>(null);
+
+  useDropdownAutoScroll(prDropdownRef, activePrIndex, showPrDropdown);
 
   const productContainerRef = useRef<HTMLDivElement>(null);
   useOnClickOutside(productContainerRef, () => {
@@ -5527,7 +5531,7 @@ const SpecialOrdersSection: React.FC = () => {
 
                 {/* Dropdown Live Results from Pharmarack */}
                 {showPrDropdown && prSearchResults.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto">
+                  <div ref={prDropdownRef} className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto">
                     <div className="p-2 border-b border-border/40 bg-bg3/50 text-[9px] font-bold text-muted uppercase tracking-wider flex justify-between items-center">
                       <span>Pharmarack Live Matches</span>
                       <button
@@ -5541,10 +5545,11 @@ const SpecialOrdersSection: React.FC = () => {
                     {prSearchResults.map((item, idx) => (
                       <div
                         key={idx}
+                        data-highlighted={idx === activePrIndex ? "true" : "false"}
                         onClick={() => handleSelectPharmarackItem(item)}
                         onMouseEnter={() => setActivePrIndex(idx)}
                         className={`p-3 border-b border-border/30 transition-colors cursor-pointer flex flex-col gap-1 text-xs ${
-                          idx === activePrIndex ? 'bg-primary/20 border-l-4 border-primary' : 'hover:bg-bg3/80'
+                          idx === activePrIndex ? 'bg-primary/20 border-l-4 border-primary ring-1 ring-primary/40 font-bold text-text' : 'hover:bg-bg3/80'
                         }`}
                       >
                         <div className="flex justify-between items-start">
@@ -5576,8 +5581,13 @@ const SpecialOrdersSection: React.FC = () => {
                           <span className="text-text">
                             MRP: {item.mrp ? `₹${item.mrp.toFixed(2)}` : 'N/A'}
                           </span>
-                          <span className="text-sky-400">
+                          <span className="text-sky-400 flex items-center gap-1.5">
                             Stock: {item.stock}
+                            {idx === activePrIndex && (
+                              <span className="text-[10px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm">
+                                ↵ Enter
+                              </span>
+                            )}
                           </span>
                         </div>
                       </div>

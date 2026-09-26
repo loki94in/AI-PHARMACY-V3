@@ -890,27 +890,31 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
         stockIndicator = `🟢 (${opt.stock})`;
       }
 
-      // Calculate margin against customer confirmed MRP (or distributor catalog MRP)
-      const effectiveMrp = customerMrp || (optMrp > 0 ? optMrp : 0);
+      // Calculate margin against distributor catalog MRP (falling back to customer confirmed MRP)
+      const itemMrp = (optMrp > 0 ? optMrp : 0) || (customerMrp || 0);
       let marginLine = '';
-      if (rate > 0 && effectiveMrp > rate) {
-        const marginVal = effectiveMrp - rate;
-        const marginPct = ((marginVal / effectiveMrp) * 100).toFixed(1);
-        marginLine = ` | Margin: ₹${marginVal.toFixed(2)} (${marginPct}%)`;
+      if (rate > 0 && itemMrp > rate) {
+        const marginVal = itemMrp - rate;
+        const marginPct = ((marginVal / itemMrp) * 100).toFixed(1);
+        marginLine = `Margin: ₹${marginVal.toFixed(2)} (${marginPct}%)`;
       }
 
-      // Price line: Wholesale PTR: ₹{rate}
-      let priceLine = '';
+      // Clean two-line format: Rate & MRP on first line, Margin on second line (no Wholesale PTR row)
+      let priceDetails = '';
       if (rate > 0) {
-        priceLine = `Wholesale PTR: ₹${rate.toFixed(2)}${marginLine}`;
-      } else if (effectiveMrp > 0) {
-        priceLine = `Rate: Available (MRP: ₹${effectiveMrp.toFixed(2)})`;
+        const mrpPart = itemMrp > 0 ? ` | MRP: ₹${itemMrp.toFixed(2)}` : '';
+        priceDetails = `   Rate: ₹${rate.toFixed(2)}${mrpPart}`;
+        if (marginLine) {
+          priceDetails += `\n   ${marginLine}`;
+        }
+      } else if (itemMrp > 0) {
+        priceDetails = `   Rate: Available | MRP: ₹${itemMrp.toFixed(2)}`;
       } else {
-        priceLine = `Rate: Available`;
+        priceDetails = `   Rate: Available`;
       }
 
       const medLine = (opt.name || opt.shortName || '').trim();
-      return `${formatNum(i)}${refBadge} *${dist}*${tag} | ${stockIndicator}\n${medLine ? '   ' + medLine + '\n' : ''}   ${priceLine}`;
+      return `${formatNum(i)}${refBadge} *${dist}*${tag} | ${stockIndicator}\n${medLine ? '   ' + medLine + '\n' : ''}${priceDetails}`;
     }).join('\n\n');
 
     const confirmedProductTitle = payload.productName || payload.medicineName;

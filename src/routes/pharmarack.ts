@@ -1263,16 +1263,59 @@ export async function rankSpecialOrderDistributorCandidates(
     return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
   });
 
-  // Pick Tier 3 unmapped (up to maxUnmapped, default 2)
-  const allowedUnmapped = Math.min(unmappedCandidates.length, maxUnmapped);
-  // Pick Tier 1 & 2 mapped (fill remaining slots up to maxTotal)
-  const allowedMapped = Math.min(mappedCandidates.length, maxTotal - allowedUnmapped);
-
-  const selectedMapped = mappedCandidates.slice(0, allowedMapped);
+  // Strictly prioritize mapped distributors (fill up to maxTotal slots first)
+  const selectedMapped = mappedCandidates.slice(0, maxTotal);
   const remainingSlots = Math.max(0, maxTotal - selectedMapped.length);
-  const selectedUnmapped = unmappedCandidates.slice(0, Math.min(unmappedCandidates.length, Math.max(allowedUnmapped, remainingSlots)));
 
-  return [...selectedMapped, ...selectedUnmapped];
+  // Fall back to unmapped distributors ONLY if mapped distributors could not fill the slots
+  let selectedUnmapped: any[] = [];
+  if (remainingSlots > 0) {
+    selectedUnmapped = unmappedCandidates.slice(0, Math.min(unmappedCandidates.length, Math.min(remainingSlots, maxUnmapped)));
+  }
+
+  const combined = [...selectedMapped, ...selectedUnmapped];
+
+  // Deduplication check across options:
+  // Ensure Option 1 and Option 2 don't present identical rate + MRP from common distributors if an alternative exists
+  if (combined.length > 1) {
+    const first = combined[0];
+    const firstRate = Number(first.rate ?? first.distributorPrice ?? first.ptr ?? 0);
+    const firstMrp = Number(first.mrp ?? 0);
+    const firstName = String(first.name || first.productName || '').trim().toLowerCase();
+
+    // Check if subsequent candidate has identical name, rate, and MRP
+    const hasDuplicate = combined.slice(1).some(c => {
+      const cRate = Number(c.rate ?? c.distributorPrice ?? c.ptr ?? 0);
+      const cMrp = Number(c.mrp ?? 0);
+      const cName = String(c.name || c.productName || '').trim().toLowerCase();
+      return cName === firstName && cRate === firstRate && cMrp === firstMrp;
+    });
+
+    if (hasDuplicate) {
+      // Look for an alternative candidate in mappedCandidates or unmappedCandidates with different rate or stock
+      const alt = [...mappedCandidates, ...unmappedCandidates].find(c => {
+        if (combined.includes(c)) return false;
+        const cRate = Number(c.rate ?? c.distributorPrice ?? c.ptr ?? 0);
+        const cMrp = Number(c.mrp ?? 0);
+        return cRate !== firstRate || cMrp !== firstMrp;
+      });
+      if (alt) {
+        // Replace the identical duplicate with the alternative
+        const dupIdx = combined.findIndex((c, idx) => {
+          if (idx === 0) return false;
+          const cRate = Number(c.rate ?? c.distributorPrice ?? c.ptr ?? 0);
+          const cMrp = Number(c.mrp ?? 0);
+          const cName = String(c.name || c.productName || '').trim().toLowerCase();
+          return cName === firstName && cRate === firstRate && cMrp === firstMrp;
+        });
+        if (dupIdx > 0) {
+          combined[dupIdx] = alt;
+        }
+      }
+    }
+  }
+
+  return combined;
 }
 
 /**
