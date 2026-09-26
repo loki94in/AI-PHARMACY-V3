@@ -372,7 +372,7 @@ router.post('/enqueue-single-distributor-order', async (req, res) => {
 
 // POST enqueue a single WhatsApp message into the background queue
 router.post('/enqueue-single', async (req, res) => {
-  const { number, message, type = 'crm_notification', targetName, explicitScheduledAt } = req.body || {};
+  const { number, message, type = 'crm_notification', targetName, explicitScheduledAt, skipDedupe } = req.body || {};
   if (!number || !message) {
     return res.status(400).json({ error: 'number and message are required' });
   }
@@ -388,7 +388,10 @@ router.post('/enqueue-single', async (req, res) => {
       String(message),
       type,
       targetName,
-      explicitScheduledAt
+      explicitScheduledAt,
+      undefined,
+      undefined,
+      { skipDedupe: Boolean(skipDedupe) }
     );
 
     res.json({

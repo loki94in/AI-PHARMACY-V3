@@ -7,6 +7,39 @@
 
 ## Fixed
 
+### [Fixed] P1-37 — Daily Communications & Staged Log Message Send and Re-Send Suppressed by 48h Sent Register Check & Modal Auto-Hydration Missing
+
+| Field | Content |
+|---|---|
+| **What the user saw** | From Daily Communications & Staged Log, re-sending a message or sending staged messages failed to actually deliver to the recipient, or the modal initially loaded empty without communications history. |
+| **Root cause** | 1. `whatsapp_send_queue` lacked a `skip_dedupe` column. While `enqueue()` bypassed table insert dedupe, the worker's background loop in `processQueueInternal()` unconditionally invoked `whatsappDeliveryRegister.isAlreadyDelivered()`. Because the communication was already delivered within 48h, the worker marked the item 'sent' and aborted `sendMessage()`.<br>2. `DailyCommunicationsModal.tsx` lacked auto-hydration on open, and `loadDailySummary()` was omitted from initial app load.<br>3. `api.manualNotification` did not record `resolved_at = datetime('now', 'localtime')` or update `patient_refills` status.<br>4. QuickAssist sidebar staged re-send did not pass `skipDedupe: true`. |
+| **How it was fixed** | 1. **Schema & Migration**: Added `skip_dedupe INTEGER DEFAULT 0` column to `whatsapp_send_queue` in `src/database.ts` and runtime migration in `ensureSchema`.<br>2. **Worker Skip-Dedupe Bypass**: Persisted `skip_dedupe` in `whatsappQueueWorker.enqueue()`, and in `processQueueInternal()` bypassed `whatsappDeliveryRegister.isAlreadyDelivered()` when `item.skip_dedupe === 1`.<br>3. **Auto-Hydration**: Added `useEffect` in `DailyCommunicationsModal.tsx` to call `onRefresh()` whenever `isOpen` is true, and called `loadDailySummary()` in `Layout.tsx` on mount and modal open.<br>4. **Endpoint Audit Sync**: Updated `/notifications/:id/manual` in `src/routes/automation.ts` to set `resolved_at = datetime('now', 'localtime')` and synchronize `patient_refills` status to `'notified'`.<br>5. **Sidebar Forwarding**: Passed `skipDedupe: true` in `Layout.tsx` staged group sending. |
+| **Priority** | P1 |
+| **What not to touch** | Anti-ban queue pacing (10–15s floor), non-resend deduplication for regular automated jobs, and human-in-the-loop review staging. |
+| **Verified by** | `npx tsc --noEmit` passed clean (0 errors) on both backend and frontend; `npm run guardrails` passed (0 violations); `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-36 — Daily Communications Modal Re-Send Button Silently Suppressed by Queue Deduplication & Positioning Glitch
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In `DailyCommunicationsModal.tsx`, clicking "Re-Send" on a sent message from today either failed to show the confirmation dialog properly or, when confirmed, did not queue or send any message to the customer's WhatsApp. |
+| **Root cause** | 1. `/whatsapp/queue/enqueue-single` did not accept or forward `skipDedupe` to `whatsappQueueWorker.enqueue()`. The worker enforced same-day deduplication (`WHERE NOT EXISTS (SELECT 1 FROM whatsapp_send_queue WHERE number = ? AND message = ? AND created_at >= startOfDayMs)`). Because the communication was already sent today, 0 rows were inserted and `triggerProcessing()` was bypassed.<br>2. `DailyCommunicationsModal.tsx` dialog box container lacked `relative`, and the confirmation overlay used an invalid Tailwind utility `z-60`, causing coordinate misalignment.<br>3. `api.enqueueSingleWhatsApp` did not support `skipDedupe`. |
+| **How it was fixed** | 1. **Backend Enqueue Option**: Updated `src/routes/whatsappQueue.ts` to extract `skipDedupe` from `req.body` and pass `{ skipDedupe: Boolean(skipDedupe) }` into `whatsappQueueWorker.enqueue()`.<br>2. **Frontend API Support**: Added `skipDedupe?: boolean` to `enqueueSingleWhatsApp` in `frontend/src/services/api.ts`.<br>3. **Modal UI & Resend Execution**: Added `relative` to modal dialog container, corrected overlay z-index to `z-submodal` (`10015`), passed `skipDedupe: true` in `handleExecuteResend` and `handleSendStaged`, added button loading spinner during resend dispatch, and updated notification audit timestamp via `api.manualNotification(item.id)`. |
+| **Priority** | P1 |
+| **What not to touch** | Safe anti-ban queue pacing (10–15s delay), unconfirmed message guardrails, and daily communication filtering tabs. |
+| **Verified by** | `npx tsc --noEmit` in both frontend and root passed with 0 errors; `npm run guardrails` passed (0 violations); `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-35 — Vite OXC Parse Error in POS/index.tsx (Missing Closing Div on Search Results Dropdown)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Vite dev server crashed with `[PARSE_ERROR] Unexpected token. Did you mean {'}'} or &rbrace;? at src/pages/POS/index.tsx:5000:18` during HMR or build. |
+| **Root cause** | In `frontend/src/pages/POS/index.tsx`, the outer container `<div ref={searchResultsRef} ...>` opened at line 4650 was missing its closing `</div>` tag before the JSX conditional closure `)}`. This left the JSX element unclosed and caused OXC to treat the closing parenthesis and bracket as unexpected raw tokens inside an open JSX tag. |
+| **How it was fixed** | Inserted the missing `</div>` tag at line 5000 before `)}`, properly terminating the `searchResultsRef` container before closing the `{showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (` expression. |
+| **Priority** | P1 |
+| **What not to touch** | Search dropdown layout, keyboard navigation handlers, online search enricher, and doctor Rx chips. |
+| **Verified by** | `npx tsc --noEmit` in frontend exited with 0 (clean); `npm run guardrails` passed (0 violations); `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P1-34 — WhatsApp Customer Medicine Response Streamlining: Single Medicine & Distributor Flow (15-Option List Dump Suppression)
 
 | Field | Content |

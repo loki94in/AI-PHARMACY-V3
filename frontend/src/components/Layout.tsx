@@ -2845,7 +2845,8 @@ const QuickAssistSidebar = memo(({
           number: group.recipient_phone,
           message: group.consolidatedMessage,
           type: 'refill_collection',
-          targetName: group.recipient_name
+          targetName: group.recipient_name,
+          skipDedupe: true
         });
         whatsappQueueEvent.triggerUpdated();
       }
@@ -4564,6 +4565,7 @@ export const Layout = ({
 
   useEffect(() => {
     if (!compactCacheLoaded) return;
+    loadDailySummary();
     fetchStagedNotifications();
     // focus + visibilitychange + app-purchases-updated can all fire within the
     // same tab-switch — one leading-edge throttled refresh instead of 2-3
@@ -4573,6 +4575,7 @@ export const Layout = ({
       const now = Date.now();
       if (now - lastRefreshAt < 3000) return;
       lastRefreshAt = now;
+      loadDailySummary();
       fetchStagedNotifications();
       refetchSpecialOrders();
       refetchRefills();
@@ -4589,7 +4592,7 @@ export const Layout = ({
       document.removeEventListener('visibilitychange', refreshAll);
       window.removeEventListener('app-purchases-updated', refreshAll);
     };
-  }, [compactCacheLoaded, fetchStagedNotifications, refetchSpecialOrders, refetchRefills]);
+  }, [compactCacheLoaded, loadDailySummary, fetchStagedNotifications, refetchSpecialOrders, refetchRefills]);
 
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [isBackupStartupMode, setIsBackupStartupMode] = useState(false);
@@ -4811,7 +4814,10 @@ export const Layout = ({
   const openConnectModal = useCallback(() => setShowConnectModal(true), []);
   const openWaQueuePopover = useCallback(() => setShowWaQueuePopover(true), []);
   const openMobileNav = useCallback(() => setMobileNavOpen(true), []);
-  const openDailyModal = useCallback(() => setIsDailyModalOpen(true), []);
+  const openDailyModal = useCallback(() => {
+    loadDailySummary();
+    setIsDailyModalOpen(true);
+  }, [loadDailySummary]);
   const handleQuickAssistActionComplete = useCallback(() => {
     fetchStagedNotifications();
     refetchSpecialOrders();

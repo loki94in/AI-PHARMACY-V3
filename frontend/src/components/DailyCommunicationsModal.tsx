@@ -51,6 +51,13 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
   const [actioningId, setActioningId] = useState<number | null>(null);
   const [confirmResendItem, setConfirmResendItem] = useState<DailyLogItem | null>(null);
 
+  // Auto-refresh log whenever modal is opened
+  useEffect(() => {
+    if (isOpen) {
+      onRefresh();
+    }
+  }, [isOpen, onRefresh]);
+
   // Auto-close on Escape key
   useEffect(() => {
     if (!isOpen) return;
@@ -96,7 +103,8 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
           number: item.recipient_phone,
           message: item.message,
           type: item.type || 'refill_collection',
-          targetName: item.recipient_name
+          targetName: item.recipient_name,
+          skipDedupe: true
         });
         whatsappQueueEvent.triggerUpdated();
       }
@@ -141,18 +149,22 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
 
   const handleExecuteResend = async (item: DailyLogItem) => {
     setResendingId(item.id);
-    setConfirmResendItem(null);
     try {
       if (item.recipient_phone) {
         await api.enqueueSingleWhatsApp({
           number: item.recipient_phone,
           message: item.message,
           type: item.type || 'refill_reminder',
-          targetName: item.recipient_name
+          targetName: item.recipient_name,
+          skipDedupe: true
         });
         whatsappQueueEvent.triggerUpdated();
       }
+      // Update notification status & timestamp for audit trail
+      await api.manualNotification(item.id).catch(() => {});
       toastEvent.trigger(`Re-sent WhatsApp message to ${item.recipient_name}!`, 'success');
+      setConfirmResendItem(null);
+      refillEvent.triggerRefresh();
       onRefresh();
     } catch (err: any) {
       toastEvent.trigger(err?.message || 'Failed to re-send message', 'error');
@@ -181,7 +193,7 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-bg border border-border w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        className="bg-bg border border-border w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden relative"
       >
         
         {/* Header */}
@@ -408,7 +420,7 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
         {confirmResendItem && (
           <div
             onClick={() => setConfirmResendItem(null)}
-            className="absolute inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+            className="absolute inset-0 z-submodal bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
           >
             <div
               onClick={(e) => e.stopPropagation()}
@@ -432,17 +444,23 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
 
               <div className="flex items-center justify-end gap-2 pt-1">
                 <button
+                  disabled={resendingId === confirmResendItem.id}
                   onClick={() => setConfirmResendItem(null)}
-                  className="px-3 py-1.5 rounded-xl bg-bg3 hover:bg-bg border border-border text-xs font-bold text-muted hover:text-text transition-colors cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl bg-bg3 hover:bg-bg border border-border text-xs font-bold text-muted hover:text-text transition-colors cursor-pointer disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
+                  disabled={resendingId === confirmResendItem.id}
                   onClick={() => handleExecuteResend(confirmResendItem)}
-                  className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
                 >
-                  <Send size={13} />
-                  <span>Confirm & Re-Send</span>
+                  {resendingId === confirmResendItem.id ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <Send size={13} />
+                  )}
+                  <span>{resendingId === confirmResendItem.id ? 'Sending...' : 'Confirm & Re-Send'}</span>
                 </button>
               </div>
             </div>

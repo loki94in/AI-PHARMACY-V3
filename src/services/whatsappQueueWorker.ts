@@ -20,6 +20,7 @@ export interface QueueItem {
   scheduled_at?: number | null;
   media_url?: string | null;
   file_json?: string | null;
+  skip_dedupe?: number;
 }
 
 export interface QueueWorkerState {
@@ -324,6 +325,9 @@ class WhatsAppQueueWorker {
       if (!colNames.has('resolved_at')) {
         await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN resolved_at INTEGER DEFAULT NULL");
       }
+      if (!colNames.has('skip_dedupe')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
+      }
 
       const notifCols = await db.all("PRAGMA table_info(automation_notifications)");
       const notifColNames = new Set(notifCols.map((c: any) => c.name));
@@ -578,12 +582,13 @@ class WhatsAppQueueWorker {
       : `WHERE NOT EXISTS (
           SELECT 1 FROM whatsapp_send_queue WHERE number = ? AND message = ? AND created_at >= ?
         )`;
-    const insertParams: any[] = [cleanPhone, message, type, now, scheduledAt, resolvedTargetName || null, mediaUrl || null, fileJsonStr];
+    const skipDedupeVal = options?.skipDedupe ? 1 : 0;
+    const insertParams: any[] = [cleanPhone, message, type, now, scheduledAt, resolvedTargetName || null, mediaUrl || null, fileJsonStr, skipDedupeVal];
     if (!options?.skipDedupe) insertParams.push(cleanPhone, message, startOfDayMs);
 
     const result = await db.run(
-      `INSERT INTO whatsapp_send_queue (number, message, type, status, retry_count, created_at, scheduled_at, target_name, media_url, file_json)
-       SELECT ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?
+      `INSERT INTO whatsapp_send_queue (number, message, type, status, retry_count, created_at, scheduled_at, target_name, media_url, file_json, skip_dedupe)
+       SELECT ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?
        ${dedupeGuard}`,
       insertParams
     );
@@ -902,37 +907,39 @@ class WhatsAppQueueWorker {
 
         // Pre-send Deduplication Check against permanent Sent Register:
         // If this message was already successfully delivered to this recipient, mark sent and suppress duplicate dispatch.
-        // Exempt recurring daily operational reminders (distributor dispatch reminders) from the 48-hour check so
-        // daily morning/afternoon dispatches are never suppressed by yesterday's send.
-        const isRecurringDailyReminder = item.type === 'distributor_dispatch_reminder' || item.type === 'afternoon_delivery_boy_dispatch';
-        const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
-          item.number, 
-          item.message, 
-          isRecurringDailyReminder ? 12 : 48
-        );
-        if (deliveryCheck.delivered) {
-          console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
-          const resolvedSentAt = deliveryCheck.sentAt || Date.now();
-          await db.run(
-            "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-            [resolvedSentAt, item.id]
+        // Exempt explicit user re-sends / manual dispatches (item.skip_dedupe = 1) and recurring daily operational reminders.
+        const isUserResend = Boolean(item.skip_dedupe);
+        if (!isUserResend) {
+          const isRecurringDailyReminder = item.type === 'distributor_dispatch_reminder' || item.type === 'afternoon_delivery_boy_dispatch';
+          const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
+            item.number, 
+            item.message, 
+            isRecurringDailyReminder ? 12 : 48
           );
-          await db.run(
-            `UPDATE automation_notifications 
-             SET status = 'sent', error_message = NULL 
-             WHERE reference_id = ? OR reference_id = ?`,
-            [`queue_${item.id}`, String(item.id)]
-          ).catch(() => {});
-          if (item.type === 'distributor_dispatch_reminder') {
-            const todayStr = new Date().toISOString().split('T')[0];
+          if (deliveryCheck.delivered) {
+            console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
+            const resolvedSentAt = deliveryCheck.sentAt || Date.now();
             await db.run(
-              `UPDATE distributor_dispatch_reminders 
-               SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
-               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
-              [todayStr, item.target_name || '', item.id]
+              "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
+              [resolvedSentAt, item.id]
+            );
+            await db.run(
+              `UPDATE automation_notifications 
+               SET status = 'sent', error_message = NULL 
+               WHERE reference_id = ? OR reference_id = ?`,
+              [`queue_${item.id}`, String(item.id)]
             ).catch(() => {});
+            if (item.type === 'distributor_dispatch_reminder') {
+              const todayStr = new Date().toISOString().split('T')[0];
+              await db.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+                 WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+                [todayStr, item.target_name || '', item.id]
+              ).catch(() => {});
+            }
+            continue;
           }
-          continue;
         }
 
         // Extract sanitized digits for phone validation & registration check

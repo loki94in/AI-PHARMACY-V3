@@ -411,13 +411,27 @@ router.post('/notifications/:id/manual', async (req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
-    const result = await db.run(
-      'UPDATE automation_notifications SET status = "sent_manually", error_message = NULL WHERE id = ?',
-      [id]
-    );
-    if (result.changes === 0) {
+    const existing = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [id]);
+    if (!existing) {
       return res.status(404).json({ error: 'Notification not found' });
     }
+
+    await db.run(
+      'UPDATE automation_notifications SET status = "sent_manually", resolved_at = datetime("now", "localtime"), error_message = NULL WHERE id = ?',
+      [id]
+    );
+
+    // If this was a refill staged notification, mark the referenced refills as notified so background sync does not immediately re-stage them
+    if (existing.reference_id && (existing.type === 'refill_collection' || existing.type === 'refill_reminder')) {
+      const refIds = String(existing.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
+      for (const refId of refIds) {
+        await db.run(
+          "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
+          [refId]
+        ).catch(() => {});
+      }
+    }
+
     res.json({ success: true, message: 'Notification marked as sent manually' });
   } catch (err: any) {
     console.error('Failed to mark manual status:', err);

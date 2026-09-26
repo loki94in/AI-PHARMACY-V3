@@ -4997,7 +4997,8 @@ const POS = () => {
                       )}
                     </div>
                   </div>
-                )}
+                </div>
+              )}
                 </div>
               </div>
             )}

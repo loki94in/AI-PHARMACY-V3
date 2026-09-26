@@ -2228,6 +2228,7 @@ export async function ensureSchema(dbPath: string) {
       scheduled_at INTEGER,
       media_url TEXT,
       file_json TEXT,
+      skip_dedupe INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       sent_at INTEGER DEFAULT NULL,
       acknowledged INTEGER DEFAULT 0,
@@ -3939,6 +3940,9 @@ export async function ensureSchema(dbPath: string) {
       }
       if (!colNames.includes('file_json')) {
         await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN file_json TEXT DEFAULT NULL");
+      }
+      if (!colNames.includes('skip_dedupe')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
       }
     } catch (colErr) {
       console.warn('[Database Schema] Column check warning for whatsapp_send_queue:', colErr);
