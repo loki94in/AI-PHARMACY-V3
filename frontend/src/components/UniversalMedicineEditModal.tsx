@@ -274,6 +274,46 @@ const THERAPEUTIC_CLASSES = [
   'Other / Unclassified'
 ];
 
+export const STANDARD_ITEM_TYPES = [
+  { value: 'TABLET', label: 'TABLET (Solid oral dosage)' },
+  { value: 'CAPSULE', label: 'CAPSULE (Gelatin/Vegetable)' },
+  { value: 'SYRUP', label: 'SYRUP / SUSPENSION (Liquid)' },
+  { value: 'INJECTION', label: 'INJECTION (Ampoule/Vial)' },
+  { value: 'CREAM', label: 'CREAM / OINTMENT (Topical)' },
+  { value: 'DROPS', label: 'DROPS (Eye/Ear/Pediatric)' },
+  { value: 'POWDER', label: 'POWDER / SACHET' },
+  { value: 'DEVICE', label: 'MEDICAL DEVICE / CONSUMABLE' }
+];
+
+export const STANDARD_PACK_TYPES = [
+  { value: 'TAB', label: 'TAB (Tablet)' },
+  { value: 'CAP', label: 'CAP (Capsule)' },
+  { value: 'STRIP', label: 'STRIP (Strip)' },
+  { value: 'SUSPENSION', label: 'SUSPENSION (Liquid)' },
+  { value: 'BOTTLE', label: 'BOTTLE (Bottle)' },
+  { value: 'VIAL', label: 'VIAL (Vial)' },
+  { value: 'AMP', label: 'AMP (Ampoule)' },
+  { value: 'GEL', label: 'GEL (Gel)' },
+  { value: 'CREAM', label: 'CREAM (Cream)' },
+  { value: 'INJ', label: 'INJ (Injection)' },
+  { value: 'OINT', label: 'OINT (Ointment)' },
+  { value: 'SYP', label: 'SYP (Syrup)' },
+  { value: 'NONE', label: 'NONE (Skip Suffix)' }
+];
+
+export const STANDARD_CATEGORIES = [
+  'Allopathy',
+  'Ayurvedic',
+  'Homeopathy',
+  'General Health',
+  'Surgical',
+  'Nutraceuticals',
+  'Cosmetics',
+  'OTC',
+  'Veterinary',
+  'Baby Care'
+];
+
 type LocalApiError = { response?: { data?: { error?: string } }; message?: string };
 
 interface LocalUniversalMedicineSeed {
@@ -522,6 +562,22 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
   });
   const [isManualName, setIsManualName] = useState(false);
 
+  const [isCustomItemType, setIsCustomItemType] = useState(() => {
+    const it = (initialData?.item_type || ocrData?.dosageForm || '').toUpperCase();
+    return !!it && !STANDARD_ITEM_TYPES.some(t => t.value === it);
+  });
+  const [isCustomSuffix, setIsCustomSuffix] = useState(() => {
+    const rawInitName = ocrData?.potentialName || initialData?.name || '';
+    const rawInitPkg = ocrData?.packaging || initialData?.packaging || (isCreateMode ? '10 TAB' : '');
+    const detected = detectDosageFormAndPack(rawInitName, rawInitPkg, ocrData?.dosageForm || initialData?.item_type, initialData?.pack_size);
+    const initialSuffix = (splitMedicineName(rawInitName, rawInitPkg, detected.packType).packType || initialData?.pack_unit || '').toUpperCase();
+    return !!initialSuffix && initialSuffix !== 'NONE' && !STANDARD_PACK_TYPES.some(p => p.value === initialSuffix);
+  });
+  const [isCustomCategory, setIsCustomCategory] = useState(() => {
+    const cat = initialData?.category || '';
+    return !!cat && !STANDARD_CATEGORIES.includes(cat);
+  });
+
   const handleMfgChange = async (val: string) => {
     setForm(prev => ({ ...prev, manufacturer: val }));
     try {
@@ -589,6 +645,15 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
           const parsed = splitMedicineName(nameVal, packagingVal, detected.packType);
           setBaseName(parsed.baseName);
           setPackType(parsed.packType);
+          if (detected.item_type && !STANDARD_ITEM_TYPES.some(t => t.value === detected.item_type.toUpperCase())) {
+            setIsCustomItemType(true);
+          }
+          if (parsed.packType && !STANDARD_PACK_TYPES.some(p => p.value === parsed.packType.toUpperCase())) {
+            setIsCustomSuffix(true);
+          }
+          if (med.category && !STANDARD_CATEGORIES.includes(med.category)) {
+            setIsCustomCategory(true);
+          }
           
           let isLooseVal = false;
           if (med.metadata) {
@@ -662,6 +727,21 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
     const parsed = splitMedicineName(nameVal, packagingVal, detected.packType);
     setBaseName(parsed.baseName);
     setPackType(parsed.packType);
+    if (detected.item_type && !STANDARD_ITEM_TYPES.some(t => t.value === detected.item_type.toUpperCase())) {
+      setIsCustomItemType(true);
+    } else {
+      setIsCustomItemType(false);
+    }
+    if (parsed.packType && !STANDARD_PACK_TYPES.some(p => p.value === parsed.packType.toUpperCase())) {
+      setIsCustomSuffix(true);
+    } else {
+      setIsCustomSuffix(false);
+    }
+    if (masterRecord.category && !STANDARD_CATEGORIES.includes(masterRecord.category)) {
+      setIsCustomCategory(true);
+    } else {
+      setIsCustomCategory(false);
+    }
     setIsManualName(false);
     setForm(prev => ({
       ...prev,
@@ -880,7 +960,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
         onClick={onClose}
       />
       
-      <div className="relative bg-bg border border-glass-border rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden slide-up">
+      <div className="relative bg-bg border border-glass-border rounded-2xl w-[96vw] max-w-5xl h-[88vh] min-h-[600px] max-h-[900px] flex flex-col shadow-2xl overflow-hidden slide-up">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -1032,7 +1112,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
         </div>
 
         {/* Body Area */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 scrollbar-custom">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 scrollbar-custom">
           {error && (
             <div className="mb-5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 text-red-400 text-sm">
               <AlertTriangle className="shrink-0 mt-0.5" size={18} />
@@ -1041,7 +1121,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
           )}
 
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-muted">
+            <div className="flex-1 flex flex-col items-center justify-center py-20 text-muted h-full min-h-[350px]">
               <RefreshCw size={32} className="animate-spin mb-3 text-primary" />
               <p className="text-sm font-medium">Hydrating 26 medicine fields...</p>
             </div>
@@ -1073,67 +1153,190 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
 
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-semibold text-muted">Item Type / Dosage Form</label>
-                        {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type) && (
-                          <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">
-                            Liquid / Non-Solid Unit
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <label className="block text-xs font-semibold text-muted">Item Type / Dosage Form</label>
+                          {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type) && (
+                            <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">
+                              Liquid / Non-Solid Unit
+                            </span>
+                          )}
+                        </div>
+                        <button 
+                          type="button" 
+                          onClick={() => setIsCustomItemType(prev => !prev)}
+                          className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                          title={isCustomItemType ? "Switch to standard list" : "Enter custom dosage form"}
+                        >
+                          {isCustomItemType ? '← Standard List' : '+ Manual Entry'}
+                        </button>
                       </div>
-                      <select 
-                        name="item_type" 
-                        value={form.item_type || 'TABLET'} 
-                        onChange={handleItemTypeChange}
-                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
-                      >
-                        <option value="TABLET">TABLET (Solid oral dosage)</option>
-                        <option value="CAPSULE">CAPSULE (Gelatin/Vegetable)</option>
-                        <option value="SYRUP">SYRUP / SUSPENSION (Liquid)</option>
-                        <option value="INJECTION">INJECTION (Ampoule/Vial)</option>
-                        <option value="CREAM">CREAM / OINTMENT (Topical)</option>
-                        <option value="DROPS">DROPS (Eye/Ear/Pediatric)</option>
-                        <option value="POWDER">POWDER / SACHET</option>
-                        <option value="DEVICE">MEDICAL DEVICE / CONSUMABLE</option>
-                      </select>
+                      {isCustomItemType ? (
+                        <div className="relative flex items-center">
+                          <input 
+                            type="text"
+                            name="item_type"
+                            id="item_type_55"
+                            value={form.item_type || ''}
+                            onChange={(e) => {
+                              const val = e.target.value.toUpperCase();
+                              setForm(prev => ({ ...prev, item_type: val }));
+                            }}
+                            placeholder="e.g. INHALER, RESPULES, PATCH, SPRAY"
+                            className="w-full px-4 py-2.5 bg-bg3 border border-primary/50 rounded-xl text-sm text-text font-medium uppercase focus:border-primary focus:outline-none"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setIsCustomItemType(false)}
+                            className="absolute right-2 px-2 py-1 text-xs text-muted hover:text-text bg-bg2 rounded-lg border border-glass-border cursor-pointer"
+                            title="Back to dropdown"
+                          >
+                            ✕ List
+                          </button>
+                        </div>
+                      ) : (
+                        <select 
+                          name="item_type" 
+                          id="item_type_55"
+                          value={STANDARD_ITEM_TYPES.some(t => t.value === (form.item_type || '').toUpperCase()) ? (form.item_type || 'TABLET') : (form.item_type || '__custom__')} 
+                          onChange={(e) => {
+                            if (e.target.value === '__custom__') {
+                              setIsCustomItemType(true);
+                            } else {
+                              handleItemTypeChange(e);
+                            }
+                          }}
+                          className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none cursor-pointer"
+                        >
+                          {STANDARD_ITEM_TYPES.map(t => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                          {!STANDARD_ITEM_TYPES.some(t => t.value === (form.item_type || '').toUpperCase()) && form.item_type && (
+                            <option value={form.item_type}>{form.item_type} (Custom)</option>
+                          )}
+                          <option value="__custom__">➕ Add Custom / Manual Dosage Form...</option>
+                        </select>
+                      )}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Form Suffix Type</label>
-                      <select 
-                        value={packType} 
-                        onChange={(e) => setPackType(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
-                      >
-                        <option value="TAB">TAB (Tablet)</option>
-                        <option value="CAP">CAP (Capsule)</option>
-                        <option value="STRIP">STRIP (Strip)</option>
-                        <option value="SUSPENSION">SUSPENSION (Liquid)</option>
-                        <option value="BOTTLE">BOTTLE (Bottle)</option>
-                        <option value="VIAL">VIAL (Vial)</option>
-                        <option value="AMP">AMP (Ampoule)</option>
-                        <option value="GEL">GEL (Gel)</option>
-                        <option value="CREAM">CREAM (Cream)</option>
-                        <option value="INJ">INJ (Injection)</option>
-                        <option value="OINT">OINT (Ointment)</option>
-                        <option value="SYP">SYP (Syrup)</option>
-                        <option value="NONE">NONE (Skip Suffix)</option>
-                      </select>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-muted">Form Suffix Type</label>
+                        <button 
+                          type="button" 
+                          onClick={() => setIsCustomSuffix(prev => !prev)}
+                          className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                          title={isCustomSuffix ? "Switch to standard list" : "Enter custom suffix"}
+                        >
+                          {isCustomSuffix ? '← Standard List' : '+ Manual Entry'}
+                        </button>
+                      </div>
+                      {isCustomSuffix ? (
+                        <div className="relative flex items-center">
+                          <input 
+                            type="text"
+                            id="field_56_57"
+                            value={packType || ''}
+                            onChange={(e) => {
+                              const val = e.target.value.toUpperCase();
+                              setPackType(val);
+                            }}
+                            placeholder="e.g. RESP, SPRAY, LOTION, MD, LOZ"
+                            className="w-full px-4 py-2.5 bg-bg3 border border-primary/50 rounded-xl text-sm text-text font-medium uppercase focus:border-primary focus:outline-none"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setIsCustomSuffix(false)}
+                            className="absolute right-2 px-2 py-1 text-xs text-muted hover:text-text bg-bg2 rounded-lg border border-glass-border cursor-pointer"
+                            title="Back to dropdown"
+                          >
+                            ✕ List
+                          </button>
+                        </div>
+                      ) : (
+                        <select 
+                          value={STANDARD_PACK_TYPES.some(p => p.value === (packType || '').toUpperCase()) ? packType : (packType || '__custom__')} 
+                          id="field_56_57"
+                          onChange={(e) => {
+                            if (e.target.value === '__custom__') {
+                              setIsCustomSuffix(true);
+                            } else {
+                              setPackType(e.target.value);
+                            }
+                          }}
+                          className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none cursor-pointer"
+                        >
+                          {STANDARD_PACK_TYPES.map(p => (
+                            <option key={p.value} value={p.value}>{p.label}</option>
+                          ))}
+                          {!STANDARD_PACK_TYPES.some(p => p.value === (packType || '').toUpperCase()) && packType && (
+                            <option value={packType}>{packType} (Custom)</option>
+                          )}
+                          <option value="__custom__">➕ Add Custom / Manual Suffix...</option>
+                        </select>
+                      )}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Category</label>
-                      <select 
-                        name="category" 
-                        value={form.category || 'Allopathy'} 
-                        onChange={handleChange}
-                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
-                      >
-                        <option value="Allopathy">Allopathy</option>
-                        <option value="Ayurvedic">Ayurvedic</option>
-                        <option value="Homeopathy">Homeopathy</option>
-                        <option value="General Health">General Health</option>
-                        <option value="Surgical">Surgical</option>
-                      </select>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-muted">Category</label>
+                        <button 
+                          type="button" 
+                          onClick={() => setIsCustomCategory(prev => !prev)}
+                          className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                          title={isCustomCategory ? "Switch to standard list" : "Enter custom category"}
+                        >
+                          {isCustomCategory ? '← Standard List' : '+ Manual Entry'}
+                        </button>
+                      </div>
+                      {isCustomCategory ? (
+                        <div className="relative flex items-center">
+                          <input 
+                            type="text"
+                            name="category"
+                            id="category_58"
+                            value={form.category || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setForm(prev => ({ ...prev, category: val }));
+                            }}
+                            placeholder="e.g. Nutraceuticals, Cosmetics, OTC, Veterinary"
+                            className="w-full px-4 py-2.5 bg-bg3 border border-primary/50 rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setIsCustomCategory(false)}
+                            className="absolute right-2 px-2 py-1 text-xs text-muted hover:text-text bg-bg2 rounded-lg border border-glass-border cursor-pointer"
+                            title="Back to dropdown"
+                          >
+                            ✕ List
+                          </button>
+                        </div>
+                      ) : (
+                        <select 
+                          name="category" 
+                          id="category_58"
+                          value={STANDARD_CATEGORIES.includes(form.category || '') ? (form.category || 'Allopathy') : (form.category || '__custom__')} 
+                          onChange={(e) => {
+                            if (e.target.value === '__custom__') {
+                              setIsCustomCategory(true);
+                            } else {
+                              handleChange(e);
+                            }
+                          }}
+                          className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none cursor-pointer"
+                        >
+                          {STANDARD_CATEGORIES.map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                          {!STANDARD_CATEGORIES.includes(form.category || '') && form.category && (
+                            <option value={form.category}>{form.category} (Custom)</option>
+                          )}
+                          <option value="__custom__">➕ Add Custom / Manual Category...</option>
+                        </select>
+                      )}
                     </div>
 
                     <div>

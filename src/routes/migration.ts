@@ -863,14 +863,20 @@ router.post('/staging/finalize', async (req, res) => {
       const today = new Date();
       const prefix = `INV-${today.getFullYear()}${(today.getMonth() + 1).toString().padStart(2, '0')}`;
 
-      await db.run('BEGIN TRANSACTION');
-      for (const inv of invoices) {
-        const newInvoiceNo = `${prefix}-${counter.toString().padStart(5, '0')}`;
-        await db.run('UPDATE sales_invoices SET invoice_no = ? WHERE id = ?', [newInvoiceNo, inv.id]);
-        counter++;
+      try {
+        await db.run('BEGIN TRANSACTION');
+        for (const inv of invoices) {
+          const newInvoiceNo = `${prefix}-${counter.toString().padStart(5, '0')}`;
+          await db.run('UPDATE sales_invoices SET invoice_no = ? WHERE id = ?', [newInvoiceNo, inv.id]);
+          counter++;
+        }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        await db.close();
       }
-      await db.run('COMMIT');
-      await db.close();
     }
 
     await closeAllStagingConnections();

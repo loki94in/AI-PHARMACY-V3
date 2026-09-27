@@ -200,8 +200,8 @@ export async function reconcileAllMedicineSalesMetrics(db: any, windowMonths: nu
   const twoDayByMed = Object.fromEntries(twoDayRows.map((r: any) => [r.medicine_id, r]));
   const purchaseByMed = Object.fromEntries(purchaseRows.map((r: any) => [r.medicine_id, r]));
 
-  await db.run('BEGIN IMMEDIATE TRANSACTION');
   try {
+    await db.run('BEGIN IMMEDIATE TRANSACTION /* BACKGROUND */');
     await db.run('DELETE FROM medicine_sales_metrics');
     for (const medId of medicineIds) {
       const sales = salesByMed[medId];

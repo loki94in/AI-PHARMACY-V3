@@ -85,8 +85,8 @@ export class VerificationService {
       // 4. Transaction & Write verification (Insert, Commit, and Rollback test)
       // We start a transaction, perform a test insert, verify it exists, and then roll back.
       // This is non-destructive and doesn't pollute the production database.
-      await db.run('BEGIN TRANSACTION');
       try {
+        await db.run('BEGIN TRANSACTION');
         const testUuid = `VERIFY_TEST_${Date.now()}`;
         const insertResult = await db.run(
           "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
@@ -108,7 +108,7 @@ export class VerificationService {
         }
       } finally {
         // Always roll back to clean the database
-        await db.run('ROLLBACK');
+        await db.run('ROLLBACK').catch(() => {});
       }
 
       return {

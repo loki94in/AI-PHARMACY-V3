@@ -812,113 +812,117 @@ export async function runCatalogImport(jobId: number) {
     const insertBatch = async (items: any[]) => {
       await activityTracker.waitUntilIdle();
       await dbManager.runWithPriority('BACKGROUND', async () => {
-        await db.run('BEGIN TRANSACTION');
-        for (const item of items) {
-        const key = item.name.toLowerCase().trim();
-        if (addedNames.has(key)) {
-          duplicateCount++;
-          continue;
-        }
-        addedNames.add(key);
+        try {
+          await db.run('BEGIN TRANSACTION');
+          for (const item of items) {
+            const key = item.name.toLowerCase().trim();
+            if (addedNames.has(key)) {
+              duplicateCount++;
+              continue;
+            }
+            addedNames.add(key);
 
-        let medId = existingMedicinesMap.get(key);
+            let medId = existingMedicinesMap.get(key);
 
-        // Check if API composition is missing or incomplete, requiring review
-        const isApiMissing = !item.api_reference || item.api_reference.trim() === '';
-        if (isApiMissing) {
-          let dbHasApi = false;
-          if (medId) {
-            const dbMed = await db.get('SELECT api_reference FROM medicines WHERE id = ?', medId);
-            if (dbMed && dbMed.api_reference && dbMed.api_reference.trim() !== '') {
-              dbHasApi = true;
+            // Check if API composition is missing or incomplete, requiring review
+            const isApiMissing = !item.api_reference || item.api_reference.trim() === '';
+            if (isApiMissing) {
+              let dbHasApi = false;
+              if (medId) {
+                const dbMed = await db.get('SELECT api_reference FROM medicines WHERE id = ?', medId);
+                if (dbMed && dbMed.api_reference && dbMed.api_reference.trim() !== '') {
+                  dbHasApi = true;
+                }
+              }
+              
+              if (!dbHasApi) {
+                // Stage for review!
+                await db.run(
+                  'INSERT INTO staged_medicine_reviews (job_id, medicine_name, status, original_row_data) VALUES (?, ?, ?, ?)',
+                  [jobId, item.name, 'pending', JSON.stringify(item)]
+                );
+                continue;
+              }
+            }
+
+            if (medId) {
+              existingCount++;
+              // Update / Merge existing medicine mapping fields
+              const updates: string[] = [];
+              const params: any[] = [];
+
+              if (item.api_reference !== undefined) { updates.push("api_reference = COALESCE(NULLIF(api_reference, ''), ?)"); params.push(item.api_reference); }
+              if (item.strength !== undefined) { updates.push("strength = COALESCE(NULLIF(strength, ''), ?)"); params.push(item.strength); }
+              if (item.packaging !== undefined) { updates.push("packaging = COALESCE(NULLIF(packaging, ''), ?)"); params.push(item.packaging); }
+              if (item.manufacturer !== undefined) { updates.push("manufacturer = COALESCE(NULLIF(manufacturer, ''), ?)"); params.push(item.manufacturer); }
+              if (item.marketed_by !== undefined) { updates.push("marketed_by = COALESCE(NULLIF(marketed_by, ''), ?)"); params.push(item.marketed_by); }
+              if (item.hsn_code !== undefined) { updates.push("hsn_code = COALESCE(NULLIF(hsn_code, ''), ?)"); params.push(item.hsn_code); }
+              if (item.schedule_type !== undefined) { updates.push("schedule_type = COALESCE(NULLIF(schedule_type, ''), ?)"); params.push(item.schedule_type); }
+              if (item.therapeutic !== undefined) { updates.push("therapeutic = COALESCE(NULLIF(therapeutic, ''), ?)"); params.push(item.therapeutic); }
+              if (item.sub_therapeutic !== undefined) { updates.push("sub_therapeutic = COALESCE(NULLIF(sub_therapeutic, ''), ?)"); params.push(item.sub_therapeutic); }
+              if (item.short_code !== undefined) { updates.push("short_code = COALESCE(NULLIF(short_code, ''), ?)"); params.push(item.short_code); }
+              if (item.ucode !== undefined) { updates.push("ucode = COALESCE(NULLIF(ucode, ''), ?)"); params.push(item.ucode); }
+              if (item.mrp !== undefined) { updates.push("mrp = COALESCE(NULLIF(mrp, 0), ?)"); params.push(item.mrp); }
+              if (item.cgst !== undefined) { updates.push("cgst_per = COALESCE(NULLIF(cgst_per, 0), ?)"); params.push(item.cgst); }
+              if (item.sgst !== undefined) { updates.push("sgst_per = COALESCE(NULLIF(sgst_per, 0), ?)"); params.push(item.sgst); }
+              if (item.rack !== undefined) { updates.push("rack = COALESCE(NULLIF(rack, ''), ?)"); params.push(item.rack); }
+              if (item.metadata !== undefined) { updates.push("metadata = COALESCE(NULLIF(metadata, ''), ?)"); params.push(item.metadata); }
+
+              // Custom columns update
+              for (const cm of customMappings) {
+                if (item[cm.dbCol] !== undefined) {
+                  updates.push(`"${cm.dbCol}" = COALESCE(NULLIF("${cm.dbCol}", ''), ?)`);
+                  params.push(item[cm.dbCol]);
+                }
+              }
+
+              if (updates.length > 0) {
+                params.push(medId);
+                await db.run(`UPDATE medicines SET ${updates.join(', ')} WHERE id = ?`, ...params);
+              }
+            } else {
+              newCount++;
+              // Create new product record in Product Master
+              const columns = ['name', 'api_reference', 'packaging', 'manufacturer', 'marketed_by', 'hsn_code', 'schedule_type', 'therapeutic', 'sub_therapeutic', 'short_code', 'ucode', 'mrp', 'cgst_per', 'sgst_per', 'rack', 'metadata'];
+              const placeholders = ['?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?'];
+              const params = [
+                item.name,
+                item.api_reference || null,
+                item.packaging || null,
+                item.manufacturer || null,
+                item.marketed_by || null,
+                item.hsn_code || null,
+                item.schedule_type || null,
+                item.therapeutic || null,
+                item.sub_therapeutic || null,
+                item.short_code || null,
+                item.ucode || null,
+                item.mrp || 0,
+                item.cgst || 0,
+                item.sgst || 0,
+                item.rack || null,
+                item.metadata || null
+              ];
+
+              for (const cm of customMappings) {
+                columns.push(`"${cm.dbCol}"`);
+                placeholders.push('?');
+                params.push(item[cm.dbCol] !== undefined ? item[cm.dbCol] : null);
+              }
+
+              const insertRes = await db.run(
+                `INSERT INTO medicines (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
+                params
+              );
+              medId = insertRes.lastID!;
+              existingMedicinesMap.set(key, medId);
             }
           }
-          
-          if (!dbHasApi) {
-            // Stage for review!
-            await db.run(
-              'INSERT INTO staged_medicine_reviews (job_id, medicine_name, status, original_row_data) VALUES (?, ?, ?, ?)',
-              [jobId, item.name, 'pending', JSON.stringify(item)]
-            );
-            continue;
-          }
+          await db.run('COMMIT');
+        } catch (err) {
+          await db.run('ROLLBACK').catch(() => {});
+          throw err;
         }
-
-        if (medId) {
-          existingCount++;
-          // Update / Merge existing medicine mapping fields
-          const updates: string[] = [];
-          const params: any[] = [];
-
-          if (item.api_reference !== undefined) { updates.push("api_reference = COALESCE(NULLIF(api_reference, ''), ?)"); params.push(item.api_reference); }
-          if (item.strength !== undefined) { updates.push("strength = COALESCE(NULLIF(strength, ''), ?)"); params.push(item.strength); }
-          if (item.packaging !== undefined) { updates.push("packaging = COALESCE(NULLIF(packaging, ''), ?)"); params.push(item.packaging); }
-          if (item.manufacturer !== undefined) { updates.push("manufacturer = COALESCE(NULLIF(manufacturer, ''), ?)"); params.push(item.manufacturer); }
-          if (item.marketed_by !== undefined) { updates.push("marketed_by = COALESCE(NULLIF(marketed_by, ''), ?)"); params.push(item.marketed_by); }
-          if (item.hsn_code !== undefined) { updates.push("hsn_code = COALESCE(NULLIF(hsn_code, ''), ?)"); params.push(item.hsn_code); }
-          if (item.schedule_type !== undefined) { updates.push("schedule_type = COALESCE(NULLIF(schedule_type, ''), ?)"); params.push(item.schedule_type); }
-          if (item.therapeutic !== undefined) { updates.push("therapeutic = COALESCE(NULLIF(therapeutic, ''), ?)"); params.push(item.therapeutic); }
-          if (item.sub_therapeutic !== undefined) { updates.push("sub_therapeutic = COALESCE(NULLIF(sub_therapeutic, ''), ?)"); params.push(item.sub_therapeutic); }
-          if (item.short_code !== undefined) { updates.push("short_code = COALESCE(NULLIF(short_code, ''), ?)"); params.push(item.short_code); }
-          if (item.ucode !== undefined) { updates.push("ucode = COALESCE(NULLIF(ucode, ''), ?)"); params.push(item.ucode); }
-          if (item.mrp !== undefined) { updates.push("mrp = COALESCE(NULLIF(mrp, 0), ?)"); params.push(item.mrp); }
-          if (item.cgst !== undefined) { updates.push("cgst_per = COALESCE(NULLIF(cgst_per, 0), ?)"); params.push(item.cgst); }
-          if (item.sgst !== undefined) { updates.push("sgst_per = COALESCE(NULLIF(sgst_per, 0), ?)"); params.push(item.sgst); }
-          if (item.rack !== undefined) { updates.push("rack = COALESCE(NULLIF(rack, ''), ?)"); params.push(item.rack); }
-          if (item.metadata !== undefined) { updates.push("metadata = COALESCE(NULLIF(metadata, ''), ?)"); params.push(item.metadata); }
-
-          // Custom columns update
-          for (const cm of customMappings) {
-            if (item[cm.dbCol] !== undefined) {
-              updates.push(`"${cm.dbCol}" = COALESCE(NULLIF("${cm.dbCol}", ''), ?)`);
-              params.push(item[cm.dbCol]);
-            }
-          }
-
-          if (updates.length > 0) {
-            params.push(medId);
-            await db.run(`UPDATE medicines SET ${updates.join(', ')} WHERE id = ?`, ...params);
-          }
-        } else {
-          newCount++;
-          // Create new product record in Product Master
-          const columns = ['name', 'api_reference', 'packaging', 'manufacturer', 'marketed_by', 'hsn_code', 'schedule_type', 'therapeutic', 'sub_therapeutic', 'short_code', 'ucode', 'mrp', 'cgst_per', 'sgst_per', 'rack', 'metadata'];
-          const placeholders = ['?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?'];
-          const params = [
-            item.name,
-            item.api_reference || null,
-            item.packaging || null,
-            item.manufacturer || null,
-            item.marketed_by || null,
-            item.hsn_code || null,
-            item.schedule_type || null,
-            item.therapeutic || null,
-            item.sub_therapeutic || null,
-            item.short_code || null,
-            item.ucode || null,
-            item.mrp || 0,
-            item.cgst || 0,
-            item.sgst || 0,
-            item.rack || null,
-            item.metadata || null
-          ];
-
-          for (const cm of customMappings) {
-            columns.push(`"${cm.dbCol}"`);
-            placeholders.push('?');
-            params.push(item[cm.dbCol] !== undefined ? item[cm.dbCol] : null);
-          }
-
-          const insertRes = await db.run(
-            `INSERT INTO medicines (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
-            params
-          );
-          medId = insertRes.lastID!;
-          existingMedicinesMap.set(key, medId);
-        }
-        // Catalog workers import medicines into master catalog; inventory is never created without purchase
-      }
-        await db.run('COMMIT');
       });
       // Cooperative yield: release lock & event loop so POS billing checkouts slip in instantly
       await new Promise(resolve => setTimeout(resolve, activityTracker.isAppInUse() ? 30 : 10));

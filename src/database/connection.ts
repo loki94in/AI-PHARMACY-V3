@@ -34,6 +34,7 @@ class DatabaseManager {
   // "cannot start a transaction within a transaction". This prioritized queue guarantees POS checkouts
   // jump ahead of background workers while preventing collision crashes.
   private isTxLocked = false;
+  private txDepth = 0;
   private activeTxPriority: TxPriority | null = null;
   private activeTxRelease: (() => void) | null = null;
   private activeTxTimer: NodeJS.Timeout | null = null;
@@ -64,6 +65,7 @@ class DatabaseManager {
       backgroundCount: this.lockStats.backgroundCount,
       isTxLocked: this.isTxLocked,
       activeTxPriority: this.activeTxPriority,
+      txDepth: this.txDepth,
       currentWaiters: {
         VIP: this.txWaiters.VIP.length,
         NORMAL: this.txWaiters.NORMAL.length,
@@ -74,6 +76,19 @@ class DatabaseManager {
 
   public runWithPriority<T>(priority: TxPriority, fn: () => T): T {
     return txPriorityStorage.run(priority, fn);
+  }
+
+  public async rollbackUnderlying(): Promise<void> {
+    if (this.connection) {
+      try {
+        const rawRun = (this.connection as any)._rawRun;
+        if (typeof rawRun === 'function') {
+          await rawRun('ROLLBACK');
+        } else {
+          await this.connection.run('ROLLBACK');
+        }
+      } catch (_) {}
+    }
   }
 
   private popNextWaiter(): { priority: TxPriority; resolve: (release: () => void) => void; enqueuedAt: number } | null {
@@ -101,15 +116,19 @@ class DatabaseManager {
     const next = this.popNextWaiter();
     if (next) {
       this.activeTxPriority = next.priority;
+      this.txDepth = 1;
       this.lockStats.totalAcquisitions++;
       if (next.priority === 'VIP') this.lockStats.vipCount++;
       else if (next.priority === 'NORMAL') this.lockStats.normalCount++;
       else this.lockStats.backgroundCount++;
       this.lockStats.lastAcquiredAt = Date.now();
 
-      // Arm safety watchdog for next holder (max 60s transaction duration)
-      this.activeTxTimer = setTimeout(() => {
-        console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${next.priority}]. Forcing release to prevent deadlock.`);
+      // Arm safety watchdog for next holder (max 60s transaction duration).
+      // CRITICAL: Must roll back SQLite before releasing lock to prevent orphan transaction collisions.
+      this.activeTxTimer = setTimeout(async () => {
+        console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${next.priority}]. Rolling back SQLite transaction and releasing lock to prevent deadlock.`);
+        await this.rollbackUnderlying().catch(() => {});
+        this.txDepth = 0;
         this.releaseTxLock();
       }, 60000);
       this.activeTxTimer.unref();
@@ -119,6 +138,7 @@ class DatabaseManager {
       next.resolve(releaseFn);
     } else {
       this.isTxLocked = false;
+      this.txDepth = 0;
       this.activeTxPriority = null;
       this.activeTxRelease = null;
     }
@@ -130,6 +150,7 @@ class DatabaseManager {
 
     if (!this.isTxLocked) {
       this.isTxLocked = true;
+      this.txDepth = 1;
       this.activeTxPriority = priority;
       this.activeTxRelease = releaseFn;
       this.lockStats.totalAcquisitions++;
@@ -138,9 +159,12 @@ class DatabaseManager {
       else this.lockStats.backgroundCount++;
       this.lockStats.lastAcquiredAt = Date.now();
 
-      // Arm safety watchdog (max 60s transaction duration)
-      this.activeTxTimer = setTimeout(() => {
-        console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${priority}]. Forcing release to prevent deadlock.`);
+      // Arm safety watchdog (max 60s transaction duration).
+      // CRITICAL: Must roll back SQLite before releasing lock to prevent orphan transaction collisions.
+      this.activeTxTimer = setTimeout(async () => {
+        console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${priority}]. Rolling back SQLite transaction and releasing lock to prevent deadlock.`);
+        await this.rollbackUnderlying().catch(() => {});
+        this.txDepth = 0;
         this.releaseTxLock();
       }, 60000);
       this.activeTxTimer.unref();
@@ -272,11 +296,13 @@ class DatabaseManager {
   private setupWriteInterceptor(db: Database) {
     const originalRun = db.run.bind(db);
     const originalExec = db.exec.bind(db);
+    (db as any)._rawRun = originalRun;
+    (db as any)._rawExec = originalExec;
     const self = this;
 
     // Classify BEGIN/COMMIT/ROLLBACK and detect transaction priority (VIP, NORMAL, BACKGROUND)
-    const txPhase = (sql: string): { phase: 'begin' | 'end' | null; priority: TxPriority } => {
-      const trimmed = sql.trim().toUpperCase();
+    const txPhase = (sql: string): { phase: 'begin' | 'end' | 'self_contained' | null; priority: TxPriority } => {
+      const trimmed = sql.trim().toUpperCase().replace(/;+$/, '');
       let priority: TxPriority = txPriorityStorage.getStore() || 'NORMAL';
 
       if (trimmed.includes('IMMEDIATE') || trimmed.includes('/* VIP */')) {
@@ -285,8 +311,14 @@ class DatabaseManager {
         priority = 'BACKGROUND';
       }
 
-      if (trimmed.startsWith('BEGIN')) return { phase: 'begin', priority };
-      if (trimmed === 'COMMIT' || trimmed.startsWith('ROLLBACK')) return { phase: 'end', priority };
+      const isBegin = trimmed.startsWith('BEGIN');
+      const isEnd = trimmed.startsWith('COMMIT') || trimmed.startsWith('ROLLBACK') || trimmed.startsWith('END');
+
+      if (isBegin && (trimmed.includes('COMMIT') || trimmed.includes('ROLLBACK'))) {
+        return { phase: 'self_contained', priority };
+      }
+      if (isBegin) return { phase: 'begin', priority };
+      if (isEnd) return { phase: 'end', priority };
       return { phase: null, priority };
     };
 
@@ -319,21 +351,68 @@ class DatabaseManager {
     db.run = async function (sql: any, ...params: any[]) {
       if (typeof sql === 'string') {
         const { phase, priority } = txPhase(sql);
+        const trimmed = sql.trim().toUpperCase().replace(/;+$/, '');
+
         if (phase === 'begin') {
+          if (self.isTxLocked && self.txDepth > 0) {
+            // Nested transaction inside an already locked transaction context (use SQLite savepoints)
+            self.txDepth++;
+            return await originalRun(`SAVEPOINT sp_${self.txDepth}`);
+          }
+
           const release = await self.acquireTxLock(priority);
           self.activeTxRelease = release;
+          self.txDepth = 1;
           try {
             return await originalRun(sql, ...params);
-          } catch (err) {
+          } catch (err: any) {
+            if (err?.message?.includes('cannot start a transaction within a transaction')) {
+              console.warn('[DB-MUTEX] Orphan transaction detected on connection. Auto-rolling back to recover...');
+              try {
+                await originalRun('ROLLBACK');
+                return await originalRun(sql, ...params);
+              } catch (recErr) {
+                console.error('[DB-MUTEX] Recovery rollback failed:', recErr);
+              }
+            }
+            self.txDepth = 0;
             releaseIfHeld();
             throw err;
           }
         }
+
         if (phase === 'end') {
-          try {
-            return await originalRun(sql, ...params);
-          } finally {
-            releaseIfHeld();
+          if (self.txDepth > 1) {
+            const currentDepth = self.txDepth;
+            self.txDepth--;
+            if (trimmed.startsWith('ROLLBACK')) {
+              return await originalRun(`ROLLBACK TO SAVEPOINT sp_${currentDepth}`);
+            } else {
+              return await originalRun(`RELEASE SAVEPOINT sp_${currentDepth}`);
+            }
+          }
+
+          if (self.txDepth === 1) {
+            try {
+              return await originalRun(sql, ...params);
+            } catch (err: any) {
+              if (err?.message?.includes('no transaction is active')) {
+                return;
+              }
+              throw err;
+            } finally {
+              self.txDepth = 0;
+              releaseIfHeld();
+            }
+          }
+
+          // Spurious rollback when depth is 0
+          if (trimmed.startsWith('ROLLBACK')) {
+            try {
+              return await originalRun(sql, ...params);
+            } catch (_) {
+              return;
+            }
           }
         }
 
@@ -377,28 +456,24 @@ class DatabaseManager {
       return originalRun(sql, ...params);
     } as any;
 
-    db.exec = async function (sql: string) {
+    db.exec = async function (sql: string): Promise<void> {
       const { phase, priority } = txPhase(sql);
-      if (phase === 'begin') {
+      if (phase === 'self_contained') {
         const release = await self.acquireTxLock(priority);
-        self.activeTxRelease = release;
         try {
-          return await originalExec(sql);
-        } catch (err) {
-          releaseIfHeld();
-          throw err;
+          await originalExec(sql);
+          return;
+        } finally {
+          release();
         }
       }
-      if (phase === 'end') {
-        try {
-          return await originalExec(sql);
-        } finally {
-          releaseIfHeld();
-        }
+      if (phase === 'begin' || phase === 'end') {
+        await db.run(sql);
+        return;
       }
       checkWriteQuery(sql);
-      return originalExec(sql);
-    };
+      await originalExec(sql);
+    } as any;
   }
 
   private async runSelfHealing(dbPath: string, busyTimeout: number, initialErrorMsg: string, oldDb?: Database): Promise<Database> {

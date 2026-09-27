@@ -2453,7 +2453,6 @@ const POS = () => {
 
   // Universal Edit state
   const [editMedicineId, setEditMedicineId] = useState<number | null>(null);
-  const [newMedicineInitialName, setNewMedicineInitialName] = useState<string | null>(null);
   const [intelligenceMedicineId, setIntelligenceMedicineId] = useState<number | null>(null);
   const [showIntelligenceModal, setShowIntelligenceModal] = useState<boolean>(false);
   const [expandedSubstitutes, setExpandedSubstitutes] = useState<Record<number, boolean>>({});
@@ -3496,7 +3495,6 @@ const POS = () => {
   useModalEscape(!!zoomedImage, () => setZoomedImage(null));
   useModalEscape(showCamera, () => setShowCamera(false));
   useModalEscape(!!editMedicineId, () => setEditMedicineId(null));
-  useModalEscape(!!newMedicineInitialName, () => setNewMedicineInitialName(null));
 
   const handleCompleteSale = async (overridePhone?: string, isDirectSave: boolean = false) => {
     if (isSavingBillRef.current) return;
@@ -4563,14 +4561,6 @@ const POS = () => {
                         if (docEl) { docEl.focus(); (docEl as HTMLInputElement).select?.(); }
                         return;
                       }
-                      if (e.altKey && e.key.toLowerCase() === 'n') {
-                        if (searchTerm.trim().length > 0) {
-                          e.preventDefault();
-                          setNewMedicineInitialName(searchTerm.trim());
-                          setShowSearchDropdown(false);
-                          return;
-                        }
-                      }
                       if (e.key === 'ArrowDown') {
                         if (searchResults.length > 0) {
                           e.preventDefault();
@@ -4595,7 +4585,20 @@ const POS = () => {
                           }
                         } else if (searchTerm.trim().length >= 2) {
                           e.preventDefault();
-                          setNewMedicineInitialName(searchTerm.trim());
+                          addToCart({
+                            id: Date.now(),
+                            name: searchTerm.trim(),
+                            batch: '',
+                            expiry: '',
+                            mrp: 0,
+                            costPrice: 0,
+                            salts: 'Custom Manual Entry',
+                            packSize: 1,
+                            quantity: 0
+                          });
+                          setSearchTerm('');
+                          setSearchResults([]);
+                          setSearchHighlightIndex(-1);
                           setShowSearchDropdown(false);
                         }
                       } else if (e.key === 'Tab' && !e.shiftKey) {
@@ -4637,34 +4640,11 @@ const POS = () => {
                   </div>
                   {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length === 0 && (
                     <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
-                      {/* PINNED TOP SECTION: Always visible New Medicine Creation Header */}
-                      <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNewMedicineInitialName(searchTerm.trim());
-                            setShowSearchDropdown(false);
-                          }}
-                          className="flex-1 text-left px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
-                          title="Register this medicine as a new master database entry with full rates"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                              <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="font-bold text-xs text-emerald-300 truncate">
-                                ✨ Register "{searchTerm.trim()}" as New Medicine
-                              </div>
-                              <div className="text-[10px] text-muted truncate">
-                                Master database entry with rates, salts & composition
-                              </div>
-                            </div>
-                          </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 flex-shrink-0 ml-2">
-                            Alt+N / Enter
-                          </span>
-                        </button>
+                      {/* TOP SECTION: Quick Add */}
+                      <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center justify-between gap-2">
+                        <div className="text-xs text-muted px-2 min-w-0 truncate">
+                          Not in master catalog: <span className="text-text font-semibold">"{searchTerm.trim()}"</span>
+                        </div>
 
                         <button
                           type="button"
@@ -4751,34 +4731,11 @@ const POS = () => {
                 {/* Search results dropdown */}
                 {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
                   <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
-                    {/* PINNED TOP SECTION: Always visible New Medicine Creation & Quick Add Header */}
-                    <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewMedicineInitialName(searchTerm.trim());
-                          setShowSearchDropdown(false);
-                        }}
-                        className="flex-1 text-left px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
-                        title="Register this medicine as a new master database entry with full rates"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                            <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-bold text-xs text-emerald-300 truncate">
-                              ✨ Register "{searchTerm.trim()}" as New Medicine
-                            </div>
-                            <div className="text-[10px] text-muted truncate">
-                              Master database entry with rates, salts & composition
-                            </div>
-                          </div>
-                        </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 flex-shrink-0 ml-2">
-                          Alt+N
-                        </span>
-                      </button>
+                    {/* PINNED TOP SECTION: Quick Add Header */}
+                    <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center justify-between gap-2">
+                      <div className="text-xs text-muted px-2 min-w-0 truncate">
+                        Found <span className="text-text font-semibold">{searchResults.length}</span> matching {searchResults.length === 1 ? 'medicine' : 'medicines'}
+                      </div>
 
                       <button
                         type="button"
@@ -5378,23 +5335,26 @@ const POS = () => {
                                     }
                                     return;
                                   }
-                                  if (e.altKey && (e.key === 'n' || e.key === 'N')) {
-                                    e.preventDefault();
-                                    const term = rowSearchTerm.trim();
-                                    if (term) {
-                                      setNewMedicineInitialName(term);
-                                      setActiveRowSearchIndex(null);
-                                      setRowSearchTerm('');
-                                      setRowSearchResults([]);
-                                    }
-                                    return;
-                                  }
                                   if (e.key === 'Enter' && rowSearchResults.length === 0 && rowSearchTerm.trim().length >= 2) {
                                     e.preventDefault();
-                                    setNewMedicineInitialName(rowSearchTerm.trim());
+                                    const term = rowSearchTerm.trim();
+                                    const updated = [...cart];
+                                    if (updated[idx]) {
+                                      updated[idx] = {
+                                        ...updated[idx],
+                                        name: term,
+                                        isEmptyRow: false,
+                                        salts: updated[idx].salts || 'Custom Manual Entry'
+                                      };
+                                      setCart(updated);
+                                    }
                                     setActiveRowSearchIndex(null);
                                     setRowSearchTerm('');
                                     setRowSearchResults([]);
+                                    setTimeout(() => {
+                                      const qtyEl = document.getElementById('row-qty-input-' + idx);
+                                      if (qtyEl) { qtyEl.focus(); (qtyEl as HTMLInputElement).select?.(); }
+                                    }, 50);
                                     return;
                                   }
                                   if (activeRowSearchIndex !== idx || rowSearchResults.length === 0) return;
@@ -5428,35 +5388,46 @@ const POS = () => {
                                       : 'top-full mt-1'
                                   }`}
                                 >
-                                  {/* PINNED TOP HEADER: Always visible New Medicine Creation Header */}
-                                  <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm shrink-0">
-                                    <button
-                                      type="button"
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        setNewMedicineInitialName(rowSearchTerm.trim());
-                                        setActiveRowSearchIndex(null);
-                                        setRowSearchTerm('');
-                                        setRowSearchResults([]);
-                                      }}
-                                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center justify-between group cursor-pointer"
-                                      title="Register this medicine as a new master database entry with full rates"
-                                    >
-                                      <div className="flex items-center gap-2 min-w-0">
-                                        <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                                          <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                                  {rowSearchResults.length === 0 && (
+                                    <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm shrink-0">
+                                      <button
+                                        type="button"
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          const term = rowSearchTerm.trim();
+                                          const updated = [...cart];
+                                          if (updated[idx]) {
+                                            updated[idx] = {
+                                              ...updated[idx],
+                                              name: term,
+                                              isEmptyRow: false,
+                                              salts: updated[idx].salts || 'Custom Manual Entry'
+                                            };
+                                            setCart(updated);
+                                          }
+                                          setActiveRowSearchIndex(null);
+                                          setRowSearchTerm('');
+                                          setRowSearchResults([]);
+                                          setTimeout(() => {
+                                            const qtyEl = document.getElementById('row-qty-input-' + idx);
+                                            if (qtyEl) { qtyEl.focus(); (qtyEl as HTMLInputElement).select?.(); }
+                                          }, 50);
+                                        }}
+                                        className="w-full text-left px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky transition-all flex items-center justify-between group cursor-pointer"
+                                        title="Use as custom manual entry in this row"
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <Zap className="w-3.5 h-3.5 text-sky shrink-0" />
+                                          <span className="font-bold text-xs text-sky truncate">
+                                            Use "{rowSearchTerm.trim()}" as manual entry
+                                          </span>
                                         </div>
-                                        <div className="min-w-0 flex-1">
-                                          <div className="font-bold text-xs text-emerald-300 truncate">
-                                            ✨ Register "{rowSearchTerm.trim()}" as New
-                                          </div>
-                                        </div>
-                                      </div>
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 flex-shrink-0 ml-1.5">
-                                        Alt+N
-                                      </span>
-                                    </button>
-                                  </div>
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg3 text-muted font-mono border border-border/60 shrink-0 ml-1.5">
+                                          Enter
+                                        </span>
+                                      </button>
+                                    </div>
+                                  )}
 
                                   {rowSearchResults.length > 0 ? (
                                     <div ref={rowSearchResultsRef} data-scrollable="true" className="max-h-56 overflow-y-auto flex-1 divide-y divide-border/10">
@@ -6822,46 +6793,7 @@ const POS = () => {
         </Suspense>
       )}
 
-      {newMedicineInitialName !== null && (
-        <Suspense fallback={<ModalSkeleton />}>
-          <UniversalMedicineEditModal 
-            mode="create"
-            medicineId={null}
-            initialData={{ name: newMedicineInitialName } as any}
-            onClose={() => setNewMedicineInitialName(null)} 
-            onSave={async (savedMed) => {
-              setNewMedicineInitialName(null);
-              if (savedMed?.id) {
-                try {
-                  const details = await api.getMedicineQuickDetails(savedMed.id);
-                  const newPackSize = details.pack_size || 1;
-                  fetchDetailsAndAddToCart({
-                    id: savedMed.id,
-                    inventory_id: savedMed.id,
-                    medicine_id: savedMed.id,
-                    medicine_name: details.name || savedMed.name,
-                    mrp: details.mrp || savedMed.mrp || 0,
-                    sell_price: details.sell_price || savedMed.sell_price || null,
-                    cost_price: details.cost_price || savedMed.rate || null,
-                    pack_size: newPackSize,
-                    manufacturer: details.manufacturer || savedMed.manufacturer || '',
-                    api_reference: details.api_reference || (savedMed as any).composition || '',
-                    quantity: 1,
-                    loose_quantity: 0
-                  } as any);
-                  setSearchTerm('');
-                  setSearchResults([]);
-                  setShowSearchDropdown(false);
-                  toastEvent.trigger(`✓ Created and added "${details.name || savedMed.name}" to cart!`, 'success');
-                } catch (err) {
-                  console.error('Failed to auto-add new medicine to cart:', err);
-                  toastEvent.trigger('✓ Medicine saved to master database!', 'success');
-                }
-              }
-            }}
-          />
-        </Suspense>
-      )}
+
 
       {/* Composition Intelligence & Substitute History Modal */}
       <CompositionIntelligenceModal

@@ -29,7 +29,7 @@ export const PurchaseSaveVerificationModal: React.FC<Props> = ({ data, saving, o
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center p-4 fade-in">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-bg border border-border rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl slide-up text-text">
+      <div className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[720px] flex flex-col shadow-2xl slide-up text-text">
         {/* Header */}
         <div className="p-5 border-b border-border bg-bg2 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -47,7 +47,7 @@ export const PurchaseSaveVerificationModal: React.FC<Props> = ({ data, saving, o
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-custom">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4 scrollbar-custom">
           {/* Invoice summary */}
           <div className="bg-bg2 border border-border rounded-xl p-4 grid grid-cols-2 gap-3 text-sm">
             <div>

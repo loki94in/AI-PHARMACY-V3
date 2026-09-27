@@ -215,7 +215,7 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
   const modalContent = (
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 fade-in">
       <div className="absolute inset-0 bg-bg/80 backdrop-blur-md" onClick={onClose} />
-      <div className="relative bg-bg border border-glass-border rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden slide-up">
+      <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[540px] max-h-[820px] flex flex-col shadow-2xl overflow-hidden slide-up">
         
         {/* Header */}
         <div className="p-5 border-b border-glass-border bg-bg3 flex items-center justify-between shrink-0">
@@ -282,7 +282,7 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
         </div>
 
         {/* Table Body */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-glass-border text-muted uppercase font-semibold">
