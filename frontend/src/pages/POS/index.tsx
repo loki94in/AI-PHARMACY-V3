@@ -1596,8 +1596,8 @@ const POS = () => {
                 // If not yet in inventory, populate cart row so cashier can complete order or assign batch manually
                 expandedRows.push({
                   id: Date.now() + Math.random(),
-                  inventory_id: null,
-                  medicine_id: null,
+                  inventory_id: undefined,
+                  medicine_id: undefined,
                   name: targetName,
                   medicine_name: targetName,
                   batch: '',
