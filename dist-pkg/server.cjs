@@ -14681,6 +14681,7 @@ async function ensureSchema(dbPath) {
       scheduled_at INTEGER,
       media_url TEXT,
       file_json TEXT,
+      skip_dedupe INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       sent_at INTEGER DEFAULT NULL,
       acknowledged INTEGER DEFAULT 0,
@@ -16136,6 +16137,11 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_local_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_id', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_name', 'AI Pharmacy Backups')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_email_backup_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_last_gdrive_upload', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_last_gdrive_error', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_telegram_enabled', 'false')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_startup_restore_check', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_daily_compression', 'true')");
@@ -16321,6 +16327,9 @@ async function ensureSchema(dbPath) {
       }
       if (!colNames.includes("file_json")) {
         await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN file_json TEXT DEFAULT NULL");
+      }
+      if (!colNames.includes("skip_dedupe")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
       }
     } catch (colErr) {
       console.warn("[Database Schema] Column check warning for whatsapp_send_queue:", colErr);
@@ -19350,6 +19359,7 @@ var init_emailService = __esm({
       isPolling = false;
       isSyncing = false;
       lastUnconfiguredLogTime = 0;
+      isPollingStarted = false;
       constructor() {
         this.imapConfig = {
           user: process.env.IMAP_USER || "",
@@ -19480,6 +19490,10 @@ var init_emailService = __esm({
        * Starts the email polling interval
        */
       async startPolling(intervalInMinutes = 5) {
+        if (this.isPollingStarted && (this.pollInterval || this.bootTimeout)) {
+          return;
+        }
+        this.isPollingStarted = true;
         if (this.pollInterval) {
           clearInterval(this.pollInterval);
           this.pollInterval = null;
@@ -19491,6 +19505,7 @@ var init_emailService = __esm({
         const { isConfigured } = await this.buildImapConfig();
         if (!isConfigured) {
           console.log("[Mail] IMAP credentials not saved/configured. Background email polling is stopped.");
+          this.isPollingStarted = false;
           return;
         }
         console.log(`[Mail] Server boot delay: First IMAP email poll scheduled in 45s (interval: ${intervalInMinutes}m)...`);
@@ -19506,6 +19521,7 @@ var init_emailService = __esm({
        * Stops the email polling
        */
       stopPolling() {
+        this.isPollingStarted = false;
         if (this.bootTimeout) {
           clearTimeout(this.bootTimeout);
           this.bootTimeout = null;
@@ -21532,7 +21548,9 @@ AI Pharmacy Team`
           } catch (dbErr) {
             console.error("Failed to save gmail sync error status:", dbErr);
           }
-          console.error("[Sync] syncNewEmailsFromIMAP error:", err);
+          if (!isSimultaneousLimit) {
+            console.error("[Sync] syncNewEmailsFromIMAP error:", err);
+          }
         } finally {
           this.isSyncing = false;
           this.activeConnection = null;
@@ -41303,6 +41321,9 @@ var init_whatsappQueueWorker = __esm({
           if (!colNames.has("resolved_at")) {
             await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN resolved_at INTEGER DEFAULT NULL");
           }
+          if (!colNames.has("skip_dedupe")) {
+            await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
+          }
           const notifCols = await db2.all("PRAGMA table_info(automation_notifications)");
           const notifColNames = new Set(notifCols.map((c) => c.name));
           if (!notifColNames.has("acknowledged")) {
@@ -41510,11 +41531,12 @@ var init_whatsappQueueWorker = __esm({
         const dedupeGuard = options?.skipDedupe ? `WHERE NOT EXISTS (SELECT 1 FROM whatsapp_send_queue WHERE id = -1)` : `WHERE NOT EXISTS (
           SELECT 1 FROM whatsapp_send_queue WHERE number = ? AND message = ? AND created_at >= ?
         )`;
-        const insertParams = [cleanPhone, message, type, now, scheduledAt, resolvedTargetName || null, mediaUrl || null, fileJsonStr];
+        const skipDedupeVal = options?.skipDedupe ? 1 : 0;
+        const insertParams = [cleanPhone, message, type, now, scheduledAt, resolvedTargetName || null, mediaUrl || null, fileJsonStr, skipDedupeVal];
         if (!options?.skipDedupe) insertParams.push(cleanPhone, message, startOfDayMs);
         const result = await db2.run(
-          `INSERT INTO whatsapp_send_queue (number, message, type, status, retry_count, created_at, scheduled_at, target_name, media_url, file_json)
-       SELECT ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?
+          `INSERT INTO whatsapp_send_queue (number, message, type, status, retry_count, created_at, scheduled_at, target_name, media_url, file_json, skip_dedupe)
+       SELECT ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?
        ${dedupeGuard}`,
           insertParams
         );
@@ -41783,37 +41805,40 @@ var init_whatsappQueueWorker = __esm({
               this.lastWasOffline = true;
               break;
             }
-            const isRecurringDailyReminder = item.type === "distributor_dispatch_reminder" || item.type === "afternoon_delivery_boy_dispatch";
-            const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
-              item.number,
-              item.message,
-              isRecurringDailyReminder ? 12 : 48
-            );
-            if (deliveryCheck.delivered) {
-              console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
-              const resolvedSentAt = deliveryCheck.sentAt || Date.now();
-              await db2.run(
-                "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-                [resolvedSentAt, item.id]
+            const isUserResend = Boolean(item.skip_dedupe);
+            if (!isUserResend) {
+              const isRecurringDailyReminder = item.type === "distributor_dispatch_reminder" || item.type === "afternoon_delivery_boy_dispatch";
+              const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
+                item.number,
+                item.message,
+                isRecurringDailyReminder ? 12 : 48
               );
-              await db2.run(
-                `UPDATE automation_notifications 
-             SET status = 'sent', error_message = NULL 
-             WHERE reference_id = ? OR reference_id = ?`,
-                [`queue_${item.id}`, String(item.id)]
-              ).catch(() => {
-              });
-              if (item.type === "distributor_dispatch_reminder") {
-                const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+              if (deliveryCheck.delivered) {
+                console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
+                const resolvedSentAt = deliveryCheck.sentAt || Date.now();
                 await db2.run(
-                  `UPDATE distributor_dispatch_reminders 
-               SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
-               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
-                  [todayStr2, item.target_name || "", item.id]
+                  "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
+                  [resolvedSentAt, item.id]
+                );
+                await db2.run(
+                  `UPDATE automation_notifications 
+               SET status = 'sent', error_message = NULL 
+               WHERE reference_id = ? OR reference_id = ?`,
+                  [`queue_${item.id}`, String(item.id)]
                 ).catch(() => {
                 });
+                if (item.type === "distributor_dispatch_reminder") {
+                  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+                  await db2.run(
+                    `UPDATE distributor_dispatch_reminders 
+                 SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+                 WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+                    [todayStr2, item.target_name || "", item.id]
+                  ).catch(() => {
+                  });
+                }
+                continue;
               }
-              continue;
             }
             const rawItemDigits = (item.number || "").replace(/\D/g, "");
             const target10Digits = rawItemDigits.length === 12 && rawItemDigits.startsWith("91") ? rawItemDigits.slice(2) : rawItemDigits.length >= 10 ? rawItemDigits.slice(-10) : rawItemDigits;
@@ -43471,7 +43496,7 @@ async function cleanupStagedRefillNotifications(db2, refillIds, targetStatus = "
     console.warn("[Refills] Cleanup of staged notifications warning:", cleanErr);
   }
 }
-async function buildDailyOperationalBriefing(db2, requestedTemplate) {
+async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
   let templateKey = requestedTemplate || "";
   if (!templateKey) {
     const row = await db2.get("SELECT value FROM app_settings WHERE key = 'daily_briefing_template'").catch(() => null);
@@ -43515,7 +43540,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate) {
   `).catch(() => []);
   const refillDetailRows = await db2.all(`
     SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
-           MIN(DATE(pr.next_refill_date)) as due_date,
+           DATE(pr.next_refill_date) as due_date,
            CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
     FROM patient_refills pr
     JOIN medicines m ON pr.medicine_id = m.id
@@ -43528,24 +43553,19 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate) {
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
-    LIMIT 20
+    LIMIT 50
   `).catch(() => []);
   const pendingCallTasks = await db2.get(
     "SELECT COUNT(*) as count FROM patient_call_tasks WHERE status IN ('pending', 'rescheduled')"
   ).catch(() => ({ count: 0 }));
   const callCount = Number(pendingCallTasks?.count || 0);
-  const specialOrders = await db2.all(
-    `SELECT requester, product, qty, status
+  const activeOrders = await db2.all(
+    `SELECT requester, product, qty, status, customer_order_source
      FROM special_orders
-     WHERE status IN ('Confirmed', 'Pending', 'Ready') AND DATE(date) >= DATE('now', 'localtime', '-7 days')
-     ORDER BY date DESC LIMIT 5`
+     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched')
+       AND DATE(date) >= DATE('now', 'localtime', '-7 days')
+     ORDER BY date DESC, id DESC LIMIT 15`
   ).catch(() => []);
-  const currentMonth = todayStr2.slice(0, 7);
-  const expRow = await db2.get(
-    `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
-    [currentMonth, `${currentMonth}%`]
-  ).catch(() => ({ count: 0 }));
-  const expCount = Number(expRow?.count || 0);
   const stagedRows = await db2.all(`
     SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
     FROM automation_notifications an
@@ -43564,13 +43584,77 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate) {
     }
     return ymd;
   };
-  let ordersBlock = "\u2022 No pending special orders";
-  if (specialOrders.length > 0) {
-    ordersBlock = specialOrders.map((o, i) => `${i + 1}. *${o.requester || "Customer"}*: ${o.product} \xD7 ${o.qty} [${o.status}]`).join("\n");
+  let ordersBlock = "\u2022 No pending orders";
+  if (activeOrders.length > 0) {
+    ordersBlock = activeOrders.map((o, i) => {
+      const rawSrc = (o.customer_order_source || "").toLowerCase();
+      let srcBadge = "Special Order";
+      if (rawSrc === "website") srcBadge = "Website Order";
+      else if (rawSrc === "whatsapp") srcBadge = "WhatsApp Order";
+      else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online Order";
+      else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
+      return `${i + 1}. *${o.requester || "Customer"}* [${srcBadge}]: ${o.product} \xD7 ${o.qty} (${o.status})`;
+    }).join("\n");
   }
-  const callTasksLine = callCount > 0 ? `\u2022 ${callCount} patient call task(s) pending in CRM Call Board` : `\u2022 No pending call tasks`;
-  const inventoryLine = expCount > 0 ? `\u2022 ${expCount} batch(es) expiring this month (${todayStr2.slice(5, 7)}/${todayStr2.slice(0, 4)}) \u2014 check for return` : `\u2022 No batches expiring this month`;
-  const stagedSummaryLine = stagedRows.length > 0 ? `\u2022 ${stagedRows.length} reminder(s) staged in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual Review)` : `\u2022 No reminders staged for review`;
+  const outOfStockRefills = refillDetailRows.filter((r) => !r.in_stock);
+  const dailyTasks = [];
+  if (outOfStockRefills.length > 0) {
+    const holdPatients = Array.from(new Set(outOfStockRefills.map((r) => r.patient_name)));
+    dailyTasks.push(`\u26A0\uFE0F *Urgent Stock Reorder Needed*: Stock required for ${holdPatients.join(", ")}`);
+  }
+  if (callCount > 0) {
+    dailyTasks.push(`\u{1F4DE} *Patient Follow-up Calls*: ${callCount} pending call(s) on CRM Call Board`);
+  }
+  if (stagedRows.length > 0) {
+    dailyTasks.push(`\u{1F514} *Staged Customer Reminders*: ${stagedRows.length} reminder(s) pending in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual)`);
+  }
+  let dailyTasksBlock = "";
+  if (dailyTasks.length > 0) {
+    dailyTasksBlock = `
+
+\u26A1 *TODAY'S OPERATIONAL TASKS*:
+` + dailyTasks.map((t, idx) => `${idx + 1}. ${t}`).join("\n");
+  }
+  const now = /* @__PURE__ */ new Date();
+  const todayDayOfMonth = now.getDate();
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const scanDaysRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_expiry_scan_days'").catch(() => null);
+  const configuredScanDays = (scanDaysRow?.value || "1,16").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
+  const isMilestoneDate = Boolean(options?.forceMilestone) || todayDayOfMonth === 1 || todayDayOfMonth >= 15 && todayDayOfMonth <= 18 || todayDayOfMonth === lastDayOfMonth || configuredScanDays.includes(todayDayOfMonth);
+  let expCount = 0;
+  let overdueCreditCount = 0;
+  let overdueCreditTotal = 0;
+  let milestoneBlock = "";
+  if (isMilestoneDate) {
+    const currentMonth = todayStr2.slice(0, 7);
+    const expRow = await db2.get(
+      `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
+      [currentMonth, `${currentMonth}%`]
+    ).catch(() => ({ count: 0 }));
+    expCount = Number(expRow?.count || 0);
+    const creditRow = await db2.get(
+      `SELECT COUNT(*) as cust_count, COALESCE(SUM(credit_balance), 0) as total_balance
+       FROM customers
+       WHERE credit_due_date IS NOT NULL
+         AND date(credit_due_date) <= date('now', 'localtime')
+         AND credit_balance > 0`
+    ).catch(() => ({ cust_count: 0, total_balance: 0 }));
+    overdueCreditCount = Number(creditRow?.cust_count || 0);
+    overdueCreditTotal = Number(creditRow?.total_balance || 0);
+    const milestoneLabel = todayDayOfMonth === 1 ? "Monthly Start Audit" : todayDayOfMonth === lastDayOfMonth ? "Month-End Audit" : "Mid-Month Review";
+    const auditItems = [];
+    if (expCount > 0) {
+      auditItems.push(`\u26A0\uFE0F *EXPIRY AUDIT (${milestoneLabel})*:
+\u2022 ${expCount} batch(es) expiring this month (${todayStr2.slice(5, 7)}/${todayStr2.slice(0, 4)}) \u2014 check for supplier return`);
+    }
+    if (overdueCreditCount > 0) {
+      auditItems.push(`\u{1F4B0} *OVERDUE CREDIT AUDIT*:
+\u2022 \u20B9${overdueCreditTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} overdue across ${overdueCreditCount} customer(s)`);
+    }
+    if (auditItems.length > 0) {
+      milestoneBlock = "\n\n" + auditItems.join("\n\n");
+    }
+  }
   let messageText = "";
   if (templateKey === "detailed") {
     const patientGroups = /* @__PURE__ */ new Map();
@@ -43598,19 +43682,8 @@ ${medLines}`);
 \u{1F4CB} *REFILL PRESCRIPTIONS (Next 7 Days)*:
 ${t4Details}
 
-\u{1F4DE} *CALL BOARD*:
-${callTasksLine}
-
-\u{1F4E6} *SPECIAL / WHATSAPP ORDERS*:
-${ordersBlock}
-
-\u26A0\uFE0F *INVENTORY TASKS*:
-${inventoryLine}
-
-\u{1F514} *STAGED CUSTOMER MESSAGES*:
-${stagedSummaryLine}
-
-\u{1F512} *Human-in-the-Loop*: Visit http://localhost:5173/crm to review & 1-click approve before dispatch.`;
+\u{1F4E6} *TODAY'S SPECIAL & ONLINE ORDERS*:
+${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
   } else if (templateKey === "compact") {
     let t1Refills = "\u2022 No refills due in next 7 days";
     if (refillRows.length > 0) {
@@ -43627,19 +43700,8 @@ ${stagedSummaryLine}
 \u{1F4CB} *1. REFILLS WORKLIST (Next 7 Days)*:
 ${t1Refills}
 
-\u{1F4DE} *2. CALL TASKS*:
-${callTasksLine}
-
-\u{1F4E6} *3. SPECIAL / WHATSAPP ORDERS*:
-${ordersBlock}
-
-\u26A0\uFE0F *4. INVENTORY TASKS*:
-${inventoryLine}
-
-\u{1F514} *5. STAGED CUSTOMER MESSAGES*:
-${stagedSummaryLine}
-
-\u{1F512} *Human-in-the-Loop*: Visit http://localhost:5173/crm to review & 1-click approve before dispatch.`;
+\u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
+${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
   } else if (templateKey === "checklist") {
     const t2Items = [];
     const holdRefills = refillRows.filter((r) => r.out_of_stock_count > 0);
@@ -43650,14 +43712,17 @@ ${stagedSummaryLine}
     if (inStockRefills.length > 0) {
       t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(", ")}`);
     }
+    if (activeOrders.length > 0) {
+      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${activeOrders.length} special/online order(s)`);
+    }
     if (callCount > 0) {
       t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
     }
-    if (expCount > 0) {
+    if (isMilestoneDate && expCount > 0) {
       t2Items.push(`[ ] *EXPIRY PACKING*: Check & return ${expCount} batches expiring this month`);
     }
-    if (specialOrders.length > 0) {
-      t2Items.push(`[ ] *SPECIAL ORDERS*: Follow up ${specialOrders.length} customer order(s)`);
+    if (isMilestoneDate && overdueCreditCount > 0) {
+      t2Items.push(`[ ] *CREDIT FOLLOW-UP*: Follow up \u20B9${overdueCreditTotal.toFixed(0)} overdue credit across ${overdueCreditCount} customer(s)`);
     }
     if (stagedRows.length > 0) {
       t2Items.push(`[ ] *APPROVE NOTIFICATIONS*: Review ${stagedRows.length} staged reminder(s) in CRM`);
@@ -43669,26 +43734,27 @@ ${stagedSummaryLine}
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
 
 \u26A1 *TODAY'S OPERATIONAL TO-DO LIST*:
-${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}
-
-\u{1F449} *Action*: Open CRM http://localhost:5173/crm to review & check off tasks.`;
+${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
   } else {
     const totalRefillsDue = refillRows.reduce((acc, r) => acc + (r.med_count || 1), 0);
+    let milestoneMetrics = "";
+    if (isMilestoneDate) {
+      milestoneMetrics = `
+\u2022 \u26A0\uFE0F Expiring Batches: *${expCount}*
+\u2022 \u{1F4B0} Overdue Credit: *\u20B9${overdueCreditTotal.toFixed(0)}* (${overdueCreditCount} cust)`;
+    }
     messageText = `\u2600\uFE0F *DAILY EXECUTIVE SUMMARY* \u2014 ${storeName}
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
 
 \u{1F4CA} *Morning KPI Dashboard*:
 \u2022 \u{1F4CB} Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+\u2022 \u{1F4E6} Active Orders: *${activeOrders.length}*
 \u2022 \u{1F4DE} Pending Calls: *${callCount}*
-\u2022 \u{1F4E6} Special Orders: *${specialOrders.length}*
-\u2022 \u26A0\uFE0F Expiring Batches: *${expCount}*
-\u2022 \u{1F514} Staged Reminders: *${stagedRows.length}*
-
-\u{1F512} Pharmacist approval required before dispatch. Visit http://localhost:5173/crm`;
+\u2022 \u{1F514} Staged Reminders: *${stagedRows.length}*${milestoneMetrics}`;
   }
   return { template: templateKey, messageText };
 }
-async function sendMorningScheduleBriefingToAdmin(db2, templateKey) {
+async function sendMorningScheduleBriefingToAdmin(db2, templateKey, options) {
   try {
     const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
     const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2);
@@ -43696,7 +43762,7 @@ async function sendMorningScheduleBriefingToAdmin(db2, templateKey) {
       console.log("[RefillService] No store owner WhatsApp configured for morning schedule briefing.");
       return { success: false, message: "No store owner WhatsApp configured in Settings." };
     }
-    const { template, messageText } = await buildDailyOperationalBriefing(db2, templateKey);
+    const { template, messageText } = await buildDailyOperationalBriefing(db2, templateKey, options);
     const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
     await whatsappQueueWorker2.enqueue(adminWhatsapp, messageText, "admin_morning_briefing", "Admin / Store Owner", void 0, void 0, void 0, { skipDedupe: true });
     console.log(`[RefillService] Morning operational task briefing (${template}) sent to owner ${adminWhatsapp}.`);
@@ -45260,9 +45326,9 @@ var init_inventory = __esm({
         if (rows.length < 15 && q.length >= 2) {
           try {
             const cleanToken = q.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
-            const tokens = cleanToken.split(/\s+/).filter((t) => t.length >= 1);
-            if (cleanToken.length >= 2) {
-              let ftsQuery = tokens.length > 1 ? tokens.map((t) => `${t}*`).join(" AND ") : `${cleanToken}*`;
+            const trigramTokens = cleanToken.split(/\s+/).filter((t) => t.length >= 3);
+            if (trigramTokens.length > 0) {
+              const ftsQuery = trigramTokens.length > 1 ? trigramTokens.map((t) => `${t}*`).join(" AND ") : `${trigramTokens[0]}*`;
               const ftsRows = await db2.all(
                 `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name,
                     COALESCE(m.total_stock, 0) as stock_qty, COALESCE(m.total_loose_stock, 0) as loose_qty,
@@ -45282,23 +45348,6 @@ var init_inventory = __esm({
               }
             }
           } catch (_) {
-            const fallbackLike = qTokens.length > 1 ? `%${qTokens.join("%")}%` : `%${q}%`;
-            const fallbackRows = await db2.all(
-              `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
-                  COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
-                  last_purchase_ptr, last_distributor_name, last_purchase_date,
-                  lowest_purchase_ptr, lowest_distributor_name
-           FROM medicines
-           WHERE name LIKE ?
-           ORDER BY name ASC LIMIT 30`,
-              [fallbackLike]
-            ).catch(() => []);
-            for (const r of fallbackRows) {
-              if (!seenIds.has(r.id)) {
-                seenIds.add(r.id);
-                rows.push(r);
-              }
-            }
           }
           if (rows.length < 15) {
             const isNumeric = /^\d+(\.\d+)?$/.test(q);
@@ -45309,35 +45358,14 @@ var init_inventory = __esm({
                     last_purchase_ptr, last_distributor_name, last_purchase_date,
                     lowest_purchase_ptr, lowest_distributor_name
              FROM medicines
-             WHERE mrp = ? OR name LIKE ? OR strength LIKE ?
+             WHERE mrp = ?
              ORDER BY name ASC LIMIT 20`,
-                [Number(q), `%${q}%`, `%${q}%`]
+                [Number(q)]
               ).catch(() => []);
               for (const r of numRows) {
                 if (!seenIds.has(r.id)) {
                   seenIds.add(r.id);
                   rows.push(r);
-                }
-              }
-            } else {
-              const letters = q.replace(/[^a-zA-Z0-9]/g, " ").split(/\s+/).filter(Boolean);
-              if (letters.length >= 2 && letters.length <= 4) {
-                const pattern = letters.map((l) => `${l}%`).join(" ");
-                const acrRows = await db2.all(
-                  `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
-                      COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
-                      last_purchase_ptr, last_distributor_name, last_purchase_date,
-                      lowest_purchase_ptr, lowest_distributor_name
-               FROM medicines
-               WHERE name LIKE ?
-               ORDER BY name ASC LIMIT 20`,
-                  [`${pattern}`]
-                ).catch(() => []);
-                for (const r of acrRows) {
-                  if (!seenIds.has(r.id)) {
-                    seenIds.add(r.id);
-                    rows.push(r);
-                  }
                 }
               }
             }
@@ -47714,6 +47742,20 @@ var init_monthlyReportService = __esm({
           currentStart = new Date(currentEnd);
           currentStart.setDate(currentStart.getDate() + 1);
         }
+        const currentMonth = endDate.slice(0, 7);
+        const expRow = await db2.get(
+          `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
+          [currentMonth, `${currentMonth}%`]
+        ).catch(() => ({ count: 0 }));
+        const expiringBatchesCount = Number(expRow?.count || 0);
+        const callRow = await db2.get(
+          "SELECT COUNT(*) as count FROM patient_call_tasks WHERE status IN ('pending', 'rescheduled')"
+        ).catch(() => ({ count: 0 }));
+        const pendingCallsCount = Number(callRow?.count || 0);
+        const stagedRow = await db2.get(
+          "SELECT COUNT(*) as count FROM automation_notifications WHERE status = 'staged'"
+        ).catch(() => ({ count: 0 }));
+        const stagedRemindersCount = Number(stagedRow?.count || 0);
         return {
           periodType,
           periodLabel,
@@ -47728,7 +47770,10 @@ var init_monthlyReportService = __esm({
           grossProfit,
           profitMargin,
           topMedicines,
-          weeklyBreakdown
+          weeklyBreakdown,
+          expiringBatchesCount,
+          pendingCallsCount,
+          stagedRemindersCount
         };
       }
       /**
@@ -47808,6 +47853,24 @@ var init_monthlyReportService = __esm({
             msg += `${idx + 1}. *${med.name}*: ${med.quantity} units (${fmt(med.revenue)})
 `;
           });
+          msg += `
+`;
+        }
+        if ((data.expiringBatchesCount ?? 0) > 0 || (data.pendingCallsCount ?? 0) > 0 || (data.stagedRemindersCount ?? 0) > 0) {
+          msg += `\u26A0\uFE0F *MONTHLY INVENTORY & CRM AUDIT*
+`;
+          if ((data.expiringBatchesCount ?? 0) > 0) {
+            msg += `\u2022 *Expiring Batches*: ${data.expiringBatchesCount} batch(es) expiring this month (${data.endDate.slice(5, 7)}/${data.endDate.slice(0, 4)})
+`;
+          }
+          if ((data.pendingCallsCount ?? 0) > 0) {
+            msg += `\u2022 *Pending Call Tasks*: ${data.pendingCallsCount} patient call(s) on Call Board
+`;
+          }
+          if ((data.stagedRemindersCount ?? 0) > 0) {
+            msg += `\u2022 *Staged Reminders*: ${data.stagedRemindersCount} reminder(s) pending in CRM
+`;
+          }
           msg += `
 `;
         }
@@ -51002,7 +51065,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.10";
+    APP_VERSION = "0.1.11";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -52365,15 +52428,31 @@ var init_crm = __esm({
     router6 = import_express6.default.Router();
     router6.get("/patients", async (req, res) => {
       const { q, limit } = req.query;
+      const isPosMode = req.query.pos === "true" || req.query.hasHistory === "true";
       try {
         const db2 = await dbManager.getConnection();
         let query = "SELECT * FROM customers";
         const params = [];
-        if (q) {
-          query += " WHERE name LIKE ? OR phone LIKE ?";
-          params.push(`%${q}%`, `%${q}%`);
+        if (isPosMode) {
+          query = `
+        SELECT c.* FROM customers c
+        WHERE (
+          EXISTS (SELECT 1 FROM sales_invoices si WHERE si.customer_id = c.id)
+          OR EXISTS (SELECT 1 FROM patient_refills pr WHERE pr.customer_id = c.id AND pr.is_active = 1)
+        )
+      `;
+          if (q) {
+            query += " AND (c.name LIKE ? OR c.phone LIKE ?)";
+            params.push(`%${q}%`, `%${q}%`);
+          }
+          query += " ORDER BY c.id DESC";
+        } else {
+          if (q) {
+            query += " WHERE name LIKE ? OR phone LIKE ?";
+            params.push(`%${q}%`, `%${q}%`);
+          }
+          query += " ORDER BY id DESC";
         }
-        query += " ORDER BY id DESC";
         if (limit) {
           const limitVal = parseInt(limit, 10);
           if (!isNaN(limitVal)) {
@@ -52423,7 +52502,11 @@ var init_crm = __esm({
         }
         if (q && patients.length === 0) {
           try {
-            const allCustomers = await db2.all("SELECT id, name, phone, address FROM customers LIMIT 300");
+            const candidateQuery = isPosMode ? `SELECT c.id, c.name, c.phone, c.address FROM customers c
+             WHERE EXISTS (SELECT 1 FROM sales_invoices si WHERE si.customer_id = c.id)
+                OR EXISTS (SELECT 1 FROM patient_refills pr WHERE pr.customer_id = c.id AND pr.is_active = 1)
+             LIMIT 300` : "SELECT id, name, phone, address FROM customers LIMIT 300";
+            const allCustomers = await db2.all(candidateQuery);
             const candidateNames = allCustomers.map((c) => c.name);
             const { findSimilarNames: findSimilarNames2 } = await Promise.resolve().then(() => (init_similarityService(), similarityService_exports));
             const similarNames = findSimilarNames2(q, candidateNames, 4, 0.25);
@@ -53231,6 +53314,684 @@ var init_crm = __esm({
   }
 });
 
+// src/services/backupRecoveryService.ts
+var backupRecoveryService_exports = {};
+__export(backupRecoveryService_exports, {
+  BackupRecoveryService: () => BackupRecoveryService,
+  backupRecoveryService: () => backupRecoveryService
+});
+var import_fs32, import_path36, import_better_sqlite32, import_adm_zip2, import_axios3, import_zlib2, import_promises2, getDbPath3, BACKUP_DIR, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
+var init_backupRecoveryService = __esm({
+  "src/services/backupRecoveryService.ts"() {
+    "use strict";
+    import_fs32 = __toESM(require("fs"), 1);
+    import_path36 = __toESM(require("path"), 1);
+    import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
+    import_adm_zip2 = __toESM(require("adm-zip"), 1);
+    import_axios3 = __toESM(require("axios"), 1);
+    init_connection();
+    init_eventService();
+    import_zlib2 = __toESM(require("zlib"), 1);
+    import_promises2 = require("stream/promises");
+    init_config();
+    getDbPath3 = () => config.dbPath;
+    BACKUP_DIR = import_path36.default.join(getAppDataDir(), "backup");
+    SNAPSHOTS_DIR = import_path36.default.join(BACKUP_DIR, "snapshots");
+    ARCHIVES_DIR = import_path36.default.join(BACKUP_DIR, "archives");
+    if (!import_fs32.default.existsSync(SNAPSHOTS_DIR)) {
+      import_fs32.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    }
+    if (!import_fs32.default.existsSync(ARCHIVES_DIR)) {
+      import_fs32.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
+    }
+    BackupRecoveryService = class _BackupRecoveryService {
+      static instance;
+      constructor() {
+        this.retryPendingUploads();
+      }
+      static getInstance() {
+        if (!_BackupRecoveryService.instance) {
+          _BackupRecoveryService.instance = new _BackupRecoveryService();
+        }
+        return _BackupRecoveryService.instance;
+      }
+      /**
+       * Helper to retrieve a key-value setting from app_settings.
+       */
+      async getSetting(key, defaultValue = "") {
+        try {
+          const db2 = await dbManager.getConnection();
+          const row = await db2.get("SELECT value FROM app_settings WHERE key = ?", [key]);
+          return row ? row.value : defaultValue;
+        } catch {
+          return defaultValue;
+        }
+      }
+      /**
+       * Helper to save a key-value setting.
+       */
+      async setSetting(key, value) {
+        try {
+          const db2 = await dbManager.getConnection();
+          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [key, value]);
+        } catch (err) {
+          console.error(`Failed to set setting ${key}:`, err);
+        }
+      }
+      /**
+       * Triggers a debounced snapshot creation after database writes.
+       */
+      triggerSnapshot() {
+        return;
+      }
+      /**
+       * Creates a snapshot of the active SQLite database using better-sqlite3 backup API.
+       */
+      async createSnapshot() {
+        const localEnabled = await this.getSetting("backup_local_enabled", "true") === "true";
+        if (!localEnabled) {
+          return "";
+        }
+        const now = /* @__PURE__ */ new Date();
+        const dateStr = now.toISOString().split("T")[0];
+        const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-");
+        const filename = `snapshot_${dateStr}_${timeStr}.db.gz`;
+        const destPath = import_path36.default.join(SNAPSHOTS_DIR, filename);
+        console.log(`[Backup] Generating database snapshot: ${filename}...`);
+        if (!import_fs32.default.existsSync(SNAPSHOTS_DIR)) {
+          import_fs32.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+        }
+        const tempDbPath = destPath.replace(".gz", "");
+        const tempDb = new import_better_sqlite32.default(getDbPath3());
+        await tempDb.backup(tempDbPath);
+        tempDb.close();
+        const gzip = import_zlib2.default.createGzip();
+        const source = import_fs32.default.createReadStream(tempDbPath);
+        const destination = import_fs32.default.createWriteStream(destPath);
+        try {
+          await (0, import_promises2.pipeline)(source, gzip, destination);
+        } finally {
+          if (import_fs32.default.existsSync(tempDbPath)) {
+            import_fs32.default.unlinkSync(tempDbPath);
+          }
+        }
+        try {
+          const db2 = await dbManager.getConnection();
+          await db2.run(
+            "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
+            ["BACKUP_SNAPSHOT", `Snapshot created automatically: ${filename}`]
+          );
+        } catch {
+        }
+        try {
+          const todayPrefix = `snapshot_${dateStr}_`;
+          const files = import_fs32.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
+            const fp = import_path36.default.join(SNAPSHOTS_DIR, f);
+            return { name: f, path: fp, time: import_fs32.default.statSync(fp).mtime.getTime() };
+          }).sort((a, b) => b.time - a.time);
+          const MAX_TODAY_SNAPSHOTS = 5;
+          if (files.length > MAX_TODAY_SNAPSHOTS) {
+            const toDelete = files.slice(MAX_TODAY_SNAPSHOTS);
+            for (const snap of toDelete) {
+              if (import_fs32.default.existsSync(snap.path)) {
+                import_fs32.default.unlinkSync(snap.path);
+                console.log(`[Backup] Same-day snapshot retention: deleted old snapshot ${snap.name}`);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("[Backup] Snapshot same-day retention cleanup failed:", err);
+        }
+        await this.compressPreviousDaysSnapshots();
+        return filename;
+      }
+      /**
+       * Compresses snapshots from previous days into daily zip archives.
+       */
+      async compressPreviousDaysSnapshots() {
+        const dailyCompressEnabled = await this.getSetting("backup_daily_compression", "true") === "true";
+        if (!dailyCompressEnabled) return;
+        try {
+          const files = import_fs32.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+          if (files.length === 0) return;
+          const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const dateGroups = {};
+          for (const file of files) {
+            const parts = file.split("_");
+            if (parts.length >= 2) {
+              const datePart = parts[1];
+              if (datePart < todayStr2) {
+                if (!dateGroups[datePart]) {
+                  dateGroups[datePart] = [];
+                }
+                dateGroups[datePart].push(file);
+              }
+            }
+          }
+          for (const [datePart, snapshotFiles] of Object.entries(dateGroups)) {
+            const archiveName = `archive_${datePart}.zip`;
+            const archivePath = import_path36.default.join(ARCHIVES_DIR, archiveName);
+            console.log(`[Backup] Compressing previous day snapshots for ${datePart} into ${archiveName}...`);
+            const zip = new import_adm_zip2.default();
+            for (const file of snapshotFiles) {
+              const filePath = import_path36.default.join(SNAPSHOTS_DIR, file);
+              if (import_fs32.default.existsSync(filePath)) {
+                zip.addLocalFile(filePath);
+              }
+            }
+            zip.writeZip(archivePath);
+            if (import_fs32.default.existsSync(archivePath)) {
+              for (const file of snapshotFiles) {
+                import_fs32.default.unlinkSync(import_path36.default.join(SNAPSHOTS_DIR, file));
+              }
+              console.log(`[Backup] Compressed ${snapshotFiles.length} snapshots into ${archiveName}. Original snapshots cleaned.`);
+              await this.uploadArchive(archiveName);
+              await this.enforceRetention();
+            }
+          }
+        } catch (err) {
+          console.error("[Backup] Daily snapshots compression failed:", err);
+        }
+      }
+      /**
+       * Uploads the daily archive to Google Drive and Telegram if configured.
+       */
+      async uploadArchive(filename) {
+        const archivePath = import_path36.default.join(ARCHIVES_DIR, filename);
+        if (!import_fs32.default.existsSync(archivePath)) return;
+        const gdriveEnabled = await this.getSetting("backup_gdrive_enabled", "false") === "true";
+        const telegramEnabled = await this.getSetting("backup_telegram_enabled", "false") === "true";
+        const notifsEnabled = await this.getSetting("backup_notifications_enabled", "true") === "true";
+        const uploadLogRaw = await this.getSetting("backup_upload_log", "{}");
+        const uploadLog = JSON.parse(uploadLogRaw);
+        if (!uploadLog[filename]) {
+          uploadLog[filename] = {};
+        }
+        let gdriveUploaded = uploadLog[filename].gdrive || false;
+        let telegramUploaded = uploadLog[filename].telegram || false;
+        await Promise.all([
+          // 1. Google Drive Upload
+          (async () => {
+            if (!(gdriveEnabled && !gdriveUploaded)) return;
+            try {
+              console.log(`[Backup] Uploading ${filename} to Google Drive...`);
+              const success = await this.uploadToGoogleDrive(archivePath, filename);
+              if (success) {
+                gdriveUploaded = true;
+                uploadLog[filename].gdrive = true;
+                console.log(`[Backup] ${filename} successfully uploaded to Google Drive.`);
+                if (notifsEnabled) {
+                  this.broadcastNotification("backup_upload_gdrive", `Google Drive upload completed: ${filename}`);
+                }
+              } else {
+                console.warn(`[Backup] Google Drive upload failed for ${filename}. Will retry later.`);
+              }
+            } catch (err) {
+              console.error(`[Backup] Google Drive upload error for ${filename}:`, err);
+            }
+          })(),
+          // 2. Telegram Upload
+          (async () => {
+            if (!(telegramEnabled && !telegramUploaded)) return;
+            try {
+              console.log(`[Backup] Sending ${filename} to Telegram...`);
+              const success = await this.uploadToTelegram(archivePath, filename);
+              if (success) {
+                telegramUploaded = true;
+                uploadLog[filename].telegram = true;
+                console.log(`[Backup] ${filename} successfully sent to Telegram.`);
+                if (notifsEnabled) {
+                  this.broadcastNotification("backup_upload_telegram", `Telegram backup completed: ${filename}`);
+                }
+              } else {
+                console.warn(`[Backup] Telegram upload failed for ${filename}. Will retry later.`);
+              }
+            } catch (err) {
+              console.error(`[Backup] Telegram upload error for ${filename}:`, err);
+            }
+          })()
+        ]);
+        await this.setSetting("backup_upload_log", JSON.stringify(uploadLog));
+      }
+      /**
+       * Retries uploading any pending daily archives.
+       */
+      async retryPendingUploads() {
+        try {
+          const archives = import_fs32.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
+          if (archives.length === 0) return;
+          console.log("[Backup] Scanning archives for pending cloud uploads...");
+          for (const archive of archives) {
+            await this.uploadArchive(archive);
+          }
+        } catch (err) {
+          console.error("[Backup] Retry pending uploads execution failed:", err);
+        }
+      }
+      /**
+       * Refreshes Google OAuth access token using saved refresh token.
+       */
+      async getGoogleOAuthAccessToken() {
+        try {
+          const clientId = process.env.GOOGLE_CLIENT_ID || await this.getSetting("google_client_id", "");
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET || await this.getSetting("google_client_secret", "");
+          const refreshToken = await this.getSetting("gmail_oauth_refresh_token", "");
+          if (!clientId || !clientSecret || !refreshToken) {
+            return {
+              accessToken: null,
+              error: 'Google OAuth credentials incomplete. Please click "Connect Google Drive" in Settings to authenticate.'
+            };
+          }
+          const tokenRes = await import_axios3.default.post("https://oauth2.googleapis.com/token", new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            grant_type: "refresh_token"
+          }), {
+            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+          });
+          const accessToken = tokenRes.data?.access_token;
+          if (!accessToken) {
+            return { accessToken: null, error: "Google did not return an access token." };
+          }
+          return { accessToken };
+        } catch (err) {
+          const errMsg = err.response?.data?.error_description || err.response?.data?.error || err.message;
+          return { accessToken: null, error: `Google OAuth refresh failed: ${errMsg}` };
+        }
+      }
+      /**
+       * Find or create the dedicated backup folder in Google Drive.
+       */
+      async getOrCreateDriveFolder(accessToken, folderName = "AI Pharmacy Backups") {
+        try {
+          const safeName = folderName.replace(/'/g, "\\'");
+          const q = encodeURIComponent(`name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+          const searchRes = await import_axios3.default.get(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          const existing = searchRes.data?.files;
+          if (existing && existing.length > 0) {
+            return existing[0].id;
+          }
+          const createRes = await import_axios3.default.post("https://www.googleapis.com/drive/v3/files", {
+            name: folderName,
+            mimeType: "application/vnd.google-apps.folder"
+          }, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json"
+            }
+          });
+          return createRes.data?.id || null;
+        } catch (err) {
+          console.warn("[Backup] Google Drive folder resolution warning:", err.response?.data || err.message);
+          return null;
+        }
+      }
+      /**
+       * Prune older backups in Google Drive folder, keeping latest keepCount copies.
+       */
+      async pruneGoogleDriveOldBackups(accessToken, folderId, keepCount = 30) {
+        try {
+          const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+          const listRes = await import_axios3.default.get(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&fields=files(id,name,createdTime)&pageSize=100`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          const files = listRes.data?.files || [];
+          if (files.length > keepCount) {
+            const toDelete = files.slice(keepCount);
+            for (const f of toDelete) {
+              try {
+                await import_axios3.default.delete(`https://www.googleapis.com/drive/v3/files/${f.id}`, {
+                  headers: { Authorization: `Bearer ${accessToken}` }
+                });
+                console.log(`[Backup] Pruned old Google Drive backup: ${f.name}`);
+              } catch (_) {
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[Backup] Cloud retention pruning warning:", err.response?.data || err.message);
+        }
+      }
+      /**
+       * Upload any backup file (.db.gz, .zip, .db) to Google Drive.
+       */
+      async uploadFileToGoogleDrive(filePath, filename) {
+        try {
+          if (!import_fs32.default.existsSync(filePath)) {
+            return { success: false, error: `File not found on disk: ${filePath}` };
+          }
+          const { accessToken, error: authError } = await this.getGoogleOAuthAccessToken();
+          if (!accessToken) {
+            await this.setSetting("backup_last_gdrive_error", authError || "Authentication failed");
+            return { success: false, error: authError };
+          }
+          const folderName = await this.getSetting("backup_gdrive_folder_name", "AI Pharmacy Backups");
+          const folderId = await this.getOrCreateDriveFolder(accessToken, folderName);
+          let mimeType = "application/octet-stream";
+          if (filename.endsWith(".gz") || filename.endsWith(".db.gz")) {
+            mimeType = "application/gzip";
+          } else if (filename.endsWith(".zip")) {
+            mimeType = "application/zip";
+          } else if (filename.endsWith(".db")) {
+            mimeType = "application/x-sqlite3";
+          }
+          const metadata = {
+            name: filename,
+            mimeType
+          };
+          if (folderId) {
+            metadata.parents = [folderId];
+          }
+          const fileBuffer = import_fs32.default.readFileSync(filePath);
+          const boundary = "foo_bar_boundary_" + Date.now();
+          const multipartBody = Buffer.concat([
+            Buffer.from(`--${boundary}\r
+Content-Type: application/json; charset=UTF-8\r
+\r
+${JSON.stringify(metadata)}\r
+`),
+            Buffer.from(`\r
+--${boundary}\r
+Content-Type: ${mimeType}\r
+\r
+`),
+            fileBuffer,
+            Buffer.from(`\r
+--${boundary}--`)
+          ]);
+          const uploadRes = await import_axios3.default.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", multipartBody, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": `multipart/related; boundary=${boundary}`,
+              "Content-Length": multipartBody.length
+            }
+          });
+          if (uploadRes.status === 200 && uploadRes.data?.id) {
+            const fileId = uploadRes.data.id;
+            const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+            await this.setSetting("backup_last_gdrive_upload", nowIso);
+            await this.setSetting("backup_last_gdrive_error", "");
+            console.log(`[Backup] Uploaded ${filename} to Google Drive (${folderName}) successfully with fileId ${fileId}`);
+            if (folderId) {
+              void this.pruneGoogleDriveOldBackups(accessToken, folderId, 30);
+            }
+            const notifsEnabled = await this.getSetting("backup_notifications_enabled", "true") === "true";
+            if (notifsEnabled) {
+              this.broadcastNotification("backup_upload_gdrive", `Google Drive backup uploaded: ${filename}`);
+            }
+            return { success: true, fileId };
+          } else {
+            const errText = `Upload returned status ${uploadRes.status}`;
+            await this.setSetting("backup_last_gdrive_error", errText);
+            return { success: false, error: errText };
+          }
+        } catch (err) {
+          const errMsg = err.response?.data?.error?.message || err.response?.data?.error_description || err.message;
+          console.error("[Backup] Google Drive upload error for " + filename + ":", errMsg);
+          await this.setSetting("backup_last_gdrive_error", errMsg);
+          return { success: false, error: errMsg };
+        }
+      }
+      /**
+       * Test Google Drive connection and folder access.
+       */
+      async testGoogleDriveConnection() {
+        try {
+          const { accessToken, error } = await this.getGoogleOAuthAccessToken();
+          if (!accessToken) {
+            return { success: false, error };
+          }
+          let email = await this.getSetting("gmail_user", "");
+          try {
+            const userRes = await import_axios3.default.get("https://www.googleapis.com/oauth2/v2/userinfo", {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (userRes.data?.email) {
+              email = userRes.data.email;
+              await this.setSetting("gmail_user", email);
+            }
+          } catch (_) {
+          }
+          const folderName = await this.getSetting("backup_gdrive_folder_name", "AI Pharmacy Backups");
+          const folderId = await this.getOrCreateDriveFolder(accessToken, folderName);
+          return {
+            success: true,
+            email: email || "Connected Google Account",
+            folderId: folderId || void 0,
+            folderName
+          };
+        } catch (err) {
+          const errMsg = err.response?.data?.error?.message || err.message;
+          return { success: false, error: errMsg };
+        }
+      }
+      /**
+       * Dispatches backup archive via email if enabled and credentials configured.
+       */
+      async dispatchBackupEmailIfConfigured(filePath, filename) {
+        try {
+          const emailEnabled = await this.getSetting("backup_email_backup_enabled", "false") === "true";
+          if (!emailEnabled) return false;
+          const gmailUser = await this.getSetting("gmail_user", "");
+          const gmailPass = await this.getSetting("gmail_pass", "");
+          if (!gmailUser || !gmailPass) return false;
+          const { createTransport: createTransport2 } = await import("nodemailer");
+          const transporter = createTransport2({
+            service: "gmail",
+            auth: { user: gmailUser, pass: gmailPass }
+          });
+          const stats = import_fs32.default.statSync(filePath);
+          const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+          await transporter.sendMail({
+            from: `"AI Pharmacy OS Backup" <${gmailUser}>`,
+            to: gmailUser,
+            subject: `[AI Pharmacy Backup] Database Snapshot \u2014 ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN")}`,
+            text: `Automated database backup attached.
+
+File: ${filename}
+Size: ${sizeMB} MB
+Date: ${(/* @__PURE__ */ new Date()).toLocaleString("en-IN")}
+
+This backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inventory records.`,
+            attachments: [
+              {
+                filename,
+                path: filePath
+              }
+            ]
+          });
+          console.log(`[Backup] Dispatched backup email with attachment to ${gmailUser}`);
+          return true;
+        } catch (err) {
+          console.warn("[Backup] Backup email dispatch warning (non-fatal):", err?.message);
+          return false;
+        }
+      }
+      /**
+       * Backward-compatible uploadToGoogleDrive wrapper.
+       */
+      async uploadToGoogleDrive(filePath, filename) {
+        const res = await this.uploadFileToGoogleDrive(filePath, filename);
+        return res.success;
+      }
+      /**
+       * Sends the archive to the configured Telegram Chat ID.
+       */
+      async uploadToTelegram(filePath, filename) {
+        try {
+          const token = await this.getSetting("telegram_token", process.env.TELEGRAM_BOT_TOKEN || "");
+          const chatId = await this.getSetting("telegram_chat_id", process.env.TELEGRAM_CHAT_ID || "");
+          if (!token || !chatId) {
+            console.warn("[Backup] Telegram upload skipped: bot credentials or chat ID missing.");
+            return false;
+          }
+          const fileBuffer = import_fs32.default.readFileSync(filePath);
+          const formData = new FormData();
+          formData.append("chat_id", chatId);
+          formData.append("document", new Blob([fileBuffer]), filename);
+          formData.append("caption", `AI Pharmacy OS daily backup archive: ${filename}`);
+          const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+            method: "POST",
+            body: formData
+          });
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => "");
+            console.error("[Backup] Telegram document dispatch failed:", response.status, errorText);
+            return false;
+          }
+          const resData = await response.json().catch(() => ({}));
+          return resData?.ok === true;
+        } catch (err) {
+          console.error("[Backup] Telegram document dispatch failed:", err.response?.data || err.message);
+          return false;
+        }
+      }
+      /**
+       * Enforces retention policy keeping only the latest 4 backup archives.
+       */
+      async enforceRetention() {
+        const autoDelete = await this.getSetting("backup_auto_delete_old_archives", "true") === "true";
+        if (!autoDelete) return;
+        try {
+          const archives = import_fs32.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
+            const filePath = import_path36.default.join(ARCHIVES_DIR, f);
+            const stats = import_fs32.default.statSync(filePath);
+            return { filename: f, path: filePath, mtime: stats.mtime };
+          }).sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+          if (archives.length > 4) {
+            const toDelete = archives.slice(4);
+            for (const arch of toDelete) {
+              if (import_fs32.default.existsSync(arch.path)) {
+                import_fs32.default.unlinkSync(arch.path);
+                console.log(`[Backup] Retention cleanup: deleted old archive ${arch.filename}`);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("[Backup] Enforce retention execution failed:", err);
+        }
+      }
+      /**
+       * Check on startup if the database is fresh (0 sales invoices & 0 purchases)
+       * and we have some backup configuration or local files.
+       */
+      async checkStartupRestore() {
+        const startupCheck = await this.getSetting("backup_startup_restore_check", "true") === "true";
+        const freshInstalled = await this.getSetting("backup_fresh_installed", "false") === "true";
+        if (!startupCheck || freshInstalled) {
+          return { showRestorePopup: false, availableArchives: [] };
+        }
+        try {
+          const db2 = await dbManager.getConnection();
+          const salesCount = await db2.get("SELECT COUNT(*) as count FROM sales_invoices");
+          const purchasesCount = await db2.get("SELECT COUNT(*) as count FROM purchases");
+          const isDbFresh = (salesCount?.count || 0) === 0 && (purchasesCount?.count || 0) === 0;
+          if (!isDbFresh) {
+            return { showRestorePopup: false, availableArchives: [] };
+          }
+          const archives = this.listArchives();
+          const showRestorePopup = archives.length > 0;
+          return { showRestorePopup, availableArchives: archives };
+        } catch (err) {
+          console.error("[Backup] Startup restore check failed:", err);
+          return { showRestorePopup: false, availableArchives: [] };
+        }
+      }
+      /**
+       * Lists all local backup archives and database snapshot files.
+       */
+      listArchives(uploadLogMap) {
+        let uploadLog = uploadLogMap || {};
+        if (!uploadLogMap) {
+          try {
+            const db2 = new import_better_sqlite32.default(getDbPath3(), { readonly: true });
+            const row = db2.prepare("SELECT value FROM app_settings WHERE key = 'backup_upload_log'").get();
+            uploadLog = JSON.parse(row?.value || "{}");
+            db2.close();
+          } catch {
+          }
+        }
+        const items = [];
+        const seen = /* @__PURE__ */ new Set();
+        const scanForArchives = (dir) => {
+          if (!import_fs32.default.existsSync(dir)) return;
+          try {
+            const files = import_fs32.default.readdirSync(dir);
+            for (const filename of files) {
+              if (seen.has(filename)) continue;
+              if (!filename.endsWith(".zip") && !filename.endsWith(".db.gz") && !filename.endsWith(".db")) continue;
+              if (!filename.startsWith("archive_") && !filename.startsWith("app_backup_") && !filename.startsWith("snapshot_")) continue;
+              try {
+                const filePath = import_path36.default.join(dir, filename);
+                const stats = import_fs32.default.statSync(filePath);
+                if (!stats.isFile()) continue;
+                const dateMatch = filename.match(/(\d{4}-\d{2}-\d{2})/);
+                const date = dateMatch ? dateMatch[1] : stats.mtime.toISOString().split("T")[0];
+                const sources = ["Local Storage"];
+                if (uploadLog[filename]?.gdrive) sources.push("Google Drive");
+                if (uploadLog[filename]?.telegram) sources.push("Telegram");
+                items.push({
+                  filename,
+                  date,
+                  sizeBytes: stats.size,
+                  source: sources.join(", ")
+                });
+                seen.add(filename);
+              } catch (_) {
+              }
+            }
+          } catch (_) {
+          }
+        };
+        scanForArchives(ARCHIVES_DIR);
+        scanForArchives(BACKUP_DIR);
+        return items.sort((a, b) => b.filename.localeCompare(a.filename));
+      }
+      /**
+       * Restores data from a compressed zip archive.
+       */
+      async restoreFromArchive(filename) {
+        const { restoreBackup: restoreBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
+        await restoreBackup2(filename);
+        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path36.default.basename(filename)}`);
+      }
+      /**
+       * Delete a specific archive.
+       */
+      deleteArchive(filename) {
+        const sanitized = import_path36.default.basename(filename);
+        if (!sanitized.endsWith(".zip")) {
+          throw new Error("Invalid archive filename");
+        }
+        const filePath = import_path36.default.join(ARCHIVES_DIR, sanitized);
+        const resolvedPath = import_path36.default.resolve(filePath);
+        if (!resolvedPath.startsWith(ARCHIVES_DIR + import_path36.default.sep)) {
+          throw new Error("Access denied");
+        }
+        if (import_fs32.default.existsSync(filePath)) {
+          import_fs32.default.unlinkSync(filePath);
+          console.log(`[Backup] Deleted archive: ${sanitized}`);
+        }
+      }
+      /**
+       * Broadcast SSE Event / UI Notification.
+       */
+      broadcastNotification(type, message) {
+        eventService.broadcast("notification", {
+          type,
+          title: "Backup System Alert",
+          message,
+          timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit", hour12: false })
+        });
+      }
+    };
+    backupRecoveryService = BackupRecoveryService.getInstance();
+  }
+});
+
 // src/worker/workerSupervisor.ts
 var workerSupervisor_exports = {};
 __export(workerSupervisor_exports, {
@@ -53409,7 +54170,8 @@ __export(backupService_exports, {
   restoreBackup: () => restoreBackup,
   setScheduleConfig: () => setScheduleConfig,
   startScheduler: () => startScheduler,
-  stopScheduler: () => stopScheduler
+  stopScheduler: () => stopScheduler,
+  uploadBackupFileToGoogleDrive: () => uploadBackupFileToGoogleDrive
 });
 async function createBackup(reason = "Manual") {
   const isManual = reason === "Manual";
@@ -53418,24 +54180,24 @@ async function createBackup(reason = "Manual") {
     console.log(`[Backup] Skipping ${reason} \u2014 server uptime ${Math.round(process.uptime())}s < 60s`);
     throw new Error("Backup deferred: server still starting up (retry after 60s)");
   }
-  if (!import_fs32.default.existsSync(BACKUP_DIR)) {
-    import_fs32.default.mkdirSync(BACKUP_DIR, { recursive: true });
+  if (!import_fs33.default.existsSync(BACKUP_DIR2)) {
+    import_fs33.default.mkdirSync(BACKUP_DIR2, { recursive: true });
   }
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const filename = `app_backup_${timestamp}.db.gz`;
-  const backupPath = import_path36.default.join(BACKUP_DIR, filename);
+  const backupPath = import_path37.default.join(BACKUP_DIR2, filename);
   const tempDbPath = backupPath.replace(".gz", "");
-  const tempDb = new import_better_sqlite32.default(DB_PATH13);
+  const tempDb = new import_better_sqlite33.default(DB_PATH13);
   await tempDb.backup(tempDbPath);
   tempDb.close();
-  const gzip = import_zlib2.default.createGzip({ level: isShutdown ? import_zlib2.default.constants.Z_BEST_SPEED : 6 });
-  const source = import_fs32.default.createReadStream(tempDbPath);
-  const destination = import_fs32.default.createWriteStream(backupPath);
+  const gzip = import_zlib3.default.createGzip({ level: isShutdown ? import_zlib3.default.constants.Z_BEST_SPEED : 6 });
+  const source = import_fs33.default.createReadStream(tempDbPath);
+  const destination = import_fs33.default.createWriteStream(backupPath);
   try {
-    await (0, import_promises2.pipeline)(source, gzip, destination);
+    await (0, import_promises3.pipeline)(source, gzip, destination);
   } finally {
-    if (import_fs32.default.existsSync(tempDbPath)) {
-      import_fs32.default.unlinkSync(tempDbPath);
+    if (import_fs33.default.existsSync(tempDbPath)) {
+      import_fs33.default.unlinkSync(tempDbPath);
     }
   }
   try {
@@ -53448,25 +54210,48 @@ async function createBackup(reason = "Manual") {
     console.error("Backup created but failed to log action");
   }
   enforceRetention();
+  try {
+    const { backupRecoveryService: backupRecoveryService2 } = await Promise.resolve().then(() => (init_backupRecoveryService(), backupRecoveryService_exports));
+    const gdriveEnabled = await backupRecoveryService2.getSetting("backup_gdrive_enabled", "false") === "true";
+    if (gdriveEnabled) {
+      void backupRecoveryService2.uploadFileToGoogleDrive(backupPath, filename);
+    }
+    void backupRecoveryService2.dispatchBackupEmailIfConfigured(backupPath, filename);
+  } catch (cloudErr) {
+    console.warn("[Backup] Cloud sync hook warning (non-fatal):", cloudErr);
+  }
   return { filename };
+}
+async function uploadBackupFileToGoogleDrive(filename) {
+  const sanitized = import_path37.default.basename(filename);
+  let filePath = import_path37.default.join(BACKUP_DIR2, sanitized);
+  if (!import_fs33.default.existsSync(filePath)) {
+    const archivesPath = import_path37.default.join(BACKUP_DIR2, "archives", sanitized);
+    if (import_fs33.default.existsSync(archivesPath)) filePath = archivesPath;
+  }
+  if (!import_fs33.default.existsSync(filePath)) {
+    return { success: false, error: "Backup file not found on disk" };
+  }
+  const { backupRecoveryService: backupRecoveryService2 } = await Promise.resolve().then(() => (init_backupRecoveryService(), backupRecoveryService_exports));
+  return backupRecoveryService2.uploadFileToGoogleDrive(filePath, sanitized);
 }
 async function backupSessions(reason = "Manual") {
   try {
     const { default: AdmZip5 } = await import("adm-zip");
     const appData = getAppDataDir();
     const targets = [
-      { name: "wwebjs_auth", dir: import_path36.default.join(appData, ".wwebjs_auth") },
-      { name: "pharmarack_profile", dir: import_path36.default.join(appData, "data", "pharmarack_profile") }
-    ].filter((t) => import_fs32.default.existsSync(t.dir) && import_fs32.default.readdirSync(t.dir).length > 0);
+      { name: "wwebjs_auth", dir: import_path37.default.join(appData, ".wwebjs_auth") },
+      { name: "pharmarack_profile", dir: import_path37.default.join(appData, "data", "pharmarack_profile") }
+    ].filter((t) => import_fs33.default.existsSync(t.dir) && import_fs33.default.readdirSync(t.dir).length > 0);
     if (targets.length === 0) return null;
-    if (!import_fs32.default.existsSync(BACKUP_DIR)) {
-      import_fs32.default.mkdirSync(BACKUP_DIR, { recursive: true });
+    if (!import_fs33.default.existsSync(BACKUP_DIR2)) {
+      import_fs33.default.mkdirSync(BACKUP_DIR2, { recursive: true });
     }
     const zip = new AdmZip5();
     const addDirRecursive = (dir, zipPath) => {
-      for (const entry of import_fs32.default.readdirSync(dir, { withFileTypes: true })) {
-        const full = import_path36.default.join(dir, entry.name);
-        const rel = import_path36.default.join(zipPath, entry.name);
+      for (const entry of import_fs33.default.readdirSync(dir, { withFileTypes: true })) {
+        const full = import_path37.default.join(dir, entry.name);
+        const rel = import_path37.default.join(zipPath, entry.name);
         if (entry.isDirectory()) {
           if (SESSION_EXCLUDED_DIRS.has(entry.name)) continue;
           addDirRecursive(full, rel);
@@ -53481,13 +54266,13 @@ async function backupSessions(reason = "Manual") {
     for (const t of targets) addDirRecursive(t.dir, t.name);
     const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     const filename = `sessions_backup_${timestamp}.zip`;
-    zip.writeZip(import_path36.default.join(BACKUP_DIR, filename));
+    zip.writeZip(import_path37.default.join(BACKUP_DIR2, filename));
     const sessionZips = listBackups().filter((b) => b.filename.startsWith("sessions_backup_"));
     for (const old of sessionZips.slice(MAX_SESSION_BACKUPS)) {
-      const p = import_path36.default.join(BACKUP_DIR, old.filename);
-      if (import_fs32.default.existsSync(p)) {
+      const p = import_path37.default.join(BACKUP_DIR2, old.filename);
+      if (import_fs33.default.existsSync(p)) {
         try {
-          import_fs32.default.unlinkSync(p);
+          import_fs33.default.unlinkSync(p);
         } catch (_) {
         }
       }
@@ -53500,17 +54285,17 @@ async function backupSessions(reason = "Manual") {
   }
 }
 function listBackups() {
-  if (!import_fs32.default.existsSync(BACKUP_DIR)) {
+  if (!import_fs33.default.existsSync(BACKUP_DIR2)) {
     return [];
   }
   const results = [];
   const scanDir = (dir) => {
-    if (!import_fs32.default.existsSync(dir)) return;
-    const files = import_fs32.default.readdirSync(dir);
+    if (!import_fs33.default.existsSync(dir)) return;
+    const files = import_fs33.default.readdirSync(dir);
     for (const filename of files) {
-      const filePath = import_path36.default.join(dir, filename);
+      const filePath = import_path37.default.join(dir, filename);
       try {
-        const stats = import_fs32.default.statSync(filePath);
+        const stats = import_fs33.default.statSync(filePath);
         if (stats.isFile() && (filename.endsWith(".db") || filename.endsWith(".db.gz") || filename.endsWith(".zip"))) {
           if (!results.some((r) => r.filename === filename)) {
             results.push({
@@ -53524,52 +54309,52 @@ function listBackups() {
       }
     }
   };
-  scanDir(BACKUP_DIR);
-  scanDir(import_path36.default.join(BACKUP_DIR, "archives"));
-  scanDir(import_path36.default.join(BACKUP_DIR, "snapshots"));
+  scanDir(BACKUP_DIR2);
+  scanDir(import_path37.default.join(BACKUP_DIR2, "archives"));
+  scanDir(import_path37.default.join(BACKUP_DIR2, "snapshots"));
   return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 function deleteBackup(filename) {
-  const sanitized = import_path36.default.basename(filename);
+  const sanitized = import_path37.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename");
   }
-  let filePath = import_path36.default.join(BACKUP_DIR, sanitized);
-  if (!import_fs32.default.existsSync(filePath)) {
-    const archivesPath = import_path36.default.join(BACKUP_DIR, "archives", sanitized);
-    const snapshotsPath = import_path36.default.join(BACKUP_DIR, "snapshots", sanitized);
-    if (import_fs32.default.existsSync(archivesPath)) filePath = archivesPath;
-    else if (import_fs32.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
+  let filePath = import_path37.default.join(BACKUP_DIR2, sanitized);
+  if (!import_fs33.default.existsSync(filePath)) {
+    const archivesPath = import_path37.default.join(BACKUP_DIR2, "archives", sanitized);
+    const snapshotsPath = import_path37.default.join(BACKUP_DIR2, "snapshots", sanitized);
+    if (import_fs33.default.existsSync(archivesPath)) filePath = archivesPath;
+    else if (import_fs33.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
   }
-  const resolved = import_path36.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR + import_path36.default.sep) && resolved !== BACKUP_DIR) {
+  const resolved = import_path37.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR2 + import_path37.default.sep) && resolved !== BACKUP_DIR2) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs32.default.existsSync(filePath)) {
+  if (!import_fs33.default.existsSync(filePath)) {
     throw new Error("Backup file not found");
   }
-  import_fs32.default.unlinkSync(filePath);
+  import_fs33.default.unlinkSync(filePath);
 }
 async function restoreBackup(filename) {
-  const sanitized = import_path36.default.basename(filename);
+  const sanitized = import_path37.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename. Must be .db, .db.gz, or .zip");
   }
-  let filePath = import_path36.default.join(BACKUP_DIR, sanitized);
-  if (!import_fs32.default.existsSync(filePath)) {
-    const archivesPath = import_path36.default.join(BACKUP_DIR, "archives", sanitized);
-    const snapshotsPath = import_path36.default.join(BACKUP_DIR, "snapshots", sanitized);
-    if (import_fs32.default.existsSync(archivesPath)) {
+  let filePath = import_path37.default.join(BACKUP_DIR2, sanitized);
+  if (!import_fs33.default.existsSync(filePath)) {
+    const archivesPath = import_path37.default.join(BACKUP_DIR2, "archives", sanitized);
+    const snapshotsPath = import_path37.default.join(BACKUP_DIR2, "snapshots", sanitized);
+    if (import_fs33.default.existsSync(archivesPath)) {
       filePath = archivesPath;
-    } else if (import_fs32.default.existsSync(snapshotsPath)) {
+    } else if (import_fs33.default.existsSync(snapshotsPath)) {
       filePath = snapshotsPath;
     }
   }
-  const resolved = import_path36.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR + import_path36.default.sep) && resolved !== BACKUP_DIR) {
+  const resolved = import_path37.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR2 + import_path37.default.sep) && resolved !== BACKUP_DIR2) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs32.default.existsSync(filePath)) {
+  if (!import_fs33.default.existsSync(filePath)) {
     throw new Error(`Backup file not found: ${sanitized}`);
   }
   const stagedPath = `${DB_PATH13}.restoring_${Date.now()}`;
@@ -53588,22 +54373,22 @@ async function restoreBackup(filename) {
     let dbSourcePath = filePath;
     if (sanitized.endsWith(".zip")) {
       const { default: AdmZip5 } = await import("adm-zip");
-      tempExtractDir = import_path36.default.join(BACKUP_DIR, `temp_restore_${Date.now()}`);
-      import_fs32.default.mkdirSync(tempExtractDir, { recursive: true });
+      tempExtractDir = import_path37.default.join(BACKUP_DIR2, `temp_restore_${Date.now()}`);
+      import_fs33.default.mkdirSync(tempExtractDir, { recursive: true });
       const zip = new AdmZip5(filePath);
       zip.extractAllTo(tempExtractDir, true);
-      const dbFiles = import_fs32.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
+      const dbFiles = import_fs33.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
       if (dbFiles.length === 0) {
         throw new Error("No valid database file (.db or .db.gz) found inside the zip archive.");
       }
-      dbSourcePath = import_path36.default.join(tempExtractDir, dbFiles[0]);
+      dbSourcePath = import_path37.default.join(tempExtractDir, dbFiles[0]);
     }
     if (dbSourcePath.endsWith(".gz")) {
-      await (0, import_promises2.pipeline)(import_fs32.default.createReadStream(dbSourcePath), import_zlib2.default.createGunzip(), import_fs32.default.createWriteStream(stagedPath));
+      await (0, import_promises3.pipeline)(import_fs33.default.createReadStream(dbSourcePath), import_zlib3.default.createGunzip(), import_fs33.default.createWriteStream(stagedPath));
     } else {
-      import_fs32.default.copyFileSync(dbSourcePath, stagedPath);
+      import_fs33.default.copyFileSync(dbSourcePath, stagedPath);
     }
-    const probe = new import_better_sqlite32.default(stagedPath, { readonly: true });
+    const probe = new import_better_sqlite33.default(stagedPath, { readonly: true });
     try {
       const integrity = probe.pragma("integrity_check");
       if (!integrity?.[0] || integrity[0].integrity_check !== "ok") {
@@ -53620,42 +54405,42 @@ async function restoreBackup(filename) {
     await dbManager.close(true);
     for (const suffix of ["-wal", "-shm"]) {
       const sidecar = DB_PATH13 + suffix;
-      if (!import_fs32.default.existsSync(sidecar)) continue;
+      if (!import_fs33.default.existsSync(sidecar)) continue;
       try {
-        import_fs32.default.unlinkSync(sidecar);
+        import_fs33.default.unlinkSync(sidecar);
       } catch (err) {
-        throw new Error(`Could not clear ${import_path36.default.basename(sidecar)} before restore: ${err.message}`);
+        throw new Error(`Could not clear ${import_path37.default.basename(sidecar)} before restore: ${err.message}`);
       }
     }
     try {
-      import_fs32.default.renameSync(stagedPath, DB_PATH13);
+      import_fs33.default.renameSync(stagedPath, DB_PATH13);
     } catch (renameErr) {
       if (renameErr.code === "EPERM" || renameErr.code === "EBUSY" || renameErr.code === "EEXIST") {
-        import_fs32.default.copyFileSync(stagedPath, DB_PATH13);
+        import_fs33.default.copyFileSync(stagedPath, DB_PATH13);
         try {
-          import_fs32.default.unlinkSync(stagedPath);
+          import_fs33.default.unlinkSync(stagedPath);
         } catch (_) {
         }
       } else {
         throw renameErr;
       }
     } finally {
-      if (tempExtractDir && import_fs32.default.existsSync(tempExtractDir)) {
+      if (tempExtractDir && import_fs33.default.existsSync(tempExtractDir)) {
         try {
-          import_fs32.default.rmSync(tempExtractDir, { recursive: true, force: true });
+          import_fs33.default.rmSync(tempExtractDir, { recursive: true, force: true });
         } catch (_) {
         }
       }
     }
   } catch (err) {
-    if (tempExtractDir && import_fs32.default.existsSync(tempExtractDir)) {
+    if (tempExtractDir && import_fs33.default.existsSync(tempExtractDir)) {
       try {
-        import_fs32.default.rmSync(tempExtractDir, { recursive: true, force: true });
+        import_fs33.default.rmSync(tempExtractDir, { recursive: true, force: true });
       } catch (_) {
       }
     }
     try {
-      if (import_fs32.default.existsSync(stagedPath)) import_fs32.default.unlinkSync(stagedPath);
+      if (import_fs33.default.existsSync(stagedPath)) import_fs33.default.unlinkSync(stagedPath);
     } catch (_) {
     }
     try {
@@ -53761,17 +54546,17 @@ function stopScheduler() {
 }
 function enforceRetention() {
   try {
-    if (import_fs32.default.existsSync(BACKUP_DIR)) {
-      const allFiles = import_fs32.default.readdirSync(BACKUP_DIR);
+    if (import_fs33.default.existsSync(BACKUP_DIR2)) {
+      const allFiles = import_fs33.default.readdirSync(BACKUP_DIR2);
       for (const f of allFiles) {
         if (f.startsWith("app_backup_") && f.endsWith(".db")) {
           const gzEquivalent = f + ".gz";
-          const fullPath = import_path36.default.join(BACKUP_DIR, f);
+          const fullPath = import_path37.default.join(BACKUP_DIR2, f);
           try {
-            const stats = import_fs32.default.statSync(fullPath);
+            const stats = import_fs33.default.statSync(fullPath);
             const ageMs = Date.now() - stats.mtimeMs;
-            if (import_fs32.default.existsSync(import_path36.default.join(BACKUP_DIR, gzEquivalent)) || ageMs > 30 * 60 * 1e3) {
-              import_fs32.default.unlinkSync(fullPath);
+            if (import_fs33.default.existsSync(import_path37.default.join(BACKUP_DIR2, gzEquivalent)) || ageMs > 30 * 60 * 1e3) {
+              import_fs33.default.unlinkSync(fullPath);
               console.log(`[Backup] Cleaned uncompressed leftover database: ${f}`);
             }
           } catch (_) {
@@ -53801,14 +54586,14 @@ async function initBackupScheduler() {
 function getDirectorySize(dirPath) {
   let total = 0;
   try {
-    if (import_fs32.default.existsSync(dirPath)) {
-      const items = import_fs32.default.readdirSync(dirPath, { withFileTypes: true });
+    if (import_fs33.default.existsSync(dirPath)) {
+      const items = import_fs33.default.readdirSync(dirPath, { withFileTypes: true });
       for (const item of items) {
-        const itemPath = import_path36.default.join(dirPath, item.name);
+        const itemPath = import_path37.default.join(dirPath, item.name);
         if (item.isDirectory()) {
           total += getDirectorySize(itemPath);
         } else if (item.isFile()) {
-          total += import_fs32.default.statSync(itemPath).size;
+          total += import_fs33.default.statSync(itemPath).size;
         }
       }
     }
@@ -53819,19 +54604,19 @@ function getDirectorySize(dirPath) {
 function getPreupdateBackupsInfo() {
   const folders = [];
   const searchDirs = /* @__PURE__ */ new Set();
-  if (BACKUP_DIR) searchDirs.add(BACKUP_DIR);
-  const exeBackup = import_path36.default.join(import_path36.default.dirname(process.execPath), "backup");
-  if (import_fs32.default.existsSync(exeBackup)) searchDirs.add(exeBackup);
+  if (BACKUP_DIR2) searchDirs.add(BACKUP_DIR2);
+  const exeBackup = import_path37.default.join(import_path37.default.dirname(process.execPath), "backup");
+  if (import_fs33.default.existsSync(exeBackup)) searchDirs.add(exeBackup);
   for (const dir of searchDirs) {
-    if (!import_fs32.default.existsSync(dir)) continue;
+    if (!import_fs33.default.existsSync(dir)) continue;
     try {
-      const entries = import_fs32.default.readdirSync(dir, { withFileTypes: true });
+      const entries = import_fs33.default.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory() && entry.name.startsWith("preupdate-")) {
-          const fullPath = import_path36.default.join(dir, entry.name);
+          const fullPath = import_path37.default.join(dir, entry.name);
           if (folders.some((f) => f.fullPath === fullPath)) continue;
           try {
-            const stats = import_fs32.default.statSync(fullPath);
+            const stats = import_fs33.default.statSync(fullPath);
             const sizeBytes = getDirectorySize(fullPath);
             folders.push({
               name: entry.name,
@@ -53861,11 +54646,11 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
   if (info.folders.length > keepCount) {
     const toDelete = info.folders.slice(keepCount);
     for (const folder of toDelete) {
-      const safeName = import_path36.default.basename(folder.fullPath);
+      const safeName = import_path37.default.basename(folder.fullPath);
       if (!safeName.startsWith("preupdate-")) continue;
       try {
-        if (import_fs32.default.existsSync(folder.fullPath)) {
-          import_fs32.default.rmSync(folder.fullPath, { recursive: true, force: true });
+        if (import_fs33.default.existsSync(folder.fullPath)) {
+          import_fs33.default.rmSync(folder.fullPath, { recursive: true, force: true });
           freedBytes += folder.sizeBytes;
           deletedCount++;
           console.log(`[Backup] Pruned old pre-update backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
@@ -53891,24 +54676,24 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
     remainingCount: Math.min(info.folders.length - deletedCount, keepCount)
   };
 }
-var import_fs32, import_path36, import_url27, import_node_cron2, import_better_sqlite32, import_zlib2, import_promises2, __filename25, __dirname25, DB_PATH13, BACKUP_DIR, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
+var import_fs33, import_path37, import_url27, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, __filename25, __dirname25, DB_PATH13, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
 var init_backupService = __esm({
   "src/services/backupService.ts"() {
     "use strict";
-    import_fs32 = __toESM(require("fs"), 1);
-    import_path36 = __toESM(require("path"), 1);
+    import_fs33 = __toESM(require("fs"), 1);
+    import_path37 = __toESM(require("path"), 1);
     import_url27 = require("url");
     import_node_cron2 = __toESM(require("node-cron"), 1);
     init_connection();
-    import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
-    import_zlib2 = __toESM(require("zlib"), 1);
-    import_promises2 = require("stream/promises");
+    import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
+    import_zlib3 = __toESM(require("zlib"), 1);
+    import_promises3 = require("stream/promises");
     init_config();
     init_config();
     __filename25 = (0, import_url27.fileURLToPath)(import_meta_url);
-    __dirname25 = import_path36.default.dirname(__filename25);
+    __dirname25 = import_path37.default.dirname(__filename25);
     DB_PATH13 = config.dbPath;
-    BACKUP_DIR = config.backupDir;
+    BACKUP_DIR2 = config.backupDir;
     MAX_BACKUPS = 20;
     MAX_SESSION_BACKUPS = 3;
     SESSION_EXCLUDED_DIRS = /* @__PURE__ */ new Set([
@@ -53924,474 +54709,6 @@ var init_backupService = __esm({
       "Service Worker"
     ]);
     scheduledTask = null;
-  }
-});
-
-// src/services/backupRecoveryService.ts
-var import_fs33, import_path37, import_better_sqlite33, import_adm_zip2, import_axios3, import_zlib3, import_promises3, getDbPath3, BACKUP_DIR2, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
-var init_backupRecoveryService = __esm({
-  "src/services/backupRecoveryService.ts"() {
-    "use strict";
-    import_fs33 = __toESM(require("fs"), 1);
-    import_path37 = __toESM(require("path"), 1);
-    import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
-    import_adm_zip2 = __toESM(require("adm-zip"), 1);
-    import_axios3 = __toESM(require("axios"), 1);
-    init_connection();
-    init_eventService();
-    import_zlib3 = __toESM(require("zlib"), 1);
-    import_promises3 = require("stream/promises");
-    init_config();
-    getDbPath3 = () => config.dbPath;
-    BACKUP_DIR2 = import_path37.default.join(getAppDataDir(), "backup");
-    SNAPSHOTS_DIR = import_path37.default.join(BACKUP_DIR2, "snapshots");
-    ARCHIVES_DIR = import_path37.default.join(BACKUP_DIR2, "archives");
-    if (!import_fs33.default.existsSync(SNAPSHOTS_DIR)) {
-      import_fs33.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-    }
-    if (!import_fs33.default.existsSync(ARCHIVES_DIR)) {
-      import_fs33.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
-    }
-    BackupRecoveryService = class _BackupRecoveryService {
-      static instance;
-      constructor() {
-        this.retryPendingUploads();
-      }
-      static getInstance() {
-        if (!_BackupRecoveryService.instance) {
-          _BackupRecoveryService.instance = new _BackupRecoveryService();
-        }
-        return _BackupRecoveryService.instance;
-      }
-      /**
-       * Helper to retrieve a key-value setting from app_settings.
-       */
-      async getSetting(key, defaultValue) {
-        try {
-          const db2 = await dbManager.getConnection();
-          const row = await db2.get("SELECT value FROM app_settings WHERE key = ?", [key]);
-          return row ? row.value : defaultValue;
-        } catch {
-          return defaultValue;
-        }
-      }
-      /**
-       * Helper to save a key-value setting.
-       */
-      async setSetting(key, value) {
-        try {
-          const db2 = await dbManager.getConnection();
-          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [key, value]);
-        } catch (err) {
-          console.error(`Failed to set setting ${key}:`, err);
-        }
-      }
-      /**
-       * Triggers a debounced snapshot creation after database writes.
-       */
-      triggerSnapshot() {
-        return;
-      }
-      /**
-       * Creates a snapshot of the active SQLite database using better-sqlite3 backup API.
-       */
-      async createSnapshot() {
-        const localEnabled = await this.getSetting("backup_local_enabled", "true") === "true";
-        if (!localEnabled) {
-          return "";
-        }
-        const now = /* @__PURE__ */ new Date();
-        const dateStr = now.toISOString().split("T")[0];
-        const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-");
-        const filename = `snapshot_${dateStr}_${timeStr}.db.gz`;
-        const destPath = import_path37.default.join(SNAPSHOTS_DIR, filename);
-        console.log(`[Backup] Generating database snapshot: ${filename}...`);
-        if (!import_fs33.default.existsSync(SNAPSHOTS_DIR)) {
-          import_fs33.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-        }
-        const tempDbPath = destPath.replace(".gz", "");
-        const tempDb = new import_better_sqlite33.default(getDbPath3());
-        await tempDb.backup(tempDbPath);
-        tempDb.close();
-        const gzip = import_zlib3.default.createGzip();
-        const source = import_fs33.default.createReadStream(tempDbPath);
-        const destination = import_fs33.default.createWriteStream(destPath);
-        try {
-          await (0, import_promises3.pipeline)(source, gzip, destination);
-        } finally {
-          if (import_fs33.default.existsSync(tempDbPath)) {
-            import_fs33.default.unlinkSync(tempDbPath);
-          }
-        }
-        try {
-          const db2 = await dbManager.getConnection();
-          await db2.run(
-            "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-            ["BACKUP_SNAPSHOT", `Snapshot created automatically: ${filename}`]
-          );
-        } catch {
-        }
-        try {
-          const todayPrefix = `snapshot_${dateStr}_`;
-          const files = import_fs33.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
-            const fp = import_path37.default.join(SNAPSHOTS_DIR, f);
-            return { name: f, path: fp, time: import_fs33.default.statSync(fp).mtime.getTime() };
-          }).sort((a, b) => b.time - a.time);
-          const MAX_TODAY_SNAPSHOTS = 5;
-          if (files.length > MAX_TODAY_SNAPSHOTS) {
-            const toDelete = files.slice(MAX_TODAY_SNAPSHOTS);
-            for (const snap of toDelete) {
-              if (import_fs33.default.existsSync(snap.path)) {
-                import_fs33.default.unlinkSync(snap.path);
-                console.log(`[Backup] Same-day snapshot retention: deleted old snapshot ${snap.name}`);
-              }
-            }
-          }
-        } catch (err) {
-          console.error("[Backup] Snapshot same-day retention cleanup failed:", err);
-        }
-        await this.compressPreviousDaysSnapshots();
-        return filename;
-      }
-      /**
-       * Compresses snapshots from previous days into daily zip archives.
-       */
-      async compressPreviousDaysSnapshots() {
-        const dailyCompressEnabled = await this.getSetting("backup_daily_compression", "true") === "true";
-        if (!dailyCompressEnabled) return;
-        try {
-          const files = import_fs33.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
-          if (files.length === 0) return;
-          const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-          const dateGroups = {};
-          for (const file of files) {
-            const parts = file.split("_");
-            if (parts.length >= 2) {
-              const datePart = parts[1];
-              if (datePart < todayStr2) {
-                if (!dateGroups[datePart]) {
-                  dateGroups[datePart] = [];
-                }
-                dateGroups[datePart].push(file);
-              }
-            }
-          }
-          for (const [datePart, snapshotFiles] of Object.entries(dateGroups)) {
-            const archiveName = `archive_${datePart}.zip`;
-            const archivePath = import_path37.default.join(ARCHIVES_DIR, archiveName);
-            console.log(`[Backup] Compressing previous day snapshots for ${datePart} into ${archiveName}...`);
-            const zip = new import_adm_zip2.default();
-            for (const file of snapshotFiles) {
-              const filePath = import_path37.default.join(SNAPSHOTS_DIR, file);
-              if (import_fs33.default.existsSync(filePath)) {
-                zip.addLocalFile(filePath);
-              }
-            }
-            zip.writeZip(archivePath);
-            if (import_fs33.default.existsSync(archivePath)) {
-              for (const file of snapshotFiles) {
-                import_fs33.default.unlinkSync(import_path37.default.join(SNAPSHOTS_DIR, file));
-              }
-              console.log(`[Backup] Compressed ${snapshotFiles.length} snapshots into ${archiveName}. Original snapshots cleaned.`);
-              await this.uploadArchive(archiveName);
-              await this.enforceRetention();
-            }
-          }
-        } catch (err) {
-          console.error("[Backup] Daily snapshots compression failed:", err);
-        }
-      }
-      /**
-       * Uploads the daily archive to Google Drive and Telegram if configured.
-       */
-      async uploadArchive(filename) {
-        const archivePath = import_path37.default.join(ARCHIVES_DIR, filename);
-        if (!import_fs33.default.existsSync(archivePath)) return;
-        const gdriveEnabled = await this.getSetting("backup_gdrive_enabled", "false") === "true";
-        const telegramEnabled = await this.getSetting("backup_telegram_enabled", "false") === "true";
-        const notifsEnabled = await this.getSetting("backup_notifications_enabled", "true") === "true";
-        const uploadLogRaw = await this.getSetting("backup_upload_log", "{}");
-        const uploadLog = JSON.parse(uploadLogRaw);
-        if (!uploadLog[filename]) {
-          uploadLog[filename] = {};
-        }
-        let gdriveUploaded = uploadLog[filename].gdrive || false;
-        let telegramUploaded = uploadLog[filename].telegram || false;
-        await Promise.all([
-          // 1. Google Drive Upload
-          (async () => {
-            if (!(gdriveEnabled && !gdriveUploaded)) return;
-            try {
-              console.log(`[Backup] Uploading ${filename} to Google Drive...`);
-              const success = await this.uploadToGoogleDrive(archivePath, filename);
-              if (success) {
-                gdriveUploaded = true;
-                uploadLog[filename].gdrive = true;
-                console.log(`[Backup] ${filename} successfully uploaded to Google Drive.`);
-                if (notifsEnabled) {
-                  this.broadcastNotification("backup_upload_gdrive", `Google Drive upload completed: ${filename}`);
-                }
-              } else {
-                console.warn(`[Backup] Google Drive upload failed for ${filename}. Will retry later.`);
-              }
-            } catch (err) {
-              console.error(`[Backup] Google Drive upload error for ${filename}:`, err);
-            }
-          })(),
-          // 2. Telegram Upload
-          (async () => {
-            if (!(telegramEnabled && !telegramUploaded)) return;
-            try {
-              console.log(`[Backup] Sending ${filename} to Telegram...`);
-              const success = await this.uploadToTelegram(archivePath, filename);
-              if (success) {
-                telegramUploaded = true;
-                uploadLog[filename].telegram = true;
-                console.log(`[Backup] ${filename} successfully sent to Telegram.`);
-                if (notifsEnabled) {
-                  this.broadcastNotification("backup_upload_telegram", `Telegram backup completed: ${filename}`);
-                }
-              } else {
-                console.warn(`[Backup] Telegram upload failed for ${filename}. Will retry later.`);
-              }
-            } catch (err) {
-              console.error(`[Backup] Telegram upload error for ${filename}:`, err);
-            }
-          })()
-        ]);
-        await this.setSetting("backup_upload_log", JSON.stringify(uploadLog));
-      }
-      /**
-       * Retries uploading any pending daily archives.
-       */
-      async retryPendingUploads() {
-        try {
-          const archives = import_fs33.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
-          if (archives.length === 0) return;
-          console.log("[Backup] Scanning archives for pending cloud uploads...");
-          for (const archive of archives) {
-            await this.uploadArchive(archive);
-          }
-        } catch (err) {
-          console.error("[Backup] Retry pending uploads execution failed:", err);
-        }
-      }
-      /**
-       * Upload to Google Drive using standard OAuth2 and multipart API requests.
-       */
-      async uploadToGoogleDrive(filePath, filename) {
-        try {
-          const clientId = process.env.GOOGLE_CLIENT_ID || await this.getSetting("google_client_id", "");
-          const clientSecret = process.env.GOOGLE_CLIENT_SECRET || await this.getSetting("google_client_secret", "");
-          const refreshToken = await this.getSetting("gmail_oauth_refresh_token", "");
-          if (!clientId || !clientSecret || !refreshToken) {
-            console.warn("[Backup] Google Drive upload skipped: Credentials incomplete.");
-            return false;
-          }
-          const tokenRes = await import_axios3.default.post("https://oauth2.googleapis.com/token", new URLSearchParams({
-            client_id: clientId,
-            client_secret: clientSecret,
-            refresh_token: refreshToken,
-            grant_type: "refresh_token"
-          }), {
-            headers: { "Content-Type": "application/x-www-form-urlencoded" }
-          });
-          const accessToken = tokenRes.data.access_token;
-          if (!accessToken) {
-            console.error("[Backup] Failed to refresh Google access token.");
-            return false;
-          }
-          const fileBuffer = import_fs33.default.readFileSync(filePath);
-          const metadata = {
-            name: filename,
-            mimeType: "application/zip"
-          };
-          const boundary = "foo_bar_boundary";
-          const multipartBody = Buffer.concat([
-            Buffer.from(`--${boundary}\r
-Content-Type: application/json; charset=UTF-8\r
-\r
-${JSON.stringify(metadata)}\r
-`),
-            Buffer.from(`\r
---${boundary}\r
-Content-Type: application/zip\r
-\r
-`),
-            fileBuffer,
-            Buffer.from(`\r
---${boundary}--`)
-          ]);
-          const uploadRes = await import_axios3.default.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", multipartBody, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": `multipart/related; boundary=${boundary}`,
-              "Content-Length": multipartBody.length
-            }
-          });
-          return uploadRes.status === 200 && !!uploadRes.data.id;
-        } catch (err) {
-          console.error("[Backup] Google Drive multipart upload failed:", err.response?.data || err.message);
-          return false;
-        }
-      }
-      /**
-       * Sends the archive to the configured Telegram Chat ID.
-       */
-      async uploadToTelegram(filePath, filename) {
-        try {
-          const token = await this.getSetting("telegram_token", process.env.TELEGRAM_BOT_TOKEN || "");
-          const chatId = await this.getSetting("telegram_chat_id", process.env.TELEGRAM_CHAT_ID || "");
-          if (!token || !chatId) {
-            console.warn("[Backup] Telegram upload skipped: bot credentials or chat ID missing.");
-            return false;
-          }
-          const fileBuffer = import_fs33.default.readFileSync(filePath);
-          const formData = new FormData();
-          formData.append("chat_id", chatId);
-          formData.append("document", new Blob([fileBuffer]), filename);
-          formData.append("caption", `AI Pharmacy OS daily backup archive: ${filename}`);
-          const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
-            method: "POST",
-            body: formData
-          });
-          if (!response.ok) {
-            const errorText = await response.text().catch(() => "");
-            console.error("[Backup] Telegram document dispatch failed:", response.status, errorText);
-            return false;
-          }
-          const resData = await response.json().catch(() => ({}));
-          return resData?.ok === true;
-        } catch (err) {
-          console.error("[Backup] Telegram document dispatch failed:", err.response?.data || err.message);
-          return false;
-        }
-      }
-      /**
-       * Enforces retention policy keeping only the latest 4 backup archives.
-       */
-      async enforceRetention() {
-        const autoDelete = await this.getSetting("backup_auto_delete_old_archives", "true") === "true";
-        if (!autoDelete) return;
-        try {
-          const archives = import_fs33.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
-            const filePath = import_path37.default.join(ARCHIVES_DIR, f);
-            const stats = import_fs33.default.statSync(filePath);
-            return { filename: f, path: filePath, mtime: stats.mtime };
-          }).sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-          if (archives.length > 4) {
-            const toDelete = archives.slice(4);
-            for (const arch of toDelete) {
-              if (import_fs33.default.existsSync(arch.path)) {
-                import_fs33.default.unlinkSync(arch.path);
-                console.log(`[Backup] Retention cleanup: deleted old archive ${arch.filename}`);
-              }
-            }
-          }
-        } catch (err) {
-          console.error("[Backup] Enforce retention execution failed:", err);
-        }
-      }
-      /**
-       * Check on startup if the database is fresh (0 sales invoices & 0 purchases)
-       * and we have some backup configuration or local files.
-       */
-      async checkStartupRestore() {
-        const startupCheck = await this.getSetting("backup_startup_restore_check", "true") === "true";
-        const freshInstalled = await this.getSetting("backup_fresh_installed", "false") === "true";
-        if (!startupCheck || freshInstalled) {
-          return { showRestorePopup: false, availableArchives: [] };
-        }
-        try {
-          const db2 = await dbManager.getConnection();
-          const salesCount = await db2.get("SELECT COUNT(*) as count FROM sales_invoices");
-          const purchasesCount = await db2.get("SELECT COUNT(*) as count FROM purchases");
-          const isDbFresh = (salesCount?.count || 0) === 0 && (purchasesCount?.count || 0) === 0;
-          if (!isDbFresh) {
-            return { showRestorePopup: false, availableArchives: [] };
-          }
-          const archives = this.listArchives();
-          const showRestorePopup = archives.length > 0;
-          return { showRestorePopup, availableArchives: archives };
-        } catch (err) {
-          console.error("[Backup] Startup restore check failed:", err);
-          return { showRestorePopup: false, availableArchives: [] };
-        }
-      }
-      /**
-       * Lists all local backup archives.
-       */
-      listArchives(uploadLogMap) {
-        if (!import_fs33.default.existsSync(ARCHIVES_DIR)) return [];
-        let uploadLog = uploadLogMap || {};
-        if (!uploadLogMap) {
-          try {
-            const db2 = new import_better_sqlite33.default(getDbPath3(), { readonly: true });
-            const row = db2.prepare("SELECT value FROM app_settings WHERE key = 'backup_upload_log'").get();
-            uploadLog = JSON.parse(row?.value || "{}");
-            db2.close();
-          } catch {
-          }
-        }
-        return import_fs33.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((filename) => {
-          const filePath = import_path37.default.join(ARCHIVES_DIR, filename);
-          const stats = import_fs33.default.statSync(filePath);
-          let rawDate = filename.replace(/^archive_/, "").replace(/\.zip$/, "");
-          if (rawDate.startsWith("manual_")) {
-            rawDate = rawDate.replace(/^manual_/, "");
-          }
-          const dateMatch = rawDate.match(/^(\d{4}-\d{2}-\d{2})/);
-          const date = dateMatch ? dateMatch[1] : stats.mtime.toISOString().split("T")[0];
-          const sources = ["Local"];
-          if (uploadLog[filename]?.gdrive) sources.push("Google Drive");
-          if (uploadLog[filename]?.telegram) sources.push("Telegram");
-          return {
-            filename,
-            date,
-            sizeBytes: stats.size,
-            source: sources.join(", ")
-          };
-        }).sort((a, b) => b.filename.localeCompare(a.filename));
-      }
-      /**
-       * Restores data from a compressed zip archive.
-       */
-      async restoreFromArchive(filename) {
-        const { restoreBackup: restoreBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
-        await restoreBackup2(filename);
-        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path37.default.basename(filename)}`);
-      }
-      /**
-       * Delete a specific archive.
-       */
-      deleteArchive(filename) {
-        const sanitized = import_path37.default.basename(filename);
-        if (!sanitized.endsWith(".zip")) {
-          throw new Error("Invalid archive filename");
-        }
-        const filePath = import_path37.default.join(ARCHIVES_DIR, sanitized);
-        const resolvedPath = import_path37.default.resolve(filePath);
-        if (!resolvedPath.startsWith(ARCHIVES_DIR + import_path37.default.sep)) {
-          throw new Error("Access denied");
-        }
-        if (import_fs33.default.existsSync(filePath)) {
-          import_fs33.default.unlinkSync(filePath);
-          console.log(`[Backup] Deleted archive: ${sanitized}`);
-        }
-      }
-      /**
-       * Broadcast SSE Event / UI Notification.
-       */
-      broadcastNotification(type, message) {
-        eventService.broadcast("notification", {
-          type,
-          title: "Backup System Alert",
-          message,
-          timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit", hour12: false })
-        });
-      }
-    };
-    backupRecoveryService = BackupRecoveryService.getInstance();
   }
 });
 
@@ -61132,7 +61449,10 @@ var init_utilities = __esm({
         const rows = await db2.all(
           `SELECT key, value FROM app_settings WHERE key IN (
         'backup_local_enabled', 'backup_gdrive_enabled', 'backup_telegram_enabled',
-        'backup_auto_enabled', 'backup_is_paused', 'backup_upload_log'
+        'backup_auto_enabled', 'backup_is_paused', 'backup_upload_log',
+        'backup_gdrive_folder_name', 'backup_gdrive_folder_id', 'backup_email_backup_enabled',
+        'backup_last_gdrive_upload', 'backup_last_gdrive_error', 'gmail_user', 'gmail_oauth_refresh_token',
+        'trigger_backup_time'
       )`
         );
         const settingsMap = {};
@@ -61141,8 +61461,15 @@ var init_utilities = __esm({
         }
         const localEnabled = (settingsMap["backup_local_enabled"] ?? "true") === "true";
         const gdriveEnabled = (settingsMap["backup_gdrive_enabled"] ?? "false") === "true";
+        const emailBackupEnabled = (settingsMap["backup_email_backup_enabled"] ?? "false") === "true";
         const telegramEnabled = (settingsMap["backup_telegram_enabled"] ?? "false") === "true";
         const isPaused = (settingsMap["backup_is_paused"] ?? "false") === "true";
+        const hasGdriveAuth = !!(settingsMap["gmail_oauth_refresh_token"] || process.env.GOOGLE_REFRESH_TOKEN);
+        const gdriveAccount = settingsMap["gmail_user"] || "";
+        const gdriveFolderName = settingsMap["backup_gdrive_folder_name"] || "AI Pharmacy Backups";
+        const lastGdriveUpload = settingsMap["backup_last_gdrive_upload"] || "Never";
+        const gdriveError = settingsMap["backup_last_gdrive_error"] || "";
+        const triggerBackupTime = settingsMap["trigger_backup_time"] || "21:59";
         let uploadLog = {};
         try {
           uploadLog = JSON.parse(settingsMap["backup_upload_log"] || "{}");
@@ -61150,12 +61477,12 @@ var init_utilities = __esm({
         }
         const archives = backupRecoveryService.listArchives(uploadLog);
         const lastArchive = archives[0];
-        let lastUploadDate = "Never";
+        let lastUploadDate = lastGdriveUpload !== "Never" ? lastGdriveUpload : "Never";
         let lastBackupDate = "Never";
         if (lastArchive) {
           lastBackupDate = lastArchive.date;
           const log = uploadLog[lastArchive.filename];
-          if (log && (log.gdrive || log.telegram)) {
+          if (log && (log.gdrive || log.telegram) && lastUploadDate === "Never") {
             lastUploadDate = lastArchive.date;
           }
         }
@@ -61185,12 +61512,30 @@ var init_utilities = __esm({
         if (frequency !== "off" && !isPaused) {
           nextScheduledBackup = `In ${frequency}`;
         }
+        let gdriveStatusLabel = "Not Connected";
+        if (hasGdriveAuth) {
+          if (isPaused) {
+            gdriveStatusLabel = "Paused";
+          } else if (gdriveEnabled) {
+            gdriveStatusLabel = "Enabled";
+          } else {
+            gdriveStatusLabel = "Connected (Off)";
+          }
+        }
         res.json({
           success: true,
           showRestorePopup: false,
           availableArchives: archives,
           localBackupStatus: localEnabled ? isPaused ? "Paused" : "Enabled" : "Disabled",
-          gdriveStatus: gdriveEnabled ? isPaused ? "Paused" : "Enabled" : "Disabled",
+          gdriveStatus: gdriveStatusLabel,
+          hasGdriveAuth,
+          gdriveEnabled,
+          gdriveAccount,
+          gdriveFolderName,
+          lastGdriveUpload,
+          gdriveError,
+          emailBackupEnabled,
+          triggerBackupTime,
           telegramStatus: telegramEnabled ? isPaused ? "Paused" : "Enabled" : "Disabled",
           lastBackupDate,
           lastUploadDate,
@@ -61199,7 +61544,7 @@ var init_utilities = __esm({
           preupdateBackups,
           backupStorageLocations: {
             local: "backup/archives",
-            gdrive: gdriveEnabled ? "Google Drive Cloud Storage" : "Not Configured",
+            gdrive: hasGdriveAuth ? `Google Drive (${gdriveFolderName})` : "Not Connected",
             telegram: telegramEnabled ? "Telegram Bot Notifications" : "Not Configured"
           },
           isPaused
@@ -61294,6 +61639,72 @@ var init_utilities = __esm({
         res.json({ success: true, message: newVal ? "Automatic backup paused" : "Automatic backup resumed", isPaused: newVal });
       } catch (err) {
         res.status(500).json({ error: "Failed to toggle pause: " + err.message });
+      }
+    });
+    router8.post("/backup/gdrive/toggle", async (req, res) => {
+      try {
+        const { enabled } = req.body;
+        const db2 = await dbManager.getConnection();
+        const val = enabled ? "true" : "false";
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', ?)", [val]);
+        res.json({ success: true, enabled: val === "true", message: `Google Drive auto-backup ${val === "true" ? "enabled" : "disabled"}` });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to toggle Google Drive backup: " + err.message });
+      }
+    });
+    router8.post("/backup/gdrive/test", async (req, res) => {
+      try {
+        const result = await backupRecoveryService.testGoogleDriveConnection();
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ success: false, error: "Google Drive test failed: " + err.message });
+      }
+    });
+    router8.post("/backup/gdrive/upload-now", async (req, res) => {
+      try {
+        const { createBackup: createBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
+        const result = await createBackup2("Manual Drive Upload");
+        const BACKUP_DIR3 = config.backupDir;
+        const filePath = import_path40.default.join(BACKUP_DIR3, result.filename);
+        const uploadRes = await backupRecoveryService.uploadFileToGoogleDrive(filePath, result.filename);
+        if (!uploadRes.success) {
+          return res.status(500).json({ error: uploadRes.error || "Google Drive upload failed" });
+        }
+        res.json({
+          success: true,
+          filename: result.filename,
+          fileId: uploadRes.fileId,
+          message: `Database successfully backed up and uploaded to Google Drive as ${result.filename}!`
+        });
+      } catch (err) {
+        console.error("[Backup] Drive upload-now error:", err);
+        res.status(500).json({ error: "Manual cloud backup failed: " + err.message });
+      }
+    });
+    router8.post("/backup/email-toggle", async (req, res) => {
+      try {
+        const { enabled } = req.body;
+        const db2 = await dbManager.getConnection();
+        const val = enabled ? "true" : "false";
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_email_backup_enabled', ?)", [val]);
+        res.json({ success: true, enabled: val === "true", message: `Email backup dispatch ${val === "true" ? "enabled" : "disabled"}` });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to toggle email backup: " + err.message });
+      }
+    });
+    router8.post("/backup/gdrive/folder", async (req, res) => {
+      try {
+        const { folderName } = req.body;
+        if (!folderName || !String(folderName).trim()) {
+          return res.status(400).json({ error: "Folder name is required" });
+        }
+        const safeName = String(folderName).trim();
+        const db2 = await dbManager.getConnection();
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_name', ?)", [safeName]);
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_folder_id', '')");
+        res.json({ success: true, folderName: safeName, message: `Google Drive backup folder set to '${safeName}'` });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to update folder name: " + err.message });
       }
     });
     router8.get("/gmail/test", async (req, res) => {
@@ -65037,10 +65448,14 @@ var init_settings = __esm({
     });
     router13.get("/briefing-templates/preview", async (req, res) => {
       try {
-        const { template } = req.query;
+        const { template, forceMilestone } = req.query;
         const db2 = await dbManager.getConnection();
         const { buildDailyOperationalBriefing: buildDailyOperationalBriefing2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
-        const result = await buildDailyOperationalBriefing2(db2, typeof template === "string" ? template : void 0);
+        const result = await buildDailyOperationalBriefing2(
+          db2,
+          typeof template === "string" ? template : void 0,
+          { forceMilestone: forceMilestone === "true" }
+        );
         res.json({ success: true, ...result });
       } catch (error) {
         console.error("Briefing preview error:", error);
@@ -69779,12 +70194,23 @@ var init_automation = __esm({
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        const result = await db2.run(
-          'UPDATE automation_notifications SET status = "sent_manually", error_message = NULL WHERE id = ?',
+        const existing = await db2.get("SELECT * FROM automation_notifications WHERE id = ?", [id]);
+        if (!existing) {
+          return res.status(404).json({ error: "Notification not found" });
+        }
+        await db2.run(
+          'UPDATE automation_notifications SET status = "sent_manually", resolved_at = datetime("now", "localtime"), error_message = NULL WHERE id = ?',
           [id]
         );
-        if (result.changes === 0) {
-          return res.status(404).json({ error: "Notification not found" });
+        if (existing.reference_id && (existing.type === "refill_collection" || existing.type === "refill_reminder")) {
+          const refIds = String(existing.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
+          for (const refId of refIds) {
+            await db2.run(
+              "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
+              [refId]
+            ).catch(() => {
+            });
+          }
         }
         res.json({ success: true, message: "Notification marked as sent manually" });
       } catch (err) {
@@ -80926,6 +81352,9 @@ var init_sales = __esm({
         }
         res.json({
           success: true,
+          has_scheduled_refill: scheduledRefills.length > 0,
+          scheduled_refill_count: scheduledRefills.length,
+          past_purchase_count: pastSaleMedicines.length,
           customer: customer ? {
             id: customer.id,
             name: customer.name,
@@ -90565,7 +90994,6 @@ var init_medicines = __esm({
         const id = result.lastID;
         const savedMed = await db2.get("SELECT * FROM medicines WHERE id = ?", [id]);
         await dbManager.close();
-        inventoryCache.invalidate();
         res.json({ success: true, data: savedMed });
       } catch (error) {
         await dbManager.close();
@@ -93240,7 +93668,7 @@ ${order.items || "Standard Pharmacy Order"}
       }
     });
     router55.post("/enqueue-single", async (req, res) => {
-      const { number, message, type = "crm_notification", targetName, explicitScheduledAt } = req.body || {};
+      const { number, message, type = "crm_notification", targetName, explicitScheduledAt, skipDedupe } = req.body || {};
       if (!number || !message) {
         return res.status(400).json({ error: "number and message are required" });
       }
@@ -93254,7 +93682,10 @@ ${order.items || "Standard Pharmacy Order"}
           String(message),
           type,
           targetName,
-          explicitScheduledAt
+          explicitScheduledAt,
+          void 0,
+          void 0,
+          { skipDedupe: Boolean(skipDedupe) }
         );
         res.json({
           success: true,
@@ -94836,6 +95267,17 @@ async function gracefulShutdown(signal) {
         stopScispacySidecar2();
       } catch (err) {
         console.error("Error stopping scispaCy sidecar:", err);
+      }
+    })(),
+    (async () => {
+      try {
+        const { emailService: emailService2 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
+        await Promise.race([
+          emailService2.gracefulShutdown(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Email graceful shutdown timed out")), 1500))
+        ]);
+      } catch (emailErr) {
+        console.error("Error shutting down email service:", emailErr);
       }
     })(),
     (async () => {
