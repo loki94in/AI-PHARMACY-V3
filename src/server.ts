@@ -568,13 +568,76 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
 
 server.on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
-    console.warn(`\n⚠️  Port ${PORT} is already bound by another instance of AI Pharmacy OS.`);
-    console.warn(`AI Pharmacy OS server is already running in the background. Opening app window...\n`);
-    const serverUrl = `http://localhost:${PORT}`;
+    // Smart single-instance guard: find the PID holding the port, check if it is
+    // the SAME install path as us. If it's a ghost from a different installation
+    // (e.g. an old G:\ or AppData copy), kill it and retry. Only reuse if same path.
+    const { execSync } = require('child_process') as typeof import('child_process');
+    const currentExe = process.execPath.toLowerCase().replace(/\\/g, '/');
+
+    let ownerPid: string | null = null;
+    let ownerPath: string | null = null;
+    let isSameInstall = false;
+
     try {
-      launchAppBrowser(serverUrl);
-    } catch (_) {}
-    setTimeout(() => process.exit(0), 500);
+      // Find the PID listening on PORT
+      const netstatOut = execSync(
+        `netstat -ano | findstr ":${PORT} " | findstr LISTENING`,
+        { encoding: 'utf8', timeout: 4000 }
+      ).trim();
+      const pidMatch = netstatOut.split('\n')[0]?.trim().split(/\s+/).pop();
+      if (pidMatch && /^\d+$/.test(pidMatch)) {
+        ownerPid = pidMatch;
+        // Resolve its executable path
+        try {
+          const wmicOut = execSync(
+            `wmic process where "ProcessId=${ownerPid}" get ExecutablePath /value`,
+            { encoding: 'utf8', timeout: 4000 }
+          );
+          const pathLine = wmicOut.split('\n').find(l => l.startsWith('ExecutablePath='));
+          ownerPath = pathLine?.replace('ExecutablePath=', '').trim().toLowerCase().replace(/\\/g, '/') ?? null;
+        } catch { /* wmic unavailable */ }
+
+        isSameInstall = !!ownerPath && ownerPath === currentExe;
+      }
+    } catch { /* netstat unavailable — fall through to legacy behaviour */ }
+
+    if (isSameInstall) {
+      // Truly the same install running in background — just open a window to it
+      console.warn(`[SingleInstance] Same install already running (PID ${ownerPid}). Opening app window.`);
+      const serverUrl = `http://localhost:${PORT}`;
+      try { launchAppBrowser(serverUrl); } catch (_) {}
+      setTimeout(() => process.exit(0), 500);
+    } else if (ownerPid) {
+      // Different / stale install holding the port — kill it and let this instance start fresh
+      console.warn(`[SingleInstance] Stale process PID ${ownerPid} (${ownerPath ?? 'unknown'}) holds port ${PORT}.`);
+      console.warn(`[SingleInstance] Killing stale process and retaking port...`);
+      try {
+        execSync(`taskkill /F /PID ${ownerPid}`, { timeout: 5000 });
+      } catch { /* already gone */ }
+      // Wait for port to free then retry listen
+      let retries = 0;
+      const retryListen = () => {
+        retries++;
+        server.listen(PORT, '127.0.0.1', () => {
+          console.log(`[SingleInstance] Port reclaimed after killing stale instance. Server running on http://localhost:${PORT}`);
+        });
+        server.once('error', (retryErr: any) => {
+          if (retryErr.code === 'EADDRINUSE' && retries < 10) {
+            setTimeout(retryListen, 800);
+          } else {
+            console.error('[SingleInstance] Failed to reclaim port after killing stale process:', retryErr);
+            process.exit(1);
+          }
+        });
+      };
+      setTimeout(retryListen, 1200);
+    } else {
+      // Cannot determine owner — fall back to legacy open-window behaviour
+      console.warn(`[SingleInstance] Port ${PORT} in use by unknown process. Opening browser to existing instance.`);
+      const serverUrl = `http://localhost:${PORT}`;
+      try { launchAppBrowser(serverUrl); } catch (_) {}
+      setTimeout(() => process.exit(0), 500);
+    }
   } else {
     console.error('Server startup error:', err);
   }

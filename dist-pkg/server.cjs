@@ -1360,10 +1360,11 @@ function launchAppBrowser(url, customProfileDir, onExit) {
       if (!import_fs4.default.existsSync(profileDir)) {
         import_fs4.default.mkdirSync(profileDir, { recursive: true });
       }
+      const windowModeArg = process.env.APP_WINDOW_MODE === "maximized" ? "--start-maximized" : "--start-fullscreen";
       const args = [
         `--app=${url}`,
         `--user-data-dir=${profileDir}`,
-        "--start-maximized",
+        windowModeArg,
         "--disable-extensions",
         "--disable-background-networking",
         "--disable-sync",
@@ -11365,6 +11366,11 @@ var init_telegramPrescriptionService = __esm({
 });
 
 // src/services/imageArchiveService.ts
+var imageArchiveService_exports = {};
+__export(imageArchiveService_exports, {
+  ImageArchiveService: () => ImageArchiveService,
+  imageArchiveService: () => imageArchiveService
+});
 var import_fs12, import_path14, import_url10, import_tesseract, import_adm_zip, import_node_cron, import_jimp4, __filename9, __dirname9, BASE_UPLOAD_DIR, TEMP_DIR, IMPORTANT_DIR, ImageArchiveService, imageArchiveService;
 var init_imageArchiveService = __esm({
   "src/services/imageArchiveService.ts"() {
@@ -11418,6 +11424,10 @@ var init_imageArchiveService = __esm({
         import_node_cron.default.schedule("0 2 1 * *", () => {
           console.log("Running monthly archiving job for important images...");
           void runHeavyJob("image_archive_monthly_zip", async () => this.zipMonthlyImportantImages());
+        });
+        import_node_cron.default.schedule("30 2 * * *", () => {
+          console.log("Running daily retention purge job for 90-day payment screenshots...");
+          void runHeavyJob("payment_receipts_retention_purge", async () => this.purgeExpiredPaymentScreenshots(90));
         });
         console.log("Image Archive Service background jobs initialized.");
       }
@@ -11547,6 +11557,133 @@ var init_imageArchiveService = __esm({
         } catch (err) {
           console.error("Error during monthly zipping:", err);
         }
+      }
+      /**
+       * Purges payment screenshot files older than specific days (default 90)
+       * ONLY for orders that are delivered/fulfilled and return-window closed.
+       */
+      async purgeExpiredPaymentScreenshots(daysOld = 90) {
+        let purgedCount = 0;
+        let freedBytes = 0;
+        try {
+          const { dbManager: dbManager2 } = await Promise.resolve().then(() => (init_connection(), connection_exports));
+          const db2 = await dbManager2.getConnection();
+          const candidates = await db2.all(`
+        SELECT id, payment_screenshot_path, created_at
+        FROM special_orders
+        WHERE payment_screenshot_path IS NOT NULL
+          AND (
+            delivery_status = 'delivered' 
+            OR status IN ('Fulfilled', 'Delivered')
+          )
+          AND (return_status IS NULL OR return_status = 'expired')
+          AND payment_status IN ('CONFIRMED', 'PAYMENT_CONFIRMED', 'VERIFIED')
+          AND created_at <= datetime('now', '-' || ? || ' days')
+      `, [daysOld]);
+          if (!candidates || candidates.length === 0) {
+            return { purgedCount: 0, freedBytes: 0, candidateCount: 0 };
+          }
+          const uploadsDir = import_path14.default.resolve(getAppDataDir(), "uploads");
+          const inboundDir = import_path14.default.resolve(getAppDataDir(), "data", "inbound_media");
+          for (const row of candidates) {
+            if (!row.payment_screenshot_path) continue;
+            const normalized = row.payment_screenshot_path.replace(/\\/g, "/");
+            const filename = normalized.split("/").pop();
+            if (!filename) continue;
+            const possiblePaths = [
+              import_path14.default.resolve(uploadsDir, filename),
+              import_path14.default.resolve(inboundDir, filename),
+              import_path14.default.resolve(row.payment_screenshot_path)
+            ];
+            for (const p of possiblePaths) {
+              if (import_fs12.default.existsSync(p) && import_fs12.default.statSync(p).isFile()) {
+                try {
+                  const sz = import_fs12.default.statSync(p).size;
+                  import_fs12.default.unlinkSync(p);
+                  freedBytes += sz;
+                  break;
+                } catch (unlinkErr) {
+                  console.warn(`[ImageArchiveService] Could not unlink ${p}:`, unlinkErr);
+                }
+              }
+            }
+            await db2.run(
+              `UPDATE special_orders 
+           SET payment_screenshot_path = NULL, 
+               updated_at = datetime('now') 
+           WHERE id = ?`,
+              [row.id]
+            );
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'payment_screenshot_retention_purge', ?, 'system', CURRENT_TIMESTAMP)`,
+              [
+                row.id,
+                `Payment screenshot was purged per ${daysOld}-day retention policy (order delivered & return window closed). Freed from disk.`
+              ]
+            ).catch(() => {
+            });
+            purgedCount++;
+          }
+          console.log(`[ImageArchiveService] Retention purge complete: ${purgedCount} screenshots purged, ${(freedBytes / 1024 / 1024).toFixed(2)} MB freed.`);
+          return { purgedCount, freedBytes, candidateCount: candidates.length };
+        } catch (err) {
+          console.error("[ImageArchiveService] Error during payment screenshot retention purge:", err);
+          return { purgedCount, freedBytes, candidateCount: 0 };
+        }
+      }
+      /**
+       * Returns storage stats for payment screenshots: total files, total MB, and eligible for 90-day purge.
+       */
+      async getPaymentScreenshotStorageStats(daysOld = 90) {
+        let totalFiles = 0;
+        let totalSizeBytes = 0;
+        let eligibleCount = 0;
+        let eligibleSizeBytes = 0;
+        try {
+          const uploadsDir = import_path14.default.resolve(getAppDataDir(), "uploads");
+          if (import_fs12.default.existsSync(uploadsDir)) {
+            const files = import_fs12.default.readdirSync(uploadsDir);
+            for (const file of files) {
+              if (file.startsWith("payment_proof_")) {
+                const p = import_path14.default.join(uploadsDir, file);
+                if (import_fs12.default.statSync(p).isFile()) {
+                  totalFiles++;
+                  totalSizeBytes += import_fs12.default.statSync(p).size;
+                }
+              }
+            }
+          }
+          const { dbManager: dbManager2 } = await Promise.resolve().then(() => (init_connection(), connection_exports));
+          const db2 = await dbManager2.getConnection();
+          const eligibleRows = await db2.all(`
+        SELECT id, payment_screenshot_path
+        FROM special_orders
+        WHERE payment_screenshot_path IS NOT NULL
+          AND (
+            delivery_status = 'delivered' 
+            OR status IN ('Fulfilled', 'Delivered')
+          )
+          AND (return_status IS NULL OR return_status = 'expired')
+          AND payment_status IN ('CONFIRMED', 'PAYMENT_CONFIRMED', 'VERIFIED')
+          AND created_at <= datetime('now', '-' || ? || ' days')
+      `, [daysOld]);
+          eligibleCount = eligibleRows ? eligibleRows.length : 0;
+          if (eligibleRows && eligibleRows.length > 0) {
+            for (const row of eligibleRows) {
+              if (!row.payment_screenshot_path) continue;
+              const filename = row.payment_screenshot_path.replace(/\\/g, "/").split("/").pop();
+              if (!filename) continue;
+              const p = import_path14.default.resolve(uploadsDir, filename);
+              if (import_fs12.default.existsSync(p) && import_fs12.default.statSync(p).isFile()) {
+                eligibleSizeBytes += import_fs12.default.statSync(p).size;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[ImageArchiveService] Failed to calculate storage stats:", err);
+        }
+        return { totalFiles, totalSizeBytes, eligibleCount, eligibleSizeBytes };
       }
     };
     imageArchiveService = new ImageArchiveService();
@@ -13286,6 +13423,22 @@ async function ensureSchema(dbPath) {
           const spNames = new Set(spCols.map((c) => c.name));
           if (spCols.length > 0 && !spNames.has("medicine_id")) {
             await db2.run("ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)");
+          }
+          if (spCols.length > 0) {
+            await db2.run(`
+              UPDATE special_orders
+              SET product = medicine_name
+              WHERE (product IS NULL OR product = '' OR length(product) <= 6)
+                AND medicine_name IS NOT NULL
+                AND length(medicine_name) > length(COALESCE(product, ''))
+            `);
+            await db2.run(`
+              UPDATE special_orders
+              SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
+              WHERE payment_screenshot_path IS NOT NULL
+                AND payment_screenshot_path LIKE '%uploads%'
+                AND payment_screenshot_path NOT LIKE '/uploads/%'
+            `);
           }
         } catch (_) {
         }
@@ -16271,6 +16424,20 @@ async function ensureSchema(dbPath) {
       SET discount = 0
       WHERE discount IS NULL;
     `);
+      await db2.run(`
+        UPDATE special_orders
+        SET product = medicine_name
+        WHERE (product IS NULL OR product = '' OR length(product) <= 6)
+          AND medicine_name IS NOT NULL
+          AND length(medicine_name) > length(COALESCE(product, ''))
+      `);
+      await db2.run(`
+        UPDATE special_orders
+        SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
+        WHERE payment_screenshot_path IS NOT NULL
+          AND payment_screenshot_path LIKE '%uploads%'
+          AND payment_screenshot_path NOT LIKE '/uploads/%'
+      `);
     } catch (healErr) {
       console.warn("[Database Healing] Non-critical warning, failed to run database healing checks:", healErr);
     }
@@ -31668,13 +31835,14 @@ async function notifyOwnerOfSpecialOrderPharmarackResults(payload) {
     };
     const customerMrp = payload.mrp != null && payload.mrp > 0 ? Number(payload.mrp) : null;
     const totalOrderVal = payload.totalAmount != null && payload.totalAmount > 0 ? Number(payload.totalAmount) : customerMrp ? customerMrp * payload.quantity : null;
+    const isSingleOption = payload.pharmarackOptions.length === 1;
     const resultsList = payload.pharmarackOptions.map((opt, i) => {
       const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || "Distributor";
       const rate = Number(opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? 0);
       const optMrp = Number(opt.mrp ?? 0);
       const isUnmapped = opt.mapped === false || opt.isMapped === false || opt.is_mapped === 0 || String(opt.IsMapped) === "0" || String(opt.Ismapped) === "0";
       const tag = isUnmapped ? " [Unmapped]" : "";
-      const refBadge = i === 0 ? " [Best Rate]" : i === 1 ? " [High Stock]" : "";
+      const refBadge = !isSingleOption ? i === 0 ? " [Best Rate]" : i === 1 ? " [High Stock]" : "" : "";
       let stockIndicator = "\u{1F7E2} High";
       const s = String(opt.stock ?? "").trim().toLowerCase();
       const num = parseInt(s, 10);
@@ -31720,6 +31888,15 @@ ${medLine ? "   " + medLine + "\n" : ""}${priceDetails}`;
 \u{1F3F7}\uFE0F *Customer MRP*: \u20B9${customerMrp.toFixed(2)} / ${payload.unit || "strip"}` : "";
     const totalLine = totalOrderVal != null ? `
 \u{1F4B0} *Total Order Value*: \u20B9${totalOrderVal.toFixed(2)}` : "";
+    const sectionTitle = isSingleOption ? `\u{1F69A} *Selected Distributor (From Live Search):*
+
+` : `\u{1F916} *Top ${payload.pharmarackOptions.length} Sourcing References:*
+
+`;
+    const checkPrompt = isSingleOption ? `\u{1F449} Reply *CONFIRM* (or *1*) to approve & send payment QR to customer
+\u{1F449} Reply *REJECT* to cancel` : `\u{1F449} Reply *CONFIRM* (or *1*) to approve Option 1 & send payment QR to customer
+\u{1F449} Reply *2* to choose Option 2
+\u{1F449} Reply *REJECT* to cancel`;
     const messageText = `\u{1F50D} *Special Order Verification & Sourcing*
 
 \u{1F194} *Order*: ${payload.soCode}
@@ -31728,14 +31905,10 @@ ${medLine ? "   " + medLine + "\n" : ""}${priceDetails}`;
 \u{1F48A} *Confirmed Product*: *${confirmedProductTitle}*
 \u{1F4E6} *Quantity*: ${payload.quantity} ${payload.unit || "strip"}${mrpLine}${totalLine}
 
-\u{1F916} *Top ${payload.pharmarackOptions.length} Sourcing References:*
-
-${resultsList}
+${sectionTitle}${resultsList}
 
 \u2696\uFE0F *Verification Check:*
-\u{1F449} Reply *CONFIRM* (or *1*) to approve Option 1 & send payment QR to customer
-` + (payload.pharmarackOptions.length > 1 ? `\u{1F449} Reply *2* to choose Option 2
-` : "") + `\u{1F449} Reply *REJECT* to cancel`;
+${checkPrompt}`;
     await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, "admin_escalation", "Admin / Store Owner");
     console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);
   } catch (err) {
@@ -33664,8 +33837,8 @@ async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
   try {
-    const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
+    const { getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const storeName = await getStoreMedicalName3(db2) || "AI Pharmacy";
     const trimmedOriginal = (originalMessage || "").trim();
     const echoLine = trimmedOriginal ? `We received your message: "${trimmedOriginal.slice(0, 200)}"
 
@@ -33821,14 +33994,64 @@ async function getCustomerHistory(customer) {
   const db2 = await dbManager.getConnection();
   const last10 = (customer.phone || "").replace(/\D/g, "").slice(-10);
   if (!last10) return [];
-  const rows = await db2.all(
-    `SELECT m.name AS medicine_name, pr.refill_interval_days, pr.last_refill_date, pr.next_refill_date
-     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
-     WHERE pr.patient_phone LIKE ?
-     ORDER BY pr.last_refill_date DESC LIMIT 10`,
-    [`%${last10}`]
-  );
-  return rows;
+  const combinedMeds = /* @__PURE__ */ new Map();
+  try {
+    const refillRows = await db2.all(
+      `SELECT m.name AS medicine_name, pr.quantity_needed, pr.refill_interval_days, pr.last_refill_date, pr.next_refill_date,
+              'refill' AS source_type, m.mrp AS estimated_mrp
+       FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+       WHERE pr.patient_phone LIKE ?
+       ORDER BY pr.last_refill_date DESC LIMIT 15`,
+      [`%${last10}`]
+    );
+    for (const r of refillRows) {
+      const key = (r.medicine_name || "").toLowerCase().trim();
+      if (key && !combinedMeds.has(key)) {
+        combinedMeds.set(key, { ...r, quantity_needed: r.quantity_needed || 1 });
+      }
+    }
+  } catch (_) {
+  }
+  try {
+    const soRows = await db2.all(
+      `SELECT so.product AS medicine_name, so.qty AS quantity_needed, 30 AS refill_interval_days,
+              COALESCE(so.date, so.created_at) AS last_refill_date, NULL AS next_refill_date,
+              'special_order' AS source_type, so.pharmarack_mrp AS estimated_mrp, so.pharmarack_distributor
+       FROM special_orders so
+       WHERE so.phone LIKE ? AND so.product IS NOT NULL AND TRIM(so.product) != ''
+       ORDER BY so.id DESC LIMIT 15`,
+      [`%${last10}`]
+    );
+    for (const s of soRows) {
+      const key = (s.medicine_name || "").toLowerCase().trim();
+      if (key && !combinedMeds.has(key)) {
+        combinedMeds.set(key, { ...s, quantity_needed: s.quantity_needed || 1 });
+      }
+    }
+  } catch (_) {
+  }
+  try {
+    const saleRows = await db2.all(
+      `SELECT m.name AS medicine_name, s.quantity AS quantity_needed, 30 AS refill_interval_days,
+              si.date AS last_refill_date, NULL AS next_refill_date,
+              'counter_sale' AS source_type, im.mrp AS estimated_mrp
+       FROM sales_invoices si
+       JOIN sale_items s ON s.invoice_id = si.id
+       JOIN inventory_master im ON im.id = s.inventory_id
+       JOIN medicines m ON m.id = im.medicine_id
+       WHERE (si.customer_phone_snapshot LIKE ? OR si.customer_id = ?)
+       ORDER BY si.id DESC LIMIT 10`,
+      [`%${last10}`, customer.id || 0]
+    );
+    for (const sl of saleRows) {
+      const key = (sl.medicine_name || "").toLowerCase().trim();
+      if (key && !combinedMeds.has(key)) {
+        combinedMeds.set(key, { ...sl, quantity_needed: sl.quantity_needed || 1 });
+      }
+    }
+  } catch (_) {
+  }
+  return Array.from(combinedMeds.values());
 }
 async function getCustomerContext(customer, chatId, currentMsgId) {
   const context = { purchases: [], refills: [], lastMessages: [] };
@@ -33930,6 +34153,20 @@ async function ensureClarificationsTable(db2) {
     }
     if (!colNames.has("distributor_eta")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN distributor_eta TEXT DEFAULT NULL");
+    }
+    if (!colNames.has("unrecognized_count")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN unrecognized_count INTEGER DEFAULT 0");
+    }
+    if (!colNames.has("last_bot_intent")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN last_bot_intent TEXT DEFAULT NULL");
+    }
+  } catch (_) {
+  }
+  try {
+    const chatCols = await db2.all("PRAGMA table_info(whatsapp_chats)");
+    const chatColNames = new Set(chatCols.map((c) => c.name));
+    if (!chatColNames.has("human_takeover_until")) {
+      await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN human_takeover_until DATETIME DEFAULT NULL");
     }
   } catch (_) {
   }
@@ -34182,8 +34419,8 @@ async function executeConfirmedProcurementFlow(params) {
       ]
     );
     const specialOrderId = orderRes.lastID;
-    const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const storeLabel = await getStoreMedicalName4(db2);
+    const { getStoreMedicalName: getStoreMedicalName3, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const storeLabel = await getStoreMedicalName3(db2);
     const storePhone = await getStorePhone3(db2);
     const phoneSuffix = storePhone ? `
 \u{1F4DE} ${storePhone}` : "";
@@ -34264,6 +34501,78 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
     const cleanedForAffirmative = lower.replace(/[.,!?;:()_~#*`"']/g, " ").replace(/\s+/g, " ").trim();
     const isAffirmative = /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji)$/i.test(cleanedForAffirmative) || isRefillConfirmationResponse(body);
     const isNegative = /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re)$/i.test(cleanedForAffirmative);
+    {
+      const isTimingQuery = /\b(time|timing|open|close|hours|kab|khula|band|baje|schedule|available)\b/i.test(lower);
+      const isAddressQuery = /\b(address|location|where|kahan|shop|store|map|area|near|galli|road|street)\b/i.test(lower);
+      const isCallRequest = /\b(call|phone|contact|talk|baat|karo|speak|help|pharmacist|human|operator|direct)\b/i.test(lower);
+      const isThankYou = /^(thanks|thank you|shukriya|dhanyawad|ok thank|ok thanks|theek hai|thx|ty)$/i.test(lower.replace(/[.,!?]/g, "").trim());
+      if (isTimingQuery && !isAddressQuery && !isCallRequest) {
+        try {
+          const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+          const sched = await getPharmacyOperatingSchedule2(db2);
+          const storeName = await getStoreMedicalName3(db2);
+          const timingMsg = `\u{1F550} *${storeName} \u2014 Store Hours*
+
+\u23F0 Open: *${sched.openTime}* \u2013 *${sched.closeTime}*
+` + (sched.weeklyOff ? `\u{1F5D3}\uFE0F Closed on: *${sched.weeklyOff}*
+` : "") + `
+For medicine orders, reply *1* (single), *2* (multiple), or *3* (refill).`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, timingMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+          return true;
+        } catch (_) {
+        }
+      }
+      if (isAddressQuery && !isTimingQuery && !isCallRequest) {
+        try {
+          const { getStoreAddress: getStoreAddress2, getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+          const addr = await getStoreAddress2(db2);
+          const storeName = await getStoreMedicalName3(db2);
+          const addrMsg = `\u{1F4CD} *${storeName}*
+
+` + (addr ? `${addr}
+
+` : "") + `For medicine orders, reply *1* (single), *2* (multiple), or *3* (refill).`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, addrMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+          return true;
+        } catch (_) {
+        }
+      }
+      if (isCallRequest) {
+        try {
+          const { getStorePhone: getStorePhone3, getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+          const storePhone = await getStorePhone3(db2);
+          const storeName = await getStoreMedicalName3(db2);
+          const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+          if (adminWhatsapp) {
+            const alertMsg = `\u{1F4DE} *Callback Request*
+
+\u{1F464} Customer: ${activeCustomerName || customer?.name || "Unknown"} (+91 ${(phone || "").replace(/\D/g, "").slice(-10)})
+
+_Customer sent a WhatsApp message asking to speak with a pharmacist / operator._`;
+            const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await whatsappQueueWorker3.enqueue(adminWhatsapp, alertMsg, "admin_escalation", "Owner");
+          }
+          const callMsg = `\u{1F4DE} *${storeName}*
+
+` + (storePhone ? `You can reach our pharmacist directly at:
+\u{1F4F1} *${storePhone}*
+
+` : "") + `We've also notified our counter to call you back shortly \u{1F64F}`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, callMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+          return true;
+        } catch (_) {
+        }
+      }
+      if (isThankYou) {
+        const tyMsg = `You're welcome! \u{1F64F} If you need to order any medicine, reply *1* (single), *2* (multiple), or *3* (refill / repeat prescription).`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, tyMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        return true;
+      }
+    }
     if (pending2.step === "awaiting_owner_selection") {
       const waitMsg = `Your request for *${pending2.suggested_name}* \xD7 ${pending2.quantity || 1} has been forwarded to our pharmacy for distributor confirmation.
 
@@ -34423,15 +34732,30 @@ Whenever you need any other medicine, just reply with the medicine name here!`;
             } else if (dosageGroup === "BOTTLE") {
               if (/\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES)\b/i.test(cleanName)) continue;
             }
-            seen.add(cleanName);
+            const distStr = String(item.distributor || item.supplier_name || item.distributor_name || item.storeName || "");
+            const packStr = String(item.packaging || "");
+            const dedupKey = `${cleanName}::${distStr}::${packStr}`.toLowerCase();
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
             const mrpVal = (() => {
               const n = typeof item.mrp === "number" ? item.mrp : typeof item.MRP === "number" ? item.MRP : parseFloat(String(item.mrp ?? item.MRP ?? ""));
+              return Number.isFinite(n) && n > 0 ? n : null;
+            })();
+            const rateVal = (() => {
+              const raw = item.rate ?? item.distributorPrice ?? item.ptr ?? item.PTR ?? "";
+              const n = typeof raw === "number" ? raw : parseFloat(String(raw));
               return Number.isFinite(n) && n > 0 ? n : null;
             })();
             mappedRows.push({
               name: cleanName,
               mrp: mrpVal,
-              distributor: String(item.distributor || item.supplier_name || item.distributor_name || item.storeName || "")
+              distributor: distStr,
+              storeId: item.storeId ? Number(item.storeId) : item.store_id ? Number(item.store_id) : null,
+              productId: item.productId ? String(item.productId) : item.product_id ? String(item.product_id) : null,
+              productCode: item.productCode ? String(item.productCode) : item.product_code ? String(item.product_code) : null,
+              rate: rateVal,
+              stock: item.stock !== void 0 ? String(item.stock) : item.availability !== void 0 ? String(item.availability) : null,
+              packaging: packStr
             });
             if (mappedRows.length >= 40) break;
           }
@@ -34497,8 +34821,15 @@ ${optionsList}
       }
       if (mappedRows.length === 1) {
         const singleMed = mappedRows[0];
-        const distInfo = await resolveSingleDistributorForMedicine(db2, singleMed.name);
-        const distName = distInfo?.name || singleMed.distributor || "Partner Distributor";
+        let distName = singleMed.distributor || "";
+        let distStoreId = singleMed.storeId || null;
+        let distEta = "";
+        if (!distName) {
+          const distInfo = await resolveSingleDistributorForMedicine(db2, singleMed.name);
+          distName = distInfo?.name || "Partner Distributor";
+          distStoreId = distInfo?.storeId || null;
+          distEta = distInfo?.eta || "";
+        }
         const singleMrpVal = (() => {
           const n = typeof singleMed.mrp === "number" ? singleMed.mrp : parseFloat(String(singleMed.mrp ?? ""));
           return Number.isFinite(n) && n > 0 ? n : null;
@@ -34509,7 +34840,7 @@ ${optionsList}
           `UPDATE wa_pending_clarifications 
            SET options_json = ?, suggested_name = ?, selected_option = ?, mrp = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_final_book', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [JSON.stringify({ allOptions: mappedRows, page: 0 }), singleMed.name, singleMed.name, singleMrpVal, distName, distInfo?.storeId || null, distInfo?.eta || null, pending2.phone]
+          [JSON.stringify({ allOptions: mappedRows, page: 0 }), singleMed.name, singleMed.name, singleMrpVal, distName, distStoreId, distEta || null, pending2.phone]
         );
         const bookPrompt = `\u{1F48A} *${singleMed.name}*${mrpLine}
 
@@ -34539,9 +34870,29 @@ Would you like us to check availability & book this for you?
         });
       }
       if (pickedIndex < 0 || pickedIndex >= options.length) {
-        const retryMsg = `Please reply with a number between 1 and ${options.length} to select your medicine.`;
-        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker3.enqueue(phone, retryMsg, "customer_medicine_clarification", activeCustomerName || "Customer");
+        const selCount = Number(pending2.unrecognized_count || 0);
+        if (selCount < 1) {
+          await db2.run(
+            `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [pending2.phone]
+          );
+          const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker3.enqueue(phone, `Please reply with a number between 1 and ${options.length} to select your medicine, or type *0* if it's not listed.`, "customer_medicine_clarification", activeCustomerName || "Customer");
+        } else {
+          await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+          const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker3.enqueue(phone, `I've shared your message with our counter pharmacist. They'll assist you right here in a moment \u{1F64F}`, "customer_medicine_clarification", activeCustomerName || "Customer");
+          const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+          if (adminWhatsapp) {
+            const { whatsappQueueWorker: qwAdmin } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await qwAdmin.enqueue(adminWhatsapp, `\u26A0\uFE0F *Bot Escalation*
+
+\u{1F464} ${activeCustomerName || customer?.name || "Unknown"} (+91 ${cleanDigits})
+\u{1F4AC} "${body.trim().slice(0, 100)}"
+
+_Could not pick from medicine list after 2 attempts._`, "admin_escalation", "Owner");
+          }
+        }
         return true;
       }
       const chosen = options[pickedIndex];
@@ -34628,8 +34979,8 @@ Would you like us to check availability & book this for you?
          WHERE phone = ?`,
         [formattedName, pending2.phone]
       );
-      const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-      const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
+      const { getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+      const storeName = await getStoreMedicalName3(db2) || "AI Pharmacy";
       const hoursNotice = await getStoreHoursNotice(db2);
       const { getPharmacyOperatingSchedule: getSchedForWelcome } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const schedForWelcome = await getSchedForWelcome(db2);
@@ -34707,7 +35058,7 @@ ${hoursLineForWelcome}
       const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
       if (isOne) {
         await db2.run(
-          `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
         const askMsg = `\u270D\uFE0F Please type the *medicine name* (and quantity if known).
@@ -34719,7 +35070,7 @@ Example: *Dolo 650 - 2 strips*`;
       }
       if (isTwo) {
         await db2.run(
-          `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
         const askMsg = `\u{1F4CB} Please send your *complete medicine list* with quantities.
@@ -34738,42 +35089,39 @@ _You can also send a prescription photo instead._`;
         const last10 = cleanDigits;
         let refillRows = [];
         try {
-          refillRows = await db2.all(
-            `SELECT m.name AS medicine_name, pr.quantity_needed, pr.refill_interval_days, pr.last_refill_date
-             FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
-             WHERE pr.patient_phone LIKE ? AND pr.is_active = 1 AND pr.status NOT IN ('completed','canceled')
-             ORDER BY pr.last_refill_date DESC LIMIT 10`,
-            [`%${last10}`]
-          );
+          refillRows = await getCustomerHistory({ id: customer?.id || 0, phone: last10 });
         } catch (_) {
         }
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         if (refillRows && refillRows.length > 0) {
-          const itemListText = refillRows.map(
-            (r) => `\u2022 *${r.medicine_name}* \xD7 ${r.quantity_needed || 1} strip`
-          ).join("\n");
+          const itemListText = refillRows.slice(0, 6).map((r, idx) => {
+            const tag = r.source_type === "special_order" ? " _(Past Request)_" : r.source_type === "refill" ? " _(Refill)_" : "";
+            return `${idx + 1}\uFE0F\u20E3 *${r.medicine_name}* \xD7 ${r.quantity_needed || 1} strip${tag}`;
+          }).join("\n");
           await db2.run(
-            `UPDATE wa_pending_clarifications SET step = 'awaiting_refill_choice', items_json = ?, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
-            [JSON.stringify(refillRows), pending2.phone]
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_refill_choice', items_json = ?, unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [JSON.stringify(refillRows.slice(0, 6)), pending2.phone]
           );
-          const refillMsg = `\u{1F501} *Your last prescription was:*
+          const refillMsg = `\u{1F501} *Your previous medicines on record:*
 ${itemListText}
 
-*Same as before or any changes?*
-1\uFE0F\u20E3 Same \u2014 book exactly this
+*How would you like to reorder?*
+1\uFE0F\u20E3 *ALL* \u2014 Reorder all above items
+\u{1F522} *Select* \u2014 Reply with number (e.g. *1* or *1, 2*)
+\u2795 *Combine* \u2014 e.g. *1 and also send 1 strip of Dolo 650*
 2\uFE0F\u20E3 Change quantities
-3\uFE0F\u20E3 Different medicines this time
-4\uFE0F\u20E3 Talk to pharmacist directly \u{1F4DE}`;
+3\uFE0F\u20E3 Completely new medicine list
+4\uFE0F\u20E3 Talk to pharmacist \u{1F4DE}`;
           await whatsappQueueWorker2.enqueue(phone, refillMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         } else {
           const { getStorePhone: getPhoneForRefill, getStoreMedicalName: getNameForRefill } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
           const storePhoneForRefill = await getPhoneForRefill(db2);
           const storeNameForRefill = await getNameForRefill(db2);
           await db2.run(
-            `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
             [pending2.phone]
           );
-          const noRefillMsg = `\u{1F50D} We couldn't find a previous prescription for your number.
+          const noRefillMsg = `\u{1F50D} We couldn't find a previous prescription or special order for your number.
 
 Would you like to:
 1\uFE0F\u20E3 Order a new medicine
@@ -34783,57 +35131,150 @@ Would you like to:
         }
         return true;
       }
-      const reprompt = `Please reply with:
-1\uFE0F\u20E3 Single Medicine
-2\uFE0F\u20E3 Multiple Medicines
-3\uFE0F\u20E3 Refill`;
-      const { whatsappQueueWorker: qwReprompt } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await qwReprompt.enqueue(phone, reprompt, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+      if (isAffirmative) {
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        let refillRowsForYes = [];
+        try {
+          refillRowsForYes = await getCustomerHistory({ id: customer?.id || 0, phone: cleanDigits });
+        } catch (_) {
+        }
+        if (refillRowsForYes && refillRowsForYes.length > 0) {
+          const itemListText = refillRowsForYes.slice(0, 6).map((r, idx) => {
+            const tag = r.source_type === "special_order" ? " _(Past Request)_" : r.source_type === "refill" ? " _(Refill)_" : "";
+            return `${idx + 1}\uFE0F\u20E3 *${r.medicine_name}* \xD7 ${r.quantity_needed || 1} strip${tag}`;
+          }).join("\n");
+          await db2.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_refill_choice', items_json = ?, unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [JSON.stringify(refillRowsForYes.slice(0, 6)), pending2.phone]
+          );
+          const refillMsg = `\u{1F501} *Your previous medicines on record:*
+${itemListText}
+
+*How would you like to reorder?*
+1\uFE0F\u20E3 *ALL* \u2014 Reorder all above items
+\u{1F522} *Select* \u2014 Reply with the number (e.g. *1* or *1, 2*)
+\u2795 *Combine* \u2014 e.g. *"1 and also send Dolo 650"*
+3\uFE0F\u20E3 Completely new medicine list
+4\uFE0F\u20E3 Talk to pharmacist \u{1F4DE}`;
+          await whatsappQueueWorker2.enqueue(phone, refillMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        } else {
+          await db2.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [pending2.phone]
+          );
+          const askMsg = `\u270D\uFE0F Which medicine would you like to order today?
+
+Please type the name (and quantity if known).
+Example: *Dolo 650 - 2 strips*`;
+          await whatsappQueueWorker2.enqueue(phone, askMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        }
+        return true;
+      }
+      const directMedCandidates = extractMedicineCandidates(picked);
+      const hasMedicineIntent = directMedCandidates.length > 0 && isPlausibleMedicineName(directMedCandidates[0]?.medicineName || "");
+      if (hasMedicineIntent) {
+        const detectedName = directMedCandidates[0].medicineName;
+        const detectedQty = directMedCandidates[0].quantity || 1;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        const searchingMsg = `\u{1F50D} Searching for *${detectedName}* \u2014 one moment! \u{1F48A}`;
+        await whatsappQueueWorker2.enqueue(phone, searchingMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', original_query = ?, unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [detectedName, pending2.phone]
+        );
+        return checkMedicineClarificationResponse(phone, picked, customer, chatId);
+      }
+      const currentCount = Number(pending2.unrecognized_count || 0);
+      if (currentCount < 1) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending2.phone]
+        );
+        const gentleMsg = activeCustomerName ? `Hi ${activeCustomerName.split(" ")[0]}! \u{1F60A} Would you like to *order a medicine* or *repeat your last prescription*? Just type the medicine name or reply *1* (single) / *3* (refill).` : `Hi! \u{1F60A} Would you like to order a medicine? Just type the medicine name or reply *1* (single) or *3* (refill / repeat prescription).`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, gentleMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+      } else {
+        await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        const silenceMsg = `I've shared your message with our counter pharmacist. They'll assist you right here in a moment \u{1F64F}`;
+        await whatsappQueueWorker2.enqueue(phone, silenceMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+        if (adminWhatsapp) {
+          const escalateMsg = `\u26A0\uFE0F *Bot Escalation \u2014 Customer Needs Help*
+
+\u{1F464} Customer: ${activeCustomerName || customer?.name || "Unknown"} (+91 ${cleanDigits || ""})
+\u{1F4AC} Last message: "${body.trim().slice(0, 120)}"
+
+_Customer could not complete order via bot after 2 attempts. Please take over in the WhatsApp chat._`;
+          await whatsappQueueWorker2.enqueue(adminWhatsapp, escalateMsg, "admin_escalation", "Owner");
+        }
+      }
       return true;
     }
     if (pending2.step === "awaiting_refill_choice") {
       const picked = body.trim();
-      const isOne = /^1$/.test(picked);
-      const isTwo = /^2$/.test(picked);
-      const isThree = /^3$/.test(picked);
+      const isOne = /^(1|all|same|sab|haan|ha|yes)$/i.test(picked);
+      const isTwo = /^2$/i.test(picked) || /^(change|quantit)/i.test(picked);
+      const isThree = /^3$/i.test(picked) || /^(different|new)/i.test(picked);
       const isFour = /^(4|pharmacist|doctor|call|phone|contact)$/i.test(picked);
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      if (isOne) {
-        let bundle = [];
-        try {
-          bundle = JSON.parse(pending2.items_json || "[]");
-        } catch (_) {
+      let bundle = [];
+      try {
+        bundle = JSON.parse(pending2.items_json || "[]");
+      } catch (_) {
+      }
+      const numberPicks = Array.from(new Set((picked.match(/\b([1-9])\b/g) || []).map(Number))).filter((n) => n >= 1 && n <= bundle.length);
+      const hasNewMedText = picked.length > 2 && !/^[1-4,\s]+$/.test(picked);
+      if (isOne || numberPicks.length > 0 && !isTwo && !isThree && !isFour) {
+        let finalItems = [];
+        if (isOne && numberPicks.length <= 1) {
+          finalItems = [...bundle];
+        } else if (numberPicks.length > 0) {
+          finalItems = numberPicks.map((idx) => bundle[idx - 1]);
+        } else {
+          finalItems = [...bundle];
         }
-        if (bundle.length > 0) {
-          const itemListText = bundle.map(
-            (item, idx) => `${idx + 1}. *${item.medicine_name}* \xD7 ${item.quantity_needed || 1} strip`
-          ).join("\n");
+        if (hasNewMedText) {
+          try {
+            const newCandidates = extractMedicineCandidates(picked);
+            for (const cand of newCandidates) {
+              const alreadyHas = finalItems.some((f) => (f.medicine_name || "").toLowerCase().includes(cand.medicineName.toLowerCase()));
+              if (!alreadyHas) {
+                finalItems.push({
+                  medicine_name: cand.medicineName,
+                  quantity_needed: cand.quantity || 1,
+                  source_type: "new_request"
+                });
+              }
+            }
+          } catch (_) {
+          }
+        }
+        if (finalItems.length > 0) {
+          const itemListText = finalItems.map((item, idx) => {
+            const tag = item.source_type === "new_request" ? " *(New Item)*" : "";
+            return `${idx + 1}. *${item.medicine_name}* \xD7 ${item.quantity_needed || 1} strip${tag}`;
+          }).join("\n");
           await db2.run(
-            `UPDATE wa_pending_clarifications SET step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
-            [pending2.phone]
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_confirmation', items_json = ?, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [JSON.stringify(finalItems), pending2.phone]
           );
-          const confirmMsg = `\u2705 Please confirm your refill order:
+          const confirmMsg = `\u2705 *Please confirm your combined order:*
 
 ${itemListText}
 
 Reply *YES* to confirm or *NO* to cancel.`;
           await whatsappQueueWorker2.enqueue(phone, confirmMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
-        } else {
-          await db2.run(
-            `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
-            [pending2.phone]
-          );
-          await whatsappQueueWorker2.enqueue(phone, `Please type the medicine name to order.`, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+          return true;
         }
-        return true;
       }
       if (isTwo) {
-        let bundle = [];
+        let bundle2 = [];
         try {
-          bundle = JSON.parse(pending2.items_json || "[]");
+          bundle2 = JSON.parse(pending2.items_json || "[]");
         } catch (_) {
         }
-        const existingList = bundle.length > 0 ? bundle.map((r) => `\u2022 ${r.medicine_name}`).join("\n") : "";
+        const existingList = bundle2.length > 0 ? bundle2.map((r) => `\u2022 ${r.medicine_name}`).join("\n") : "";
         await db2.run(
           `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
@@ -34880,12 +35321,29 @@ Our team will be happy to assist you! \u{1F64F}`;
         await whatsappQueueWorker2.enqueue(phone, pharmacistMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         return true;
       }
-      const repromptRefill = `Please reply with:
-1\uFE0F\u20E3 Same \u2014 book exactly this
-2\uFE0F\u20E3 Change quantities
-3\uFE0F\u20E3 Different medicines
-4\uFE0F\u20E3 Talk to pharmacist`;
-      await whatsappQueueWorker2.enqueue(phone, repromptRefill, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+      const refillChoiceCount = Number(pending2.unrecognized_count || 0);
+      if (refillChoiceCount < 1) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending2.phone]
+        );
+        const gentleRefillMsg = `Just reply with the number of the medicine you'd like to reorder (e.g. *1* or *2, 3*), or type *"all"* to reorder everything. You can also add a new medicine like *"1 and Dolo 650"*.`;
+        await whatsappQueueWorker2.enqueue(phone, gentleRefillMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+      } else {
+        await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+        const silenceMsg = `I've shared your message with our counter pharmacist. They'll assist you right here in a moment \u{1F64F}`;
+        await whatsappQueueWorker2.enqueue(phone, silenceMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+        if (adminWhatsapp) {
+          const escalateMsg = `\u26A0\uFE0F *Bot Escalation \u2014 Customer Needs Help*
+
+\u{1F464} Customer: ${activeCustomerName || customer?.name || "Unknown"} (+91 ${cleanDigits})
+\u{1F4AC} Last message: "${body.trim().slice(0, 120)}"
+
+_Customer could not select refill item after 2 attempts. Please take over in the WhatsApp chat._`;
+          await whatsappQueueWorker2.enqueue(adminWhatsapp, escalateMsg, "admin_escalation", "Owner");
+        }
+      }
       return true;
     }
     if (pending2.step === "awaiting_multi_medicine_list") {
@@ -34997,17 +35455,32 @@ Reply *YES* to confirm or *NO* to cancel.`;
             if (!isMapped) continue;
             if (!isItemInStock(item.stock ?? item.availability ?? item.Stock ?? item.Availability)) continue;
             const cleanName = (item.name || item.productName || item.fullName || "").trim();
-            if (!cleanName || seen.has(cleanName)) continue;
-            seen.add(cleanName);
+            if (!cleanName) continue;
+            const distStr = String(item.distributor || item.supplier_name || item.distributor_name || item.storeName || "");
+            const packStr = String(item.packaging || "");
+            const dedupKey = `${cleanName}::${distStr}::${packStr}`.toLowerCase();
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
             const mrpVal = (() => {
               const raw = item.mrp ?? item.MRP ?? item.Mrp ?? "";
+              const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+              return Number.isFinite(n) && n > 0 ? n : null;
+            })();
+            const rateVal = (() => {
+              const raw = item.rate ?? item.distributorPrice ?? item.ptr ?? item.PTR ?? "";
               const n = typeof raw === "number" ? raw : parseFloat(String(raw));
               return Number.isFinite(n) && n > 0 ? n : null;
             })();
             mappedCatalogHits.push({
               name: cleanName,
               mrp: mrpVal,
-              distributor: String(item.distributor || item.supplier_name || item.distributor_name || item.storeName || "")
+              distributor: distStr,
+              storeId: item.storeId ? Number(item.storeId) : item.store_id ? Number(item.store_id) : null,
+              productId: item.productId ? String(item.productId) : item.product_id ? String(item.product_id) : null,
+              productCode: item.productCode ? String(item.productCode) : item.product_code ? String(item.product_code) : null,
+              rate: rateVal,
+              stock: item.stock !== void 0 ? String(item.stock) : item.availability !== void 0 ? String(item.availability) : null,
+              packaging: packStr
             });
             if (mappedCatalogHits.length >= 40) break;
           }
@@ -35102,8 +35575,15 @@ ${optionsList}
       }
       if (mappedCatalogHits.length === 1) {
         const topMed = mappedCatalogHits[0];
-        const distInfo = await resolveSingleDistributorForMedicine(db2, topMed.name);
-        const distName = distInfo?.name || topMed.distributor || "Partner Distributor";
+        let distName = topMed.distributor || "";
+        let distStoreId = topMed.storeId || null;
+        let distEta = "";
+        if (!distName) {
+          const distInfo = await resolveSingleDistributorForMedicine(db2, topMed.name);
+          distName = distInfo?.name || "Partner Distributor";
+          distStoreId = distInfo?.storeId || null;
+          distEta = distInfo?.eta || "";
+        }
         const singleMrpVal2 = (() => {
           const n = typeof topMed.mrp === "number" ? topMed.mrp : parseFloat(String(topMed.mrp ?? ""));
           return Number.isFinite(n) && n > 0 ? n : null;
@@ -35114,7 +35594,7 @@ ${optionsList}
           `UPDATE wa_pending_clarifications
            SET suggested_name = ?, selected_option = ?, mrp = ?, original_query = ?, options_json = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP
            WHERE phone = ?`,
-          [topMed.name, topMed.name, singleMrpVal2, medQuery, JSON.stringify({ allOptions: mappedCatalogHits, page: 0 }), distName, distInfo?.storeId || null, distInfo?.eta || null, pending2.phone]
+          [topMed.name, topMed.name, singleMrpVal2, medQuery, JSON.stringify({ allOptions: mappedCatalogHits, page: 0 }), distName, distStoreId, distEta || null, pending2.phone]
         );
         let imageFile = null;
         try {
@@ -35317,12 +35797,27 @@ ${itemsText}
               if (!isMapped) continue;
               if (!isItemInStock(item.stock ?? item.availability ?? item.Stock ?? item.Availability)) continue;
               const cleanName = (item.name || item.productName || item.fullName || "").trim();
-              if (!cleanName || seen.has(cleanName)) continue;
-              seen.add(cleanName);
+              if (!cleanName) continue;
+              const distStr = String(item.distributor || item.supplier_name || item.distributor_name || item.storeName || "");
+              const packStr = String(item.packaging || "");
+              const dedupKey = `${cleanName}::${distStr}::${packStr}`.toLowerCase();
+              if (seen.has(dedupKey)) continue;
+              seen.add(dedupKey);
+              const rateVal = (() => {
+                const raw = item.rate ?? item.distributorPrice ?? item.ptr ?? item.PTR ?? "";
+                const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+                return Number.isFinite(n) && n > 0 ? n : null;
+              })();
               newMappedHits.push({
                 name: cleanName,
                 mrp: parseMrp(item.mrp ?? item.MRP ?? item.Mrp),
-                distributor: String(item.distributor || item.supplier_name || item.distributor_name || item.storeName || "")
+                distributor: distStr,
+                storeId: item.storeId ? Number(item.storeId) : item.store_id ? Number(item.store_id) : null,
+                productId: item.productId ? String(item.productId) : item.product_id ? String(item.product_id) : null,
+                productCode: item.productCode ? String(item.productCode) : item.product_code ? String(item.product_code) : null,
+                rate: rateVal,
+                stock: item.stock !== void 0 ? String(item.stock) : item.availability !== void 0 ? String(item.availability) : null,
+                packaging: packStr
               });
               if (newMappedHits.length >= 40) break;
             }
@@ -35355,8 +35850,15 @@ ${optionsList}
                 return true;
               }
               const topHit = sortedHits[0];
-              const distInfo = await resolveSingleDistributorForMedicine(db2, topHit.name);
-              const distName = distInfo?.name || topHit.distributor || "Partner Distributor";
+              let distName = topHit.distributor || "";
+              let distStoreId = topHit.storeId || null;
+              let distEta = "";
+              if (!distName) {
+                const distInfo = await resolveSingleDistributorForMedicine(db2, topHit.name);
+                distName = distInfo?.name || "Partner Distributor";
+                distStoreId = distInfo?.storeId || null;
+                distEta = distInfo?.eta || "";
+              }
               const mrpVal = parseMrp(topHit.mrp);
               const mrpStr = mrpVal != null ? `
 \u{1F3F7}\uFE0F MRP: \u20B9${mrpVal.toFixed(2)}` : "";
@@ -35367,7 +35869,7 @@ ${optionsList}
                 `UPDATE wa_pending_clarifications
                  SET suggested_name = ?, original_query = ?, mrp = ?, options_json = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP
                  WHERE phone = ?`,
-                [topHit.name, newQuery, topHit.mrp, JSON.stringify({ allOptions: sortedHits, page: 0 }), distName, distInfo?.storeId || null, distInfo?.eta || null, pending2.phone]
+                [topHit.name, newQuery, topHit.mrp, JSON.stringify({ allOptions: sortedHits, page: 0 }), distName, distStoreId, distEta || null, pending2.phone]
               );
               const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
               await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
@@ -35380,13 +35882,22 @@ ${optionsList}
         const chosen = options[chosenIndex];
         const chosenMedicine = typeof chosen === "string" ? chosen : chosen?.name || "";
         const chosenMrp = typeof chosen === "object" && chosen?.mrp != null && chosen.mrp > 0 ? Number(chosen.mrp) : null;
-        const distInfo = await resolveSingleDistributorForMedicine(db2, chosenMedicine);
-        const distName = distInfo?.name || (typeof chosen === "object" ? chosen.distributor : "") || "Partner Distributor";
+        const chosenDist = typeof chosen === "object" && chosen?.distributor ? String(chosen.distributor).trim() : "";
+        const chosenStoreId = typeof chosen === "object" && chosen?.storeId ? Number(chosen.storeId) : null;
+        let distName = chosenDist;
+        let distStoreId = chosenStoreId;
+        let distEta = "";
+        if (!distName) {
+          const distInfo = await resolveSingleDistributorForMedicine(db2, chosenMedicine);
+          distName = distInfo?.name || "Partner Distributor";
+          distStoreId = distInfo?.storeId || null;
+          distEta = distInfo?.eta || "";
+        }
         await db2.run(
           `UPDATE wa_pending_clarifications 
            SET suggested_name = ?, selected_option = ?, mrp = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [chosenMedicine, chosenMedicine, chosenMrp, distName, distInfo?.storeId || null, distInfo?.eta || null, pending2.phone]
+          [chosenMedicine, chosenMedicine, chosenMrp, distName, distStoreId, distEta || null, pending2.phone]
         );
         const mrpStr = chosenMrp ? `
 \u{1F3F7}\uFE0F MRP: \u20B9${chosenMrp.toFixed(2)}` : "";
@@ -35572,8 +36083,8 @@ Reply *1* (or *YES*) to confirm.`;
           }
           if (confirmedNames.length > 0) {
             const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-            const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-            const storeLabel = await getStoreMedicalName4(db2);
+            const { getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+            const storeLabel = await getStoreMedicalName3(db2);
             const listText = confirmedNames.map((n, i) => `${i + 1}. *${n}*`).join("\n");
             const bundleConfirmMsg = `\u2705 *Order Received!*
 
@@ -35702,6 +36213,93 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
       medUnit = medUnit || "strip";
     }
   }
+  let selectedCandidate = null;
+  try {
+    const parsed = JSON.parse(pending2.options_json || "{}");
+    const opts = Array.isArray(parsed) ? parsed : parsed.allOptions || [];
+    selectedCandidate = opts.find(
+      (o) => (o.name === pending2.selected_option || o.name === pending2.suggested_name) && (!pending2.selected_distributor || o.distributor === pending2.selected_distributor)
+    ) || opts.find((o) => o.name === pending2.selected_option || o.name === pending2.suggested_name);
+  } catch (_) {
+  }
+  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const confirmedPackaging = selectedCandidate?.packaging || pending2.suggested_name || medName;
+  const confirmedMrp = selectedCandidate?.mrp != null && selectedCandidate.mrp > 0 ? Number(selectedCandidate.mrp) : pending2.mrp != null && pending2.mrp > 0 ? Number(pending2.mrp) : null;
+  const totalOrderVal = confirmedMrp ? confirmedMrp * medQty : null;
+  const targetDist = selectedCandidate?.distributor || pending2.selected_distributor || null;
+  const targetStoreId = selectedCandidate?.storeId ? Number(selectedCandidate.storeId) : pending2.distributor_store_id ? Number(pending2.distributor_store_id) : null;
+  const targetRate = selectedCandidate?.rate != null ? Number(selectedCandidate.rate) : null;
+  const targetProdId = selectedCandidate?.productId ? String(selectedCandidate.productId) : null;
+  const targetProdCode = selectedCandidate?.productCode ? String(selectedCandidate.productCode) : null;
+  if (selectedCandidate && targetDist) {
+    const orderRes2 = await db2.run(
+      `INSERT INTO special_orders (
+         store_id, requester, phone, medicine_name, product, qty, priority, status,
+         date, notified, customer_order_source, total_amount, advance_payment, payment_status,
+         pharmarack_mrp, pharmarack_rate, distributor_name, pharmarack_distributor,
+         pharmarack_store_id, pharmarack_product_id, pharmarack_product_code, pharmarack_product_name, pharmarack_mapped
+       ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [
+        1,
+        customerName,
+        cleanDigits,
+        medName,
+        medName,
+        medQty,
+        todayStr2,
+        confirmedMrp,
+        targetRate,
+        targetDist,
+        targetDist,
+        targetStoreId,
+        targetProdId,
+        targetProdCode,
+        medName
+      ]
+    );
+    const specialOrderId2 = Number(orderRes2.lastID) || 0;
+    const soCode2 = await generateStoreSpecialOrderCode(db2, 1, specialOrderId2);
+    await db2.run(
+      `UPDATE wa_pending_clarifications
+       SET step = 'awaiting_owner_selection', special_order_id = ?, so_code = ?, customer_name = ?, created_at = CURRENT_TIMESTAMP
+       WHERE phone = ?`,
+      [specialOrderId2, soCode2, customerName, pending2.phone]
+    );
+    const exactOption = {
+      name: selectedCandidate.name || medName,
+      shortName: selectedCandidate.name || medName,
+      fullName: selectedCandidate.name || medName,
+      packaging: confirmedPackaging,
+      distributor: targetDist,
+      rate: targetRate,
+      mrp: confirmedMrp,
+      stock: selectedCandidate.stock || "Available",
+      productId: targetProdId,
+      productCode: targetProdCode,
+      storeId: targetStoreId,
+      mapped: true
+    };
+    await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
+      specialOrderId: specialOrderId2,
+      soCode: soCode2,
+      customerName,
+      customerPhone: cleanDigits,
+      medicineName: medName,
+      productName: medName,
+      quantity: medQty,
+      unit: medUnit,
+      mrp: confirmedMrp,
+      totalAmount: totalOrderVal,
+      pharmarackOptions: [exactOption]
+    });
+    const mrpSuffix = confirmedMrp != null && confirmedMrp > 0 ? ` (MRP \u20B9${confirmedMrp.toFixed(2)})` : "";
+    const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty}${mrpSuffix} has been received at our pharmacy.
+
+We will send you payment details shortly.`;
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(phone, custWaitMsg, "customer_inquiry_confirmed", customerName);
+    return true;
+  }
   const pharmaQuery = sanitizePharmarackQuery(medName);
   const coreWords = (pharmaQuery || medName).split(/\s+/).filter(Boolean);
   const word1 = coreWords[0] || medName;
@@ -35743,10 +36341,6 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
     }
   }
   const inStockCandidates = rawPharmarackItems.filter((p) => isItemInStock(p.availability ?? p.stock));
-  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const confirmedPackaging = pending2.suggested_name || medName;
-  const confirmedMrp = pending2.mrp != null && pending2.mrp > 0 ? Number(pending2.mrp) : null;
-  const totalOrderVal = confirmedMrp ? confirmedMrp * medQty : null;
   const orderRes = await db2.run(
     `INSERT INTO special_orders (
        store_id, requester, phone, medicine_name, product, qty, priority, status,
@@ -35758,7 +36352,7 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
       customerName,
       cleanDigits,
       medName,
-      confirmedPackaging,
+      medName,
       medQty,
       todayStr2,
       confirmedMrp
@@ -35794,7 +36388,7 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
       customerName,
       customerPhone: cleanDigits,
       medicineName: medName,
-      productName: confirmedPackaging,
+      productName: medName,
       quantity: medQty,
       unit: medUnit,
       mrp: confirmedMrp,
@@ -36559,9 +37153,9 @@ async function handleInbound(msg) {
           }
           if (!isManualSession) {
             try {
-              const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+              const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName3, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
               const sched = await getPharmacyOperatingSchedule2(db3);
-              const storeName = await getStoreMedicalName4(db3);
+              const storeName = await getStoreMedicalName3(db3);
               const storePhone = await getStorePhone3(db3);
               const hoursNotice = await getStoreHoursNotice(db3);
               const phoneSuffix = storePhone ? `
@@ -36611,8 +37205,8 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ?`,
         [`%${cleanDigits}`, `%${cleanDigits}%`]
       );
-      const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-      const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
+      const { getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+      const storeName = await getStoreMedicalName3(db2) || "AI Pharmacy";
       const hoursNotice = await getStoreHoursNotice(db2);
       const hasKnownName = isKnownCustomerName(customer?.name);
       if (!hasKnownName) {
@@ -36708,11 +37302,12 @@ ${hoursLineForGreet}
           [pendingPayment.phone]
         );
         if (pendingPayment.special_order_id) {
+          const webProofPath = proofImagePath ? `/uploads/payment_proof_${soCode}.jpg` : null;
           await db2.run(
             `UPDATE special_orders 
              SET payment_status = 'SCREENSHOT_RECEIVED', payment_screenshot_path = COALESCE(?, payment_screenshot_path), screenshot_amount = 50, updated_at = datetime('now') 
              WHERE id = ?`,
-            [proofImagePath || null, pendingPayment.special_order_id]
+            [webProofPath || null, pendingPayment.special_order_id]
           );
         }
         const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2) || "";
@@ -36899,11 +37494,12 @@ We will confirm your order shortly!`;
           if (pendingPayment && pendingPayment.special_order_id && imagePath) {
             const soId = pendingPayment.special_order_id;
             const soCode = pendingPayment.so_code || await generateStoreSpecialOrderCode(db2, 1, soId);
+            const webImagePath = imagePath ? `/uploads/${import_path22.default.basename(imagePath)}` : null;
             await db2.run(
               `UPDATE special_orders
                SET payment_screenshot_path = ?, screenshot_amount = 50, payment_status = 'SCREENSHOT_RECEIVED', updated_at = datetime('now')
                WHERE id = ?`,
-              [imagePath, soId]
+              [webImagePath || null, soId]
             );
             await db2.run(
               `UPDATE wa_pending_clarifications
@@ -37390,8 +37986,8 @@ async function searchAndBroadcast(opts) {
         });
         const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
         if (!toggle || toggle.value !== "false") {
-          const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-          const storeName = await getStoreMedicalName4(db2);
+          const { getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+          const storeName = await getStoreMedicalName3(db2);
           const ackMsg = `Namaste! We received your inquiry for "${medicineName}" at ${storeName}. Our pharmacist is checking availability with our distributors and will message you shortly.`;
           const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
           await whatsappQueueWorker2.enqueue(phone || chatId || "", ackMsg, "customer_inquiry_ack", customer?.name || "Customer");
@@ -38993,8 +39589,8 @@ async function syncWhatsappData(client) {
     try {
       const ownerRow = await db2.get("SELECT value FROM app_settings WHERE key = 'owner_whatsapp_number'");
       const ownerPhone = (ownerRow?.value || "").replace(/\D/g, "");
-      const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-      const storeName = await getStoreMedicalName4(db2);
+      const { getStoreMedicalName: getStoreMedicalName3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+      const storeName = await getStoreMedicalName3(db2);
       for (const chat of chats) {
         const chatId = chat.id._serialized;
         if (chat.isGroup || await isIgnoredCached(chatId)) continue;
@@ -42664,8 +43260,8 @@ async function runExpiryScanAndAlert(days = 90) {
       console.log("[ExpiryScan] No near-expiry items found to report.");
       return true;
     }
-    const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const medicalName = await getStoreMedicalName4(db2);
+    const { getStoreMedicalName: getStoreMedicalName3, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const medicalName = await getStoreMedicalName3(db2);
     const targetPhone = await getStorePhone3(db2);
     if (!targetPhone) {
       console.log("[ExpiryScan] Expiry scan completed successfully. WhatsApp notification skipped (no store phone configured in app_settings).");
@@ -51065,7 +51661,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.11";
+    APP_VERSION = "0.1.14";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -61571,6 +62167,28 @@ var init_utilities = __esm({
         res.json({ success: true, message: "Fresh installation mode set" });
       } catch (err) {
         res.status(500).json({ error: "Failed to set fresh installation mode: " + err.message });
+      }
+    });
+    router8.get("/storage/payment-proofs", async (req, res) => {
+      try {
+        const daysOld = typeof req.query.daysOld === "string" ? Math.max(1, parseInt(req.query.daysOld, 10) || 90) : 90;
+        const { imageArchiveService: imageArchiveService2 } = await Promise.resolve().then(() => (init_imageArchiveService(), imageArchiveService_exports));
+        const stats = await imageArchiveService2.getPaymentScreenshotStorageStats(daysOld);
+        res.json({ success: true, daysOld, ...stats });
+      } catch (err) {
+        console.error("[Storage] Failed to get payment proof storage stats:", err);
+        res.status(500).json({ error: err.message || "Failed to retrieve storage stats" });
+      }
+    });
+    router8.post("/storage/purge-payment-proofs", async (req, res) => {
+      try {
+        const daysOld = typeof req.body?.daysOld === "number" ? Math.max(1, req.body.daysOld) : 90;
+        const { imageArchiveService: imageArchiveService2 } = await Promise.resolve().then(() => (init_imageArchiveService(), imageArchiveService_exports));
+        const result = await imageArchiveService2.purgeExpiredPaymentScreenshots(daysOld);
+        res.json({ success: true, daysOld, ...result });
+      } catch (err) {
+        console.error("[Storage] Purge payment proofs failed:", err);
+        res.status(500).json({ error: err.message || "Failed to purge payment proofs" });
       }
     });
     router8.post("/backup/archive/restore", async (req, res) => {
@@ -73194,8 +73812,10 @@ Please collect and pay at our pharmacy counter.`;
             if (!import_fs49.default.existsSync(uploadsDir)) {
               import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            proofImagePath = import_path53.default.join(uploadsDir, `payment_proof_SO-${orderId}.jpg`);
-            import_fs49.default.writeFileSync(proofImagePath, Buffer.from(cleanBase64, "base64"));
+            const savedFileName = `payment_proof_SO-${orderId}.jpg`;
+            const diskPath = import_path53.default.join(uploadsDir, savedFileName);
+            import_fs49.default.writeFileSync(diskPath, Buffer.from(cleanBase64, "base64"));
+            proofImagePath = `/uploads/${savedFileName}`;
           } catch (saveErr) {
             console.error("[WebsiteOrdersRoute] Failed to save payment proof from portal:", saveErr);
           }
@@ -73317,10 +73937,11 @@ Thank you!
         const db2 = await dbManager.getConnection();
         const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
         if (!order) return res.status(404).json({ error: "Order not found" });
-        if (order.payment_status === "CONFIRMED" || order.payment_status === "PAYMENT_CONFIRMED") {
+        if (order.payment_status === "CONFIRMED" || order.payment_status === "PAYMENT_CONFIRMED" || order.payment_status === "VERIFIED") {
           return res.status(409).json({ error: "Payment already confirmed for this order" });
         }
-        const nextOrderStatus = order.order_type === "DELIVERY" ? "Ready" : "ORDER_READY_FOR_PICKUP";
+        const isSpecialProcurement = Boolean(order.pharmarack_distributor || order.pharmarack_product_id);
+        const nextOrderStatus = isSpecialProcurement ? "Confirmed" : order.order_type === "DELIVERY" ? "Ready" : "ORDER_READY_FOR_PICKUP";
         await db2.run(
           `UPDATE special_orders
        SET payment_status = 'PAYMENT_CONFIRMED',
@@ -73336,23 +73957,126 @@ Thank you!
         await db2.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
        VALUES (?, 'payment_confirmed', ?, ?, CURRENT_TIMESTAMP)`,
-          [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || "N/A"}. Ready for pickup.`, confirmed_by]
+          [orderId, `Payment confirmed via ${payment_method} by ${confirmed_by}. Ref: ${payment_reference || "N/A"}. Status: ${nextOrderStatus}.`, confirmed_by]
         );
+        try {
+          const existingItem = await db2.get("SELECT id FROM online_order_items WHERE order_id = ? LIMIT 1", [orderId]);
+          if (!existingItem) {
+            await db2.run(
+              `INSERT INTO online_order_items (
+             order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+              [
+                orderId,
+                order.medicine_name || order.product,
+                order.medicine_name || order.product,
+                order.qty || 1,
+                order.qty || 1,
+                order.pharmarack_mrp || 0,
+                order.pharmarack_rate || 0,
+                (order.qty || 1) * (order.pharmarack_rate || 0)
+              ]
+            );
+          }
+        } catch (itemErr) {
+          console.warn("[WebsiteOrdersRoute] Non-fatal online_order_items insert note:", itemErr);
+        }
+        let resolvedStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : 0;
+        if (!resolvedStoreId && order.pharmarack_distributor) {
+          try {
+            const dRow = await db2.get(
+              `SELECT store_id FROM distributor_catalog WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?) LIMIT 1`,
+              [order.pharmarack_distributor.trim(), `%${order.pharmarack_distributor.trim()}%`]
+            );
+            if (dRow && dRow.store_id) {
+              resolvedStoreId = Number(dRow.store_id);
+            }
+          } catch (_) {
+          }
+        }
+        const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+        const resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : order.medicine_id ? Number(order.medicine_id) : 0;
+        const resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : "";
         try {
           const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
           void addItemsToPharmarackCart2([{
-            productName: order.medicine_name || order.product,
-            product: order.medicine_name || order.product,
-            productId: order.medicine_id || 0,
-            productCode: "",
-            storeId: 0,
+            productName: resolvedProdName,
+            product: resolvedProdName,
+            productId: resolvedProdId,
+            productCode: resolvedProdCode,
+            storeId: resolvedStoreId,
             storeName: order.pharmarack_distributor || "Standard Distributor",
             qty: order.qty > 0 ? order.qty : 1,
             rate: order.pharmarack_rate || 0,
             mrp: order.pharmarack_mrp || 0,
-            packaging: "1 strip"
+            packaging: "1 strip",
+            mapped: order.pharmarack_mapped === 1
           }]).catch((err) => console.warn("[WebsiteOrdersRoute] Live cart add error on payment confirm:", err?.message || err));
         } catch (_) {
+        }
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, orderId).catch(() => `SO-TMSA-${orderId}`);
+        const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
+        const customerName = formatCustomerName(order.customer_name || order.requester || "Customer");
+        const medicineName = order.medicine_name || order.product || "Medicine";
+        const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
+        const cleanCustPhone = String(order.phone || "").replace(/\D/g, "").slice(-10);
+        await db2.run(
+          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+          [soCode, `%${orderId}`]
+        ).catch(() => {
+        });
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+          [orderId, soCode]
+        ).catch(() => {
+        });
+        const custFinalMsg = isSpecialProcurement ? `\u{1F389} Hello *${customerName}*, your medicine request is confirmed!
+
+\u{1F194} Special Order ID: ${soCode}
+
+\u{1F48A} ${medicineName}
+\u{1F4E6} Quantity: ${order.qty || 1}
+
+\u{1F4B0} Booking Amount Paid: \u20B9${amountPaid}
+
+\u{1F6D2} Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!
+
+Thank you!
+\u2014 ${storeName}` : `\u{1F389} Hello *${customerName}*, your order payment is confirmed!
+
+\u{1F194} Order ID: ${soCode}
+
+\u{1F48A} ${medicineName}
+\u{1F4E6} Quantity: ${order.qty || 1}
+
+\u{1F4B0} Amount Paid: \u20B9${amountPaid}
+
+\u2705 Your order is ${nextOrderStatus === "Ready" ? "being packed for delivery" : "ready for pickup at our counter"}.
+
+Thank you!
+\u2014 ${storeName}`;
+        if (cleanCustPhone) {
+          try {
+            await whatsappQueueWorker.enqueue(
+              cleanCustPhone,
+              custFinalMsg,
+              "customer_order_confirmed",
+              customerName
+            );
+            console.log(`[WebsiteOrdersRoute] Payment confirmation WhatsApp enqueued for ${customerName} (${cleanCustPhone}) [${soCode}]`);
+          } catch (waErr) {
+            console.warn("[WebsiteOrdersRoute] Failed to enqueue customer payment confirmation WhatsApp:", waErr);
+          }
+          try {
+            await db2.run(
+              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+           VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
+              ["whatsapp_order", customerName, cleanCustPhone, custFinalMsg, String(orderId)]
+            );
+          } catch (notifErr) {
+            console.warn("[WebsiteOrdersRoute] Failed to log automation_notification:", notifErr);
+          }
         }
         broadcastOrdersChanged();
         res.json({
@@ -73375,7 +74099,7 @@ Thank you!
           `SELECT so.*
        FROM special_orders so
        WHERE so.store_id = ?
-         AND so.payment_status = 'CONFIRMED'
+         AND (so.payment_status = 'CONFIRMED' OR so.payment_status = 'PAYMENT_CONFIRMED' OR so.payment_status = 'VERIFIED')
          AND so.pharmacy_verification_status != 'DONE'
        ORDER BY so.payment_confirmed_at ASC, so.date DESC`,
           [storeId]
@@ -76066,6 +76790,100 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
       } catch (err) {
         console.error("[CustomerPortal] Fetch customer refills error:", err);
         res.status(500).json({ error: "Failed to fetch refills" });
+      }
+    });
+    router28.get("/customer/past-medicines", async (req, res) => {
+      const customerId = req.query.customer_id ? parseInt(req.query.customer_id, 10) : null;
+      const rawPhone = req.query.phone || "";
+      const phone = normalizePhone2(rawPhone);
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.query.token);
+      if (verified && customerId && verified.customerId !== customerId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      let custId = customerId || verified?.customerId || 0;
+      const targetPhone = phone || verified?.phone || "";
+      const last10 = targetPhone.slice(-10);
+      try {
+        const db2 = await dbManager.getConnection();
+        if (!custId && last10) {
+          const cust = await db2.get(
+            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+            [targetPhone, `%${last10}`]
+          );
+          if (cust) custId = cust.id;
+        }
+        if (!custId && !last10) {
+          return res.status(400).json({ error: "customer_id or phone is required" });
+        }
+        const itemsMap = /* @__PURE__ */ new Map();
+        try {
+          const refills = await db2.all(
+            `SELECT pr.id as refill_id, m.id as medicine_id, m.name as medicine_name,
+                pr.quantity_needed as qty, pr.refill_interval_days, pr.last_refill_date,
+                pr.next_refill_date, m.mrp, m.sell_price, s.name as store_name,
+                'refill' as item_type
+         FROM patient_refills pr
+         JOIN medicines m ON m.id = pr.medicine_id
+         LEFT JOIN stores s ON s.id = pr.store_id
+         WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
+         ORDER BY pr.id DESC LIMIT 20`,
+            [custId || -1, `%${last10}%`]
+          );
+          for (const r of refills) {
+            const key = (r.medicine_name || "").toLowerCase().trim();
+            if (key && !itemsMap.has(key)) {
+              itemsMap.set(key, r);
+            }
+          }
+        } catch (_) {
+        }
+        try {
+          const specialOrders = await db2.all(
+            `SELECT so.id as special_order_id, so.product as medicine_name,
+                so.qty, so.pharmarack_mrp as mrp, so.pharmarack_rate as sell_price,
+                so.pharmarack_distributor as store_name, so.status,
+                COALESCE(so.date, so.created_at) as last_refill_date,
+                'special_order' as item_type
+         FROM special_orders so
+         WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.product IS NOT NULL AND TRIM(so.product) != ''
+         ORDER BY so.id DESC LIMIT 20`,
+            [custId || -1, `%${last10}%`]
+          );
+          for (const s of specialOrders) {
+            const key = (s.medicine_name || "").toLowerCase().trim();
+            if (key && !itemsMap.has(key)) {
+              itemsMap.set(key, s);
+            }
+          }
+        } catch (_) {
+        }
+        try {
+          const sales = await db2.all(
+            `SELECT m.id as medicine_id, m.name as medicine_name,
+                s.quantity as qty, im.mrp, s.unit_price as sell_price,
+                si.date as last_refill_date, 'counter_sale' as item_type
+         FROM sales_invoices si
+         JOIN sale_items s ON s.invoice_id = si.id
+         JOIN inventory_master im ON im.id = s.inventory_id
+         JOIN medicines m ON m.id = im.medicine_id
+         WHERE (si.customer_id = ? OR si.customer_phone_snapshot LIKE ?)
+         ORDER BY si.id DESC LIMIT 20`,
+            [custId || -1, `%${last10}%`]
+          );
+          for (const sl of sales) {
+            const key = (sl.medicine_name || "").toLowerCase().trim();
+            if (key && !itemsMap.has(key)) {
+              itemsMap.set(key, sl);
+            }
+          }
+        } catch (_) {
+        }
+        const pastMedicines = Array.from(itemsMap.values());
+        res.json({ success: true, count: pastMedicines.length, medicines: pastMedicines });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch past medicines error:", err);
+        res.status(500).json({ error: "Failed to fetch past medicines" });
       }
     });
     router28.put("/customer/phone", async (req, res) => {
@@ -87161,9 +87979,9 @@ var init_orders = __esm({
         let orders;
         try {
           if (allStores) {
-            orders = await db2.all("SELECT * FROM special_orders ORDER BY date DESC LIMIT 1000");
+            orders = await db2.all("SELECT * FROM special_orders ORDER BY created_at DESC, id DESC LIMIT 1000");
           } else {
-            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY date DESC LIMIT 1000", [storeId]);
+            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY created_at DESC, id DESC LIMIT 1000", [storeId]);
           }
         } catch (_) {
           if (allStores) {
@@ -87784,6 +88602,201 @@ ${upiUri}
         res.status(500).json({ error: "Failed to send payment QR: " + err.message });
       }
     });
+    router40.get("/:id/distributor-options", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+        const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+        await waAdminEscalationService2.ensureOwnerPendingRequestsTable?.(db2);
+        const reqRow = await db2.get(
+          `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? OR req_code LIKE ? ORDER BY id DESC LIMIT 1`,
+          [soCode, `%${id}`]
+        );
+        let options = [];
+        if (reqRow && reqRow.options_json) {
+          try {
+            const parsed = JSON.parse(reqRow.options_json);
+            options = Array.isArray(parsed) ? parsed : parsed.options || parsed.allOptions || [];
+          } catch (_) {
+          }
+        }
+        return res.json({
+          orderId: id,
+          soCode,
+          medicineName: order.medicine_name || order.product,
+          quantity: order.qty || 1,
+          currentDistributor: order.distributor_name || order.pharmarack_distributor || null,
+          currentRate: order.pharmarack_rate || null,
+          currentMrp: order.pharmarack_mrp || null,
+          paymentStatus: order.payment_status || "UNPAID",
+          status: order.status || "Pending",
+          ownerRequestStatus: reqRow?.status || null,
+          options
+        });
+      } catch (err) {
+        console.error("[Orders] Get distributor options error:", err);
+        res.status(500).json({ error: "Failed to fetch distributor options: " + err.message });
+      }
+    });
+    router40.post("/:id/confirm-distributor", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const {
+          distributor,
+          rate,
+          mrp,
+          productId,
+          productCode,
+          storeId,
+          productName,
+          sendPaymentQr = true
+        } = req.body;
+        if (!distributor) {
+          return res.status(400).json({ error: "Distributor name is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const distName = String(distributor).trim();
+        const distRate = Number(rate || 0);
+        const distMrp = Number(mrp || order.pharmarack_mrp || 0);
+        const prodId = productId ? Number(productId) : order.pharmarack_product_id || null;
+        const prodCode = productCode ? String(productCode) : order.pharmarack_product_code || null;
+        const stId = storeId ? Number(storeId) : order.pharmarack_store_id || null;
+        const prodName = productName || order.pharmarack_product_name || order.medicine_name || order.product;
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+        await db2.run(
+          `UPDATE special_orders SET
+         distributor_name = ?,
+         pharmarack_distributor = ?,
+         pharmarack_rate = ?,
+         pharmarack_mrp = ?,
+         pharmarack_product_id = ?,
+         pharmarack_product_code = ?,
+         pharmarack_store_id = ?,
+         pharmarack_product_name = ?,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [distName, distName, distRate, distMrp, prodId, prodCode, stId, prodName, id]
+        );
+        await db2.run(
+          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+          [soCode, `%${id}`]
+        ).catch(() => {
+        });
+        let qrSent = false;
+        let queueId = null;
+        if (sendPaymentQr) {
+          const cleanPhone = String(order.phone || "").replace(/\D/g, "");
+          const custPhoneLast10 = cleanPhone.slice(-10);
+          const activeQr = await paymentQrService.allocateNextQr();
+          const amount = 50;
+          const medicineTitle = prodName || order.medicine_name || order.product || "Medicine";
+          const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
+          const fullQrPath = await paymentQrService.generatePaymentCard({
+            upiUri,
+            orderNumber: soCode,
+            medicineName: medicineTitle,
+            amount,
+            payeeName: activeQr.payee_name,
+            upiId: activeQr.upi_id,
+            filename: `payment_card_${soCode}.png`
+          });
+          await db2.run(
+            `UPDATE special_orders SET
+           payment_qr_id = ?,
+           payment_status = 'AWAITING_PAYMENT',
+           advance_payment = ?,
+           total_amount = ?
+         WHERE id = ?`,
+            [activeQr.id, amount, amount, id]
+          );
+          if (custPhoneLast10) {
+            await db2.run(
+              `UPDATE wa_pending_clarifications
+           SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
+           WHERE phone LIKE ? OR phone LIKE ?`,
+              [id, soCode, `%${custPhoneLast10}`, `%${custPhoneLast10}%`]
+            ).catch(() => {
+            });
+          }
+          const mrpLine = distMrp > 0 ? `
+\u{1F3F7}\uFE0F *MRP*: \u20B9${distMrp.toFixed(2)}` : "";
+          const custQrMsg = `\u2705 *Medicine Request Confirmed*
+
+\u{1F194} *Special Order*: ${soCode}
+\u{1F48A} *Medicine*: ${medicineTitle}
+\u{1F4E6} *Quantity*: ${order.qty || 1}${mrpLine}
+
+\u{1F510} *Booking Advance Amount*: \u20B9${amount.toFixed(2)}
+
+Please pay the \u20B9${amount.toFixed(2)} booking amount using the QR card attached above.
+
+\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
+\u{1F464} *Payee*: ${activeQr.payee_name}
+
+\u{1F449} *Or tap to pay directly on this phone*:
+${upiUri}
+
+\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
+          let custTarget = cleanPhone;
+          if (custPhoneLast10) {
+            const activeChat = await db2.get(
+              `SELECT id FROM whatsapp_chats 
+           WHERE (resolved_number LIKE ? OR id LIKE ?) 
+           ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC LIMIT 1`,
+              [`%${custPhoneLast10}%`, `%${custPhoneLast10}%`]
+            ).catch(() => null);
+            if (activeChat?.id) {
+              custTarget = activeChat.id;
+            }
+          }
+          if (custTarget) {
+            queueId = await whatsappQueueWorker.enqueue(
+              custTarget,
+              custQrMsg,
+              "customer_payment_qr",
+              order.requester || "Customer",
+              void 0,
+              fullQrPath
+            ).catch((err) => {
+              console.warn("[Orders] QR image enqueue failed, falling back to text:", err?.message || err);
+              return whatsappQueueWorker.enqueue(
+                custTarget,
+                custQrMsg + `
+
+\u{1F517} *Pay via UPI link*:
+${upiUri}`,
+                "customer_payment_qr",
+                order.requester || "Customer"
+              ).catch(() => null);
+            });
+            qrSent = true;
+          }
+        }
+        broadcastOrdersChanged2();
+        return res.json({
+          success: true,
+          orderId: id,
+          distributor: distName,
+          rate: distRate,
+          mrp: distMrp,
+          qrSent,
+          queueId,
+          message: qrSent ? `Distributor ${distName} confirmed and \u20B950 payment QR dispatched to customer on WhatsApp!` : `Distributor ${distName} assigned to order #${id}.`
+        });
+      } catch (err) {
+        console.error("[Orders] Confirm distributor error:", err);
+        res.status(500).json({ error: "Failed to confirm distributor: " + err.message });
+      }
+    });
     router40.post("/:id/mark-advance-paid", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
@@ -87811,6 +88824,58 @@ ${upiUri}
             mapped: order.pharmarack_mapped === 1
           }]).catch((err) => console.warn("[Orders] Live cart add error on mark-advance-paid:", err?.message || err));
         } catch (_) {
+        }
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+        const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
+        const customerName = formatCustomerName(order.customer_name || order.requester || "Customer");
+        const medicineName = order.medicine_name || order.product || "Medicine";
+        const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
+        const cleanCustPhone = String(order.phone || "").replace(/\D/g, "").slice(-10);
+        await db2.run(
+          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+          [soCode, `%${id}`]
+        ).catch(() => {
+        });
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+          [id, soCode]
+        ).catch(() => {
+        });
+        const custFinalMsg = `\u{1F389} Hello *${customerName}*, your medicine request is confirmed!
+
+\u{1F194} Special Order ID: ${soCode}
+
+\u{1F48A} ${medicineName}
+\u{1F4E6} Quantity: ${order.qty || 1}
+
+\u{1F4B0} Booking Amount Paid: \u20B9${amountPaid}
+
+\u{1F6D2} Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!
+
+Thank you!
+\u2014 ${storeName}`;
+        if (cleanCustPhone) {
+          try {
+            await whatsappQueueWorker.enqueue(
+              cleanCustPhone,
+              custFinalMsg,
+              "customer_order_confirmed",
+              customerName
+            );
+            console.log(`[Orders] Payment confirmation WhatsApp enqueued for ${customerName} (${cleanCustPhone}) [${soCode}]`);
+          } catch (waErr) {
+            console.warn("[Orders] Failed to enqueue customer payment confirmation WhatsApp:", waErr);
+          }
+          try {
+            await db2.run(
+              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+           VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
+              ["whatsapp_order", customerName, cleanCustPhone, custFinalMsg, String(id)]
+            );
+          } catch (notifErr) {
+            console.warn("[Orders] Failed to log automation_notification:", notifErr);
+          }
         }
         broadcastOrdersChanged2();
         return res.json({
@@ -95181,6 +96246,13 @@ async function setupCrons(db2) {
     } catch (amErr) {
       console.warn("[Boot] AutoMatchWorker initialization skipped:", amErr);
     }
+    try {
+      const { imageArchiveService: imageArchiveService2 } = await Promise.resolve().then(() => (init_imageArchiveService(), imageArchiveService_exports));
+      imageArchiveService2.initJobs();
+      console.log("[Boot] Image archive & retention purge service initialized.");
+    } catch (iaErr) {
+      console.warn("[Boot] ImageArchiveService initialization skipped:", iaErr);
+    }
   } catch (err) {
     bootWorkerFailures++;
     console.warn("[Boot] WhatsApp intent service registration skipped:", err);
@@ -95636,16 +96708,72 @@ var init_server = __esm({
     });
     server.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
-        console.warn(`
-\u26A0\uFE0F  Port ${PORT} is already bound by another instance of AI Pharmacy OS.`);
-        console.warn(`AI Pharmacy OS server is already running in the background. Opening app window...
-`);
-        const serverUrl = `http://localhost:${PORT}`;
+        const { execSync: execSync7 } = require("child_process");
+        const currentExe = process.execPath.toLowerCase().replace(/\\/g, "/");
+        let ownerPid = null;
+        let ownerPath = null;
+        let isSameInstall = false;
         try {
-          launchAppBrowser(serverUrl);
-        } catch (_) {
+          const netstatOut = execSync7(
+            `netstat -ano | findstr ":${PORT} " | findstr LISTENING`,
+            { encoding: "utf8", timeout: 4e3 }
+          ).trim();
+          const pidMatch = netstatOut.split("\n")[0]?.trim().split(/\s+/).pop();
+          if (pidMatch && /^\d+$/.test(pidMatch)) {
+            ownerPid = pidMatch;
+            try {
+              const wmicOut = execSync7(
+                `wmic process where "ProcessId=${ownerPid}" get ExecutablePath /value`,
+                { encoding: "utf8", timeout: 4e3 }
+              );
+              const pathLine = wmicOut.split("\n").find((l) => l.startsWith("ExecutablePath="));
+              ownerPath = pathLine?.replace("ExecutablePath=", "").trim().toLowerCase().replace(/\\/g, "/") ?? null;
+            } catch {
+            }
+            isSameInstall = !!ownerPath && ownerPath === currentExe;
+          }
+        } catch {
         }
-        setTimeout(() => process.exit(0), 500);
+        if (isSameInstall) {
+          console.warn(`[SingleInstance] Same install already running (PID ${ownerPid}). Opening app window.`);
+          const serverUrl = `http://localhost:${PORT}`;
+          try {
+            launchAppBrowser(serverUrl);
+          } catch (_) {
+          }
+          setTimeout(() => process.exit(0), 500);
+        } else if (ownerPid) {
+          console.warn(`[SingleInstance] Stale process PID ${ownerPid} (${ownerPath ?? "unknown"}) holds port ${PORT}.`);
+          console.warn(`[SingleInstance] Killing stale process and retaking port...`);
+          try {
+            execSync7(`taskkill /F /PID ${ownerPid}`, { timeout: 5e3 });
+          } catch {
+          }
+          let retries = 0;
+          const retryListen = () => {
+            retries++;
+            server.listen(PORT, "127.0.0.1", () => {
+              console.log(`[SingleInstance] Port reclaimed after killing stale instance. Server running on http://localhost:${PORT}`);
+            });
+            server.once("error", (retryErr) => {
+              if (retryErr.code === "EADDRINUSE" && retries < 10) {
+                setTimeout(retryListen, 800);
+              } else {
+                console.error("[SingleInstance] Failed to reclaim port after killing stale process:", retryErr);
+                process.exit(1);
+              }
+            });
+          };
+          setTimeout(retryListen, 1200);
+        } else {
+          console.warn(`[SingleInstance] Port ${PORT} in use by unknown process. Opening browser to existing instance.`);
+          const serverUrl = `http://localhost:${PORT}`;
+          try {
+            launchAppBrowser(serverUrl);
+          } catch (_) {
+          }
+          setTimeout(() => process.exit(0), 500);
+        }
       } else {
         console.error("Server startup error:", err);
       }

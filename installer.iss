@@ -43,8 +43,8 @@ AppVerName={#MyAppName} {#MyAppVersion} (Portable)
 AppPublisher={#MyAppPublisher}
 SetupIconFile={#MyAppIcon}
 
-; Smart default directory: prefers D:\ or E:\ if present to protect C: drive space
-DefaultDirName={code:GetDefaultInstallDir}
+; Always install to the user's LocalAppData — standardized single location, no drive conflicts
+DefaultDirName={localappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 DisableDirPage=no
@@ -169,16 +169,7 @@ Name: "{app}\updates\staging"; Permissions: users-full
 
 [Code]
 
-function GetDefaultInstallDir(Param: String): String;
-begin
-  // Prioritize secondary drives (D:\, E:\) to protect C: drive space and ensure long-term stability
-  if DirExists('D:\') then
-    Result := 'D:\AI Pharmacy OS'
-  else if DirExists('E:\') then
-    Result := 'E:\AI Pharmacy OS'
-  else
-    Result := ExpandConstant('{localappdata}\{#MyAppName}');
-end;
+// Install path is always {localappdata}\AI Pharmacy OS — no GetDefaultInstallDir needed.
 
 function VCRedistFilePresent: Boolean;
 begin
@@ -349,108 +340,47 @@ begin
   end;
 end;
 
-var
-  DataDirPage: TInputDirWizardPage;
-
-procedure InitializeWizard;
-var
-  DefaultDataPath: String;
-begin
-  if DirExists('D:\') then
-    DefaultDataPath := 'D:\AI_Pharmacy_Data'
-  else if DirExists('E:\') then
-    DefaultDataPath := 'E:\AI_Pharmacy_Data'
-  else
-    DefaultDataPath := ExpandConstant('{app}\data');
-
-  DataDirPage := CreateInputDirPage(
-    wpSelectDir,
-    'Select Database & Storage Location',
-    'Where should AI Pharmacy OS store your database, patient history, and bill uploads?',
-    'Select the folder or drive for your pharmacy data. We recommend selecting D:\ or E:\ so your C: drive never runs out of space over years of usage.' + #13#10#13#10 +
-    'Click Next to use this folder, or click Browse to select a different folder or drive.',
-    False,
-    'New Folder'
-  );
-  DataDirPage.Add('Data directory:');
-  DataDirPage.Values[0] := DefaultDataPath;
-end;
-
+// Data directory is always {app}\data — beside the exe, no separate drive wizard.
+// This eliminates the root cause of dual-install conflicts (DATA_DIR pointing to G:\ etc.)
 function GetDataDir(Param: String): String;
 begin
-  if (DataDirPage <> nil) and (DataDirPage.Values[0] <> '') then
-    Result := DataDirPage.Values[0]
-  else if DirExists('D:\') then
-    Result := 'D:\AI_Pharmacy_Data'
-  else if DirExists('E:\') then
-    Result := 'E:\AI_Pharmacy_Data'
-  else
-    Result := ExpandConstant('{app}\data');
+  Result := ExpandConstant('{app}\data');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   AppDir: String;
-  TargetDataDir: String;
   EnvFilePath: String;
   EnvLines: TArrayOfString;
   I: Integer;
   DataDirFound: Boolean;
-  NewEnvContent: String;
 begin
   if CurStep = ssPostInstall then
   begin
     AppDir := ExpandConstant('{app}');
-    TargetDataDir := GetDataDir('');
-
-    // 1. Provision storage directory structure on chosen drive
-    ForceDirectories(TargetDataDir);
-    ForceDirectories(TargetDataDir + '\data');
-    ForceDirectories(TargetDataDir + '\uploads');
-    ForceDirectories(TargetDataDir + '\uploads\temp');
-    ForceDirectories(TargetDataDir + '\backup');
-
-    // 2. Copy seed catalog files into chosen data directory if not already present
-    if FileExists(AppDir + '\data\reference_medicines.csv') and (not FileExists(TargetDataDir + '\data\reference_medicines.csv')) then
-      FileCopy(AppDir + '\data\reference_medicines.csv', TargetDataDir + '\data\reference_medicines.csv', False);
-
-    if FileExists(AppDir + '\data\medicine_reference_seed.json') and (not FileExists(TargetDataDir + '\data\medicine_reference_seed.json')) then
-      FileCopy(AppDir + '\data\medicine_reference_seed.json', TargetDataDir + '\data\medicine_reference_seed.json', False);
-
-    // 3. Inject or update DATA_DIR in {app}\.env
+    // Data always lives in {app}\data — already created by [Dirs] section
+    // Remove any stale DATA_DIR line from .env so the app uses its built-in default
     EnvFilePath := AppDir + '\.env';
-    DataDirFound := False;
     if FileExists(EnvFilePath) then
     begin
       if LoadStringsFromFile(EnvFilePath, EnvLines) then
       begin
-        for I := 0 to GetArrayLength(EnvLines) - 1 do
+        DataDirFound := False;
+        for I := GetArrayLength(EnvLines) - 1 downto 0 do
         begin
+          // Strip any DATA_DIR= line — app resolves data dir automatically beside the exe
           if Copy(EnvLines[I], 1, 9) = 'DATA_DIR=' then
           begin
-            EnvLines[I] := 'DATA_DIR=' + TargetDataDir;
+            // Remove this element by shifting down
+            SetArrayLength(EnvLines, GetArrayLength(EnvLines) - 1);
             DataDirFound := True;
           end;
         end;
-        if not DataDirFound then
-        begin
-          SetArrayLength(EnvLines, GetArrayLength(EnvLines) + 1);
-          EnvLines[GetArrayLength(EnvLines) - 1] := 'DATA_DIR=' + TargetDataDir;
-        end;
-        SaveStringsToFile(EnvFilePath, EnvLines, False);
+        if DataDirFound then
+          SaveStringsToFile(EnvFilePath, EnvLines, False);
       end;
-    end
-    else
-    begin
-      NewEnvContent := 'PORT=5175' + #13#10 +
-                       'NODE_ENV=production' + #13#10 +
-                       'AUTO_OPEN_BROWSER=true' + #13#10 +
-                       'SINGLE_PROCESS_WORKERS=true' + #13#10 +
-                       'DATA_DIR=' + TargetDataDir + #13#10;
-      SaveStringToFile(EnvFilePath, NewEnvContent, False);
     end;
-
-    Sleep(3000);
+    Sleep(2000);
   end;
 end;
 
