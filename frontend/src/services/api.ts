@@ -1479,6 +1479,12 @@ export const api = {
     apiClient.post<{ success: boolean; queue_id?: number; message: string }>(`/orders/${id}/send-payment-qr`).then(res => res.data),
   markSpecialOrderAdvancePaid: (id: number) =>
     apiClient.post<{ success: boolean; message: string }>(`/orders/${id}/mark-advance-paid`).then(res => res.data),
+  restoreOrder: (id: number, data?: { restored_by?: string; notes?: string }) =>
+    apiClient.post<{ success: boolean; message?: string; error?: string; order_id?: number }>(`/orders/${id}/restore`, data || {}).then(res => res.data),
+  getOrderItems: (id: number) =>
+    apiClient.get<{ success: boolean; orderId?: number; items: any[]; error?: string }>(`/orders/${id}/items`).then(res => res.data),
+  updateOrderItems: (id: number, data: { items: any[]; removed_item_ids?: number[]; notes?: string; send_whatsapp?: boolean; advance_payment?: number }) =>
+    apiClient.put<{ success: boolean; message?: string; error?: string; order_id?: number; items?: any[]; total_amount?: number; qty?: number }>(`/orders/${id}/items`, data).then(res => res.data),
 
   // Expiry Monitor
   getExpiryList: (paramsOrDays?: number | { days?: number; date_from?: string; date_to?: string }) => {

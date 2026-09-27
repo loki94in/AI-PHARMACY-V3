@@ -1551,6 +1551,245 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
 router.post('/:id/status', handleStatusUpdate);
 router.put('/:id/status', handleStatusUpdate);
 
+// Restore a cancelled order
+router.post('/:id/restore', async (req, res) => {
+  const { id } = req.params;
+  const { restored_by = 'Staff Pharmacist', notes = '' } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    await initOrdersTable(db);
+
+    const existing = await db.get('SELECT * FROM special_orders WHERE id = ?', id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (existing.status !== 'Cancelled') {
+      return res.status(400).json({ error: 'Order is not cancelled' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      await db.run(
+        `UPDATE special_orders
+         SET status = 'Pending',
+             pharmacy_verification_status = 'PENDING',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [id]
+      );
+
+      await db.run(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_restored', ?, ?, CURRENT_TIMESTAMP)`,
+        [id, `Order restored to Pending by ${restored_by}. ${notes ? `Note: ${notes}` : ''}`.trim(), restored_by]
+      ).catch(() => {});
+
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+
+    broadcastOrdersChanged();
+    res.json({ success: true, message: 'Order restored to Pending successfully' });
+  } catch (err: any) {
+    console.error('Restore order error:', err);
+    res.status(500).json({ error: 'Internal server error: ' + (err?.message || '') });
+  }
+});
+
+// Fetch Order Line Items
+router.get('/:id/items', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await dbManager.getConnection();
+    await initOrdersTable(db);
+
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const items = await db.all(
+      `SELECT id, order_id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, sell_price, subtotal, item_status
+       FROM online_order_items
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+      [id]
+    );
+
+    if (items && items.length > 0) {
+      return res.json({ success: true, orderId: Number(id), items });
+    }
+
+    // Fallback single item from special_orders row
+    const fallbackItem = {
+      id: 0,
+      order_id: order.id,
+      medicine_id: order.medicine_id || null,
+      product_name: order.product || order.medicine_name || 'Medicine',
+      requested_qty: order.qty || 1,
+      confirmed_qty: order.qty || 1,
+      mrp: order.pharmarack_mrp || 0,
+      sell_price: order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0,
+      subtotal: (order.qty || 1) * (order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0),
+      item_status: 'PENDING'
+    };
+
+    return res.json({ success: true, orderId: Number(id), items: [fallbackItem] });
+  } catch (err: any) {
+    console.error('Get order items error:', err);
+    res.status(500).json({ error: 'Failed to fetch order items' });
+  }
+});
+
+// Modify Order Line Items (Edit, Add, Remove)
+router.put('/:id/items', async (req, res) => {
+  const { id } = req.params;
+  const { items, removed_item_ids, notes, send_whatsapp, advance_payment } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'At least one medicine item is required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    await initOrdersTable(db);
+
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      // 1. Remove deleted items
+      if (Array.isArray(removed_item_ids) && removed_item_ids.length > 0) {
+        for (const remId of removed_item_ids) {
+          const numId = Number(remId);
+          if (numId > 0) {
+            await db.run('DELETE FROM online_order_items WHERE order_id = ? AND id = ?', [id, numId]);
+          }
+        }
+      }
+
+      // 2. Insert or update items
+      for (const it of items) {
+        const prodName = String(it.product_name || it.product || it.name || '').trim();
+        if (!prodName) continue;
+        const qty = Math.max(1, parseInt(String(it.requested_qty || it.qty || 1), 10) || 1);
+        const mrp = Number(it.mrp || 0);
+        const sellPrice = Number(it.sell_price !== undefined ? it.sell_price : (it.rate !== undefined ? it.rate : mrp));
+        const subtotal = qty * sellPrice;
+        const itemId = Number(it.id || 0);
+        const medId = it.medicine_id ? Number(it.medicine_id) : null;
+
+        if (itemId > 0) {
+          const existingItem = await db.get('SELECT id FROM online_order_items WHERE id = ? AND order_id = ?', [itemId, id]);
+          if (existingItem) {
+            await db.run(
+              `UPDATE online_order_items
+               SET product_name = ?, product_name_snapshot = ?, requested_qty = ?, mrp = ?, sell_price = ?, subtotal = ?
+               WHERE id = ? AND order_id = ?`,
+              [prodName, prodName, qty, mrp, sellPrice, subtotal, itemId, id]
+            );
+          } else {
+            await db.run(
+              `INSERT INTO online_order_items
+               (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+              [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+            );
+          }
+        } else {
+          await db.run(
+            `INSERT INTO online_order_items
+             (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+            [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+          );
+        }
+      }
+
+      // 3. Query all updated items
+      const currentItems = await db.all('SELECT * FROM online_order_items WHERE order_id = ? ORDER BY id ASC', [id]);
+      if (currentItems.length === 0) {
+        throw new Error('Order must contain at least one item');
+      }
+
+      const totalAmount = currentItems.reduce((acc: number, it: any) => acc + (Number(it.subtotal) || 0), 0);
+      const totalQty = currentItems.reduce((acc: number, it: any) => acc + (Number(it.requested_qty) || 1), 0);
+      const summaryProduct = currentItems.length === 1
+        ? currentItems[0].product_name
+        : `${currentItems[0].product_name} (+${currentItems.length - 1} more)`;
+
+      const newNotes = notes !== undefined ? notes : order.notes;
+      const newAdvance = advance_payment !== undefined && advance_payment !== null ? Number(advance_payment) : order.advance_payment;
+
+      // 4. Update special_orders header
+      await db.run(
+        `UPDATE special_orders
+         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, id]
+      );
+
+      // 5. Audit trail
+      await db.run(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_modified', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+        [id, `Order modified: ${currentItems.length} items total (₹${totalAmount.toFixed(2)})`]
+      ).catch(() => {});
+
+      await db.run('COMMIT');
+
+      // 6. Human-in-the-Loop WhatsApp notification
+      if (Boolean(send_whatsapp) && order.phone) {
+        const cleanPhone = String(order.phone).replace(/\D/g, '');
+        if (cleanPhone.length >= 10) {
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
+          const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, Number(id)).catch(() => `SO-TMSA-${id}`);
+          const storeName = (await getStoreMedicalName(db, order.store_id || 1)) || 'AI Pharmacy';
+          const custName = formatCustomerName(order.requester || 'Customer');
+
+          const itemsText = currentItems.map((it: any, idx: number) => {
+            const itemPrice = Number(it.subtotal || 0).toFixed(2);
+            return `${idx + 1}. *${it.product_name}* × ${it.requested_qty} (₹${itemPrice})`;
+          }).join('\n');
+
+          const waMsg =
+            `📝 Hello *${custName}*,\n\n` +
+            `Your order *${soCode}* has been updated:\n\n` +
+            `${itemsText}\n\n` +
+            `💰 *Updated Total*: ₹${totalAmount.toFixed(2)}\n\n` +
+            `We are preparing your order. Thank you!\n— ${storeName}`;
+
+          void whatsappQueueWorker.enqueue(
+            formattedPhone,
+            waMsg,
+            'order_modified',
+            custName
+          ).catch((waErr: any) => console.warn('[Orders] Failed to enqueue WhatsApp on modify:', waErr));
+        }
+      }
+
+      broadcastOrdersChanged();
+
+      res.json({
+        success: true,
+        message: 'Order items updated successfully',
+        order_id: Number(id),
+        items: currentItems,
+        total_amount: totalAmount,
+        qty: totalQty
+      });
+    } catch (txErr: any) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+  } catch (err: any) {
+    console.error('Modify order items error:', err);
+    res.status(500).json({ error: 'Failed to modify order items: ' + (err?.message || 'Unknown error') });
+  }
+});
+
 // Delete an order
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;

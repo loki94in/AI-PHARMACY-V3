@@ -5,7 +5,7 @@ import { apiClient, api, type CompactInventoryItem } from '../../services/api';
 import {
   RefreshCw, Send, Users, MessageSquare, Phone, Calendar,
   CheckCircle2, AlertCircle, Clock, Search, Repeat2, Bell,
-  MessageCircle, Check, Package, Mail, ExternalLink, LogOut, Zap, Copy, FileText, X, Plus, Trash2, Sliders, ChevronDown, ChevronUp, ClipboardList, ShoppingCart, AlertTriangle, Pencil, Edit2, RotateCcw, Globe, Pill, QrCode
+  MessageCircle, Check, Package, Mail, ExternalLink, LogOut, Zap, Copy, FileText, X, Plus, Trash2, Sliders, ChevronDown, ChevronUp, ClipboardList, ShoppingCart, AlertTriangle, Pencil, Edit2, Edit3, RotateCcw, Globe, Pill, QrCode
 } from 'lucide-react';
 import { toastEvent, specialOrdersEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
@@ -21,6 +21,7 @@ import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { EnquiriesSection } from './EnquiriesSection';
 import { MedicineVisualReferenceModal } from '../../components/MedicineVisualReferenceModal';
 import { CallTaskBoard, CallTaskBadge } from '../../components/CallTaskBoard';
+import { OrderModifyModal } from '../../components/OrderModifyModal';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -4313,6 +4314,8 @@ const SpecialOrdersSection: React.FC = () => {
   } | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [modifyingOrder, setModifyingOrder] = useState<any | null>(null);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
 
   interface CartAdjustmentNotice {
     productName: string;
@@ -4825,6 +4828,25 @@ const SpecialOrdersSection: React.FC = () => {
     }
   };
 
+  const handleRestoreOrder = async (orderId: number) => {
+    if (restoringId === orderId) return;
+    setRestoringId(orderId);
+    try {
+      const res = await api.restoreOrder(orderId, { notes: 'Restored from cancelled status by staff' });
+      if (res?.success) {
+        toastEvent.trigger(res.message || 'Special request restored to Pending status successfully!', 'success', '/crm');
+        await loadOrders();
+        specialOrdersEvent.triggerUpdated();
+      } else {
+        toastEvent.trigger(res?.error || res?.message || 'Failed to restore order', 'error', '/crm');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to restore order', 'error', '/crm');
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
   const handleConvertToRefill = async (order: SpecialOrderItem) => {
     const daysStr = prompt(`Enter refill frequency in days for "${order.product}" (e.g. 30):`, '30');
     if (daysStr === null) return;
@@ -5165,7 +5187,8 @@ const SpecialOrdersSection: React.FC = () => {
     else if (statusFilter === 'Ordered') matchesStatus = o.status === 'Ordered';
     else if (statusFilter === 'Waiting') matchesStatus = o.status === 'Waiting';
     else if (statusFilter === 'Arrived') matchesStatus = o.status === 'Ready' || o.status === 'Arrived';
-    else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled';
+    else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled' && o.status !== 'Cancelled';
+    else if (statusFilter === 'Cancelled') matchesStatus = o.status === 'Cancelled';
 
     if (!matchesStatus) return false;
 
@@ -5414,6 +5437,29 @@ const SpecialOrdersSection: React.FC = () => {
               <span>Refill</span>
             </button>
 
+            {/* Restore Cancelled Request */}
+            {order.status === 'Cancelled' && (
+              <button
+                onClick={() => handleRestoreOrder(order.id)}
+                disabled={restoringId === order.id}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50"
+                title="Restore cancelled special request back to Pending status"
+              >
+                <RotateCcw size={11} className={restoringId === order.id ? 'animate-spin' : ''} />
+                <span>{restoringId === order.id ? 'Restoring…' : 'Restore'}</span>
+              </button>
+            )}
+
+            {/* Modify Items Button */}
+            <button
+              onClick={() => setModifyingOrder(order)}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-text text-xs font-bold transition-all cursor-pointer"
+              title="Modify medicines, add items, or adjust quantities"
+            >
+              <Edit3 size={11} className="text-primary" />
+              <span>Modify</span>
+            </button>
+
             {/* Edit Button */}
             <button
               onClick={() => handleOpenEditModal(order)}
@@ -5425,15 +5471,17 @@ const SpecialOrdersSection: React.FC = () => {
             </button>
 
             {/* Cancel Button */}
-            <button
-              onClick={() => handleDeleteOrder(order.id, order.product)}
-              disabled={deletingId === order.id}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold transition-all disabled:opacity-50"
-              title="Cancel Special Order Request"
-            >
-              <Trash2 size={11} />
-              <span>{deletingId === order.id ? '...' : 'Cancel'}</span>
-            </button>
+            {order.status !== 'Cancelled' && (
+              <button
+                onClick={() => handleDeleteOrder(order.id, order.product)}
+                disabled={deletingId === order.id}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold transition-all disabled:opacity-50"
+                title="Cancel Special Order Request"
+              >
+                <Trash2 size={11} />
+                <span>{deletingId === order.id ? '...' : 'Cancel'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -5460,7 +5508,7 @@ const SpecialOrdersSection: React.FC = () => {
             />
           </div>
           <div className="flex items-center gap-1 bg-bg3/60 p-1 rounded-xl border border-border">
-            {['All', 'Pending', 'Ordered', 'Waiting', 'Arrived', 'Not Arrived'].map(st => (
+            {['All', 'Pending', 'Ordered', 'Waiting', 'Arrived', 'Not Arrived', 'Cancelled'].map(st => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -6459,6 +6507,18 @@ const SpecialOrdersSection: React.FC = () => {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Modify Items Modal */}
+      {modifyingOrder && (
+        <OrderModifyModal
+          order={modifyingOrder}
+          onClose={() => setModifyingOrder(null)}
+          onSuccess={async () => {
+            await loadOrders();
+            specialOrdersEvent.triggerUpdated();
+          }}
+        />
       )}
     </div>
   );

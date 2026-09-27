@@ -28,13 +28,15 @@ import {
   Sparkles,
   CreditCard,
   ShoppingCart,
-  Building2
+  Building2,
+  Edit3
 } from 'lucide-react';
 import { api, apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
 import { StoreSelector } from '../../components/StoreSelector';
 import { toastEvent } from '../../services/events';
 import { isOnlineOrder } from '../../utils/onlineOrders';
+import { OrderModifyModal } from '../../components/OrderModifyModal';
 
 // Module-level state cache for instant SPA re-hydration
 let cachedOrders: any[] = [];
@@ -78,7 +80,8 @@ export default function WebsiteOrders() {
   const [orders, setOrders] = useState<any[]>(() => cachedOrders);
   const [loading, setLoading] = useState(() => cachedOrders.length === 0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'ready' | 'delivered' | 'returns'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'ready' | 'delivered' | 'returns' | 'cancelled'>('all');
+  const [modifyingOrder, setModifyingOrder] = useState<any | null>(null);
   const [selectedPrescription, setSelectedPrescription] = useState<string | null>(null);
   const [prescriptionPhotoIndex, setPrescriptionPhotoIndex] = useState(0);
   const [selectedPrescriptionOrder, setSelectedPrescriptionOrder] = useState<any | null>(null);
@@ -192,6 +195,19 @@ export default function WebsiteOrders() {
       fetchOrders(true);
     } catch (err: any) {
       toastEvent.trigger(err.response?.data?.error || 'Failed to confirm payment', 'error');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleRestoreOrder = async (orderId: number) => {
+    try {
+      setActionInProgress(orderId);
+      await api.restoreOrder(orderId, { restored_by: 'Staff Pharmacist' });
+      toastEvent.trigger(`Order #${orderId} restored to Pending status. Staff can freshly verify stock.`, 'success');
+      fetchOrders(true);
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to restore order', 'error');
     } finally {
       setActionInProgress(null);
     }
@@ -400,8 +416,9 @@ export default function WebsiteOrders() {
     const ready = orders.filter(o => o.status === 'Ready' || o.delivery_status === 'dispatched').length;
     const delivered = orders.filter(o => o.delivery_status === 'delivered').length;
     const returns = orders.filter(o => o.return_status === 'requested' || o.return_status === 'eligible' || o.return_override_by).length;
+    const cancelled = orders.filter(o => o.status === 'Cancelled').length;
 
-    return { total, pending, ready, delivered, returns };
+    return { total, pending, ready, delivered, returns, cancelled };
   }, [orders]);
 
   // Filtered list
@@ -423,6 +440,7 @@ export default function WebsiteOrders() {
       if (statusFilter === 'ready') return order.status === 'Ready' || order.delivery_status === 'dispatched';
       if (statusFilter === 'delivered') return order.delivery_status === 'delivered';
       if (statusFilter === 'returns') return order.return_status === 'requested' || order.return_status === 'expired' || order.return_override_by;
+      if (statusFilter === 'cancelled') return order.status === 'Cancelled';
 
       return true;
     }).sort((a, b) => {
@@ -477,7 +495,7 @@ export default function WebsiteOrders() {
       </div>
 
       {/* KPI Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div
           onClick={() => setStatusFilter('all')}
           className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${statusFilter === 'all' ? 'bg-primary/10 border-primary/40 shadow-sm' : 'bg-bg border-border hover:bg-bg2'}`}
@@ -532,6 +550,17 @@ export default function WebsiteOrders() {
           </div>
           <div className="text-xl font-black text-rose-500 mt-1">{metrics.returns}</div>
         </div>
+
+        <div
+          onClick={() => setStatusFilter('cancelled')}
+          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${statusFilter === 'cancelled' ? 'bg-rose-500/10 border-rose-500/40 shadow-sm' : 'bg-bg border-border hover:bg-bg2'}`}
+        >
+          <div className="flex items-center justify-between text-rose-500">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Cancelled</span>
+            <X size={14} />
+          </div>
+          <div className="text-xl font-black text-rose-500 mt-1">{metrics.cancelled}</div>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -549,7 +578,7 @@ export default function WebsiteOrders() {
 
         {/* Filter Chips */}
         <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-          {(['all', 'pending', 'ready', 'delivered', 'returns'] as const).map((tab) => (
+          {(['all', 'pending', 'ready', 'delivered', 'returns', 'cancelled'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setStatusFilter(tab)}
@@ -1239,6 +1268,31 @@ export default function WebsiteOrders() {
                       </button>
                     )}
 
+                    {/* Restore Cancelled Order */}
+                    {order.status === 'Cancelled' && (
+                      <button
+                        type="button"
+                        disabled={actionInProgress === order.id}
+                        onClick={() => handleRestoreOrder(order.id)}
+                        className="flex-1 py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        title="Restore cancelled order back to Pending status"
+                      >
+                        <RotateCcw size={13} />
+                        <span>{actionInProgress === order.id ? 'Restoring…' : 'Restore Order'}</span>
+                      </button>
+                    )}
+
+                    {/* Modify Order / Add Items button */}
+                    <button
+                      type="button"
+                      onClick={() => setModifyingOrder(order)}
+                      className="py-1.5 px-2.5 bg-bg2 hover:bg-bg3 border border-border text-text text-[11px] font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                      title="Modify medicines, add items, or adjust quantities"
+                    >
+                      <Edit3 size={12} className="text-primary" />
+                      <span>Modify Items</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => handleOpenInPOS(order)}
@@ -1663,6 +1717,15 @@ export default function WebsiteOrders() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modify Order / Add Items Modal */}
+      {modifyingOrder && (
+        <OrderModifyModal
+          order={modifyingOrder}
+          onClose={() => setModifyingOrder(null)}
+          onSuccess={() => fetchOrders(true)}
+        />
       )}
     </div>
   );
