@@ -27,6 +27,9 @@ export interface MonthlyReportData {
   profitMargin: number;
   topMedicines: Array<{ name: string; quantity: number; revenue: number }>;
   weeklyBreakdown: Array<{ label: string; sales: number; purchases: number }>;
+  expiringBatchesCount?: number;
+  pendingCallsCount?: number;
+  stagedRemindersCount?: number;
 }
 
 export class MonthlyReportService {
@@ -208,6 +211,24 @@ export class MonthlyReportService {
       currentStart.setDate(currentStart.getDate() + 1);
     }
 
+    // 6. Monthly Inventory & Operational Task Overview
+    const currentMonth = endDate.slice(0, 7);
+    const expRow = await db.get(
+      `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
+      [currentMonth, `${currentMonth}%`]
+    ).catch(() => ({ count: 0 }));
+    const expiringBatchesCount = Number(expRow?.count || 0);
+
+    const callRow = await db.get(
+      "SELECT COUNT(*) as count FROM patient_call_tasks WHERE status IN ('pending', 'rescheduled')"
+    ).catch(() => ({ count: 0 }));
+    const pendingCallsCount = Number(callRow?.count || 0);
+
+    const stagedRow = await db.get(
+      "SELECT COUNT(*) as count FROM automation_notifications WHERE status = 'staged'"
+    ).catch(() => ({ count: 0 }));
+    const stagedRemindersCount = Number(stagedRow?.count || 0);
+
     return {
       periodType,
       periodLabel,
@@ -222,7 +243,10 @@ export class MonthlyReportService {
       grossProfit,
       profitMargin,
       topMedicines,
-      weeklyBreakdown
+      weeklyBreakdown,
+      expiringBatchesCount,
+      pendingCallsCount,
+      stagedRemindersCount
     };
   }
 
@@ -288,6 +312,21 @@ export class MonthlyReportService {
       data.topMedicines.forEach((med, idx) => {
         msg += `${idx + 1}. *${med.name}*: ${med.quantity} units (${fmt(med.revenue)})\n`;
       });
+      msg += `\n`;
+    }
+
+    // Monthly Operational & Inventory Overview
+    if ((data.expiringBatchesCount ?? 0) > 0 || (data.pendingCallsCount ?? 0) > 0 || (data.stagedRemindersCount ?? 0) > 0) {
+      msg += `⚠️ *MONTHLY INVENTORY & CRM AUDIT*\n`;
+      if ((data.expiringBatchesCount ?? 0) > 0) {
+        msg += `• *Expiring Batches*: ${data.expiringBatchesCount} batch(es) expiring this month (${data.endDate.slice(5, 7)}/${data.endDate.slice(0, 4)})\n`;
+      }
+      if ((data.pendingCallsCount ?? 0) > 0) {
+        msg += `• *Pending Call Tasks*: ${data.pendingCallsCount} patient call(s) on Call Board\n`;
+      }
+      if ((data.stagedRemindersCount ?? 0) > 0) {
+        msg += `• *Staged Reminders*: ${data.stagedRemindersCount} reminder(s) pending in CRM\n`;
+      }
       msg += `\n`;
     }
 

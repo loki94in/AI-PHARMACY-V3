@@ -1277,10 +1277,14 @@ router.post('/send-test-briefing', async (req, res) => {
 // GET preview of operational briefing templates
 router.get('/briefing-templates/preview', async (req, res) => {
   try {
-    const { template } = req.query;
+    const { template, forceMilestone } = req.query;
     const db = await dbManager.getConnection();
     const { buildDailyOperationalBriefing } = await import('../services/refillService.js');
-    const result = await buildDailyOperationalBriefing(db, typeof template === 'string' ? template : undefined);
+    const result = await buildDailyOperationalBriefing(
+      db,
+      typeof template === 'string' ? template : undefined,
+      { forceMilestone: forceMilestone === 'true' }
+    );
     res.json({ success: true, ...result });
   } catch (error: any) {
     console.error('Briefing preview error:', error);

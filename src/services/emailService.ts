@@ -1193,6 +1193,7 @@ export class EmailService {
   private isPolling: boolean = false;
   private isSyncing: boolean = false;
   private lastUnconfiguredLogTime: number = 0;
+  private isPollingStarted: boolean = false;
 
   constructor() {
     // IMAP configuration for receiving emails
@@ -1342,6 +1343,11 @@ export class EmailService {
    * Starts the email polling interval
    */
   public async startPolling(intervalInMinutes: number = 5): Promise<void> {
+    if (this.isPollingStarted && (this.pollInterval || this.bootTimeout)) {
+      return;
+    }
+    this.isPollingStarted = true;
+
     // Clear any existing interval & boot delay timer
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
@@ -1355,6 +1361,7 @@ export class EmailService {
     const { isConfigured } = await this.buildImapConfig();
     if (!isConfigured) {
       console.log('[Mail] IMAP credentials not saved/configured. Background email polling is stopped.');
+      this.isPollingStarted = false;
       return;
     }
 
@@ -1375,6 +1382,7 @@ export class EmailService {
    * Stops the email polling
    */
   public stopPolling(): void {
+    this.isPollingStarted = false;
     if (this.bootTimeout) {
       clearTimeout(this.bootTimeout);
       this.bootTimeout = null;
@@ -3824,7 +3832,9 @@ export class EmailService {
       } catch (dbErr) {
         console.error('Failed to save gmail sync error status:', dbErr);
       }
-      console.error('[Sync] syncNewEmailsFromIMAP error:', err);
+      if (!isSimultaneousLimit) {
+        console.error('[Sync] syncNewEmailsFromIMAP error:', err);
+      }
     } finally {
       this.isSyncing = false;
       this.activeConnection = null;

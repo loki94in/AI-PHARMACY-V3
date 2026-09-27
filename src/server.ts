@@ -1083,6 +1083,17 @@ async function gracefulShutdown(signal: string) {
     })(),
     (async () => {
       try {
+        const { emailService } = await import('./services/emailService.js');
+        await Promise.race([
+          emailService.gracefulShutdown(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Email graceful shutdown timed out')), 1500))
+        ]);
+      } catch (emailErr) {
+        console.error('Error shutting down email service:', emailErr);
+      }
+    })(),
+    (async () => {
+      try {
         const { cloudflareTunnelService } = await import('./services/cloudflareTunnelService.js');
         await cloudflareTunnelService.stop();
       } catch (err) {

@@ -427,7 +427,11 @@ export async function cleanupStagedRefillNotifications(
  * - 'checklist' (Template 2): Action checklist format with [ ] checkboxes
  * - 'executive' (Template 3): Ultra-short KPI metrics summary
  */
-export async function buildDailyOperationalBriefing(db: Database, requestedTemplate?: string): Promise<{ template: string; messageText: string }> {
+export async function buildDailyOperationalBriefing(
+  db: Database,
+  requestedTemplate?: string,
+  options?: { forceMilestone?: boolean }
+): Promise<{ template: string; messageText: string }> {
   let templateKey: string = requestedTemplate || '';
   if (!templateKey) {
     const row = await db.get("SELECT value FROM app_settings WHERE key = 'daily_briefing_template'").catch(() => null);
@@ -475,10 +479,10 @@ export async function buildDailyOperationalBriefing(db: Database, requestedTempl
     LIMIT 15
   `).catch(() => []);
 
-  // Detailed refill items (with medicine names & quantities)
+  // Detailed refill items (with medicine names & quantities) — no aggregate collapse so all medicines appear
   const refillDetailRows = await db.all(`
     SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
-           MIN(DATE(pr.next_refill_date)) as due_date,
+           DATE(pr.next_refill_date) as due_date,
            CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
     FROM patient_refills pr
     JOIN medicines m ON pr.medicine_id = m.id
@@ -491,7 +495,7 @@ export async function buildDailyOperationalBriefing(db: Database, requestedTempl
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
-    LIMIT 20
+    LIMIT 50
   `).catch(() => []);
 
   // Pending call tasks
@@ -500,21 +504,14 @@ export async function buildDailyOperationalBriefing(db: Database, requestedTempl
   ).catch(() => ({ count: 0 }));
   const callCount = Number(pendingCallTasks?.count || 0);
 
-  // Active special orders
-  const specialOrders = await db.all(
-    `SELECT requester, product, qty, status
+  // Active special, website, and online orders
+  const activeOrders = await db.all(
+    `SELECT requester, product, qty, status, customer_order_source
      FROM special_orders
-     WHERE status IN ('Confirmed', 'Pending', 'Ready') AND DATE(date) >= DATE('now', 'localtime', '-7 days')
-     ORDER BY date DESC LIMIT 5`
+     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched')
+       AND DATE(date) >= DATE('now', 'localtime', '-7 days')
+     ORDER BY date DESC, id DESC LIMIT 15`
   ).catch(() => []);
-
-  // Batches expiring this month
-  const currentMonth = todayStr.slice(0, 7);
-  const expRow = await db.get(
-    `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
-    [currentMonth, `${currentMonth}%`]
-  ).catch(() => ({ count: 0 }));
-  const expCount = Number(expRow?.count || 0);
 
   // Staged reminders breakdown
   const stagedRows = await db.all(`
@@ -537,22 +534,96 @@ export async function buildDailyOperationalBriefing(db: Database, requestedTempl
     return ymd;
   };
 
-  let ordersBlock = '• No pending special orders';
-  if (specialOrders.length > 0) {
-    ordersBlock = specialOrders.map((o: any, i: number) => `${i + 1}. *${o.requester || 'Customer'}*: ${o.product} × ${o.qty} [${o.status}]`).join('\n');
+  let ordersBlock = '• No pending orders';
+  if (activeOrders.length > 0) {
+    ordersBlock = activeOrders.map((o: any, i: number) => {
+      const rawSrc = (o.customer_order_source || '').toLowerCase();
+      let srcBadge = 'Special Order';
+      if (rawSrc === 'website') srcBadge = 'Website Order';
+      else if (rawSrc === 'whatsapp') srcBadge = 'WhatsApp Order';
+      else if (rawSrc === 'online' || rawSrc === 'portal') srcBadge = 'Online Order';
+      else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
+
+      return `${i + 1}. *${o.requester || 'Customer'}* [${srcBadge}]: ${o.product} × ${o.qty} (${o.status})`;
+    }).join('\n');
   }
 
-  const callTasksLine = callCount > 0
-    ? `• ${callCount} patient call task(s) pending in CRM Call Board`
-    : `• No pending call tasks`;
+  // Daily operational tasks to ensure no work is missed
+  const outOfStockRefills = refillDetailRows.filter((r: any) => !r.in_stock);
+  const dailyTasks: string[] = [];
+  if (outOfStockRefills.length > 0) {
+    const holdPatients = Array.from(new Set(outOfStockRefills.map((r: any) => r.patient_name)));
+    dailyTasks.push(`⚠️ *Urgent Stock Reorder Needed*: Stock required for ${holdPatients.join(', ')}`);
+  }
+  if (callCount > 0) {
+    dailyTasks.push(`📞 *Patient Follow-up Calls*: ${callCount} pending call(s) on CRM Call Board`);
+  }
+  if (stagedRows.length > 0) {
+    dailyTasks.push(`🔔 *Staged Customer Reminders*: ${stagedRows.length} reminder(s) pending in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual)`);
+  }
 
-  const inventoryLine = expCount > 0
-    ? `• ${expCount} batch(es) expiring this month (${todayStr.slice(5, 7)}/${todayStr.slice(0, 4)}) — check for return`
-    : `• No batches expiring this month`;
+  let dailyTasksBlock = '';
+  if (dailyTasks.length > 0) {
+    dailyTasksBlock = `\n\n⚡ *TODAY'S OPERATIONAL TASKS*:\n` + dailyTasks.map((t, idx) => `${idx + 1}. ${t}`).join('\n');
+  }
 
-  const stagedSummaryLine = stagedRows.length > 0
-    ? `• ${stagedRows.length} reminder(s) staged in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual Review)`
-    : `• No reminders staged for review`;
+  // Date-Driven Auto-Add: Periodic Expiry Audit & Overdue Credit on milestone dates (1st, 15-18th, month-end, or trigger_expiry_scan_days)
+  const now = new Date();
+  const todayDayOfMonth = now.getDate();
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+  // Read configured expiry scan days from settings (defaults to '1,16')
+  const scanDaysRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_expiry_scan_days'").catch(() => null);
+  const configuredScanDays = (scanDaysRow?.value || '1,16')
+    .split(',')
+    .map((s: string) => parseInt(s.trim(), 10))
+    .filter((n: number) => !isNaN(n));
+
+  const isMilestoneDate = Boolean(options?.forceMilestone) ||
+                          todayDayOfMonth === 1 ||
+                          (todayDayOfMonth >= 15 && todayDayOfMonth <= 18) ||
+                          todayDayOfMonth === lastDayOfMonth ||
+                          configuredScanDays.includes(todayDayOfMonth);
+
+  let expCount = 0;
+  let overdueCreditCount = 0;
+  let overdueCreditTotal = 0;
+  let milestoneBlock = '';
+
+  if (isMilestoneDate) {
+    const currentMonth = todayStr.slice(0, 7);
+    const expRow = await db.get(
+      `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
+      [currentMonth, `${currentMonth}%`]
+    ).catch(() => ({ count: 0 }));
+    expCount = Number(expRow?.count || 0);
+
+    const creditRow = await db.get(
+      `SELECT COUNT(*) as cust_count, COALESCE(SUM(credit_balance), 0) as total_balance
+       FROM customers
+       WHERE credit_due_date IS NOT NULL
+         AND date(credit_due_date) <= date('now', 'localtime')
+         AND credit_balance > 0`
+    ).catch(() => ({ cust_count: 0, total_balance: 0 }));
+    overdueCreditCount = Number(creditRow?.cust_count || 0);
+    overdueCreditTotal = Number(creditRow?.total_balance || 0);
+
+    const milestoneLabel = todayDayOfMonth === 1
+      ? 'Monthly Start Audit'
+      : (todayDayOfMonth === lastDayOfMonth ? 'Month-End Audit' : 'Mid-Month Review');
+
+    const auditItems: string[] = [];
+    if (expCount > 0) {
+      auditItems.push(`⚠️ *EXPIRY AUDIT (${milestoneLabel})*:\n• ${expCount} batch(es) expiring this month (${todayStr.slice(5, 7)}/${todayStr.slice(0, 4)}) — check for supplier return`);
+    }
+    if (overdueCreditCount > 0) {
+      auditItems.push(`💰 *OVERDUE CREDIT AUDIT*:\n• ₹${overdueCreditTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })} overdue across ${overdueCreditCount} customer(s)`);
+    }
+
+    if (auditItems.length > 0) {
+      milestoneBlock = '\n\n' + auditItems.join('\n\n');
+    }
+  }
 
   let messageText = '';
 
@@ -584,19 +655,8 @@ export async function buildDailyOperationalBriefing(db: Database, requestedTempl
 📋 *REFILL PRESCRIPTIONS (Next 7 Days)*:
 ${t4Details}
 
-📞 *CALL BOARD*:
-${callTasksLine}
-
-📦 *SPECIAL / WHATSAPP ORDERS*:
-${ordersBlock}
-
-⚠️ *INVENTORY TASKS*:
-${inventoryLine}
-
-🔔 *STAGED CUSTOMER MESSAGES*:
-${stagedSummaryLine}
-
-🔒 *Human-in-the-Loop*: Visit http://localhost:5173/crm to review & 1-click approve before dispatch.`;
+📦 *TODAY'S SPECIAL & ONLINE ORDERS*:
+${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
 
   } else if (templateKey === 'compact') {
     // TEMPLATE 1: Compact worklist (no medicine names)
@@ -616,19 +676,8 @@ ${stagedSummaryLine}
 📋 *1. REFILLS WORKLIST (Next 7 Days)*:
 ${t1Refills}
 
-📞 *2. CALL TASKS*:
-${callTasksLine}
-
-📦 *3. SPECIAL / WHATSAPP ORDERS*:
-${ordersBlock}
-
-⚠️ *4. INVENTORY TASKS*:
-${inventoryLine}
-
-🔔 *5. STAGED CUSTOMER MESSAGES*:
-${stagedSummaryLine}
-
-🔒 *Human-in-the-Loop*: Visit http://localhost:5173/crm to review & 1-click approve before dispatch.`;
+📦 *2. SPECIAL & ONLINE ORDERS*:
+${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
 
   } else if (templateKey === 'checklist') {
     // TEMPLATE 2: Action checklist [ ]
@@ -641,14 +690,17 @@ ${stagedSummaryLine}
     if (inStockRefills.length > 0) {
       t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r: any) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(', ')}`);
     }
+    if (activeOrders.length > 0) {
+      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${activeOrders.length} special/online order(s)`);
+    }
     if (callCount > 0) {
       t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
     }
-    if (expCount > 0) {
+    if (isMilestoneDate && expCount > 0) {
       t2Items.push(`[ ] *EXPIRY PACKING*: Check & return ${expCount} batches expiring this month`);
     }
-    if (specialOrders.length > 0) {
-      t2Items.push(`[ ] *SPECIAL ORDERS*: Follow up ${specialOrders.length} customer order(s)`);
+    if (isMilestoneDate && overdueCreditCount > 0) {
+      t2Items.push(`[ ] *CREDIT FOLLOW-UP*: Follow up ₹${overdueCreditTotal.toFixed(0)} overdue credit across ${overdueCreditCount} customer(s)`);
     }
     if (stagedRows.length > 0) {
       t2Items.push(`[ ] *APPROVE NOTIFICATIONS*: Review ${stagedRows.length} staged reminder(s) in CRM`);
@@ -661,24 +713,24 @@ ${stagedSummaryLine}
 📅 *Date*: ${todayStr} (${todayDayName}) | ${statusLine}
 
 ⚡ *TODAY'S OPERATIONAL TO-DO LIST*:
-${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}
-
-👉 *Action*: Open CRM http://localhost:5173/crm to review & check off tasks.`;
+${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}`;
 
   } else {
     // TEMPLATE 3: Executive summary
     const totalRefillsDue = refillRows.reduce((acc: number, r: any) => acc + (r.med_count || 1), 0);
+    let milestoneMetrics = '';
+    if (isMilestoneDate) {
+      milestoneMetrics = `\n• ⚠️ Expiring Batches: *${expCount}*\n• 💰 Overdue Credit: *₹${overdueCreditTotal.toFixed(0)}* (${overdueCreditCount} cust)`;
+    }
+
     messageText = `☀️ *DAILY EXECUTIVE SUMMARY* — ${storeName}
 📅 *Date*: ${todayStr} (${todayDayName}) | ${statusLine}
 
 📊 *Morning KPI Dashboard*:
 • 📋 Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+• 📦 Active Orders: *${activeOrders.length}*
 • 📞 Pending Calls: *${callCount}*
-• 📦 Special Orders: *${specialOrders.length}*
-• ⚠️ Expiring Batches: *${expCount}*
-• 🔔 Staged Reminders: *${stagedRows.length}*
-
-🔒 Pharmacist approval required before dispatch. Visit http://localhost:5173/crm`;
+• 🔔 Staged Reminders: *${stagedRows.length}*${milestoneMetrics}`;
   }
 
   return { template: templateKey, messageText };
@@ -689,7 +741,11 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}
  * Summarizes today's refills, special orders, and whether today has pause/holiday rules.
  * Does NOT send any automated messages to patients.
  */
-export async function sendMorningScheduleBriefingToAdmin(db: Database, templateKey?: string): Promise<{ success: boolean; message?: string }> {
+export async function sendMorningScheduleBriefingToAdmin(
+  db: Database,
+  templateKey?: string,
+  options?: { forceMilestone?: boolean }
+): Promise<{ success: boolean; message?: string }> {
   try {
     const { waAdminEscalationService } = await import('./waAdminEscalationService.js');
     const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber(db);
@@ -698,7 +754,7 @@ export async function sendMorningScheduleBriefingToAdmin(db: Database, templateK
       return { success: false, message: 'No store owner WhatsApp configured in Settings.' };
     }
 
-    const { template, messageText } = await buildDailyOperationalBriefing(db, templateKey);
+    const { template, messageText } = await buildDailyOperationalBriefing(db, templateKey, options);
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_morning_briefing', 'Admin / Store Owner', undefined, undefined, undefined, { skipDedupe: true });
