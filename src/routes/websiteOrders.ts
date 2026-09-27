@@ -16,9 +16,12 @@ import { imageCompressionService } from '../services/imageCompressionService.js'
 
 const router = express.Router();
 
-const broadcastOrdersChanged = () => {
+const broadcastOrdersChanged = (delta?: { action: string; orderId: number; patch?: any }) => {
   try {
-    eventService.broadcast('order_updated', { at: Date.now(), source: 'website' });
+    if (delta) {
+      eventService.broadcast('order_delta', delta);
+    }
+    eventService.broadcast('order_updated', { at: Date.now(), source: 'website', delta });
   } catch (_) {}
 };
 
@@ -1202,7 +1205,7 @@ router.post('/orders/:orderId/restore', async (req, res) => {
       throw txErr;
     }
 
-    broadcastOrdersChanged();
+    broadcastOrdersChanged({ action: 'restore', orderId: Number(orderId), patch: { status: 'Pending', pharmacy_verification_status: 'PENDING' } });
 
     res.json({
       success: true,
@@ -1388,7 +1391,7 @@ router.put('/orders/:orderId/items', async (req, res) => {
         }
       }
 
-      broadcastOrdersChanged();
+      broadcastOrdersChanged({ action: 'update_items', orderId: Number(orderId), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
 
       res.json({
         success: true,

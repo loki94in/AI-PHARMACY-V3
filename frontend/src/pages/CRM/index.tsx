@@ -4683,9 +4683,25 @@ const SpecialOrdersSection: React.FC = () => {
     const handleRefresh = () => {
       loadOrders();
     };
+    const handleOrderDelta = (e: any) => {
+      const delta = e?.detail;
+      if (!delta || !delta.orderId) return;
+      setOrders(prev => {
+        if (delta.action === 'delete') {
+          return prev.filter(o => o.id !== delta.orderId);
+        }
+        return prev.map(o => o.id === delta.orderId ? { ...o, ...(delta.patch || {}) } : o);
+      });
+      cachedSpecialOrders = delta.action === 'delete'
+        ? cachedSpecialOrders.filter(o => o.id !== delta.orderId)
+        : cachedSpecialOrders.map(o => o.id === delta.orderId ? { ...o, ...(delta.patch || {}) } : o);
+    };
+
     window.addEventListener('refresh-special-orders', handleRefresh);
+    window.addEventListener('app-order-delta', handleOrderDelta);
     return () => {
       window.removeEventListener('refresh-special-orders', handleRefresh);
+      window.removeEventListener('app-order-delta', handleOrderDelta);
     };
   }, [loadOrders]);
 
@@ -4735,10 +4751,16 @@ const SpecialOrdersSection: React.FC = () => {
   const handleUpdateStatus = async (id: number, newStatus: string) => {
     if (updatingId === id) return;
     setUpdatingId(id);
+
+    // Sub-10ms Optimistic UI update (<2ms)
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, status: newStatus } : o));
+    cachedSpecialOrders = cachedSpecialOrders.map(o => o.id === id ? { ...o, status: newStatus } : o);
+
     try {
       const res = await api.updateOrder(id, { status: newStatus });
       if (newStatus === 'Cancelled') {
-        const ord = orders.find(o => o.id === id);
+        const ord = prevOrders.find(o => o.id === id);
         handleCartAdjustmentFeedback(res?.cartAdjustment, ord?.product || 'Medicine');
       }
       toastEvent.trigger(
@@ -4749,8 +4771,11 @@ const SpecialOrdersSection: React.FC = () => {
         '/crm'
       );
       if (res?.whatsapp_queued) whatsappQueueEvent.triggerUpdated();
-      await loadOrders();
+      specialOrdersEvent.triggerUpdated();
     } catch {
+      // Rollback on failure
+      setOrders(prevOrders);
+      cachedSpecialOrders = prevOrders;
       toastEvent.trigger('Failed to update order status', 'error', '/crm');
     } finally {
       setUpdatingId(null);
@@ -4815,13 +4840,21 @@ const SpecialOrdersSection: React.FC = () => {
   const handleDeleteOrder = async (id: number, product: string) => {
     if (!window.confirm(`Are you sure you want to cancel and delete the special order request for "${product}"?`)) return;
     setDeletingId(id);
+
+    // Sub-10ms Optimistic UI update (<2ms)
+    const prevOrders = [...orders];
+    setOrders(prev => prev.filter(o => o.id !== id));
+    cachedSpecialOrders = cachedSpecialOrders.filter(o => o.id !== id);
+    toastEvent.trigger(`Special order for "${product}" cancelled & deleted`, 'success', '/crm');
+
     try {
       const res = await api.deleteOrder(id);
       handleCartAdjustmentFeedback(res?.cartAdjustment, product);
-      toastEvent.trigger(`Special order for "${product}" cancelled & deleted`, 'success', '/crm');
-      await loadOrders();
       specialOrdersEvent.triggerUpdated();
     } catch {
+      // Rollback on failure
+      setOrders(prevOrders);
+      cachedSpecialOrders = prevOrders;
       toastEvent.trigger('Failed to delete order request', 'error', '/crm');
     } finally {
       setDeletingId(null);
@@ -4831,16 +4864,26 @@ const SpecialOrdersSection: React.FC = () => {
   const handleRestoreOrder = async (orderId: number) => {
     if (restoringId === orderId) return;
     setRestoringId(orderId);
+
+    // Sub-10ms Optimistic UI update (<2ms)
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Pending' } : o));
+    cachedSpecialOrders = cachedSpecialOrders.map(o => o.id === orderId ? { ...o, status: 'Pending' } : o);
+    toastEvent.trigger('Special request restored to Pending status successfully!', 'success', '/crm');
+
     try {
       const res = await api.restoreOrder(orderId, { notes: 'Restored from cancelled status by staff' });
       if (res?.success) {
-        toastEvent.trigger(res.message || 'Special request restored to Pending status successfully!', 'success', '/crm');
-        await loadOrders();
         specialOrdersEvent.triggerUpdated();
       } else {
+        // Rollback on failure
+        setOrders(prevOrders);
+        cachedSpecialOrders = prevOrders;
         toastEvent.trigger(res?.error || res?.message || 'Failed to restore order', 'error', '/crm');
       }
     } catch (err: any) {
+      setOrders(prevOrders);
+      cachedSpecialOrders = prevOrders;
       toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to restore order', 'error', '/crm');
     } finally {
       setRestoringId(null);

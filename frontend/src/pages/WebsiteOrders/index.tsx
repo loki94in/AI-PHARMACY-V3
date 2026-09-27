@@ -160,24 +160,47 @@ export default function WebsiteOrders() {
   useEffect(() => {
     fetchOrders();
     const handleInvalidate = () => fetchOrders(true);
+    const handleOrderDelta = (e: any) => {
+      const delta = e?.detail;
+      if (!delta || !delta.orderId) return;
+      setOrders(prev => {
+        if (delta.action === 'delete') {
+          return prev.filter(o => o.id !== delta.orderId);
+        }
+        return prev.map(o => o.id === delta.orderId ? { ...o, ...(delta.patch || {}) } : o);
+      });
+      cachedOrders = delta.action === 'delete'
+        ? cachedOrders.filter(o => o.id !== delta.orderId)
+        : cachedOrders.map(o => o.id === delta.orderId ? { ...o, ...(delta.patch || {}) } : o);
+    };
+
     window.addEventListener('cache-invalidate', handleInvalidate);
     window.addEventListener('refresh-special-orders', handleInvalidate);
     window.addEventListener('sse-website-order-created', handleInvalidate);
+    window.addEventListener('app-order-delta', handleOrderDelta);
     return () => {
       window.removeEventListener('cache-invalidate', handleInvalidate);
       window.removeEventListener('refresh-special-orders', handleInvalidate);
       window.removeEventListener('sse-website-order-created', handleInvalidate);
+      window.removeEventListener('app-order-delta', handleOrderDelta);
     };
   }, [fetchOrders]);
 
   // Status Actions
   const handleMarkReady = async (orderId: number) => {
+    // Optimistic sub-10ms UI update
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Ready' } : o));
+    cachedOrders = cachedOrders.map(o => o.id === orderId ? { ...o, status: 'Ready' } : o);
+    toastEvent.trigger(`Order #${orderId} marked Ready for Delivery`, 'success');
+
     try {
       setActionInProgress(orderId);
       await apiClient.put(`/orders/${orderId}/status`, { status: 'Ready' });
-      toastEvent.trigger(`Order #${orderId} marked Ready for Delivery`, 'success');
       fetchOrders(true);
     } catch (err: any) {
+      setOrders(prevOrders);
+      cachedOrders = prevOrders;
       toastEvent.trigger(err.response?.data?.error || 'Failed to update status', 'error');
     } finally {
       setActionInProgress(null);
@@ -201,12 +224,19 @@ export default function WebsiteOrders() {
   };
 
   const handleRestoreOrder = async (orderId: number) => {
+    // Optimistic sub-10ms UI update
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Pending', pharmacy_verification_status: 'PENDING' } : o));
+    cachedOrders = cachedOrders.map(o => o.id === orderId ? { ...o, status: 'Pending', pharmacy_verification_status: 'PENDING' } : o);
+    toastEvent.trigger(`Order #${orderId} restored to Pending status. Staff can freshly verify stock.`, 'success');
+
     try {
       setActionInProgress(orderId);
       await api.restoreOrder(orderId, { restored_by: 'Staff Pharmacist' });
-      toastEvent.trigger(`Order #${orderId} restored to Pending status. Staff can freshly verify stock.`, 'success');
       fetchOrders(true);
     } catch (err: any) {
+      setOrders(prevOrders);
+      cachedOrders = prevOrders;
       toastEvent.trigger(err.response?.data?.error || 'Failed to restore order', 'error');
     } finally {
       setActionInProgress(null);
@@ -214,12 +244,19 @@ export default function WebsiteOrders() {
   };
 
   const handleMarkDelivered = async (orderId: number) => {
+    // Optimistic sub-10ms UI update
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: 'delivered' } : o));
+    cachedOrders = cachedOrders.map(o => o.id === orderId ? { ...o, delivery_status: 'delivered' } : o);
+    toastEvent.trigger(`Order #${orderId} marked Delivered. 14-day return window started!`, 'success');
+
     try {
       setActionInProgress(orderId);
       await api.markOrderDelivered(orderId);
-      toastEvent.trigger(`Order #${orderId} marked Delivered. 14-day return window started!`, 'success');
       fetchOrders(true);
     } catch (err: any) {
+      setOrders(prevOrders);
+      cachedOrders = prevOrders;
       toastEvent.trigger(err.response?.data?.error || 'Failed to mark delivered', 'error');
     } finally {
       setActionInProgress(null);

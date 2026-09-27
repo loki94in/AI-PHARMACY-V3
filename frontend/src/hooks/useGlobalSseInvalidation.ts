@@ -46,6 +46,7 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
 const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   activity_logged: ['sse-activity-logged'],
   order_updated: ['refresh-special-orders'],
+  order_delta: ['app-order-delta', 'refresh-special-orders'],
   website_order_created: ['sse-website-order-created', 'refresh-special-orders'],
   customers_changed: ['app-customers-updated', 'refresh-special-orders'],
   refill_updated: ['app-refills-updated'],
@@ -162,7 +163,7 @@ export function useGlobalSseInvalidation(enabled: boolean = true) {
         (SSE_CUSTOM_EVENTS[type] || []).forEach(evtName => {
           // detail carries the full parsed SSE frame (or unpacked payload for toasts) so page-level listeners
           // can consume payloads without opening their own EventSource
-          const detailData = (evtName === 'app-show-toast' && parsed?.payload) ? parsed.payload : parsed;
+          const detailData = ((evtName === 'app-show-toast' || evtName === 'app-order-delta') && parsed?.payload) ? parsed.payload : parsed;
           window.dispatchEvent(new CustomEvent(evtName, { detail: detailData }));
         });
       };

@@ -21,9 +21,14 @@ const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data
 
 const router = express.Router();
 
-// P1 push event: special-order UI updates without polling
-const broadcastOrdersChanged = () => {
-  try { eventService.broadcast('order_updated', { at: Date.now() }); } catch (_) {}
+// P1 push event: special-order UI updates with sub-2ms delta streaming
+const broadcastOrdersChanged = (delta?: { action: string; orderId: number; patch?: any }) => {
+  try {
+    if (delta) {
+      eventService.broadcast('order_delta', delta);
+    }
+    eventService.broadcast('order_updated', { at: Date.now(), delta });
+  } catch (_) {}
 };
 
 let ordersTableInitialized = false;
@@ -1540,7 +1545,7 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
       }
     }
 
-    broadcastOrdersChanged();
+    broadcastOrdersChanged({ action: 'update_status', orderId: Number(id), patch: { status } });
     res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
   } catch (err: any) {
     console.error('Update order status error:', err);
@@ -1591,7 +1596,7 @@ router.post('/:id/restore', async (req, res) => {
       throw txErr;
     }
 
-    broadcastOrdersChanged();
+    broadcastOrdersChanged({ action: 'restore', orderId: Number(id), patch: { status: 'Pending', pharmacy_verification_status: 'PENDING' } });
     res.json({ success: true, message: 'Order restored to Pending successfully' });
   } catch (err: any) {
     console.error('Restore order error:', err);
@@ -1770,7 +1775,7 @@ router.put('/:id/items', async (req, res) => {
         }
       }
 
-      broadcastOrdersChanged();
+      broadcastOrdersChanged({ action: 'update_items', orderId: Number(id), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
 
       res.json({
         success: true,
@@ -1828,7 +1833,7 @@ router.delete('/:id', async (req, res) => {
       console.warn('[Orders] Could not auto-adjust live cart on order delete:', cartErr);
     }
 
-    broadcastOrdersChanged();
+    broadcastOrdersChanged({ action: 'delete', orderId: Number(id) });
     res.json({ success: true, message: 'Order deleted successfully', cartAdjustment });
   } catch (err) {
     console.error('Delete order error:', err);

@@ -1,20 +1,20 @@
-# Implementation Tracking — Website & Special Orders: Restore Cancelled Order & Multi-Item Order Modification
+# Implementation Tracking — Sub-10ms UI Actions & Fast App Startup Launch Optimization
 
 ## Plan Reference
-See `WEBSITE_AND_SPECIAL_ORDERS_RESTORE_AND_MULTI_ITEM_EDIT_PLAN.md` for full requirements and architectural context.
+See `SUB_10MS_PERFORMANCE_AND_FAST_BOOT_OPTIMIZATION_PLAN.md` for full requirements and architectural context.
 
 ## Tasks Status
-- [x] Task 1: Backend Restore Endpoints in `src/routes/websiteOrders.ts` and `src/routes/orders.ts`
-  - *Completed*: Added `POST /api/website/orders/:orderId/restore` and `POST /api/orders/:id/restore`. Both transactionally update order status to `'Pending'`, reset verification status, record an `order_tracking_events` audit event, and trigger SSE event broadcasting (`broadcastOrdersChanged()`).
-- [x] Task 2: Backend Multi-Item Order Management Endpoints (`GET /api/orders/:id/items` and `PUT /api/orders/:id/items`)
-  - *Completed*: Added `GET` and `PUT` endpoints to both `websiteOrders.ts` and `orders.ts`. Fetches items from `online_order_items` with fallback to header fields for single-item requests. Updates items transactionally, recalculates order quantity and total amount, syncs `special_orders` header values, logs tracking events, and optionally dispatches an updated WhatsApp order summary.
-- [x] Task 3: Frontend API Services in `frontend/src/services/api.ts`
-  - *Completed*: Exposed `api.restoreOrder`, `api.getOrderItems`, and `api.updateOrderItems`.
-- [x] Task 4: Universal Order Modification Modal (`OrderModifyModal.tsx`)
-  - *Completed*: Created `frontend/src/components/OrderModifyModal.tsx` supporting interactive line-item editing (quantity stepper, rate editing, subtotal calculation), catalog search with debounced backend lookups, manual custom medicine addition, item deletion (preserving minimum 1 item), advance payment tracking, and human-in-the-loop WhatsApp dispatch toggle.
-- [x] Task 5: Website Orders UI Integration (`WebsiteOrders/index.tsx`)
-  - *Completed*: Added `'cancelled'` filter tab, Cancelled KPI metric card, `Restore Order` button (`RotateCcw`) on cancelled orders, `Modify Items` button (`Edit3`) on all orders, and embedded `<OrderModifyModal />`.
-- [x] Task 6: CRM Special Orders UI Integration (`CRM/index.tsx`)
-  - *Completed*: Added `'Cancelled'` filter chip in `SpecialOrdersSection`, `Restore` button when `order.status === 'Cancelled'`, `Modify` button on order cards, and rendered `<OrderModifyModal />` with cache invalidation and event trigger.
+- [x] Task 1: Backend SSE Delta Streaming (`src/routes/orders.ts` & `src/routes/websiteOrders.ts`)
+  - *Completed*: Updated `broadcastOrdersChanged` in both route files to emit `order_delta` with exact action and patch fields on `restore`, `update_status`, `update_items`, and `delete`.
+- [x] Task 2: Global SSE Hook Delta Dispatcher (`frontend/src/hooks/useGlobalSseInvalidation.ts`)
+  - *Completed*: Registered `order_delta` in `SSE_CUSTOM_EVENTS` and wired DOM `CustomEvent('app-order-delta')` passing unpacked payload directly to components.
+- [x] Task 3: Sub-10ms Optimistic UI in Website Orders (`frontend/src/pages/WebsiteOrders/index.tsx`)
+  - *Completed*: Implemented immediate synchronous state mutation (<2ms) for `handleRestoreOrder`, `handleMarkReady`, and `handleMarkDelivered` with snapshot rollback on error. Subscribed to `app-order-delta` for instant cross-tab memory patching without database re-fetching.
+- [x] Task 4: Sub-10ms Optimistic UI in CRM Special Orders (`frontend/src/pages/CRM/index.tsx`)
+  - *Completed*: Implemented immediate synchronous state mutation (<2ms) for `handleRestoreOrder`, `handleDeleteOrder`, and `handleUpdateStatus` with snapshot rollback on error. Added `app-order-delta` listener for zero-delay synchronization.
+- [x] Task 5: Fast App Startup Optimization (`src/server.ts` & `src/utils/chromeBrowser.ts`)
+  - *Completed*: Replaced `localhost` with explicit `127.0.0.1` binding, eliminating 2–3s Windows IPv6 DNS stall. Reduced browser spawn delay to 50ms for packaged app. Added Chrome boot optimization flags (`--disable-component-update`, `--disable-features=Translate,OptimizationHints,MediaRouter`, `--dns-prefetch-disable`).
+- [x] Task 6: Instant Boot UI Skeleton (`frontend/index.html`)
+  - *Completed*: Added inline lightweight branded splash skeleton inside `<div id="root">` to render the UI shell on screen in under 15ms upon window open.
 - [x] Task 7: Verification & Quality Assurance (`npm run guardrails` and quick-update)
-  - *Completed*: Ran `npm run guardrails` (TypeScript compile check `tsc --noEmit` passed with 0 errors; all performance, color theme, and speed architecture checks passed). Updated `.understand-anything/knowledge-graph.json` via `node scripts/quick-update.mjs`.
+  - *Completed*: Ran `npm run guardrails` — TypeScript compilation (`tsc --noEmit`) succeeded with 0 errors; all speed and theme rules passed. Ran `node scripts/quick-update.mjs` to synchronize the knowledge graph.

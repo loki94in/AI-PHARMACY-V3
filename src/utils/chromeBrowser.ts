@@ -126,7 +126,10 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
         '--disable-default-apps',
         '--no-first-run',
         '--no-default-browser-check',
-        '--disable-session-crashed-bubble'
+        '--disable-session-crashed-bubble',
+        '--disable-component-update',
+        '--disable-features=Translate,OptimizationHints,MediaRouter',
+        '--dns-prefetch-disable'
       ];
 
       const child = spawn(browserPath, args, {

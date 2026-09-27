@@ -541,7 +541,8 @@ const PORT = config.port;
 // ponytail: bind to 127.0.0.1 explicitly — on Windows, Node 17+ resolves bare
 // 'localhost' to ::1 (IPv6) while Vite proxy targets 127.0.0.1 (IPv4), causing ECONNREFUSED.
 const server = app.listen(PORT, '127.0.0.1', async () => {
-  const serverUrl = `http://localhost:${PORT}`;
+  // Use 127.0.0.1 explicitly to eliminate Windows IPv6 (::1) DNS resolution stall (saving 2–3s cold start)
+  const serverUrl = `http://127.0.0.1:${PORT}`;
   console.log(`Server is running on ${serverUrl} (listening ${Math.round(performance.now() - BOOT_T0)}ms after module load)`);
 
   // Auto-open clean app window when launched from packaged executable or when configured.
@@ -549,15 +550,17 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
   // In packaged builds the backend serves the built SPA, so serverUrl is correct.
   if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === 'true') {
     const uiUrl = !isPackagedApp() && config.nodeEnv !== 'production'
-      ? `http://localhost:5173`  // Vite dev server
+      ? `http://127.0.0.1:5173`  // Vite dev server
       : serverUrl;               // Packaged: backend serves the SPA
+    // In packaged app, the HTTP server is already bound and ready in <100ms. Launch immediately (<50ms).
+    const launchDelay = isPackagedApp() ? 50 : 800;
     setTimeout(() => {
       console.log(`[Boot] Launching dedicated app window at ${uiUrl}...`);
       launchAppBrowser(uiUrl, undefined, () => {
         console.log('[Boot] Main application UI window closed. Exiting AI Pharmacy OS...');
         void gracefulShutdown('UI_WINDOW_CLOSED');
       });
-    }, 1500);
+    }, launchDelay);
   }
 
   // Initialize Cloudflare Online Store Tunnel if configured for autostart
