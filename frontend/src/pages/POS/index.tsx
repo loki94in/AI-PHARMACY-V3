@@ -5396,6 +5396,7 @@ const POS = () => {
                                           e.preventDefault();
                                           const term = rowSearchTerm.trim();
                                           const updated = [...cart];
+                                          const idx = cart.indexOf(item);
                                           if (updated[idx]) {
                                             updated[idx] = {
                                               ...updated[idx],

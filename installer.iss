@@ -81,8 +81,24 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon";  Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
 
 [Files]
-; Main executable (Node SEA — do not recompress the blob)
-Source: "dist\PharmacyOS.exe"; DestDir: "{app}"; Flags: ignoreversion nocompression
+; Main executable (Electron native desktop window)
+Source: "dist\PharmacyOS.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+; Backend executable (Node SEA background service)
+Source: "dist\PharmacyBackend.exe"; DestDir: "{app}"; Flags: ignoreversion nocompression
+
+; Electron runtime files & application resources
+Source: "dist\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "node_modules\electron\dist\locales\*"; DestDir: "{app}\locales"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "node_modules\electron\dist\*.pak"; DestDir: "{app}"; Flags: ignoreversion
+Source: "node_modules\electron\dist\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "node_modules\electron\dist\*.dat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "node_modules\electron\dist\*.bin"; DestDir: "{app}"; Flags: ignoreversion
+Source: "node_modules\electron\dist\version"; DestDir: "{app}"; Flags: ignoreversion
+Source: "node_modules\electron\dist\vk_swiftshader_icd.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+
+; Dist package for backend
+Source: "dist-pkg\*"; DestDir: "{app}\dist-pkg"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Required anchor for createRequire() beside the exe
 Source: "sea-entry.cjs"; DestDir: "{app}"; Flags: ignoreversion
@@ -121,14 +137,9 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntex
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\RUN-PharmacyOS-Silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
-Name: "{group}\AI Pharmacy OS (Debug Console)"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
-Name: "{group}\Open in Browser"; Filename: "http://localhost:{#MyAppPort}"; IconFilename: "{app}\app.ico"
-Name: "{group}\Run (with browser)"; Filename: "{app}\RUN-PharmacyOS.bat"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
-Name: "{group}\Stop AI Pharmacy OS"; Filename: "{app}\STOP-PharmacyOS.bat"; WorkingDir: "{app}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\RUN-PharmacyOS-Silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
-Name: "{autodesktop}\Stop {#MyAppName}"; Filename: "{app}\STOP-PharmacyOS.bat"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\AIPharmacyOS"; Flags: uninsdeletekey
@@ -142,19 +153,29 @@ Type: files; Name: "{userstartup}\AI Pharmacy OS.lnk"
 Type: files; Name: "{userstartup}\PharmacyOS.lnk"
 Type: files; Name: "{commonstartup}\AI Pharmacy OS.lnk"
 Type: files; Name: "{commonstartup}\PharmacyOS.lnk"
+; Strip any confusing secondary shortcuts from Start Menu and Desktop
+Type: files; Name: "{group}\AI Pharmacy OS (Backend Only).lnk"
+Type: files; Name: "{group}\Open in Browser.url"
+Type: files; Name: "{group}\Run (with browser).lnk"
+Type: files; Name: "{group}\Stop AI Pharmacy OS.lnk"
+Type: files; Name: "{autodesktop}\Stop {#MyAppName}.lnk"
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Visual C++ Redistributable (if needed)..."; Check: VCRedistNeedsInstall and VCRedistFilePresent; Flags: waituntilterminated
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\RUN-PharmacyOS-Silent.vbs"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; RunOnceId: "StopPharmacyServer"
+Filename: "taskkill"; Parameters: "/F /IM PharmacyBackend.exe"; Flags: runhidden; RunOnceId: "StopPharmacyBackend"
+Filename: "taskkill"; Parameters: "/F /IM electron.exe"; Flags: runhidden; RunOnceId: "StopPharmacyElectron"
 
 ; Runtime-created temporary folders/files (customer database, uploads, and backups are strictly preserved!)
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.wwebjs_cache"
 Type: filesandordirs; Name: "{app}\node_modules"
 Type: filesandordirs; Name: "{app}\frontend"
+Type: filesandordirs; Name: "{app}\resources"
+Type: filesandordirs; Name: "{app}\locales"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\self_healing.log"
 Type: files; Name: "{app}\crash_log*"
@@ -209,26 +230,28 @@ var
   Attempts: Integer;
 begin
   Result := True;
-  if IsProcessRunning('PharmacyOS.exe') then
+  if IsProcessRunning('PharmacyOS.exe') or IsProcessRunning('PharmacyBackend.exe') or IsProcessRunning('electron.exe') then
   begin
-    Log('[Upgrade] PharmacyOS.exe is currently running. Stopping process...');
+    Log('[Upgrade] Pharmacy processes are running. Stopping processes...');
     Exec('taskkill.exe', '/F /IM PharmacyOS.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill.exe', '/F /IM PharmacyBackend.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill.exe', '/F /IM electron.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
     Attempts := 0;
-    while IsProcessRunning('PharmacyOS.exe') and (Attempts < 20) do
+    while (IsProcessRunning('PharmacyOS.exe') or IsProcessRunning('PharmacyBackend.exe')) and (Attempts < 20) do
     begin
       Sleep(500);
       Attempts := Attempts + 1;
     end;
 
-    if IsProcessRunning('PharmacyOS.exe') then
+    if IsProcessRunning('PharmacyOS.exe') or IsProcessRunning('PharmacyBackend.exe') then
     begin
-      Log('[Upgrade] Error: Failed to stop PharmacyOS.exe within timeout.');
+      Log('[Upgrade] Error: Failed to stop processes within timeout.');
       Result := False;
     end
     else
     begin
-      Log('[Upgrade] PharmacyOS.exe stopped successfully.');
+      Log('[Upgrade] Pharmacy processes stopped successfully.');
       Sleep(1000);
       Result := True;
     end;

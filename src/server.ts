@@ -546,9 +546,10 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
   console.log(`Server is running on ${serverUrl} (listening ${Math.round(performance.now() - BOOT_T0)}ms after module load)`);
 
   // Auto-open clean app window when launched from packaged executable or when configured.
+  // ELECTRON_MODE=true: Electron's main.ts manages the BrowserWindow — skip Chrome launch entirely.
   // In dev mode (Vite), the React SPA is served by Vite on port 5173, not by this backend.
   // In packaged builds the backend serves the built SPA, so serverUrl is correct.
-  if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === 'true') {
+  if (!process.env.ELECTRON_MODE && (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === 'true')) {
     const uiUrl = !isPackagedApp() && config.nodeEnv !== 'production'
       ? `http://127.0.0.1:5173`  // Vite dev server
       : serverUrl;               // Packaged: backend serves the SPA

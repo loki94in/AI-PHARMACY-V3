@@ -5,6 +5,7 @@ echo Stopping AI Pharmacy OS and releasing Port 5175...
 echo ===================================================
 
 taskkill /F /IM PharmacyOS.exe >nul 2>&1
+taskkill /F /IM PharmacyBackend.exe >nul 2>&1
 
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :5175 ^| findstr LISTENING') do (
   taskkill /F /PID %%a >nul 2>&1

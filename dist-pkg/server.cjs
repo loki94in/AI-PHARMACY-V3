@@ -1371,7 +1371,10 @@ function launchAppBrowser(url, customProfileDir, onExit) {
         "--disable-default-apps",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-session-crashed-bubble"
+        "--disable-session-crashed-bubble",
+        "--disable-component-update",
+        "--disable-features=Translate,OptimizationHints,MediaRouter",
+        "--dns-prefetch-disable"
       ];
       const child = (0, import_child_process.spawn)(browserPath, args, {
         detached: !onExit,
@@ -25369,8 +25372,8 @@ async function reconcileAllMedicineSalesMetrics(db2, windowMonths) {
   const salesByMed = Object.fromEntries(salesRows.map((r) => [r.medicine_id, r]));
   const twoDayByMed = Object.fromEntries(twoDayRows.map((r) => [r.medicine_id, r]));
   const purchaseByMed = Object.fromEntries(purchaseRows.map((r) => [r.medicine_id, r]));
-  await db2.run("BEGIN IMMEDIATE TRANSACTION");
   try {
+    await db2.run("BEGIN IMMEDIATE TRANSACTION /* BACKGROUND */");
     await db2.run("DELETE FROM medicine_sales_metrics");
     for (const medId of medicineIds) {
       const sales = salesByMed[medId];
@@ -49628,6 +49631,7 @@ var init_connection = __esm({
       // "cannot start a transaction within a transaction". This prioritized queue guarantees POS checkouts
       // jump ahead of background workers while preventing collision crashes.
       isTxLocked = false;
+      txDepth = 0;
       activeTxPriority = null;
       activeTxRelease = null;
       activeTxTimer = null;
@@ -49651,6 +49655,7 @@ var init_connection = __esm({
           backgroundCount: this.lockStats.backgroundCount,
           isTxLocked: this.isTxLocked,
           activeTxPriority: this.activeTxPriority,
+          txDepth: this.txDepth,
           currentWaiters: {
             VIP: this.txWaiters.VIP.length,
             NORMAL: this.txWaiters.NORMAL.length,
@@ -49660,6 +49665,19 @@ var init_connection = __esm({
       }
       runWithPriority(priority, fn) {
         return txPriorityStorage.run(priority, fn);
+      }
+      async rollbackUnderlying() {
+        if (this.connection) {
+          try {
+            const rawRun = this.connection._rawRun;
+            if (typeof rawRun === "function") {
+              await rawRun("ROLLBACK");
+            } else {
+              await this.connection.run("ROLLBACK");
+            }
+          } catch (_) {
+          }
+        }
       }
       popNextWaiter() {
         if (this.txWaiters.VIP.length > 0) {
@@ -49681,13 +49699,17 @@ var init_connection = __esm({
         const next = this.popNextWaiter();
         if (next) {
           this.activeTxPriority = next.priority;
+          this.txDepth = 1;
           this.lockStats.totalAcquisitions++;
           if (next.priority === "VIP") this.lockStats.vipCount++;
           else if (next.priority === "NORMAL") this.lockStats.normalCount++;
           else this.lockStats.backgroundCount++;
           this.lockStats.lastAcquiredAt = Date.now();
-          this.activeTxTimer = setTimeout(() => {
-            console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${next.priority}]. Forcing release to prevent deadlock.`);
+          this.activeTxTimer = setTimeout(async () => {
+            console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${next.priority}]. Rolling back SQLite transaction and releasing lock to prevent deadlock.`);
+            await this.rollbackUnderlying().catch(() => {
+            });
+            this.txDepth = 0;
             this.releaseTxLock();
           }, 6e4);
           this.activeTxTimer.unref();
@@ -49696,6 +49718,7 @@ var init_connection = __esm({
           next.resolve(releaseFn);
         } else {
           this.isTxLocked = false;
+          this.txDepth = 0;
           this.activeTxPriority = null;
           this.activeTxRelease = null;
         }
@@ -49705,6 +49728,7 @@ var init_connection = __esm({
         const releaseFn = () => this.releaseTxLock();
         if (!this.isTxLocked) {
           this.isTxLocked = true;
+          this.txDepth = 1;
           this.activeTxPriority = priority;
           this.activeTxRelease = releaseFn;
           this.lockStats.totalAcquisitions++;
@@ -49712,8 +49736,11 @@ var init_connection = __esm({
           else if (priority === "NORMAL") this.lockStats.normalCount++;
           else this.lockStats.backgroundCount++;
           this.lockStats.lastAcquiredAt = Date.now();
-          this.activeTxTimer = setTimeout(() => {
-            console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${priority}]. Forcing release to prevent deadlock.`);
+          this.activeTxTimer = setTimeout(async () => {
+            console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${priority}]. Rolling back SQLite transaction and releasing lock to prevent deadlock.`);
+            await this.rollbackUnderlying().catch(() => {
+            });
+            this.txDepth = 0;
             this.releaseTxLock();
           }, 6e4);
           this.activeTxTimer.unref();
@@ -49830,17 +49857,24 @@ var init_connection = __esm({
       setupWriteInterceptor(db2) {
         const originalRun = db2.run.bind(db2);
         const originalExec = db2.exec.bind(db2);
+        db2._rawRun = originalRun;
+        db2._rawExec = originalExec;
         const self = this;
         const txPhase = (sql) => {
-          const trimmed = sql.trim().toUpperCase();
+          const trimmed = sql.trim().toUpperCase().replace(/;+$/, "");
           let priority = txPriorityStorage.getStore() || "NORMAL";
           if (trimmed.includes("IMMEDIATE") || trimmed.includes("/* VIP */")) {
             priority = "VIP";
           } else if (trimmed.includes("/* BACKGROUND */")) {
             priority = "BACKGROUND";
           }
-          if (trimmed.startsWith("BEGIN")) return { phase: "begin", priority };
-          if (trimmed === "COMMIT" || trimmed.startsWith("ROLLBACK")) return { phase: "end", priority };
+          const isBegin = trimmed.startsWith("BEGIN");
+          const isEnd = trimmed.startsWith("COMMIT") || trimmed.startsWith("ROLLBACK") || trimmed.startsWith("END");
+          if (isBegin && (trimmed.includes("COMMIT") || trimmed.includes("ROLLBACK"))) {
+            return { phase: "self_contained", priority };
+          }
+          if (isBegin) return { phase: "begin", priority };
+          if (isEnd) return { phase: "end", priority };
           return { phase: null, priority };
         };
         const releaseIfHeld = () => {
@@ -49864,21 +49898,61 @@ var init_connection = __esm({
         db2.run = async function(sql, ...params) {
           if (typeof sql === "string") {
             const { phase, priority } = txPhase(sql);
+            const trimmed = sql.trim().toUpperCase().replace(/;+$/, "");
             if (phase === "begin") {
+              if (self.isTxLocked && self.txDepth > 0) {
+                self.txDepth++;
+                return await originalRun(`SAVEPOINT sp_${self.txDepth}`);
+              }
               const release = await self.acquireTxLock(priority);
               self.activeTxRelease = release;
+              self.txDepth = 1;
               try {
                 return await originalRun(sql, ...params);
               } catch (err) {
+                if (err?.message?.includes("cannot start a transaction within a transaction")) {
+                  console.warn("[DB-MUTEX] Orphan transaction detected on connection. Auto-rolling back to recover...");
+                  try {
+                    await originalRun("ROLLBACK");
+                    return await originalRun(sql, ...params);
+                  } catch (recErr) {
+                    console.error("[DB-MUTEX] Recovery rollback failed:", recErr);
+                  }
+                }
+                self.txDepth = 0;
                 releaseIfHeld();
                 throw err;
               }
             }
             if (phase === "end") {
-              try {
-                return await originalRun(sql, ...params);
-              } finally {
-                releaseIfHeld();
+              if (self.txDepth > 1) {
+                const currentDepth = self.txDepth;
+                self.txDepth--;
+                if (trimmed.startsWith("ROLLBACK")) {
+                  return await originalRun(`ROLLBACK TO SAVEPOINT sp_${currentDepth}`);
+                } else {
+                  return await originalRun(`RELEASE SAVEPOINT sp_${currentDepth}`);
+                }
+              }
+              if (self.txDepth === 1) {
+                try {
+                  return await originalRun(sql, ...params);
+                } catch (err) {
+                  if (err?.message?.includes("no transaction is active")) {
+                    return;
+                  }
+                  throw err;
+                } finally {
+                  self.txDepth = 0;
+                  releaseIfHeld();
+                }
+              }
+              if (trimmed.startsWith("ROLLBACK")) {
+                try {
+                  return await originalRun(sql, ...params);
+                } catch (_) {
+                  return;
+                }
               }
             }
             const sqlLower = sql.toLowerCase();
@@ -49910,25 +49984,21 @@ var init_connection = __esm({
         };
         db2.exec = async function(sql) {
           const { phase, priority } = txPhase(sql);
-          if (phase === "begin") {
+          if (phase === "self_contained") {
             const release = await self.acquireTxLock(priority);
-            self.activeTxRelease = release;
             try {
-              return await originalExec(sql);
-            } catch (err) {
-              releaseIfHeld();
-              throw err;
+              await originalExec(sql);
+              return;
+            } finally {
+              release();
             }
           }
-          if (phase === "end") {
-            try {
-              return await originalExec(sql);
-            } finally {
-              releaseIfHeld();
-            }
+          if (phase === "begin" || phase === "end") {
+            await db2.run(sql);
+            return;
           }
           checkWriteQuery(sql);
-          return originalExec(sql);
+          await originalExec(sql);
         };
       }
       async runSelfHealing(dbPath, busyTimeout, initialErrorMsg, oldDb) {
@@ -50896,146 +50966,152 @@ async function runCatalogImport(jobId) {
     const insertBatch = async (items) => {
       await activityTracker.waitUntilIdle();
       await dbManager.runWithPriority("BACKGROUND", async () => {
-        await db2.run("BEGIN TRANSACTION");
-        for (const item of items) {
-          const key = item.name.toLowerCase().trim();
-          if (addedNames.has(key)) {
-            duplicateCount++;
-            continue;
-          }
-          addedNames.add(key);
-          let medId = existingMedicinesMap.get(key);
-          const isApiMissing = !item.api_reference || item.api_reference.trim() === "";
-          if (isApiMissing) {
-            let dbHasApi = false;
-            if (medId) {
-              const dbMed = await db2.get("SELECT api_reference FROM medicines WHERE id = ?", medId);
-              if (dbMed && dbMed.api_reference && dbMed.api_reference.trim() !== "") {
-                dbHasApi = true;
-              }
-            }
-            if (!dbHasApi) {
-              await db2.run(
-                "INSERT INTO staged_medicine_reviews (job_id, medicine_name, status, original_row_data) VALUES (?, ?, ?, ?)",
-                [jobId, item.name, "pending", JSON.stringify(item)]
-              );
+        try {
+          await db2.run("BEGIN TRANSACTION");
+          for (const item of items) {
+            const key = item.name.toLowerCase().trim();
+            if (addedNames.has(key)) {
+              duplicateCount++;
               continue;
             }
-          }
-          if (medId) {
-            existingCount++;
-            const updates = [];
-            const params = [];
-            if (item.api_reference !== void 0) {
-              updates.push("api_reference = COALESCE(NULLIF(api_reference, ''), ?)");
-              params.push(item.api_reference);
-            }
-            if (item.strength !== void 0) {
-              updates.push("strength = COALESCE(NULLIF(strength, ''), ?)");
-              params.push(item.strength);
-            }
-            if (item.packaging !== void 0) {
-              updates.push("packaging = COALESCE(NULLIF(packaging, ''), ?)");
-              params.push(item.packaging);
-            }
-            if (item.manufacturer !== void 0) {
-              updates.push("manufacturer = COALESCE(NULLIF(manufacturer, ''), ?)");
-              params.push(item.manufacturer);
-            }
-            if (item.marketed_by !== void 0) {
-              updates.push("marketed_by = COALESCE(NULLIF(marketed_by, ''), ?)");
-              params.push(item.marketed_by);
-            }
-            if (item.hsn_code !== void 0) {
-              updates.push("hsn_code = COALESCE(NULLIF(hsn_code, ''), ?)");
-              params.push(item.hsn_code);
-            }
-            if (item.schedule_type !== void 0) {
-              updates.push("schedule_type = COALESCE(NULLIF(schedule_type, ''), ?)");
-              params.push(item.schedule_type);
-            }
-            if (item.therapeutic !== void 0) {
-              updates.push("therapeutic = COALESCE(NULLIF(therapeutic, ''), ?)");
-              params.push(item.therapeutic);
-            }
-            if (item.sub_therapeutic !== void 0) {
-              updates.push("sub_therapeutic = COALESCE(NULLIF(sub_therapeutic, ''), ?)");
-              params.push(item.sub_therapeutic);
-            }
-            if (item.short_code !== void 0) {
-              updates.push("short_code = COALESCE(NULLIF(short_code, ''), ?)");
-              params.push(item.short_code);
-            }
-            if (item.ucode !== void 0) {
-              updates.push("ucode = COALESCE(NULLIF(ucode, ''), ?)");
-              params.push(item.ucode);
-            }
-            if (item.mrp !== void 0) {
-              updates.push("mrp = COALESCE(NULLIF(mrp, 0), ?)");
-              params.push(item.mrp);
-            }
-            if (item.cgst !== void 0) {
-              updates.push("cgst_per = COALESCE(NULLIF(cgst_per, 0), ?)");
-              params.push(item.cgst);
-            }
-            if (item.sgst !== void 0) {
-              updates.push("sgst_per = COALESCE(NULLIF(sgst_per, 0), ?)");
-              params.push(item.sgst);
-            }
-            if (item.rack !== void 0) {
-              updates.push("rack = COALESCE(NULLIF(rack, ''), ?)");
-              params.push(item.rack);
-            }
-            if (item.metadata !== void 0) {
-              updates.push("metadata = COALESCE(NULLIF(metadata, ''), ?)");
-              params.push(item.metadata);
-            }
-            for (const cm of customMappings) {
-              if (item[cm.dbCol] !== void 0) {
-                updates.push(`"${cm.dbCol}" = COALESCE(NULLIF("${cm.dbCol}", ''), ?)`);
-                params.push(item[cm.dbCol]);
+            addedNames.add(key);
+            let medId = existingMedicinesMap.get(key);
+            const isApiMissing = !item.api_reference || item.api_reference.trim() === "";
+            if (isApiMissing) {
+              let dbHasApi = false;
+              if (medId) {
+                const dbMed = await db2.get("SELECT api_reference FROM medicines WHERE id = ?", medId);
+                if (dbMed && dbMed.api_reference && dbMed.api_reference.trim() !== "") {
+                  dbHasApi = true;
+                }
+              }
+              if (!dbHasApi) {
+                await db2.run(
+                  "INSERT INTO staged_medicine_reviews (job_id, medicine_name, status, original_row_data) VALUES (?, ?, ?, ?)",
+                  [jobId, item.name, "pending", JSON.stringify(item)]
+                );
+                continue;
               }
             }
-            if (updates.length > 0) {
-              params.push(medId);
-              await db2.run(`UPDATE medicines SET ${updates.join(", ")} WHERE id = ?`, ...params);
+            if (medId) {
+              existingCount++;
+              const updates = [];
+              const params = [];
+              if (item.api_reference !== void 0) {
+                updates.push("api_reference = COALESCE(NULLIF(api_reference, ''), ?)");
+                params.push(item.api_reference);
+              }
+              if (item.strength !== void 0) {
+                updates.push("strength = COALESCE(NULLIF(strength, ''), ?)");
+                params.push(item.strength);
+              }
+              if (item.packaging !== void 0) {
+                updates.push("packaging = COALESCE(NULLIF(packaging, ''), ?)");
+                params.push(item.packaging);
+              }
+              if (item.manufacturer !== void 0) {
+                updates.push("manufacturer = COALESCE(NULLIF(manufacturer, ''), ?)");
+                params.push(item.manufacturer);
+              }
+              if (item.marketed_by !== void 0) {
+                updates.push("marketed_by = COALESCE(NULLIF(marketed_by, ''), ?)");
+                params.push(item.marketed_by);
+              }
+              if (item.hsn_code !== void 0) {
+                updates.push("hsn_code = COALESCE(NULLIF(hsn_code, ''), ?)");
+                params.push(item.hsn_code);
+              }
+              if (item.schedule_type !== void 0) {
+                updates.push("schedule_type = COALESCE(NULLIF(schedule_type, ''), ?)");
+                params.push(item.schedule_type);
+              }
+              if (item.therapeutic !== void 0) {
+                updates.push("therapeutic = COALESCE(NULLIF(therapeutic, ''), ?)");
+                params.push(item.therapeutic);
+              }
+              if (item.sub_therapeutic !== void 0) {
+                updates.push("sub_therapeutic = COALESCE(NULLIF(sub_therapeutic, ''), ?)");
+                params.push(item.sub_therapeutic);
+              }
+              if (item.short_code !== void 0) {
+                updates.push("short_code = COALESCE(NULLIF(short_code, ''), ?)");
+                params.push(item.short_code);
+              }
+              if (item.ucode !== void 0) {
+                updates.push("ucode = COALESCE(NULLIF(ucode, ''), ?)");
+                params.push(item.ucode);
+              }
+              if (item.mrp !== void 0) {
+                updates.push("mrp = COALESCE(NULLIF(mrp, 0), ?)");
+                params.push(item.mrp);
+              }
+              if (item.cgst !== void 0) {
+                updates.push("cgst_per = COALESCE(NULLIF(cgst_per, 0), ?)");
+                params.push(item.cgst);
+              }
+              if (item.sgst !== void 0) {
+                updates.push("sgst_per = COALESCE(NULLIF(sgst_per, 0), ?)");
+                params.push(item.sgst);
+              }
+              if (item.rack !== void 0) {
+                updates.push("rack = COALESCE(NULLIF(rack, ''), ?)");
+                params.push(item.rack);
+              }
+              if (item.metadata !== void 0) {
+                updates.push("metadata = COALESCE(NULLIF(metadata, ''), ?)");
+                params.push(item.metadata);
+              }
+              for (const cm of customMappings) {
+                if (item[cm.dbCol] !== void 0) {
+                  updates.push(`"${cm.dbCol}" = COALESCE(NULLIF("${cm.dbCol}", ''), ?)`);
+                  params.push(item[cm.dbCol]);
+                }
+              }
+              if (updates.length > 0) {
+                params.push(medId);
+                await db2.run(`UPDATE medicines SET ${updates.join(", ")} WHERE id = ?`, ...params);
+              }
+            } else {
+              newCount++;
+              const columns = ["name", "api_reference", "packaging", "manufacturer", "marketed_by", "hsn_code", "schedule_type", "therapeutic", "sub_therapeutic", "short_code", "ucode", "mrp", "cgst_per", "sgst_per", "rack", "metadata"];
+              const placeholders = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
+              const params = [
+                item.name,
+                item.api_reference || null,
+                item.packaging || null,
+                item.manufacturer || null,
+                item.marketed_by || null,
+                item.hsn_code || null,
+                item.schedule_type || null,
+                item.therapeutic || null,
+                item.sub_therapeutic || null,
+                item.short_code || null,
+                item.ucode || null,
+                item.mrp || 0,
+                item.cgst || 0,
+                item.sgst || 0,
+                item.rack || null,
+                item.metadata || null
+              ];
+              for (const cm of customMappings) {
+                columns.push(`"${cm.dbCol}"`);
+                placeholders.push("?");
+                params.push(item[cm.dbCol] !== void 0 ? item[cm.dbCol] : null);
+              }
+              const insertRes = await db2.run(
+                `INSERT INTO medicines (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
+                params
+              );
+              medId = insertRes.lastID;
+              existingMedicinesMap.set(key, medId);
             }
-          } else {
-            newCount++;
-            const columns = ["name", "api_reference", "packaging", "manufacturer", "marketed_by", "hsn_code", "schedule_type", "therapeutic", "sub_therapeutic", "short_code", "ucode", "mrp", "cgst_per", "sgst_per", "rack", "metadata"];
-            const placeholders = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
-            const params = [
-              item.name,
-              item.api_reference || null,
-              item.packaging || null,
-              item.manufacturer || null,
-              item.marketed_by || null,
-              item.hsn_code || null,
-              item.schedule_type || null,
-              item.therapeutic || null,
-              item.sub_therapeutic || null,
-              item.short_code || null,
-              item.ucode || null,
-              item.mrp || 0,
-              item.cgst || 0,
-              item.sgst || 0,
-              item.rack || null,
-              item.metadata || null
-            ];
-            for (const cm of customMappings) {
-              columns.push(`"${cm.dbCol}"`);
-              placeholders.push("?");
-              params.push(item[cm.dbCol] !== void 0 ? item[cm.dbCol] : null);
-            }
-            const insertRes = await db2.run(
-              `INSERT INTO medicines (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
-              params
-            );
-            medId = insertRes.lastID;
-            existingMedicinesMap.set(key, medId);
           }
+          await db2.run("COMMIT");
+        } catch (err) {
+          await db2.run("ROLLBACK").catch(() => {
+          });
+          throw err;
         }
-        await db2.run("COMMIT");
       });
       await new Promise((resolve) => setTimeout(resolve, activityTracker.isAppInUse() ? 30 : 10));
     };
@@ -61445,14 +61521,21 @@ var init_migration = __esm({
           let counter = 1;
           const today = /* @__PURE__ */ new Date();
           const prefix = `INV-${today.getFullYear()}${(today.getMonth() + 1).toString().padStart(2, "0")}`;
-          await db2.run("BEGIN TRANSACTION");
-          for (const inv of invoices) {
-            const newInvoiceNo = `${prefix}-${counter.toString().padStart(5, "0")}`;
-            await db2.run("UPDATE sales_invoices SET invoice_no = ? WHERE id = ?", [newInvoiceNo, inv.id]);
-            counter++;
+          try {
+            await db2.run("BEGIN TRANSACTION");
+            for (const inv of invoices) {
+              const newInvoiceNo = `${prefix}-${counter.toString().padStart(5, "0")}`;
+              await db2.run("UPDATE sales_invoices SET invoice_no = ? WHERE id = ?", [newInvoiceNo, inv.id]);
+              counter++;
+            }
+            await db2.run("COMMIT");
+          } catch (err) {
+            await db2.run("ROLLBACK").catch(() => {
+            });
+            throw err;
+          } finally {
+            await db2.close();
           }
-          await db2.run("COMMIT");
-          await db2.close();
         }
         await closeAllStagingConnections();
         try {
@@ -63580,8 +63663,8 @@ var init_verificationService = __esm({
           if (missingIndexes.length > 0) {
             console.warn(`[Verification] Warning: Recommended indexes missing: ${missingIndexes.join(", ")}`);
           }
-          await db2.run("BEGIN TRANSACTION");
           try {
+            await db2.run("BEGIN TRANSACTION");
             const testUuid = `VERIFY_TEST_${Date.now()}`;
             const insertResult = await db2.run(
               "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
@@ -63599,7 +63682,8 @@ var init_verificationService = __esm({
               throw new Error("Data inserted is not retrievable");
             }
           } finally {
-            await db2.run("ROLLBACK");
+            await db2.run("ROLLBACK").catch(() => {
+            });
           }
           return {
             success: true,
@@ -73440,9 +73524,12 @@ var init_websiteOrders = __esm({
     init_prescriptionIntelService();
     init_imageCompressionService();
     router27 = import_express29.default.Router();
-    broadcastOrdersChanged = () => {
+    broadcastOrdersChanged = (delta) => {
       try {
-        eventService.broadcast("order_updated", { at: Date.now(), source: "website" });
+        if (delta) {
+          eventService.broadcast("order_delta", delta);
+        }
+        eventService.broadcast("order_updated", { at: Date.now(), source: "website", delta });
       } catch (_) {
       }
     };
@@ -74447,6 +74534,208 @@ Thank you for your payment.`;
       } catch (err) {
         console.error("[WebsiteOrdersRoute] Cancel error:", err);
         res.status(500).json({ error: "Failed to cancel order" });
+      }
+    });
+    router27.post("/orders/:orderId/restore", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        const { restored_by = "Staff Pharmacist", notes = "" } = req.body;
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        if (order.status !== "Cancelled") {
+          return res.status(400).json({ error: "Order is not cancelled" });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE special_orders
+         SET status = 'Pending',
+             pharmacy_verification_status = 'PENDING',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [orderId]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_restored', ?, ?, CURRENT_TIMESTAMP)`,
+            [orderId, `Order restored to Pending by ${restored_by}. ${notes ? `Note: ${notes}` : ""}`.trim(), restored_by]
+          );
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        broadcastOrdersChanged({ action: "restore", orderId: Number(orderId), patch: { status: "Pending", pharmacy_verification_status: "PENDING" } });
+        res.json({
+          success: true,
+          message: "Order restored to Pending. Staff can freshly verify and source items.",
+          order_id: orderId
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Restore error:", err);
+        res.status(500).json({ error: "Failed to restore order" });
+      }
+    });
+    router27.get("/orders/:orderId/items", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const items = await db2.all(
+          `SELECT id, order_id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, sell_price, subtotal, item_status
+       FROM online_order_items
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+          [orderId]
+        );
+        if (items && items.length > 0) {
+          return res.json({ success: true, orderId, items });
+        }
+        const fallbackItem = {
+          id: 0,
+          order_id: order.id,
+          medicine_id: order.medicine_id || null,
+          product_name: order.product || order.medicine_name || "Medicine",
+          requested_qty: order.qty || 1,
+          confirmed_qty: order.qty || 1,
+          mrp: order.pharmarack_mrp || 0,
+          sell_price: order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0,
+          subtotal: (order.qty || 1) * (order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0),
+          item_status: "PENDING"
+        };
+        return res.json({ success: true, orderId, items: [fallbackItem] });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Get items error:", err);
+        res.status(500).json({ error: "Failed to fetch order items" });
+      }
+    });
+    router27.put("/orders/:orderId/items", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const { items, removed_item_ids, notes, send_whatsapp, advance_payment } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+          return res.status(400).json({ error: "At least one medicine item is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          if (Array.isArray(removed_item_ids) && removed_item_ids.length > 0) {
+            for (const remId of removed_item_ids) {
+              const numId = Number(remId);
+              if (numId > 0) {
+                await db2.run("DELETE FROM online_order_items WHERE order_id = ? AND id = ?", [orderId, numId]);
+              }
+            }
+          }
+          for (const it of items) {
+            const prodName = String(it.product_name || it.product || it.name || "").trim();
+            if (!prodName) continue;
+            const qty = Math.max(1, parseInt(String(it.requested_qty || it.qty || 1), 10) || 1);
+            const mrp = Number(it.mrp || 0);
+            const sellPrice = Number(it.sell_price !== void 0 ? it.sell_price : it.rate !== void 0 ? it.rate : mrp);
+            const subtotal = qty * sellPrice;
+            const itemId = Number(it.id || 0);
+            const medId = it.medicine_id ? Number(it.medicine_id) : null;
+            if (itemId > 0) {
+              const existingItem = await db2.get("SELECT id FROM online_order_items WHERE id = ? AND order_id = ?", [itemId, orderId]);
+              if (existingItem) {
+                await db2.run(
+                  `UPDATE online_order_items
+               SET product_name = ?, product_name_snapshot = ?, requested_qty = ?, mrp = ?, sell_price = ?, subtotal = ?
+               WHERE id = ? AND order_id = ?`,
+                  [prodName, prodName, qty, mrp, sellPrice, subtotal, itemId, orderId]
+                );
+              } else {
+                await db2.run(
+                  `INSERT INTO online_order_items
+               (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+                  [orderId, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+                );
+              }
+            } else {
+              await db2.run(
+                `INSERT INTO online_order_items
+             (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+                [orderId, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+              );
+            }
+          }
+          const currentItems = await db2.all("SELECT * FROM online_order_items WHERE order_id = ? ORDER BY id ASC", [orderId]);
+          if (currentItems.length === 0) {
+            throw new Error("Order must contain at least one item");
+          }
+          const totalAmount = currentItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
+          const totalQty = currentItems.reduce((acc, it) => acc + (Number(it.requested_qty) || 1), 0);
+          const summaryProduct = currentItems.length === 1 ? currentItems[0].product_name : `${currentItems[0].product_name} (+${currentItems.length - 1} more)`;
+          const newNotes = notes !== void 0 ? notes : order.notes;
+          const newAdvance = advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : order.advance_payment;
+          await db2.run(
+            `UPDATE special_orders
+         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, orderId]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_modified', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+            [orderId, `Order modified: ${currentItems.length} items total (\u20B9${totalAmount.toFixed(2)})`]
+          );
+          await db2.run("COMMIT");
+          if (Boolean(send_whatsapp) && order.phone) {
+            const cleanPhone = String(order.phone).replace(/\D/g, "");
+            if (cleanPhone.length >= 10) {
+              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+              const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+              const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, orderId).catch(() => `SO-TMSA-${orderId}`);
+              const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
+              const custName = formatCustomerName(order.requester || "Customer");
+              const itemsText = currentItems.map((it, idx) => {
+                const itemPrice = Number(it.subtotal || 0).toFixed(2);
+                return `${idx + 1}. *${it.product_name}* \xD7 ${it.requested_qty} (\u20B9${itemPrice})`;
+              }).join("\n");
+              const waMsg = `\u{1F4DD} Hello *${custName}*,
+
+Your order *${soCode}* has been updated:
+
+${itemsText}
+
+\u{1F4B0} *Updated Total*: \u20B9${totalAmount.toFixed(2)}
+
+We are preparing your order. Thank you!
+\u2014 ${storeName}`;
+              void whatsappQueueWorker.enqueue(
+                formattedPhone,
+                waMsg,
+                "order_modified",
+                custName
+              ).catch((waErr) => console.warn("[WebsiteOrdersRoute] Failed to enqueue WhatsApp on modify:", waErr));
+            }
+          }
+          broadcastOrdersChanged({ action: "update_items", orderId: Number(orderId), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
+          res.json({
+            success: true,
+            message: "Order items updated successfully",
+            order_id: orderId,
+            items: currentItems,
+            total_amount: totalAmount,
+            qty: totalQty
+          });
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Modify items error:", err);
+        res.status(500).json({ error: "Failed to modify order items: " + (err?.message || "Unknown error") });
       }
     });
     router27.get("/orders/:orderId/track", async (req, res) => {
@@ -87963,9 +88252,12 @@ var init_orders = __esm({
     __dirname41 = import_path62.default.dirname(__filename41);
     DB_PATH27 = process.env.DB_PATH || import_path62.default.resolve(__dirname41, "..", "..", "data", "app.db");
     router40 = import_express42.default.Router();
-    broadcastOrdersChanged2 = () => {
+    broadcastOrdersChanged2 = (delta) => {
       try {
-        eventService.broadcast("order_updated", { at: Date.now() });
+        if (delta) {
+          eventService.broadcast("order_delta", delta);
+        }
+        eventService.broadcast("order_updated", { at: Date.now(), delta });
       } catch (_) {
       }
     };
@@ -89187,7 +89479,7 @@ ${upiUri}
             console.warn("[Orders] Could not auto-adjust live cart on order status Cancelled:", cartErr);
           }
         }
-        broadcastOrdersChanged2();
+        broadcastOrdersChanged2({ action: "update_status", orderId: Number(id), patch: { status } });
         res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
       } catch (err) {
         console.error("Update order status error:", err);
@@ -89196,6 +89488,208 @@ ${upiUri}
     };
     router40.post("/:id/status", handleStatusUpdate);
     router40.put("/:id/status", handleStatusUpdate);
+    router40.post("/:id/restore", async (req, res) => {
+      const { id } = req.params;
+      const { restored_by = "Staff Pharmacist", notes = "" } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!existing) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        if (existing.status !== "Cancelled") {
+          return res.status(400).json({ error: "Order is not cancelled" });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE special_orders
+         SET status = 'Pending',
+             pharmacy_verification_status = 'PENDING',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_restored', ?, ?, CURRENT_TIMESTAMP)`,
+            [id, `Order restored to Pending by ${restored_by}. ${notes ? `Note: ${notes}` : ""}`.trim(), restored_by]
+          ).catch(() => {
+          });
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        broadcastOrdersChanged2({ action: "restore", orderId: Number(id), patch: { status: "Pending", pharmacy_verification_status: "PENDING" } });
+        res.json({ success: true, message: "Order restored to Pending successfully" });
+      } catch (err) {
+        console.error("Restore order error:", err);
+        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
+      }
+    });
+    router40.get("/:id/items", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const items = await db2.all(
+          `SELECT id, order_id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, sell_price, subtotal, item_status
+       FROM online_order_items
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+          [id]
+        );
+        if (items && items.length > 0) {
+          return res.json({ success: true, orderId: Number(id), items });
+        }
+        const fallbackItem = {
+          id: 0,
+          order_id: order.id,
+          medicine_id: order.medicine_id || null,
+          product_name: order.product || order.medicine_name || "Medicine",
+          requested_qty: order.qty || 1,
+          confirmed_qty: order.qty || 1,
+          mrp: order.pharmarack_mrp || 0,
+          sell_price: order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0,
+          subtotal: (order.qty || 1) * (order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0),
+          item_status: "PENDING"
+        };
+        return res.json({ success: true, orderId: Number(id), items: [fallbackItem] });
+      } catch (err) {
+        console.error("Get order items error:", err);
+        res.status(500).json({ error: "Failed to fetch order items" });
+      }
+    });
+    router40.put("/:id/items", async (req, res) => {
+      const { id } = req.params;
+      const { items, removed_item_ids, notes, send_whatsapp, advance_payment } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "At least one medicine item is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          if (Array.isArray(removed_item_ids) && removed_item_ids.length > 0) {
+            for (const remId of removed_item_ids) {
+              const numId = Number(remId);
+              if (numId > 0) {
+                await db2.run("DELETE FROM online_order_items WHERE order_id = ? AND id = ?", [id, numId]);
+              }
+            }
+          }
+          for (const it of items) {
+            const prodName = String(it.product_name || it.product || it.name || "").trim();
+            if (!prodName) continue;
+            const qty = Math.max(1, parseInt(String(it.requested_qty || it.qty || 1), 10) || 1);
+            const mrp = Number(it.mrp || 0);
+            const sellPrice = Number(it.sell_price !== void 0 ? it.sell_price : it.rate !== void 0 ? it.rate : mrp);
+            const subtotal = qty * sellPrice;
+            const itemId = Number(it.id || 0);
+            const medId = it.medicine_id ? Number(it.medicine_id) : null;
+            if (itemId > 0) {
+              const existingItem = await db2.get("SELECT id FROM online_order_items WHERE id = ? AND order_id = ?", [itemId, id]);
+              if (existingItem) {
+                await db2.run(
+                  `UPDATE online_order_items
+               SET product_name = ?, product_name_snapshot = ?, requested_qty = ?, mrp = ?, sell_price = ?, subtotal = ?
+               WHERE id = ? AND order_id = ?`,
+                  [prodName, prodName, qty, mrp, sellPrice, subtotal, itemId, id]
+                );
+              } else {
+                await db2.run(
+                  `INSERT INTO online_order_items
+               (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+                  [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+                );
+              }
+            } else {
+              await db2.run(
+                `INSERT INTO online_order_items
+             (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+                [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+              );
+            }
+          }
+          const currentItems = await db2.all("SELECT * FROM online_order_items WHERE order_id = ? ORDER BY id ASC", [id]);
+          if (currentItems.length === 0) {
+            throw new Error("Order must contain at least one item");
+          }
+          const totalAmount = currentItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
+          const totalQty = currentItems.reduce((acc, it) => acc + (Number(it.requested_qty) || 1), 0);
+          const summaryProduct = currentItems.length === 1 ? currentItems[0].product_name : `${currentItems[0].product_name} (+${currentItems.length - 1} more)`;
+          const newNotes = notes !== void 0 ? notes : order.notes;
+          const newAdvance = advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : order.advance_payment;
+          await db2.run(
+            `UPDATE special_orders
+         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_modified', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+            [id, `Order modified: ${currentItems.length} items total (\u20B9${totalAmount.toFixed(2)})`]
+          ).catch(() => {
+          });
+          await db2.run("COMMIT");
+          if (Boolean(send_whatsapp) && order.phone) {
+            const cleanPhone = String(order.phone).replace(/\D/g, "");
+            if (cleanPhone.length >= 10) {
+              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+              const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+              const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, Number(id)).catch(() => `SO-TMSA-${id}`);
+              const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
+              const custName = formatCustomerName(order.requester || "Customer");
+              const itemsText = currentItems.map((it, idx) => {
+                const itemPrice = Number(it.subtotal || 0).toFixed(2);
+                return `${idx + 1}. *${it.product_name}* \xD7 ${it.requested_qty} (\u20B9${itemPrice})`;
+              }).join("\n");
+              const waMsg = `\u{1F4DD} Hello *${custName}*,
+
+Your order *${soCode}* has been updated:
+
+${itemsText}
+
+\u{1F4B0} *Updated Total*: \u20B9${totalAmount.toFixed(2)}
+
+We are preparing your order. Thank you!
+\u2014 ${storeName}`;
+              void whatsappQueueWorker.enqueue(
+                formattedPhone,
+                waMsg,
+                "order_modified",
+                custName
+              ).catch((waErr) => console.warn("[Orders] Failed to enqueue WhatsApp on modify:", waErr));
+            }
+          }
+          broadcastOrdersChanged2({ action: "update_items", orderId: Number(id), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
+          res.json({
+            success: true,
+            message: "Order items updated successfully",
+            order_id: Number(id),
+            items: currentItems,
+            total_amount: totalAmount,
+            qty: totalQty
+          });
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+      } catch (err) {
+        console.error("Modify order items error:", err);
+        res.status(500).json({ error: "Failed to modify order items: " + (err?.message || "Unknown error") });
+      }
+    });
     router40.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
@@ -89226,7 +89720,7 @@ ${upiUri}
         } catch (cartErr) {
           console.warn("[Orders] Could not auto-adjust live cart on order delete:", cartErr);
         }
-        broadcastOrdersChanged2();
+        broadcastOrdersChanged2({ action: "delete", orderId: Number(id) });
         res.json({ success: true, message: "Order deleted successfully", cartAdjustment });
       } catch (err) {
         console.error("Delete order error:", err);
@@ -96688,17 +97182,18 @@ var init_server = __esm({
     app.use(errorHandler);
     PORT = config.port;
     server = app.listen(PORT, "127.0.0.1", async () => {
-      const serverUrl = `http://localhost:${PORT}`;
+      const serverUrl = `http://127.0.0.1:${PORT}`;
       console.log(`Server is running on ${serverUrl} (listening ${Math.round(performance.now() - BOOT_T0)}ms after module load)`);
-      if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === "true") {
-        const uiUrl = !isPackagedApp() && config.nodeEnv !== "production" ? `http://localhost:5173` : serverUrl;
+      if (!process.env.ELECTRON_MODE && (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === "true")) {
+        const uiUrl = !isPackagedApp() && config.nodeEnv !== "production" ? `http://127.0.0.1:5173` : serverUrl;
+        const launchDelay = isPackagedApp() ? 50 : 800;
         setTimeout(() => {
           console.log(`[Boot] Launching dedicated app window at ${uiUrl}...`);
           launchAppBrowser(uiUrl, void 0, () => {
             console.log("[Boot] Main application UI window closed. Exiting AI Pharmacy OS...");
             void gracefulShutdown("UI_WINDOW_CLOSED");
           });
-        }, 1500);
+        }, launchDelay);
       }
       Promise.resolve().then(() => (init_cloudflareTunnelService(), cloudflareTunnelService_exports)).then(({ cloudflareTunnelService: cloudflareTunnelService2 }) => {
         cloudflareTunnelService2.init().catch(() => {

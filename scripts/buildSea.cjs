@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Packages dist-pkg/server.cjs into a single Windows executable using Node's
- * built-in Single Executable Application (SEA) support.
+ * Packages AI Pharmacy OS into a native Electron desktop application
+ * backed by a self-contained Node SEA backend (PharmacyBackend.exe).
  *
- * We use SEA instead of `pkg` because `pkg` (vercel/pkg) cannot execute
- * dynamic `import()` at all (throws "Invalid host defined options"), and
- * this codebase's lazy-loaded routes/services depend on it throughout.
- * SEA runs the real Node binary, so dynamic import works exactly as in dev.
+ * Architecture:
+ *   - PharmacyOS.exe      -> Native Electron BrowserWindow UI launcher (replaces Chrome #1)
+ *   - PharmacyBackend.exe -> Self-contained Node SEA backend (Express, SQLite, SSE, Port 5175)
+ *   - installer.iss       -> Inno Setup installer packaging both into a portable setup
  */
 const fs = require('fs');
 const path = require('path');
@@ -18,29 +18,57 @@ const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const APP_VERSION = pkg.version;
 const distDir = path.join(root, 'dist');
-const outExe = path.join(distDir, 'PharmacyOS.exe');
+const backendExe = path.join(distDir, 'PharmacyBackend.exe');
 const blobPath = path.join(root, 'dist-pkg', 'sea-prep.blob');
 
 fs.mkdirSync(distDir, { recursive: true });
 
-console.log('[build-sea] Generating SEA blob...');
+console.log('[build-sea] Step 1: Generating SEA blob for backend...');
 execFileSync(process.execPath, ['--experimental-sea-config', 'sea-config.json'], {
   cwd: root,
   stdio: 'inherit',
 });
 
-console.log('[build-sea] Copying base node executable...');
-if (fs.existsSync(outExe)) fs.rmSync(outExe);
-fs.copyFileSync(process.execPath, outExe);
+console.log('[build-sea] Step 2: Creating PharmacyBackend.exe (Node SEA)...');
+if (fs.existsSync(backendExe)) fs.rmSync(backendExe);
+fs.copyFileSync(process.execPath, backendExe);
 
-console.log('[build-sea] Injecting blob with postject...');
+console.log('[build-sea] Step 3: Injecting blob with postject...');
 const q = (s) => `"${s}"`;
 execSync(
-  `npx --yes postject ${q(outExe)} NODE_SEA_BLOB ${q(blobPath)} --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`,
+  `npx --yes postject ${q(backendExe)} NODE_SEA_BLOB ${q(blobPath)} --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`,
+  { cwd: root, stdio: 'inherit' }
+);
+console.log('[build-sea] ✓ PharmacyBackend.exe ready ->', backendExe);
+
+console.log('[build-sea] Step 4: Compiling Electron main and preload scripts...');
+const electronDistDir = path.join(distDir, 'electron');
+fs.mkdirSync(electronDistDir, { recursive: true });
+execSync(
+  `npx esbuild electron/main.ts --bundle --platform=node --target=node20 --outfile=${q(path.join(electronDistDir, 'main.cjs'))} --external:electron`,
+  { cwd: root, stdio: 'inherit' }
+);
+execSync(
+  `npx esbuild electron/preload.ts --bundle --platform=node --target=node20 --outfile=${q(path.join(electronDistDir, 'preload.cjs'))} --external:electron`,
   { cwd: root, stdio: 'inherit' }
 );
 
-console.log('[build-sea] Done ->', outExe);
+console.log('[build-sea] Step 5: Preparing Electron runtime (PharmacyOS.exe)...');
+const electronSourceDir = path.join(root, 'node_modules', 'electron', 'dist');
+const outElectronExe = path.join(distDir, 'PharmacyOS.exe');
+if (fs.existsSync(outElectronExe)) fs.rmSync(outElectronExe);
+fs.copyFileSync(path.join(electronSourceDir, 'electron.exe'), outElectronExe);
+
+// Prepare resources/app folder
+const appResourcesDir = path.join(distDir, 'resources', 'app');
+fs.mkdirSync(appResourcesDir, { recursive: true });
+fs.writeFileSync(
+  path.join(appResourcesDir, 'package.json'),
+  JSON.stringify({ name: 'ai-pharmacy-os', version: APP_VERSION, main: 'main.cjs' }, null, 2)
+);
+fs.copyFileSync(path.join(electronDistDir, 'main.cjs'), path.join(appResourcesDir, 'main.cjs'));
+fs.copyFileSync(path.join(electronDistDir, 'preload.cjs'), path.join(appResourcesDir, 'preload.cjs'));
+console.log('[build-sea] ✓ Electron app and resources staged in dist/resources/app');
 
 // Automatically check for Inno Setup compiler (ISCC.exe) and compile installer if installed
 const isccCandidates = [
@@ -68,7 +96,7 @@ for (const cand of isccCandidates) {
 
 const issPath = path.join(root, 'installer.iss');
 if (isccExe && fs.existsSync(issPath)) {
-  // Ensure no local product images are accidentally included in the build distribution (per spec: images load online via web)
+  // Ensure no local product images are accidentally included in the build distribution
   const distProductsDir = path.join(root, 'frontend', 'dist', 'products');
   if (fs.existsSync(distProductsDir)) {
     console.log('[build-sea] Stripping local product images from build distribution (images load via web)...');
@@ -83,12 +111,10 @@ if (isccExe && fs.existsSync(issPath)) {
     // Pass version via /DMyAppVersion= so installer.iss never needs manual edits (PRODUCTION.md §6)
     execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} "${issPath}"`, { cwd: root, stdio: 'inherit' });
     console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v${APP_VERSION}.exe`);
-
   } catch (e) {
     console.error('[build-sea] Inno Setup compilation failed:', e.message);
   }
 } else {
   console.log('[build-sea] Notice: Inno Setup compiler (ISCC.exe) was not found in standard paths.');
-  console.log('[build-sea] If you want a 1-file setup installer, download Inno Setup 6 (https://jrsoftware.org/isinfo.php)');
+  console.log('[build-sea] If you want a 1-file setup installer, download Inno Setup (https://jrsoftware.org/isinfo.php)');
 }
-

@@ -7,7 +7,19 @@
 
 ## Fixed
 
+### [Fixed] P3-49 — POS Manual Entry Button: `idx` Undefined TypeScript Error Blocking Build
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Frontend build (`npm run build:client`) failed with `error TS2304: Cannot find name 'idx'` at 5 locations in `frontend/src/pages/POS/index.tsx` (lines 5399–5412). The manual entry "Use as custom manual entry in this row" button in the POS cart table was broken. |
+| **Root cause** | The `cart.map(item => { ... })` callback at line 5219 used only the `item` parameter — no index parameter. However, code inside the `onMouseDown` handler of the manual entry button at lines 5399–5412 referenced a bare `idx` variable that was never declared in that scope. The variable was accidentally removed when the button was added, leaving 5 dangling references. |
+| **How it was fixed** | Added `const idx = cart.indexOf(item);` as the first line inside the `onMouseDown` handler. This is consistent with how the same pattern is used just 16 lines above at line 5383 (`activeRowSearchIndex === cart.indexOf(item)`). No other code was changed. |
+| **Priority** | P3 (build blocker) |
+| **What not to touch** | The rest of the POS cart table, the `rowSearchResults` logic, the `activeRowSearchIndex` state. |
+| **Verified by** | `npm run build:client` passes (✓ 2616 modules, 39s); `npm run guardrails` PASS. |
+
 ### [Fixed] P2-48 — SQLite Transaction Collision, Mutex Deadlock & Orphan Auto-Recovery
+
 
 | Field | Content |
 |---|---|
