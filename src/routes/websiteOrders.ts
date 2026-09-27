@@ -435,8 +435,10 @@ router.post('/orders/:orderId/mark-paid', async (req, res) => {
         if (!fs.existsSync(uploadsDir)) {
           fs.mkdirSync(uploadsDir, { recursive: true });
         }
-        proofImagePath = path.join(uploadsDir, `payment_proof_SO-${orderId}.jpg`);
-        fs.writeFileSync(proofImagePath, Buffer.from(cleanBase64, 'base64'));
+        const savedFileName = `payment_proof_SO-${orderId}.jpg`;
+        const diskPath = path.join(uploadsDir, savedFileName);
+        fs.writeFileSync(diskPath, Buffer.from(cleanBase64, 'base64'));
+        proofImagePath = `/uploads/${savedFileName}`;
       } catch (saveErr) {
         console.error('[WebsiteOrdersRoute] Failed to save payment proof from portal:', saveErr);
       }
@@ -577,11 +579,14 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    if (order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') {
+    if (order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED' || order.payment_status === 'VERIFIED') {
       return res.status(409).json({ error: 'Payment already confirmed for this order' });
     }
 
-    const nextOrderStatus = order.order_type === 'DELIVERY' ? 'Ready' : 'ORDER_READY_FOR_PICKUP';
+    const isSpecialProcurement = Boolean(order.pharmarack_distributor || order.pharmarack_product_id);
+    const nextOrderStatus = isSpecialProcurement
+      ? 'Confirmed'
+      : (order.order_type === 'DELIVERY' ? 'Ready' : 'ORDER_READY_FOR_PICKUP');
 
     await db.run(
       `UPDATE special_orders
@@ -599,25 +604,128 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
     await db.run(
       `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
        VALUES (?, 'payment_confirmed', ?, ?, CURRENT_TIMESTAMP)`,
-      [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || 'N/A'}. Ready for pickup.`, confirmed_by]
+      [orderId, `Payment confirmed via ${payment_method} by ${confirmed_by}. Ref: ${payment_reference || 'N/A'}. Status: ${nextOrderStatus}.`, confirmed_by]
     );
+
+    // Ensure item exists in online_order_items for Live Cart queue visibility
+    try {
+      const existingItem = await db.get('SELECT id FROM online_order_items WHERE order_id = ? LIMIT 1', [orderId]);
+      if (!existingItem) {
+        await db.run(
+          `INSERT INTO online_order_items (
+             order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+          [
+            orderId,
+            order.medicine_name || order.product,
+            order.medicine_name || order.product,
+            order.qty || 1,
+            order.qty || 1,
+            order.pharmarack_mrp || 0,
+            order.pharmarack_rate || 0,
+            (order.qty || 1) * (order.pharmarack_rate || 0)
+          ]
+        );
+      }
+    } catch (itemErr) {
+      console.warn('[WebsiteOrdersRoute] Non-fatal online_order_items insert note:', itemErr);
+    }
+
+    // Resolve distributor storeId from locked special order or distributor_catalog
+    let resolvedStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : 0;
+    if (!resolvedStoreId && order.pharmarack_distributor) {
+      try {
+        const dRow = await db.get(
+          `SELECT store_id FROM distributor_catalog WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?) LIMIT 1`,
+          [order.pharmarack_distributor.trim(), `%${order.pharmarack_distributor.trim()}%`]
+        );
+        if (dRow && dRow.store_id) {
+          resolvedStoreId = Number(dRow.store_id);
+        }
+      } catch (_) {}
+    }
+
+    const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+    const resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : (order.medicine_id ? Number(order.medicine_id) : 0);
+    const resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : '';
 
     // Auto-add item to Pharmarack Live Cart
     try {
       const { addItemsToPharmarackCart } = await import('./pharmarack.js');
       void addItemsToPharmarackCart([{
-        productName: order.medicine_name || order.product,
-        product: order.medicine_name || order.product,
-        productId: order.medicine_id || 0,
-        productCode: '',
-        storeId: 0,
+        productName: resolvedProdName,
+        product: resolvedProdName,
+        productId: resolvedProdId,
+        productCode: resolvedProdCode,
+        storeId: resolvedStoreId,
         storeName: order.pharmarack_distributor || 'Standard Distributor',
         qty: order.qty > 0 ? order.qty : 1,
         rate: order.pharmarack_rate || 0,
         mrp: order.pharmarack_mrp || 0,
-        packaging: '1 strip'
+        packaging: '1 strip',
+        mapped: order.pharmarack_mapped === 1
       }]).catch((err: any) => console.warn('[WebsiteOrdersRoute] Live cart add error on payment confirm:', err?.message || err));
     } catch (_) {}
+
+    // Resolve store order code (e.g. SO-TMSA-7)
+    const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
+    const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, orderId).catch(() => `SO-TMSA-${orderId}`);
+    const storeName = (await getStoreMedicalName(db, order.store_id || 1)) || 'AI Pharmacy';
+    const customerName = formatCustomerName(order.customer_name || order.requester || 'Customer');
+    const medicineName = order.medicine_name || order.product || 'Medicine';
+    const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
+    const cleanCustPhone = String(order.phone || '').replace(/\D/g, '').slice(-10);
+
+    // Mark owner pending request fulfilled & customer clarification completed
+    await db.run(
+      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+      [soCode, `%${orderId}`]
+    ).catch(() => {});
+    await db.run(
+      `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+      [orderId, soCode]
+    ).catch(() => {});
+
+    // Stage final customer message and send confirmation receipt directly to customer on WhatsApp
+    const custFinalMsg = isSpecialProcurement
+      ? `🎉 Hello *${customerName}*, your medicine request is confirmed!\n\n` +
+        `🆔 Special Order ID: ${soCode}\n\n` +
+        `💊 ${medicineName}\n` +
+        `📦 Quantity: ${order.qty || 1}\n\n` +
+        `💰 Booking Amount Paid: ₹${amountPaid}\n\n` +
+        `🛒 Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!\n\n` +
+        `Thank you!\n— ${storeName}`
+      : `🎉 Hello *${customerName}*, your order payment is confirmed!\n\n` +
+        `🆔 Order ID: ${soCode}\n\n` +
+        `💊 ${medicineName}\n` +
+        `📦 Quantity: ${order.qty || 1}\n\n` +
+        `💰 Amount Paid: ₹${amountPaid}\n\n` +
+        `✅ Your order is ${nextOrderStatus === 'Ready' ? 'being packed for delivery' : 'ready for pickup at our counter'}.\n\n` +
+        `Thank you!\n— ${storeName}`;
+
+    if (cleanCustPhone) {
+      try {
+        await whatsappQueueWorker.enqueue(
+          cleanCustPhone,
+          custFinalMsg,
+          'customer_order_confirmed',
+          customerName
+        );
+        console.log(`[WebsiteOrdersRoute] Payment confirmation WhatsApp enqueued for ${customerName} (${cleanCustPhone}) [${soCode}]`);
+      } catch (waErr) {
+        console.warn('[WebsiteOrdersRoute] Failed to enqueue customer payment confirmation WhatsApp:', waErr);
+      }
+
+      try {
+        await db.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+           VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
+          ['whatsapp_order', customerName, cleanCustPhone, custFinalMsg, String(orderId)]
+        );
+      } catch (notifErr) {
+        console.warn('[WebsiteOrdersRoute] Failed to log automation_notification:', notifErr);
+      }
+    }
 
     broadcastOrdersChanged();
 
@@ -646,7 +754,7 @@ router.get('/live-cart', async (req, res) => {
       `SELECT so.*
        FROM special_orders so
        WHERE so.store_id = ?
-         AND so.payment_status = 'CONFIRMED'
+         AND (so.payment_status = 'CONFIRMED' OR so.payment_status = 'PAYMENT_CONFIRMED' OR so.payment_status = 'VERIFIED')
          AND so.pharmacy_verification_status != 'DONE'
        ORDER BY so.payment_confirmed_at ASC, so.date DESC`,
       [storeId]

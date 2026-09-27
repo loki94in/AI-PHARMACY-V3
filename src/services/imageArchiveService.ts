@@ -44,6 +44,12 @@ export class ImageArchiveService {
       void runHeavyJob('image_archive_monthly_zip', async () => this.zipMonthlyImportantImages());
     });
 
+    // Run every day at 2:30 AM to purge payment screenshots older than 90 days for delivered orders
+    cron.schedule('30 2 * * *', () => {
+      console.log('Running daily retention purge job for 90-day payment screenshots...');
+      void runHeavyJob('payment_receipts_retention_purge', async () => this.purgeExpiredPaymentScreenshots(90));
+    });
+
     console.log('Image Archive Service background jobs initialized.');
   }
 
@@ -205,6 +211,155 @@ export class ImageArchiveService {
     } catch (err) {
       console.error('Error during monthly zipping:', err);
     }
+  }
+
+  /**
+   * Purges payment screenshot files older than specific days (default 90)
+   * ONLY for orders that are delivered/fulfilled and return-window closed.
+   */
+  public async purgeExpiredPaymentScreenshots(daysOld: number = 90): Promise<{ purgedCount: number; freedBytes: number; candidateCount: number }> {
+    let purgedCount = 0;
+    let freedBytes = 0;
+    try {
+      const { dbManager } = await import('../database/connection.js');
+      const db = await dbManager.getConnection();
+
+      // Query candidate orders that have a payment screenshot, are older than cutoff,
+      // and whose order lifecycle is completely finished
+      const candidates = await db.all<Array<{ id: number; payment_screenshot_path: string; created_at: string }>>(`
+        SELECT id, payment_screenshot_path, created_at
+        FROM special_orders
+        WHERE payment_screenshot_path IS NOT NULL
+          AND (
+            delivery_status = 'delivered' 
+            OR status IN ('Fulfilled', 'Delivered')
+          )
+          AND (return_status IS NULL OR return_status = 'expired')
+          AND payment_status IN ('CONFIRMED', 'PAYMENT_CONFIRMED', 'VERIFIED')
+          AND created_at <= datetime('now', '-' || ? || ' days')
+      `, [daysOld]);
+
+      if (!candidates || candidates.length === 0) {
+        return { purgedCount: 0, freedBytes: 0, candidateCount: 0 };
+      }
+
+      const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+      const inboundDir = path.resolve(getAppDataDir(), 'data', 'inbound_media');
+
+      for (const row of candidates) {
+        if (!row.payment_screenshot_path) continue;
+        const normalized = row.payment_screenshot_path.replace(/\\/g, '/');
+        const filename = normalized.split('/').pop();
+        if (!filename) continue;
+
+        const possiblePaths = [
+          path.resolve(uploadsDir, filename),
+          path.resolve(inboundDir, filename),
+          path.resolve(row.payment_screenshot_path)
+        ];
+
+        for (const p of possiblePaths) {
+          if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+            try {
+              const sz = fs.statSync(p).size;
+              fs.unlinkSync(p);
+              freedBytes += sz;
+              break;
+            } catch (unlinkErr) {
+              console.warn(`[ImageArchiveService] Could not unlink ${p}:`, unlinkErr);
+            }
+          }
+        }
+
+        await db.run(
+          `UPDATE special_orders 
+           SET payment_screenshot_path = NULL, 
+               updated_at = datetime('now') 
+           WHERE id = ?`,
+          [row.id]
+        );
+
+        await db.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'payment_screenshot_retention_purge', ?, 'system', CURRENT_TIMESTAMP)`,
+          [
+            row.id,
+            `Payment screenshot was purged per ${daysOld}-day retention policy (order delivered & return window closed). Freed from disk.`
+          ]
+        ).catch(() => {});
+
+        purgedCount++;
+      }
+
+      console.log(`[ImageArchiveService] Retention purge complete: ${purgedCount} screenshots purged, ${(freedBytes / 1024 / 1024).toFixed(2)} MB freed.`);
+      return { purgedCount, freedBytes, candidateCount: candidates.length };
+    } catch (err) {
+      console.error('[ImageArchiveService] Error during payment screenshot retention purge:', err);
+      return { purgedCount, freedBytes, candidateCount: 0 };
+    }
+  }
+
+  /**
+   * Returns storage stats for payment screenshots: total files, total MB, and eligible for 90-day purge.
+   */
+  public async getPaymentScreenshotStorageStats(daysOld: number = 90): Promise<{
+    totalFiles: number;
+    totalSizeBytes: number;
+    eligibleCount: number;
+    eligibleSizeBytes: number;
+  }> {
+    let totalFiles = 0;
+    let totalSizeBytes = 0;
+    let eligibleCount = 0;
+    let eligibleSizeBytes = 0;
+
+    try {
+      const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+      if (fs.existsSync(uploadsDir)) {
+        const files = fs.readdirSync(uploadsDir);
+        for (const file of files) {
+          if (file.startsWith('payment_proof_')) {
+            const p = path.join(uploadsDir, file);
+            if (fs.statSync(p).isFile()) {
+              totalFiles++;
+              totalSizeBytes += fs.statSync(p).size;
+            }
+          }
+        }
+      }
+
+      const { dbManager } = await import('../database/connection.js');
+      const db = await dbManager.getConnection();
+      const eligibleRows = await db.all<Array<{ id: number; payment_screenshot_path: string }>>(`
+        SELECT id, payment_screenshot_path
+        FROM special_orders
+        WHERE payment_screenshot_path IS NOT NULL
+          AND (
+            delivery_status = 'delivered' 
+            OR status IN ('Fulfilled', 'Delivered')
+          )
+          AND (return_status IS NULL OR return_status = 'expired')
+          AND payment_status IN ('CONFIRMED', 'PAYMENT_CONFIRMED', 'VERIFIED')
+          AND created_at <= datetime('now', '-' || ? || ' days')
+      `, [daysOld]);
+
+      eligibleCount = eligibleRows ? eligibleRows.length : 0;
+      if (eligibleRows && eligibleRows.length > 0) {
+        for (const row of eligibleRows) {
+          if (!row.payment_screenshot_path) continue;
+          const filename = row.payment_screenshot_path.replace(/\\/g, '/').split('/').pop();
+          if (!filename) continue;
+          const p = path.resolve(uploadsDir, filename);
+          if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+            eligibleSizeBytes += fs.statSync(p).size;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[ImageArchiveService] Failed to calculate storage stats:', err);
+    }
+
+    return { totalFiles, totalSizeBytes, eligibleCount, eligibleSizeBytes };
   }
 }
 

@@ -54,9 +54,9 @@ router.get('/', async (req, res) => {
     let orders;
     try {
       if (allStores) {
-        orders = await db.all('SELECT * FROM special_orders ORDER BY date DESC LIMIT 1000');
+        orders = await db.all('SELECT * FROM special_orders ORDER BY created_at DESC, id DESC LIMIT 1000');
       } else {
-        orders = await db.all('SELECT * FROM special_orders WHERE store_id = ? ORDER BY date DESC LIMIT 1000', [storeId]);
+        orders = await db.all('SELECT * FROM special_orders WHERE store_id = ? ORDER BY created_at DESC, id DESC LIMIT 1000', [storeId]);
       }
     } catch (_) {
       if (allStores) {
@@ -856,6 +856,222 @@ router.post('/:id/send-payment-qr', async (req, res) => {
   }
 });
 
+// Fetch evaluated distributor options and current sourcing status for a special order
+router.get('/:id/distributor-options', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
+    const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+
+    // Check wa_owner_pending_requests
+    const { waAdminEscalationService } = await import('../services/waAdminEscalationService.js');
+    await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
+    const reqRow = await db.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? OR req_code LIKE ? ORDER BY id DESC LIMIT 1`,
+      [soCode, `%${id}`]
+    );
+
+    let options: any[] = [];
+    if (reqRow && reqRow.options_json) {
+      try {
+        const parsed = JSON.parse(reqRow.options_json);
+        options = Array.isArray(parsed) ? parsed : (parsed.options || parsed.allOptions || []);
+      } catch (_) {}
+    }
+
+    return res.json({
+      orderId: id,
+      soCode,
+      medicineName: order.medicine_name || order.product,
+      quantity: order.qty || 1,
+      currentDistributor: order.distributor_name || order.pharmarack_distributor || null,
+      currentRate: order.pharmarack_rate || null,
+      currentMrp: order.pharmarack_mrp || null,
+      paymentStatus: order.payment_status || 'UNPAID',
+      status: order.status || 'Pending',
+      ownerRequestStatus: reqRow?.status || null,
+      options
+    });
+  } catch (err: any) {
+    console.error('[Orders] Get distributor options error:', err);
+    res.status(500).json({ error: 'Failed to fetch distributor options: ' + err.message });
+  }
+});
+
+// Confirm or update distributor from web app, optionally dispatching customer payment QR
+router.post('/:id/confirm-distributor', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const {
+      distributor,
+      rate,
+      mrp,
+      productId,
+      productCode,
+      storeId,
+      productName,
+      sendPaymentQr = true
+    } = req.body;
+
+    if (!distributor) {
+      return res.status(400).json({ error: 'Distributor name is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const distName = String(distributor).trim();
+    const distRate = Number(rate || 0);
+    const distMrp = Number(mrp || order.pharmarack_mrp || 0);
+    const prodId = productId ? Number(productId) : (order.pharmarack_product_id || null);
+    const prodCode = productCode ? String(productCode) : (order.pharmarack_product_code || null);
+    const stId = storeId ? Number(storeId) : (order.pharmarack_store_id || null);
+    const prodName = productName || order.pharmarack_product_name || order.medicine_name || order.product;
+
+    const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
+    const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+
+    // Update special_orders record
+    await db.run(
+      `UPDATE special_orders SET
+         distributor_name = ?,
+         pharmarack_distributor = ?,
+         pharmarack_rate = ?,
+         pharmarack_mrp = ?,
+         pharmarack_product_id = ?,
+         pharmarack_product_code = ?,
+         pharmarack_store_id = ?,
+         pharmarack_product_name = ?,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [distName, distName, distRate, distMrp, prodId, prodCode, stId, prodName, id]
+    );
+
+    // Mark owner pending request as fulfilled
+    await db.run(
+      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+      [soCode, `%${id}`]
+    ).catch(() => {});
+
+    let qrSent = false;
+    let queueId: number | string | null = null;
+
+    if (sendPaymentQr) {
+      const cleanPhone = String(order.phone || '').replace(/\D/g, '');
+      const custPhoneLast10 = cleanPhone.slice(-10);
+
+      // Allocate rotating UPI QR config
+      const activeQr = await paymentQrService.allocateNextQr();
+      const amount = 50;
+      const medicineTitle = prodName || order.medicine_name || order.product || 'Medicine';
+      const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
+      const fullQrPath = await paymentQrService.generatePaymentCard({
+        upiUri,
+        orderNumber: soCode,
+        medicineName: medicineTitle,
+        amount,
+        payeeName: activeQr.payee_name,
+        upiId: activeQr.upi_id,
+        filename: `payment_card_${soCode}.png`
+      });
+
+      await db.run(
+        `UPDATE special_orders SET
+           payment_qr_id = ?,
+           payment_status = 'AWAITING_PAYMENT',
+           advance_payment = ?,
+           total_amount = ?
+         WHERE id = ?`,
+        [activeQr.id, amount, amount, id]
+      );
+
+      // Update customer conversation state
+      if (custPhoneLast10) {
+        await db.run(
+          `UPDATE wa_pending_clarifications
+           SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
+           WHERE phone LIKE ? OR phone LIKE ?`,
+          [id, soCode, `%${custPhoneLast10}`, `%${custPhoneLast10}%`]
+        ).catch(() => {});
+      }
+
+      // Enqueue message to customer with QR card and UPI pay link
+      const mrpLine = distMrp > 0 ? `\n🏷️ *MRP*: ₹${distMrp.toFixed(2)}` : '';
+      const custQrMsg =
+        `✅ *Medicine Request Confirmed*\n\n` +
+        `🆔 *Special Order*: ${soCode}\n` +
+        `💊 *Medicine*: ${medicineTitle}\n` +
+        `📦 *Quantity*: ${order.qty || 1}${mrpLine}\n\n` +
+        `🔐 *Booking Advance Amount*: ₹${amount.toFixed(2)}\n\n` +
+        `Please pay the ₹${amount.toFixed(2)} booking amount using the QR card attached above.\n\n` +
+        `🏦 *UPI ID*: ${activeQr.upi_id.trim()}\n` +
+        `👤 *Payee*: ${activeQr.payee_name}\n\n` +
+        `👉 *Or tap to pay directly on this phone*:\n${upiUri}\n\n` +
+        `📸 After payment, please send the payment screenshot in this chat.`;
+
+      let custTarget = cleanPhone;
+      if (custPhoneLast10) {
+        const activeChat = await db.get(
+          `SELECT id FROM whatsapp_chats 
+           WHERE (resolved_number LIKE ? OR id LIKE ?) 
+           ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC LIMIT 1`,
+          [`%${custPhoneLast10}%`, `%${custPhoneLast10}%`]
+        ).catch(() => null);
+        if (activeChat?.id) {
+          custTarget = activeChat.id;
+        }
+      }
+
+      if (custTarget) {
+        queueId = await whatsappQueueWorker.enqueue(
+          custTarget,
+          custQrMsg,
+          'customer_payment_qr',
+          order.requester || 'Customer',
+          undefined,
+          fullQrPath
+        ).catch((err: any) => {
+          console.warn('[Orders] QR image enqueue failed, falling back to text:', err?.message || err);
+          return whatsappQueueWorker.enqueue(
+            custTarget,
+            custQrMsg + `\n\n🔗 *Pay via UPI link*:\n${upiUri}`,
+            'customer_payment_qr',
+            order.requester || 'Customer'
+          ).catch(() => null);
+        });
+        qrSent = true;
+      }
+    }
+
+    broadcastOrdersChanged();
+
+    return res.json({
+      success: true,
+      orderId: id,
+      distributor: distName,
+      rate: distRate,
+      mrp: distMrp,
+      qrSent,
+      queueId,
+      message: qrSent
+        ? `Distributor ${distName} confirmed and ₹50 payment QR dispatched to customer on WhatsApp!`
+        : `Distributor ${distName} assigned to order #${id}.`
+    });
+  } catch (err: any) {
+    console.error('[Orders] Confirm distributor error:', err);
+    res.status(500).json({ error: 'Failed to confirm distributor: ' + err.message });
+  }
+});
+
 // Mark special order advance payment as paid
 router.post('/:id/mark-advance-paid', async (req, res) => {
   try {
@@ -888,6 +1104,58 @@ router.post('/:id/mark-advance-paid', async (req, res) => {
         mapped: order.pharmarack_mapped === 1
       }]).catch((err: any) => console.warn('[Orders] Live cart add error on mark-advance-paid:', err?.message || err));
     } catch (_) {}
+
+    // Resolve store order code and send customer WhatsApp receipt
+    const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
+    const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+    const storeName = (await getStoreMedicalName(db, order.store_id || 1)) || 'AI Pharmacy';
+    const customerName = formatCustomerName(order.customer_name || order.requester || 'Customer');
+    const medicineName = order.medicine_name || order.product || 'Medicine';
+    const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
+    const cleanCustPhone = String(order.phone || '').replace(/\D/g, '').slice(-10);
+
+    // Mark owner pending request fulfilled & customer clarification completed
+    await db.run(
+      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+      [soCode, `%${id}`]
+    ).catch(() => {});
+    await db.run(
+      `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+      [id, soCode]
+    ).catch(() => {});
+
+    const custFinalMsg =
+      `🎉 Hello *${customerName}*, your medicine request is confirmed!\n\n` +
+      `🆔 Special Order ID: ${soCode}\n\n` +
+      `💊 ${medicineName}\n` +
+      `📦 Quantity: ${order.qty || 1}\n\n` +
+      `💰 Booking Amount Paid: ₹${amountPaid}\n\n` +
+      `🛒 Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!\n\n` +
+      `Thank you!\n— ${storeName}`;
+
+    if (cleanCustPhone) {
+      try {
+        await whatsappQueueWorker.enqueue(
+          cleanCustPhone,
+          custFinalMsg,
+          'customer_order_confirmed',
+          customerName
+        );
+        console.log(`[Orders] Payment confirmation WhatsApp enqueued for ${customerName} (${cleanCustPhone}) [${soCode}]`);
+      } catch (waErr) {
+        console.warn('[Orders] Failed to enqueue customer payment confirmation WhatsApp:', waErr);
+      }
+
+      try {
+        await db.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+           VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
+          ['whatsapp_order', customerName, cleanCustPhone, custFinalMsg, String(id)]
+        );
+      } catch (notifErr) {
+        console.warn('[Orders] Failed to log automation_notification:', notifErr);
+      }
+    }
 
     broadcastOrdersChanged();
 

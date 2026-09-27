@@ -864,13 +864,17 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
       ? Number(payload.totalAmount)
       : (customerMrp ? customerMrp * payload.quantity : null);
 
+    const isSingleOption = payload.pharmarackOptions.length === 1;
+
     const resultsList = payload.pharmarackOptions.map((opt, i) => {
       const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || 'Distributor';
       const rate = Number(opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? 0);
       const optMrp = Number(opt.mrp ?? 0);
       const isUnmapped = opt.mapped === false || opt.isMapped === false || opt.is_mapped === 0 || String(opt.IsMapped) === '0' || String(opt.Ismapped) === '0';
       const tag = isUnmapped ? ' [Unmapped]' : '';
-      const refBadge = i === 0 ? ' [Best Rate]' : (i === 1 ? ' [High Stock]' : '');
+      const refBadge = !isSingleOption
+        ? (i === 0 ? ' [Best Rate]' : (i === 1 ? ' [High Stock]' : ''))
+        : '';
 
       // Stock indicator: 🟢 (QTY) / 🟢 High, 🟡 (QTY) / 🟡 Low, 🔴 (0)
       let stockIndicator = '🟢 High';
@@ -921,6 +925,16 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
     const mrpLine = customerMrp != null ? `\n🏷️ *Customer MRP*: ₹${customerMrp.toFixed(2)} / ${payload.unit || 'strip'}` : '';
     const totalLine = totalOrderVal != null ? `\n💰 *Total Order Value*: ₹${totalOrderVal.toFixed(2)}` : '';
 
+    const sectionTitle = isSingleOption
+      ? `🚚 *Selected Distributor (From Live Search):*\n\n`
+      : `🤖 *Top ${payload.pharmarackOptions.length} Sourcing References:*\n\n`;
+
+    const checkPrompt = isSingleOption
+      ? `👉 Reply *CONFIRM* (or *1*) to approve & send payment QR to customer\n👉 Reply *REJECT* to cancel`
+      : `👉 Reply *CONFIRM* (or *1*) to approve Option 1 & send payment QR to customer\n` +
+        `👉 Reply *2* to choose Option 2\n` +
+        `👉 Reply *REJECT* to cancel`;
+
     const messageText =
       `🔍 *Special Order Verification & Sourcing*\n\n` +
       `🆔 *Order*: ${payload.soCode}\n` +
@@ -929,12 +943,10 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
       `📦 *Quantity*: ${payload.quantity} ${payload.unit || 'strip'}` +
       `${mrpLine}` +
       `${totalLine}\n\n` +
-      `🤖 *Top ${payload.pharmarackOptions.length} Sourcing References:*\n\n` +
+      `${sectionTitle}` +
       `${resultsList}\n\n` +
       `⚖️ *Verification Check:*\n` +
-      `👉 Reply *CONFIRM* (or *1*) to approve Option 1 & send payment QR to customer\n` +
-      (payload.pharmarackOptions.length > 1 ? `👉 Reply *2* to choose Option 2\n` : '') +
-      `👉 Reply *REJECT* to cancel`;
+      `${checkPrompt}`;
 
     await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation', 'Admin / Store Owner');
     console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);

@@ -12,6 +12,7 @@ export const SHORTCUT_DIRECTORY: KeyboardShortcutInfo[] = [
   { key: 'Ctrl + S', description: 'Save current active page form, profile, or open modal', category: 'Global' },
   { key: 'Esc', description: 'Close active open modal, popup, or overlay', category: 'Global' },
   { key: 'Ctrl + /  or  ?', description: 'Toggle Keyboard Shortcuts Cheat Sheet', category: 'Global' },
+  { key: 'F11', description: 'Toggle Full-Screen / Windowed Mode', category: 'Global' },
   { key: '↑ / ↓ Arrow', description: 'Switch vertically between item rows in POS & Purchases tables', category: 'POS' },
   { key: '↑ / ↓ Arrow', description: 'Switch vertically between item rows in POS & Purchases tables', category: 'Purchases' },
   { key: 'F2', description: 'Focus medicine search input in POS', category: 'POS' },

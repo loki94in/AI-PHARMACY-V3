@@ -427,6 +427,32 @@ router.post('/backup/fresh-install', async (req, res) => {
   }
 });
 
+// GET /api/utilities/storage/payment-proofs (Storage diagnostics for payment receipts)
+router.get('/storage/payment-proofs', async (req, res) => {
+  try {
+    const daysOld = typeof req.query.daysOld === 'string' ? Math.max(1, parseInt(req.query.daysOld, 10) || 90) : 90;
+    const { imageArchiveService } = await import('../services/imageArchiveService.js');
+    const stats = await imageArchiveService.getPaymentScreenshotStorageStats(daysOld);
+    res.json({ success: true, daysOld, ...stats });
+  } catch (err: any) {
+    console.error('[Storage] Failed to get payment proof storage stats:', err);
+    res.status(500).json({ error: err.message || 'Failed to retrieve storage stats' });
+  }
+});
+
+// POST /api/utilities/storage/purge-payment-proofs (Human-in-the-Loop confirmed purge)
+router.post('/storage/purge-payment-proofs', async (req, res) => {
+  try {
+    const daysOld = typeof req.body?.daysOld === 'number' ? Math.max(1, req.body.daysOld) : 90;
+    const { imageArchiveService } = await import('../services/imageArchiveService.js');
+    const result = await imageArchiveService.purgeExpiredPaymentScreenshots(daysOld);
+    res.json({ success: true, daysOld, ...result });
+  } catch (err: any) {
+    console.error('[Storage] Purge payment proofs failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to purge payment proofs' });
+  }
+});
+
 // POST /api/utilities/backup/archive/restore
 router.post('/backup/archive/restore', async (req, res) => {
   const { filename } = req.body;

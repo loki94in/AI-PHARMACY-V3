@@ -1807,6 +1807,8 @@ export const api = {
   markOrderDelivered: (orderId: number) => apiClient.post(`/orders/${orderId}/mark-delivered`).then(res => res.data),
   applyReturnOverride: (orderId: number, data: { override_by: string; reason: string }) => apiClient.post(`/orders/${orderId}/return-override`, data).then(res => res.data),
   getOrderReturnStatus: (orderId: number) => apiClient.get(`/orders/${orderId}/return-status`).then(res => res.data),
+  getOrderDistributorOptions: (orderId: number) => apiClient.get(`/orders/${orderId}/distributor-options`).then(res => res.data),
+  confirmOrderDistributor: (orderId: number, data: { distributor: string; rate?: number; mrp?: number; productId?: number | string; productCode?: string; storeId?: number; productName?: string; sendPaymentQr?: boolean }) => apiClient.post(`/orders/${orderId}/confirm-distributor`, data).then(res => res.data),
 
   // Central + Local Sync
   getSyncStatus: () => apiClient.get<{ store_id: number; pending_count: number; synced_count: number; conflict_count: number; last_synced_at: string | null }>('/sync/status').then(res => res.data),
@@ -1843,6 +1845,8 @@ export const api = {
     apiClient.get<{ success: boolean; count: number; refills: any[] }>('/customer-portal/customer/refills', { params, headers: params.token ? { Authorization: `Bearer ${params.token}` } : undefined }).then(res => res.data),
   getCustomerOrders: (params: { customer_id?: number; phone?: string; token?: string; limit?: number }) =>
     apiClient.get<{ success: boolean; count: number; orders: any[] }>('/customer-portal/customer/orders', { params, headers: params.token ? { Authorization: `Bearer ${params.token}` } : undefined }).then(res => res.data),
+  getCustomerPastMedicines: (params: { customer_id?: number; phone?: string; token?: string }) =>
+    apiClient.get<{ success: boolean; count: number; medicines: any[] }>('/customer-portal/customer/past-medicines', { params, headers: params.token ? { Authorization: `Bearer ${params.token}` } : undefined }).then(res => res.data),
   updateCustomerPhone: (data: { customer_id?: number; new_phone: string; token?: string }) =>
     apiClient.put<{ success: boolean; message: string; customer_id: number; new_phone: string; token: string }>('/customer-portal/customer/phone', data, { headers: data.token ? { Authorization: `Bearer ${data.token}` } : undefined }).then(res => res.data),
   placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; delivery_mode?: 'pickup' | 'delivery'; delivery_address?: string; notes?: string; idempotency_key?: string }) =>

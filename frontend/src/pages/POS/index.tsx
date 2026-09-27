@@ -309,6 +309,7 @@ interface PrefillMed {
   unit_price?: number | string;
   unitPrice?: number | string;
   discount?: number | string;
+  rate?: number | string;
   batch_no?: string;
   expiry_date?: string;
   inventory_id?: number;
@@ -1541,7 +1542,24 @@ const POS = () => {
               // Fallback to name search in inventory
               if (allocated.length === 0 && targetName) {
                 try {
-                  const matched = await api.searchMedicine(targetName);
+                  let matched = await api.searchMedicine(targetName);
+                  // Fuzzy / token fallback if packaging tokens caused miss (e.g. "GLIMIDIB M2 SR 15TAB" vs "GLIMIDIB-M2 SR")
+                  if ((!matched || matched.length === 0)) {
+                    const normalized = targetName
+                      .replace(/\b\d+\s*(tab|tabs|cap|caps|gm|ml|mg|s)\b/gi, '')
+                      .replace(/\b(strip|tablet|tablets|capsule|capsules|ointment|oint|syrup|gel)\b/gi, '')
+                      .replace(/[-_]/g, ' ')
+                      .trim();
+                    if (normalized && normalized.toLowerCase() !== targetName.toLowerCase()) {
+                      matched = await api.searchMedicine(normalized);
+                    }
+                  }
+                  if ((!matched || matched.length === 0)) {
+                    const words = targetName.split(/[\s-]+/).filter(w => w.length > 2 && !/^\d+(tab|cap|gm|ml|mg)?$/i.test(w));
+                    if (words.length >= 2) {
+                      matched = await api.searchMedicine(words.slice(0, 2).join(' '));
+                    }
+                  }
                   if (matched && matched.length > 0) {
                     const m = matched[0];
                     allocated = [{
@@ -1575,8 +1593,31 @@ const POS = () => {
               if (allocated.length > 0) {
                 expandedRows.push(...allocated);
               } else if (targetName) {
+                // If not yet in inventory, populate cart row so cashier can complete order or assign batch manually
+                expandedRows.push({
+                  id: Date.now() + Math.random(),
+                  inventory_id: null,
+                  medicine_id: null,
+                  name: targetName,
+                  medicine_name: targetName,
+                  batch: '',
+                  batch_no: '',
+                  expiry: '',
+                  expiry_date: '',
+                  mrp: Number(med.mrp || med.sell_price || med.rate || 0),
+                  sell_price: Number(med.sell_price || med.mrp || med.rate || 0),
+                  qty: targetQty,
+                  quantity: targetQty,
+                  unitPrice: Number(med.sell_price || med.mrp || med.rate || 0),
+                  looseQty: targetLooseQty,
+                  discount: Number(med.discount || 0),
+                  packSize: 1,
+                  availableStock: 0,
+                  availableLooseStock: 0,
+                  isEmptyRow: false
+                });
                 toastEvent.trigger(
-                  `"${targetName}" could not be found in the medicine database. It may need to be added or purchased first.`,
+                  `"${targetName}" added to POS (batch unallocated - select or enter batch before checkout).`,
                   'info', '/pos'
                 );
               }

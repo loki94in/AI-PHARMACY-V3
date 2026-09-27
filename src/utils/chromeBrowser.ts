@@ -115,10 +115,11 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
         fs.mkdirSync(profileDir, { recursive: true });
       }
 
+      const windowModeArg = process.env.APP_WINDOW_MODE === 'maximized' ? '--start-maximized' : '--start-fullscreen';
       const args = [
         `--app=${url}`,
         `--user-data-dir=${profileDir}`,
-        '--start-maximized',
+        windowModeArg,
         '--disable-extensions',
         '--disable-background-networking',
         '--disable-sync',

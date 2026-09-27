@@ -883,6 +883,112 @@ router.get('/customer/refills', async (req, res) => {
   }
 });
 
+// GET /api/customer-portal/customer/past-medicines — Unified past medicine history (refills + special orders + purchases)
+router.get('/customer/past-medicines', async (req, res) => {
+  const customerId = req.query.customer_id ? parseInt(req.query.customer_id as string, 10) : null;
+  const rawPhone = (req.query.phone as string) || '';
+  const phone = normalizePhone(rawPhone);
+  const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const verified = verifyCustomerToken(authHeader || (req.query.token as string));
+
+  if (verified && customerId && verified.customerId !== customerId) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  let custId = customerId || verified?.customerId || 0;
+  const targetPhone = phone || verified?.phone || '';
+  const last10 = targetPhone.slice(-10);
+
+  try {
+    const db = await dbManager.getConnection();
+
+    if (!custId && last10) {
+      const cust = await db.get(
+        `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+        [targetPhone, `%${last10}`]
+      );
+      if (cust) custId = cust.id;
+    }
+
+    if (!custId && !last10) {
+      return res.status(400).json({ error: 'customer_id or phone is required' });
+    }
+
+    const itemsMap = new Map<string, any>();
+
+    // 1. Patient refills
+    try {
+      const refills = await db.all(
+        `SELECT pr.id as refill_id, m.id as medicine_id, m.name as medicine_name,
+                pr.quantity_needed as qty, pr.refill_interval_days, pr.last_refill_date,
+                pr.next_refill_date, m.mrp, m.sell_price, s.name as store_name,
+                'refill' as item_type
+         FROM patient_refills pr
+         JOIN medicines m ON m.id = pr.medicine_id
+         LEFT JOIN stores s ON s.id = pr.store_id
+         WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
+         ORDER BY pr.id DESC LIMIT 20`,
+        [custId || -1, `%${last10}%`]
+      );
+      for (const r of refills) {
+        const key = (r.medicine_name || '').toLowerCase().trim();
+        if (key && !itemsMap.has(key)) {
+          itemsMap.set(key, r);
+        }
+      }
+    } catch (_) {}
+
+    // 2. Special orders (past custom procurement requests)
+    try {
+      const specialOrders = await db.all(
+        `SELECT so.id as special_order_id, so.product as medicine_name,
+                so.qty, so.pharmarack_mrp as mrp, so.pharmarack_rate as sell_price,
+                so.pharmarack_distributor as store_name, so.status,
+                COALESCE(so.date, so.created_at) as last_refill_date,
+                'special_order' as item_type
+         FROM special_orders so
+         WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.product IS NOT NULL AND TRIM(so.product) != ''
+         ORDER BY so.id DESC LIMIT 20`,
+        [custId || -1, `%${last10}%`]
+      );
+      for (const s of specialOrders) {
+        const key = (s.medicine_name || '').toLowerCase().trim();
+        if (key && !itemsMap.has(key)) {
+          itemsMap.set(key, s);
+        }
+      }
+    } catch (_) {}
+
+    // 3. Counter sales past purchases
+    try {
+      const sales = await db.all(
+        `SELECT m.id as medicine_id, m.name as medicine_name,
+                s.quantity as qty, im.mrp, s.unit_price as sell_price,
+                si.date as last_refill_date, 'counter_sale' as item_type
+         FROM sales_invoices si
+         JOIN sale_items s ON s.invoice_id = si.id
+         JOIN inventory_master im ON im.id = s.inventory_id
+         JOIN medicines m ON m.id = im.medicine_id
+         WHERE (si.customer_id = ? OR si.customer_phone_snapshot LIKE ?)
+         ORDER BY si.id DESC LIMIT 20`,
+        [custId || -1, `%${last10}%`]
+      );
+      for (const sl of sales) {
+        const key = (sl.medicine_name || '').toLowerCase().trim();
+        if (key && !itemsMap.has(key)) {
+          itemsMap.set(key, sl);
+        }
+      }
+    } catch (_) {}
+
+    const pastMedicines = Array.from(itemsMap.values());
+    res.json({ success: true, count: pastMedicines.length, medicines: pastMedicines });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Fetch past medicines error:', err);
+    res.status(500).json({ error: 'Failed to fetch past medicines' });
+  }
+});
+
 // PUT /api/customer-portal/customer/phone — Update customer phone number (Test 12: user_id remains unchanged)
 router.put('/customer/phone', async (req, res) => {
   const { customer_id, new_phone } = req.body;

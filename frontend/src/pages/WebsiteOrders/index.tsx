@@ -27,7 +27,8 @@ import {
   FileImage,
   Sparkles,
   CreditCard,
-  ShoppingCart
+  ShoppingCart,
+  Building2
 } from 'lucide-react';
 import { api, apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
@@ -37,6 +38,38 @@ import { isOnlineOrder } from '../../utils/onlineOrders';
 
 // Module-level state cache for instant SPA re-hydration
 let cachedOrders: any[] = [];
+
+/**
+ * Normalizes any backend filesystem path, relative upload path, or full URL
+ * into a browser-accessible URL that routes properly through Vite proxy or Express.
+ */
+export const getMediaUrl = (rawPath: string | null | undefined): string => {
+  if (!rawPath) return '';
+  const trimmed = String(rawPath).trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('blob:') || trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  const normalized = trimmed.replace(/\\/g, '/');
+  const uploadsIdx = normalized.indexOf('/uploads/');
+  if (uploadsIdx !== -1) {
+    return normalized.slice(uploadsIdx);
+  }
+  if (normalized.startsWith('uploads/')) {
+    return `/${normalized}`;
+  }
+  const inboundIdx = normalized.indexOf('/data/inbound_media/');
+  if (inboundIdx !== -1) {
+    return normalized.slice(inboundIdx);
+  }
+  if (normalized.startsWith('data/inbound_media/')) {
+    return `/${normalized}`;
+  }
+  if (normalized.startsWith('/')) {
+    return normalized;
+  }
+  const filename = normalized.split('/').pop();
+  return filename ? `/uploads/${filename}` : '';
+};
 
 export default function WebsiteOrders() {
   const navigate = useNavigate();
@@ -91,6 +124,15 @@ export default function WebsiteOrders() {
     amount: number;
     screenshotAmount?: number;
   } | null>(null);
+
+  // Sourcing & Live Stock Search state
+  const [expandedSourcingId, setExpandedSourcingId] = useState<number | null>(null);
+  const [sourcingOptionsData, setSourcingOptionsData] = useState<any | null>(null);
+  const [loadingSourcingOptions, setLoadingSourcingOptions] = useState(false);
+  const [liveSearchQuery, setLiveSearchQuery] = useState('');
+  const [liveSearchResults, setLiveSearchResults] = useState<any[]>([]);
+  const [isSearchingLive, setIsSearchingLive] = useState(false);
+  const [confirmingDistributorFor, setConfirmingDistributorFor] = useState<string | null>(null);
 
   // Fetch website orders
   const fetchOrders = useCallback(async (silent = false) => {
@@ -165,6 +207,69 @@ export default function WebsiteOrders() {
       toastEvent.trigger(err.response?.data?.error || 'Failed to mark delivered', 'error');
     } finally {
       setActionInProgress(null);
+    }
+  };
+
+  const handleToggleSourcing = async (orderId: number, medName: string) => {
+    if (expandedSourcingId === orderId) {
+      setExpandedSourcingId(null);
+      setSourcingOptionsData(null);
+      setLiveSearchResults([]);
+      return;
+    }
+    setExpandedSourcingId(orderId);
+    setLiveSearchQuery(medName || '');
+    setLiveSearchResults([]);
+    setLoadingSourcingOptions(true);
+    try {
+      const data = await api.getOrderDistributorOptions(orderId);
+      setSourcingOptionsData(data);
+    } catch (err: any) {
+      console.warn('Failed to load distributor options:', err);
+    } finally {
+      setLoadingSourcingOptions(false);
+    }
+  };
+
+  const handleLiveDistributorSearch = async (queryText?: string) => {
+    const q = (queryText || liveSearchQuery || '').trim();
+    if (!q) return;
+    setIsSearchingLive(true);
+    try {
+      const results = await api.searchPharmarack(q);
+      const items = Array.isArray(results) ? results : (results?.items || []);
+      setLiveSearchResults(items);
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Live distributor search failed', 'error');
+    } finally {
+      setIsSearchingLive(false);
+    }
+  };
+
+  const handleConfirmDistributor = async (
+    orderId: number,
+    distributorData: {
+      distributor: string;
+      rate?: number;
+      mrp?: number;
+      productId?: number | string;
+      productCode?: string;
+      storeId?: number;
+      productName?: string;
+      sendPaymentQr?: boolean;
+    }
+  ) => {
+    try {
+      setConfirmingDistributorFor(distributorData.distributor);
+      const res = await api.confirmOrderDistributor(orderId, distributorData);
+      toastEvent.trigger(res.message || `Distributor ${distributorData.distributor} confirmed!`, 'success');
+      fetchOrders(true);
+      const updatedOpts = await api.getOrderDistributorOptions(orderId).catch(() => null);
+      if (updatedOpts) setSourcingOptionsData(updatedOpts);
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to confirm distributor', 'error');
+    } finally {
+      setConfirmingDistributorFor(null);
     }
   };
 
@@ -320,6 +425,11 @@ export default function WebsiteOrders() {
       if (statusFilter === 'returns') return order.return_status === 'requested' || order.return_status === 'expired' || order.return_override_by;
 
       return true;
+    }).sort((a, b) => {
+      const timeA = new Date(a.created_at || a.date).getTime();
+      const timeB = new Date(b.created_at || b.date).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+      return (Number(b.id) || 0) - (Number(a.id) || 0);
     });
   }, [orders, searchQuery, statusFilter]);
 
@@ -485,7 +595,9 @@ export default function WebsiteOrders() {
                   <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2.5">
                     <div>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-black text-primary">#{order.id}</span>
+                        <span className="text-xs font-black text-primary">
+                          {order.so_code || `SO-TMSA-${order.id}`}
+                        </span>
                         <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-primary/10 text-primary border border-primary/20">
                           Website
                         </span>
@@ -640,17 +752,228 @@ export default function WebsiteOrders() {
                   </div>
 
                   {/* Medicine Item Details */}
-                  <div className="p-2.5 rounded-xl bg-bg border border-border/60 space-y-1 text-xs">
-                    <div className="font-bold text-text truncate">
-                      {order.medicine_name || order.product || 'Prescription Fulfillment Request'}
+                  <div className="p-2.5 rounded-xl bg-bg border border-border/60 space-y-1.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-bold text-text truncate" title={order.medicine_name || order.product}>
+                        {order.medicine_name || order.product || 'Prescription Fulfillment Request'}
+                      </div>
+                      {(order.distributor_name || order.pharmarack_distributor) && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0 flex items-center gap-1">
+                          <Building2 size={11} />
+                          <span className="max-w-[130px] truncate" title={order.distributor_name || order.pharmarack_distributor}>
+                            {order.distributor_name || order.pharmarack_distributor}
+                          </span>
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center justify-between text-[11px] text-muted">
+                    <div className="flex items-center justify-between text-[11px] text-muted flex-wrap gap-1">
                       <span>Qty: <strong className="text-text">{order.qty || 1}</strong></span>
+                      {(Number(order.pharmarack_rate) > 0 || Number(order.pharmarack_mrp) > 0) && (
+                        <span className="text-muted text-[10px]">
+                          {Number(order.pharmarack_rate) > 0 && <span>Rate: <strong className="text-text">₹{order.pharmarack_rate}</strong></span>}
+                          {Number(order.pharmarack_rate) > 0 && Number(order.pharmarack_mrp) > 0 && <span className="mx-1">|</span>}
+                          {Number(order.pharmarack_mrp) > 0 && <span>MRP: <strong className="text-text">₹{order.pharmarack_mrp}</strong></span>}
+                        </span>
+                      )}
                       {order.advance_payment > 0 && (
                         <span className="text-emerald-500 font-bold">Advance: ₹{order.advance_payment}</span>
                       )}
                     </div>
                   </div>
+
+                  {/* Sourcing & Distributor Accordion Toggle */}
+                  <div className="pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSourcing(order.id, order.medicine_name || order.product || '')}
+                      className="w-full py-1.5 px-3 rounded-xl bg-bg border border-border/80 hover:border-primary/50 text-[11px] font-bold text-text flex items-center justify-between transition-all cursor-pointer shadow-xs"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Building2 size={13} className="text-primary" />
+                        <span>Sourcing & Distributor (Live Stock)</span>
+                      </span>
+                      <span className="text-[10px] text-primary flex items-center gap-0.5 font-semibold">
+                        {expandedSourcingId === order.id ? 'Hide Sourcing ▲' : 'Manage & Live Search ▼'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Inline Sourcing & Live Distributor Panel */}
+                  {expandedSourcingId === order.id && (
+                    <div className="p-3 rounded-xl bg-bg3/60 border border-border space-y-3 text-xs">
+                      {/* Section Header */}
+                      <div className="flex items-center justify-between border-b border-border/60 pb-1.5">
+                        <span className="font-bold text-text flex items-center gap-1">
+                          <Building2 size={13} className="text-primary" />
+                          <span>Distributor Sourcing & Verification</span>
+                        </span>
+                        {sourcingOptionsData?.currentDistributor && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-bold">
+                            Selected: {sourcingOptionsData.currentDistributor}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Section A: Escalated / Bot Options */}
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-bold text-muted uppercase tracking-wider">
+                          Bot Escalation Recommendations:
+                        </div>
+                        {loadingSourcingOptions ? (
+                          <div className="p-2 text-center text-muted text-xs animate-pulse">Loading evaluated options...</div>
+                        ) : sourcingOptionsData?.options && sourcingOptionsData.options.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {sourcingOptionsData.options.map((opt: any, idx: number) => {
+                              const distName = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || 'Distributor';
+                              const rate = Number(opt.rate || opt.distributorPrice || opt.ptr || 0);
+                              const mrp = Number(opt.mrp || 0);
+                              const margin = mrp > rate && rate > 0 ? mrp - rate : 0;
+                              const isCurrent = (order.distributor_name || order.pharmarack_distributor) === distName;
+                              const isSubmitting = confirmingDistributorFor === distName;
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`p-2 rounded-lg border transition-all ${
+                                    isCurrent
+                                      ? 'bg-primary/10 border-primary/40'
+                                      : 'bg-bg border-border hover:border-border/80'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-1.5">
+                                    <div className="space-y-0.5">
+                                      <div className="font-bold text-text flex items-center gap-1.5">
+                                        <span>{distName}</span>
+                                        {opt.stock && (
+                                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold">
+                                            Stock: {opt.stock}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[10px] text-muted flex items-center gap-2 flex-wrap">
+                                        {rate > 0 && <span>Rate: <strong className="text-text">₹{rate.toFixed(2)}</strong></span>}
+                                        {mrp > 0 && <span>MRP: <strong className="text-text">₹{mrp.toFixed(2)}</strong></span>}
+                                        {margin > 0 && <span className="text-emerald-500 font-semibold">Margin: ₹{margin.toFixed(2)}</span>}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={isSubmitting}
+                                      onClick={() => handleConfirmDistributor(order.id, {
+                                        distributor: distName,
+                                        rate,
+                                        mrp,
+                                        productId: opt.productId || opt.product_id,
+                                        productCode: opt.productCode || opt.product_code,
+                                        storeId: opt.storeId || opt.store_id,
+                                        productName: opt.name || opt.productName || order.medicine_name || order.product,
+                                        sendPaymentQr: true
+                                      })}
+                                      className="shrink-0 py-1 px-2.5 rounded-lg bg-primary hover:bg-primary/90 text-white font-bold text-[10px] transition-all cursor-pointer disabled:opacity-50"
+                                    >
+                                      {isSubmitting ? 'Sending...' : isCurrent ? 'Re-send QR' : 'Approve & Send QR'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-muted italic bg-bg/50 p-2 rounded-lg">
+                            No automated options logged. Use the live search below to check all stocking distributors.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Section B: Live Stock Query & Reassurance */}
+                      <div className="space-y-2 pt-1 border-t border-border/60">
+                        <div className="text-[10px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
+                          <Search size={11} className="text-primary" />
+                          <span>Reassure Medicine & Live Distributor Pool</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={liveSearchQuery}
+                            onChange={(e) => setLiveSearchQuery(e.target.value)}
+                            placeholder="Search live Pharmarack catalog..."
+                            className="flex-1 py-1 px-2.5 text-xs rounded-lg bg-bg border border-border text-text focus:outline-none focus:border-primary"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleLiveDistributorSearch();
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={isSearchingLive}
+                            onClick={() => handleLiveDistributorSearch()}
+                            className="py-1 px-3 rounded-lg bg-bg2 hover:bg-bg border border-border text-xs font-bold text-text flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {isSearchingLive ? (
+                              <RefreshCw size={12} className="animate-spin text-primary" />
+                            ) : (
+                              <Search size={12} className="text-primary" />
+                            )}
+                            <span>{isSearchingLive ? 'Searching...' : 'Search'}</span>
+                          </button>
+                        </div>
+
+                        {/* Live Search Results */}
+                        {liveSearchResults.length > 0 && (
+                          <div className="max-h-48 overflow-y-auto space-y-1.5 p-1 rounded-lg bg-bg border border-border/60">
+                            {liveSearchResults.map((item: any, idx: number) => {
+                              const distName = item.distributor || item.supplier_name || item.storeName || item.distributor_name || 'Distributor';
+                              const rate = Number(item.rate || item.distributorPrice || item.ptr || 0);
+                              const mrp = Number(item.mrp || 0);
+                              const isSubmitting = confirmingDistributorFor === distName;
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className="p-2 rounded-lg bg-bg2 border border-border/80 hover:border-primary/40 transition-all flex items-center justify-between gap-2"
+                                >
+                                  <div className="min-w-0 flex-1 space-y-0.5">
+                                    <div className="font-bold text-text truncate text-xs flex items-center gap-1.5">
+                                      <span>{distName}</span>
+                                      {item.stock && (
+                                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold shrink-0">
+                                          {item.stock}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] text-muted truncate">
+                                      {item.name || item.productName || item.shortName}
+                                    </div>
+                                    <div className="text-[10px] text-muted flex items-center gap-2">
+                                      {rate > 0 && <span>Rate: <strong className="text-text">₹{rate.toFixed(2)}</strong></span>}
+                                      {mrp > 0 && <span>MRP: <strong className="text-text">₹{mrp.toFixed(2)}</strong></span>}
+                                      {item.scheme && <span className="text-amber-500 font-semibold">Scheme: {item.scheme}</span>}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={isSubmitting}
+                                    onClick={() => handleConfirmDistributor(order.id, {
+                                      distributor: distName,
+                                      rate,
+                                      mrp,
+                                      productId: item.productId || item.product_id,
+                                      productCode: item.productCode || item.product_code,
+                                      storeId: item.storeId || item.store_id,
+                                      productName: item.name || item.productName || order.medicine_name || order.product,
+                                      sendPaymentQr: true
+                                    })}
+                                    className="shrink-0 py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition-all cursor-pointer disabled:opacity-50"
+                                  >
+                                    {isSubmitting ? 'Sending...' : 'Select & Send QR'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* WhatsApp Payment Verification Card (Human-in-the-Loop) */}
                   {(order.payment_screenshot_path || order.payment_status === 'PENDING_VERIFICATION') && (
@@ -693,19 +1016,83 @@ export default function WebsiteOrders() {
                       ) : null}
 
                       {order.payment_screenshot_path && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedScreenshot({
-                            path: order.payment_screenshot_path,
-                            orderId: order.id,
-                            amount: Number(order.total_amount || 0),
-                            screenshotAmount: order.screenshot_amount ? Number(order.screenshot_amount) : undefined
-                          })}
-                          className="w-full py-1.5 px-3 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-xs font-bold text-text flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                        >
-                          <Eye size={13} className="text-primary" />
-                          <span>Inspect WhatsApp Payment Receipt</span>
-                        </button>
+                        <div className="space-y-2 pt-1">
+                          {/* Inline Receipt Thumbnail Card */}
+                          <div
+                            onClick={() => setSelectedScreenshot({
+                              path: order.payment_screenshot_path,
+                              orderId: order.id,
+                              amount: Number(order.total_amount || 0),
+                              screenshotAmount: order.screenshot_amount ? Number(order.screenshot_amount) : undefined
+                            })}
+                            className="relative group rounded-xl border border-border bg-bg2 overflow-hidden cursor-pointer hover:border-primary/50 transition-all shadow-xs"
+                            title="Click to zoom and inspect receipt"
+                          >
+                            <div className="h-32 w-full bg-bg3 flex items-center justify-center relative overflow-hidden">
+                              <img
+                                src={getMediaUrl(order.payment_screenshot_path)}
+                                alt={`Payment proof for Order #${order.id}`}
+                                className="h-full w-full object-contain p-1 group-hover:scale-105 transition-transform duration-200"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                  const fallbackEl = document.getElementById(`receipt-fallback-${order.id}`);
+                                  if (fallbackEl) fallbackEl.style.display = 'flex';
+                                }}
+                              />
+                              <div
+                                id={`receipt-fallback-${order.id}`}
+                                style={{ display: 'none' }}
+                                className="absolute inset-0 flex flex-col items-center justify-center text-muted p-2 text-center"
+                              >
+                                <FileImage size={24} className="mb-1 text-amber-500 opacity-80" />
+                                <span className="text-[10px] font-medium text-text">Receipt image saved</span>
+                                <span className="text-[9px] text-muted">Click to inspect file</span>
+                              </div>
+                              {/* Hover Overlay */}
+                              <div className="absolute inset-0 bg-bg3/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 transition-opacity backdrop-blur-2xs">
+                                <span className="px-2.5 py-1 rounded-lg bg-bg border border-border text-[11px] font-bold text-text flex items-center gap-1 shadow-sm">
+                                  <Eye size={12} className="text-primary" />
+                                  <span>Inspect Photo</span>
+                                </span>
+                              </div>
+                            </div>
+                            <div className="p-1.5 bg-bg border-t border-border flex items-center justify-between text-[10px] text-muted">
+                              <span className="flex items-center gap-1 font-medium">
+                                <FileImage size={11} className="text-primary" />
+                                <span>WhatsApp Attachment</span>
+                              </span>
+                              <span className="text-primary font-bold hover:underline flex items-center gap-0.5">
+                                Zoom Preview <ChevronRight size={10} />
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Quick Actions Bar */}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={actionInProgress === order.id}
+                              onClick={() => handleConfirmPayment(order.id)}
+                              className="flex-1 py-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              <Check size={13} />
+                              <span>Confirm Payment (₹{Number(order.total_amount || 0).toFixed(2)})</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedScreenshot({
+                                path: order.payment_screenshot_path,
+                                orderId: order.id,
+                                amount: Number(order.total_amount || 0),
+                                screenshotAmount: order.screenshot_amount ? Number(order.screenshot_amount) : undefined
+                              })}
+                              className="p-1.5 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-muted hover:text-text cursor-pointer transition-all"
+                              title="Full screen inspect"
+                            >
+                              <Eye size={14} className="text-primary" />
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
@@ -899,7 +1286,7 @@ export default function WebsiteOrders() {
               {/* Main Image Preview with Previous/Next Controls */}
               <div className="relative max-h-[65vh] overflow-hidden flex items-center justify-center bg-bg3/20 rounded-2xl p-2 group">
                 <img
-                  src={currentPhoto}
+                  src={getMediaUrl(currentPhoto)}
                   alt={`Doctor's Prescription - Page ${prescriptionPhotoIndex + 1}`}
                   className="max-w-full max-h-[60vh] object-contain rounded-xl shadow-md"
                 />
@@ -940,7 +1327,7 @@ export default function WebsiteOrders() {
                           : 'border-border opacity-60 hover:opacity-100'
                       }`}
                     >
-                      <img src={url} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
+                      <img src={getMediaUrl(url)} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
                       <span className="absolute bottom-0 right-0 px-1 text-[9px] bg-bg/90 text-text font-bold rounded-tl">
                         {idx + 1}
                       </span>
@@ -1207,26 +1594,58 @@ export default function WebsiteOrders() {
             </div>
 
             {/* Image Preview */}
-            <div className="flex-1 overflow-auto rounded-xl border border-border bg-bg3 flex items-center justify-center p-2 min-h-[250px]">
+            <div className="flex-1 overflow-auto rounded-xl border border-border bg-bg3 flex flex-col items-center justify-center p-2 min-h-[250px] relative">
               <img
-                src={selectedScreenshot.path}
+                src={getMediaUrl(selectedScreenshot.path)}
                 alt="Payment Screenshot"
                 className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-sm"
                 onError={(e) => {
-                  (e.target as any).style.display = 'none';
+                  (e.target as HTMLElement).style.display = 'none';
+                  const fallback = document.getElementById('modal-receipt-fallback');
+                  if (fallback) fallback.style.display = 'flex';
                 }}
               />
+              <div
+                id="modal-receipt-fallback"
+                style={{ display: 'none' }}
+                className="flex flex-col items-center justify-center text-center p-4 space-y-2"
+              >
+                <AlertCircle size={28} className="text-amber-500" />
+                <p className="text-xs font-semibold text-text">Image preview not available</p>
+                <p className="text-[11px] text-muted max-w-xs break-all">
+                  File path: {selectedScreenshot.path}
+                </p>
+                <a
+                  href={getMediaUrl(selectedScreenshot.path)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1 rounded-lg bg-bg2 border border-border text-[11px] font-bold text-primary hover:underline flex items-center gap-1"
+                >
+                  <ExternalLink size={11} /> Open raw link
+                </a>
+              </div>
             </div>
 
             {/* Actions */}
             <div className="pt-2 flex items-center justify-between gap-2 border-t border-border/60">
-              <button
-                type="button"
-                onClick={() => setSelectedScreenshot(null)}
-                className="px-4 py-2 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-muted hover:text-text cursor-pointer"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedScreenshot(null)}
+                  className="px-4 py-2 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-muted hover:text-text cursor-pointer"
+                >
+                  Close
+                </button>
+                <a
+                  href={getMediaUrl(selectedScreenshot.path)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-muted hover:text-text flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ExternalLink size={13} />
+                  <span>Full Size</span>
+                </a>
+              </div>
 
               <button
                 type="button"

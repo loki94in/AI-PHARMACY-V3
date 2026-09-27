@@ -2028,6 +2028,15 @@ const Topbar = memo(({
         setShowShortcutHelp(prev => !prev);
         return;
       }
+
+      // 4. Universal F11 full-screen toggle fallback
+      if (e.key === 'F11') {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen?.().catch(() => {});
+        } else {
+          document.exitFullscreen?.().catch(() => {});
+        }
+      }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown, true);

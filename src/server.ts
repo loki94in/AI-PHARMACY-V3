@@ -975,6 +975,15 @@ async function setupCrons(db: any) {
     } catch (amErr) {
       console.warn('[Boot] AutoMatchWorker initialization skipped:', amErr);
     }
+
+    // Initialize image archive and 90-day payment screenshot retention purge jobs
+    try {
+      const { imageArchiveService } = await import('./services/imageArchiveService.js');
+      imageArchiveService.initJobs();
+      console.log('[Boot] Image archive & retention purge service initialized.');
+    } catch (iaErr) {
+      console.warn('[Boot] ImageArchiveService initialization skipped:', iaErr);
+    }
   } catch (err) {
     bootWorkerFailures++;
     console.warn('[Boot] WhatsApp intent service registration skipped:', err);

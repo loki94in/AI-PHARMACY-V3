@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { apiClient, api, type CompactInventoryItem } from '../../services/api';
@@ -302,6 +302,74 @@ const RefillsSection: React.FC = () => {
   const [dropUpIndex, setDropUpIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showDelayModal, setShowDelayModal] = useState(false);
+
+  // Refill draft auto-save & restore (session resumption)
+  const [hasRefillDraft, setHasRefillDraft] = useState(false);
+
+  useEffect(() => {
+    if (showAddModal && !editingPatient) {
+      try {
+        const raw = localStorage.getItem('crm_refill_draft');
+        if (raw) {
+          const draft = JSON.parse(raw);
+          if (draft && (draft.addPatientName || draft.addPatientPhone || (Array.isArray(draft.medicineRows) && draft.medicineRows.some((r: any) => r.medicineName)))) {
+            setRefillSalutation(draft.refillSalutation || 'Mr.');
+            setRefillCustomSalutation(draft.refillCustomSalutation || '');
+            setAddPatientName(draft.addPatientName || '');
+            setAddPatientPhone(draft.addPatientPhone || '');
+            setAddLanguage(draft.addLanguage || 'en');
+            setAddReminderMode(draft.addReminderMode || 'manual');
+            setAddInterval(draft.addInterval || 30);
+            if (Array.isArray(draft.medicineRows) && draft.medicineRows.length > 0) {
+              setMedicineRows(draft.medicineRows);
+            }
+            setHasRefillDraft(true);
+          }
+        }
+      } catch (_) {}
+    }
+  }, [showAddModal, editingPatient]);
+
+  useEffect(() => {
+    if (!showAddModal || editingPatient) return;
+    const hasContent = addPatientName.trim() || addPatientPhone.trim() || medicineRows.some(r => r.medicineName.trim());
+    if (hasContent) {
+      const draft = {
+        refillSalutation,
+        refillCustomSalutation,
+        addPatientName,
+        addPatientPhone,
+        addLanguage,
+        addReminderMode,
+        addInterval,
+        medicineRows: medicineRows.map(r => ({
+          medicineId: r.medicineId,
+          medicineName: r.medicineName,
+          manufacturer: r.manufacturer,
+          mrp: r.mrp,
+          inStockQty: r.inStockQty,
+          quantity_needed: r.quantity_needed,
+          searchTerm: r.searchTerm,
+          isOpen: false,
+          suggestions: []
+        }))
+      };
+      localStorage.setItem('crm_refill_draft', JSON.stringify(draft));
+      setHasRefillDraft(true);
+    }
+  }, [showAddModal, editingPatient, refillSalutation, refillCustomSalutation, addPatientName, addPatientPhone, addLanguage, addReminderMode, addInterval, medicineRows]);
+
+  const handleClearRefillDraft = () => {
+    localStorage.removeItem('crm_refill_draft');
+    setRefillSalutation('Mr.');
+    setRefillCustomSalutation('');
+    setAddPatientName('');
+    setAddPatientPhone('');
+    setAddInterval(30);
+    setMedicineRows([emptyRow()]);
+    setHasRefillDraft(false);
+    toastEvent.trigger('Refill draft discarded', 'info', '/crm');
+  };
 
   // Frequency slider modal
   const [editingRefill, setEditingRefill] = useState<{ id: number; currentInterval: number; name: string } | null>(null);
@@ -1035,6 +1103,8 @@ const RefillsSection: React.FC = () => {
         reminder_mode: addReminderMode
       }).catch(() => {});
 
+      localStorage.removeItem('crm_refill_draft');
+      setHasRefillDraft(false);
       setShowAddModal(false);
       setEditingPatient(null);
       setRefillSalutation('Mr.');
@@ -2028,6 +2098,23 @@ const RefillsSection: React.FC = () => {
 
             {/* Modal Body */}
             <form onSubmit={handleSaveRefill} className="p-5 space-y-5 overflow-y-auto flex-1">
+              {/* Restored Draft Notice */}
+              {hasRefillDraft && !editingPatient && (
+                <div className="flex items-center justify-between p-2.5 px-3 rounded-xl bg-primary/10 border border-primary/25 text-xs animate-fade-in">
+                  <div className="flex items-center gap-2 text-primary font-semibold">
+                    <RotateCcw size={14} />
+                    <span>Restored uncompleted refill draft</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearRefillDraft}
+                    className="text-[11px] text-muted hover:text-red-400 font-bold underline cursor-pointer"
+                  >
+                    Discard Draft
+                  </button>
+                </div>
+              )}
+
               {/* Patient Details */}
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
@@ -4361,6 +4448,151 @@ const SpecialOrdersSection: React.FC = () => {
   const [selectedCompany, setSelectedCompany] = useState('');
   const [selectedPackaging, setSelectedPackaging] = useState('');
 
+  // Special order draft persistence & resumption
+  const [hasSpecialOrderDraft, setHasSpecialOrderDraft] = useState(false);
+
+  useEffect(() => {
+    if (showAddModal) {
+      try {
+        const raw = localStorage.getItem('crm_special_order_draft');
+        if (raw) {
+          const draft = JSON.parse(raw);
+          if (draft && (draft.product || draft.requester || draft.phone)) {
+            setProduct(draft.product || '');
+            setOrderSalutation(draft.orderSalutation || 'Mr.');
+            setOrderCustomSalutation(draft.orderCustomSalutation || '');
+            setRequester(draft.requester || '');
+            setPhone(draft.phone || '');
+            setQty(draft.qty || 1);
+            setAdvancePayment(draft.advancePayment || '');
+            setPriority(draft.priority || 'Normal');
+            setLanguage(draft.language || 'en');
+            setSelectedDistributor(draft.selectedDistributor || '');
+            setSelectedRate(draft.selectedRate || '');
+            setSelectedMrp(draft.selectedMrp || '');
+            setSelectedMapped(draft.selectedMapped ?? true);
+            setSelectedScheme(draft.selectedScheme || '');
+            setSelectedProductId(draft.selectedProductId || '');
+            setSelectedStoreId(draft.selectedStoreId || '');
+            setSelectedProductCode(draft.selectedProductCode || '');
+            setSelectedCompany(draft.selectedCompany || '');
+            setSelectedPackaging(draft.selectedPackaging || '');
+            setHasSpecialOrderDraft(true);
+          }
+        }
+      } catch (_) {}
+    }
+  }, [showAddModal]);
+
+  useEffect(() => {
+    if (!showAddModal) return;
+    const hasContent = product.trim() || requester.trim() || phone.trim();
+    if (hasContent) {
+      const draft = {
+        product,
+        orderSalutation,
+        orderCustomSalutation,
+        requester,
+        phone,
+        qty,
+        advancePayment,
+        priority,
+        language,
+        selectedDistributor,
+        selectedRate,
+        selectedMrp,
+        selectedMapped,
+        selectedScheme,
+        selectedProductId,
+        selectedStoreId,
+        selectedProductCode,
+        selectedCompany,
+        selectedPackaging,
+      };
+      localStorage.setItem('crm_special_order_draft', JSON.stringify(draft));
+      setHasSpecialOrderDraft(true);
+    }
+  }, [showAddModal, product, orderSalutation, orderCustomSalutation, requester, phone, qty, advancePayment, priority, language, selectedDistributor, selectedRate, selectedMrp, selectedMapped, selectedScheme, selectedProductId, selectedStoreId, selectedProductCode, selectedCompany, selectedPackaging]);
+
+  const handleClearSpecialOrderDraft = () => {
+    localStorage.removeItem('crm_special_order_draft');
+    setProduct('');
+    setOrderSalutation('Mr.');
+    setOrderCustomSalutation('');
+    setRequester('');
+    setPhone('');
+    setQty(1);
+    setAdvancePayment('');
+    setPriority('Normal');
+    setSelectedDistributor('');
+    setSelectedRate('');
+    setSelectedMrp('');
+    setSelectedScheme('');
+    setSelectedProductId('');
+    setSelectedStoreId('');
+    setSelectedProductCode('');
+    setSelectedCompany('');
+    setSelectedPackaging('');
+    setHasSpecialOrderDraft(false);
+    toastEvent.trigger('Special order draft discarded', 'info', '/crm');
+  };
+
+  // Past Orders Lookup & Reorder for this patient
+  const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+  const patientPastOrders = useMemo(() => {
+    if (!cleanPhone || cleanPhone.length < 8) return [];
+    return orders.filter(o => {
+      const op = (o.phone || '').replace(/\D/g, '').slice(-10);
+      return op === cleanPhone;
+    });
+  }, [orders, cleanPhone]);
+
+  const handleReorderPastItem = (past: SpecialOrderItem) => {
+    isSelectingPrRef.current = true;
+    setProduct(past.product);
+    setQty(past.qty || 1);
+    if (past.requester && !requester) {
+      const { salutation, customSalutation, name: customerName } = parseSalutationAndName(past.requester);
+      setOrderSalutation(salutation);
+      setOrderCustomSalutation(customSalutation);
+      setRequester(customerName);
+    }
+    if (past.pharmarack_distributor) setSelectedDistributor(past.pharmarack_distributor);
+    if (past.pharmarack_rate) setSelectedRate(past.pharmarack_rate);
+    if (past.pharmarack_mrp) setSelectedMrp(past.pharmarack_mrp);
+    if (past.pharmarack_product_id) setSelectedProductId(past.pharmarack_product_id);
+    if (past.pharmarack_store_id) setSelectedStoreId(past.pharmarack_store_id);
+    if (past.pharmarack_product_code) setSelectedProductCode(past.pharmarack_product_code);
+    toastEvent.trigger(`Reordered "${past.product}" (Qty: ${past.qty || 1})!`, 'success', '/crm');
+  };
+
+  // WhatsApp Chat Intelligence for this patient
+  const [waMessages, setWaMessages] = useState<any[]>([]);
+  const [loadingWaMessages, setLoadingWaMessages] = useState(false);
+
+  useEffect(() => {
+    if (!showAddModal || !cleanPhone || cleanPhone.length < 10) {
+      setWaMessages([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingWaMessages(true);
+    apiClient.get<any[]>(`/messaging/chats/${encodeURIComponent(cleanPhone)}/messages?limit=25`)
+      .then(res => {
+        if (cancelled) return;
+        const list = Array.isArray(res.data) ? res.data : [];
+        const patientMsgs = list.filter(m => !m.fromMe && m.body && m.body.trim().length > 1);
+        setWaMessages(patientMsgs.slice(-5));
+      })
+      .catch(() => {
+        if (!cancelled) setWaMessages([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingWaMessages(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAddModal, cleanPhone]);
+
   const isSelectingPrRef = useRef(false);
 
   // Universal Escape key dismissal for Special Order modals
@@ -4764,7 +4996,8 @@ const SpecialOrdersSection: React.FC = () => {
         }
       } catch (_) {}
 
-      toastEvent.trigger(`Special order for "${product}" logged & synced!`, 'success', '/crm');
+      localStorage.removeItem('crm_special_order_draft');
+      setHasSpecialOrderDraft(false);
       setShowAddModal(false);
       setProduct('');
       setOrderSalutation('Mr.');
@@ -5487,6 +5720,23 @@ const SpecialOrdersSection: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateRequest} className="space-y-3.5 text-xs">
+              {/* Restored Draft Notice */}
+              {hasSpecialOrderDraft && (
+                <div className="flex items-center justify-between p-2.5 px-3 rounded-xl bg-primary/10 border border-primary/25 text-xs animate-fade-in">
+                  <div className="flex items-center gap-2 text-primary font-semibold">
+                    <RotateCcw size={14} />
+                    <span>Restored uncompleted special order draft</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearSpecialOrderDraft}
+                    className="text-[11px] text-muted hover:text-red-400 font-bold underline cursor-pointer"
+                  >
+                    Discard Draft
+                  </button>
+                </div>
+              )}
+
               {/* Product Search with Live Pharmarack Autocomplete */}
               <div ref={productContainerRef} className="space-y-1.5 relative">
                 <label className="block font-semibold text-text">Requested Medicine Name *</label>
@@ -5658,6 +5908,85 @@ const SpecialOrdersSection: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* Patient Past Special Orders Quick-Reorder */}
+              {patientPastOrders.length > 0 && (
+                <div className="p-3 bg-bg3/40 border border-primary/25 rounded-xl space-y-2 animate-fade-in">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-text">
+                    <span className="flex items-center gap-1.5 text-primary">
+                      <RotateCcw size={13} />
+                      Patient Past Special Orders ({patientPastOrders.length})
+                    </span>
+                    <span className="text-[10px] text-muted">Click Reorder to prefill</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {patientPastOrders.slice(0, 4).map((pastOrder: SpecialOrderItem) => (
+                      <div
+                        key={pastOrder.id}
+                        className="flex items-center justify-between p-2 rounded-lg bg-bg2 border border-border text-[11px] hover:border-primary/40 transition-colors"
+                      >
+                        <div className="truncate max-w-[240px]">
+                          <span className="font-bold text-text truncate block">{pastOrder.product}</span>
+                          <span className="text-[10px] text-muted">
+                            Qty: {pastOrder.qty || 1} • {formatDate(pastOrder.date)}
+                            {pastOrder.pharmarack_distributor && ` • ${pastOrder.pharmarack_distributor}`}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleReorderPastItem(pastOrder)}
+                          className="px-2.5 py-1 bg-primary text-white text-[10px] font-bold rounded-lg hover:bg-primary/90 transition-all flex items-center gap-1 shadow-xs cursor-pointer shrink-0"
+                        >
+                          <RotateCcw size={10} />
+                          <span>Reorder</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* WhatsApp Chat Intelligence */}
+              {waMessages.length > 0 && (
+                <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-2 animate-fade-in">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-emerald-400">
+                    <span className="flex items-center gap-1.5">
+                      <MessageCircle size={13} />
+                      WhatsApp Chat Intelligence
+                    </span>
+                    {loadingWaMessages && <RefreshCw size={11} className="animate-spin text-muted" />}
+                  </div>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                    {waMessages.map((msg, idx) => (
+                      <div
+                        key={msg.id || idx}
+                        className="p-2 rounded-lg bg-bg2 border border-border/80 text-[11px] flex flex-col gap-1"
+                      >
+                        <div className="text-text italic line-clamp-2">
+                          "{msg.body}"
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-border/40">
+                          <span className="text-[9px] text-muted">
+                            {msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Patient Chat'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              isSelectingPrRef.current = false;
+                              setProduct(msg.body.trim());
+                              toastEvent.trigger('Copied chat text to medicine name', 'info', '/crm');
+                            }}
+                            className="px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[10px] font-bold text-emerald-400 transition-colors cursor-pointer flex items-center gap-1"
+                          >
+                            <Plus size={10} />
+                            <span>Use as Medicine Name</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Quantity, Advance Payment & Priority */}
               <div className="grid grid-cols-3 gap-3">

@@ -71,6 +71,7 @@ interface SelectedMedicine {
   product: string;
   qty: number;
   price: number;
+  itemType?: 'refill' | 'special_order' | 'new';
 }
 
 export default function CustomerPortal() {
@@ -161,6 +162,10 @@ export default function CustomerPortal() {
   const [refills, setRefills] = useState<RefillItem[]>([]);
   const [bills, setBills] = useState<PastBill[]>([]);
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
+  const [pastMedicines, setPastMedicines] = useState<any[]>([]);
+  const [newMedQuery, setNewMedQuery] = useState('');
+  const [newMedResults, setNewMedResults] = useState<any[]>([]);
+  const [isSearchingNewMed, setIsSearchingNewMed] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
 
   // ─── Catalog Manager State ──────────────────────────────────────────────────
@@ -308,19 +313,22 @@ export default function CustomerPortal() {
     setLoadingData(true);
     try {
       const token = localStorage.getItem('customer_portal_token') || undefined;
-      const [refillRes, billRes, orderRes] = await Promise.all([
+      const [refillRes, billRes, orderRes, pastRes] = await Promise.all([
         api.getCustomerRefills({ customer_id: custId, phone, token }),
         api.getCustomerBills({ customer_id: custId, phone, token }),
-        api.getCustomerOrders({ customer_id: custId, phone, token })
+        api.getCustomerOrders({ customer_id: custId, phone, token }),
+        api.getCustomerPastMedicines({ customer_id: custId, phone, token }).catch(() => ({ count: 0, medicines: [] }))
       ]);
 
       const loadedRefills = refillRes?.refills || [];
       const loadedBills = billRes?.bills || [];
       const loadedOrders = orderRes?.orders || [];
+      const loadedPast = pastRes?.medicines || [];
 
       setRefills(loadedRefills);
       setBills(loadedBills);
       setCustomerOrders(loadedOrders);
+      setPastMedicines(loadedPast);
 
       // Pre-select all active refills by default
       const initialMap: Record<string, SelectedMedicine> = {};
@@ -328,7 +336,8 @@ export default function CustomerPortal() {
         initialMap[r.medicine_name] = {
           product: r.medicine_name,
           qty: r.quantity_needed || 1,
-          price: r.sell_price || r.mrp || 0
+          price: r.sell_price || r.mrp || 0,
+          itemType: 'refill'
         };
       });
       setSelectedItems(initialMap);
@@ -338,6 +347,28 @@ export default function CustomerPortal() {
       setLoadingData(false);
     }
   };
+
+  // Quick search new medicines to add to combined order
+  useEffect(() => {
+    if (!newMedQuery.trim() || newMedQuery.trim().length < 2) {
+      setNewMedResults([]);
+      setIsSearchingNewMed(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsSearchingNewMed(true);
+      try {
+        const res = await api.searchMedicines(newMedQuery.trim(), 8);
+        const list = Array.isArray(res) ? res : (res as any)?.medicines || [];
+        setNewMedResults(list);
+      } catch (_) {
+        setNewMedResults([]);
+      } finally {
+        setIsSearchingNewMed(false);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [newMedQuery]);
 
   // ─── Authentication Handlers ───────────────────────────────────────────────
 
@@ -510,13 +541,13 @@ export default function CustomerPortal() {
 
   // ─── Item Selection Handlers ───────────────────────────────────────────────
 
-  const toggleItem = (name: string, price: number, defaultQty = 1) => {
+  const toggleItem = (name: string, price: number, defaultQty = 1, itemType: 'refill' | 'special_order' | 'new' = 'refill') => {
     setSelectedItems(prev => {
       const next = { ...prev };
       if (next[name]) {
         delete next[name];
       } else {
-        next[name] = { product: name, qty: defaultQty, price };
+        next[name] = { product: name, qty: defaultQty, price, itemType };
       }
       return next;
     });
@@ -2008,6 +2039,203 @@ export default function CustomerPortal() {
                   )}
                 </div>
 
+                {/* Section 1.5: Past Special Requests & Custom Procurements */}
+                {pastMedicines.filter(m => m.item_type === 'special_order').length > 0 && (
+                  <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-text flex items-center gap-2">
+                          <RotateCcw className="w-4 h-4 text-indigo-400" />
+                          <span>Past Special Requests & Custom Procurements</span>
+                        </h3>
+                        <p className="text-xs text-muted">Previously requested out-of-stock items — 1-click reorder into your combined basket</p>
+                      </div>
+                      <span className="text-xs px-2.5 py-1 bg-indigo-500/10 text-indigo-400 font-semibold rounded-lg">
+                        {pastMedicines.filter(m => m.item_type === 'special_order').length} Custom Requests
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {pastMedicines.filter(m => m.item_type === 'special_order').map((so, idx) => {
+                        const isSelected = Boolean(selectedItems[so.medicine_name]);
+                        const currentQty = selectedItems[so.medicine_name]?.qty || so.qty || 1;
+                        const price = so.sell_price || so.mrp || 0;
+
+                        return (
+                          <div
+                            key={so.special_order_id || idx}
+                            className={`p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                              isSelected
+                                ? 'bg-indigo-500/5 border-indigo-500/40 shadow-sm'
+                                : 'bg-bg border-border opacity-85 hover:opacity-100'
+                            }`}
+                          >
+                            <div
+                              className="flex items-center gap-3 cursor-pointer select-none"
+                              onClick={() => toggleItem(so.medicine_name, price, so.qty || 1, 'special_order')}
+                            >
+                              <div
+                                className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors ${
+                                  isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-border bg-bg2'
+                                }`}
+                              >
+                                {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-bold text-text block leading-snug">{so.medicine_name}</span>
+                                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 font-bold">
+                                    Special Request
+                                  </span>
+                                </div>
+                                <span className="text-xs text-muted">
+                                  Qty: {so.qty || 1} • {price > 0 ? `₹${price.toFixed(2)}` : 'MRP on arrival'}
+                                  {so.last_refill_date && (
+                                    <span className="ml-1.5 text-[11px] text-muted">
+                                      • Last Ordered: {new Date(so.last_refill_date).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+
+                            {isSelected ? (
+                              <div className="flex items-center gap-2 bg-bg2 border border-border rounded-lg p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => updateQuantity(so.medicine_name, -1)}
+                                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text hover:text-red-500 transition-colors cursor-pointer"
+                                >
+                                  {currentQty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
+                                </button>
+                                <span className="text-xs font-bold w-6 text-center text-text">{currentQty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateQuantity(so.medicine_name, 1)}
+                                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => toggleItem(so.medicine_name, price, so.qty || 1, 'special_order')}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Reorder</span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Section 1.6: Add New Medicines to Combined Order */}
+                <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-text flex items-center gap-2">
+                        <Plus className="w-4 h-4 text-sky-400" />
+                        <span>Add New Medicine to this Combined Order</span>
+                      </h3>
+                      <p className="text-xs text-muted">Search from store catalog or request any new medicine along with your regular refill</p>
+                    </div>
+                    <span className="text-xs px-2.5 py-1 bg-sky-500/10 text-sky-400 font-semibold rounded-lg">
+                      New Medicines
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                      <input
+                        type="text"
+                        placeholder="Search & add new medicine e.g. Dolo 650, Volini Gel, Azithral..."
+                        value={newMedQuery}
+                        onChange={e => setNewMedQuery(e.target.value)}
+                        className="w-full pl-9 pr-10 py-2.5 bg-bg border border-border rounded-xl text-xs text-text placeholder:text-muted focus:outline-hidden focus:border-primary transition-colors"
+                      />
+                      {newMedQuery && (
+                        <button
+                          type="button"
+                          onClick={() => { setNewMedQuery(''); setNewMedResults([]); }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Live Results Dropdown / Panel */}
+                    {isSearchingNewMed ? (
+                      <div className="p-3 text-center text-xs text-muted flex items-center justify-center gap-2">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                        <span>Searching medicine catalog...</span>
+                      </div>
+                    ) : newMedResults.length > 0 ? (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                        {newMedResults.map((med: any) => {
+                          const isAlreadySelected = Boolean(selectedItems[med.name]);
+                          const price = med.sell_price || med.mrp || 0;
+                          return (
+                            <div
+                              key={med.id || med.name}
+                              className="flex items-center justify-between p-2.5 rounded-xl bg-bg border border-border hover:border-sky-500/40 transition-colors text-xs"
+                            >
+                              <div className="truncate max-w-[280px]">
+                                <span className="font-bold text-text block truncate">{med.name}</span>
+                                <span className="text-[11px] text-muted">
+                                  {price > 0 ? `₹${price.toFixed(2)}` : 'Pricing at counter'}
+                                  {med.manufacturer && ` • ${med.manufacturer}`}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  toggleItem(med.name, price, 1, 'new');
+                                  setNewMedQuery('');
+                                  setNewMedResults([]);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                                  isAlreadySelected
+                                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                    : 'bg-sky-600 hover:bg-sky-700 text-white'
+                                }`}
+                              >
+                                {isAlreadySelected ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                <span>{isAlreadySelected ? 'Added' : 'Add to Order'}</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : newMedQuery.trim().length >= 2 ? (
+                      <div className="p-3 bg-bg border border-border rounded-xl flex items-center justify-between gap-3 text-xs">
+                        <div>
+                          <span className="font-bold text-text block">"{newMedQuery.trim()}" not found in quick catalog</span>
+                          <span className="text-[11px] text-muted">You can still book it as a custom special request!</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            toggleItem(newMedQuery.trim(), 0, 1, 'new');
+                            setNewMedQuery('');
+                            setNewMedResults([]);
+                          }}
+                          className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Request Medicine</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
                 {/* Section 2: Reorder from Previous In-Store Bills & Sell History */}
                 <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
                   <div className="flex items-center justify-between">
@@ -2117,8 +2345,23 @@ export default function CustomerPortal() {
                         {selectedList.map(item => (
                           <div key={item.product} className="flex items-center justify-between text-xs text-text bg-bg p-2 rounded-lg border border-border/50">
                             <div className="max-w-[60%]">
-                              <span className="font-semibold block truncate">{item.product}</span>
-                              <span className="text-muted">Qty: {item.qty} × ₹{item.price.toFixed(2)}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold block truncate">{item.product}</span>
+                                {item.itemType === 'special_order' ? (
+                                  <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/15 text-indigo-400 font-bold border border-indigo-500/30 shrink-0">
+                                    Special
+                                  </span>
+                                ) : item.itemType === 'new' ? (
+                                  <span className="text-[9px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-400 font-bold border border-sky-500/30 shrink-0">
+                                    New
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] px-1 py-0.2 rounded bg-primary/15 text-primary font-bold border border-primary/30 shrink-0">
+                                    Refill
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-muted">Qty: {item.qty} × {item.price > 0 ? `₹${item.price.toFixed(2)}` : 'MRP on arrival'}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-primary">₹{(item.price * item.qty).toFixed(2)}</span>
@@ -2235,8 +2478,23 @@ export default function CustomerPortal() {
                 {selectedList.map(item => (
                   <div key={item.product} className="flex items-center justify-between p-3 bg-bg rounded-xl border border-border">
                     <div className="space-y-0.5 max-w-[50%]">
-                      <span className="text-xs font-bold text-text block truncate">{item.product}</span>
-                      <span className="text-[11px] text-muted">₹{item.price.toFixed(2)} each</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-bold text-text block truncate">{item.product}</span>
+                        {item.itemType === 'special_order' ? (
+                          <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-bold border border-indigo-500/30 shrink-0">
+                            Special
+                          </span>
+                        ) : item.itemType === 'new' ? (
+                          <span className="text-[9px] px-1 py-0.5 rounded bg-sky-500/15 text-sky-400 font-bold border border-sky-500/30 shrink-0">
+                            New
+                          </span>
+                        ) : (
+                          <span className="text-[9px] px-1 py-0.5 rounded bg-primary/15 text-primary font-bold border border-primary/30 shrink-0">
+                            Refill
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-muted">{item.price > 0 ? `₹${item.price.toFixed(2)} each` : 'Price on arrival'}</span>
                     </div>
                     <div className="flex items-center gap-1.5 sm:gap-2">
                       <button

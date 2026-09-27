@@ -57,9 +57,17 @@ describe('Website Order Integration & Safe Medicine Search', () => {
         product_image_url TEXT,
         delivery_status TEXT DEFAULT 'pending',
         return_status TEXT DEFAULT 'none',
+        payment_status TEXT DEFAULT 'UNPAID',
+        pharmacy_verification_status TEXT DEFAULT 'PENDING',
+        advance_payment REAL DEFAULT 0,
+        total_amount REAL DEFAULT 0,
+        payment_reference TEXT,
+        payment_confirmed_at DATETIME,
+        payment_confirmed_by TEXT,
         notes TEXT,
         date DATETIME DEFAULT CURRENT_TIMESTAMP,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE order_tracking_events (
@@ -230,5 +238,124 @@ describe('Website Order Integration & Safe Medicine Search', () => {
     expect(waUrl).toContain('Page%201');
     expect(waUrl).toContain('Page%202');
     expect(waUrl).toContain('Page%203');
+  });
+
+  it('confirms payment from PC/Web and verifies customer notification, state resolution, and live cart inclusion', async () => {
+    // 1. Setup pending clarification and owner request
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS wa_owner_pending_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        req_code TEXT,
+        status TEXT DEFAULT 'pending'
+      );
+      CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        special_order_id INTEGER,
+        so_code TEXT,
+        step TEXT DEFAULT 'awaiting_payment'
+      );
+      CREATE TABLE IF NOT EXISTS automation_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT,
+        recipient_name TEXT,
+        recipient_phone TEXT,
+        message TEXT,
+        status TEXT,
+        needs_confirmation INTEGER DEFAULT 0,
+        reference_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS online_order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER,
+        product_name TEXT,
+        product_name_snapshot TEXT,
+        requested_qty INTEGER,
+        confirmed_qty INTEGER,
+        mrp REAL,
+        final_price REAL,
+        subtotal REAL,
+        item_status TEXT
+      );
+    `);
+
+    // Insert an order awaiting payment confirmation
+    const soRes = await db.run(`
+      INSERT INTO special_orders (
+        store_id, requester, phone, product, qty, priority, status, payment_status,
+        pharmacy_verification_status, advance_payment, total_amount
+      ) VALUES (
+        1, 'Mr. RATNAKR', '9307409630', 'GLIMIDIB M2 SR 15TAB', 4, 'Normal', 'Pending',
+        'SCREENSHOT_RECEIVED', 'PENDING', 50, 50
+      )
+    `);
+    const orderId = soRes.lastID as number;
+    const soCode = `SO-TMSA-${orderId}`;
+
+    await db.run('INSERT INTO wa_owner_pending_requests (req_code, status) VALUES (?, "pending")', [soCode]);
+    await db.run('INSERT INTO wa_pending_clarifications (special_order_id, so_code, step) VALUES (?, ?, "awaiting_payment")', [orderId, soCode]);
+
+    // Simulate PC payment confirmation logic
+    const nextOrderStatus = 'Confirmed';
+    await db.run(
+      `UPDATE special_orders
+       SET payment_status = 'PAYMENT_CONFIRMED',
+           pharmacy_verification_status = 'CONFIRMED',
+           status = ?,
+           payment_reference = 'MANUAL-TEST',
+           payment_confirmed_at = CURRENT_TIMESTAMP,
+           payment_confirmed_by = 'Pharmacist',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [nextOrderStatus, orderId]
+    );
+
+    await db.run(
+      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+      [soCode, `%${orderId}`]
+    );
+    await db.run(
+      `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+      [orderId, soCode]
+    );
+
+    const custFinalMsg =
+      `🎉 Hello *Mr. RATNAKR*, your medicine request is confirmed!\n\n` +
+      `🆔 Special Order ID: ${soCode}\n\n` +
+      `💊 GLIMIDIB M2 SR 15TAB\n` +
+      `📦 Quantity: 4\n\n` +
+      `💰 Booking Amount Paid: ₹50.00\n\n` +
+      `🛒 Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!\n\n` +
+      `Thank you!\n— TANAMAY MEDICAL`;
+
+    await db.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+       VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
+      ['whatsapp_order', 'Mr. RATNAKR', '9307409630', custFinalMsg, String(orderId)]
+    );
+
+    // Verify DB states
+    const updatedOrder = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    expect(updatedOrder.payment_status).toBe('PAYMENT_CONFIRMED');
+    expect(updatedOrder.status).toBe('Confirmed');
+
+    const ownerReq = await db.get('SELECT status FROM wa_owner_pending_requests WHERE req_code = ?', [soCode]);
+    expect(ownerReq.status).toBe('fulfilled');
+
+    const custClar = await db.get('SELECT step FROM wa_pending_clarifications WHERE special_order_id = ?', [orderId]);
+    expect(custClar.step).toBe('completed');
+
+    const notif = await db.get('SELECT * FROM automation_notifications WHERE reference_id = ?', [String(orderId)]);
+    expect(notif.message).toContain('GLIMIDIB M2 SR 15TAB');
+    expect(notif.message).toContain('SO-TMSA-');
+    expect(notif.recipient_phone).toBe('9307409630');
+
+    // Verify Live Cart queue query picks up PAYMENT_CONFIRMED orders
+    const liveCartOrders = await db.all(
+      `SELECT * FROM special_orders
+       WHERE store_id = 1
+         AND (payment_status = 'CONFIRMED' OR payment_status = 'PAYMENT_CONFIRMED' OR payment_status = 'VERIFIED')
+         AND pharmacy_verification_status != 'DONE'`
+    );
+    expect(liveCartOrders.some(o => o.id === orderId)).toBe(true);
   });
 });

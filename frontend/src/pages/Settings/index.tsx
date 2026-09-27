@@ -10,7 +10,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { broadcastContactDataChanged, updateSettingsCache } from '../../utils/settingsSync';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
-import { useModalEscape } from '../../services/keyboardShortcuts';
+import { useModalEscape, shortcutEvent } from '../../services/keyboardShortcuts';
 import {
   Settings as SettingsIcon,
   Building2,
@@ -484,6 +484,15 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
       setSaving(false);
     }
   };
+
+  const handleSaveStoreProfileRef = useRef(handleSaveStoreProfile);
+  handleSaveStoreProfileRef.current = handleSaveStoreProfile;
+
+  useEffect(() => {
+    return shortcutEvent.subscribeSave(() => {
+      void handleSaveStoreProfileRef.current();
+    });
+  }, []);
 
   const handleApplyStudioSettings = async () => {
     setSaving(true);
@@ -2107,8 +2116,8 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     }
   };
 
-  const handleSaveIntegrations = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveIntegrations = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setSaving(true);
     try {
       const payload: Record<string, string> = {
@@ -2155,6 +2164,15 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
       setSaving(false);
     }
   };
+
+  const handleSaveIntegrationsRef = useRef(handleSaveIntegrations);
+  handleSaveIntegrationsRef.current = handleSaveIntegrations;
+
+  useEffect(() => {
+    return shortcutEvent.subscribeSave(() => {
+      void handleSaveIntegrationsRef.current();
+    });
+  }, []);
 
   const handleToggleCombineSearch = async (val: boolean) => {
     setCombinePharmarackSearch(val);
@@ -3248,11 +3266,64 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showSystemResetModal, setShowSystemResetModal] = useState(false);
   const [resetModalInitialMode, setResetModalInitialMode] = useState<'data' | 'factory'>('data');
+  const [storageStats, setStorageStats] = useState<{
+    totalFiles: number;
+    totalSizeBytes: number;
+    eligibleCount: number;
+    eligibleSizeBytes: number;
+  } | null>(null);
+  const [loadingStorageStats, setLoadingStorageStats] = useState(false);
+  const [purgingStorage, setPurgingStorage] = useState(false);
+  const [showPurgeConfirmModal, setShowPurgeConfirmModal] = useState(false);
   const queryClient = useQueryClient();
 
   // Universal Escape key dismissal for Backup & Reset modals
   useModalEscape(showBackupModal, () => setShowBackupModal(false));
   useModalEscape(showSystemResetModal, () => setShowSystemResetModal(false));
+  useModalEscape(showPurgeConfirmModal, () => setShowPurgeConfirmModal(false));
+
+  const fetchStorageStats = useCallback(async () => {
+    setLoadingStorageStats(true);
+    try {
+      const res = await apiClient.get('/utilities/storage/payment-proofs?daysOld=90');
+      if (res.data?.success) {
+        setStorageStats({
+          totalFiles: res.data.totalFiles || 0,
+          totalSizeBytes: res.data.totalSizeBytes || 0,
+          eligibleCount: res.data.eligibleCount || 0,
+          eligibleSizeBytes: res.data.eligibleSizeBytes || 0,
+        });
+      }
+    } catch (err) {
+      console.warn('[Settings] Failed to fetch storage stats:', err);
+    } finally {
+      setLoadingStorageStats(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStorageStats();
+  }, [fetchStorageStats]);
+
+  const handlePurgeScreenshots = async () => {
+    setPurgingStorage(true);
+    try {
+      const res = await apiClient.post('/utilities/storage/purge-payment-proofs', { daysOld: 90 });
+      if (res.data?.success) {
+        toastEvent.trigger(
+          `Retention purge complete: ${res.data.purgedCount} screenshot(s) cleaned (${(res.data.freedBytes / 1024).toFixed(1)} KB freed)`,
+          'success'
+        );
+        setShowPurgeConfirmModal(false);
+        fetchStorageStats();
+      }
+    } catch (err) {
+      const e = err as LocalApiError;
+      toastEvent.trigger('Failed to purge screenshots: ' + e.message, 'error');
+    } finally {
+      setPurgingStorage(false);
+    }
+  };
 
   const hasGdriveAuth = !!(rawSettings.gmail_oauth_refresh_token || rawSettings.gmail_user);
 
@@ -3363,6 +3434,62 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
         </div>
       </div>
 
+      {/* WhatsApp Payment Receipts & Media Storage Retention Card */}
+      <div className="space-y-4 pt-2 border-t border-border">
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+            <ImageIcon size={16} /> WhatsApp Payment Receipts & Media Storage
+          </h2>
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-bold">
+            90-Day Auto Retention Active
+          </span>
+        </div>
+
+        <div className="bg-bg3/20 border border-border rounded-xl p-4 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-text">Payment Screenshots Disk Space:</span>
+                <span className="text-xs font-mono font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/20">
+                  {storageStats ? `${storageStats.totalFiles} file(s) · ${(storageStats.totalSizeBytes / 1024).toFixed(1)} KB` : 'Loading...'}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted">
+                Receipts from delivered & return-window closed orders older than 90 days are automatically purged daily at 2:30 AM to prevent disk accumulation.
+              </p>
+              {storageStats && (
+                <div className="text-[11px] text-muted flex items-center gap-3 pt-1">
+                  <span>Eligible for 90-day purge: <strong className="text-text">{storageStats.eligibleCount} file(s)</strong> ({(storageStats.eligibleSizeBytes / 1024).toFixed(1)} KB)</span>
+                  <span className="text-emerald-500 font-medium">✓ Active & pending orders protected</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={fetchStorageStats}
+                disabled={loadingStorageStats}
+                className="p-2 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-muted hover:text-text cursor-pointer transition-all"
+                title="Refresh Storage Stats"
+              >
+                <RefreshCw size={14} className={loadingStorageStats ? 'animate-spin text-primary' : ''} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPurgeConfirmModal(true)}
+                disabled={purgingStorage || !storageStats || storageStats.eligibleCount === 0}
+                className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={storageStats && storageStats.eligibleCount === 0 ? 'No delivered receipts older than 90 days' : 'Purge delivered screenshots older than 90 days'}
+              >
+                <Trash2 size={13} />
+                <span>Clean 90-Day Expired Proofs</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Maintenance, Cache & Reset */}
       <div className="space-y-4 pt-2 border-t border-border">
         <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2 border-b border-border pb-2">
@@ -3450,6 +3577,62 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
           onClose={() => setShowSystemResetModal(false)}
           refetchSettings={refetchSettings}
         />
+      )}
+
+      {/* Purge Confirmation Modal (Human-in-the-Loop) */}
+      {showPurgeConfirmModal && storageStats && (
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-bg border border-border rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <Trash2 size={18} className="text-amber-500" />
+                <h3 className="text-sm font-bold text-text">Confirm 90-Day Receipt Purge</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPurgeConfirmModal(false)}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg2 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted leading-relaxed">
+              You are about to delete <strong className="text-text">{storageStats.eligibleCount} payment receipt image(s)</strong> older than 90 days. This will free approximately <strong className="text-emerald-500">{(storageStats.eligibleSizeBytes / 1024).toFixed(1)} KB</strong> of disk space.
+            </p>
+
+            <div className="p-3 bg-bg2 rounded-xl border border-border text-xs text-text space-y-1.5">
+              <div className="flex items-center gap-2 font-semibold">
+                <ShieldCheck size={14} className="text-emerald-500 shrink-0" />
+                <span>Zero Accidental Data Loss Shield:</span>
+              </div>
+              <ul className="text-[11px] text-muted list-disc list-inside space-y-0.5">
+                <li>Orders in progress, pending delivery, or return-window open are preserved.</li>
+                <li>Financial transaction amounts, order totals, and customer details remain in SQLite.</li>
+                <li>An audit trail entry is logged in order tracking events.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/60">
+              <button
+                type="button"
+                onClick={() => setShowPurgeConfirmModal(false)}
+                className="px-4 py-2 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-muted hover:text-text cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={purgingStorage}
+                onClick={handlePurgeScreenshots}
+                className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {purgingStorage ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                <span>{purgingStorage ? 'Purging...' : 'Approve & Purge Files'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -3800,6 +3983,15 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
       setSaving(false);
     }
   };
+
+  const handleSaveTriggersRef = useRef(handleSaveTriggers);
+  handleSaveTriggersRef.current = handleSaveTriggers;
+
+  useEffect(() => {
+    return shortcutEvent.subscribeSave(() => {
+      void handleSaveTriggersRef.current();
+    });
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -4748,6 +4940,15 @@ function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: Record<
       setSaving(false);
     }
   };
+
+  const handleSaveTimingSettingsRef = useRef(handleSaveTimingSettings);
+  handleSaveTimingSettingsRef.current = handleSaveTimingSettings;
+
+  useEffect(() => {
+    return shortcutEvent.subscribeSave(() => {
+      void handleSaveTimingSettingsRef.current();
+    });
+  }, []);
 
   const handleAddHoliday = async (e: React.FormEvent) => {
     e.preventDefault();

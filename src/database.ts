@@ -808,6 +808,22 @@ export async function ensureSchema(dbPath: string) {
           if (spCols.length > 0 && !spNames.has('medicine_id')) {
             await db.run('ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)');
           }
+          if (spCols.length > 0) {
+            await db.run(`
+              UPDATE special_orders
+              SET product = medicine_name
+              WHERE (product IS NULL OR product = '' OR length(product) <= 6)
+                AND medicine_name IS NOT NULL
+                AND length(medicine_name) > length(COALESCE(product, ''))
+            `);
+            await db.run(`
+              UPDATE special_orders
+              SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
+              WHERE payment_screenshot_path IS NOT NULL
+                AND payment_screenshot_path LIKE '%uploads%'
+                AND payment_screenshot_path NOT LIKE '/uploads/%'
+            `);
+          }
         } catch (_) { }
 
         await db.run(`
@@ -3883,6 +3899,24 @@ export async function ensureSchema(dbPath: string) {
       SET discount = 0
       WHERE discount IS NULL;
     `);
+
+      // Heal special_orders where product was corrupted with short packaging fragment
+      await db.run(`
+        UPDATE special_orders
+        SET product = medicine_name
+        WHERE (product IS NULL OR product = '' OR length(product) <= 6)
+          AND medicine_name IS NOT NULL
+          AND length(medicine_name) > length(COALESCE(product, ''))
+      `);
+
+      // Heal special_orders payment_screenshot_path to web-accessible /uploads/ path
+      await db.run(`
+        UPDATE special_orders
+        SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
+        WHERE payment_screenshot_path IS NOT NULL
+          AND payment_screenshot_path LIKE '%uploads%'
+          AND payment_screenshot_path NOT LIKE '/uploads/%'
+      `);
     } catch (healErr) {
       console.warn('[Database Healing] Non-critical warning, failed to run database healing checks:', healErr);
     }

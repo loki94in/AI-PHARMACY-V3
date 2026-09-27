@@ -76,9 +76,51 @@ describe('Special Order Sourcing Notification & Guard Tests', () => {
     expect(mockEnqueue).toHaveBeenCalledTimes(1);
     const msg = mockEnqueue.mock.calls[0][1] as string;
     expect(msg).toContain('IBUGESIC PLUS SYRUP');
+    expect(msg).toContain('Selected Distributor (From Live Search)');
     expect(msg).toContain('Rate: ₹31.61 | MRP: ₹41.49');
     expect(msg).toContain('Margin: ₹9.88 (23.8%)');
     expect(msg).not.toContain('Wholesale PTR:');
+    expect(msg).not.toContain('[Best Rate]');
+    expect(msg).not.toContain('[High Stock]');
+  });
+
+  test('notifyOwnerOfSpecialOrderPharmarackResults displays multiple options with ref badges when multiple options exist', async () => {
+    await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
+      specialOrderId: 3,
+      soCode: 'SO-TMSA-3',
+      customerName: 'Mr. RATNAKR',
+      customerPhone: '9307409630',
+      medicineName: 'GLIMIDIB M2 SR 15TAB',
+      quantity: 4,
+      unit: 'strip',
+      mrp: 177.19,
+      totalAmount: 708.76,
+      pharmarackOptions: [
+        {
+          name: 'GLIMIDIB M2 SR 15TAB',
+          distributor: 'BETTER LIFE PHARMA',
+          rate: 25.25,
+          mrp: 177.19,
+          mapped: true,
+          stock: '17'
+        },
+        {
+          name: 'GLIMIDIB M2 SR TAB (15)',
+          distributor: 'PRO SUCCESS PHARMA AND SURGICAL',
+          rate: 28.74,
+          mrp: 214.31,
+          mapped: true,
+          stock: '294'
+        }
+      ]
+    });
+
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const msg = mockEnqueue.mock.calls[0][1] as string;
+    expect(msg).toContain('Top 2 Sourcing References');
+    expect(msg).toContain('[Best Rate] *BETTER LIFE PHARMA*');
+    expect(msg).toContain('[High Stock] *PRO SUCCESS PHARMA AND SURGICAL*');
+    expect(msg).toContain('👉 Reply *2* to choose Option 2');
   });
 
   test('filterCandidatesByFormulation enforces Dosage Form Shield (Syrup != Tab)', () => {
