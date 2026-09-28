@@ -137,9 +137,9 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntex
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; AppUserModelID: "com.aipharmacy.os"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon; AppUserModelID: "com.aipharmacy.os"
 
 [Registry]
 Root: HKCU; Subkey: "Software\AIPharmacyOS"; Flags: uninsdeletekey
@@ -159,6 +159,10 @@ Type: files; Name: "{group}\Open in Browser.url"
 Type: files; Name: "{group}\Run (with browser).lnk"
 Type: files; Name: "{group}\Stop AI Pharmacy OS.lnk"
 Type: files; Name: "{autodesktop}\Stop {#MyAppName}.lnk"
+; Strip any rogue or duplicate Electron shortcuts so only AI Pharmacy OS appears
+Type: files; Name: "{userprograms}\Electron.lnk"
+Type: files; Name: "{commonprograms}\Electron.lnk"
+Type: files; Name: "{group}\Electron.lnk"
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Visual C++ Redistributable (if needed)..."; Check: VCRedistNeedsInstall and VCRedistFilePresent; Flags: waituntilterminated

@@ -59,6 +59,22 @@ const outElectronExe = path.join(distDir, 'PharmacyOS.exe');
 if (fs.existsSync(outElectronExe)) fs.rmSync(outElectronExe);
 fs.copyFileSync(path.join(electronSourceDir, 'electron.exe'), outElectronExe);
 
+// Brand Electron runtime executable with AI Pharmacy OS icon and PE metadata
+const rceditPath = path.join(root, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe');
+const appIconPath = path.join(root, 'packaging', 'app.ico');
+if (fs.existsSync(rceditPath) && fs.existsSync(appIconPath)) {
+  try {
+    console.log('[build-sea] Branding PharmacyOS.exe with application icon and metadata...');
+    execSync(
+      `"${rceditPath}" "${outElectronExe}" --set-icon "${appIconPath}" --set-version-string "FileDescription" "AI Pharmacy OS" --set-version-string "ProductName" "AI Pharmacy OS" --set-version-string "CompanyName" "AI Pharmacy Team"`,
+      { stdio: 'inherit' }
+    );
+    console.log('[build-sea] ✓ PharmacyOS.exe branded successfully.');
+  } catch (err) {
+    console.warn('[build-sea] Warning: Failed to brand PharmacyOS.exe with rcedit:', err.message);
+  }
+}
+
 // Prepare resources/app folder
 const appResourcesDir = path.join(distDir, 'resources', 'app');
 fs.mkdirSync(appResourcesDir, { recursive: true });

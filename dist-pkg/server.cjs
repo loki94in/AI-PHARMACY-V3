@@ -180,7 +180,7 @@ var init_sqlitePatch = __esm({
               return;
             }
             db2.run(`PRAGMA busy_timeout = ${busyTimeout};`);
-            db2.run("PRAGMA cache_size = -16000;");
+            db2.run("PRAGMA cache_size = -64000;");
             db2.run("PRAGMA temp_store = MEMORY;");
             db2.run("PRAGMA synchronous = NORMAL;", (err2) => {
               if (callback) callback(err2 || null);
@@ -24076,6 +24076,7 @@ __export(distributorDispatchReminderWorker_exports, {
   allocateDynamicReminderTimes: () => allocateDynamicReminderTimes,
   checkAndSendAfternoonDeliveryBoyReminder: () => checkAndSendAfternoonDeliveryBoyReminder,
   checkAndSendAutoReminders: () => checkAndSendAutoReminders,
+  getTodayDistributorRemindersFast: () => getTodayDistributorRemindersFast,
   purgeStaleOfflineReminders: () => purgeStaleOfflineReminders,
   startDistributorDispatchReminderWorker: () => startDistributorDispatchReminderWorker,
   stopDistributorDispatchReminderWorker: () => stopDistributorDispatchReminderWorker,
@@ -24089,8 +24090,115 @@ async function ensureReminderSchema(db2) {
     if (!colNames.has("scheduled_send_time")) {
       await db2.run("ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL");
     }
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_dist_disp_rem_date ON distributor_dispatch_reminders (date, status)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_dist_disp_rem_date_name ON distributor_dispatch_reminders (date, distributor_name)");
     reminderSchemaEnsured = true;
   } catch (_e) {
+  }
+}
+async function getTodayDistributorRemindersFast(customDateStr) {
+  const db2 = await dbManager.getConnection();
+  const todayStr2 = customDateStr || getTodayDateString();
+  try {
+    await ensureReminderSchema(db2);
+    const todayReminders = await db2.all(
+      `SELECT r.id, r.distributor_id,
+              COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
+              COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
+              1 as has_pharmarack_order_today,
+              1 as has_order_today
+       FROM distributor_dispatch_reminders r
+       LEFT JOIN distributors d ON r.distributor_id = d.id
+       LEFT JOIN delivery_boys db ON r.delivery_boy_id = db.id
+       WHERE r.date = ?
+       ORDER BY r.status DESC, r.created_at DESC`,
+      [todayStr2]
+    );
+    if (!todayReminders || todayReminders.length === 0) {
+      return syncTodayActiveDistributors();
+    }
+    const notifRows = await db2.all(
+      `SELECT recipient_name, recipient_phone, status, error_message
+       FROM automation_notifications
+       WHERE DATE(created_at) = ?
+       ORDER BY id ASC`,
+      [todayStr2]
+    );
+    const notifMap = /* @__PURE__ */ new Map();
+    for (const n of notifRows) {
+      const s = n.status;
+      const err = s === "failed" || s === "error" ? n.error_message : null;
+      if (n.recipient_name) notifMap.set(n.recipient_name.toLowerCase().trim(), { status: s, error: err });
+      if (n.recipient_phone) notifMap.set(n.recipient_phone.replace(/\\D/g, "").slice(-10), { status: s, error: err });
+    }
+    const [todayPlacedOrders, todayPurchases] = await Promise.all([
+      db2.all(
+        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+         FROM pharmarack_placed_orders 
+         WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ?`,
+        [todayStr2, todayStr2]
+      ),
+      db2.all(
+        `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
+         FROM purchases p
+         JOIN distributors d ON p.distributor_id = d.id
+         WHERE (p.date IS NOT NULL AND DATE(p.date) = ?)`,
+        [todayStr2]
+      )
+    ]);
+    for (const r of todayReminders) {
+      const normDistName = (r.distributor_name || "").toLowerCase().trim();
+      const phoneDigits = (r.distributor_phone || "").replace(/\\D/g, "").slice(-10);
+      const notif = notifMap.get(normDistName) || (phoneDigits ? notifMap.get(phoneDigits) : void 0);
+      r.latest_notif_status = notif?.status || null;
+      r.latest_notif_error = notif?.error || null;
+      const distId = r.distributor_id;
+      const matchingPlaced = todayPlacedOrders.filter(
+        (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId
+      );
+      const matchingPurchases = todayPurchases.filter(
+        (p) => p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName || distId && p.distributor_id === distId
+      );
+      const ordersList = [];
+      let totalItems = 0;
+      for (const po of matchingPlaced) {
+        let itemsArr = [];
+        try {
+          itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
+        } catch (_) {
+        }
+        totalItems += itemsArr.length;
+        const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
+        const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
+        ordersList.push({
+          id: `pharma_${po.id}`,
+          source: "pharmarack",
+          order_time: timeStr,
+          items_count: itemsArr.length,
+          items_preview: previews
+        });
+      }
+      for (const p of matchingPurchases) {
+        const timeStr = p.date ? new Date(p.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
+        ordersList.push({
+          id: `purch_${p.id}`,
+          source: "purchase",
+          order_time: timeStr,
+          items_count: 1,
+          items_preview: [`Purchase Bill #${p.invoice_no || p.id}`]
+        });
+      }
+      const totalCount = ordersList.length;
+      r.order_count = totalCount > 0 ? totalCount : r.has_order_today && r.status !== "No Order Today" ? 1 : 0;
+      r.orders_list = ordersList;
+      r.total_items_count = totalItems;
+    }
+    return todayReminders || [];
+  } catch (err) {
+    console.error("[DistributorReminderWorker] Error in fast read today active distributors:", err.message);
+    return [];
   }
 }
 function getTodayDateString() {
@@ -39141,6 +39249,7 @@ __export(whatsappClient_exports, {
   hasSavedSession: () => hasSavedSession,
   hashMessageBody: () => hashMessageBody,
   initClient: () => initClient,
+  isProductionAppRunning: () => isProductionAppRunning,
   isPuppeteerDetachedError: () => isPuppeteerDetachedError,
   isReady: () => isReady,
   isWhatsAppAutoConnectAllowed: () => isWhatsAppAutoConnectAllowed,
@@ -39176,9 +39285,29 @@ function hasSavedSession() {
     return false;
   }
 }
+async function isProductionAppRunning() {
+  if (isPackagedApp()) return false;
+  return new Promise((resolve) => {
+    import("http").then((http3) => {
+      const req = http3.get("http://127.0.0.1:5175/api/health", { timeout: 800 }, (res) => {
+        resolve(res.statusCode === 200);
+        res.resume();
+      });
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+    }).catch(() => resolve(false));
+  });
+}
 async function isWhatsAppAutoConnectAllowed() {
   if (await isWhatsAppExplicitlyDisabled()) return false;
   if (!hasSavedSession()) return false;
+  if (!isPackagedApp() && await isProductionAppRunning()) {
+    console.log("[WhatsApp Priority Shield] Production Electron app is active on port 5175. Auto-connect yielded to production.");
+    return false;
+  }
   try {
     const db2 = await dbManager.getConnection();
     const authRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_session_authenticated'");
@@ -40308,6 +40437,10 @@ async function initClient(options = {}) {
   if (!forceQr && !isManual && !isBoot && !await isWhatsAppAutoConnectAllowed()) {
     console.log("[WhatsApp] Connection suppressed: App will never connect WhatsApp unless user manually invokes it.");
     setLifecycleProgress("disconnected", 0, "WhatsApp is disconnected. Click Connect to start.");
+    return null;
+  }
+  if (!forceQr && !isPackagedApp() && await isProductionAppRunning()) {
+    console.log("[WhatsApp Priority Shield] Production Electron app is active on port 5175. Yielding WhatsApp connection to production instance.");
     return null;
   }
   if (clientInstance && isReady) {
@@ -49811,7 +49944,7 @@ var init_connection = __esm({
               await db2.run(`PRAGMA busy_timeout = ${busyTimeout};`);
               await db2.run("PRAGMA journal_mode = WAL;");
               await db2.run("PRAGMA synchronous = NORMAL;");
-              await db2.run("PRAGMA cache_size = -16000;");
+              await db2.run("PRAGMA cache_size = -64000;");
               await db2.run("PRAGMA temp_store = MEMORY;");
               await db2.run("PRAGMA mmap_size = 268435456;");
               openSuccess = true;
@@ -51737,7 +51870,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.15";
+    APP_VERSION = "0.1.18";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -52145,6 +52278,14 @@ var init_doctorReportingService = __esm({
 });
 
 // src/database/messageDAO.ts
+var messageDAO_exports = {};
+__export(messageDAO_exports, {
+  closeMessageDAO: () => closeMessageDAO,
+  deleteTemplate: () => deleteTemplate,
+  getTemplate: () => getTemplate,
+  listTemplates: () => listTemplates,
+  setTemplate: () => setTemplate
+});
 function getDb() {
   if (!db) {
     db = new import_better_sqlite3.default("./data/app.db", { readonly: false });
@@ -52163,6 +52304,20 @@ function closeMessageDAO() {
 function getTemplate(locale, key) {
   const row = getDb().prepare("SELECT value FROM message_templates WHERE locale = ? AND key = ?").get(locale, key);
   return row ? row.value : null;
+}
+function setTemplate(locale, key, value) {
+  const stmt = getDb().prepare(`
+    INSERT INTO message_templates (locale, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(locale, key) DO UPDATE SET value = excluded.value
+  `);
+  stmt.run(locale, key, value);
+}
+function deleteTemplate(locale, key) {
+  getDb().prepare("DELETE FROM message_templates WHERE locale = ? AND key = ?").run(locale, key);
+}
+function listTemplates(locale) {
+  const rows = getDb().prepare("SELECT key, value FROM message_templates WHERE locale = ?").all(locale);
+  return rows;
 }
 var import_better_sqlite3, db;
 var init_messageDAO = __esm({
@@ -58891,8 +59046,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           await import_fs35.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
         } catch (unzipError) {
           try {
-            const { execSync: execSync7 } = await import("child_process");
-            execSync7(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
+            const { execSync: execSync8 } = await import("child_process");
+            execSync8(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
           } catch (_) {
             throw new Error(`Failed to extract ZIP file: ${unzipError.message}`);
           }
@@ -58963,9 +59118,9 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       migrationStatus.message = "Extracting TAR archive...";
       extractPath = import_path38.default.join(TEMP_DIR3, `extract_${Date.now()}`);
       import_fs35.default.mkdirSync(extractPath, { recursive: true });
-      const { execSync: execSync7 } = await import("child_process");
+      const { execSync: execSync8 } = await import("child_process");
       try {
-        execSync7(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
+        execSync8(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
       } catch (tarError) {
         throw new Error(`Failed to extract TAR archive: ${tarError.message}`);
       }
@@ -61604,15 +61759,32 @@ var init_migration = __esm({
         } catch (err) {
           console.warn("Failed to stop workers or close staging connections:", err);
         }
+        try {
+          const { closeMessageDAO: closeMessageDAO2 } = await Promise.resolve().then(() => (init_messageDAO(), messageDAO_exports));
+          closeMessageDAO2();
+        } catch (_) {
+        }
+        try {
+          const { stopEmailPoller: stopEmailPoller2 } = await Promise.resolve().then(() => (init_emailPoller(), emailPoller_exports));
+          stopEmailPoller2();
+        } catch (_) {
+        }
         await dbManager.close(true);
         dbManager.suspend();
+        await new Promise((resolve) => setTimeout(resolve, 400));
         if (import_fs36.default.existsSync(DB_PATH15)) {
           const Database6 = (await import("better-sqlite3")).default;
           let tempAppDb = null;
           try {
             tempAppDb = new Database6(DB_PATH15, { timeout: 1e4 });
-            tempAppDb.pragma("wal_checkpoint(TRUNCATE)");
-            tempAppDb.pragma("journal_mode = DELETE");
+            try {
+              tempAppDb.pragma("wal_checkpoint(TRUNCATE)");
+            } catch (_) {
+            }
+            try {
+              tempAppDb.pragma("journal_mode = DELETE");
+            } catch (_) {
+            }
           } catch (checkpointErr) {
             console.warn("[Migration Finalize] Active DB checkpoint warning:", checkpointErr);
           } finally {
@@ -61625,7 +61797,11 @@ var init_migration = __esm({
         const timestamp = Date.now();
         backupPath = DB_PATH15 + ".bak_" + timestamp;
         if (import_fs36.default.existsSync(DB_PATH15)) {
-          import_fs36.default.copyFileSync(DB_PATH15, backupPath);
+          try {
+            import_fs36.default.copyFileSync(DB_PATH15, backupPath);
+          } catch (bakErr) {
+            console.warn("[Migration Finalize] Active DB backup copy warning:", bakErr?.message);
+          }
         }
         ["app.db-wal", "app.db-shm", "staging.db-wal", "staging.db-shm"].forEach((f) => {
           const p = import_path39.default.join(import_path39.default.dirname(DB_PATH15), f);
@@ -61636,7 +61812,36 @@ var init_migration = __esm({
             }
           }
         });
-        import_fs36.default.copyFileSync(STAGING_DB_PATH2, DB_PATH15);
+        let swapSucceeded = false;
+        let swapError = null;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          try {
+            import_fs36.default.copyFileSync(STAGING_DB_PATH2, DB_PATH15);
+            swapSucceeded = true;
+            break;
+          } catch (err) {
+            swapError = err;
+            await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+          }
+        }
+        if (!swapSucceeded) {
+          console.warn(`[Migration Finalize] Direct file copy failed (${swapError?.message}). Falling back to SQLite native Backup API...`);
+          const Database6 = (await import("better-sqlite3")).default;
+          const stagingSourceDb = new Database6(STAGING_DB_PATH2, { readonly: true });
+          try {
+            await stagingSourceDb.backup(DB_PATH15);
+            swapSucceeded = true;
+            console.log("[Migration Finalize] Successfully swapped database using SQLite native Backup API.");
+          } catch (backupApiErr) {
+            console.error("[Migration Finalize] SQLite native Backup API failed:", backupApiErr);
+            throw new Error(`Failed to swap staging database into active database: ${backupApiErr.message}`);
+          } finally {
+            try {
+              stagingSourceDb.close();
+            } catch (_) {
+            }
+          }
+        }
         try {
           const Database6 = (await import("better-sqlite3")).default;
           const checkDb = new Database6(DB_PATH15, { readonly: true });
@@ -65455,13 +65660,13 @@ var init_settings = __esm({
           if (hasWhatsappKey) {
             try {
               const { destroyClient: destroyClient2, shouldRouteToBusiness: shouldRouteToBusiness2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-              const enabled = payload["whatsapp_enabled"] === "true";
+              const explicitlyDisabled = payload["whatsapp_enabled"] === "false" || payload["whatsapp_preferred_system"] === "disabled";
               const useBusiness = await shouldRouteToBusiness2();
-              if (useBusiness || !enabled) {
-                console.log("[Settings] WhatsApp Business API preferred or WhatsApp Web disabled. Shutting down automated client...");
+              if (useBusiness || explicitlyDisabled) {
+                console.log("[Settings] WhatsApp Business API preferred or WhatsApp Web explicitly disabled. Shutting down automated client...");
                 await destroyClient2();
               } else {
-                console.log("[Settings] WhatsApp settings saved. Connection remains manual-only (user must click Connect to start).");
+                console.log("[Settings] WhatsApp settings saved. Connection state preserved.");
               }
             } catch (err) {
               console.error("[Settings] Failed to hot-reload WhatsApp config:", err);
@@ -66477,7 +66682,7 @@ var init_dispatch = __esm({
         res.status(500).json({ error: "Failed to fetch delivery messages" });
       }
     });
-    router14.get("/distributor-reminders/today", async (_req, res) => {
+    router14.get("/distributor-reminders/today", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const [startSetting, endSetting, afternoonEnabledSetting, afternoonTimeSetting, dispatchEnabledSetting, pausedDatesRow] = await Promise.all([
@@ -66499,7 +66704,14 @@ var init_dispatch = __esm({
           } catch (_) {
           }
         }
-        const reminders = await syncTodayActiveDistributors();
+        const forceSync = req.query.forceSync === "true";
+        let reminders;
+        if (forceSync) {
+          reminders = await syncTodayActiveDistributors();
+          eventService.broadcast("dispatch_updated", { type: "reminders_synced" });
+        } else {
+          reminders = await getTodayDistributorRemindersFast();
+        }
         res.json({
           success: true,
           window_start: startSetting?.value || "12:30",
@@ -67299,6 +67511,15 @@ var init_messaging = __esm({
       } catch (err) {
         console.error("WhatsApp prewarm error:", err);
         res.status(500).json({ error: "Failed to pre-warm WhatsApp client" });
+      }
+    });
+    router16.post("/yield", async (_req, res) => {
+      try {
+        console.log("[Messaging] Received WhatsApp yield request from production app. Releasing client...");
+        await destroyClient();
+        res.json({ success: true, yielded: true });
+      } catch (err) {
+        res.status(500).json({ error: err?.message || "Failed to yield WhatsApp client" });
       }
     });
     router16.get("/qr", async (req, res) => {
@@ -84964,6 +85185,7 @@ var init_purchases = __esm({
       LEFT JOIN distributors d ON p.distributor_id = d.id
       WHERE pi.medicine_id IN (${placeholders}) AND pi.batch_no IS NOT NULL AND TRIM(pi.batch_no) != ''
       ORDER BY p.date DESC, pi.id DESC
+      LIMIT 50
     `, medicineIds);
         const inventoryRows = await db2.all(`
       SELECT 
@@ -84981,6 +85203,7 @@ var init_purchases = __esm({
       JOIN medicines m ON im.medicine_id = m.id
       WHERE im.medicine_id IN (${placeholders}) AND im.batch_no IS NOT NULL AND TRIM(im.batch_no) != ''
       ORDER BY im.id DESC
+      LIMIT 50
     `, medicineIds);
         const batchMap2 = /* @__PURE__ */ new Map();
         for (const row of purchaseRows) {
@@ -85041,35 +85264,52 @@ var init_purchases = __esm({
     router36.get("/price-history", async (req, res) => {
       let db2;
       try {
-        const name = req.query.name;
-        if (!name) {
-          return res.status(400).json({ error: "Medicine name query is required" });
+        const medicineIdParam = req.query.medicine_id;
+        const name = (req.query.name || "").trim();
+        if (!medicineIdParam && !name) {
+          return res.status(400).json({ error: "Medicine name or medicine_id query is required" });
         }
         db2 = await dbManager.getConnection();
         let medicineIds = [];
-        try {
-          if (productNameFilterService) {
-            await productNameFilterService.initialize();
-            const filterResult = await productNameFilterService.filterProductNames(name);
-            if (filterResult && filterResult.matches && filterResult.matches.length > 0) {
-              const queryPlaceholders = filterResult.matches.map(() => "?").join(",");
-              const meds = await db2.all(
-                `SELECT id FROM medicines WHERE name IN (${queryPlaceholders})`,
-                filterResult.matches
-              );
-              medicineIds = meds.map((m) => m.id);
+        if (medicineIdParam) {
+          const parsed = parseInt(medicineIdParam, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            medicineIds = [parsed];
+          }
+        }
+        if (medicineIds.length === 0 && name) {
+          const exactRows = await db2.all("SELECT id FROM medicines WHERE name = ? LIMIT 5", [name]);
+          if (exactRows.length > 0) {
+            medicineIds = exactRows.map((m) => m.id);
+          }
+          if (medicineIds.length === 0) {
+            const cleanName = name.split(" ")[0] || name;
+            const prefix = cleanName.slice(0, 10).replace(/[%_]/g, "");
+            if (prefix.length >= 3) {
+              const prefixRows = await db2.all("SELECT id FROM medicines WHERE name LIKE ? LIMIT 5", [`${prefix}%`]);
+              if (prefixRows.length > 0) {
+                medicineIds = prefixRows.map((m) => m.id);
+              }
             }
           }
-        } catch (e) {
-          console.warn("Fuzzy lookup in price-history failed, falling back to LIKE:", e);
-        }
-        if (medicineIds.length === 0) {
-          const cleanName = name.split(" ")[0] || name;
-          const medicines = await db2.all(
-            "SELECT id FROM medicines WHERE name LIKE ? OR name LIKE ? LIMIT 5",
-            [`%${name}%`, `%${cleanName}%`]
-          );
-          medicineIds = medicines.map((m) => m.id);
+          if (medicineIds.length === 0) {
+            try {
+              if (productNameFilterService) {
+                await productNameFilterService.initialize();
+                const filterResult = await productNameFilterService.filterProductNames(name);
+                if (filterResult && filterResult.matches && filterResult.matches.length > 0) {
+                  const queryPlaceholders = filterResult.matches.map(() => "?").join(",");
+                  const meds = await db2.all(
+                    `SELECT id FROM medicines WHERE name IN (${queryPlaceholders})`,
+                    filterResult.matches
+                  );
+                  medicineIds = meds.map((m) => m.id);
+                }
+              }
+            } catch (e) {
+              console.warn("Fuzzy lookup in price-history failed, falling back to LIKE:", e);
+            }
+          }
         }
         if (medicineIds.length === 0) {
           return res.json({ data: [] });
@@ -96878,13 +97118,14 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express60, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path69, import_child_process11, import_url49, import_fs65, import_axios5, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express60, import_compression, import_zlib5, import_cors, import_helmet, import_express_rate_limit, import_path69, import_child_process11, import_url49, import_fs65, import_axios5, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
     init_sqlitePatch();
     import_express60 = __toESM(require("express"), 1);
     import_compression = __toESM(require("compression"), 1);
+    import_zlib5 = __toESM(require("zlib"), 1);
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
@@ -96951,6 +97192,20 @@ var init_server = __esm({
     if (!import_fs65.default.existsSync(RAW_DIR2)) {
       import_fs65.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
+    app.use((0, import_compression.default)({
+      brotli: {
+        params: {
+          [import_zlib5.default.constants.BROTLI_PARAM_QUALITY]: 4
+        }
+      },
+      threshold: 1024,
+      filter: (req, res) => {
+        if (req.headers.accept && req.headers.accept.includes("text/event-stream")) {
+          return false;
+        }
+        return import_compression.default.filter(req, res);
+      }
+    }));
     app.use((0, import_helmet.default)({
       contentSecurityPolicy: false
       // Disable CSP so inline scripts and styles in index.html can run
@@ -97203,13 +97458,12 @@ var init_server = __esm({
     });
     server.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
-        const { execSync: execSync7 } = require("child_process");
         const currentExe = process.execPath.toLowerCase().replace(/\\/g, "/");
         let ownerPid = null;
         let ownerPath = null;
         let isSameInstall = false;
         try {
-          const netstatOut = execSync7(
+          const netstatOut = (0, import_child_process11.execSync)(
             `netstat -ano | findstr ":${PORT} " | findstr LISTENING`,
             { encoding: "utf8", timeout: 4e3 }
           ).trim();
@@ -97217,7 +97471,7 @@ var init_server = __esm({
           if (pidMatch && /^\d+$/.test(pidMatch)) {
             ownerPid = pidMatch;
             try {
-              const wmicOut = execSync7(
+              const wmicOut = (0, import_child_process11.execSync)(
                 `wmic process where "ProcessId=${ownerPid}" get ExecutablePath /value`,
                 { encoding: "utf8", timeout: 4e3 }
               );
@@ -97241,7 +97495,7 @@ var init_server = __esm({
           console.warn(`[SingleInstance] Stale process PID ${ownerPid} (${ownerPath ?? "unknown"}) holds port ${PORT}.`);
           console.warn(`[SingleInstance] Killing stale process and retaking port...`);
           try {
-            execSync7(`taskkill /F /PID ${ownerPid}`, { timeout: 5e3 });
+            (0, import_child_process11.execSync)(`taskkill /F /PID ${ownerPid}`, { timeout: 5e3 });
           } catch {
           }
           let retries = 0;

@@ -480,14 +480,14 @@ router.post('/save', async (req, res) => {
       if (hasWhatsappKey) {
         try {
           const { destroyClient, shouldRouteToBusiness } = await import('../whatsappClient.js');
-          const enabled = payload['whatsapp_enabled'] === 'true';
+          const explicitlyDisabled = payload['whatsapp_enabled'] === 'false' || payload['whatsapp_preferred_system'] === 'disabled';
           const useBusiness = await shouldRouteToBusiness();
 
-          if (useBusiness || !enabled) {
-            console.log('[Settings] WhatsApp Business API preferred or WhatsApp Web disabled. Shutting down automated client...');
+          if (useBusiness || explicitlyDisabled) {
+            console.log('[Settings] WhatsApp Business API preferred or WhatsApp Web explicitly disabled. Shutting down automated client...');
             await destroyClient();
           } else {
-            console.log('[Settings] WhatsApp settings saved. Connection remains manual-only (user must click Connect to start).');
+            console.log('[Settings] WhatsApp settings saved. Connection state preserved.');
           }
         } catch (err) {
           console.error('[Settings] Failed to hot-reload WhatsApp config:', err);

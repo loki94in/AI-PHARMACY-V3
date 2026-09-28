@@ -7,7 +7,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { eventService } from './services/eventService.js';
 import { dbManager } from './database/connection.js';
-import { config as appConfig, getAppDataDir } from './config/index.js';
+import { config as appConfig, getAppDataDir, isPackagedApp } from './config/index.js';
 import { whatsappBusinessService } from './services/whatsappBusinessService.js';
 import { cleanProfileLockFiles } from './services/tokenRefreshScheduler.js';
 
@@ -56,9 +56,33 @@ export function hasSavedSession(): boolean {
  * The legacy phone-number fallback is intentionally removed — it caused Chrome to
  * spawn on boot for installs where WhatsApp was previously paired but later disconnected.
  */
+/**
+ * Priority Shield: Probe if production Electron app is running on port 5175.
+ * In development mode, the dev server must NEVER contest WhatsApp session with the production app.
+ */
+export async function isProductionAppRunning(): Promise<boolean> {
+  if (isPackagedApp()) return false;
+  return new Promise<boolean>((resolve) => {
+    import('http').then(http => {
+      const req = http.get('http://127.0.0.1:5175/api/health', { timeout: 800 }, (res) => {
+        resolve(res.statusCode === 200);
+        res.resume();
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+    }).catch(() => resolve(false));
+  });
+}
+
 export async function isWhatsAppAutoConnectAllowed(): Promise<boolean> {
   if (await isWhatsAppExplicitlyDisabled()) return false;
   if (!hasSavedSession()) return false;
+
+  // Priority Shield: If running in development and production Electron app is active on port 5175, yield.
+  if (!isPackagedApp() && (await isProductionAppRunning())) {
+    console.log('[WhatsApp Priority Shield] Production Electron app is active on port 5175. Auto-connect yielded to production.');
+    return false;
+  }
 
   try {
     const db = await dbManager.getConnection();
@@ -1471,6 +1495,12 @@ export async function initClient(options: { forceQr?: boolean; manual?: boolean;
   if (!forceQr && !isManual && !isBoot && !(await isWhatsAppAutoConnectAllowed())) {
     console.log('[WhatsApp] Connection suppressed: App will never connect WhatsApp unless user manually invokes it.');
     setLifecycleProgress('disconnected', 0, 'WhatsApp is disconnected. Click Connect to start.');
+    return null;
+  }
+
+  // Priority Shield: In development mode, always yield to production Electron app on port 5175 unless forceQr
+  if (!forceQr && !isPackagedApp() && (await isProductionAppRunning())) {
+    console.log('[WhatsApp Priority Shield] Production Electron app is active on port 5175. Yielding WhatsApp connection to production instance.');
     return null;
   }
 

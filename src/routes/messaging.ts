@@ -54,6 +54,17 @@ router.post('/prewarm', async (req, res) => {
   }
 });
 
+// POST /api/messaging/yield — Called by production Electron app to request dev server release WhatsApp
+router.post('/yield', async (_req, res) => {
+  try {
+    console.log('[Messaging] Received WhatsApp yield request from production app. Releasing client...');
+    await destroyClient();
+    res.json({ success: true, yielded: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to yield WhatsApp client' });
+  }
+});
+
 function findChromePath() {
   const paths = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',

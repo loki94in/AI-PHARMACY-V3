@@ -23,6 +23,20 @@ const currentDir = typeof __dirname !== 'undefined'
   ? __dirname
   : path.dirname(process.argv[1] || process.cwd());
 
+// Enforce single unified application identity across Windows Start Menu, Taskbar & Notifications
+app.name = 'AI Pharmacy OS';
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.aipharmacy.os');
+  try {
+    const userPrograms = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+    const rogueShortcut = path.join(userPrograms, 'Electron.lnk');
+    if (fs.existsSync(rogueShortcut)) {
+      fs.unlinkSync(rogueShortcut);
+      console.log('[ElectronMain] Purged rogue Electron.lnk from Start Menu.');
+    }
+  } catch (_) {}
+}
+
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5175;
 const BACKEND_URL = `http://127.0.0.1:${PORT}`;
 const HEALTH_URL = `${BACKEND_URL}/api/health`;
@@ -125,11 +139,24 @@ function startBackend(): ChildProcess {
   // Silent process spawn: windowsHide=true prevents Windows from allocating a console window,
   // and stdio: ['ignore', 'pipe', 'pipe'] redirects output silently to backend.log
   const child = spawn(cmd, args, {
+    cwd: exeDir,
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: useShell,
     windowsHide: true,
   });
+
+  // Windows Process Priority: elevate backend process to Above Normal priority
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      import('os').then((os) => {
+        if (os.constants?.priority?.PRIORITY_ABOVE_NORMAL && child.pid) {
+          os.setPriority(child.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
+          console.log(`[ElectronMain] Set backend child PID ${child.pid} priority to Above Normal.`);
+        }
+      }).catch(() => {});
+    } catch (_) {}
+  }
 
   const logDir = path.join(exeDir, 'data');
   try {
@@ -226,6 +253,40 @@ function createWindow() {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // Elevate Electron main process priority on Windows
+  if (process.platform === 'win32') {
+    try {
+      import('os').then((os) => {
+        if (os.constants?.priority?.PRIORITY_ABOVE_NORMAL) {
+          os.setPriority(process.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
+          console.log('[ElectronMain] Set Electron main process priority to Above Normal.');
+        }
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  // Priority Shield: If a background development server is running on port 5174, request it to yield WhatsApp
+  try {
+    const yieldReq = http.request('http://127.0.0.1:5174/api/messaging/yield', { method: 'POST', timeout: 800 }, (res) => {
+      res.resume();
+      console.log('[ElectronMain] Notified background dev server on port 5174 to yield WhatsApp session.');
+    });
+    yieldReq.on('error', () => {/* port 5174 not running, expected in standalone prod */});
+    yieldReq.end();
+  } catch (_) {}
+
+  // Clean stale devtools active port & singleton locks from app session directory
+  const exeDir = path.dirname(process.execPath);
+  const sessionLocks = [
+    path.join(exeDir, '.wwebjs_auth', 'session', 'devtoolsactiveport'),
+    path.join(exeDir, '.wwebjs_auth', 'session', 'Default', 'devtoolsactiveport'),
+    path.join(exeDir, '.wwebjs_auth', 'session', 'lockfile'),
+    path.join(exeDir, '.wwebjs_auth', 'session', 'SingletonLock'),
+  ];
+  for (const lock of sessionLocks) {
+    try { if (fs.existsSync(lock)) fs.unlinkSync(lock); } catch (_) {}
+  }
+
   console.log('[ElectronMain] Starting AI Pharmacy OS backend...');
   backendProcess = startBackend();
 
