@@ -937,6 +937,14 @@ router.put('/sales/:invoiceId', async (req, res) => {
     }>();
 
     for (const oi of oldItems) {
+      if (!oi.inventory_id && oi.batch_no) {
+        const invRow = await db.get(
+          `SELECT id FROM inventory_master 
+           WHERE batch_no = ? LIMIT 1`,
+          [(oi.batch_no || '').trim()]
+        );
+        if (invRow) oi.inventory_id = invRow.id;
+      }
       if (!oi.inventory_id) continue;
       const invId = Number(oi.inventory_id);
       const existing = deltaMap.get(invId);
@@ -1079,7 +1087,7 @@ router.put('/sales/:invoiceId', async (req, res) => {
 
     await db.run(
       `UPDATE sales_invoices
-       SET total_amount = ?, tax_amount = ?, discount = ?, subtotal = ?, round_off = ?
+       SET total_amount = ?, tax_amount = ?, discount = ?, subtotal = ?, roff = ?
        WHERE id = ?`,
       [total, tax, Number(discount || 0), subtotal, roundOff, invoiceId]
     );

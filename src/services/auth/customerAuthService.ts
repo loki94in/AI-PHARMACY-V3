@@ -13,6 +13,9 @@ export function normalizePhone(raw: string | number): string {
   if (digits.length === 11 && digits.startsWith('0')) {
     return digits.slice(1);
   }
+  if (digits.length > 10) {
+    return digits.slice(-10);
+  }
   return digits;
 }
 
@@ -108,13 +111,19 @@ class CustomerAuthService {
     const db = await dbManager.getConnection();
 
     // 1. Locate existing customer in CRM / pharmacy database
-    const customer = await db.get(
+    let customer = await db.get(
       `SELECT id, name, phone FROM customers WHERE phone LIKE ? OR phone = ? LIMIT 1`,
       [`%${phone}%`, phone]
     );
 
     if (!customer) {
-      throw new Error('This mobile number is not registered in pharmacy records. Please contact the pharmacy to register.');
+      const defaultName = `Customer ${phone.slice(-4)}`;
+      const insResult = await db.run(
+        `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+        [defaultName, phone]
+      );
+      customer = { id: insResult.lastID as number, name: defaultName, phone };
+      logger.info(`Auto-registered customer for phone ${phone}`, { module: 'CustomerAuthService', customerId: customer.id });
     }
 
     // 2. Ensure customer_portal_accounts entry exists for this registered customer

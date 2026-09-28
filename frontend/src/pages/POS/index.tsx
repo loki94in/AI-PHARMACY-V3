@@ -756,6 +756,8 @@ const mapEditSaleItemsToCart = (itemsList: EditSaleLine[]): CartRow[] => {
       : (it.looseQty !== undefined && it.looseQty !== null ? Number(it.looseQty) : 0);
     const packSize = Math.max(1, Number(it.pack_size || it.packSize || 1));
     const unitPrice = Number(it.unit_price !== undefined && it.unit_price !== null ? it.unit_price : (it.rate || it.sell_price || it.mrp || 0));
+    const shelfStock = Number(it.stock_qty != null ? it.stock_qty : 0);
+    const shelfLoose = Number(it.loose_quantity != null ? it.loose_quantity : 0);
     return {
       id: it.id ? `edit_item_${it.id}` : (it.inventory_id ? `inv_item_${it.inventory_id}_${idx}` : `item_${idx}_${Date.now()}`),
       inventory_id: it.inventory_id || it.id,
@@ -771,8 +773,10 @@ const mapEditSaleItemsToCart = (itemsList: EditSaleLine[]): CartRow[] => {
       looseQty: itemLooseQty,
       discount: Number(it.discount_per !== undefined ? it.discount_per : (it.discount || 0)),
       packSize: packSize,
-      availableStock: Number(it.stock_qty ?? it.quantity ?? itemQty),
-      availableLooseStock: Number(it.loose_quantity ?? it.loose_qty ?? itemLooseQty),
+      originalQty: itemQty,
+      originalLooseQty: itemLooseQty,
+      availableStock: shelfStock + itemQty,
+      availableLooseStock: shelfLoose + itemLooseQty,
       isEmptyRow: false
     };
   });
@@ -828,7 +832,13 @@ export function allocateMedicineBatches(params: {
         Number(item.inventory_id) === Number(medicineId)
       );
       const nameMatch = Boolean(targetNormName && itemNorm && itemNorm === targetNormName);
-      const hasStock = ((item.stock_qty !== undefined ? item.stock_qty : item.quantity) || 0) > 0 || (item.loose_quantity || 0) > 0;
+      const isEditingThisBatch = Boolean(
+        editingInvoiceId && (
+          (params.priorityInventoryId && String(item.inventory_id || item.id) === String(params.priorityInventoryId)) ||
+          (params.priorityBatchNo && item.batch_no === params.priorityBatchNo)
+        )
+      );
+      const hasStock = ((item.stock_qty !== undefined ? item.stock_qty : item.quantity) || 0) > 0 || (item.loose_quantity || 0) > 0 || isEditingThisBatch;
       return (idMatch || nameMatch) && hasStock;
     })
     .map(item => {
@@ -847,10 +857,18 @@ export function allocateMedicineBatches(params: {
         }
         if (expDate < new Date()) isExpired = true;
       }
+      const isEditingThisBatch = Boolean(
+        editingInvoiceId && (
+          (params.priorityInventoryId && String(item.inventory_id || item.id) === String(params.priorityInventoryId)) ||
+          (params.priorityBatchNo && item.batch_no === params.priorityBatchNo)
+        )
+      );
+      const heldStock = isEditingThisBatch ? Number(params.fallbackItem?.originalQty || params.fallbackItem?.quantity || params.fallbackItem?.qty || 0) : 0;
+      const heldLoose = isEditingThisBatch ? Number(params.fallbackItem?.originalLooseQty || params.fallbackItem?.loose_qty || params.fallbackItem?.looseQty || 0) : 0;
       return { 
         ...item, 
-        stock_qty: item.stock_qty !== undefined ? item.stock_qty : (item.quantity || 0),
-        loose_quantity: item.loose_quantity || 0,
+        stock_qty: (item.stock_qty !== undefined ? item.stock_qty : (item.quantity || 0)) + heldStock,
+        loose_quantity: (item.loose_quantity || 0) + heldLoose,
         isExpired 
       };
     })
@@ -3573,7 +3591,10 @@ const POS = () => {
 
         const availQty = Number(item.availableStock !== undefined ? item.availableStock : 0);
         const availLoose = Number(item.availableLooseStock !== undefined ? item.availableLooseStock : 0);
-        const availTotalUnits = availQty * packSize + availLoose;
+        // If availableStock did not already include originalQty, account for held units during invoice edit
+        const uncreditedHeldQty = editingInvoiceId && item.originalQty && availQty < Number(item.originalQty) ? Number(item.originalQty) - availQty : 0;
+        const uncreditedHeldLoose = editingInvoiceId && item.originalLooseQty && availLoose < Number(item.originalLooseQty) ? Number(item.originalLooseQty) - availLoose : 0;
+        const availTotalUnits = (availQty * packSize + availLoose) + (uncreditedHeldQty * packSize + uncreditedHeldLoose);
         
         if (availTotalUnits < reqTotalUnits) {
           toastEvent.trigger(`❌ Insufficient Stock: "${item.name || 'Medicine'}" has only ${availQty} strips & ${availLoose} loose available (${availTotalUnits} units). Please reduce quantity to match available stock.`, 'error');

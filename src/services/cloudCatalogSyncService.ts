@@ -74,7 +74,7 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
       SELECT si.id, si.invoice_no, si.total_amount, si.date, c.phone as customer_phone
       FROM sales_invoices si
       JOIN customers c ON c.id = si.customer_id
-      WHERE c.phone IS NOT NULL AND (si.status IS NULL OR si.status != 'cancelled')
+      WHERE c.phone IS NOT NULL AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
       ORDER BY si.date DESC LIMIT 150
     `);
 
@@ -84,8 +84,11 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
         if (!customerBills[cleanPhone]) customerBills[cleanPhone] = [];
         if (customerBills[cleanPhone].length < 5) {
           const items = await db.all(`
-            SELECT sit.quantity as qty, sit.unit_price as price, sit.medicine_name as name
-            FROM sale_items sit WHERE sit.invoice_id = ?
+            SELECT sit.quantity as qty, sit.unit_price as price, COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as name
+            FROM sale_items sit
+            LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+            LEFT JOIN medicines m ON m.id = im.medicine_id
+            WHERE sit.invoice_id = ?
           `, [s.id]).catch(() => []);
           customerBills[cleanPhone].push({
             invoiceNo: s.invoice_no,

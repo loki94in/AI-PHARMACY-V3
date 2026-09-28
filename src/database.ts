@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 70;
+const CURRENT_SCHEMA_VERSION = 71;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -961,6 +961,9 @@ export async function ensureSchema(dbPath: string) {
           last_login_at DATETIME,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          total_login_count INTEGER DEFAULT 0,
+          total_time_spent_seconds INTEGER DEFAULT 0,
+          last_logout_at DATETIME,
           FOREIGN KEY(customer_id) REFERENCES customers(id)
         )
       `);
@@ -4525,6 +4528,80 @@ export async function ensureSchema(dbPath: string) {
       const spNames = new Set(spCols.map((c: any) => c.name));
       if (spCols.length > 0 && !spNames.has('prescription_scan_id')) {
         await db.run('ALTER TABLE special_orders ADD COLUMN prescription_scan_id INTEGER REFERENCES prescription_scans(id)');
+      }
+    } catch (_) { }
+
+    // Schema v71: Universal Customer Portal & Session Authentication Tables in Full DDL Wall
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS customer_portal_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL UNIQUE,
+        login_id TEXT NOT NULL UNIQUE,
+        pin_hash TEXT NOT NULL,
+        pin_display TEXT,
+        preferred_store_id INTEGER DEFAULT 1,
+        status TEXT DEFAULT 'active',
+        last_login_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        total_login_count INTEGER DEFAULT 0,
+        total_time_spent_seconds INTEGER DEFAULT 0,
+        last_logout_at DATETIME,
+        FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id);
+      CREATE INDEX IF NOT EXISTS idx_portal_cust ON customer_portal_accounts(customer_id);
+
+      CREATE TABLE IF NOT EXISTS customer_portal_otps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        login_id TEXT NOT NULL,
+        otp_code TEXT NOT NULL,
+        expires_at DATETIME NOT NULL,
+        is_used INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id);
+
+      CREATE TABLE IF NOT EXISTS customer_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL,
+        phone TEXT NOT NULL,
+        session_token TEXT NOT NULL UNIQUE,
+        channel TEXT DEFAULT 'portal',
+        device_info TEXT,
+        ip_address TEXT,
+        logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        logged_out_at DATETIME,
+        duration_seconds INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at);
+      CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id);
+      CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active);
+    `);
+
+    try {
+      const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
+      const accNames = new Set(accCols.map((c: any) => c.name));
+      if (accCols.length > 0) {
+        if (!accNames.has('total_login_count')) await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
+        if (!accNames.has('total_time_spent_seconds')) await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
+        if (!accNames.has('last_logout_at')) await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
+      }
+    } catch (_) { }
+
+    try {
+      const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
+      const sessNames = new Set(sessCols.map((c: any) => c.name));
+      if (sessCols.length > 0) {
+        if (!sessNames.has('logged_in_at')) await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+        if (!sessNames.has('logged_out_at')) await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
+        if (!sessNames.has('duration_seconds')) await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
+        if (!sessNames.has('is_active')) await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
       }
     } catch (_) { }
 

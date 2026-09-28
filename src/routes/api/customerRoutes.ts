@@ -37,7 +37,7 @@ export async function requireCustomerAuth(req: CustomerAuthRequest, res: Respons
 
 router.post('/auth/request-otp', async (req: Request, res: Response) => {
   try {
-    const { phone } = req.body;
+    const phone = req.body.phone || req.body.login_id || req.body.loginId;
     const result = await customerAuthService.requestOtp(phone);
     return sendSuccess(res, result);
   } catch (err: any) {
@@ -47,7 +47,8 @@ router.post('/auth/request-otp', async (req: Request, res: Response) => {
 
 router.post('/auth/verify-otp', async (req: Request, res: Response) => {
   try {
-    const { phone, otp } = req.body;
+    const phone = req.body.phone || req.body.login_id || req.body.loginId;
+    const otp = req.body.otp || req.body.otp_code;
     const clientIp = req.ip;
     const userAgent = req.headers['user-agent'];
     const result = await customerAuthService.verifyOtp(phone, otp, { ip: clientIp, userAgent });
@@ -59,7 +60,8 @@ router.post('/auth/verify-otp', async (req: Request, res: Response) => {
 
 router.post('/auth/login', async (req: Request, res: Response) => {
   try {
-    const { loginId, pin } = req.body;
+    const loginId = req.body.loginId || req.body.login_id || req.body.phone;
+    const pin = req.body.pin;
     const clientIp = req.ip;
     const userAgent = req.headers['user-agent'];
     const result = await customerAuthService.loginWithPin(loginId, pin, { ip: clientIp, userAgent });

@@ -383,6 +383,9 @@ export default function CustomerPortal() {
         setSession(res.customer);
         if (res.stores) setStores(res.stores);
         localStorage.setItem('customer_portal_session', JSON.stringify(res.customer));
+        if (res.token) {
+          localStorage.setItem('customer_portal_token', res.token);
+        }
       } else {
         setAuthError('Invalid credentials');
       }
@@ -472,6 +475,9 @@ export default function CustomerPortal() {
         setSession(res.customer);
         if (res.stores) setStores(res.stores);
         localStorage.setItem('customer_portal_session', JSON.stringify(res.customer));
+        if (res.token) {
+          localStorage.setItem('customer_portal_token', res.token);
+        }
         setAuthSuccess('Account registered successfully! Welcome to our pharmacy.');
       } else {
         setAuthError(res.message || 'Registration failed');

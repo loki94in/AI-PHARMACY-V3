@@ -55,6 +55,12 @@ apiClient.interceptors.request.use((config) => {
     const activeStoreId = localStorage.getItem('active_store_id') || '1';
     if (config.headers) {
       config.headers['x-store-id'] = activeStoreId;
+      if (!config.headers['Authorization'] && !config.headers['authorization']) {
+        const portalToken = localStorage.getItem('customer_portal_token');
+        if (portalToken) {
+          config.headers['Authorization'] = `Bearer ${portalToken}`;
+        }
+      }
     }
   } catch (_) {}
   return config;
@@ -1840,9 +1846,9 @@ export const api = {
   updatePortalAccount: (accountId: number, data: { status?: string; preferred_store_id?: number }) =>
     apiClient.put<{ success: boolean; message: string }>(`/customer-portal/accounts/${accountId}`, data).then(res => res.data),
   customerLogin: (data: { login_id: string; pin: string }) =>
-    apiClient.post<{ success: boolean; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/login', data).then(res => res.data),
+    apiClient.post<{ success: boolean; token?: string; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/login', data).then(res => res.data),
   customerRegister: (data: { name: string; phone: string; address?: string; pin: string }) =>
-    apiClient.post<{ success: boolean; message: string; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/register', data).then(res => res.data),
+    apiClient.post<{ success: boolean; token?: string; message: string; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/register', data).then(res => res.data),
   customerRequestOtp: (data: { login_id: string; name?: string }) =>
     apiClient.post<{ success: boolean; message: string; login_id: string }>('/customer-portal/auth/request-otp', data).then(res => res.data),
   customerVerifyOtp: (data: { login_id: string; otp_code: string }) =>

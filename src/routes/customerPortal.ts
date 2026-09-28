@@ -41,6 +41,9 @@ export function normalizePhone(raw: string | number): string {
   if (digits.length === 11 && digits.startsWith('0')) {
     return digits.slice(1);
   }
+  if (digits.length > 10) {
+    return digits.slice(-10);
+  }
   return digits;
 }
 
@@ -409,7 +412,7 @@ router.post('/auth/change-pin', async (req, res) => {
     // Verify current PIN if provided
     if (cleanCurrentPin) {
       const currentHashed = hashPin(cleanCurrentPin);
-      if (account.pin_hash !== currentHashed) {
+      if (account.pin_hash !== currentHashed && account.pin_display !== cleanCurrentPin) {
         return res.status(401).json({ error: 'Current PIN is incorrect' });
       }
     }
@@ -439,8 +442,9 @@ router.post('/auth/change-pin', async (req, res) => {
 
 // POST /api/website/auth/login — Customer Login with Phone + PIN
 router.post('/auth/login', async (req, res) => {
-  const { login_id, pin } = req.body;
-  const cleanPhone = normalizePhone(login_id);
+  const { login_id, loginId, phone, pin } = req.body;
+  const rawId = login_id || loginId || phone;
+  const cleanPhone = normalizePhone(rawId);
   const cleanPin = String(pin || '').trim();
 
   if (!cleanPhone || cleanPhone.length < 10 || !cleanPin) {
@@ -451,34 +455,61 @@ router.post('/auth/login', async (req, res) => {
     const db = await dbManager.getConnection();
     const hashed = hashPin(cleanPin);
 
-    // Look up account
+    // Look up account (support exact login_id or phone match)
     const account = await db.get(
       `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
        FROM customer_portal_accounts pa
        JOIN customers c ON c.id = pa.customer_id
-       WHERE pa.login_id = ? AND pa.pin_hash = ? AND pa.status = 'active'`,
-      [cleanPhone, hashed]
+       WHERE (pa.login_id = ? OR c.phone = ? OR c.phone LIKE ?) AND pa.status = 'active'`,
+      [cleanPhone, cleanPhone, `%${cleanPhone}%`]
     );
 
     if (!account) {
       return res.status(401).json({ error: 'Invalid phone number or PIN. Please try again or request OTP.' });
     }
 
-    // Update last login
+    if (account.pin_hash !== hashed && account.pin_display !== cleanPin) {
+      return res.status(401).json({ error: 'Invalid phone number or PIN. Please try again or request OTP.' });
+    }
+
+    // Update last login and increment total_login_count
     await db.run(
-      'UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
+      `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
       [account.id]
     );
+
+    // Generate signed token & record session in customer_sessions
+    const token = createCustomerToken(account.cust_id, cleanPhone);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await db.run(
+      `INSERT INTO customer_sessions (
+         customer_id, phone, session_token, channel, device_info, ip_address,
+         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+      [
+        account.cust_id,
+        cleanPhone,
+        token,
+        req.headers['user-agent'] || null,
+        req.ip || null,
+        expiresAt
+      ]
+    ).catch((e) => console.warn('[CustomerPortal] Record session warning:', e));
 
     // Fetch active stores list
     const stores = await storeContextService.listStores(undefined, false);
 
     res.json({
       success: true,
+      token,
       customer: {
         id: account.cust_id,
+        user_id: account.cust_id,
         name: account.customer_name,
-        phone: account.login_id,
+        phone: account.login_id || cleanPhone,
         address: account.customer_address || '',
         preferred_store_id: account.preferred_store_id || 1
       },
@@ -553,6 +584,23 @@ router.post('/auth/register', async (req, res) => {
       account = await db.get('SELECT * FROM customer_portal_accounts WHERE id = ?', [accRes.lastID]);
     }
 
+    const token = createCustomerToken(customerId, cleanPhone);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await db.run(
+      `INSERT INTO customer_sessions (
+         customer_id, phone, session_token, channel, device_info, ip_address,
+         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+      [
+        customerId,
+        cleanPhone,
+        token,
+        req.headers['user-agent'] || null,
+        req.ip || null,
+        expiresAt
+      ]
+    ).catch((e) => console.warn('[CustomerPortal] Record session warning:', e));
+
     const stores = await storeContextService.listStores(undefined, false);
 
     // Enqueue welcome notification on WhatsApp
@@ -565,9 +613,11 @@ router.post('/auth/register', async (req, res) => {
 
     res.json({
       success: true,
+      token,
       message: 'Account registered successfully!',
       customer: {
         id: customerId,
+        user_id: customerId,
         name: cleanName,
         phone: cleanPhone,
         address: cleanAddress || customer.address || '',
@@ -588,8 +638,8 @@ router.post('/auth/register', async (req, res) => {
 
 // POST /api/website/auth/request-otp — Customer requests 6-digit WhatsApp OTP
 router.post('/auth/request-otp', async (req, res) => {
-  const { login_id, name } = req.body;
-  const cleanPhone = normalizePhone(login_id);
+  const { login_id, phone, loginId, name } = req.body;
+  const cleanPhone = normalizePhone(login_id || phone || loginId);
 
   if (!cleanPhone || cleanPhone.length < 10) {
     return res.status(400).json({ error: 'Valid 10-digit mobile number required' });
@@ -661,9 +711,9 @@ router.post('/auth/request-otp', async (req, res) => {
 
 // POST /api/website/auth/verify-otp — Verify WhatsApp OTP and log in
 router.post('/auth/verify-otp', async (req, res) => {
-  const { login_id, otp_code } = req.body;
-  const cleanPhone = normalizePhone(login_id);
-  const cleanOtp = String(otp_code || '').trim();
+  const { login_id, phone, loginId, otp_code, otp } = req.body;
+  const cleanPhone = normalizePhone(login_id || phone || loginId);
+  const cleanOtp = String(otp_code || otp || '').trim();
 
   if (!cleanPhone || !cleanOtp) {
     return res.status(400).json({ error: 'Phone number and OTP are required' });
@@ -720,9 +770,31 @@ router.post('/auth/verify-otp', async (req, res) => {
       );
     }
 
-    await db.run('UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [account.id]);
+    await db.run(
+      `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+      [account.id]
+    );
 
     const token = createCustomerToken(account.cust_id, cleanPhone);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await db.run(
+      `INSERT INTO customer_sessions (
+         customer_id, phone, session_token, channel, device_info, ip_address,
+         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+      [
+        account.cust_id,
+        cleanPhone,
+        token,
+        req.headers['user-agent'] || null,
+        req.ip || null,
+        expiresAt
+      ]
+    ).catch((e) => console.warn('[CustomerPortal] Record session warning:', e));
+
     const stores = await storeContextService.listStores(undefined, false);
 
     res.json({
@@ -788,7 +860,7 @@ router.get('/customer/bills', async (req, res) => {
               COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
        FROM sales_invoices si
        LEFT JOIN stores st ON st.id = si.store_id
-       WHERE si.customer_id = ? AND (si.status IS NULL OR si.status != 'cancelled')
+       WHERE si.customer_id = ? AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
        ORDER BY si.date DESC LIMIT ?`,
       [custId, limit]
     ).catch(() => []);
@@ -1701,17 +1773,18 @@ router.get('/history', async (req, res) => {
     const sales = await db.all(
       `SELECT
          si.id as invoice_id,
+         si.invoice_no,
          si.date,
          si.business_date,
-         si.grand_total,
+         si.total_amount as grand_total,
          si.online_order_id,
          si.payment_medium,
-         si.status,
-         COALESCE(st.name, 'Pharmacy') as store_name
+         si.payment_status as status,
+         COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
        FROM sales_invoices si
        LEFT JOIN stores st ON st.id = si.store_id
        WHERE si.customer_id = ?
-         AND si.status != 'cancelled'
+         AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
        ORDER BY si.date DESC
        LIMIT ? OFFSET ?`,
       [resolvedCustomerId, limit, offset]
@@ -1722,17 +1795,18 @@ router.get('/history', async (req, res) => {
       const items = await db.all(
         `SELECT
            sit.id,
-           m.name as medicine_name,
-           m.generic_name,
-           m.strength,
-           m.packaging,
+           COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
+           COALESCE(m.generic_name, '') as generic_name,
+           COALESCE(m.strength, '') as strength,
+           COALESCE(m.packaging, '') as packaging,
            sit.quantity,
-           sit.mrp,
-           sit.sell_price,
-           sit.discount,
-           sit.medicine_id
+           COALESCE(sit.mrp_snapshot, sit.mrp, 0) as mrp,
+           sit.unit_price as sell_price,
+           COALESCE(sit.discount_per, 0) as discount,
+           COALESCE(im.medicine_id, 0) as medicine_id
          FROM sale_items sit
-         LEFT JOIN medicines m ON m.id = sit.medicine_id
+         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
          WHERE sit.invoice_id = ?
          ORDER BY sit.id ASC`,
         [sale.invoice_id]
@@ -1743,7 +1817,7 @@ router.get('/history', async (req, res) => {
 
     // Count for pagination
     const countRow = await db.get(
-      'SELECT COUNT(*) as total FROM sales_invoices WHERE customer_id = ? AND status != ?',
+      'SELECT COUNT(*) as total FROM sales_invoices WHERE customer_id = ? AND (payment_status IS NULL OR payment_status != ?)',
       [resolvedCustomerId, 'cancelled']
     ).catch(() => ({ total: 0 }));
 
@@ -1796,9 +1870,10 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
 
     // Get original items
     const origItems = await db.all(
-      `SELECT sit.medicine_id, sit.quantity, m.name as medicine_name
+      `SELECT COALESCE(im.medicine_id, 0) as medicine_id, sit.quantity, COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name
        FROM sale_items sit
-       LEFT JOIN medicines m ON m.id = sit.medicine_id
+       LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+       LEFT JOIN medicines m ON m.id = im.medicine_id
        WHERE sit.invoice_id = ?`,
       [invoiceId]
     );

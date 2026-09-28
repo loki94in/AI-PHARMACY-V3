@@ -29,9 +29,9 @@ class CustomerService {
 
     // 3. Active refills preview
     const refills = await db.all(
-      `SELECT pr.*, 
-        (SELECT COUNT(*) FROM patient_refill_items pri WHERE pri.refill_id = pr.id) as item_count
+      `SELECT pr.*, m.name as medicine_name, m.generic_name, 1 as item_count
        FROM patient_refills pr
+       LEFT JOIN medicines m ON m.id = pr.medicine_id
        WHERE pr.customer_id = ? AND pr.is_active = 1
        ORDER BY pr.next_refill_date ASC LIMIT 5`,
       [customerId]
@@ -39,7 +39,7 @@ class CustomerService {
 
     // 4. Recent bills (from sales_invoices)
     const bills = await db.all(
-      `SELECT id, invoice_number, date, total_amount, payment_status, payment_medium, store_id
+      `SELECT id, invoice_no, invoice_no as invoice_number, date, total_amount, payment_status, payment_medium, store_id
        FROM sales_invoices
        WHERE customer_id = ?
        ORDER BY date DESC LIMIT 5`,
@@ -81,7 +81,8 @@ class CustomerService {
     const db = await dbManager.getConnection();
     const bills = await db.all(
       `SELECT 
-         id, invoice_number, date, subtotal, tax_amount, discount_amount, 
+         id, invoice_no, invoice_no as invoice_number, date, subtotal, tax_amount, 
+         discount, discount as discount_amount, 
          total_amount, payment_status, payment_medium, store_id
        FROM sales_invoices
        WHERE customer_id = ?
@@ -98,7 +99,8 @@ class CustomerService {
   async getBillDetails(customerId: number, billId: number) {
     const db = await dbManager.getConnection();
     const invoice = await db.get(
-      `SELECT id, invoice_number, date, subtotal, tax_amount, discount_amount, 
+      `SELECT id, invoice_no, invoice_no as invoice_number, date, subtotal, tax_amount, 
+              discount, discount as discount_amount, 
               total_amount, payment_status, payment_medium, store_id
        FROM sales_invoices
        WHERE id = ? AND customer_id = ?`,
@@ -109,10 +111,17 @@ class CustomerService {
 
     const items = await db.all(
       `SELECT 
-         si.id, si.medicine_id, m.name as medicine_name, si.batch_no, 
-         si.quantity, si.unit_price, si.discount_per, si.total_amount
+         si.id, 
+         COALESCE(im.medicine_id, 0) as medicine_id, 
+         COALESCE(si.medicine_name_snapshot, m.name, 'Medicine') as medicine_name, 
+         si.batch_no, 
+         si.quantity, 
+         si.unit_price, 
+         si.discount_per, 
+         ROUND(si.quantity * si.unit_price * (1 - COALESCE(si.discount_per, 0) / 100.0), 2) as total_amount
        FROM sale_items si
-       JOIN medicines m ON m.id = si.medicine_id
+       LEFT JOIN inventory_master im ON im.id = si.inventory_id
+       LEFT JOIN medicines m ON m.id = im.medicine_id
        WHERE si.invoice_id = ?`,
       [billId]
     );
@@ -130,19 +139,25 @@ class CustomerService {
     const db = await dbManager.getConnection();
     const items = await db.all(
       `SELECT 
-         si.medicine_id, m.name as medicine_name, m.mrp, m.packaging, m.category,
+         COALESCE(im.medicine_id, 0) as medicine_id, 
+         COALESCE(si.medicine_name_snapshot, m.name, 'Medicine') as medicine_name, 
+         COALESCE(si.mrp_snapshot, m.mrp, 0) as mrp, 
+         m.packaging, 
+         m.category,
          si.quantity as previous_quantity
        FROM sale_items si
-       JOIN medicines m ON m.id = si.medicine_id
-       WHERE si.invoice_id = ? AND si.medicine_id IN (
-         SELECT medicine_id FROM sale_items WHERE invoice_id = ?
-       )`,
-      [billId, billId]
+       LEFT JOIN inventory_master im ON im.id = si.inventory_id
+       LEFT JOIN medicines m ON m.id = im.medicine_id
+       WHERE si.invoice_id = ?`,
+      [billId]
     );
+
+    // Filter out items without valid medicine_id
+    const validItems = items.filter((item: any) => item.medicine_id && item.medicine_id > 0);
 
     // Reprice each item using current centralized pricing engine
     const currentItems = await Promise.all(
-      items.map(async item => {
+      validItems.map(async (item: any) => {
         const pricing = await pricingService.calculatePrice({
           mrp: item.mrp,
           category: item.category,

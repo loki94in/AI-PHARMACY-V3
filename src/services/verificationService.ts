@@ -176,10 +176,14 @@ export class VerificationService {
       const oldInvoiceItemsMap = new Map<number, { qty: number; loose: number }>();
       if (editId) {
         const oldRows = await db.all(
-          'SELECT inventory_id, quantity, loose_qty FROM sale_items WHERE invoice_id = ?',
+          'SELECT inventory_id, quantity, loose_qty, batch_no FROM sale_items WHERE invoice_id = ?',
           [editId]
         );
         for (const r of oldRows) {
+          if (!r.inventory_id && r.batch_no) {
+            const invRow = await db.get('SELECT id FROM inventory_master WHERE batch_no = ? LIMIT 1', [(r.batch_no || '').trim()]);
+            if (invRow) r.inventory_id = invRow.id;
+          }
           if (!r.inventory_id) continue;
           const invId = Number(r.inventory_id);
           const existing = oldInvoiceItemsMap.get(invId);

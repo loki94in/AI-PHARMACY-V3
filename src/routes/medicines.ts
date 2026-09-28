@@ -33,6 +33,7 @@ router.get('/medicines', async (req, res) => {
     const packagingFilter = (req.query.packagingFilter as string) || '';
     const distributorFilter = (req.query.distributorFilter as string) || '';
     const categoryFilter = (req.query.category as string) || '';
+    const purchasedOnly = req.query.purchasedOnly === 'true' || req.query.purchased === 'true';
     const offset = (page - 1) * limit;
 
     const db = await dbManager.getConnection();
@@ -42,6 +43,13 @@ router.get('/medicines', async (req, res) => {
     const letter = (req.query.letter as string) || '';
     
     let whereClauses = [];
+
+    if (purchasedOnly) {
+      whereClauses.push(`(
+        medicines.id IN (SELECT medicine_id FROM inventory_master) OR
+        medicines.id IN (SELECT medicine_id FROM purchase_items)
+      )`);
+    }
     
     if (letter) {
       whereClauses.push('medicines.name LIKE ?');
@@ -119,6 +127,8 @@ router.get('/medicines', async (req, res) => {
     } else if (search && search.trim()) {
       const cleanPrefix = search.trim();
       orderString = `ORDER BY CASE WHEN medicines.name LIKE '${cleanPrefix.replace(/'/g, "''")}%' THEN 0 ELSE 1 END ASC, medicines.name ASC`;
+    } else if (purchasedOnly) {
+      orderString = 'ORDER BY medicines.name ASC';
     }
 
     const buildQuery = (limitVal: number, offsetVal: number) => `

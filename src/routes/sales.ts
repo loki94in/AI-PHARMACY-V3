@@ -2420,7 +2420,13 @@ router.put('/:id', async (req, res) => {
       // Reverse old stock (strips + loose as one pool, same as the original sale deduction).
       // Batch-fetch once, restore through an in-memory map so multiple old lines on the
       // same inventory_id accumulate correctly instead of racing on stale reads.
-      const oldItems = await db.all('SELECT inventory_id, quantity, loose_qty FROM sale_items WHERE invoice_id = ?', [id]);
+      const oldItems = await db.all('SELECT inventory_id, quantity, loose_qty, batch_no FROM sale_items WHERE invoice_id = ?', [id]);
+      for (const oi of oldItems) {
+        if (!oi.inventory_id && oi.batch_no) {
+          const invRow = await db.get('SELECT id FROM inventory_master WHERE batch_no = ? LIMIT 1', [(oi.batch_no || '').trim()]);
+          if (invRow) oi.inventory_id = invRow.id;
+        }
+      }
       const oldInventoryIds = oldItems.map((oi: any) => oi.inventory_id).filter(Boolean);
       const oldStockMap = new Map<number, any>();
       if (oldInventoryIds.length > 0) {

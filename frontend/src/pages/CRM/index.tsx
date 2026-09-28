@@ -937,18 +937,7 @@ const RefillsSection: React.FC = () => {
 
   // ── Medicine row search & inventory dropdown ──────────────────────────────
   const fetchSuggestions = async (idx: number, term: string) => {
-    // Dropdown must never appear unless the user has typed at least 2 characters.
     const clean = term.trim();
-    if (clean.length < 2) {
-      setMedicineRows(prev => {
-        const updated = [...prev];
-        if (updated[idx]) {
-          updated[idx] = { ...updated[idx], suggestions: [], loadingSuggestions: false, isOpen: false };
-        }
-        return updated;
-      });
-      return;
-    }
 
     setMedicineRows(prev => {
       const updated = [...prev];
@@ -968,9 +957,22 @@ const RefillsSection: React.FC = () => {
         stockMap.set(mId, cur + (item.stock_qty || item.quantity || 0) + (item.loose_quantity || 0));
       }
 
-      const res = await apiClient.get<{ medicines?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', { params: { search: clean, limit: 15 } });
-      const resData = Array.isArray(res.data) ? res.data : res.data?.medicines;
-      const list = Array.isArray(resData) ? resData : [];
+      // Query medicines that the pharmacy has ever purchased/stocked (including 0 current stock items)
+      const res = await apiClient.get<{ medicines?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
+        params: { search: clean, limit: 30, purchasedOnly: true }
+      });
+      let resData = Array.isArray(res.data) ? res.data : res.data?.medicines;
+      let list = Array.isArray(resData) ? resData : [];
+
+      // Fallback: If no purchased medicines matched and user typed 2+ chars, search entire catalog
+      if (list.length === 0 && clean.length >= 2) {
+        const catRes = await apiClient.get<{ medicines?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
+          params: { search: clean, limit: 15 }
+        });
+        const catData = Array.isArray(catRes.data) ? catRes.data : catRes.data?.medicines;
+        list = Array.isArray(catData) ? catData : [];
+      }
+
       if (list.length > 0) {
         suggestions = list.map((m): MedicineSuggestion => ({
           id: m.id,
@@ -980,39 +982,6 @@ const RefillsSection: React.FC = () => {
           in_stock_qty: stockMap.get(m.id) || 0,
           location: (m as any).location || (m as any).rack || (m as any).shelf || ''
         }));
-      } else {
-        const lower = clean.toLowerCase();
-        const prefixMatched: CompactInventoryItem[] = [];
-        const infixMatched: CompactInventoryItem[] = [];
-        for (const c of compactCache) {
-          const mName = (c.name || c.medicine_name || '').toLowerCase();
-          if (mName.startsWith(lower)) {
-            prefixMatched.push(c);
-          } else if (mName.includes(lower)) {
-            infixMatched.push(c);
-          }
-        }
-        const sortAlpha = (a: any, b: any) =>
-          String(a.name || a.medicine_name || '').localeCompare(String(b.name || b.medicine_name || ''), undefined, { numeric: true, sensitivity: 'base' });
-        prefixMatched.sort(sortAlpha);
-        infixMatched.sort(sortAlpha);
-        const combined = [...prefixMatched, ...infixMatched];
-
-        const seen = new Map<number, MedicineSuggestion>();
-        for (const m of combined) {
-          const medId = m.medicine_id || m.id;
-          if (!seen.has(medId)) {
-            seen.set(medId, {
-              id: medId,
-              name: m.name || m.medicine_name,
-              manufacturer: m.manufacturer,
-              mrp: m.mrp,
-              in_stock_qty: stockMap.get(medId) || 0,
-              location: (m as any).location || (m as any).rack || (m as any).shelf || ''
-            });
-          }
-        }
-        suggestions = Array.from(seen.values()).slice(0, 15);
       }
 
       setMedicineRows(prev => {
@@ -1043,7 +1012,7 @@ const RefillsSection: React.FC = () => {
         searchTerm: term,
         medicineName: term,
         medicineId: null,
-        isOpen: term.trim().length >= 2
+        isOpen: true
       };
       return updated;
     });
@@ -1053,7 +1022,7 @@ const RefillsSection: React.FC = () => {
     }
     searchDebounceRef.current[idx] = setTimeout(() => {
       fetchSuggestions(idx, term);
-    }, 300);
+    }, 250);
   };
 
   const selectMedicine = (idx: number, s: MedicineSuggestion) => {
@@ -2405,16 +2374,14 @@ const RefillsSection: React.FC = () => {
                                 } else {
                                   setDropUpIndex(null);
                                 }
-                                if (row.searchTerm.trim().length >= 2) {
-                                  if (row.suggestions.length === 0) {
-                                    fetchSuggestions(idx, row.searchTerm);
-                                  } else {
-                                    setMedicineRows(prev => {
-                                      const updated = [...prev];
-                                      updated[idx] = { ...updated[idx], isOpen: true };
-                                      return updated;
-                                    });
-                                  }
+                                if (row.suggestions.length === 0) {
+                                  fetchSuggestions(idx, row.searchTerm);
+                                } else {
+                                  setMedicineRows(prev => {
+                                    const updated = [...prev];
+                                    updated[idx] = { ...updated[idx], isOpen: true };
+                                    return updated;
+                                  });
                                 }
                               }}
                               onChange={e => {
@@ -2426,7 +2393,7 @@ const RefillsSection: React.FC = () => {
                                 }
                                 handleMedicineSearch(idx, e.target.value);
                               }}
-                              placeholder="Type to search inventory stock…"
+                              placeholder="Search all pharmacy medicines (purchased/stocked)…"
                               className="w-full pl-9 pr-8 py-2.5 bg-bg2 border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
                             />
                             <ChevronDown
@@ -2436,7 +2403,7 @@ const RefillsSection: React.FC = () => {
                           </div>
 
                           {/* Dropdown Suggestions List */}
-                          {row.isOpen && row.searchTerm.trim().length >= 2 && (
+                          {row.isOpen && (
                             <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto backdrop-blur-xl ${
                               dropUpIndex === idx
                                 ? 'bottom-full mb-1'
