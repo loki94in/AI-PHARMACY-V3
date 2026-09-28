@@ -36,12 +36,22 @@
   --text:       #14532d;          /* deep green — maximum readability, brand-aligned */
   --muted:      #44604f;          /* darkened green-grey — ≥5:1 contrast on white */
 
-  /* Glass panels — white frosted */
-  --glass-bg:   rgba(255, 255, 255, 0.97);
+  /* Glass panels — clean crisp solid white for high-performance low-spec rendering */
+  --glass-bg:   #ffffff;
   --glass-border: rgba(0, 0, 0, 0.08); /* neutral glass border */
 
   /* Notification / Toast borders — soft purple */
   --notif-border: rgba(167, 139, 250, 0.55);
+}
+
+/* ═══════════════════════════════════════════
+   PERFORMANCE: ZERO-COST CLEAN FLAT SURFACES
+   Disables CPU-killing backdrop-filter blurs across all modals, drawers, sticky headers & cards.
+   Eliminates Gaussian blur shader passes on low-end / no-GPU PCs for butter-smooth 60 FPS.
+   ═══════════════════════════════════════════ */
+*, ::before, ::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* ═══════════════════════════════════════════

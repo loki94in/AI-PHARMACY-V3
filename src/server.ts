@@ -1,11 +1,12 @@
 import './database/sqlitePatch.js';
 import express from 'express';
 import compression from 'compression';
+import zlib from 'zlib';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import axios from 'axios';
@@ -176,6 +177,23 @@ if (!fs.existsSync(RAW_DIR)) {
   fs.mkdirSync(RAW_DIR, { recursive: true });
 }
 
+
+// High-performance response compression: native Brotli (quality 4) with Gzip fallback
+app.use(compression({
+  brotli: {
+    params: {
+      [zlib.constants.BROTLI_PARAM_QUALITY]: 4,
+    },
+  },
+  threshold: 1024,
+  filter: (req, res) => {
+    // Never buffer or compress Server-Sent Event (SSE) streams
+    if (req.headers.accept && req.headers.accept.includes('text/event-stream')) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 
 // Security middleware
 app.use(helmet({
@@ -575,7 +593,6 @@ server.on('error', (err: any) => {
     // Smart single-instance guard: find the PID holding the port, check if it is
     // the SAME install path as us. If it's a ghost from a different installation
     // (e.g. an old G:\ or AppData copy), kill it and retry. Only reuse if same path.
-    const { execSync } = require('child_process') as typeof import('child_process');
     const currentExe = process.execPath.toLowerCase().replace(/\\/g, '/');
 
     let ownerPid: string | null = null;

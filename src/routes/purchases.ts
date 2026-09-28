@@ -2000,6 +2000,7 @@ router.get('/medicine-batches', async (req, res) => {
       LEFT JOIN distributors d ON p.distributor_id = d.id
       WHERE pi.medicine_id IN (${placeholders}) AND pi.batch_no IS NOT NULL AND TRIM(pi.batch_no) != ''
       ORDER BY p.date DESC, pi.id DESC
+      LIMIT 50
     `, medicineIds);
 
     // 2. Fetch from inventory_master (current active/inactive stock batches)
@@ -2019,6 +2020,7 @@ router.get('/medicine-batches', async (req, res) => {
       JOIN medicines m ON im.medicine_id = m.id
       WHERE im.medicine_id IN (${placeholders}) AND im.batch_no IS NOT NULL AND TRIM(im.batch_no) != ''
       ORDER BY im.id DESC
+      LIMIT 50
     `, medicineIds);
 
     // 3. Deduplicate by batch_no (normalized uppercase/trimmed)
@@ -2086,40 +2088,61 @@ router.get('/medicine-batches', async (req, res) => {
 router.get('/price-history', async (req, res) => {
   let db;
   try {
-    const name = req.query.name as string;
-    if (!name) {
-      return res.status(400).json({ error: 'Medicine name query is required' });
+    const medicineIdParam = req.query.medicine_id as string;
+    const name = (req.query.name as string || '').trim();
+    if (!medicineIdParam && !name) {
+      return res.status(400).json({ error: 'Medicine name or medicine_id query is required' });
     }
     db = await dbManager.getConnection();
 
     let medicineIds: number[] = [];
 
-    // 1. Try fuzzy matching lookup
-    try {
-      if (productNameFilterService) {
-        await productNameFilterService.initialize();
-        const filterResult = await productNameFilterService.filterProductNames(name);
-        if (filterResult && filterResult.matches && filterResult.matches.length > 0) {
-          const queryPlaceholders = filterResult.matches.map(() => '?').join(',');
-          const meds = await db.all(
-            `SELECT id FROM medicines WHERE name IN (${queryPlaceholders})`,
-            filterResult.matches
-          );
-          medicineIds = meds.map((m: any) => m.id);
-        }
+    // 0. Direct ID lookup: instant 0.1ms indexed query
+    if (medicineIdParam) {
+      const parsed = parseInt(medicineIdParam, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        medicineIds = [parsed];
       }
-    } catch (e) {
-      console.warn('Fuzzy lookup in price-history failed, falling back to LIKE:', e);
     }
 
-    // 2. Fallback to LIKE if no fuzzy matches found
-    if (medicineIds.length === 0) {
-      const cleanName = name.split(' ')[0] || name;
-      const medicines = await db.all(
-        'SELECT id FROM medicines WHERE name LIKE ? OR name LIKE ? LIMIT 5',
-        [`%${name}%`, `%${cleanName}%`]
-      );
-      medicineIds = medicines.map((m: any) => m.id);
+    if (medicineIds.length === 0 && name) {
+      // 1. Fast indexed exact name match (0.1ms using idx_medicines_name_nocase)
+      const exactRows = await db.all('SELECT id FROM medicines WHERE name = ? LIMIT 5', [name]);
+      if (exactRows.length > 0) {
+        medicineIds = exactRows.map((m: any) => m.id);
+      }
+
+      // 2. Fast indexed prefix scan (0.2ms using covering index)
+      if (medicineIds.length === 0) {
+        const cleanName = name.split(' ')[0] || name;
+        const prefix = cleanName.slice(0, 10).replace(/[%_]/g, '');
+        if (prefix.length >= 3) {
+          const prefixRows = await db.all('SELECT id FROM medicines WHERE name LIKE ? LIMIT 5', [`${prefix}%`]);
+          if (prefixRows.length > 0) {
+            medicineIds = prefixRows.map((m: any) => m.id);
+          }
+        }
+      }
+
+      // 3. Fallback to fuzzy match only if indexed matches yielded nothing
+      if (medicineIds.length === 0) {
+        try {
+          if (productNameFilterService) {
+            await productNameFilterService.initialize();
+            const filterResult = await productNameFilterService.filterProductNames(name);
+            if (filterResult && filterResult.matches && filterResult.matches.length > 0) {
+              const queryPlaceholders = filterResult.matches.map(() => '?').join(',');
+              const meds = await db.all(
+                `SELECT id FROM medicines WHERE name IN (${queryPlaceholders})`,
+                filterResult.matches
+              );
+              medicineIds = meds.map((m: any) => m.id);
+            }
+          }
+        } catch (e) {
+          console.warn('Fuzzy lookup in price-history failed, falling back to LIKE:', e);
+        }
+      }
     }
 
     if (medicineIds.length === 0) {

@@ -175,6 +175,7 @@ export const DispatchWhatsAppProgressCard: React.FC = memo(() => {
           <span>WhatsApp Dispatch Queue is idle (no pending messages for today)</span>
         </div>
         <button
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
           onClick={() => whatsappQueueEvent.triggerOpen()}
           className="text-xs font-bold text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
         >
@@ -229,6 +230,7 @@ export const DispatchWhatsAppProgressCard: React.FC = memo(() => {
           )}
 
           <button
+            onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
             onClick={() => whatsappQueueEvent.triggerOpen()}
             className="px-2.5 py-1 rounded-lg bg-bg border border-glass-border/60 hover:border-glass-border text-[11px] font-bold text-text transition-colors cursor-pointer"
             title="Open WhatsApp Queue Drawer"

@@ -530,6 +530,7 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
 
             <div className="p-4 pt-0">
               <button
+                onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
                 onClick={() => { whatsappQueueEvent.triggerOpen(); onClose(); }}
                 className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-bg3/60 hover:bg-bg3 text-text transition-all cursor-pointer"
               >

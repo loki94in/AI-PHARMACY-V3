@@ -39,8 +39,10 @@ import { whatsappQueueEvent, toastEvent, messageSendEvent } from '../../services
 import {
   getDispatchDeliveryBoysCache,
   getDispatchOrdersCache,
+  getDispatchRemindersCache,
   setDispatchDeliveryBoysCache,
   setDispatchOrdersCache,
+  setDispatchRemindersCache,
   clearDispatchPageCache,
   type CachedDeliveryBoy,
 } from '../../utils/pageModuleCaches';
@@ -133,6 +135,7 @@ type TabType = 'all' | 'queue' | 'reminders' | 'staff' | 'logs';
 const Dispatch = () => {
   const cachedOrders = getDispatchOrdersCache() as DispatchOrder[] | null;
   const cachedDeliveryBoys = getDispatchDeliveryBoysCache() as DeliveryBoy[] | null;
+  const cachedReminders = getDispatchRemindersCache() as LocalReminderRow[] | null;
 
   const [activeTab, setActiveTab] = useState<TabType>('reminders');
   const [orders, setOrders] = useState<DispatchOrder[]>(cachedOrders || []);
@@ -169,13 +172,13 @@ const Dispatch = () => {
   const [loadingMessages, setLoadingMessages] = useState(false);
 
   // Distributor Dispatch Reminders state
-  const [distributorReminders, setDistributorReminders] = useState<LocalReminderRow[]>([]);
+  const [distributorReminders, setDistributorReminders] = useState<LocalReminderRow[]>(cachedReminders || []);
   const [autoDispatchEnabled, setAutoDispatchEnabled] = useState(true);
   const [isTodayPaused, setIsTodayPaused] = useState(false);
   const [distributorSearch, setDistributorSearch] = useState('');
   const [distributorTodayOnly, setDistributorTodayOnly] = useState<boolean>(true);
   const [sendingReminderId, setSendingReminderId] = useState<number | null>(null);
-  const [loadingDistributorReminders, setLoadingDistributorReminders] = useState(false);
+  const [loadingDistributorReminders, setLoadingDistributorReminders] = useState(!cachedReminders);
   const [expandedPreviewId, setExpandedPreviewId] = useState<number | null>(null);
   const [expandedOrderDetailsId, setExpandedOrderDetailsId] = useState<number | null>(null);
   const [customMessages, setCustomMessages] = useState<Record<number, string>>({});
@@ -338,11 +341,13 @@ const Dispatch = () => {
   const [, setIsRecentFallback] = useState(false);
   const [, setRecentDate] = useState<string | null>(null);
 
-  const fetchDistributorReminders = useCallback(async (silent = false) => {
-    if (!silent) setLoadingDistributorReminders(true);
+  const fetchDistributorReminders = useCallback(async (silent = false, forceSync = false) => {
+    const hasCache = !!getDispatchRemindersCache();
+    if (!silent && !hasCache) setLoadingDistributorReminders(true);
     try {
-      const res = await api.getTodayDistributorReminders();
+      const res = await api.getTodayDistributorReminders(forceSync);
       if (res && res.success && Array.isArray(res.reminders)) {
+        setDispatchRemindersCache(res.reminders);
         setDistributorReminders(res.reminders);
         setIsRecentFallback(!!res.is_recent_fallback);
         setRecentDate(res.recent_date || null);
@@ -823,103 +828,55 @@ const Dispatch = () => {
 
   return (
     <div className="w-full flex-1 flex flex-col gap-4 pb-8 text-left animate-in fade-in duration-300">
-      {/* ── SIGNATURE: LIVE DISTRIBUTOR COLLECTION WINDOW ── */}
-      {(() => {
-        if (!autoDispatchEnabled) {
-          return (
-            <div className="rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 bg-bg2/40 border-glass-border/80">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                <Bell size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold text-text">Distributor collection window</span>
-                  <span className="text-sm font-mono font-bold whitespace-nowrap text-amber-400">
-                    ⏸️ Auto-Reminders Disabled in Settings
-                  </span>
-                </div>
-                <div className="mt-1 text-xs text-muted">
-                  Automatic reminder dispatches are paused. Enable "Distributor Dispatch Reminders" in Settings to activate the live auto-send schedule.
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        if (isTodayPaused) {
-          return (
-            <div className="rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 bg-bg2/40 border-glass-border/80">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                <Bell size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold text-text">Distributor collection window</span>
-                  <span className="text-sm font-mono font-bold whitespace-nowrap text-amber-400">
-                    ⏸️ Cart Orders Paused for Today
-                  </span>
-                </div>
-                <div className="mt-1 text-xs text-muted">
-                  Today's cart order schedule is paused in the Cart calendar. Dispatch countdown and auto-reminders are paused.
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        const activeDistributorOrdersCount = distributorReminders.filter(r => Boolean(r.has_order_today)).length;
-        if (activeDistributorOrdersCount === 0) {
-          return (
-            <div className="rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 bg-bg2/40 border-glass-border/80">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-bg3/80 text-muted border border-border">
-                <Bell size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold text-text">Distributor collection window</span>
-                  <span className="text-sm font-mono font-bold whitespace-nowrap text-muted">
-                    No Orders Placed Today
-                  </span>
-                </div>
-                <div className="mt-1 text-xs text-muted">
-                  No active distributor orders found for today. The reminder window is on standby.
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        const cd = getWindowCountdownInfo(nowTime, windowSchedule.start, windowSchedule.end);
-        return (
-          <div className={`rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 ${
-            cd.status === 'ACTIVE'
-              ? 'bg-emerald-500/10 border-emerald-500/30'
-              : 'bg-bg2/40 border-glass-border/80'
-          }`}>
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-              cd.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-bg3/80 text-muted'
-            }`}>
-              <MessageSquare size={18} className={cd.status === 'ACTIVE' ? 'animate-pulse' : ''} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-semibold text-text">Distributor collection window</span>
-                <span className={`text-sm font-mono font-bold whitespace-nowrap ${
-                  cd.status === 'ACTIVE' ? 'text-emerald-400' : cd.status === 'BEFORE' ? 'text-amber-400' : 'text-muted'
-                }`}>
-                  {cd.status === 'CLOSED' ? 'Closed for today' : cd.countdownText}
-                </span>
-              </div>
-              <div className="mt-1.5 h-1.5 rounded-full bg-bg3/80 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-1000 ${cd.status === 'ACTIVE' ? 'bg-emerald-400' : cd.status === 'CLOSED' ? 'bg-glass-border' : 'bg-amber-400/70'}`}
-                  style={{ width: `${cd.progressPct}%` }}
-                />
-              </div>
-            </div>
+      {/* ── RESTORED CLEAN PAGE HEADER ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/60">
+        <div className="flex items-center gap-3.5">
+          <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shadow-xs shrink-0">
+            <Truck size={22} className="text-primary" />
           </div>
-        );
-      })()}
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-extrabold text-text tracking-tight leading-none">
+                Dispatch &amp; Delivery Management
+              </h1>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                LIVE HUB
+              </span>
+            </div>
+            <p className="text-[11px] text-muted font-medium mt-1">
+              Active patient deliveries, runner dispatches, and distributor collections
+            </p>
+          </div>
+        </div>
+
+        {/* Global Dispatch Action Controls */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              fetchAll();
+              fetchDistributorReminders(false, true);
+            }}
+            className="h-8 flex items-center gap-1.5 px-3 rounded-lg border bg-bg3/60 border-border text-muted hover:text-text hover:bg-bg2 text-xs font-semibold transition-all cursor-pointer"
+            title="Refresh dispatch queue & staff"
+          >
+            <RefreshCw size={13} className={loading || loadingDistributorReminders ? 'animate-spin text-primary' : ''} />
+            <span>Refresh</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setForm(emptyForm);
+              setShowModal(true);
+            }}
+            className="h-8 flex items-center gap-1.5 px-3 rounded-lg border bg-primary/15 border-primary/40 text-primary hover:bg-primary hover:text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+            title="Create new delivery dispatch order"
+          >
+            <Plus size={14} />
+            <span>New Dispatch</span>
+          </button>
+        </div>
+      </div>
 
       {/* ── LIVE WHATSAPP DISPATCH PROGRESS CARD ── */}
       <DispatchWhatsAppProgressCard />
@@ -1346,6 +1303,21 @@ const Dispatch = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              {autoDispatchEnabled && !isTodayPaused && (() => {
+                const activeCount = distributorReminders.filter(r => Boolean(r.has_order_today)).length;
+                if (activeCount === 0) return null;
+                const cd = getWindowCountdownInfo(nowTime, windowSchedule.start, windowSchedule.end);
+                return (
+                  <div className={`px-2.5 py-1.5 rounded-xl border flex items-center gap-2 text-xs font-medium ${
+                    cd.status === 'ACTIVE'
+                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                      : 'bg-bg3/60 border-glass-border text-muted'
+                  }`}>
+                    <MessageSquare size={13} className={cd.status === 'ACTIVE' ? 'animate-pulse text-emerald-400' : 'text-muted'} />
+                    <span>Window: {cd.status === 'CLOSED' ? 'Closed' : cd.countdownText}</span>
+                  </div>
+                );
+              })()}
               <button
                 type="button"
                 onClick={() => setShowManualOrderModal(true)}
@@ -1371,7 +1343,7 @@ const Dispatch = () => {
 
               <button
                 type="button"
-                onClick={() => fetchDistributorReminders()}
+                onClick={() => fetchDistributorReminders(false, true)}
                 className="p-2.5 rounded-xl bg-bg3/60 hover:bg-bg3 text-muted hover:text-text transition-colors border border-glass-border cursor-pointer active:scale-95"
                 title="Refresh Distributor Reminders"
               >

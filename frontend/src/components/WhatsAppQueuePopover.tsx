@@ -47,8 +47,9 @@ let cachedDelayDeliveryBoy = 0;
 
 export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onClose }) => {
   useModalEscape(true, onClose);
-  const [queueState, setQueueState] = useState<LocalQueueState | null>(() => cachedQueueState || peekWhatsAppQueueStatusCache(10000));
-  const [loading, setLoading] = useState(() => !cachedQueueState && !peekWhatsAppQueueStatusCache(10000));
+  const initialQueueState = cachedQueueState || peekWhatsAppQueueStatusCache(30000);
+  const [queueState, setQueueState] = useState<LocalQueueState | null>(() => initialQueueState);
+  const [loading, setLoading] = useState(() => !initialQueueState);
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<number, boolean>>({});
@@ -192,17 +193,17 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sanctioned SSE queue-event refresh flow per AGENTS.md
     fetchStatus(false);
-    fetchSentRegister();
+    if (activeTab === 'register') fetchSentRegister();
     const unsub = whatsappQueueEvent.subscribeUpdated(() => {
       fetchStatus(true);
-      fetchSentRegister();
+      if (activeTab === 'register') fetchSentRegister();
     });
     const unsubSend = messageSendEvent.subscribeSendProgress((detail) => {
       startSendAnimation(detail.recipient, detail.messagePreview, detail.durationSec || 10);
     });
     const handleSse = () => {
       fetchStatus(true);
-      fetchSentRegister();
+      if (activeTab === 'register') fetchSentRegister();
     };
     window.addEventListener('sse-wa-queue-updated', handleSse);
     return () => {
@@ -213,7 +214,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
       window.removeEventListener('sse-wa-queue-updated', handleSse);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only + event subscriptions, fetchStatus is stable-in-practice
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab === 'register') {

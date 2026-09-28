@@ -113,7 +113,7 @@ function App() {
     // mounts at boot as the landing page). Each step fires only while the user
     // is idle (>45s without input) and the tab is visible; page-level data
     // fetching still honors its own useFetchMode / data_fetch_control gates.
-    const WARMUP_PATHS = ['/dashboard', '/inventory', '/crm', '/mail', '/purchases', '/pharmarack-cart', '/settings'];
+    const WARMUP_PATHS = ['/dashboard', '/inventory', '/crm', '/mail', '/purchases', '/dispatch', '/pharmarack-cart', '/settings'];
     let lastInteraction = Date.now();
     let idx = 0;
     let timer: ReturnType<typeof setTimeout>;
@@ -142,6 +142,9 @@ function App() {
             ]).then(([summary, records]) => ({ summary, records })),
             staleTime: 5 * 60_000,
           }).catch(() => {});
+
+          // Preload WhatsApp Queue modal chunk into browser V8 memory during idle
+          import('./components/WhatsAppQueuePopover').catch(() => {});
         }
         prewarmRoute(WARMUP_PATHS[idx]);
         idx += 1;

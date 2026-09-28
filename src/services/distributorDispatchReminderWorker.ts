@@ -14,8 +14,143 @@ async function ensureReminderSchema(db: any): Promise<void> {
     if (!colNames.has('scheduled_send_time')) {
       await db.run("ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL");
     }
+    await db.run("CREATE INDEX IF NOT EXISTS idx_dist_disp_rem_date ON distributor_dispatch_reminders (date, status)");
+    await db.run("CREATE INDEX IF NOT EXISTS idx_dist_disp_rem_date_name ON distributor_dispatch_reminders (date, distributor_name)");
     reminderSchemaEnsured = true;
   } catch (_e) {}
+}
+
+/**
+ * Fast read of today's distributor dispatch reminders (<10ms).
+ * Strictly reads existing SQLite records without executing heavy multi-table substring scans.
+ */
+export async function getTodayDistributorRemindersFast(customDateStr?: string): Promise<any[]> {
+  const db = await dbManager.getConnection();
+  const todayStr = customDateStr || getTodayDateString();
+
+  try {
+    await ensureReminderSchema(db);
+
+    const todayReminders = await db.all(
+      `SELECT r.id, r.distributor_id,
+              COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
+              COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
+              1 as has_pharmarack_order_today,
+              1 as has_order_today
+       FROM distributor_dispatch_reminders r
+       LEFT JOIN distributors d ON r.distributor_id = d.id
+       LEFT JOIN delivery_boys db ON r.delivery_boy_id = db.id
+       WHERE r.date = ?
+       ORDER BY r.status DESC, r.created_at DESC`,
+      [todayStr]
+    );
+
+    // If no records exist yet for today, run sync once to populate baseline
+    if (!todayReminders || todayReminders.length === 0) {
+      return syncTodayActiveDistributors();
+    }
+
+    // 1. Single indexed query for today's notification status (avoiding correlated subqueries)
+    const notifRows = await db.all(
+      `SELECT recipient_name, recipient_phone, status, error_message
+       FROM automation_notifications
+       WHERE DATE(created_at) = ?
+       ORDER BY id ASC`,
+      [todayStr]
+    );
+    const notifMap = new Map<string, { status?: string; error?: string | null }>();
+    for (const n of notifRows) {
+      const s = n.status;
+      const err = (s === 'failed' || s === 'error') ? n.error_message : null;
+      if (n.recipient_name) notifMap.set(n.recipient_name.toLowerCase().trim(), { status: s, error: err });
+      if (n.recipient_phone) notifMap.set(n.recipient_phone.replace(/\\D/g, '').slice(-10), { status: s, error: err });
+    }
+
+    // 2. Fetch placed orders and purchases for today to populate order_count and orders_list
+    const [todayPlacedOrders, todayPurchases] = await Promise.all([
+      db.all(
+        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+         FROM pharmarack_placed_orders 
+         WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ?`,
+        [todayStr, todayStr]
+      ),
+      db.all(
+        `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
+         FROM purchases p
+         JOIN distributors d ON p.distributor_id = d.id
+         WHERE (p.date IS NOT NULL AND DATE(p.date) = ?)`,
+        [todayStr]
+      )
+    ]);
+
+    for (const r of todayReminders) {
+      const normDistName = (r.distributor_name || '').toLowerCase().trim();
+      const phoneDigits = (r.distributor_phone || '').replace(/\\D/g, '').slice(-10);
+      const notif = notifMap.get(normDistName) || (phoneDigits ? notifMap.get(phoneDigits) : undefined);
+      r.latest_notif_status = notif?.status || null;
+      r.latest_notif_error = notif?.error || null;
+
+      const distId = r.distributor_id;
+      const matchingPlaced = todayPlacedOrders.filter((po: any) => 
+        (po.store_name && po.store_name.toLowerCase().trim() === normDistName) ||
+        (distId && po.store_id === distId)
+      );
+
+      const matchingPurchases = todayPurchases.filter((p: any) =>
+        (p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName) ||
+        (distId && p.distributor_id === distId)
+      );
+
+      const ordersList: Array<{
+        id: string | number;
+        source: 'pharmarack' | 'purchase' | 'manual';
+        order_time: string;
+        items_count: number;
+        items_preview: string[];
+      }> = [];
+
+      let totalItems = 0;
+      for (const po of matchingPlaced) {
+        let itemsArr: any[] = [];
+        try {
+          itemsArr = typeof po.items_json === 'string' ? JSON.parse(po.items_json) : (Array.isArray(po.items_json) ? po.items_json : []);
+        } catch (_) {}
+        totalItems += itemsArr.length;
+        const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
+        const previews = itemsArr.slice(0, 5).map((it: any) => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
+        ordersList.push({
+          id: `pharma_${po.id}`,
+          source: 'pharmarack',
+          order_time: timeStr,
+          items_count: itemsArr.length,
+          items_preview: previews
+        });
+      }
+
+      for (const p of matchingPurchases) {
+        const timeStr = p.date ? new Date(p.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
+        ordersList.push({
+          id: `purch_${p.id}`,
+          source: 'purchase',
+          order_time: timeStr,
+          items_count: 1,
+          items_preview: [`Purchase Bill #${p.invoice_no || p.id}`]
+        });
+      }
+
+      const totalCount = ordersList.length;
+      r.order_count = totalCount > 0 ? totalCount : (r.has_order_today && r.status !== 'No Order Today' ? 1 : 0);
+      r.orders_list = ordersList;
+      r.total_items_count = totalItems;
+    }
+
+    return todayReminders || [];
+  } catch (err: any) {
+    console.error('[DistributorReminderWorker] Error in fast read today active distributors:', err.message);
+    return [];
+  }
 }
 
 /**

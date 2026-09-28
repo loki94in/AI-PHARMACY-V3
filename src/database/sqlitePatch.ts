@@ -35,7 +35,7 @@ const OriginalDatabase = sqlite3.Database;
           return;
         }
         db.run(`PRAGMA busy_timeout = ${busyTimeout};`);
-        db.run('PRAGMA cache_size = -16000;');
+        db.run('PRAGMA cache_size = -64000;');
         db.run('PRAGMA temp_store = MEMORY;');
         db.run('PRAGMA synchronous = NORMAL;', (err2) => {
           if (callback) callback(err2 || null);

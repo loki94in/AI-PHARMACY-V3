@@ -244,7 +244,7 @@ class DatabaseManager {
           await db.run(`PRAGMA busy_timeout = ${busyTimeout};`);
           await db.run('PRAGMA journal_mode = WAL;');
           await db.run('PRAGMA synchronous = NORMAL;');
-          await db.run('PRAGMA cache_size = -16000;');
+          await db.run('PRAGMA cache_size = -64000;');
           await db.run('PRAGMA temp_store = MEMORY;');
           await db.run('PRAGMA mmap_size = 268435456;');
           openSuccess = true;

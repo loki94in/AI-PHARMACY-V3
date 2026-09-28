@@ -4,7 +4,7 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { notificationService } from '../services/notificationService.js';
-import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
+import { syncTodayActiveDistributors, getTodayDistributorRemindersFast } from '../services/distributorDispatchReminderWorker.js';
 import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 
@@ -330,7 +330,7 @@ router.get('/messages', async (req, res) => {
 // ─── DISTRIBUTOR DISPATCH REMINDERS ──────────────────────────────────────────
 
 // GET today's distributor reminders (strictly today's orders & emails only)
-router.get('/distributor-reminders/today', async (_req, res) => {
+router.get('/distributor-reminders/today', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const [startSetting, endSetting, afternoonEnabledSetting, afternoonTimeSetting, dispatchEnabledSetting, pausedDatesRow] = await Promise.all([
@@ -353,7 +353,15 @@ router.get('/distributor-reminders/today', async (_req, res) => {
       } catch (_) {}
     }
 
-    const reminders = await syncTodayActiveDistributors();
+    const forceSync = req.query.forceSync === 'true';
+    let reminders: any[];
+    if (forceSync) {
+      reminders = await syncTodayActiveDistributors();
+      eventService.broadcast('dispatch_updated', { type: 'reminders_synced' });
+    } else {
+      reminders = await getTodayDistributorRemindersFast();
+    }
+
     res.json({
       success: true,
       window_start: startSetting?.value || '12:30',

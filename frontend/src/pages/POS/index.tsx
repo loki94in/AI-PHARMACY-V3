@@ -4787,9 +4787,6 @@ const POS = () => {
                         </div>
                       </div>
                     )}
-                    <div className="p-3 border-b border-border/30 bg-bg3/55 text-[15px] font-bold text-muted uppercase tracking-wider">
-                      Matching Inventory Records:
-                    </div>
                     <div className="flex flex-col">
                       {searchResults.map((med) => {
                         const renderMedicineItem = (item: PosBatchItem, isAlt = false) => {
@@ -4865,8 +4862,18 @@ const POS = () => {
                                     </span>
                                   )}
                                 </div>
-                                <span className="text-[15px] text-muted">
-                                  Company: <span className="text-text font-semibold">{item.manufacturer || '—'}</span>
+                                <span className="text-[15px] text-muted flex items-center flex-wrap gap-2">
+                                  <span>Company: <span className="text-text font-semibold">{item.manufacturer || '—'}</span></span>
+                                  {item.batch_no && (
+                                    <span className="font-mono font-semibold text-text bg-bg3/80 px-1.5 py-0.5 rounded text-xs border border-border/40">
+                                      Batch: {item.batch_no}
+                                    </span>
+                                  )}
+                                  {(item.expiry_date || item.expiry) && (
+                                    <span className="font-mono text-muted text-xs">
+                                      Exp: {item.expiry_date || String(item.expiry || '')}
+                                    </span>
+                                  )}
                                   {item.quantity !== undefined && (() => {
                                     const remainingLoose = remainingUnits % packSize;
                                     const hasLoose = (item.loose_quantity !== undefined && item.loose_quantity > 0) || remainingLoose > 0;
@@ -5601,7 +5608,7 @@ const POS = () => {
                             </button>
                             
                             {activeBatchRowId === String(item.id) && rowBatchesList.length > 0 && (
-                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto w-68 text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
                                 <div className="p-2 border-b border-border/30 bg-bg3/60 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
                                   <span>Switch Batch</span>
                                   <span className="text-xs font-normal text-muted/70">{rowBatchesList.length} available</span>

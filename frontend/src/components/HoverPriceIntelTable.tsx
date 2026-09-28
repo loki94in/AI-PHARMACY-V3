@@ -18,6 +18,7 @@ interface PriceRecord {
 
 interface HoverPriceIntelTableProps {
   medicineName: string;
+  medicineId?: number | null;
   /**
    * Pre-loaded history rows (from the Purchases one-shot medicine-batches cache).
    * When provided, NO network call is made — the table renders straight from
@@ -26,11 +27,11 @@ interface HoverPriceIntelTableProps {
   records?: PriceRecord[] | null;
 }
 
-export const HoverPriceIntelTable: React.FC<HoverPriceIntelTableProps> = ({ medicineName, records }) => {
+export const HoverPriceIntelTable: React.FC<HoverPriceIntelTableProps> = ({ medicineName, medicineId, records }) => {
   const canFetch = !!medicineName && medicineName.length >= 2 && !records;
   const { data: historyRes, isFetching, isSuccess, isError } = useApiQuery<{ data?: PriceRecord[] }>(
-    ['medicine-price-history', medicineName],
-    () => api.getMedicinePriceHistory(medicineName),
+    ['medicine-price-history', medicineId || medicineName],
+    () => api.getMedicinePriceHistory(medicineName, medicineId),
     { enabled: canFetch }
   );
   const sourceRecords: PriceRecord[] = (records && records.length > 0 ? records : null) || historyRes?.data || [];

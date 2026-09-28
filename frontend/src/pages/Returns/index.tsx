@@ -1905,9 +1905,6 @@ const Returns: React.FC = () => {
                   {/* Distributor Autocomplete Dropdown */}
                   {showDistDropdown && (
                     <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto">
-                      <div className="p-2 border-b border-border/40 text-[10px] font-bold text-muted uppercase tracking-wider bg-bg3/40">
-                        Select Distributor ({filteredMasterDistributors.length} found)
-                      </div>
                       {filteredMasterDistributors.length === 0 ? (
                         <div className="p-3 text-xs text-muted italic">
                           No registered distributor found. Type name to use as custom distributor.
@@ -2291,12 +2288,6 @@ const Returns: React.FC = () => {
                                   <div ref={searchResultsRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-60 overflow-y-auto">
                                     {searchResults.length > 0 ? (
                                       <>
-                                        {activeBill.distributor_name && (
-                                          <div className="px-3 py-1.5 bg-primary/10 border-b border-border/40 text-[10px] font-bold text-primary flex items-center gap-1.5">
-                                            <CheckCircle2 size={11} />
-                                            <span>Purchased from {activeBill.distributor_name}</span>
-                                          </div>
-                                        )}
                                         {searchResults.map((result, idx) => (
                                           <button
                                             key={result.purchase_item_id || idx}

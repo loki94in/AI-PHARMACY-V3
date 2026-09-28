@@ -713,6 +713,8 @@ const NotificationPanel = ({
           <div className="flex items-center gap-1">
             <button
               type="button"
+              onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+              onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
               onClick={() => {
                 whatsappQueueEvent.triggerOpen();
                 onClose();
@@ -926,6 +928,11 @@ const NotificationPanel = ({
                   {(notif.link || notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation') && (
                     <button
                       type="button"
+                      onMouseEnter={() => {
+                        if (notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation' || !notif.link) {
+                          import('./WhatsAppQueuePopover').catch(() => {});
+                        }
+                      }}
                       onClick={e => {
                         e.stopPropagation();
                         if (!notif.read) onMarkRead(notif.id);

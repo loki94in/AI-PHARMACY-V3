@@ -44,6 +44,13 @@ if (!gotTheLock) {
   });
 }
 
+// Chromium Performance & Hardware Acceleration Switches (Crucial for Low-Spec / Integrated Display PCs)
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-features', 'CanvasOopRasterization');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+
 /** Poll the health endpoint until the backend is ready (max 30s) */
 function waitForBackend(timeoutMs = 30_000): Promise<void> {
   const start = Date.now();
@@ -115,10 +122,39 @@ function startBackend(): ChildProcess {
 
   console.log(`[ElectronMain] Spawning backend: ${cmd} ${args.join(' ')}`);
 
+  // Silent process spawn: windowsHide=true prevents Windows from allocating a console window,
+  // and stdio: ['ignore', 'pipe', 'pipe'] redirects output silently to backend.log
   const child = spawn(cmd, args, {
     env: childEnv,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     shell: useShell,
+    windowsHide: true,
+  });
+
+  const logDir = path.join(exeDir, 'data');
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+  } catch (_) {}
+  const logFile = path.join(logDir, 'backend.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  if (child.stdout) {
+    child.stdout.pipe(logStream);
+    if (!isPackaged) {
+      child.stdout.on('data', (d) => process.stdout.write(`[Backend] ${d}`));
+    }
+  }
+  if (child.stderr) {
+    child.stderr.pipe(logStream);
+    if (!isPackaged) {
+      child.stderr.on('data', (d) => process.stderr.write(`[Backend ERR] ${d}`));
+    }
+  }
+
+  child.on('close', () => {
+    try {
+      logStream.end();
+    } catch (_) {}
   });
 
   child.on('error', (err) => {
@@ -159,6 +195,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+      backgroundThrottling: false, // Prevent frame rate drops and timer clamping
     },
   });
 

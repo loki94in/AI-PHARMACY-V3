@@ -1250,7 +1250,13 @@ export const api = {
   quickEditMedicine: (id: number, data: QuickEditMedicinePayload) => apiClient.put(`/medicines/${id}/quick-edit`, data).then(res => res.data),
   patchAllowLooseSale: (id: number, allow_loose_sale: number | boolean) => apiClient.patch(`/medicines/${id}/allow-loose-sale`, { allow_loose_sale: allow_loose_sale ? 1 : 0 }).then(res => res.data),
 
-  getMedicinePriceHistory: (name: string) => apiClient.get('/purchases/price-history', { params: { name } }).then(res => res.data),
+  getMedicinePriceHistory: (name: string, medicineId?: number | null) =>
+    apiClient.get('/purchases/price-history', {
+      params: {
+        name,
+        ...(medicineId ? { medicine_id: medicineId } : {})
+      }
+    }).then(res => res.data),
   searchPharmarack: (q: string, storeId?: string | number, isMapped?: boolean, signal?: AbortSignal) =>
     apiClient.get('/pharmarack/search', {
       params: {
@@ -1512,7 +1518,7 @@ export const api = {
   deleteDeliveryBoy: (id: number) => apiClient.delete(`/dispatch/delivery-boys/${id}`).then(res => res.data),
   getDeliveryBoyMessageDates: () => apiClient.get<{ success: boolean; dates: string[] }>('/dispatch/messages/dates').then(res => res.data),
   getDeliveryBoyMessages: (date?: string) => apiClient.get<{ success: boolean; date: string; messages: AutomationNotification[] }>('/dispatch/messages', { params: { date } }).then(res => res.data),
-  getTodayDistributorReminders: () => apiClient.get<{ success: boolean; auto_dispatch_enabled?: boolean; window_start?: string; window_end?: string; afternoon_enabled?: boolean; afternoon_time?: string; is_recent_fallback?: boolean; recent_date?: string | null; reminders: DistributorDispatchReminder[] }>('/dispatch/distributor-reminders/today').then(res => res.data),
+  getTodayDistributorReminders: (forceSync?: boolean) => apiClient.get<{ success: boolean; auto_dispatch_enabled?: boolean; window_start?: string; window_end?: string; afternoon_enabled?: boolean; afternoon_time?: string; is_recent_fallback?: boolean; recent_date?: string | null; reminders: DistributorDispatchReminder[] }>('/dispatch/distributor-reminders/today', { params: forceSync ? { forceSync: 'true' } : undefined }).then(res => res.data),
   toggleDistributorAutoRemind: (id: number, auto_remind: boolean) => apiClient.post('/dispatch/distributor-reminders/toggle-auto', { id, auto_remind }).then(res => res.data),
   updateDistributorReminderStatus: (id: number, data: { status?: string; delivery_boy_id?: number | null; distributor_name?: string; distributor_phone?: string }) => apiClient.put(`/dispatch/distributor-reminders/${id}/status`, data).then(res => res.data),
   sendDistributorReminderNow: (id: number, custom_message?: string) => apiClient.post(`/dispatch/distributor-reminders/${id}/send-now`, { custom_message }).then(res => res.data),

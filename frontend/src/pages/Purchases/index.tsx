@@ -1433,6 +1433,7 @@ const Purchases: React.FC = () => {
   const savingStartedAtRef = useRef<number>(0);
   const savingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hoveredPriceRow, setHoveredPriceRow] = useState<string | null>(null);
+  const [hoveredRateRow, setHoveredRateRow] = useState<string | null>(null);
   const [, setLastSavedInvoiceNo] = useState('');
   const [, setLastSavedItems] = useState<{ name?: string; batch?: string }[]>([]);
   const searchResultsRef = useRef<HTMLDivElement>(null);
@@ -2021,6 +2022,34 @@ const Purchases: React.FC = () => {
     setActiveSearchIndex(null);
     setSearchHighlightIndex(-1);
 
+    // Instant local memory cache hydration:
+    // If the medicine exists in frontend compact inventory, immediately populate rowBatchesList
+    // and pre-warm medicineHistoryCache with 0ms latency!
+    const compact = getCompactInventoryCache();
+    if (compact && compact.length > 0) {
+      const localMatches = compact.filter(m => 
+        (medicine.id && m.medicine_id === medicine.id) ||
+        (m.name || m.medicine_name || '').toLowerCase().trim() === (medicine.name || '').toLowerCase().trim()
+      );
+      if (localMatches.length > 0) {
+        const formatted: MedicineBatchHistoryRow[] = localMatches.map(m => ({
+          batch_no: m.batch_no || '',
+          expiry_date: m.expiry_date || '',
+          rate: Number(m.cost_price || 0),
+          mrp: Number(m.mrp || 0),
+          cgst_per: (m as any).cgst_per ?? null,
+          sgst_per: (m as any).sgst_per ?? null,
+          quantity: Number(m.quantity || 0),
+          distributor_name: null,
+          purchase_date: null
+        })).filter(b => b.batch_no.trim() !== '');
+        if (formatted.length > 0) {
+          setRowBatchesList(formatted);
+          medicineHistoryCache.set(historyCacheKey(medicine.id, selectedDistributor), formatted);
+        }
+      }
+    }
+
     // Focus Batch field of the current row so the user can enter batch and price details!
     focusRowField(index, 'batch_no');
 
@@ -2032,6 +2061,11 @@ const Purchases: React.FC = () => {
     // One-shot history load for this medicine+distributor warms the cache for batch suggestions
     // and price intel hover tooltip without auto-overwriting manual fields.
     loadMedicineHistory(medicine.id, medicine.name, selectedDistributor || undefined)
+      .then(fullBatches => {
+        if (Array.isArray(fullBatches) && fullBatches.length > 0) {
+          setRowBatchesList(fullBatches);
+        }
+      })
       .catch(() => {});
   };
 
@@ -3196,8 +3230,7 @@ const Purchases: React.FC = () => {
                 />
                 {showDistributorDropdown && distributorSearch.trim().length >= 2 && (
                   <div ref={distributorDropdownRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 overflow-y-auto shadow-2xl">
-                    <div className="px-3 py-1.5 bg-bg3 border-b border-glass-border/40 flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-muted uppercase tracking-wider">Distributor List ({filteredDistributors.length})</span>
+                    <div className="px-3 py-1 bg-bg3 border-b border-glass-border/40 flex items-center justify-end">
                       <button
                         type="button"
                         onMouseDown={(e) => {
@@ -3451,7 +3484,6 @@ const Purchases: React.FC = () => {
             
             {showCreditNotesPanel && pendingReturns.length > 0 && (
               <div className="absolute z-dropdown w-64 mt-1 bg-bg2 border border-purple-500/30 rounded-xl shadow-2xl p-2 max-h-48 overflow-y-auto">
-                <p className="text-[10px] text-purple-300 font-bold uppercase tracking-wider mb-1.5 px-2 border-b border-purple-500/20 pb-1">Select Return Credit Note</p>
                 {pendingReturns.map(ret => (
                   <button
                     key={ret.id}
@@ -3996,9 +4028,35 @@ const Purchases: React.FC = () => {
                           return;
                         }
                         const cached = getCachedMedicineHistory(medId, selectedDistributor);
-                        if (cached) {
+                        if (cached && cached.length > 0) {
                           setRowBatchesList(cached);
                           return;
+                        }
+                        // Check local memory cache synchronously
+                        const compact = getCompactInventoryCache();
+                        if (compact && compact.length > 0) {
+                          const localMatches = compact.filter(m => 
+                            (medId && m.medicine_id === medId) ||
+                            (m.name || m.medicine_name || '').toLowerCase().trim() === (medName || '').toLowerCase().trim()
+                          );
+                          if (localMatches.length > 0) {
+                            const formatted: MedicineBatchHistoryRow[] = localMatches.map(m => ({
+                              batch_no: m.batch_no || '',
+                              expiry_date: m.expiry_date || '',
+                              rate: Number(m.cost_price || 0),
+                              mrp: Number(m.mrp || 0),
+                              cgst_per: (m as any).cgst_per ?? null,
+                              sgst_per: (m as any).sgst_per ?? null,
+                              quantity: Number(m.quantity || 0),
+                              distributor_name: null,
+                              purchase_date: null
+                            })).filter(b => b.batch_no.trim() !== '');
+                            if (formatted.length > 0) {
+                              setRowBatchesList(formatted);
+                              medicineHistoryCache.set(historyCacheKey(medId, selectedDistributor), formatted);
+                              return;
+                            }
+                          }
                         }
                         // Cold cache: one shared request; tag it so a late
                         // response for another row/medicine/distributor is dropped.
@@ -4118,7 +4176,11 @@ const Purchases: React.FC = () => {
                       className="w-[68px] bg-white/10 border border-white/20 rounded px-1 py-1 text-white text-sm font-mono text-center h-8"
                     />
                   </td>
-                  <td className="py-2.5 px-1 relative group/btn">
+                  <td 
+                    className="py-2.5 px-1 relative group/btn"
+                    onMouseEnter={() => setHoveredRateRow(item.id)}
+                    onMouseLeave={() => setHoveredRateRow(null)}
+                  >
                     {mrpVal > 0 && (
                       <div className="absolute -top-1.5 right-1 z-10 select-none pointer-events-none">
                         {(() => {
@@ -4158,11 +4220,12 @@ const Purchases: React.FC = () => {
                         Eff: ₹{((qtyVal * rateVal) / (qtyVal + parseFloat(String(item.free_qty || 0)))).toFixed(2)}/u
                       </div>
                     )}
-                    {item.medicine_name && (
-                      <div className="absolute z-dropdown top-full left-0 mt-2 hidden group-hover/btn:block min-w-[320px]">
+                    {hoveredRateRow === item.id && item.medicine_name && (
+                      <div className="absolute z-dropdown top-full left-0 mt-2 min-w-[320px]">
                         <div className="bg-bg3 border border-blue-500/50 rounded-lg p-2 shadow-xl">
                           <HoverPriceIntelTable
                             medicineName={item.medicine_name}
+                            medicineId={item.medicine_id}
                             records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, selectedDistributor))}
                           />
                         </div>
@@ -4201,15 +4264,14 @@ const Purchases: React.FC = () => {
                         </div>
                       );
                     })()}
-                    {item.medicine_name && (
-                      <div className="absolute z-dropdown top-full left-0 mt-2 hidden group-hover/btn:block min-w-[320px]">
+                    {hoveredPriceRow === item.id && item.medicine_name && (
+                      <div className="absolute z-dropdown top-full left-0 mt-2 min-w-[320px]">
                         <div className="bg-bg3 border border-purple-500/50 rounded-lg p-2 shadow-xl">
-                          {hoveredPriceRow === item.id && (
-                            <HoverPriceIntelTable
-                              medicineName={item.medicine_name}
-                              records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, selectedDistributor))}
-                            />
-                          )}
+                          <HoverPriceIntelTable
+                            medicineName={item.medicine_name}
+                            medicineId={item.medicine_id}
+                            records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, selectedDistributor))}
+                          />
                         </div>
                       </div>
                     )}

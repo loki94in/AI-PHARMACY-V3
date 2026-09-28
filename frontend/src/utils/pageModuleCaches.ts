@@ -9,6 +9,7 @@ export interface CachedDeliveryBoy {
 
 let cachedDispatchOrders: unknown[] | null = null;
 let cachedDispatchDeliveryBoys: CachedDeliveryBoy[] | null = null;
+let cachedDispatchReminders: unknown[] | null = null;
 
 export function getDispatchOrdersCache(): unknown[] | null {
   return cachedDispatchOrders;
@@ -26,7 +27,17 @@ export function setDispatchDeliveryBoysCache(boys: CachedDeliveryBoy[] | null): 
   cachedDispatchDeliveryBoys = boys;
 }
 
+export function getDispatchRemindersCache(): unknown[] | null {
+  return cachedDispatchReminders;
+}
+
+export function setDispatchRemindersCache(reminders: unknown[] | null): void {
+  cachedDispatchReminders = reminders;
+}
+
 export function clearDispatchPageCache(): void {
   cachedDispatchOrders = null;
   cachedDispatchDeliveryBoys = null;
+  cachedDispatchReminders = null;
 }
+

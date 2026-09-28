@@ -957,6 +957,18 @@ router.post('/staging/finalize', async (req, res) => {
       console.warn('Failed to stop workers or close staging connections:', err);
     }
 
+    // 4b. Explicitly close open messageDAO connection so it releases its better-sqlite3 handle
+    try {
+      const { closeMessageDAO } = await import('../database/messageDAO.js');
+      closeMessageDAO();
+    } catch (_) {}
+
+    // 4c. Stop in-process email poller if running
+    try {
+      const { stopEmailPoller } = await import('../worker/emailPoller.js');
+      stopEmailPoller();
+    } catch (_) {}
+
     // 5. Close live dbManager connection pool FIRST to release file handles, then
     // suspend it so no background timer (messaging queue, device-connection poll,
     // stock calculator, etc.) can reopen a connection while the file underneath is
@@ -964,22 +976,20 @@ router.post('/staging/finalize', async (req, res) => {
     await dbManager.close(true);
     dbManager.suspend();
 
+    // Settle grace period (400ms) for Windows OS kernel and libuv thread pool to release file handles
+    await new Promise(resolve => setTimeout(resolve, 400));
+
     // 6. Checkpoint active DB using better-sqlite3 with timeout
     if (fs.existsSync(DB_PATH)) {
       const Database = (await import('better-sqlite3')).default;
       let tempAppDb: InstanceType<typeof Database> | null = null;
       try {
         tempAppDb = new Database(DB_PATH, { timeout: 10000 });
-        tempAppDb.pragma('wal_checkpoint(TRUNCATE)');
-        tempAppDb.pragma('journal_mode = DELETE');
+        try { tempAppDb.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+        try { tempAppDb.pragma('journal_mode = DELETE'); } catch (_) {}
       } catch (checkpointErr) {
         console.warn('[Migration Finalize] Active DB checkpoint warning:', checkpointErr);
       } finally {
-        // If the checkpoint pragma above throws, this connection was never closed —
-        // it stays open on DB_PATH straight through the backup and the copyFileSync
-        // swap a few lines down, and a stale handle open on the destination during
-        // that overwrite is what corrupts the swapped file (observed as "malformed
-        // database schema ... index already exists" on the post-swap integrity check).
         try { tempAppDb?.close(); } catch (_) { }
       }
     }
@@ -988,7 +998,11 @@ router.post('/staging/finalize', async (req, res) => {
     const timestamp = Date.now();
     backupPath = DB_PATH + '.bak_' + timestamp;
     if (fs.existsSync(DB_PATH)) {
-      fs.copyFileSync(DB_PATH, backupPath);
+      try {
+        fs.copyFileSync(DB_PATH, backupPath);
+      } catch (bakErr: any) {
+        console.warn('[Migration Finalize] Active DB backup copy warning:', bakErr?.message);
+      }
     }
 
     // Clean any leftover wal/shm files for app.db and staging.db
@@ -1000,7 +1014,39 @@ router.post('/staging/finalize', async (req, res) => {
     });
 
     // 7. Swap files: replace app.db with staging.db
-    fs.copyFileSync(STAGING_DB_PATH, DB_PATH);
+    let swapSucceeded = false;
+    let swapError: any = null;
+
+    // Attempt 1: Direct file copy with retries for transient Windows lock contention
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        fs.copyFileSync(STAGING_DB_PATH, DB_PATH);
+        swapSucceeded = true;
+        break;
+      } catch (err: any) {
+        swapError = err;
+        await new Promise(resolve => setTimeout(resolve, 300 * attempt));
+      }
+    }
+
+    // Attempt 2: If direct OS file copy is blocked on Windows, use SQLite's native Backup API.
+    // The native Backup API operates via the SQLite page engine and writes directly into DB_PATH
+    // without requiring an exclusive OS file replacement.
+    if (!swapSucceeded) {
+      console.warn(`[Migration Finalize] Direct file copy failed (${swapError?.message}). Falling back to SQLite native Backup API...`);
+      const Database = (await import('better-sqlite3')).default;
+      const stagingSourceDb = new Database(STAGING_DB_PATH, { readonly: true });
+      try {
+        await stagingSourceDb.backup(DB_PATH);
+        swapSucceeded = true;
+        console.log('[Migration Finalize] Successfully swapped database using SQLite native Backup API.');
+      } catch (backupApiErr: any) {
+        console.error('[Migration Finalize] SQLite native Backup API failed:', backupApiErr);
+        throw new Error(`Failed to swap staging database into active database: ${backupApiErr.message}`);
+      } finally {
+        try { stagingSourceDb.close(); } catch (_) {}
+      }
+    }
 
     // 8. Validate swapped app.db integrity
     try {
@@ -1010,8 +1056,6 @@ router.post('/staging/finalize', async (req, res) => {
       try {
         checkResult = checkDb.pragma('integrity_check') as any;
       } finally {
-        // Close even if the pragma throws — a leaked handle here stays open on
-        // DB_PATH right through dbManager reconnecting to it a few lines down.
         try { checkDb.close(); } catch (_) { }
       }
       if (!checkResult || !checkResult[0] || checkResult[0].integrity_check !== 'ok') {
