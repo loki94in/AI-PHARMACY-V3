@@ -13,7 +13,7 @@
  */
 
 import { app, BrowserWindow, shell } from 'electron';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
@@ -49,6 +49,7 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   console.log('[ElectronMain] Another instance is already running. Quitting duplicate.');
   app.quit();
+  process.exit(0);
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -56,6 +57,49 @@ if (!gotTheLock) {
       mainWindow.focus();
     }
   });
+}
+
+/** Clean leftover browser profile locks so Chromium / Puppeteer never launch locked */
+function cleanAllSessionLocks(targetDir: string): void {
+  const sessionLocks = [
+    path.join(targetDir, '.wwebjs_auth', 'session', 'devtoolsactiveport'),
+    path.join(targetDir, '.wwebjs_auth', 'session', 'Default', 'devtoolsactiveport'),
+    path.join(targetDir, '.wwebjs_auth', 'session', 'lockfile'),
+    path.join(targetDir, '.wwebjs_auth', 'session', 'SingletonLock'),
+    path.join(targetDir, 'data', 'pharmarack_profile', 'SingletonLock'),
+    path.join(targetDir, 'data', 'pharmarack_profile', 'lockfile'),
+    path.join(targetDir, 'data', 'pharmarack_profile', 'devtoolsactiveport'),
+  ];
+  for (const lock of sessionLocks) {
+    try {
+      if (fs.existsSync(lock)) fs.unlinkSync(lock);
+    } catch (_) {}
+  }
+}
+
+/** Forcibly reclaim port if occupied by any stale/zombie process from previous runs */
+function reclaimPort(port: number): void {
+  if (process.platform !== 'win32') return;
+  try {
+    const netstatOut = execSync(`netstat -ano -p tcp | findstr :${port} | findstr LISTENING`, {
+      encoding: 'utf8',
+      timeout: 1500,
+    });
+    const lines = netstatOut.trim().split('\n');
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const pidStr = parts[parts.length - 1];
+      const pid = parseInt(pidStr, 10);
+      if (pid && pid !== process.pid) {
+        console.log(`[ElectronMain] Port ${port} is occupied by stale PID ${pid}. Terminating process tree...`);
+        try {
+          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 2000 });
+        } catch (_) {}
+      }
+    }
+  } catch (_) {
+    // Port is already free
+  }
 }
 
 // Chromium Performance & Hardware Acceleration Switches (Crucial for Low-Spec / Integrated Display PCs)
@@ -229,8 +273,19 @@ function createWindow() {
   // Open the app in maximized mode (same as old Chrome --start-fullscreen)
   mainWindow.maximize();
 
+  // Visual Safety Fallback: Ensure the window becomes visible within 2.5s even if ready-to-show is slow
+  const showFallback = setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      console.log('[ElectronMain] Safety fallback triggered: displaying main window.');
+      mainWindow.show();
+    }
+  }, 2500);
+
   mainWindow.once('ready-to-show', () => {
-    if (mainWindow) mainWindow.show();
+    clearTimeout(showFallback);
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
   });
 
   // Load the React SPA served by our Express backend
@@ -275,17 +330,10 @@ app.whenReady().then(async () => {
     yieldReq.end();
   } catch (_) {}
 
-  // Clean stale devtools active port & singleton locks from app session directory
+  // Startup Sanitation: Reclaim port 5175 if occupied by any lingering zombie, and clear session locks
   const exeDir = path.dirname(process.execPath);
-  const sessionLocks = [
-    path.join(exeDir, '.wwebjs_auth', 'session', 'devtoolsactiveport'),
-    path.join(exeDir, '.wwebjs_auth', 'session', 'Default', 'devtoolsactiveport'),
-    path.join(exeDir, '.wwebjs_auth', 'session', 'lockfile'),
-    path.join(exeDir, '.wwebjs_auth', 'session', 'SingletonLock'),
-  ];
-  for (const lock of sessionLocks) {
-    try { if (fs.existsSync(lock)) fs.unlinkSync(lock); } catch (_) {}
-  }
+  reclaimPort(PORT);
+  cleanAllSessionLocks(exeDir);
 
   console.log('[ElectronMain] Starting AI Pharmacy OS backend...');
   backendProcess = startBackend();
@@ -301,16 +349,23 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  console.log('[ElectronMain] All windows closed. Shutting down backend...');
-  if (backendProcess && !backendProcess.killed) {
-    backendProcess.kill('SIGTERM');
-    // Force kill after 3s if graceful shutdown doesn't complete
-    setTimeout(() => {
-      if (backendProcess && !backendProcess.killed) {
-        backendProcess.kill('SIGKILL');
+  console.log('[ElectronMain] All windows closed. Synchronously shutting down backend & child processes...');
+  if (backendProcess && backendProcess.pid) {
+    const pid = backendProcess.pid;
+    try {
+      if (process.platform === 'win32') {
+        // Synchronous process-tree kill: forcibly terminates backend AND all child headless Chrome/Node instances
+        execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
+      } else {
+        backendProcess.kill('SIGTERM');
       }
-    }, 3000);
+    } catch (_) {}
   }
+
+  // Clean session profile locks synchronously on exit
+  const exeDir = path.dirname(process.execPath);
+  cleanAllSessionLocks(exeDir);
+
   app.quit();
 });
 

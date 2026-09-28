@@ -62,6 +62,8 @@ export function hasSavedSession(): boolean {
  */
 export async function isProductionAppRunning(): Promise<boolean> {
   if (isPackagedApp()) return false;
+  // If THIS process itself is running on port 5175, it cannot be another production instance
+  if (Number(process.env.PORT || appConfig.port) === 5175) return false;
   return new Promise<boolean>((resolve) => {
     import('http').then(http => {
       const req = http.get('http://127.0.0.1:5175/api/health', { timeout: 800 }, (res) => {
@@ -87,8 +89,25 @@ export async function isWhatsAppAutoConnectAllowed(): Promise<boolean> {
   try {
     const db = await dbManager.getConnection();
     const authRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_session_authenticated'");
-    // Must be an explicit 'true' — missing key or 'false' both block auto-connect
-    return authRow?.value === 'true';
+    
+    // Explicit 'false' means user explicitly clicked Logout / Disconnect -> do not auto-connect
+    if (authRow?.value === 'false') return false;
+
+    // Explicit 'true' -> auto-connect allowed
+    if (authRow?.value === 'true') return true;
+
+    // Auto-heal: If session folder exists on disk (hasSavedSession() === true) and the user has
+    // never explicitly disconnected (authRow is undefined / missing), auto-heal setting to 'true'
+    if (authRow === undefined) {
+      console.log('[WhatsApp Auto-Heal] Existing valid session detected on disk without explicit disconnect. Healing whatsapp_session_authenticated to true.');
+      try {
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+           ON CONFLICT(key) DO UPDATE SET value = 'true'`
+        );
+      } catch (_) {}
+      return true;
+    }
   } catch (err) {
     console.error('[WhatsApp] Failed to query session authentication status:', err);
   }
@@ -1014,6 +1033,11 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       '--renderer-process-limit=1',
       '--js-flags=--max-old-space-size=256'
     ];
+
+    // Ensure session directory is free of leftover lockfiles before Puppeteer launch
+    const sessionDir = path.join(WWEBJS_AUTH_DIR, 'session');
+    cleanProfileLockFiles(sessionDir);
+    cleanProfileLockFiles(path.join(sessionDir, 'Default'));
 
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
@@ -2311,6 +2335,11 @@ export async function getChats(): Promise<any[]> {
        FROM whatsapp_chats
        ORDER BY timestamp DESC`
     );
+
+    // If local cache is empty but client is active, trigger background chat sync
+    if (rows.length === 0 && clientInstance && isReady && !isSyncing) {
+      syncWhatsappData(clientInstance).catch(() => {});
+    }
 
     // Deduplicate chats that share the same last 10 digits (e.g. @lid vs @c.us)
     const nowMs = Date.now();

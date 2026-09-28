@@ -2060,10 +2060,23 @@ const RefillsSection: React.FC = () => {
               <div className="w-16 h-16 rounded-2xl bg-bg3/60 border border-border flex items-center justify-center">
                 <Repeat2 size={32} className="text-primary/60" />
               </div>
-              <p className="text-sm font-semibold text-text">Select a patient from the left panel</p>
-              <p className="text-xs text-muted max-w-sm text-center">
-                Click on any patient to view active refill prescriptions, live inventory stock status, automated shortage alerts, and fulfillment history.
+              <p className="text-sm font-semibold text-text">
+                {data.length === 0 ? 'No Refill Schedules Recorded Yet' : 'Select a patient from the left panel'}
               </p>
+              <p className="text-xs text-muted max-w-sm text-center">
+                {data.length === 0
+                  ? 'Set up recurring refill schedules with automated WhatsApp reminders, cycle tracking, and stock-check alerts.'
+                  : 'Click on any patient to view active refill prescriptions, live inventory stock status, automated shortage alerts, and fulfillment history.'}
+              </p>
+              {data.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(true)}
+                  className="mt-2 flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold shadow-md shadow-primary/20 hover:bg-primary/90 transition-all cursor-pointer"
+                >
+                  <Plus size={14} /> Add First Refill Schedule
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -7229,8 +7242,18 @@ const CustomerCreditSection: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center p-8 text-muted text-xs">
-              Select a credit customer from the left panel to view purchase bills &amp; details.
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-muted text-xs gap-3">
+              <div className="w-16 h-16 rounded-2xl bg-bg3/60 border border-border flex items-center justify-center">
+                <Users size={32} className="text-primary/60" />
+              </div>
+              <p className="text-sm font-semibold text-text">
+                {customers.length === 0 ? 'No Outstanding Customer Credit' : 'Select a credit customer from the left panel'}
+              </p>
+              <p className="text-xs text-muted max-w-sm text-center">
+                {customers.length === 0
+                  ? 'All customer credit dues are currently cleared. Credit sales recorded at POS will automatically track here.'
+                  : 'Select a customer from the left panel to inspect unpaid bills, ledger statements, and dispatch WhatsApp payment QR reminders.'}
+              </p>
             </div>
           )}
         </div>

@@ -83,9 +83,10 @@ export class VerificationService {
       }
 
       // 4. Transaction & Write verification (Insert, Commit, and Rollback test)
-      // We start a transaction, perform a test insert, verify it exists, and then roll back.
-      // This is non-destructive and doesn't pollute the production database.
+      // Acquire prioritized transaction lock so verification NEVER deadlocks the SQLite mutex
+      let releaseLock: (() => void) | null = null;
       try {
+        releaseLock = await dbManager.acquireTxLock('VIP');
         await db.run('BEGIN TRANSACTION');
         const testUuid = `VERIFY_TEST_${Date.now()}`;
         const insertResult = await db.run(
@@ -107,8 +108,9 @@ export class VerificationService {
           throw new Error('Data inserted is not retrievable');
         }
       } finally {
-        // Always roll back to clean the database
+        // Always roll back to clean the database and release lock
         await db.run('ROLLBACK').catch(() => {});
+        if (releaseLock) releaseLock();
       }
 
       return {

@@ -20,8 +20,8 @@ function isNodeSea(): boolean {
   }
 }
 
-/** True when running as a packaged single executable (Node SEA), not from source. */
-export const isPackagedApp = (): boolean => isNodeSea();
+/** True when running as a packaged single executable (Node SEA) or in packaged Electron mode, not from raw source. */
+export const isPackagedApp = (): boolean => isNodeSea() || process.env.ELECTRON_MODE === 'true';
 
 // Load environment variables from .env file. dotenv's default behaviour reads
 // `.env` from process.cwd(), which is only the app folder when launched with an

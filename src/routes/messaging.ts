@@ -153,6 +153,10 @@ router.post('/connect', async (req, res) => {
     if (explicitlyDisabled) {
       return res.status(400).json({ error: 'WhatsApp is currently disabled in Settings. Enable WhatsApp before connecting.' });
     }
+    // Clear any lingering login window lock flags
+    setLoginWindowActive(false);
+    const authPath = path.resolve(getAppDataDir(), '.wwebjs_auth', 'session');
+    cleanProfileLockFiles(authPath);
     initClient({ forceQr: true, manual: true }).catch(console.error);
     res.json({ success: true, message: 'Initializing WhatsApp QR code scan...' });
   } catch (err: any) {
@@ -185,8 +189,7 @@ router.post('/login-window', async (req, res) => {
       if (!fs.existsSync(authPath)) fs.mkdirSync(authPath, { recursive: true });
       cleanProfileLockFiles(authPath);
 
-      // Spawn Chrome directly — opens instantly, no Puppeteer init overhead.
-      // Background whatsapp-web.js client re-inits on exit to capture the session.
+      // Spawn Chrome directly — opens visibly and independently in foreground
       console.log('[WhatsApp] Spawning Chrome natively from:', chromePath);
       const { spawn: spawnProc } = await import('child_process');
       const chromeProc = spawnProc(chromePath, [
@@ -203,7 +206,7 @@ router.post('/login-window', async (req, res) => {
         '--mute-audio',
         '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'https://web.whatsapp.com/'
-      ], { detached: false, stdio: 'ignore' });
+      ], { detached: false, stdio: 'ignore', windowsHide: false });
 
       chromeProc.on('error', (e: Error) => {
         console.warn('[WhatsApp] Chrome spawn error:', e.message);

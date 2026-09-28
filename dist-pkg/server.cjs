@@ -66,7 +66,7 @@ var init_config = __esm({
     import_fs = __toESM(require("fs"), 1);
     __filename2 = (0, import_url.fileURLToPath)(import_meta_url);
     __dirname2 = import_path.default.dirname(__filename2);
-    isPackagedApp = () => isNodeSea();
+    isPackagedApp = () => isNodeSea() || process.env.ELECTRON_MODE === "true";
     if (isPackagedApp()) {
       (0, import_dotenv.config)({ path: import_path.default.join(import_path.default.dirname(process.execPath), ".env") });
     } else {
@@ -39287,6 +39287,7 @@ function hasSavedSession() {
 }
 async function isProductionAppRunning() {
   if (isPackagedApp()) return false;
+  if (Number(process.env.PORT || config.port) === 5175) return false;
   return new Promise((resolve) => {
     import("http").then((http3) => {
       const req = http3.get("http://127.0.0.1:5175/api/health", { timeout: 800 }, (res) => {
@@ -39311,7 +39312,19 @@ async function isWhatsAppAutoConnectAllowed() {
   try {
     const db2 = await dbManager.getConnection();
     const authRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_session_authenticated'");
-    return authRow?.value === "true";
+    if (authRow?.value === "false") return false;
+    if (authRow?.value === "true") return true;
+    if (authRow === void 0) {
+      console.log("[WhatsApp Auto-Heal] Existing valid session detected on disk without explicit disconnect. Healing whatsapp_session_authenticated to true.");
+      try {
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+           ON CONFLICT(key) DO UPDATE SET value = 'true'`
+        );
+      } catch (_) {
+      }
+      return true;
+    }
   } catch (err) {
     console.error("[WhatsApp] Failed to query session authentication status:", err);
   }
@@ -40030,6 +40043,9 @@ function launchClientInstance(forceQr) {
       "--renderer-process-limit=1",
       "--js-flags=--max-old-space-size=256"
     ];
+    const sessionDir = import_path23.default.join(WWEBJS_AUTH_DIR, "session");
+    cleanProfileLockFiles(sessionDir);
+    cleanProfileLockFiles(import_path23.default.join(sessionDir, "Default"));
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
       puppeteer: execPath ? { executablePath: execPath, headless: true, args: puppeteerArgs } : { headless: true, args: puppeteerArgs }
@@ -41125,6 +41141,10 @@ async function getChats() {
        FROM whatsapp_chats
        ORDER BY timestamp DESC`
     );
+    if (rows.length === 0 && clientInstance && isReady && !isSyncing) {
+      syncWhatsappData(clientInstance).catch(() => {
+      });
+    }
     const nowMs = Date.now();
     const dedupedMap = /* @__PURE__ */ new Map();
     for (const r of rows) {
@@ -50242,6 +50262,10 @@ var init_connection = __esm({
         if (!force) return;
         if (this.connection) {
           try {
+            await this.connection.run("PRAGMA wal_checkpoint(TRUNCATE);");
+          } catch (_) {
+          }
+          try {
             await this.connection.close();
           } catch (e) {
           }
@@ -51870,7 +51894,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.18";
+    APP_VERSION = "0.1.19";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -63868,7 +63892,9 @@ var init_verificationService = __esm({
           if (missingIndexes.length > 0) {
             console.warn(`[Verification] Warning: Recommended indexes missing: ${missingIndexes.join(", ")}`);
           }
+          let releaseLock = null;
           try {
+            releaseLock = await dbManager.acquireTxLock("VIP");
             await db2.run("BEGIN TRANSACTION");
             const testUuid = `VERIFY_TEST_${Date.now()}`;
             const insertResult = await db2.run(
@@ -63889,6 +63915,7 @@ var init_verificationService = __esm({
           } finally {
             await db2.run("ROLLBACK").catch(() => {
             });
+            if (releaseLock) releaseLock();
           }
           return {
             success: true,
@@ -67578,6 +67605,9 @@ var init_messaging = __esm({
         if (explicitlyDisabled) {
           return res.status(400).json({ error: "WhatsApp is currently disabled in Settings. Enable WhatsApp before connecting." });
         }
+        setLoginWindowActive(false);
+        const authPath = import_path46.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
+        cleanProfileLockFiles(authPath);
         initClient({ forceQr: true, manual: true }).catch(console.error);
         res.json({ success: true, message: "Initializing WhatsApp QR code scan..." });
       } catch (err) {
@@ -67618,7 +67648,7 @@ var init_messaging = __esm({
             "--mute-audio",
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "https://web.whatsapp.com/"
-          ], { detached: false, stdio: "ignore" });
+          ], { detached: false, stdio: "ignore", windowsHide: false });
           chromeProc.on("error", (e) => {
             console.warn("[WhatsApp] Chrome spawn error:", e.message);
             setLoginWindowActive(false);

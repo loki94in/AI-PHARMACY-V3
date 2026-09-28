@@ -604,6 +604,9 @@ class DatabaseManager {
     if (!force) return;
     if (this.connection) {
       try {
+        await this.connection.run('PRAGMA wal_checkpoint(TRUNCATE);');
+      } catch (_) {}
+      try {
         await this.connection.close();
       } catch (e) {}
       this.connection = null;
