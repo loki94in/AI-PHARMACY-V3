@@ -409,8 +409,7 @@ router.post('/enqueue-single', async (req, res) => {
 router.post('/flush', async (_req, res) => {
   try {
     whatsappQueueWorker.triggerProcessing();
-    const state = await whatsappQueueWorker.getWorkerState();
-    res.json({ success: true, message: 'Queue processing triggered', state });
+    res.json({ success: true, message: 'Queue processing triggered' });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to trigger queue processing' });
   }
@@ -420,8 +419,7 @@ router.post('/flush', async (_req, res) => {
 router.post('/toggle-pause', async (_req, res) => {
   try {
     const isPaused = whatsappQueueWorker.togglePaused();
-    const state = await whatsappQueueWorker.getWorkerState();
-    res.json({ success: true, isPaused, message: isPaused ? 'Queue paused' : 'Queue resumed', state });
+    res.json({ success: true, isPaused, message: isPaused ? 'Queue paused' : 'Queue resumed' });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to toggle queue pause' });
   }
@@ -431,8 +429,7 @@ router.post('/toggle-pause', async (_req, res) => {
 router.post('/pause', async (_req, res) => {
   try {
     whatsappQueueWorker.setPaused(true);
-    const state = await whatsappQueueWorker.getWorkerState();
-    res.json({ success: true, isPaused: true, message: 'Queue paused', state });
+    res.json({ success: true, isPaused: true, message: 'Queue paused' });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to pause queue' });
   }
@@ -443,8 +440,7 @@ router.post('/resume', async (_req, res) => {
   try {
     whatsappQueueWorker.setPaused(false);
     whatsappQueueWorker.triggerProcessing();
-    const state = await whatsappQueueWorker.getWorkerState();
-    res.json({ success: true, isPaused: false, message: 'Queue resumed', state });
+    res.json({ success: true, isPaused: false, message: 'Queue resumed' });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to resume queue' });
   }
@@ -573,8 +569,7 @@ router.post('/items/:id/resend', async (req, res) => {
 router.post('/flush-next', async (_req, res) => {
   try {
     const forced = await whatsappQueueWorker.forceNext();
-    const state = await whatsappQueueWorker.getWorkerState();
-    res.json({ success: true, forced, message: forced ? 'Dispatched next queue item immediately' : 'No pending items in queue', state });
+    res.json({ success: true, forced, message: forced ? 'Dispatched next queue item immediately' : 'No pending items in queue' });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to dispatch next item' });
   }

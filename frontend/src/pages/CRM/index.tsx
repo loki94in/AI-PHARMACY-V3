@@ -682,30 +682,55 @@ const RefillsSection: React.FC = () => {
   };
 
   const handleTogglePauseRefill = async (refillId: number, currentIsActive: boolean) => {
+    // Optimistic: flip is_active in local state immediately
+    setData(prev => prev.map(p => ({
+      ...p,
+      medicines: (p.medicines || []).map(m => m.id === refillId ? { ...m, is_active: currentIsActive ? 0 : 1 } : m)
+    })));
     try {
       const res = await apiClient.post(`/refills/${refillId}/toggle-pause`);
       toastEvent.trigger(res.data?.message || `Refill ${currentIsActive ? 'paused' : 'resumed'}`, 'success', '/crm');
       refillEvent.triggerRefresh();
-      await load(true);
     } catch (err) {
+      // Rollback on failure
+      setData(prev => prev.map(p => ({
+        ...p,
+        medicines: (p.medicines || []).map(m => m.id === refillId ? { ...m, is_active: currentIsActive ? 1 : 0 } : m)
+      })));
       toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to toggle pause state', 'error', '/crm');
     }
   };
 
   const handleCancelRefill = async (refillId: number) => {
     if (!window.confirm('Are you sure you want to cancel this refill schedule? (It will stay preserved in your history)')) return;
+    // Optimistic: mark medicine as inactive in local state
+    setData(prev => prev.map(p => ({
+      ...p,
+      medicines: (p.medicines || []).map(m => m.id === refillId ? { ...m, is_active: 0, status: 'cancelled' } : m)
+    })));
     try {
       await apiClient.post(`/refills/${refillId}/cancel`);
       toastEvent.trigger('Refill schedule canceled and preserved in history', 'success', '/crm');
       refillEvent.triggerRefresh();
-      await load(true);
     } catch (err) {
+      // Rollback
+      setData(prev => prev.map(p => ({
+        ...p,
+        medicines: (p.medicines || []).map(m => m.id === refillId ? { ...m, is_active: 1, status: 'pending' } : m)
+      })));
       toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to cancel refill', 'error', '/crm');
     }
   };
 
   const handleDeletePatientRefill = async (patient: RefillPatient) => {
     if (!window.confirm(`Are you sure you want to permanently delete the refill schedule for "${patient.patient_name}"?`)) return;
+    // Optimistic: remove patient from local list immediately
+    setData(prev => prev.filter(p => p.patient_phone !== patient.patient_phone));
+    if (selectedPatient?.patient_phone === patient.patient_phone) {
+      setSelectedPatient(null);
+      setFulfillments([]);
+      setInvoices([]);
+    }
     try {
       const ids = (patient.medicines || []).map(m => m.id).filter(Boolean);
       const res = await apiClient.post('/refills/delete-patient', {
@@ -716,21 +741,28 @@ const RefillsSection: React.FC = () => {
       });
       toastEvent.trigger(res.data?.message || `Refill schedule deleted for ${patient.patient_name}`, 'success', '/crm');
       refillEvent.triggerRefresh();
-      await load(true);
     } catch (err) {
+      // Rollback: restore from server
       toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to delete refill schedule', 'error', '/crm');
+      load(true);
     }
   };
 
   const handleDeleteRefillItem = async (refillId: number, medicineName: string) => {
     if (!window.confirm(`Are you sure you want to permanently delete "${medicineName}" from this refill schedule?`)) return;
+    // Optimistic: remove medicine from patient's medicines list
+    setData(prev => prev.map(p => ({
+      ...p,
+      medicines: (p.medicines || []).filter(m => m.id !== refillId)
+    })).filter(p => (p.medicines || []).length > 0));
     try {
       const res = await apiClient.delete(`/refills/${refillId}`);
       toastEvent.trigger(res.data?.message || `Deleted "${medicineName}" from refill schedule`, 'success', '/crm');
       refillEvent.triggerRefresh();
-      await load(true);
     } catch (err) {
+      // Rollback
       toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to delete refill item', 'error', '/crm');
+      load(true);
     }
   };
 

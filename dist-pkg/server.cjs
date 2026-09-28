@@ -51894,7 +51894,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.19";
+    APP_VERSION = "0.1.20";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -69095,8 +69095,9 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router19.put("/:id", async (req, res) => {
+    router19.put("/:id", async (req, res, next) => {
       const { id } = req.params;
+      if (!/^\d+$/.test(id)) return next();
       const { patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, hold_for_stock, is_active } = req.body;
       let db2;
       try {
@@ -69389,7 +69390,6 @@ var init_refills = __esm({
             [recalculatedNextDate, pauseDurationSeconds, id]
           );
         }
-        await checkAllRefills(db2);
         try {
           eventService.broadcast("refill_updated", { at: Date.now(), refillId: id, is_active: newIsActive });
         } catch (_) {
@@ -69399,6 +69399,9 @@ var init_refills = __esm({
           is_active: newIsActive,
           next_refill_date: recalculatedNextDate,
           message: `Refill schedule ${newIsActive === 0 ? "paused" : "resumed"} successfully`
+        });
+        setImmediate(() => {
+          checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after pause:", e));
         });
       } catch (err) {
         console.error("Failed to toggle refill pause:", err);
@@ -69419,8 +69422,10 @@ var init_refills = __esm({
        WHERE type = 'refill_collection' AND reference_id = ? AND lifecycle_status = 'staged'`,
           [String(id)]
         );
-        await checkAllRefills(db2);
         res.json({ success: true, message: "Refill schedule canceled successfully" });
+        setImmediate(() => {
+          checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after cancel:", e));
+        });
       } catch (err) {
         console.error("Failed to cancel refill:", err);
         res.status(500).json({ error: "Internal server error: " + err.message });
@@ -69474,24 +69479,30 @@ var init_refills = __esm({
             `DELETE FROM patient_refills WHERE id IN (${placeholders})`,
             refillIds
           );
-          await checkAllRefills(db2);
-          return res.json({
+          res.json({
             success: true,
             deletedCount: result.changes || refillIds.length,
             message: "Patient refill schedule deleted successfully"
           });
+          setImmediate(() => {
+            checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after delete:", e));
+          });
+          return;
         } else {
           let deleted = 0;
           if (phone) {
             const delRes = await db2.run("DELETE FROM patient_refills WHERE patient_phone = ? OR patient_phone LIKE ?", [phone, `%${phone.replace(/\D/g, "").slice(-10)}%`]);
             deleted = delRes.changes || 0;
           }
-          await checkAllRefills(db2);
-          return res.json({
+          res.json({
             success: true,
             deletedCount: deleted,
             message: "Patient refill schedule deleted successfully"
           });
+          setImmediate(() => {
+            checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after delete:", e));
+          });
+          return;
         }
       } catch (err) {
         console.error("Failed to delete patient refill schedule:", err);
@@ -80541,12 +80552,13 @@ var init_sales = __esm({
             console.warn(`[POS WhatsApp] Invalid/missing 10-digit phone number for invoice ${invoice_no} \u2014 skipping WhatsApp dispatch.`);
           }
         }
-        const matchedSpecialOrders = [];
-        try {
-          const distinctMedNames = Array.from(new Set(
-            items.map((it) => (it.medicine_name || "").trim()).filter(Boolean)
-          ));
-          if (distinctMedNames.length > 0) {
+        res.json({ success: true, invoice_no, invoice_id: invoiceId, id: invoiceId, total, tax, matched_special_orders: [] });
+        setImmediate(async () => {
+          try {
+            const distinctMedNames = Array.from(new Set(
+              items.map((it) => (it.medicine_name || "").trim()).filter(Boolean)
+            ));
+            if (distinctMedNames.length === 0) return;
             const openOrders = await db2.all(
               `SELECT id as order_id, product as medicine, qty as qty_ordered, requester, phone as customer_phone, status as order_status
            FROM special_orders
@@ -80565,29 +80577,17 @@ var init_sales = __esm({
               }
               if (best) {
                 consumedOrderIds.add(best.order.order_id);
-                const m = best.order;
-                const specMsg = `Hi ${m.requester || "Customer"}, your special order for *${m.medicine}* (Qty: ${item.quantity || 1}) has been billed & fulfilled. Thank you!`;
-                matchedSpecialOrders.push({
-                  ...m,
-                  qty_sold: Number(item.quantity) || 1,
-                  match_confidence: best.score / 100,
-                  whatsapp_template: specMsg
-                });
                 try {
-                  await db2.run(
-                    `UPDATE special_orders SET status = 'Fulfilled' WHERE id = ?`,
-                    [m.order_id]
-                  );
+                  await db2.run(`UPDATE special_orders SET status = 'Fulfilled' WHERE id = ?`, [best.order.order_id]);
                 } catch (specErr) {
-                  console.warn(`[Special Order] Failed to update fulfilled status for order #${m.order_id}:`, specErr);
+                  console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
                 }
               }
             }
+          } catch (soErr) {
+            console.warn("[POS Special Orders bg] Error processing matched special orders:", soErr);
           }
-        } catch (soErr) {
-          console.warn("[POS Special Orders] Error processing matched special orders:", soErr);
-        }
-        res.json({ success: true, invoice_no, invoice_id: invoiceId, id: invoiceId, total, tax, matched_special_orders: matchedSpecialOrders });
+        });
       } catch (error) {
         if (db2) {
           try {
@@ -95529,8 +95529,7 @@ ${order.items || "Standard Pharmacy Order"}
     router55.post("/flush", async (_req, res) => {
       try {
         whatsappQueueWorker.triggerProcessing();
-        const state = await whatsappQueueWorker.getWorkerState();
-        res.json({ success: true, message: "Queue processing triggered", state });
+        res.json({ success: true, message: "Queue processing triggered" });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to trigger queue processing" });
       }
@@ -95538,8 +95537,7 @@ ${order.items || "Standard Pharmacy Order"}
     router55.post("/toggle-pause", async (_req, res) => {
       try {
         const isPaused = whatsappQueueWorker.togglePaused();
-        const state = await whatsappQueueWorker.getWorkerState();
-        res.json({ success: true, isPaused, message: isPaused ? "Queue paused" : "Queue resumed", state });
+        res.json({ success: true, isPaused, message: isPaused ? "Queue paused" : "Queue resumed" });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to toggle queue pause" });
       }
@@ -95547,8 +95545,7 @@ ${order.items || "Standard Pharmacy Order"}
     router55.post("/pause", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(true);
-        const state = await whatsappQueueWorker.getWorkerState();
-        res.json({ success: true, isPaused: true, message: "Queue paused", state });
+        res.json({ success: true, isPaused: true, message: "Queue paused" });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to pause queue" });
       }
@@ -95557,8 +95554,7 @@ ${order.items || "Standard Pharmacy Order"}
       try {
         whatsappQueueWorker.setPaused(false);
         whatsappQueueWorker.triggerProcessing();
-        const state = await whatsappQueueWorker.getWorkerState();
-        res.json({ success: true, isPaused: false, message: "Queue resumed", state });
+        res.json({ success: true, isPaused: false, message: "Queue resumed" });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to resume queue" });
       }
@@ -95675,8 +95671,7 @@ ${order.items || "Standard Pharmacy Order"}
     router55.post("/flush-next", async (_req, res) => {
       try {
         const forced = await whatsappQueueWorker.forceNext();
-        const state = await whatsappQueueWorker.getWorkerState();
-        res.json({ success: true, forced, message: forced ? "Dispatched next queue item immediately" : "No pending items in queue", state });
+        res.json({ success: true, forced, message: forced ? "Dispatched next queue item immediately" : "No pending items in queue" });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to dispatch next item" });
       }

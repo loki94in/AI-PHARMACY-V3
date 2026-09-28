@@ -272,10 +272,15 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   };
 
   const handleTogglePause = async () => {
+    // Optimistic: flip isPaused immediately so the button responds at click-time
+    setQueueState(prev => prev ? { ...prev, isPaused: !prev.isPaused } : prev);
     try {
       await apiClient.post('/whatsapp/queue/toggle-pause');
-      await fetchStatus();
+      // Background refresh to sync truth from server (non-blocking for the user)
+      fetchStatus(true);
     } catch (_err) {
+      // Rollback optimistic flip
+      setQueueState(prev => prev ? { ...prev, isPaused: !prev.isPaused } : prev);
       toastEvent.trigger('Failed to toggle queue pause', 'error');
     }
   };

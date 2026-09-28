@@ -3693,16 +3693,12 @@ const POS = () => {
       }
       const invoiceNo = result!.invoice_no || result!.invoiceNo || 'SAVED';
 
-      // Verification Layer Check: Post-save history validation
+      // Verification Layer Check: Post-save history validation — fire-and-forget so it never
+      // blocks the cashier UI. The invoice is already committed; this is a sanity log only.
       if (invoiceNo !== 'SAVED') {
-        try {
-          const syncVerify = await api.verifySalesHistory(invoiceNo);
-          if (!syncVerify.success) {
-            console.error(`[Verification Layer] Post-save sync check failed: ${syncVerify.message}`);
-          }
-        } catch (syncErr) {
-          console.error('[Verification Layer] Post-save verification API failed:', syncErr);
-        }
+        api.verifySalesHistory(invoiceNo)
+          .then(syncVerify => { if (!syncVerify.success) console.error(`[Verification Layer] Post-save sync check failed: ${syncVerify.message}`); })
+          .catch(syncErr => console.error('[Verification Layer] Post-save verification API failed:', syncErr));
       }
       
       // Centralized cache invalidation for frontend lists and local infinite scroll caches

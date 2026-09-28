@@ -431,8 +431,10 @@ router.post('/check', async (req, res) => {
 });
 
 // Update a refill schedule manually
-router.put('/:id', async (req, res) => {
+router.put('/:id', async (req, res, next) => {
   const { id } = req.params;
+  // Guard: non-numeric segments (e.g. 'patient-reminder-mode') must fall through
+  if (!/^\d+$/.test(id)) return next();
   const { patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, hold_for_stock, is_active } = req.body;
 
   let db;
@@ -779,19 +781,18 @@ router.post('/:id/toggle-pause', async (req, res) => {
       );
     }
 
-    // Re-run check to recalculate ready state or staged notifications
-    await checkAllRefills(db);
-
     try {
       eventService.broadcast('refill_updated', { at: Date.now(), refillId: id, is_active: newIsActive });
     } catch (_) {}
 
+    // Respond immediately — checkAllRefills is a full-table scan, run it in the background
     res.json({
       success: true,
       is_active: newIsActive,
       next_refill_date: recalculatedNextDate,
       message: `Refill schedule ${newIsActive === 0 ? 'paused' : 'resumed'} successfully`
     });
+    setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after pause:', e)); });
   } catch (err: any) {
     console.error('Failed to toggle refill pause:', err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });
@@ -813,8 +814,9 @@ router.post('/:id/cancel', async (req, res) => {
        WHERE type = 'refill_collection' AND reference_id = ? AND lifecycle_status = 'staged'`,
       [String(id)]
     );
-    await checkAllRefills(db);
+    // Respond immediately — background the full-table scan
     res.json({ success: true, message: 'Refill schedule canceled successfully' });
+    setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after cancel:', e)); });
   } catch (err: any) {
     console.error('Failed to cancel refill:', err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });
@@ -883,13 +885,14 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
         refillIds
       );
 
-      await checkAllRefills(db);
-
-      return res.json({
+      // Respond immediately — background the full-table scan
+      res.json({
         success: true,
         deletedCount: result.changes || refillIds.length,
         message: 'Patient refill schedule deleted successfully'
       });
+      setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after delete:', e)); });
+      return;
     } else {
       // Direct deletion fallback if query had no pre-match
       let deleted = 0;
@@ -897,12 +900,14 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
         const delRes = await db.run('DELETE FROM patient_refills WHERE patient_phone = ? OR patient_phone LIKE ?', [phone, `%${phone.replace(/\D/g, '').slice(-10)}%`]);
         deleted = delRes.changes || 0;
       }
-      await checkAllRefills(db);
-      return res.json({
+      // Respond immediately — background the full-table scan
+      res.json({
         success: true,
         deletedCount: deleted,
         message: 'Patient refill schedule deleted successfully'
       });
+      setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after delete:', e)); });
+      return;
     }
   } catch (err: any) {
     console.error('Failed to delete patient refill schedule:', err);

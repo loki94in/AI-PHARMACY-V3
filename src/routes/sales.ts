@@ -893,27 +893,27 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Match special orders for each item in the saved POS bill.
-    // Uses the shared scorer (exact fast-path + High-tier fuzzy >= ARRIVAL_MATCH_THRESHOLD)
-    // scoped strictly to ACTIVE in-app order statuses, so old/fulfilled/cancelled orders
-    // are never consumed by a new sale.
-    const matchedSpecialOrders: any[] = [];
-    try {
-      const distinctMedNames = Array.from(new Set(
-        items.map((it: any) => (it.medicine_name || '').trim()).filter(Boolean)
-      ));
-      if (distinctMedNames.length > 0) {
-        const openOrders = await db.all(
+    // Special order matching: runs in background after response is sent.
+    // Never blocks the cashier — the cashier UI reads matched_special_orders from
+    // SSE/refetch, not from this synchronous response body.
+    res.json({ success: true, invoice_no, invoice_id: invoiceId, id: invoiceId, total, tax, matched_special_orders: [] });
+
+    // Defer CPU-bound fuzzy match + DB write until after HTTP flush
+    setImmediate(async () => {
+      try {
+        const distinctMedNames = Array.from(new Set(
+          items.map((it: any) => (it.medicine_name || '').trim()).filter(Boolean)
+        ));
+        if (distinctMedNames.length === 0) return;
+        const openOrders = await db!.all(
           `SELECT id as order_id, product as medicine, qty as qty_ordered, requester, phone as customer_phone, status as order_status
            FROM special_orders
            WHERE status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'OVERLAP_DETECTED', 'POTENTIAL_ARRIVAL', 'Pending', 'Ordered', 'Ready')`
         );
         const consumedOrderIds = new Set<number>();
-
         for (const item of items) {
           const medName = (item.medicine_name || '').trim();
           if (!medName) continue;
-
           let best: { order: any; score: number } | null = null;
           for (const order of openOrders) {
             if (consumedOrderIds.has(order.order_id)) continue;
@@ -921,34 +921,19 @@ router.post('/', async (req, res) => {
             if (match.score < ARRIVAL_MATCH_THRESHOLD) continue;
             if (!best || match.score > best.score) best = { order, score: match.score };
           }
-
           if (best) {
             consumedOrderIds.add(best.order.order_id);
-            const m = best.order;
-            const specMsg = `Hi ${m.requester || 'Customer'}, your special order for *${m.medicine}* (Qty: ${item.quantity || 1}) has been billed & fulfilled. Thank you!`;
-            matchedSpecialOrders.push({
-              ...m,
-              qty_sold: Number(item.quantity) || 1,
-              match_confidence: best.score / 100,
-              whatsapp_template: specMsg
-            });
-            // Update special order to Fulfilled in DB without auto-sending message
             try {
-              await db.run(
-                `UPDATE special_orders SET status = 'Fulfilled' WHERE id = ?`,
-                [m.order_id]
-              );
+              await db!.run(`UPDATE special_orders SET status = 'Fulfilled' WHERE id = ?`, [best.order.order_id]);
             } catch (specErr) {
-              console.warn(`[Special Order] Failed to update fulfilled status for order #${m.order_id}:`, specErr);
+              console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
             }
           }
         }
+      } catch (soErr) {
+        console.warn('[POS Special Orders bg] Error processing matched special orders:', soErr);
       }
-    } catch (soErr) {
-      console.warn('[POS Special Orders] Error processing matched special orders:', soErr);
-    }
-
-    res.json({ success: true, invoice_no, invoice_id: invoiceId, id: invoiceId, total, tax, matched_special_orders: matchedSpecialOrders });
+    });
   } catch (error) {
     if (db) {
       try {
