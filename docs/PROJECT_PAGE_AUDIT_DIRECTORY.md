@@ -30,8 +30,8 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 | Feature Area | Authoritative New Location | Legacy / Obsolete Path (DO NOT USE) | Found Vulnerability / Risk |
 | :--- | :--- | :--- | :--- |
 | **Delivery Boy Management** | `/dispatch` (`Dispatch/index.tsx`) & `delivery_boys` DB table (`GET /api/dispatch/delivery-boys`) | `Settings` (`/settings`), `Learning` (`/learning`), & `app_settings` keys (`delivery_boy_whatsapp`, `dinesh_whatsapp_number`) | `Learning/index.tsx` still renders inputs saving to `settingsData.delivery_boy_whatsapp`; `PharmarackCart/index.tsx` and background services fall back to querying `app_settings` for `dinesh_whatsapp_number`. |
-| **Special Shortage Orders** | `/orders` (`Orders/index.tsx`) & `special_orders` DB table | `pending_shortage_requests` DB table in `shortageReminderService.ts` | Dual database tables exist for shortage requests. Frontend uses `special_orders`, while background reminder service queries `pending_shortage_requests`. |
-| **Patient Refills** | `/refills` (`Refills/index.tsx`) & `patient_refills` DB table | Hardcoded modal calls | Refill alerts and stock holds were previously split across `Layout.tsx` and `Refills`. Unified under `/refills` & `LiveCartAddModal`. |
+| **Special Shortage Orders** | `/crm?tab=special_orders` writes `special_orders` (`GET/POST/PUT/DELETE /api/orders`). Quick Assist shows the same rows | `pending_shortage_requests`; a second orders page | Patient management stays on CRM. Quick Assist is a mirror (`api.getOrders()`), not a second store. See `AGENT_DATA_FLOW_TREE.md`. |
+| **Patient Refills** | `/crm?tab=refills` writes `patient_refills`. Quick Assist shows the same `api.getRefills()` rows. `/refills` redirects to CRM | A second refill list | CRM is the patient screen. Quick Assist is the mirror. See `AGENT_DATA_FLOW_TREE.md`. |
 | **Invoice File Format Config** | `/purchases` (`Purchases/index.tsx`) & `/mail` (`Mail/index.tsx`) | `distributor_invoice_file_format` in `Settings` | Format settings present in `Settings`, but parsing logic is in `Mail` and `Purchases`. |
 | **WhatsApp System Config** | `Settings` (`/settings`) & `/messaging` APIs | Hardcoded WhatsApp Web extensions | Dual engines exist: Web extension `postMessage` vs. WhatsApp Business API (`wa_business_access_token`). |
 
@@ -149,13 +149,13 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 
 ---
 
-### 12. Special Orders & Requests (`/orders`)
-* **Component Path**: [pages/Orders/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/Orders/index.tsx)
-* **Authoritative Responsibilities**: Customer special shortage requests, requester contact info, priority status (`Pending`, `Ordered`, `Fulfilled`).
+### 12. Special Orders & Requests (`/crm?tab=special_orders`)
+* **Component Path**: `frontend/src/pages/CRM/index.tsx` (special-orders tab). Quick Assist mirror: `QuickAssistSidebar` in `frontend/src/components/Layout.tsx`.
+* **Authoritative Responsibilities**: Customer special shortage requests, requester contact info, priority status (`Pending`, `Ordered`, `Fulfilled`). The user manages these on CRM. Quick Assist lists the same `api.getOrders()` rows and may change status or hand off to POS; it does not keep its own table.
 * **Authoritative Data Sources**: `GET /api/orders`, `POST /api/orders`, `PUT /api/orders/:id`.
 * **Database Tables**: `special_orders`.
 * **Verified Status**:
-  - **Single Source of Truth**: Backend `shortageReminderService.ts` and frontend `/orders` are fully unified on `special_orders` table.
+  - **Single Source of Truth**: CRM is the patient screen. Quick Assist reads the same API. Do not point new code at `pending_shortage_requests`. Direction rules: `AGENT_DATA_FLOW_TREE.md`.
 
 ---
 
@@ -169,8 +169,8 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 
 ---
 
-### 14. Chronic Patient Refills (`/refills`)
-* **Component Path**: [pages/Refills/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/Refills/index.tsx)
+### 14. Chronic Patient Refills (`/crm?tab=refills`)
+* **Component Path**: CRM refills tab in `frontend/src/pages/CRM/index.tsx`. `/refills` redirects there. Quick Assist lists the same `api.getRefills()` rows.
 * **Authoritative Responsibilities**: Managing chronic patient medicine refills, calculating next due dates, holding stock, triggering Pharmarack live cart search via `LiveCartAddModal`.
 * **Authoritative Data Sources**: `GET /api/refills`, `POST /api/refills`, `PUT /api/refills/:id`.
 * **Database Tables**: `patient_refills`.
@@ -211,9 +211,9 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 
 ### 18. Customer Relationship Management / CRM (`/crm`)
 * **Component Path**: [pages/CRM/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/index.tsx)
-* **Authoritative Responsibilities**: Patient & customer directory, phone numbers, total purchase history, pending credit balances, customer WhatsApp communications.
-* **Authoritative Data Sources**: `GET /api/customers`, `POST /api/customers`, `GET /api/customers/:id/history`.
-* **Database Tables**: `customers`, `sales_invoices`.
+* **Authoritative Responsibilities**: Patient record for the shop loop. Directory, phone numbers, purchase history, credit, WhatsApp, plus special orders (`?tab=special_orders`) and refills (`?tab=refills`). Quick Assist reflects those same special-order and refill rows. Sell Now hands `location.state.prefill` to `/pos` and does not write the invoice here.
+* **Authoritative Data Sources**: `GET /api/customers`, `POST /api/customers`, `GET /api/customers/:id/history`, `GET/POST /api/orders`, `GET/POST /api/refills`.
+* **Database Tables**: `customers`, `sales_invoices`, `special_orders`, `patient_refills`.
 
 ---
 

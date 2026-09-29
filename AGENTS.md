@@ -242,6 +242,16 @@ After fixing a bug in this repo, update `SMALL_BUG_FIX_PLAN.md` (move Open → F
 
 ---
 
+## Shop Data-Flow Tree (mandatory for the shop loop)
+
+Before adding a feature or fixing a bug on purchases, inventory, POS, sells, CRM, Quick Assist, or reports, agents **MUST** read **`AGENT_DATA_FLOW_TREE.md`**.
+
+That tree is the enforcement: one writer per fact, CRM as the patient record (refills and special orders), Quick Assist as the same rows, POS as the only sale writer. Extend the node that already exists. Do not add a parallel page, table, or cache for the same fact.
+
+Shortcut pointer: **`.agents/rules/data-flow-tree.md`**.
+
+---
+
 ## Database & Backend Schema Safety (mandatory for data-backed features)
 
 When creating or modifying features that query or persist SQLite data, agents **MUST** read before editing:
@@ -404,7 +414,7 @@ To prevent regressions, legacy fallback loops, and developer/AI confusion when f
 1. **Single Source of Truth**: All feature paths, page responsibilities, API endpoints, and database tables are documented in `docs/PROJECT_PAGE_AUDIT_DIRECTORY.md`.
 2. **Strict Route Ownership Rules**:
    - **Delivery Boy Management**: MUST ONLY be read/written via `/dispatch` (`Dispatch/index.tsx`) using the `delivery_boys` database table (`GET/POST /api/dispatch/delivery-boys`). **NEVER** read/write delivery boy details from `Settings` or `app_settings`.
-   - **Special Shortage Orders**: MUST ONLY be managed via `/orders` (`Orders/index.tsx`) using the `special_orders` database table (`GET/POST /api/orders`). **NEVER** introduce parallel logic pointing to `pending_shortage_requests`.
+   - **Special Shortage Orders**: Patient truth lives on `/crm?tab=special_orders` (`special_orders` via `GET/POST/PUT/DELETE /api/orders`). Quick Assist shows those same rows (`api.getOrders()`). Refills follow the same split: CRM `/crm?tab=refills` writes `patient_refills`; Quick Assist reads `api.getRefills()`. **NEVER** introduce a second patient list or point new code at `pending_shortage_requests`. Full direction rules: `AGENT_DATA_FLOW_TREE.md`.
    - **Pharma Intelligence Hub (`/ai-engineering`)**: The single 4-tab command center (`AIEngineering/index.tsx`) owning ALL AI-engineering surfaces. Tabs: `?tab=composition` (Composition Enrichment — `panels/CompositionPanel.tsx`, the ONLY UI for the `/enrichment/*` pipeline), `?tab=schedules` (Drug Schedules), `?tab=compliance` (H1 Compliance register) and `?tab=wa` (WA Requests — live feed of SSE `wa_medicine_match` events broadcast by `whatsappIntentService`; display-only, its manual lookup fires exactly ONE `searchPharmarack` per user click with no auto-retry; cosmetic / ayurvedic / homeopathy candidates are labeled `NON_ALLOPATHIC` by `detectNonAllopathicKind()` and skip Pharmarack searches server-side; photos consolidate to ONE search per image — extras ride along as local-only `relatedMedicines` chips, and the owner's WhatsApp gets the identification summary with the photo attached). Legacy routes `/composition-queue`, `/schedule-drugs`, `/compliance` are silent redirects preserving query params (POS's `/composition-queue?highlight=N` → `?tab=composition&highlight=N`). Do NOT recreate standalone pages for these features.
    - **Schedule Medicine Hub (Drug Schedules tab of `/ai-engineering`)**: The ONLY surface for browsing India drug-schedule classification (H / H1 / X) across the master catalog. Classification lives in `medicines.schedule_type` and is written EXCLUSIVELY by (a) the idempotent `scripts/classifyDrugSchedules.ts` backfill against the official D&C Rules lists (H1 = GSR 588(E)/2013 46 drugs; X appendix; H 2006 consolidated list), or (b) the user-clicked Google-OCR research confirm in the tab's Review New Medicines view (ONE search + ONE screenshot + OCR word-highlight, pharmacist confirms; evidence saved to metadata). Never hardcode schedule keywords or per-row classifications anywhere else — reference data lives only in `src/utils/drugSchedules.ts`. Sale-time compliance logging stays owned by the H1 Compliance tab via `invoiceService`.
    - **AI Learning Hub (`/learning`) & Settings Hub (`/settings`)**: `/learning` (`Learning/index.tsx`) is the dedicated 4-tab AI Learning command center managing Clinical AI retraining, OCR text correction rules, Doctor Directory, Distributor OCR layouts, and QR document scanning sandbox. `/settings` (`Settings/index.tsx`) is the store configuration hub managing Store Profile, Staff & Security, External Integrations, and Data & Backups. These pages function as completely separate routes with ZERO cross-page redirects.
