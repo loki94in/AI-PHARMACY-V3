@@ -685,8 +685,8 @@ router.get('/data-counts', async (req, res) => {
     const [medicines, inventory, bills, purchases, customers] = await Promise.all([
       safe('SELECT COUNT(*) as c FROM medicines'),
       safe('SELECT COUNT(*) as c FROM inventory_master'),
-      safe('SELECT COUNT(*) as c FROM bills'),
-      safe('SELECT COUNT(*) as c FROM purchase_bills'),
+      safe('SELECT COUNT(*) as c FROM sales_invoices'),
+      safe('SELECT COUNT(*) as c FROM purchases'),
       safe('SELECT COUNT(*) as c FROM customers'),
     ]);
     res.json({ medicines, inventory, bills, purchases, customers });
@@ -736,99 +736,151 @@ router.post('/reset-data', async (req, res) => {
       }
     }
 
-    // 2. Instead of deleting the DB file (fails on Windows due to file locks held by
-    //    child workers, backup service, etc.), we wipe all data IN-PLACE using SQL.
-    //    This is reliable because we can write to the DB through the existing connection.
-    const db = await dbManager.getConnection();
-
-    // 2a. Remove the FTS5 index as a unit before dropping anything else.
-    // Dropping medicines_fts also drops its shadow tables. Letting the generic loop
-    // below drop those shadow tables individually would leave the vtable declaration
-    // orphaned in sqlite_master, and an orphaned medicines_fts makes every later
-    // INSERT INTO medicines fail with "vtable constructor failed" — permanently,
-    // because a vtable whose constructor fails can no longer be dropped.
-    try { await db.exec('DROP TRIGGER IF EXISTS medicines_ai'); } catch (_) {}
-    try { await db.exec('DROP TRIGGER IF EXISTS medicines_ad'); } catch (_) {}
-    try { await db.exec('DROP TRIGGER IF EXISTS medicines_au'); } catch (_) {}
+    // 2. Stop running services and background tasks
     try {
-      await db.exec('DROP TABLE IF EXISTS medicines_fts');
-    } catch (_) {
-      // Already broken from an earlier reset — strip it out of the schema directly.
-      try {
-        const { purgeMedicinesFts } = await import('../database.js');
-        await purgeMedicinesFts(db);
-      } catch (purgeErr: any) {
-        console.warn('[Reset] Could not purge medicines_fts:', purgeErr.message);
-      }
+      const { tokenRefreshScheduler } = await import('../services/tokenRefreshScheduler.js');
+      tokenRefreshScheduler.stop();
+    } catch (_) {}
+    try {
+      const { stopEmailPoller } = await import('../worker/emailPoller.js');
+      stopEmailPoller();
+    } catch (_) {}
+    try {
+      const { stopMasterEnrichment } = await import('../services/masterMedicinesSeedService.js');
+      stopMasterEnrichment();
+    } catch (_) {}
+
+    // 2a. Destroy WhatsApp client FIRST so Chromium releases its file locks
+    try {
+      const { destroyClient } = await import('../whatsappClient.js');
+      await destroyClient();
+    } catch (err: any) {
+      console.warn('[Reset] Failed to destroy WhatsApp client before wipe:', err.message);
     }
 
-    // 2b. Get all user-created table names. FTS shadow tables are excluded: they are
-    // gone with the vtable above, and dropping them piecemeal is what causes the
-    // orphaned-index damage described in 2a.
-    const tables = await db.all(
+    // 2b. Kill orphan Chrome processes so Pharmarack Chromium profiles release file locks
+    try {
+      const { killOrphanChromeProcesses } = await import('../services/tokenRefreshScheduler.js');
+      await killOrphanChromeProcesses('pharmarack_profile');
+    } catch (err: any) {
+      console.warn('[Reset] Failed to kill Chrome processes:', err.message);
+    }
+
+    // 3. Database Purge: Wipes all operational/migrated tables, PRESERVES Master Medicines
+    const db = await dbManager.getConnection();
+    await db.run('PRAGMA foreign_keys = OFF');
+
+    // 3a. Clean transactional stock, racks, and purchase stats from master medicines
+    try {
+      await db.run(`
+        UPDATE medicines SET
+          total_stock = 0,
+          total_loose_stock = 0,
+          rack = NULL,
+          last_purchase_ptr = 0,
+          last_distributor_name = NULL,
+          last_purchase_date = NULL,
+          lowest_purchase_ptr = 0,
+          lowest_distributor_name = NULL
+      `);
+      // Purge non-master scratch rows created during previous migrations
+      await db.run("DELETE FROM medicines WHERE source IN ('migration', 'pg_migration')");
+    } catch (err: any) {
+      console.warn('[Reset] Failed to reset transactional fields on medicines:', err.message);
+    }
+
+    // 3b. Drop all user tables EXCEPT preserved master catalog, reference, and system structure tables
+    const preservedTables = new Set([
+      'medicines',
+      'medicines_fts',
+      'medicines_fts_data',
+      'medicines_fts_idx',
+      'medicines_fts_docsize',
+      'medicines_fts_config',
+      'api_substances',
+      'medicine_reference',
+      'substitutes',
+      'app_license',
+      'schema_migrations',
+      'app_settings',
+      'update_checks',
+      'stores',
+      ...(!wipeAll ? ['settings', 'store_settings'] : [])
+    ]);
+
+    const allTables = await db.all(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'medicines_fts%'"
     );
 
-    // 2c. Drop every table
-    for (const { name } of tables) {
-      try {
-        await db.run(`DROP TABLE IF EXISTS "${name}"`);
-      } catch (err: any) {
-        console.warn(`[Reset] Failed to drop table "${name}":`, err.message);
+    for (const { name } of allTables) {
+      if (!preservedTables.has(name)) {
+        try {
+          await db.run(`DROP TABLE IF EXISTS "${name}"`);
+        } catch (err: any) {
+          console.warn(`[Reset] Failed to drop table "${name}":`, err.message);
+        }
       }
     }
 
-    // 2c. Close the now-empty connection so ensureSchema gets a fresh one
+    // 3c. Close connection so ensureSchema gets a fresh one
     await dbManager.close(true);
 
-    // 2d. Also close the messageDAO connection so it reconnects to the fresh schema
+    // 3d. Close messageDAO connection
     try {
       closeMessageDAO();
     } catch (_) {}
 
-    // 2e. Lock and close all active staging database connections to release file locks on Windows
+    // 3e. Lock and close staging database connections
     try {
       const { closeAllStagingConnections, lockStagingDb } = await import('./migration.js');
       lockStagingDb();
       await closeAllStagingConnections();
     } catch (_) {}
 
-    // 3. Recreate all tables from scratch via the schema migrations
-    const { ensureSchema } = await import('../database.js');
+    // 4. Recreate all dropped tables from scratch via the schema migrations
+    const { ensureSchema, ensureMedicinesFts } = await import('../database.js');
     await ensureSchema(getDbPath());
 
-    // 3.1 Always unlock staging database after schema recreation so future migrations can connect
+    // 4.1 Unlock staging database
     try {
       const { unlockStagingDb } = await import('./migration.js');
       unlockStagingDb();
     } catch (_) {}
 
-    // 3a. Clear SQLite sequence counter so primary key IDs start cleanly from 1
+    // 4a. Clear SQLite sequence counter so primary key IDs start cleanly from 1 (except medicines)
+    const freshDb = await dbManager.getConnection();
     try {
-      const freshDb = await dbManager.getConnection();
-      await freshDb.run('DELETE FROM sqlite_sequence');
+      await freshDb.run("DELETE FROM sqlite_sequence WHERE name != 'medicines'");
     } catch (_) {}
 
-    // 3b. Invalidate in-memory inventory cache
+    // 4b. Ensure medicines_fts triggers & index integrity
+    try {
+      await ensureMedicinesFts(freshDb);
+    } catch (ftsErr: any) {
+      console.warn('[Reset] medicines_fts verify notice:', ftsErr.message);
+    }
+
+    // 4c. Invalidate in-memory inventory and search caches
     try {
       const { inventoryCache } = await import('../services/inventoryCache.js');
       inventoryCache.invalidate();
     } catch (_) {}
-
-    // 3c. Compact the DB file to reclaim space from dropped tables
     try {
-      const freshDb = await dbManager.getConnection();
+      const { searchCache } = await import('../services/searchCache.js');
+      searchCache.clear();
+    } catch (_) {}
+
+    // 4d. Compact DB file to reclaim space
+    try {
       await freshDb.run('VACUUM');
     } catch (_) {}
 
-
-    // 5. Restore configurations into the fresh database (skipped for full factory reset)
+    // 5. Restore configurations (if not full factory reset) or log factory reset
     if (!wipeAll) {
       try {
         const { open } = await import('sqlite');
         const { default: sqlite3 } = await import('sqlite3');
         const dbRaw = await open({ filename: getDbPath(), driver: sqlite3.Database });
-        
         await dbRaw.run('BEGIN TRANSACTION');
         try {
           for (const row of appSettingsRows) {
@@ -837,9 +889,8 @@ router.post('/reset-data', async (req, res) => {
           for (const row of settingsRows) {
             await dbRaw.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [row.key, row.value]);
           }
-          // Log reset event
           await dbRaw.run(
-            "INSERT INTO action_logs (action_type, description) VALUES ('SYSTEM_RESET', 'System data reset & database self-healed successfully')"
+            "INSERT INTO action_logs (action_type, description) VALUES ('SYSTEM_RESET', 'System data reset & database self-healed successfully. Master medicines preserved.')"
           );
           await dbRaw.run('COMMIT');
         } catch (err) {
@@ -851,15 +902,26 @@ router.post('/reset-data', async (req, res) => {
         console.error('[Reset] Failed to restore configurations:', err);
       }
     } else {
-      // Log the factory reset in the fresh DB + set flag to skip shutdown backup
       try {
         const { open } = await import('sqlite');
         const { default: sqlite3 } = await import('sqlite3');
         const dbRaw = await open({ filename: getDbPath(), driver: sqlite3.Database });
+        // Clean all configured rows on factory reset without dropping the core structure
+        try {
+          await dbRaw.run("DELETE FROM app_settings WHERE key NOT IN ('schema_version')");
+        } catch (_) {}
+        try {
+          await dbRaw.run("DELETE FROM update_checks");
+        } catch (_) {}
+        try {
+          await dbRaw.run("DELETE FROM settings");
+        } catch (_) {}
+        try {
+          await dbRaw.run("DELETE FROM store_settings");
+        } catch (_) {}
         await dbRaw.run(
-          "INSERT INTO action_logs (action_type, description) VALUES ('FACTORY_RESET', 'Full factory reset — all data and settings wiped')"
+          "INSERT INTO action_logs (action_type, description) VALUES ('FACTORY_RESET', 'Full factory reset — all operational data, migrated files, WhatsApp & Pharmarack auth wiped, master medicines preserved')"
         );
-        // Flag tells gracefulShutdown to skip the next shutdown backup
         await dbRaw.run(
           "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('factory_reset_pending', 'true')"
         );
@@ -868,6 +930,7 @@ router.post('/reset-data', async (req, res) => {
     }
 
     // 6. Clean up file directories on disk
+    const dataDir = path.resolve(getAppDataDir(), 'data');
     const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
     const attachmentsDir = path.resolve(getAppDataDir(), 'attachments');
     const reportsDir = path.resolve(getAppDataDir(), 'reports');
@@ -880,22 +943,40 @@ router.post('/reset-data', async (req, res) => {
 
     const clearDir = (dirPath: string, preserveFiles: string[] = []) => {
       if (!fs.existsSync(dirPath)) return;
-      const files = fs.readdirSync(dirPath);
-      for (const file of files) {
-        const filePath = path.join(dirPath, file);
-        const stat = fs.statSync(filePath);
-        if (stat.isDirectory()) {
-          clearDir(filePath, preserveFiles);
-          try {
-            if (fs.readdirSync(filePath).length === 0) {
-              fs.rmdirSync(filePath);
-            }
-          } catch (_) {}
-        } else {
-          if (!preserveFiles.includes(file)) {
+      try {
+        const files = fs.readdirSync(dirPath);
+        for (const file of files) {
+          const filePath = path.join(dirPath, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isDirectory()) {
+            clearDir(filePath, preserveFiles);
             try {
-              fs.unlinkSync(filePath);
+              if (fs.readdirSync(filePath).length === 0) {
+                fs.rmdirSync(filePath);
+              }
             } catch (_) {}
+          } else {
+            if (!preserveFiles.includes(file)) {
+              try { fs.unlinkSync(filePath); } catch (_) {}
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Reset] clearDir notice for ${dirPath}:`, err.message);
+      }
+    };
+
+    const removeDirWithRetry = async (dirPath: string, attempts = 3) => {
+      if (!fs.existsSync(dirPath)) return;
+      for (let i = 0; i < attempts; i++) {
+        try {
+          fs.rmSync(dirPath, { recursive: true, force: true });
+          return;
+        } catch (err: any) {
+          if (i === attempts - 1) {
+            console.warn(`[Reset] Failed to remove ${dirPath} after ${attempts} attempts:`, err.message);
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 300));
           }
         }
       }
@@ -912,161 +993,101 @@ router.post('/reset-data', async (req, res) => {
     clearDir(auditImagesDir);
 
     if (wipeAll) {
-      // Factory reset: also wipe all backup files, archives, snapshots
-      const backupDir = config.backupDir;
-      clearDir(backupDir); // clears all .db.gz files, archives/, snapshots/ subdirs
+      clearDir(config.backupDir);
+    }
 
-      // Wipe migration staging database (separate from app.db)
-      const dataDir = path.resolve(getAppDataDir(), 'data');
-      const stagingDbPath = path.join(dataDir, 'staging.db');
-      if (fs.existsSync(stagingDbPath)) {
-        try {
-          const { open } = await import('sqlite');
-          const { default: sqlite3 } = await import('sqlite3');
-          const stagingDb = await open({ filename: stagingDbPath, driver: sqlite3.Database });
-          await stagingDb.run('PRAGMA foreign_keys = OFF');
-          try {
-            await stagingDb.exec('DROP TABLE IF EXISTS medicines_fts');
-          } catch (_) {
-            const { purgeMedicinesFts, dropFtsTriggers } = await import('../database.js');
-            await dropFtsTriggers(stagingDb);
-            await purgeMedicinesFts(stagingDb);
-          }
-          const stagingTables = await stagingDb.all(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'medicines_fts%'"
-          );
-          for (const { name } of stagingTables) {
-            await stagingDb.run(`DROP TABLE IF EXISTS "${name}"`);
-          }
-          await stagingDb.run('VACUUM');
-          await stagingDb.close();
-        } catch (err) {
-          console.warn('[Reset] Failed to wipe staging DB in-place:', err);
+    // Wipe staging database (separate from app.db)
+    const stagingDbPath = path.join(dataDir, 'staging.db');
+    if (fs.existsSync(stagingDbPath)) {
+      try {
+        const { open } = await import('sqlite');
+        const { default: sqlite3 } = await import('sqlite3');
+        const stagingDb = await open({ filename: stagingDbPath, driver: sqlite3.Database });
+        await stagingDb.run('PRAGMA foreign_keys = OFF');
+        try { await stagingDb.exec('DROP TABLE IF EXISTS medicines_fts'); } catch (_) {}
+        const stagingTables = await stagingDb.all(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'medicines_fts%'"
+        );
+        for (const { name } of stagingTables) {
+          await stagingDb.run(`DROP TABLE IF EXISTS "${name}"`);
         }
+        await stagingDb.run('VACUUM');
+        await stagingDb.close();
+      } catch (err) {
+        console.warn('[Reset] Failed to wipe staging DB in-place:', err);
       }
-      const stagingDbFiles = ['staging.db', 'staging.db-wal', 'staging.db-shm'];
-      for (const f of stagingDbFiles) {
-        try { if (fs.existsSync(path.join(dataDir, f))) fs.unlinkSync(path.join(dataDir, f)); } catch (_) {}
-      }
-      // Unlock staging database connections
-      try {
-        const { unlockStagingDb } = await import('./migration.js');
-        unlockStagingDb();
-      } catch (_) {}
+    }
+    const stagingDbFiles = ['staging.db', 'staging.db-wal', 'staging.db-shm'];
+    for (const f of stagingDbFiles) {
+      try { if (fs.existsSync(path.join(dataDir, f))) fs.unlinkSync(path.join(dataDir, f)); } catch (_) {}
+    }
 
-      // Wipe uploaded migration source files (zip, csv, xlsx etc.)
-      const migrationSampelDir = path.resolve(getAppDataDir(), 'MIGRATION SAMPEL');
-      clearDir(migrationSampelDir);
+    // Wipe uploaded migration source files & temp directories
+    clearDir(path.resolve(getAppDataDir(), 'MIGRATION SAMPEL'));
+    for (const d of [
+      path.resolve(getAppDataDir(), 'data', 'temp_migration'),
+      path.resolve(getAppDataDir(), 'data', 'temp_ocr'),
+      path.resolve(getAppDataDir(), 'data', 'search_screenshots'),
+      path.resolve(getAppDataDir(), 'data', 'archived_migrations'),
+    ]) {
+      clearDir(d);
+    }
 
-      // Wipe temp data directories
-      const tempDirs = [
-        path.resolve(getAppDataDir(), 'data', 'temp_migration'),
-        path.resolve(getAppDataDir(), 'data', 'temp_ocr'),
-        path.resolve(getAppDataDir(), 'data', 'search_screenshots'),
-        path.resolve(getAppDataDir(), 'data', 'archived_migrations'),
-      ];
-      for (const d of tempDirs) clearDir(d);
+    // Wipe WhatsApp web.js auth/cache sessions (forces fresh auth/QR on restart)
+    await removeDirWithRetry(path.resolve(getAppDataDir(), '.wwebjs_auth'));
+    await removeDirWithRetry(path.resolve(getAppDataDir(), '.wwebjs_cache'));
 
-      // Stop email poller if running
-      try {
-        const { stopEmailPoller } = await import('../worker/emailPoller.js');
-        stopEmailPoller();
-      } catch (_) {}
-
-      // Delete temp/leftover DB files and runtime state files in data/
-      if (fs.existsSync(dataDir)) {
-        for (const f of fs.readdirSync(dataDir)) {
-          // Skip the freshly-created app.db and its journal files
-          if (f === 'app.db' || f === 'app.db-wal' || f === 'app.db-shm') continue;
-          // Skip AI/OCR model files
-          if (f === 'models') continue;
-          // Skip sub-directories already handled separately
-          const fullPath = path.join(dataDir, f);
-          const stat = fs.statSync(fullPath);
-          if (stat.isDirectory()) continue;
-          // Delete everything else (including reference CSVs, master text dicts, and runtime JSONs on factory reset)
-          try { fs.unlinkSync(fullPath); } catch (_) {}
-        }
-      }
-
-      // Wipe entire catalogue directory (master catalog raw/parsed data)
-      const catalogueDir = path.resolve(getAppDataDir(), 'catalogue');
-      clearDir(catalogueDir);
-
-      // Destroy the live WhatsApp client FIRST so Chromium releases its file locks.
-      try {
-        const { destroyClient } = await import('../whatsappClient.js');
-        await destroyClient();
-      } catch (err: any) {
-        console.warn('[Reset] Failed to destroy WhatsApp client before wipe:', err.message);
-      }
-
-      // Wipe WhatsApp web.js auth/cache sessions (forces fresh auth/QR on restart)
-      const wwwebAuthDir = path.resolve(getAppDataDir(), '.wwebjs_auth');
-      const wwwebCacheDir = path.resolve(getAppDataDir(), '.wwebjs_cache');
-      const removeDirWithRetry = async (dirPath: string, attempts = 3) => {
-        if (!fs.existsSync(dirPath)) return;
-        for (let i = 0; i < attempts; i++) {
-          try {
-            fs.rmSync(dirPath, { recursive: true, force: true });
-            return;
-          } catch (err: any) {
-            if (i === attempts - 1) {
-              console.warn(`[Reset] Failed to remove ${dirPath} after ${attempts} attempts:`, err.message);
-            } else {
-              // OS may take a moment to release file handles after the browser process exits
-              await new Promise(resolve => setTimeout(resolve, 300));
-            }
-          }
-        }
-      };
-      await removeDirWithRetry(wwwebAuthDir);
-      await removeDirWithRetry(wwwebCacheDir);
-
-      // Kill orphan Chrome processes so Pharmarack Chromium user profiles release file locks
-      try {
-        const { killOrphanChromeProcesses } = await import('../services/tokenRefreshScheduler.js');
-        await killOrphanChromeProcesses('pharmarack_profile');
-      } catch (err: any) {
-        console.warn('[Reset] Failed to kill Chrome processes:', err.message);
-      }
-
-      // Wipe Pharmarack profile and temp cache directories
-      const pharmarackProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
-      await removeDirWithRetry(pharmarackProfilePath);
-
-      // Also wipe any temp profiles (pharmarack_profile_temp_*)
-      if (fs.existsSync(dataDir)) {
-        for (const entry of fs.readdirSync(dataDir)) {
-          if (entry.startsWith('pharmarack_profile_temp_')) {
-            await removeDirWithRetry(path.join(dataDir, entry));
-          }
-        }
-      }
-
-      // Wipe cache directory
-      const cachePath = path.resolve(getAppDataDir(), 'data', 'cache');
-      await removeDirWithRetry(cachePath);
-
-      // Clear in-memory search and inventory caches
-      try {
-        const { searchCache } = await import('../services/searchCache.js');
-        searchCache.clear();
-      } catch (_) {}
-
-      // Wipe accidental space-split directories in the project root
-      const accidentalDirs = ['PHARMACY', 'WORKING', 'ON', 'PROJECT'];
-      for (const d of accidentalDirs) {
-        const fullPath = path.resolve(__dirname, '..', '..', d);
-        if (fs.existsSync(fullPath)) {
-          try {
-            fs.rmSync(fullPath, { recursive: true, force: true });
-          } catch (_) {}
+    // Wipe Pharmarack profile and temp cache directories
+    await removeDirWithRetry(path.resolve(getAppDataDir(), 'data', 'pharmarack_profile'));
+    if (fs.existsSync(dataDir)) {
+      for (const entry of fs.readdirSync(dataDir)) {
+        if (entry.startsWith('pharmarack_profile_temp_')) {
+          await removeDirWithRetry(path.join(dataDir, entry));
         }
       }
     }
 
-    res.json({ success: true, message: wipeAll ? 'Factory reset complete. App is now in fresh installation state.' : 'All stored data reset and database self-healed successfully' });
+    // Wipe cache directory
+    await removeDirWithRetry(path.resolve(getAppDataDir(), 'data', 'cache'));
+
+    // Delete temp/leftover files in dataDir (skipping app.db and models)
+    if (fs.existsSync(dataDir)) {
+      for (const f of fs.readdirSync(dataDir)) {
+        if (f.startsWith('app.db')) continue;
+        if (f === 'models') continue;
+        const fullPath = path.join(dataDir, f);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (!stat.isDirectory()) {
+            if (wipeAll || f.endsWith('.tmp') || f.endsWith('.log')) {
+              fs.unlinkSync(fullPath);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (wipeAll) {
+      clearDir(path.resolve(getAppDataDir(), 'catalogue'));
+    }
+
+    // Wipe accidental space-split directories in the project root
+    const accidentalDirs = ['PHARMACY', 'WORKING', 'ON', 'PROJECT'];
+    for (const d of accidentalDirs) {
+      const fullPath = path.resolve(__dirname, '..', '..', d);
+      if (fs.existsSync(fullPath)) {
+        try {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        } catch (_) {}
+      }
+    }
+
+    res.json({
+      success: true,
+      message: wipeAll
+        ? 'Factory reset complete. All operational data, migrated files, WhatsApp & Pharmarack auth wiped. Master medicines preserved.'
+        : 'All stored data reset successfully. Master medicines preserved.'
+    });
   } catch (error: any) {
     try {
       const { unlockStagingDb } = await import('./migration.js');

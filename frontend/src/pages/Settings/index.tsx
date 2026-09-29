@@ -3675,18 +3675,8 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
       
       // 1. Purge all localStorage sent order history keys & cached state
       try {
-        localStorage.removeItem('pharmacart_sent_wa_history');
-        localStorage.removeItem('pharmarack_last_sent_wa_time_map');
-        localStorage.removeItem('pharmarack_last_batch_sent_time');
-        localStorage.removeItem('pharmarack_sent_history');
-        localStorage.removeItem('pharmarack_latest_sent_map');
-        localStorage.removeItem('custom_distributor_phones');
-        localStorage.removeItem('pos_active_tabs');
-        localStorage.removeItem('sells-date-range');
-        if (resetType === 'factory') {
-          localStorage.clear();
-          sessionStorage.clear();
-        }
+        localStorage.clear();
+        sessionStorage.clear();
       } catch (_) {}
 
       // 2. Clear QueryClient and invalidate queries
@@ -3730,7 +3720,7 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
           </div>
           <div>
             <h2 className="text-base font-bold text-text">System Data Reset & Factory Initialization</h2>
-            <p className="text-xs text-muted">Re-initialize database tables, self-heal schemas, or execute full factory reset.</p>
+            <p className="text-xs text-muted">Wipe operational data and integrations while preserving the Master Medicines catalog.</p>
           </div>
         </div>
 
@@ -3748,7 +3738,7 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
             <div className="font-bold text-xs flex items-center gap-1.5">
               <RotateCcw size={14} /> System Data Reset
             </div>
-            <p className="text-[11px] mt-1 opacity-80">Wipes sales, inventory & transactions. Keeps store profile & API keys intact.</p>
+            <p className="text-[11px] mt-1 opacity-80">Wipes sales, purchases, inventory, CRM, reports, migration files, WhatsApp auth & Pharmarack tokens. Keeps Store Profile and Master Medicines catalog.</p>
           </button>
 
           <button
@@ -3763,7 +3753,7 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
             <div className="font-bold text-xs flex items-center gap-1.5">
               <Trash2 size={14} /> Full Factory Reset
             </div>
-            <p className="text-[11px] mt-1 opacity-80">Complete wipe of all data, store profile, cashier accounts & integration tokens.</p>
+            <p className="text-[11px] mt-1 opacity-80">Total clean wipe: store profile, migrated data, sales, purchases, inventory, CRM, reports, WhatsApp auth, Pharmarack tokens. Preserves only Master Medicines catalog.</p>
           </button>
         </div>
 
@@ -3778,7 +3768,7 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center text-xs">
               <div className="p-2 bg-bg rounded-lg border border-border">
                 <div className="font-bold text-text">{dataCounts?.medicines ?? 0}</div>
-                <div className="text-[10px] text-muted">Medicines</div>
+                <div className="text-[10px] text-emerald-400 font-semibold">Medicines (Kept)</div>
               </div>
               <div className="p-2 bg-bg rounded-lg border border-border">
                 <div className="font-bold text-text">{dataCounts?.inventory ?? 0}</div>

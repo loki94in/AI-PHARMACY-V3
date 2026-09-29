@@ -476,23 +476,27 @@ export async function ensureSessionHealth(): Promise<boolean> {
 
 /** Helper to check whether we should route messages to WhatsApp Business Cloud API */
 export async function shouldRouteToBusiness(): Promise<boolean> {
-  const db = await dbManager.getConnection();
+  try {
+    const db = await dbManager.getConnection();
 
-  // First, check preferred system
-  const preferredSystemRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_preferred_system'");
-  if (preferredSystemRow) {
-    if (preferredSystemRow.value === 'official') return true;
-    if (preferredSystemRow.value === 'automated') return false;
+    // First, check preferred system
+    const preferredSystemRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_preferred_system'");
+    if (preferredSystemRow) {
+      if (preferredSystemRow.value === 'official') return true;
+      if (preferredSystemRow.value === 'automated') return false;
+    }
+
+    // Fallback to wa_business_enabled
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'wa_business_enabled'");
+    if (row) {
+      return row.value === 'true';
+    }
+
+    // Default to automated mode (use the scanned in-app WhatsApp Web session headlessly)
+    return false;
+  } catch {
+    return false;
   }
-
-  // Fallback to wa_business_enabled
-  const row = await db.get("SELECT value FROM app_settings WHERE key = 'wa_business_enabled'");
-  if (row) {
-    return row.value === 'true';
-  }
-
-  // Default to automated mode (use the scanned in-app WhatsApp Web session headlessly)
-  return false;
 }
 
 /**

@@ -379,6 +379,12 @@ export async function syncInventoryToMaster(): Promise<{ synced: number }> {
   }
 }
 
+let cancelEnrichmentRequested = false;
+
+export function stopMasterEnrichment(): void {
+  cancelEnrichmentRequested = true;
+}
+
 /**
  * Reads medicines.csv and enriches existing master_reference rows in the medicines table
  * by filling in empty fields (packaging, manufacturer, therapeutic, etc.) via
@@ -387,6 +393,7 @@ export async function syncInventoryToMaster(): Promise<{ synced: number }> {
  * Safe to call on every boot — skips enrichment if CSV is absent.
  */
 export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number }> {
+  cancelEnrichmentRequested = false;
   const db = await dbManager.getConnection();
 
   // Auto-heal legacy corrupted records where manufacturer was erroneously parsed as 'f'
@@ -494,7 +501,7 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
   let batch: any[][] = [];
 
   const flushBatch = async (rows: any[][]) => {
-    if (rows.length === 0) return;
+    if (rows.length === 0 || cancelEnrichmentRequested) return;
     await db.run('BEGIN TRANSACTION');
     try {
       const stmt = await db.prepare(`
@@ -529,6 +536,7 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
         WHERE medicines.source = 'master_reference'
       `);
       for (const row of rows) {
+        if (cancelEnrichmentRequested) break;
         await stmt.run(...row);
       }
       await stmt.finalize();
@@ -542,6 +550,11 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
 
   try {
     for await (const line of rl) {
+      if (cancelEnrichmentRequested) {
+        rl.close();
+        fileStream.destroy();
+        break;
+      }
       if (!line.trim()) continue;
 
       if (!headerParsed) {
