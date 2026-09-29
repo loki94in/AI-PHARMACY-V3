@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw, Send } from 'lucide-react';
+import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
 

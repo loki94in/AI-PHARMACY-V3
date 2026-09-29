@@ -11,10 +11,10 @@
  * - Real-time badge count via SSE call_tasks_updated event
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../services/api';
-import { Phone, CheckCircle, Clock, X, RefreshCw, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Phone, CheckCircle, Clock, X, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface CallTask {
   id: number;

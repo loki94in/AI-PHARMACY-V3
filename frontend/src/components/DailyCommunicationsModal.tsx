@@ -6,7 +6,6 @@ import {
   Send,
   Clock,
   CheckCircle2,
-  AlertCircle,
   RotateCw,
   Calendar,
   MessageSquare,
