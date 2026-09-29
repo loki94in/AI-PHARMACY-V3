@@ -558,3 +558,41 @@ export async function isAutoAddToLiveCartEnabled(dbInstance?: any): Promise<bool
   }
 }
 
+export interface DeliveryScheduleSlot {
+  id: string;
+  cutoffTime: string;      // e.g. "14:00" or "23:00"
+  deliveryWindow: string;  // e.g. "5:00 PM – 7:00 PM (Same Day)"
+  label: string;           // e.g. "Afternoon Dispatch"
+}
+
+/**
+ * Returns configured delivery schedules / slots.
+ * Falls back to sensible defaults if unconfigured.
+ */
+export async function getDeliverySchedules(dbInstance?: any): Promise<DeliveryScheduleSlot[]> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'pharmacy_delivery_schedules'");
+    if (row?.value) {
+      const parsed = JSON.parse(row.value);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  return [
+    { id: 'slot_1', cutoffTime: '14:00', deliveryWindow: '5:00 PM – 7:00 PM (Same Day)', label: 'Afternoon Dispatch' },
+    { id: 'slot_2', cutoffTime: '23:00', deliveryWindow: '9:00 AM – 11:00 AM (Next Day)', label: 'Night Cutoff Dispatch' }
+  ];
+}
+
+/**
+ * Persists configured delivery schedules to app_settings.
+ */
+export async function saveDeliverySchedules(schedules: DeliveryScheduleSlot[], dbInstance?: any): Promise<void> {
+  const db = dbInstance || (await dbManager.getConnection());
+  await db.run(
+    "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmacy_delivery_schedules', ?)",
+    [JSON.stringify(schedules)]
+  );
+}
+
+

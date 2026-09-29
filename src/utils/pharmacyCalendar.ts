@@ -51,10 +51,14 @@ export async function isClosedDay(
   const dayName = dayNames[targetDate.getDay()];
   const isSunday = targetDate.getDay() === 0;
 
-  // 1. Fetch weekly off and Sunday policy from app_settings
+  // 1. Fetch weekly off, policies, custom closed dates, and paused dates from app_settings
   const settingsRows = await db.all(
     `SELECT key, value FROM app_settings 
-     WHERE key IN ('pharmacy_weekly_off', 'weekly_off', 'sunday_orders_enabled', 'sunday_delivery', 'holiday_delivery')`
+     WHERE key IN (
+       'pharmacy_weekly_off', 'weekly_off', 'sunday_orders_enabled', 'sunday_delivery', 
+       'holiday_delivery', 'pharmacy_closed_dates', 'pharmarack_paused_dispatch_dates',
+       'pharmacy_market_closure_config'
+     )`
   ).catch(() => []);
 
   const settingsMap = new Map<string, string>(settingsRows.map((r: any) => [String(r.key), String(r.value)]));
@@ -68,6 +72,48 @@ export async function isClosedDay(
   } else if (isSunday && !sundayAllowed) {
     isWeeklyOff = true;
   }
+
+  // 1b. Check custom pharmacy closed dates (e.g. ['2026-10-01', ...])
+  let isCustomClosed = false;
+  try {
+    const rawClosed = settingsMap.get('pharmacy_closed_dates');
+    if (rawClosed) {
+      const parsed = JSON.parse(rawClosed);
+      if (Array.isArray(parsed) && parsed.includes(ymd)) {
+        isCustomClosed = true;
+      }
+    }
+  } catch (_) {}
+
+  // 1c. Check paused Pharmarack dispatch dates (e.g. ['2026-10-01', ...])
+  let isPausedDispatch = false;
+  try {
+    const rawPaused = settingsMap.get('pharmarack_paused_dispatch_dates');
+    if (rawPaused) {
+      const parsed = JSON.parse(rawPaused);
+      if (Array.isArray(parsed) && parsed.includes(ymd)) {
+        isPausedDispatch = true;
+      }
+    }
+  } catch (_) {}
+
+  // 1d. Check market / store closure config
+  let isMarketClosed = false;
+  let closureReason: string | undefined;
+  try {
+    const rawMarket = settingsMap.get('pharmacy_market_closure_config');
+    if (rawMarket) {
+      const parsed = JSON.parse(rawMarket);
+      if (parsed && parsed.enabled && parsed.startDate) {
+        const start = parsed.startDate.slice(0, 10);
+        const end = (parsed.endDate || parsed.startDate).slice(0, 10);
+        if (ymd >= start && ymd <= end) {
+          isMarketClosed = true;
+          closureReason = parsed.reason || (parsed.type === 'pharmacy_closed' ? 'Pharmacy Closed' : 'Market Closed');
+        }
+      }
+    }
+  } catch (_) {}
 
   // 2. Fetch holiday status from pharmacy_holidays
   let holidayRow = null;
@@ -85,11 +131,17 @@ export async function isClosedDay(
     !holidayDelivery
   );
 
-  const isClosed = isWeeklyOff || isHolidayClosed;
+  const isClosed = isWeeklyOff || isHolidayClosed || isCustomClosed || isPausedDispatch || isMarketClosed;
   let reason: string | undefined;
 
   if (isHolidayClosed) {
     reason = `Pharmacy closed for ${holidayRow?.holiday_name || holidayRow?.name || 'Public Holiday'}`;
+  } else if (isMarketClosed) {
+    reason = `Closed: ${closureReason || 'Wholesale Market Closure'}`;
+  } else if (isCustomClosed) {
+    reason = `Pharmacy marked closed on ${ymd}`;
+  } else if (isPausedDispatch) {
+    reason = `Pharmarack distributor dispatch paused on ${ymd}`;
   } else if (isWeeklyOff) {
     reason = isSunday ? 'Pharmacy closed on Sundays' : `Pharmacy closed on weekly off (${weeklyOff})`;
   }

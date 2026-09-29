@@ -5,6 +5,7 @@ import { toastEvent, whatsappQueueEvent } from '../services/events';
 import { useStore } from '../context/StoreContext';
 import { MarketClosureModal } from './MarketClosureModal';
 import { ClosureStockBufferModal } from './ClosureStockBufferModal';
+import { MarketClosureNoticeModal } from './MarketClosureNoticeModal';
 
 // Indian Public & National Holidays (2025-2027 reference)
 const INDIAN_HOLIDAYS: Record<string, string> = {
@@ -116,6 +117,9 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   // Market & Pharmacy Closure Management States
   const [isClosureModalOpen, setIsClosureModalOpen] = useState<boolean>(false);
   const [isBufferModalOpen, setIsBufferModalOpen] = useState<boolean>(false);
+  const [isNoticeModalOpen, setIsNoticeModalOpen] = useState<boolean>(false);
+  const [noticeModalTargetDate, setNoticeModalTargetDate] = useState<string>('');
+  const [noticeModalEndDate, setNoticeModalEndDate] = useState<string>('');
   const [closureConfig, setClosureConfig] = useState<any>(null);
   const [bufferCount, setBufferCount] = useState<number>(0);
 
@@ -299,6 +303,9 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       const updated = [...pausedDates, dateStr];
       updatePausedDates(updated);
       toastEvent.trigger(`Paused auto-dispatch for ${dateStr}`, 'info');
+      setNoticeModalTargetDate(dateStr);
+      setNoticeModalEndDate(dateStr);
+      setIsNoticeModalOpen(true);
     }
   };
 
@@ -997,6 +1004,13 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         onConfigSaved={() => {
           loadClosureStatus();
           window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+          api.getMarketClosureStatus().then((res: any) => {
+            if (res?.config?.enabled && res.config.startDate) {
+              setNoticeModalTargetDate(res.config.startDate);
+              setNoticeModalEndDate(res.config.endDate || res.config.startDate);
+              setIsNoticeModalOpen(true);
+            }
+          }).catch(() => {});
         }}
       />
 
@@ -1007,6 +1021,21 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         onCartUpdated={() => {
           loadClosureStatus();
           window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        }}
+      />
+
+      {/* Market Closure & Paused Dispatch Patient Notice Modal (Human-in-the-Loop) */}
+      <MarketClosureNoticeModal
+        isOpen={isNoticeModalOpen}
+        onClose={() => setIsNoticeModalOpen(false)}
+        targetDate={noticeModalTargetDate}
+        endDate={noticeModalEndDate}
+        closureReason={closureConfig?.reason || 'Market Holiday / Paused Dispatch'}
+        onConfirmPauseWithoutSending={() => {
+          // Date already recorded in pausedDates state
+        }}
+        onSuccess={(count) => {
+          toastEvent.trigger(`Notified ${count} affected patient(s) about delivery reschedule`, 'success');
         }}
       />
 

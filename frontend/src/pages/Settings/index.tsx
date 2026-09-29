@@ -3896,6 +3896,20 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
     nonWaFallbackEnabled: rawSettings.non_wa_fallback_enabled !== 'false',
     nonWaFallbackMode: rawSettings.non_wa_fallback_mode || 'both',
     nonWaFallbackAlertPhone: rawSettings.non_wa_fallback_alert_phone || '',
+
+    // 13. Customer Delivery Schedules
+    deliverySchedules: (() => {
+      try {
+        if (rawSettings.pharmacy_delivery_schedules) {
+          const parsed = JSON.parse(rawSettings.pharmacy_delivery_schedules);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (_) {}
+      return [
+        { id: 'slot_1', label: 'Afternoon Dispatch', cutoffTime: '14:00', deliveryWindow: '5:00 PM – 7:00 PM (Same Day)' },
+        { id: 'slot_2', label: 'Night Cutoff Dispatch', cutoffTime: '23:00', deliveryWindow: '9:00 AM – 11:00 AM (Next Day)' }
+      ];
+    })() as Array<{ id: string; label: string; cutoffTime: string; deliveryWindow: string }>,
   });
 
   const [saving, setSaving] = useState(false);
@@ -3959,6 +3973,8 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
         non_wa_fallback_enabled: formData.nonWaFallbackEnabled ? 'true' : 'false',
         non_wa_fallback_mode: formData.nonWaFallbackMode,
         non_wa_fallback_alert_phone: formData.nonWaFallbackAlertPhone,
+        // Delivery Schedules
+        pharmacy_delivery_schedules: JSON.stringify(formData.deliverySchedules),
       };
 
       await api.saveSettings(payload);
@@ -4507,14 +4523,17 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
           </div>
         </div>
 
-        {/* Trigger 11: Pharmarack Cart Daily Auto-Send Cutoff */}
-        <div className="p-4 rounded-2xl bg-bg3/30 border border-border space-y-3">
+        {/* Trigger 11: Pharmarack Cart Daily Auto-Send Cutoff & Configurable Delivery Timetable */}
+        <div className="p-4 rounded-2xl bg-bg3/30 border border-border space-y-4 md:col-span-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingCart size={16} className="text-emerald-400" />
-              <span className="text-xs font-bold text-text">Pharmarack Cart Auto-Send Cutoff</span>
+              <div>
+                <span className="text-xs font-bold text-text">Pharmarack Cart Auto-Send Cutoff & Delivery Timetable</span>
+                <p className="text-[11px] text-muted">Daily deadline when today's Pharmarack cart orders automatically batch-dispatch to suppliers, plus customer delivery expectation windows.</p>
+              </div>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
               <input
                 type="checkbox"
                 checked={formData.triggerPharmarackCartSendEnabled}
@@ -4524,15 +4543,116 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
               <div className="w-9 h-5 bg-bg3 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-zinc-100 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-100 after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
             </label>
           </div>
-          <p className="text-[11px] text-muted">Daily deadline when today's Pharmarack cart orders automatically batch-dispatch to suppliers & delivery boys.</p>
-          <div className="flex items-center gap-2">
-            <label className="text-[11px] font-semibold text-text whitespace-nowrap">Cutoff Time:</label>
+
+          <div className="flex items-center gap-2 pt-1 border-t border-border/40">
+            <label className="text-[11px] font-semibold text-text whitespace-nowrap">Primary Cart Auto-Send Cutoff:</label>
             <input
               type="time"
               value={formData.triggerPharmarackCartSendTime}
               onChange={(e) => setFormData({ ...formData, triggerPharmarackCartSendTime: e.target.value })}
               className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
             />
+            <span className="text-[10px] text-muted">(Automated batch send timer fires at this time)</span>
+          </div>
+
+          {/* Delivery Schedule Slots for WhatsApp & Online Orders */}
+          <div className="space-y-2 pt-2 border-t border-border/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Truck size={14} className="text-primary" />
+                <span className="text-xs font-bold text-text">Configured Delivery Windows & Cutoffs</span>
+                <span className="text-[10px] text-muted">({formData.deliverySchedules.length} slots)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const newSlot = {
+                    id: `slot_${Date.now()}`,
+                    label: `Slot ${formData.deliverySchedules.length + 1}`,
+                    cutoffTime: '18:00',
+                    deliveryWindow: '8:00 PM – 10:00 PM (Same Day)',
+                  };
+                  setFormData({
+                    ...formData,
+                    deliverySchedules: [...formData.deliverySchedules, newSlot],
+                  });
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all cursor-pointer"
+              >
+                <Plus size={12} />
+                <span>Add Delivery Window</span>
+              </button>
+            </div>
+            <p className="text-[10px] text-muted">
+              AI Bot automatically calculates the promised delivery date/time on WhatsApp and Online Orders based on order booking time, these cutoffs, and market closure/paused days.
+            </p>
+
+            <div className="space-y-2">
+              {formData.deliverySchedules.map((slot, index) => (
+                <div
+                  key={slot.id || index}
+                  className="p-2.5 rounded-xl bg-bg border border-border flex flex-wrap items-center gap-2 text-xs"
+                >
+                  <div className="flex items-center gap-1.5 min-w-[130px] flex-1 sm:flex-initial">
+                    <label className="text-[10px] font-bold text-muted uppercase">Name:</label>
+                    <input
+                      type="text"
+                      value={slot.label}
+                      onChange={(e) => {
+                        const updated = [...formData.deliverySchedules];
+                        updated[index] = { ...updated[index], label: e.target.value };
+                        setFormData({ ...formData, deliverySchedules: updated });
+                      }}
+                      placeholder="e.g. Afternoon Slot"
+                      className="px-2 py-1 text-xs bg-bg2 border border-border rounded-lg text-text focus:outline-none focus:border-primary flex-1 min-w-[110px]"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[10px] font-bold text-muted uppercase">Cutoff:</label>
+                    <input
+                      type="time"
+                      value={slot.cutoffTime}
+                      onChange={(e) => {
+                        const updated = [...formData.deliverySchedules];
+                        updated[index] = { ...updated[index], cutoffTime: e.target.value };
+                        setFormData({ ...formData, deliverySchedules: updated });
+                      }}
+                      className="px-2 py-1 text-xs bg-bg2 border border-border rounded-lg text-text focus:outline-none focus:border-primary font-mono"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                    <label className="text-[10px] font-bold text-muted uppercase">Delivery Window:</label>
+                    <input
+                      type="text"
+                      value={slot.deliveryWindow}
+                      onChange={(e) => {
+                        const updated = [...formData.deliverySchedules];
+                        updated[index] = { ...updated[index], deliveryWindow: e.target.value };
+                        setFormData({ ...formData, deliverySchedules: updated });
+                      }}
+                      placeholder="e.g. 5:00 PM – 7:00 PM (Same Day)"
+                      className="px-2 py-1 text-xs bg-bg2 border border-border rounded-lg text-text focus:outline-none focus:border-primary flex-1"
+                    />
+                  </div>
+
+                  {formData.deliverySchedules.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = formData.deliverySchedules.filter((_, i) => i !== index);
+                        setFormData({ ...formData, deliverySchedules: updated });
+                      }}
+                      className="p-1 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer shrink-0"
+                      title="Remove Schedule Slot"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

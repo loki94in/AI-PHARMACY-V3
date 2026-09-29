@@ -3675,6 +3675,62 @@ router.post('/add-closure-buffer-to-cart', async (req, res) => {
   }
 });
 
+// GET /api/pharmarack/affected-closure-patients
+router.get('/affected-closure-patients', async (req, res) => {
+  try {
+    const startDate = String(req.query.startDate || req.query.date || new Date().toISOString().slice(0, 10));
+    const endDate = req.query.endDate ? String(req.query.endDate) : startDate;
+
+    const patients = await marketClosureService.getAffectedClosureCustomers({ startDate, endDate });
+
+    const { orderScheduleService } = await import('../services/orderScheduleService.js');
+    const { getDeliverySchedules } = await import('../services/storeSettingsService.js');
+
+    // Calculate next open delivery date
+    const nextDateInfo = await orderScheduleService.getNextAvailableWorkingDate(endDate || startDate, { advanceAtLeastOneDay: true });
+    const schedules = await getDeliverySchedules();
+    const defaultSlot = schedules[0]?.deliveryWindow || '9:00 AM – 11:00 AM';
+
+    res.json({
+      success: true,
+      patients,
+      count: patients.length,
+      nextWorkingDate: nextDateInfo.formatted,
+      nextWorkingDateYmd: nextDateInfo.ymd,
+      nextDeliveryTime: defaultSlot,
+      closureReason: nextDateInfo.shiftReason || 'Market Holiday / Paused Dispatch'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/pharmarack/send-closure-notices
+router.post('/send-closure-notices', async (req, res) => {
+  try {
+    const { selectedPatients, messageTemplate, nextWorkingDate, nextDeliveryTime, reason } = req.body;
+    if (!Array.isArray(selectedPatients) || selectedPatients.length === 0) {
+      return res.status(400).json({ error: 'selectedPatients array is required and must not be empty' });
+    }
+    if (!messageTemplate || typeof messageTemplate !== 'string') {
+      return res.status(400).json({ error: 'messageTemplate string is required' });
+    }
+
+    const result = await marketClosureService.sendApprovedClosureNotices({
+      selectedPatients,
+      messageTemplate,
+      nextWorkingDate,
+      nextDeliveryTime,
+      reason
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+
 
 

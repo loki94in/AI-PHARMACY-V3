@@ -548,9 +548,44 @@ export async function buildDailyOperationalBriefing(
     }).join('\n');
   }
 
+  // 24-Hour Incomplete Order Calendar-Aware SLA Audit
+  let incomplete24hAudit: any = { overdue: [], marketPaused: [], stats: { totalOverdueCount: 0, totalPausedCount: 0, totalOverdueMedicines: 0, totalPausedMedicines: 0 } };
+  try {
+    const { orderScheduleService } = await import('./orderScheduleService.js');
+    incomplete24hAudit = await orderScheduleService.evaluateIncompleteOrders24hSLA({ dbInstance: db, cutoffHours: 24 });
+  } catch (err) {
+    console.warn('[RefillService] Failed to evaluate 24h incomplete orders SLA:', err);
+  }
+
+  let slaBlock = '';
+  const slaLines: string[] = [];
+  if (incomplete24hAudit.overdue.length > 0) {
+    const overdueDetails = incomplete24hAudit.overdue.slice(0, 5).map((c: any, idx: number) => {
+      const medStr = c.medicines.map((m: any) => `${m.name} × ${m.qty}`).join(', ');
+      return `  ${idx + 1}. *${c.name}*: ${medStr} (${c.elapsedHours}h ago • 🚨 Action Needed)`;
+    }).join('\n');
+    const extraOverdue = incomplete24hAudit.overdue.length > 5 ? `\n  ...and ${incomplete24hAudit.overdue.length - 5} more overdue` : '';
+    slaLines.push(`🚨 *OVERDUE (>24h SLA BREACH — ${incomplete24hAudit.overdue.length} Orders)*:\n${overdueDetails}${extraOverdue}`);
+  }
+  if (incomplete24hAudit.marketPaused.length > 0) {
+    const pausedDetails = incomplete24hAudit.marketPaused.slice(0, 5).map((c: any, idx: number) => {
+      const medStr = c.medicines.map((m: any) => `${m.name} × ${m.qty}`).join(', ');
+      const resumeStr = c.resumedWorkingDate ? ` • Resumes: ${c.resumedWorkingDate}` : '';
+      return `  • *${c.name}*: ${medStr} (${c.pauseReason || 'Market closure'}${resumeStr})`;
+    }).join('\n');
+    const extraPaused = incomplete24hAudit.marketPaused.length > 5 ? `\n  ...and ${incomplete24hAudit.marketPaused.length - 5} more paused` : '';
+    slaLines.push(`⏸️ *MARKET CLOSURE / PAUSE HELD (${incomplete24hAudit.marketPaused.length} Orders)*:\n${pausedDetails}${extraPaused}`);
+  }
+  if (slaLines.length > 0) {
+    slaBlock = `\n\n⏱️ *24-HOUR FULFILLMENT WATCH*:\n` + slaLines.join('\n\n');
+  }
+
   // Daily operational tasks to ensure no work is missed
   const outOfStockRefills = refillDetailRows.filter((r: any) => !r.in_stock);
   const dailyTasks: string[] = [];
+  if (incomplete24hAudit.overdue.length > 0) {
+    dailyTasks.push(`🚨 *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA — push to Pharmarack or contact distributor`);
+  }
   if (outOfStockRefills.length > 0) {
     const holdPatients = Array.from(new Set(outOfStockRefills.map((r: any) => r.patient_name)));
     dailyTasks.push(`⚠️ *Urgent Stock Reorder Needed*: Stock required for ${holdPatients.join(', ')}`);
@@ -656,7 +691,7 @@ export async function buildDailyOperationalBriefing(
 ${t4Details}
 
 📦 *TODAY'S SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
+${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 
   } else if (templateKey === 'compact') {
     // TEMPLATE 1: Compact worklist (no medicine names)
@@ -677,11 +712,17 @@ ${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
 ${t1Refills}
 
 📦 *2. SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${dailyTasksBlock}${milestoneBlock}`;
+${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 
   } else if (templateKey === 'checklist') {
     // TEMPLATE 2: Action checklist [ ]
     const t2Items: string[] = [];
+    if (incomplete24hAudit.overdue.length > 0) {
+      t2Items.push(`[ ] *24H OVERDUE ESCALATION*: Expedite ${incomplete24hAudit.overdue.length} order(s) breaching 24h SLA (${incomplete24hAudit.stats.totalOverdueMedicines} meds)`);
+    }
+    if (incomplete24hAudit.marketPaused.length > 0) {
+      t2Items.push(`[ ] *MONITOR PAUSED ORDERS*: ${incomplete24hAudit.marketPaused.length} order(s) held for next open market day`);
+    }
     const holdRefills = refillRows.filter((r: any) => r.out_of_stock_count > 0);
     if (holdRefills.length > 0) {
       t2Items.push(`[ ] *URGENT REORDER*: ${holdRefills.map((r: any) => r.patient_name).join(', ')} (Stock Needed)`);
@@ -729,6 +770,8 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}`;
 📊 *Morning KPI Dashboard*:
 • 📋 Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
 • 📦 Active Orders: *${activeOrders.length}*
+• ⏱️ 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
+• ⏸️ Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
 • 📞 Pending Calls: *${callCount}*
 • 🔔 Staged Reminders: *${stagedRows.length}*${milestoneMetrics}`;
   }

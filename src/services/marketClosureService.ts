@@ -12,6 +12,7 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { getConfiguredPharmacyName } from './storeSettingsService.js';
+import { whatsappQueueWorker } from './whatsappQueueWorker.js';
 
 export interface MarketClosureConfig {
   enabled: boolean;
@@ -41,7 +42,23 @@ export interface ClosureBufferItem {
   status: 'shortfall' | 'sufficient';
 }
 
+export interface AffectedClosureCustomer {
+  phone: string;
+  name: string;
+  sourceTypes: string[];        // ['Special Order', 'Refill', 'Online Order', 'CRM']
+  orderRefs: string[];          // ['SO-TMSA-10452', 'RF-8821']
+  medicines: Array<{
+    name: string;
+    qty: number;
+    unit?: string;
+    mrp?: number;
+  }>;
+  totalItems: number;
+  notes?: string;
+}
+
 const SETTING_KEY = 'pharmacy_market_closure_config';
+
 
 export class MarketClosureService {
   /**
@@ -321,6 +338,209 @@ export class MarketClosureService {
     eventService.broadcast('special_orders_updated', { addedCount });
     return { addedCount };
   }
+
+  /**
+   * Harvest all affected customers across:
+   * 1. Special Orders (pending / confirmed / waiting)
+   * 2. Patient Refills (due in closure window)
+   * 3. CRM Patient Call Tasks (pending)
+   * Deduplicates by patient phone and groups medicines.
+   */
+  async getAffectedClosureCustomers(
+    dateRange?: { startDate?: string; endDate?: string },
+    dbInstance?: any
+  ): Promise<AffectedClosureCustomer[]> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const start = dateRange?.startDate ? dateRange.startDate.slice(0, 10) : todayStr;
+    const end = dateRange?.endDate ? dateRange.endDate.slice(0, 10) : start;
+
+    const byPhone = new Map<string, AffectedClosureCustomer>();
+
+    const getOrCreate = (rawPhone: string, rawName: string): AffectedClosureCustomer | null => {
+      const cleanDigits = String(rawPhone || '').replace(/\D/g, '').slice(-10);
+      if (!cleanDigits || cleanDigits.length < 10) return null;
+      let existing = byPhone.get(cleanDigits);
+      if (!existing) {
+        existing = {
+          phone: cleanDigits,
+          name: (rawName && rawName.trim().length > 1) ? rawName.trim() : 'Customer',
+          sourceTypes: [],
+          orderRefs: [],
+          medicines: [],
+          totalItems: 0,
+        };
+        byPhone.set(cleanDigits, existing);
+      }
+      if (rawName && rawName.trim().length > 1 && existing.name === 'Customer') {
+        existing.name = rawName.trim();
+      }
+      return existing;
+    };
+
+    // 1. Special Orders & Online Order Items
+    try {
+      const specialOrderRows = await db.all(`
+        SELECT so.id, so.requester, so.phone, so.medicine_name, so.product, so.qty, so.status,
+               so.customer_order_source, so.pharmarack_mrp, so.total_amount, so.created_at,
+               ooi.product_name, ooi.requested_qty, ooi.mrp as ooi_mrp
+        FROM special_orders so
+        LEFT JOIN online_order_items ooi ON ooi.order_id = so.id
+        WHERE so.status NOT IN ('Cancelled', 'Fulfilled', 'Delivered')
+          AND date(so.created_at) >= date('now', '-7 days')
+        ORDER BY so.id DESC
+      `);
+
+      for (const row of specialOrderRows) {
+        const cust = getOrCreate(row.phone, row.requester);
+        if (!cust) continue;
+
+        const isOnline = row.customer_order_source === 'online' || row.customer_order_source === 'website';
+        const sourceLabel = isOnline ? 'Online Order' : 'Special Order';
+        if (!cust.sourceTypes.includes(sourceLabel)) cust.sourceTypes.push(sourceLabel);
+
+        const soRef = `SO-${row.id}`;
+        if (!cust.orderRefs.includes(soRef)) cust.orderRefs.push(soRef);
+
+        const medName = row.product_name || row.medicine_name || row.product;
+        const medQty = Number(row.requested_qty || row.qty || 1);
+        const medMrp = Number(row.ooi_mrp || row.pharmarack_mrp || 0);
+
+        if (medName) {
+          const already = cust.medicines.find(m => m.name.toLowerCase() === medName.toLowerCase());
+          if (!already) {
+            cust.medicines.push({ name: medName, qty: medQty, mrp: medMrp > 0 ? medMrp : undefined });
+            cust.totalItems += medQty;
+          }
+        }
+      }
+    } catch (soErr) {
+      console.warn('[MarketClosure] Error fetching special orders for closure:', soErr);
+    }
+
+    // 2. Patient Refills due in range
+    try {
+      const refillRows = await db.all(`
+        SELECT pr.id, pr.patient_name, pr.patient_phone, pr.quantity_needed,
+               pr.next_refill_date, m.name as medicine_name, COALESCE(m.mrp, 0) as mrp
+        FROM patient_refills pr
+        JOIN medicines m ON m.id = pr.medicine_id
+        WHERE pr.is_active = 1
+          AND (pr.status IS NULL OR pr.status != 'cancelled')
+          AND date(pr.next_refill_date) BETWEEN date(?) AND date(?)
+        ORDER BY pr.next_refill_date ASC
+      `, [start, end]);
+
+      for (const row of refillRows) {
+        const cust = getOrCreate(row.patient_phone, row.patient_name);
+        if (!cust) continue;
+
+        if (!cust.sourceTypes.includes('Refill')) cust.sourceTypes.push('Refill');
+        const rfRef = `RF-${row.id}`;
+        if (!cust.orderRefs.includes(rfRef)) cust.orderRefs.push(rfRef);
+
+        const medName = row.medicine_name;
+        const medQty = Number(row.quantity_needed || 1);
+        const medMrp = Number(row.mrp || 0);
+
+        if (medName) {
+          const already = cust.medicines.find(m => m.name.toLowerCase() === medName.toLowerCase());
+          if (!already) {
+            cust.medicines.push({ name: medName, qty: medQty, mrp: medMrp > 0 ? medMrp : undefined });
+            cust.totalItems += medQty;
+          }
+        }
+      }
+    } catch (rfErr) {
+      console.warn('[MarketClosure] Error fetching refills for closure:', rfErr);
+    }
+
+    // 3. CRM Call Tasks
+    try {
+      const crmRows = await db.all(`
+        SELECT id, patient_name, patient_phone, task_type, details_json, notes
+        FROM patient_call_tasks
+        WHERE status = 'pending'
+          AND date(created_at) >= date('now', '-3 days')
+      `);
+
+      for (const row of crmRows) {
+        const cust = getOrCreate(row.patient_phone, row.patient_name);
+        if (!cust) continue;
+
+        if (!cust.sourceTypes.includes('CRM')) cust.sourceTypes.push('CRM');
+        const crmRef = `CRM-${row.id}`;
+        if (!cust.orderRefs.includes(crmRef)) cust.orderRefs.push(crmRef);
+      }
+    } catch (crmErr) {
+      console.warn('[MarketClosure] Error fetching CRM tasks for closure:', crmErr);
+    }
+
+    return Array.from(byPhone.values());
+  }
+
+  /**
+   * Send WhatsApp notice to human-approved selected patients.
+   * Strict Human-in-the-loop: Dispatches ONLY to explicitly checked patients.
+   */
+  async sendApprovedClosureNotices(
+    params: {
+      selectedPatients: Array<{
+        phone: string;
+        name: string;
+        orderRef?: string;
+        medicines?: string[];
+      }>;
+      messageTemplate: string;
+      nextWorkingDate?: string;
+      nextDeliveryTime?: string;
+      reason?: string;
+    },
+    dbInstance?: any
+  ): Promise<{ sentCount: number }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const pharmacyName = (await getConfiguredPharmacyName()) || 'Pharmacy';
+    const patients = Array.isArray(params.selectedPatients) ? params.selectedPatients : [];
+
+    let sentCount = 0;
+    for (const p of patients) {
+      const cleanDigits = String(p.phone || '').replace(/\D/g, '').slice(-10);
+      if (!cleanDigits || cleanDigits.length < 10) continue;
+
+      const medList = Array.isArray(p.medicines) && p.medicines.length > 0
+        ? p.medicines.join(', ')
+        : 'your prescribed medicines';
+
+      let msg = params.messageTemplate
+        .replace(/\{\{PATIENT_NAME\}\}/g, p.name || 'Customer')
+        .replace(/\{patient_name\}/g, p.name || 'Customer')
+        .replace(/\{\{ORDER_REF\}\}/g, p.orderRef || 'your order')
+        .replace(/\{order_ref\}/g, p.orderRef || 'your order')
+        .replace(/\{\{MEDICINES\}\}/g, medList)
+        .replace(/\{medicines\}/g, medList)
+        .replace(/\{\{NEXT_WORKING_DATE\}\}/g, params.nextWorkingDate || 'our next working day')
+        .replace(/\{next_date\}/g, params.nextWorkingDate || 'our next working day')
+        .replace(/\{\{NEXT_DELIVERY_TIME\}\}/g, params.nextDeliveryTime || '9:00 AM – 11:00 AM')
+        .replace(/\{delivery_time\}/g, params.nextDeliveryTime || '9:00 AM – 11:00 AM')
+        .replace(/\{\{PHARMACY_NAME\}\}/g, pharmacyName)
+        .replace(/\{pharmacy_name\}/g, pharmacyName);
+
+      try {
+        await whatsappQueueWorker.enqueue(
+          cleanDigits,
+          msg,
+          'customer_order_status',
+          p.name || 'Customer'
+        );
+        sentCount++;
+      } catch (sendErr) {
+        console.warn(`[MarketClosure] Failed to enqueue notice to ${cleanDigits}:`, sendErr);
+      }
+    }
+
+    return { sentCount };
+  }
 }
 
 export const marketClosureService = new MarketClosureService();
+

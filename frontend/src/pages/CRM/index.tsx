@@ -22,6 +22,7 @@ import { EnquiriesSection } from './EnquiriesSection';
 import { MedicineVisualReferenceModal } from '../../components/MedicineVisualReferenceModal';
 import { CallTaskBoard, CallTaskBadge } from '../../components/CallTaskBoard';
 import { OrderModifyModal } from '../../components/OrderModifyModal';
+import { IncompleteOrders24hCard } from '../../components/IncompleteOrders24hCard';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -7420,6 +7421,9 @@ const CRM: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* 24-Hour Fulfillment Watch Briefing Card */}
+      <IncompleteOrders24hCard />
 
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-hidden">

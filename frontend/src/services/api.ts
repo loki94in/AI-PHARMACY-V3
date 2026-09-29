@@ -1338,6 +1338,27 @@ export const api = {
   stageClosureNotices: (refillIds: number[], customTemplate?: string) => apiClient.post('/pharmarack/stage-closure-notices', { refillIds, customTemplate }).then(res => res.data),
   addClosureBufferToCart: (items: Array<{ medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>) => apiClient.post('/pharmarack/add-closure-buffer-to-cart', { items }).then(res => res.data),
   launchPharmarackLoginWindow: () => apiClient.post('/pharmarack/login-window').then(res => res.data),
+  getAffectedClosurePatients: (params: { startDate?: string; endDate?: string; date?: string }) =>
+    apiClient.get('/pharmarack/affected-closure-patients', { params }).then(res => res.data),
+  sendClosureNotices: (data: {
+    selectedPatients: Array<{ phone: string; name: string; orderRef?: string; medicines?: string[] }>;
+    messageTemplate: string;
+    nextWorkingDate?: string;
+    nextDeliveryTime?: string;
+    reason?: string;
+  }) => apiClient.post('/pharmarack/send-closure-notices', data).then(res => res.data),
+  
+  // 24h Incomplete Order Calendar-Aware SLA & HITL Actions
+  getIncomplete24hAudit: () => apiClient.get('/orders/incomplete-24h-audit').then(res => res.data),
+  executeIncomplete24hAction: (data: {
+    action: 'push_to_cart' | 'send_delay_notices' | 'snooze_sla';
+    orderIds?: number[];
+    customerPhones?: string[];
+    template?: string;
+    nextWorkingDate?: string;
+    hours?: number;
+    reason?: string;
+  }) => apiClient.post('/orders/incomplete-24h-action', data).then(res => res.data),
   
   // Composition Enrichment
   getEnrichmentStatus: () => apiClient.get('/enrichment/status').then(res => res.data),

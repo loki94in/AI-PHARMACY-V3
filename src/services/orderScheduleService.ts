@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
+import { advanceToNextOpenDay, isClosedDay } from '../utils/pharmacyCalendar.js';
 
 export interface PharmacyTimingConfig {
   orderCutoffTime: string;          // e.g. "23:00"
@@ -76,6 +76,37 @@ export interface OrderScheduleResult {
   schedule_version: number;
   schedule_calculated_at: string;
   formatted_window: string;
+}
+
+export interface IncompleteOrderCustomerSummary {
+  phone: string;
+  name: string;
+  sourceType: 'special_order' | 'refill' | 'online_order';
+  orderIds: number[];
+  medicines: Array<{
+    id?: number;
+    name: string;
+    qty: number;
+    unit?: string;
+  }>;
+  firstOrderDate: string;
+  elapsedHours: number;
+  classification: 'overdue' | 'market_paused';
+  pauseReason?: string;
+  resumedWorkingDate?: string;
+  resumedDeliveryWindow?: string;
+  status: string;
+}
+
+export interface IncompleteOrdersAuditResult {
+  overdue: IncompleteOrderCustomerSummary[];
+  marketPaused: IncompleteOrderCustomerSummary[];
+  stats: {
+    totalOverdueCount: number;
+    totalPausedCount: number;
+    totalOverdueMedicines: number;
+    totalPausedMedicines: number;
+  };
 }
 
 export class OrderScheduleService {
@@ -519,6 +550,237 @@ export class OrderScheduleService {
     const updated = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
     return updated;
   }
+
+  /**
+   * Find the next open working date by scanning forward day-by-day (skipping closed days,
+   * paused dispatch dates, market closures, and weekly offs).
+   */
+  async getNextAvailableWorkingDate(
+    startDateOrYmd?: Date | string,
+    options?: { storeId?: number; dbInstance?: any; advanceAtLeastOneDay?: boolean }
+  ): Promise<{ date: Date; ymd: string; formatted: string; shiftReason?: string }> {
+    const db = options?.dbInstance || (await dbManager.getConnection());
+    const storeId = options?.storeId || 1;
+    let baseDate: Date;
+    if (!startDateOrYmd) {
+      baseDate = new Date();
+    } else if (typeof startDateOrYmd === 'string') {
+      const [y, m, d] = startDateOrYmd.slice(0, 10).split('-').map(Number);
+      baseDate = new Date(y, m - 1, d, 12, 0, 0);
+    } else {
+      baseDate = new Date(startDateOrYmd);
+    }
+
+    const res = await advanceToNextOpenDay(baseDate, {
+      storeId,
+      dbInstance: db,
+      advanceAtLeastOneDay: options?.advanceAtLeastOneDay ?? true
+    });
+
+    const dayFormatter = new Intl.DateTimeFormat('en-IN', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short'
+    });
+    const formatted = dayFormatter.format(res.targetDate);
+
+    return {
+      date: res.targetDate,
+      ymd: res.ymd,
+      formatted,
+      shiftReason: res.shiftReason
+    };
+  }
+
+  /**
+   * Calendar-Aware Evaluation of Incomplete Orders & Refills (>24h SLA)
+   * Distinguishes true store SLA failure (open hours) from market-closure/paused-dispatch holds.
+   */
+  async evaluateIncompleteOrders24hSLA(
+    options?: { storeId?: number; dbInstance?: any; cutoffHours?: number }
+  ): Promise<IncompleteOrdersAuditResult> {
+    const db = options?.dbInstance || (await dbManager.getConnection());
+    const storeId = options?.storeId || 1;
+    const cutoffHours = options?.cutoffHours || 24;
+    const nowMs = Date.now();
+
+    // Check snoozed orders map from app_settings
+    let snoozedMap: Record<string, number> = {};
+    try {
+      const row = await db.get("SELECT value FROM app_settings WHERE key = 'snoozed_24h_order_ids'").catch(() => null);
+      if (row?.value) snoozedMap = JSON.parse(row.value);
+    } catch (_) {}
+
+    // Check store & market closure status for today
+    const todayClosedCheck = await isClosedDay(new Date(), storeId, db);
+    let nextResumed: { date: Date; ymd: string; formatted: string; shiftReason?: string } | null = null;
+    if (todayClosedCheck.isClosed) {
+      nextResumed = await this.getNextAvailableWorkingDate(new Date(), { dbInstance: db, storeId });
+    }
+
+    let defaultWindow = '11:00 AM - 01:00 PM';
+    try {
+      const { getDeliverySchedules } = await import('./storeSettingsService.js');
+      const schedules = await getDeliverySchedules(db);
+      if (schedules && schedules.length > 0 && schedules[0].deliveryWindow) {
+        defaultWindow = schedules[0].deliveryWindow;
+      }
+    } catch (_) {}
+
+    // 1. Fetch unfulfilled special/online orders
+    const specialRows = await db.all(`
+      SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source,
+             COALESCE(created_at, date, datetime('now', 'localtime')) as order_time
+      FROM special_orders
+      WHERE status IN ('Pending', 'Confirmed', 'Waiting')
+      ORDER BY id DESC
+      LIMIT 150
+    `).catch(() => []);
+
+    // 2. Fetch pending patient refills that were due yesterday or earlier
+    const refillRows = await db.all(`
+      SELECT pr.id, pr.patient_name, pr.quantity_needed, pr.next_refill_date, pr.status,
+             COALESCE(pr.created_at, pr.next_refill_date) as order_time,
+             m.name as medicine_name,
+             COALESCE(c.phone, '') as customer_phone
+      FROM patient_refills pr
+      JOIN medicines m ON pr.medicine_id = m.id
+      LEFT JOIN customers c ON (c.name = pr.patient_name OR c.id = pr.customer_id)
+      WHERE pr.is_active = 1
+        AND pr.status IN ('pending', 'notified', 'staged')
+        AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '-1 day')
+      ORDER BY pr.id DESC
+      LIMIT 150
+    `).catch(() => []);
+
+    const customerMap = new Map<string, IncompleteOrderCustomerSummary>();
+
+    const processItem = (item: {
+      id: number;
+      name: string;
+      phone: string;
+      productName: string;
+      qty: number;
+      orderTimeStr: string;
+      source: 'special_order' | 'refill' | 'online_order';
+      status: string;
+    }) => {
+      // Check snooze
+      const snoozeKey = `${item.source}_${item.id}`;
+      if (snoozedMap[snoozeKey] && snoozedMap[snoozeKey] > nowMs) {
+        return; // Snoozed
+      }
+
+      const orderDate = new Date(item.orderTimeStr);
+      const elapsedMs = nowMs - (isNaN(orderDate.getTime()) ? nowMs : orderDate.getTime());
+      const elapsedHrs = Math.max(1, Math.round(elapsedMs / (1000 * 60 * 60)));
+
+      if (elapsedHrs < cutoffHours) {
+        return; // Has not reached cutoff threshold
+      }
+
+      const custKey = (item.phone || item.name || `unknown_${item.id}`).trim().toLowerCase();
+      const existing = customerMap.get(custKey);
+
+      // Determine classification
+      const isPaused = todayClosedCheck.isClosed;
+      const pauseReason = todayClosedCheck.reason;
+      const classification: 'overdue' | 'market_paused' = isPaused ? 'market_paused' : 'overdue';
+
+      if (!existing) {
+        customerMap.set(custKey, {
+          phone: item.phone || '',
+          name: item.name || 'Valued Customer',
+          sourceType: item.source,
+          orderIds: [item.id],
+          medicines: [{
+            id: item.id,
+            name: item.productName || 'Prescribed Medicine',
+            qty: item.qty || 1
+          }],
+          firstOrderDate: item.orderTimeStr,
+          elapsedHours: elapsedHrs,
+          classification,
+          pauseReason: isPaused ? pauseReason : undefined,
+          resumedWorkingDate: nextResumed?.formatted,
+          resumedDeliveryWindow: defaultWindow,
+          status: item.status
+        });
+      } else {
+        existing.orderIds.push(item.id);
+        existing.medicines.push({
+          id: item.id,
+          name: item.productName || 'Prescribed Medicine',
+          qty: item.qty || 1
+        });
+        existing.elapsedHours = Math.max(existing.elapsedHours, elapsedHrs);
+        if (classification === 'overdue') {
+          existing.classification = 'overdue';
+        }
+      }
+    };
+
+    for (const row of specialRows) {
+      const srcRaw = (row.customer_order_source || '').toLowerCase();
+      let src: 'special_order' | 'refill' | 'online_order' = 'special_order';
+      if (srcRaw.includes('online') || srcRaw.includes('web')) src = 'online_order';
+
+      processItem({
+        id: Number(row.id),
+        name: String(row.requester || 'Customer'),
+        phone: String(row.phone || ''),
+        productName: String(row.product || row.medicine_name || 'Medicine'),
+        qty: Number(row.qty) || 1,
+        orderTimeStr: String(row.order_time),
+        source: src,
+        status: String(row.status || 'Pending')
+      });
+    }
+
+    for (const row of refillRows) {
+      processItem({
+        id: Number(row.id),
+        name: String(row.patient_name || 'Refill Patient'),
+        phone: String(row.customer_phone || ''),
+        productName: String(row.medicine_name || 'Refill Medicine'),
+        qty: Number(row.quantity_needed) || 1,
+        orderTimeStr: String(row.order_time),
+        source: 'refill',
+        status: String(row.status || 'pending')
+      });
+    }
+
+    const overdue: IncompleteOrderCustomerSummary[] = [];
+    const marketPaused: IncompleteOrderCustomerSummary[] = [];
+
+    for (const summary of customerMap.values()) {
+      if (summary.classification === 'overdue') {
+        overdue.push(summary);
+      } else {
+        marketPaused.push(summary);
+      }
+    }
+
+    // Sort by largest elapsed hours descending
+    overdue.sort((a, b) => b.elapsedHours - a.elapsedHours);
+    marketPaused.sort((a, b) => b.elapsedHours - a.elapsedHours);
+
+    const totalOverdueMedicines = overdue.reduce((acc, c) => acc + c.medicines.length, 0);
+    const totalPausedMedicines = marketPaused.reduce((acc, c) => acc + c.medicines.length, 0);
+
+    return {
+      overdue,
+      marketPaused,
+      stats: {
+        totalOverdueCount: overdue.length,
+        totalPausedCount: marketPaused.length,
+        totalOverdueMedicines,
+        totalPausedMedicines
+      }
+    };
+  }
 }
 
 export const orderScheduleService = new OrderScheduleService();
+
+

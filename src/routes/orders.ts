@@ -1994,4 +1994,100 @@ router.post('/:id/delivery-override', async (req, res) => {
   }
 });
 
+// GET /api/orders/incomplete-24h-audit — Audit incomplete orders (>24h SLA) with calendar awareness
+router.get('/incomplete-24h-audit', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const storeId = resolveStoreId(req);
+    const audit = await orderScheduleService.evaluateIncompleteOrders24hSLA({
+      dbInstance: db,
+      storeId,
+      cutoffHours: 24
+    });
+    res.json({ success: true, audit });
+  } catch (err: any) {
+    console.error('Incomplete 24h orders audit error:', err);
+    res.status(500).json({ error: 'Failed to evaluate incomplete orders SLA: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// POST /api/orders/incomplete-24h-action — Human-in-the-loop action handler (push to cart, delay notice, snooze)
+router.post('/incomplete-24h-action', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const { action, orderIds, customerPhones, template, nextWorkingDate, hours } = req.body;
+
+    if (!action) {
+      return res.status(400).json({ error: 'action is required' });
+    }
+
+    if (action === 'push_to_cart') {
+      const ids: number[] = Array.isArray(orderIds) ? orderIds : [];
+      let updatedCount = 0;
+      for (const id of ids) {
+        await db.run("UPDATE special_orders SET status = 'Waiting', updated_at = datetime('now') WHERE id = ?", [id]);
+        updatedCount++;
+      }
+      broadcastOrdersChanged();
+      return res.json({ success: true, message: `Pushed ${updatedCount} items to order queue.` });
+    }
+
+    if (action === 'send_delay_notices') {
+      const phones: string[] = Array.isArray(customerPhones) ? customerPhones : [];
+      const msgTemplate: string = template || 'Dear Customer, your order was held due to wholesale market holiday. It will be delivered on {{next_working_date}}.';
+      const resumeDateStr: string = nextWorkingDate || 'tomorrow';
+      let sentCount = 0;
+
+      for (const rawPhone of phones) {
+        if (!rawPhone || rawPhone.trim().length < 5) continue;
+        const normalized = normalizeWhatsAppPhone(rawPhone);
+        if (!normalized) continue;
+
+        const rendered = msgTemplate.replace(/\{\{next_working_date\}\}/gi, resumeDateStr);
+        await whatsappQueueWorker.enqueue(
+          normalized,
+          rendered,
+          'customer_order_update',
+          'Customer',
+          undefined,
+          undefined,
+          undefined,
+          { skipDedupe: true }
+        );
+        sentCount++;
+      }
+      return res.json({ success: true, message: `Queued delay notices for ${sentCount} customer(s).` });
+    }
+
+    if (action === 'snooze_sla') {
+      const ids: string[] = Array.isArray(orderIds) ? orderIds.map(String) : [];
+      const snoozeDurationHours = Number(hours) || 24;
+      const snoozeUntil = Date.now() + (snoozeDurationHours * 3600 * 1000);
+
+      const existingRow = await db.get("SELECT value FROM app_settings WHERE key = 'snoozed_24h_order_ids'").catch(() => null);
+      let snoozedMap: Record<string, number> = {};
+      try {
+        if (existingRow?.value) snoozedMap = JSON.parse(existingRow.value);
+      } catch (_) {}
+
+      for (const id of ids) {
+        snoozedMap[id] = snoozeUntil;
+      }
+
+      await db.run(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('snoozed_24h_order_ids', ?)",
+        [JSON.stringify(snoozedMap)]
+      );
+
+      broadcastOrdersChanged();
+      return res.json({ success: true, message: `Snoozed ${ids.length} order(s) for ${snoozeDurationHours} hours.` });
+    }
+
+    return res.status(400).json({ error: `Unknown action: ${action}` });
+  } catch (err: any) {
+    console.error('Incomplete 24h action error:', err);
+    res.status(500).json({ error: 'Failed to process action: ' + (err.message || 'Unknown error') });
+  }
+});
+
 export default router;
