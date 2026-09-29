@@ -156,6 +156,7 @@ A report that needs “what this patient bought” reads that patient’s sale i
 - Selling from CRM instead of handing `prefill` to POS.
 - Creating stock from a catalog import, an OCR scan, or a search result.
 - Substituting a placeholder name, phone, batch, or amount when the saved row is empty.
+- Painting a column that has no API. Investigation does not show Stock Audit or B2B Sales: those cells were always a dash, and the export wrote `0`. `b2b_invoices` is filled only by the old migration import. No shop-loop route reads it. A B2B column waits until a real reader exists.
 
 ---
 

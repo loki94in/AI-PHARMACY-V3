@@ -224,8 +224,6 @@ const InvestigationCenter = () => {
     { key: 'purchaseReturn', label: 'Purchase Return' },
     { key: 'salesReturn', label: 'Sales Return' },
     { key: 'adj', label: 'Adj' },
-    { key: 'stockAudit', label: 'Stock Audit' },
-    { key: 'b2bSales', label: 'B2B Sales' },
     { key: 'closingStock', label: 'Closing Stock' },
     { key: 'medicineStock', label: 'Medicine Stock' },
   ] as const;
@@ -387,8 +385,6 @@ const InvestigationCenter = () => {
       ...(col('purchaseReturn') ? [{ key: 'purchase_return_qty', label: 'Purchase Return' }] : []),
       ...(col('salesReturn') ? [{ key: 'sales_return_qty', label: 'Sales Return' }] : []),
       ...(col('adj') ? [{ key: 'adj_qty_formatted', label: 'Adj' }] : []),
-      ...(col('stockAudit') ? [{ key: 'stock_audit', label: 'Stock Audit' }] : []),
-      ...(col('b2bSales') ? [{ key: 'b2b_sales', label: 'B2B Sales' }] : []),
       ...(col('closingStock') ? [{ key: 'closing_qty_formatted', label: 'Closing Stock' }] : []),
       ...(col('medicineStock') ? [{ key: 'medicine_stock_qty_formatted', label: 'Medicine Stock' }] : []),
     ];
@@ -400,8 +396,6 @@ const InvestigationCenter = () => {
       purchase_qty_formatted: item.type === 'Purchase' ? formatTxQty(item.purchase_qty, item.free_qty || 0) : '0',
       sales_qty_formatted: item.type === 'Sale' ? formatTxQty(item.sale_qty, item.sale_loose) : '0',
       adj_qty_formatted: item.type === 'Adjustment' ? formatTxQty(item.adj_qty, item.adj_loose) : '0',
-      stock_audit: '0',
-      b2b_sales: '0',
       closing_qty_formatted: formatTxQty(item.closing_qty, item.closing_loose),
       medicine_stock_qty_formatted: formatTxQty(item.medicine_stock_qty, item.medicine_stock_loose),
     }));
@@ -1701,8 +1695,6 @@ const InvestigationCenter = () => {
                       {col('purchaseReturn') && <th className="px-3 text-center w-32 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">Pur. Return</th>}
                       {col('salesReturn') && <th className="px-3 text-center w-32 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">Sale Return</th>}
                       {col('adj') && <th className="px-3 text-center w-24 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">Adj</th>}
-                      {col('stockAudit') && <th className="px-3 text-center w-28 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">Stock Audit</th>}
-                      {col('b2bSales') && <th className="px-3 text-center w-28 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">B2B Sales</th>}
                       {col('closingStock') && <th className="px-3 text-center w-32 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">Closing</th>}
                       {col('medicineStock') && <th className="px-3 text-center w-32 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">Med. Stock</th>}
                       <th className="px-3 text-center w-24 shrink-0 uppercase text-[9px] tracking-widest text-muted/70 font-black">
@@ -1848,9 +1840,6 @@ const InvestigationCenter = () => {
                               )}
                             </td>
                           )}
-
-                          {col('stockAudit') && <td className="p-2 border-r border-glass-border/15 w-28 shrink-0 text-center font-mono text-xs text-muted/30">—</td>}
-                          {col('b2bSales') && <td className="p-2 border-r border-glass-border/15 w-28 shrink-0 text-center font-mono text-xs text-muted/30">—</td>}
 
                           {col('closingStock') && (
                             <td className="p-2 border-r border-glass-border/15 w-32 shrink-0 text-center font-mono text-xs">
