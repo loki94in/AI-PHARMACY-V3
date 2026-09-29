@@ -2451,6 +2451,7 @@ router.put('/:id', async (req, res) => {
           quantity: Number(oi.quantity), loose_quantity: Number(oi.loose_qty || 0),
           transaction_type: 'sale_edit_restore', transaction_id: id
         });
+        await applySaleDelta(db, oldStock.medicine_id, -Number(oi.quantity || 0));
         oldStockMap.set(oi.inventory_id, { ...oldStock, quantity: restored.quantity, loose_quantity: restored.loose_quantity });
       }
 
@@ -2519,6 +2520,7 @@ router.put('/:id', async (req, res) => {
           quantity: -Number(quantity), loose_quantity: -Number(loose_qty),
           transaction_type: 'sale_edit', transaction_id: id
         });
+        await applySaleDelta(db, currentStock.medicine_id, Number(quantity));
         editStockMap.set(inventory_id, { ...currentStock, quantity: newStock.quantity, loose_quantity: newStock.loose_quantity });
       }
 

@@ -107,6 +107,7 @@ interface LocalBillItem {
   quantity: number;
   unit_price?: number | string | null;
   loose_qty?: number;
+  pack_size?: number;
   cost_price?: number | string | null;
   mrp?: number | string | null;
   free_qty?: number;
@@ -165,6 +166,7 @@ interface LocalSaleDetailItem {
   quantity?: number;
   unit_price?: number | string | null;
   loose_qty?: number;
+  pack_size?: number;
 }
 
 interface LocalPurchaseDetailItem {
@@ -488,6 +490,7 @@ const InvestigationCenter = () => {
           quantity: it.quantity as number,
           unit_price: it.unit_price,
           loose_qty: it.loose_qty || 0,
+          pack_size: it.pack_size || 1,
           original_qty: it.quantity as number
         }));
         setBillItems(mapped);
@@ -526,10 +529,17 @@ const InvestigationCenter = () => {
       .finally(() => setDetailsLoading(false));
   };
 
+  // Billed sale line: strips at unit price, loose at unit price / pack. Free purchase qty is stock, not billed.
+  const saleLineAmount = (it: LocalBillItem) => {
+    const price = Number(it.unit_price) || 0;
+    const pack = Math.max(1, Number(it.pack_size) || 1);
+    return (Number(it.quantity) || 0) * price + ((Number(it.loose_qty) || 0) * price) / pack;
+  };
+
   // Inline Recalculation Engine
   const calculateRecalculatedTotal = () => {
     if (editingType === 'sale') {
-      const subtotal = billItems.reduce((acc, it) => acc + (it.quantity * (it.unit_price as number)), 0);
+      const subtotal = billItems.reduce((acc, it) => acc + saleLineAmount(it), 0);
       const tax = subtotal * 0.05;
       return Math.round(subtotal + tax - billDiscount);
     }
@@ -549,6 +559,15 @@ const InvestigationCenter = () => {
     setBillItems(prev => {
       const next = [...prev];
       next[index].quantity = newQty;
+      return next;
+    });
+  };
+
+  const handleItemFreeQtyChange = (index: number, newQty: number) => {
+    if (newQty < 0) return;
+    setBillItems(prev => {
+      const next = [...prev];
+      next[index].free_qty = newQty;
       return next;
     });
   };
@@ -1447,6 +1466,34 @@ const InvestigationCenter = () => {
                                     </div>
                                   </div>
 
+                                  {editingType === 'purchase' && (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted font-bold uppercase tracking-wider">Free</span>
+                                      <div className="flex items-center bg-bg2 border border-glass-border rounded-lg overflow-hidden h-8">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleItemFreeQtyChange(index, Math.max(0, Number(item.free_qty || 0) - 1))}
+                                          className="px-2.5 hover:bg-bg3 text-muted hover:text-text transition-colors h-full flex items-center justify-center border-r border-glass-border/40 cursor-pointer"
+                                        >
+                                          <Minus size={11} />
+                                        </button>
+                                        <input
+                                          type="number"
+                                          value={item.free_qty || 0}
+                                          onChange={e => handleItemFreeQtyChange(index, Math.max(0, Number(e.target.value)))}
+                                          className="w-10 text-center bg-transparent font-mono font-bold text-text text-xs focus:outline-none"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => handleItemFreeQtyChange(index, Number(item.free_qty || 0) + 1)}
+                                          className="px-2.5 hover:bg-bg3 text-muted hover:text-text transition-colors h-full flex items-center justify-center border-l border-glass-border/40 cursor-pointer"
+                                        >
+                                          <Plus size={11} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   {/* Loose Quantity Stepper (Sales only) */}
                                   {editingType === 'sale' && (
                                     <div className="flex items-center gap-1.5">
@@ -1515,7 +1562,9 @@ const InvestigationCenter = () => {
                       <div className="flex justify-between items-center text-muted">
                         <span>Subtotal</span>
                         <span className="font-mono font-bold text-text">
-                          ₹{billItems.reduce((acc, it) => acc + (it.quantity * ((editingType === 'sale' ? it.unit_price : it.cost_price) as number)), 0).toFixed(2)}
+                          ₹{billItems.reduce((acc, it) => acc + (editingType === 'sale'
+                            ? saleLineAmount(it)
+                            : (it.quantity * (Number(it.cost_price) || 0))), 0).toFixed(2)}
                         </span>
                       </div>
 
@@ -1524,7 +1573,7 @@ const InvestigationCenter = () => {
                         <div className="flex justify-between items-center text-muted">
                           <span>GST / Taxes (5%)</span>
                           <span className="font-mono font-bold text-text">
-                            ₹{(billItems.reduce((acc, it) => acc + (it.quantity * (it.unit_price as number)), 0) * 0.05).toFixed(2)}
+                            ₹{(billItems.reduce((acc, it) => acc + saleLineAmount(it), 0) * 0.05).toFixed(2)}
                           </span>
                         </div>
                       )}
