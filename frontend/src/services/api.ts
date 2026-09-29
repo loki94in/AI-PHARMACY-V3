@@ -476,6 +476,19 @@ interface AppSettings {
 
 // ── Row/payload shapes observed from the backend route handlers ──────────────
 
+export interface LastPurchaseByDistributorRow {
+  distributor_id: number;
+  distributor_name: string;
+  date: string;
+  invoice_no: string | null;
+  batch_no: string | null;
+  expiry_date: string | null;
+  rate: number | null;
+  mrp: number | null;
+  quantity: number | null;
+  free_qty: number | null;
+}
+
 export interface CompactInventoryItem {
   medicine_id: number;
   inventory_id: number;
@@ -1263,7 +1276,11 @@ export const api = {
         ...(medicineId ? { medicine_id: medicineId } : {})
       }
     }).then(res => res.data),
-  searchPharmarack: (q: string, storeId?: string | number, isMapped?: boolean, signal?: AbortSignal) =>
+  getLastPurchaseByDistributor: (medicineId: number) =>
+    apiClient.get<{ data: LastPurchaseByDistributorRow[] }>('/purchases/last-by-distributor', {
+      params: { medicine_id: medicineId }
+    }).then(res => res.data),
+  searchPharmarack:(q: string, storeId?: string | number, isMapped?: boolean, signal?: AbortSignal) =>
     apiClient.get('/pharmarack/search', {
       params: {
         q,

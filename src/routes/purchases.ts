@@ -2202,6 +2202,35 @@ router.get('/price-history', async (req, res) => {
   }
 });
 
+// One row per distributor: that distributor's most recent purchase line for the medicine. READ-ONLY.
+router.get('/last-by-distributor', async (req, res) => {
+  const medicineId = parseInt(req.query.medicine_id as string, 10);
+  if (!medicineId || medicineId <= 0) {
+    return res.status(400).json({ error: 'medicine_id is required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(`
+      SELECT distributor_id, distributor_name, date, invoice_no, batch_no, expiry_date, rate, mrp, quantity, free_qty
+      FROM (
+        SELECT p.distributor_id, d.name AS distributor_name, p.date, p.invoice_no,
+               pi.batch_no, pi.expiry_date, pi.cost_price AS rate, pi.mrp, pi.quantity, pi.free_qty,
+               ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY p.date DESC, pi.id DESC) AS rn
+        FROM purchase_items pi
+        JOIN purchases p ON p.id = pi.purchase_id
+        JOIN distributors d ON d.id = p.distributor_id
+        WHERE pi.medicine_id = ?
+      )
+      WHERE rn = 1
+      ORDER BY date DESC
+    `, [medicineId]);
+    res.json({ data: rows });
+  } catch (error) {
+    console.error('Last-by-distributor error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Batch auto-fill: get last purchase for multiple medicines at once
 router.post('/batch-last-purchase', async (req, res) => {
   let db;

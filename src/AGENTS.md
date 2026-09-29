@@ -39,6 +39,9 @@ No purchase ingestion route may silently create `medicines` master rows. Master 
 - `GET /purchases/last-purchase`, `/price-history` and `POST /batch-last-purchase` expose `hsn_code`; `GET /purchases/history-prefill?name=` returns the best single historical match (approved bills first, pending staged email invoices as fallback) with provenance — READ-ONLY, never creates records. Used by the Universal editor's "Found in past bills" confirm strip; keep it user-clicked Apply, no silent autofill.
 - `GET /purchases/last-purchase` also accepts an optional `batch_no` param (`pi.batch_no COLLATE NOCASE = ?`) that narrows to the newest line of the SAME batch — powers the Purchases-page "same batch → same rate/MRP/GST" autofill. Keep it read-only.
 
+## Last Purchase Per Distributor (added 2026-09-29)
+- **`GET /purchases/last-by-distributor?medicine_id=`**: READ-ONLY. One row per distributor = that distributor's most recent `purchase_items` line for the medicine (`ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY p.date DESC, pi.id DESC)`), newest first. Seeks via `idx_purchase_items_medicine_id`; measured on the migrated installed DB (63k purchase lines): 0.19 ms avg / 2.6 ms heaviest medicine in SQL, ~3 ms over HTTP. Keyed strictly on `medicine_id` (the `inventory_master.medicine_id`), no name fuzzing. Consumer: Inventory drawer's `LastPurchaseByDistributor`.
+
 ## Mail-Arrival Alert Truthfulness Contract (added 2026-08)
 
 - **Arrival time is the mailbox time, never the sync moment**: `emailService` delta-sync carries the mail's real timestamp (IMAP INTERNALDATE preferred, sender Date header fallback) on the processed mail; `notifyMailArrival`, the SSE toast, and `sendDistributorWhatsAppAlert` prefer it — `new Date()` is a last-resort only. Do not revert to sync-time fallbacks.

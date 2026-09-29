@@ -16,6 +16,7 @@ import { InfiniteScrollStatus } from '../../components/InfiniteScrollStatus';
 import { useRef } from 'react';
 import { exportToCSV, exportToPDF } from '../../utils/export';
 
+import { LastPurchaseByDistributor } from '../../components/LastPurchaseByDistributor';
 const UniversalMedicineEditModal = lazy(() => import('../../components/UniversalMedicineEditModal').then(m => ({ default: m.UniversalMedicineEditModal })));
 
 type LocalSellSourceItem = InventoryItem & { inventory_id?: number; batch_no?: string };
@@ -1156,6 +1157,8 @@ const Inventory = () => {
                     </div>
                   </div>
                 </div>
+
+                {selectedItem.medicine_id ? <LastPurchaseByDistributor medicineId={selectedItem.medicine_id} /> : null}
 
                 {/* Medical Profile (openFDA) */}
                 <div className="px-4 pb-6 space-y-3">

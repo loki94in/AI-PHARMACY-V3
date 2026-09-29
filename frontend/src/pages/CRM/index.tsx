@@ -958,18 +958,18 @@ const RefillsSection: React.FC = () => {
       }
 
       // Query medicines that the pharmacy has ever purchased/stocked (including 0 current stock items)
-      const res = await apiClient.get<{ medicines?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
+      const res = await apiClient.get<{ data?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
         params: { search: clean, limit: 30, purchasedOnly: true }
       });
-      let resData = Array.isArray(res.data) ? res.data : res.data?.medicines;
+      let resData = Array.isArray(res.data) ? res.data : res.data?.data;
       let list = Array.isArray(resData) ? resData : [];
 
       // Fallback: If no purchased medicines matched and user typed 2+ chars, search entire catalog
       if (list.length === 0 && clean.length >= 2) {
-        const catRes = await apiClient.get<{ medicines?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
+        const catRes = await apiClient.get<{ data?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
           params: { search: clean, limit: 15 }
         });
-        const catData = Array.isArray(catRes.data) ? catRes.data : catRes.data?.medicines;
+        const catData = Array.isArray(catRes.data) ? catRes.data : catRes.data?.data;
         list = Array.isArray(catData) ? catData : [];
       }
 
