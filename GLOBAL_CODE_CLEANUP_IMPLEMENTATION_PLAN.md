@@ -556,59 +556,59 @@ Fix any dead code, duplicate logic, unused components, and unnecessary complexit
 - [x] `scripts/resolve_true_mismatches.mjs`
 
 ### Chunk 11 (Files 501 to 550)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `scripts/restore.mjs`
-- [ ] `scripts/retry-not-found-images.mjs`
-- [ ] `scripts/scan_all_downloaded_images.ts`
-- [ ] `scripts/scan_and_resolve_primary_images.mjs`
-- [ ] `scripts/scan_db_images_accuracy.ts`
-- [ ] `scripts/search_apollo.mjs`
-- [ ] `scripts/search_live.mjs`
-- [ ] `scripts/seed_inventory_medicines.mjs`
-- [ ] `scripts/show_135.mjs`
-- [ ] `scripts/show_other.mjs`
-- [ ] `scripts/start-online-catalog-tunnel.mjs`
-- [ ] `scripts/summarize_real_errors.mjs`
-- [ ] `scripts/sync-multi-angles.mjs`
-- [ ] `scripts/test_10_images_benchmark.ts`
-- [ ] `scripts/test_1mg.mjs`
-- [ ] `scripts/test_1mg_dytor.mjs`
-- [ ] `scripts/test_ai_camera_10.ts`
-- [ ] `scripts/test_aicamera_improvements.ts`
-- [ ] `scripts/test_aicamera_strength_confirmation.mjs`
-- [ ] `scripts/test_apis.mjs`
-- [ ] `scripts/test_apollo_img.mjs`
-- [ ] `scripts/test_batch_search.mjs`
-- [ ] `scripts/test_brand_expansion.mjs`
-- [ ] `scripts/test_brand_filtering.ts`
-- [ ] `scripts/test_calpol_pe.mjs`
-- [ ] `scripts/test_cdn_urls.mjs`
-- [ ] `scripts/test_cipladine_search.mjs`
-- [ ] `scripts/test_clinical_resolver.mjs`
-- [ ] `scripts/test_device_conflict.ts`
-- [ ] `scripts/test_dispovan.mjs`
-- [ ] `scripts/test_dispovan_apollo.mjs`
-- [ ] `scripts/test_download_10_random.ts`
-- [ ] `scripts/test_enhanced_resolver.mjs`
-- [ ] `scripts/test_fast_offline_ocr.ts`
-- [ ] `scripts/test_flamingo_cotton.ts`
-- [ ] `scripts/test_honey.mjs`
-- [ ] `scripts/test_icloud_prescription.ts`
-- [ ] `scripts/test_image_compression.ts`
-- [ ] `scripts/test_image_correction.mjs`
-- [ ] `scripts/test_insulin_download.ts`
-- [ ] `scripts/test_inventory_10.ts`
-- [ ] `scripts/test_netmeds.mjs`
-- [ ] `scripts/test_netmeds_search.mjs`
-- [ ] `scripts/test_offline_prescription_matcher.ts`
-- [ ] `scripts/test_onnx_ocr.ts`
-- [ ] `scripts/test_other_sources.mjs`
-- [ ] `scripts/test_parachute_match.mjs`
-- [ ] `scripts/test_pe_cdn.mjs`
-- [ ] `scripts/test_prefixed_dict.ts`
-- [ ] `scripts/test_prescription_intel_flow.ts`
+- [x] `scripts/restore.mjs`
+- [x] `scripts/retry-not-found-images.mjs`
+- [x] `scripts/scan_all_downloaded_images.ts`
+- [x] `scripts/scan_and_resolve_primary_images.mjs`
+- [x] `scripts/scan_db_images_accuracy.ts`
+- [x] `scripts/search_apollo.mjs`
+- [x] `scripts/search_live.mjs`
+- [x] `scripts/seed_inventory_medicines.mjs`
+- [x] `scripts/show_135.mjs`
+- [x] `scripts/show_other.mjs`
+- [x] `scripts/start-online-catalog-tunnel.mjs`
+- [x] `scripts/summarize_real_errors.mjs`
+- [x] `scripts/sync-multi-angles.mjs`
+- [x] `scripts/test_10_images_benchmark.ts`
+- [x] `scripts/test_1mg.mjs`
+- [x] `scripts/test_1mg_dytor.mjs`
+- [x] `scripts/test_ai_camera_10.ts`
+- [x] `scripts/test_aicamera_improvements.ts`
+- [x] `scripts/test_aicamera_strength_confirmation.mjs`
+- [x] `scripts/test_apis.mjs`
+- [x] `scripts/test_apollo_img.mjs`
+- [x] `scripts/test_batch_search.mjs`
+- [x] `scripts/test_brand_expansion.mjs`
+- [x] `scripts/test_brand_filtering.ts`
+- [x] `scripts/test_calpol_pe.mjs`
+- [x] `scripts/test_cdn_urls.mjs`
+- [x] `scripts/test_cipladine_search.mjs`
+- [x] `scripts/test_clinical_resolver.mjs`
+- [x] `scripts/test_device_conflict.ts`
+- [x] `scripts/test_dispovan.mjs`
+- [x] `scripts/test_dispovan_apollo.mjs`
+- [x] `scripts/test_download_10_random.ts`
+- [x] `scripts/test_enhanced_resolver.mjs`
+- [x] `scripts/test_fast_offline_ocr.ts`
+- [x] `scripts/test_flamingo_cotton.ts`
+- [x] `scripts/test_honey.mjs`
+- [x] `scripts/test_icloud_prescription.ts`
+- [x] `scripts/test_image_compression.ts`
+- [x] `scripts/test_image_correction.mjs`
+- [x] `scripts/test_insulin_download.ts`
+- [x] `scripts/test_inventory_10.ts`
+- [x] `scripts/test_netmeds.mjs`
+- [x] `scripts/test_netmeds_search.mjs`
+- [x] `scripts/test_offline_prescription_matcher.ts`
+- [x] `scripts/test_onnx_ocr.ts`
+- [x] `scripts/test_other_sources.mjs`
+- [x] `scripts/test_parachute_match.mjs`
+- [x] `scripts/test_pe_cdn.mjs`
+- [x] `scripts/test_prefixed_dict.ts`
+- [x] `scripts/test_prescription_intel_flow.ts`
 
 ### Chunk 12 (Files 551 to 600)
 **Agent Assigned:** [ ]
