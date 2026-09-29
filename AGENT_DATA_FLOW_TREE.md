@@ -37,7 +37,7 @@ Before editing:
 |---|---|---|---|---|
 | Master name | Medicine name the user registered | Universal medicine editor on the purchase flow | `medicines` | `POST /api/medicines` |
 | Purchase bill | Distributor invoice the user confirmed | Purchases → verification modal Confirm | `purchases`, `purchase_items` | purchase save after `PurchaseSaveVerificationModal` |
-| Shelf stock | Batch, expiry, qty, cost, MRP from that confirmed bill, or an explicit stock adjustment the user performed on Inventory | Purchase confirm (creates the batch). Inventory adjustment edits a batch that already exists | `inventory_master` | purchase save; `POST /api/inventory/adjust` for a user adjustment |
+| Shelf stock | Batch, expiry, qty, cost, MRP from that confirmed bill, or an explicit stock adjustment the user performed on Inventory or Investigation | Purchase confirm (creates the batch). Inventory or Investigation adjustment edits a batch that already exists | `inventory_master` | purchase save; Investigation `PUT /api/investigation/inventory/:id` |
 | Sale | Counter bill | POS save | `sales_invoices`, `sale_items` | `POST /api/sales` |
 | Patient | Name and phone captured on a sale, or edited on the patient the sale already created | POS save creates the person from the name and phone on the bill. CRM edits that person | `customers` | sale save; `GET/POST /api/customers` |
 | Special order | Shortage request for a patient | CRM special-orders tab | `special_orders` | `GET/POST/PUT/DELETE /api/orders` |
@@ -49,7 +49,22 @@ Historical importers (migration, portal, cloud sync) already write some of these
 
 ---
 
-## 4. Journey
+## 4. Stock columns — POS sale and Investigation
+
+One shelf row is `inventory_master.id`. The numbers that move are `quantity` (strips) and `loose_quantity`.
+
+| Event | Writes | Investigation reads |
+|---|---|---|
+| Confirmed purchase | `inventory_master.quantity` increases by `purchase_items.quantity + free_qty`. `stock_ledger.quantity` is that same positive total | Purchase line. Closing stock adds billed quantity and free quantity |
+| POS sale | `sale_items.inventory_id`, `sale_items.quantity`, `sale_items.loose_qty`. Shelf drops through the strip/loose pool (`applyStockDelta`). `stock_ledger` stores the negative sale | Sale line joined on `sale_items.inventory_id`. Closing stock uses that same pool, so a loose sale that opens a strip matches the shelf |
+| Customer return of a sale | `inventory_master.quantity` back up. `return_items.quantity` with `returns.type = 'sale'` | Return line. Closing stock adds those strips back |
+| Investigation +/− | `PUT /api/investigation/inventory/:id` sets `quantity` and `loose_quantity` to the numbers the user typed, and appends `stock_ledger` (`transaction_type = investigation_adjustment`) for the difference | Adjustment row from `action_logs` metadata `quantity` / `looseQuantity`. Closing stock becomes those saved numbers |
+
+A sale bill edit on Investigation changes `sale_items` and the same shelf columns. It does not create a second stock table.
+
+---
+
+## 5. Journey
 
 ```text
 Mail / OCR attachment
@@ -75,7 +90,7 @@ Direction rules:
 
 ---
 
-## 5. Patient truth — CRM writes, Quick Assist shows the same rows
+## 6. Patient truth — CRM writes, Quick Assist shows the same rows
 
 CRM (`/crm`) is where the user manages patient details.
 
@@ -99,7 +114,7 @@ Quick Assist (`QuickAssistSidebar` in `frontend/src/components/Layout.tsx`) is a
 
 ---
 
-## 6. Handoff into POS
+## 7. Handoff into POS
 
 CRM **Sell Now** and Quick Assist **Complete** open `/pos` with the same `location.state.prefill`:
 
@@ -115,7 +130,7 @@ POS hydrates the cart from that object. The invoice is written only by POS save.
 
 ---
 
-## 7. Shared readers
+## 8. Shared readers
 
 These pages do not own the numbers. They read the stores in section 3.
 
@@ -133,7 +148,7 @@ A report that needs “what this patient bought” reads that patient’s sale i
 
 ---
 
-## 8. Moves this tree stops
+## 9. Moves this tree stops
 
 - Collecting every inventory row to answer a question whose answer is on one purchase bill or one sale.
 - Building a new CRM, a new orders page, or a new refill list beside `/crm`.
@@ -144,6 +159,6 @@ A report that needs “what this patient bought” reads that patient’s sale i
 
 ---
 
-## 9. When the slice grows
+## 10. When the slice grows
 
 A later feature joins this file as a new node: writer, table, API, and every existing reader. It does not start a parallel tree.

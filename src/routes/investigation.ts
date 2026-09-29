@@ -2,6 +2,7 @@ import express from 'express';
 import { dbManager } from '../database/connection.js';
 import { inventoryCache } from '../services/inventoryCache.js';
 import { rebuildPurchaseSummaryCache, triggerBackgroundSummaryRebuild } from '../services/summaryCacheService.js';
+import { applyStockDelta } from '../utils/stockRebuild.js';
 
 const router = express.Router();
 
@@ -78,6 +79,7 @@ router.get('/timeline', async (req, res) => {
         c.name AS customer_name,
         si.quantity AS quantity,
         si.loose_qty AS loose_quantity,
+        COALESCE(m.pack_size, 1) AS pack_size,
         im.batch_no AS batch_no,
         m.name AS medicine_name,
         m.id AS medicine_id,
@@ -105,14 +107,15 @@ router.get('/timeline', async (req, res) => {
         pi.batch_no AS batch_no,
         m.name AS medicine_name,
         m.id AS medicine_id,
-        im.id AS inventory_id,
+        (SELECT im.id FROM inventory_master im
+           WHERE im.medicine_id = pi.medicine_id AND im.batch_no = pi.batch_no
+           ORDER BY im.id LIMIT 1) AS inventory_id,
         pi.expiry_date AS expiry_date,
         pi.mrp AS mrp
       FROM purchase_items pi
       JOIN purchases p ON pi.purchase_id = p.id
       JOIN medicines m ON pi.medicine_id = m.id
       LEFT JOIN distributors d ON p.distributor_id = d.id
-      LEFT JOIN inventory_master im ON im.medicine_id = pi.medicine_id AND im.batch_no = pi.batch_no
       WHERE 1=1
     `;
     const purchasesParams: any[] = [];
@@ -126,11 +129,16 @@ router.get('/timeline', async (req, res) => {
         c.name AS customer_name,
         d.name AS distributor_name,
         ri.quantity AS quantity,
+        COALESCE(m.pack_size, 1) AS pack_size,
         ri.batch_no AS batch_no,
         m.name AS medicine_name,
         m.id AS medicine_id,
-        im.id AS inventory_id,
-        im.expiry_date AS expiry_date,
+        (SELECT im.id FROM inventory_master im
+           WHERE im.medicine_id = ri.medicine_id AND im.batch_no = ri.batch_no
+           ORDER BY im.id LIMIT 1) AS inventory_id,
+        (SELECT im.expiry_date FROM inventory_master im
+           WHERE im.medicine_id = ri.medicine_id AND im.batch_no = ri.batch_no
+           ORDER BY im.id LIMIT 1) AS expiry_date,
         ri.mrp AS mrp,
         r.type AS return_type,
         r.reason AS reason
@@ -140,7 +148,6 @@ router.get('/timeline', async (req, res) => {
       LEFT JOIN distributors d ON r.distributor_id = d.id
       LEFT JOIN sales_invoices si ON r.original_invoice_id = si.id
       LEFT JOIN customers c ON si.customer_id = c.id
-      LEFT JOIN inventory_master im ON im.medicine_id = ri.medicine_id AND im.batch_no = ri.batch_no
       WHERE 1=1
     `;
     const returnsParams: any[] = [];
@@ -503,17 +510,35 @@ router.get('/timeline', async (req, res) => {
       let newMedLoose = prevMed.loose;
 
       if (tx.type === 'Purchase') {
-        newBatchQty += tx.purchase_qty;
-        newMedQty += tx.purchase_qty;
+        // Shelf stock is billed quantity plus free quantity (purchases.ts totalQty).
+        const inbound = Number(tx.purchase_qty || 0) + Number(tx.free_qty || 0);
+        newBatchQty += inbound;
+        newMedQty += inbound;
       } else if (tx.type === 'Sale') {
-        newBatchQty -= tx.sale_qty;
-        newBatchLoose -= tx.sale_loose;
-        newMedQty -= tx.sale_qty;
-        newMedLoose -= tx.sale_loose;
+        // Same strip/loose pool POS uses, so a loose sale that opens a strip
+        // closes on the same quantity and loose_quantity the shelf holds.
+        const next = applyStockDelta(
+          { quantity: newBatchQty, loose_quantity: newBatchLoose },
+          -Number(tx.sale_qty || 0),
+          -Number(tx.sale_loose || 0),
+          Number(tx.pack_size) || 1
+        );
+        newMedQty += next.quantity - newBatchQty;
+        newMedLoose += next.loose_quantity - newBatchLoose;
+        newBatchQty = next.quantity;
+        newBatchLoose = next.loose_quantity;
       } else if (tx.type === 'Return') {
         if (tx.return_type === 'sale') {
-          newBatchQty += tx.sales_return_qty;
-          newMedQty += tx.sales_return_qty;
+          const next = applyStockDelta(
+            { quantity: newBatchQty, loose_quantity: newBatchLoose },
+            Number(tx.sales_return_qty || 0),
+            0,
+            Number(tx.pack_size) || 1
+          );
+          newMedQty += next.quantity - newBatchQty;
+          newMedLoose += next.loose_quantity - newBatchLoose;
+          newBatchQty = next.quantity;
+          newBatchLoose = next.loose_quantity;
         } else {
           newBatchQty -= tx.purchase_return_qty;
           newMedQty -= tx.purchase_return_qty;
@@ -808,7 +833,8 @@ router.get('/details/:inventoryId', async (req, res) => {
         type: 'Sale',
         reference: s.invoice_no,
         detail: `Sold to Patient ${s.customer_name || 'Walk-in Customer'}`,
-        qtyChange: -s.quantity,
+        qtyChange: -Number(s.quantity || 0),
+        looseChange: -Number(s.loose_qty || 0),
         price: s.unit_price
       });
     }
@@ -890,6 +916,20 @@ router.put('/inventory/:inventoryId', async (req, res) => {
       batchNo: { from: oldRecord.batch_no, to: batch_no },
       expiryDate: { from: oldRecord.expiry_date, to: expiry_date }
     });
+
+    const qtyDelta = Number(quantity) - Number(oldRecord.quantity || 0);
+    const looseDelta = Number(loose_quantity) - Number(oldRecord.loose_quantity || 0);
+    if (qtyDelta !== 0 || looseDelta !== 0) {
+      const { recordStockLedger } = await import('../utils/stockRebuild.js');
+      await recordStockLedger(db, {
+        medicine_id: oldRecord.medicine_id,
+        batch_no: batch_no,
+        quantity: qtyDelta,
+        loose_quantity: looseDelta,
+        transaction_type: 'investigation_adjustment',
+        transaction_id: inventoryId
+      });
+    }
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
@@ -1179,9 +1219,12 @@ router.put('/purchases/:purchaseId', async (req, res) => {
 
     // Step 1: Fetch old items to calculate deltas
     const oldItems = await db.all(
-      'SELECT medicine_id, batch_no, quantity, expiry_date, cost_price, mrp FROM purchase_items WHERE purchase_id = ?',
+      'SELECT medicine_id, batch_no, quantity, free_qty, expiry_date, cost_price, mrp FROM purchase_items WHERE purchase_id = ?',
       [purchaseId]
     );
+    // inventory_master.quantity moved by quantity + free_qty on purchase save.
+    const shelfUnits = (row: { quantity?: number; free_qty?: number }) =>
+      Number(row.quantity || 0) + Number(row.free_qty || 0);
 
     // Group items by medicine_id and batch_no to calculate net changes (accumulating duplicates if any)
     const deltaMap = new Map<string, {
@@ -1198,12 +1241,12 @@ router.put('/purchases/:purchaseId', async (req, res) => {
       const key = `${oi.medicine_id}_${oi.batch_no}`;
       const existing = deltaMap.get(key);
       if (existing) {
-        existing.oldQty += Number(oi.quantity || 0);
+        existing.oldQty += shelfUnits(oi);
       } else {
         deltaMap.set(key, {
           medicine_id: Number(oi.medicine_id),
           batch_no: oi.batch_no,
-          oldQty: Number(oi.quantity || 0),
+          oldQty: shelfUnits(oi),
           newQty: 0,
           expiry_date: oi.expiry_date || null,
           mrp: Number(oi.mrp || 0),
@@ -1221,7 +1264,7 @@ router.put('/purchases/:purchaseId', async (req, res) => {
       const key = `${medId}_${batchNo}`;
       const existing = deltaMap.get(key);
       if (existing) {
-        existing.newQty += Number(ni.quantity) || 0;
+        existing.newQty += shelfUnits(ni);
         existing.expiry_date = ni.expiry_date || existing.expiry_date;
         existing.mrp = Number(ni.mrp) || existing.mrp;
         existing.cost_price = Number(ni.cost_price) || existing.cost_price;
@@ -1230,7 +1273,7 @@ router.put('/purchases/:purchaseId', async (req, res) => {
           medicine_id: medId,
           batch_no: batchNo,
           oldQty: 0,
-          newQty: Number(ni.quantity) || 0,
+          newQty: shelfUnits(ni),
           expiry_date: ni.expiry_date || null,
           mrp: Number(ni.mrp) || 0,
           cost_price: Number(ni.cost_price) || 0
