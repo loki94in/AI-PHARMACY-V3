@@ -392,113 +392,113 @@ Fix any dead code, duplicate logic, unused components, and unnecessary complexit
 
 ### Chunk 8 (Files 351 to 400)
 **Agent Assigned:** [Antigravity]
-**Status:** [ ] Not Started / [x] In Progress / [ ] Completed
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `scripts/activate_calpol.mjs`
-- [ ] `scripts/all_541_rejected.json`
-- [ ] `scripts/analyze-frontend-bundle.mjs`
-- [ ] `scripts/analyze_534.mjs`
-- [ ] `scripts/analyze_rejected.mjs`
-- [ ] `scripts/analyze_rejected_names.mjs`
-- [ ] `scripts/apply_exact_strength_corrections.mjs`
-- [ ] `scripts/audit_all_catalog_images.mjs`
-- [ ] `scripts/audit_and_clean_catalog_images.ts`
-- [ ] `scripts/audit_and_correct_catalog_images.mjs`
-- [ ] `scripts/audit_dispovan.mjs`
-- [ ] `scripts/backfill_migration_returns.mjs`
-- [ ] `scripts/backup-restore-drill.mjs`
-- [ ] `scripts/backup.mjs`
-- [ ] `scripts/batch_20_redownload.ts`
-- [ ] `scripts/batch_ocr_worker.ts`
-- [ ] `scripts/benchmark_aicamera_recognition.ts`
-- [ ] `scripts/build-medicine-dict.ts`
-- [ ] `scripts/build-update-package.mjs`
-- [ ] `scripts/buildBundle.cjs`
-- [ ] `scripts/buildSea.cjs`
-- [ ] `scripts/buildUniversalCatalog.mjs`
-- [ ] `scripts/bump-version.mjs`
-- [ ] `scripts/categorize_rejected.mjs`
-- [ ] `scripts/check_all_api_keys.mjs`
-- [ ] `scripts/check_all_dytor_resolved_images.mjs`
-- [ ] `scripts/check_api_key.ts`
-- [ ] `scripts/check_candidate_rows.mjs`
-- [ ] `scripts/check_counts.mjs`
-- [ ] `scripts/check_dytor10_pe.mjs`
-- [ ] `scripts/check_dytor10_side2.mjs`
-- [ ] `scripts/check_dytor20_db.mjs`
-- [ ] `scripts/check_dytor_cross.mjs`
-- [ ] `scripts/check_dytor_mismatches.mjs`
-- [ ] `scripts/check_dytor_pe.mjs`
-- [ ] `scripts/check_dytor_source.mjs`
-- [ ] `scripts/check_dytor_state_exact.mjs`
-- [ ] `scripts/check_dytor_stock.mjs`
-- [ ] `scripts/check_dytor_substitutes.mjs`
-- [ ] `scripts/check_existing_files.mjs`
-- [ ] `scripts/check_filename_matches.mjs`
-- [ ] `scripts/check_gemini_quota.mjs`
-- [ ] `scripts/check_honey_row.mjs`
-- [ ] `scripts/check_live_pe.mjs`
-- [ ] `scripts/check_local_matches.mjs`
-- [ ] `scripts/check_med_cols.mjs`
-- [ ] `scripts/check_rejected_on_disk.mjs`
-- [ ] `scripts/check_stock_query.mjs`
-- [ ] `scripts/classifyDrugSchedules.ts`
-- [ ] `scripts/classify_292.mjs`
+- [x] `scripts/activate_calpol.mjs`
+- [x] `scripts/all_541_rejected.json`
+- [x] `scripts/analyze-frontend-bundle.mjs`
+- [x] `scripts/analyze_534.mjs`
+- [x] `scripts/analyze_rejected.mjs`
+- [x] `scripts/analyze_rejected_names.mjs`
+- [x] `scripts/apply_exact_strength_corrections.mjs`
+- [x] `scripts/audit_all_catalog_images.mjs`
+- [x] `scripts/audit_and_clean_catalog_images.ts`
+- [x] `scripts/audit_and_correct_catalog_images.mjs`
+- [x] `scripts/audit_dispovan.mjs`
+- [x] `scripts/backfill_migration_returns.mjs`
+- [x] `scripts/backup-restore-drill.mjs`
+- [x] `scripts/backup.mjs`
+- [x] `scripts/batch_20_redownload.ts`
+- [x] `scripts/batch_ocr_worker.ts`
+- [x] `scripts/benchmark_aicamera_recognition.ts`
+- [x] `scripts/build-medicine-dict.ts`
+- [x] `scripts/build-update-package.mjs`
+- [x] `scripts/buildBundle.cjs`
+- [x] `scripts/buildSea.cjs`
+- [x] `scripts/buildUniversalCatalog.mjs`
+- [x] `scripts/bump-version.mjs`
+- [x] `scripts/categorize_rejected.mjs`
+- [x] `scripts/check_all_api_keys.mjs`
+- [x] `scripts/check_all_dytor_resolved_images.mjs`
+- [x] `scripts/check_api_key.ts`
+- [x] `scripts/check_candidate_rows.mjs`
+- [x] `scripts/check_counts.mjs`
+- [x] `scripts/check_dytor10_pe.mjs`
+- [x] `scripts/check_dytor10_side2.mjs`
+- [x] `scripts/check_dytor20_db.mjs`
+- [x] `scripts/check_dytor_cross.mjs`
+- [x] `scripts/check_dytor_mismatches.mjs`
+- [x] `scripts/check_dytor_pe.mjs`
+- [x] `scripts/check_dytor_source.mjs`
+- [x] `scripts/check_dytor_state_exact.mjs`
+- [x] `scripts/check_dytor_stock.mjs`
+- [x] `scripts/check_dytor_substitutes.mjs`
+- [x] `scripts/check_existing_files.mjs`
+- [x] `scripts/check_filename_matches.mjs`
+- [x] `scripts/check_gemini_quota.mjs`
+- [x] `scripts/check_honey_row.mjs`
+- [x] `scripts/check_live_pe.mjs`
+- [x] `scripts/check_local_matches.mjs`
+- [x] `scripts/check_med_cols.mjs`
+- [x] `scripts/check_rejected_on_disk.mjs`
+- [x] `scripts/check_stock_query.mjs`
+- [x] `scripts/classifyDrugSchedules.ts`
+- [x] `scripts/classify_292.mjs`
 
 ### Chunk 9 (Files 401 to 450)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `scripts/classify_true_clinical_errors.mjs`
-- [ ] `scripts/clean_all_remaining_images.mjs`
-- [ ] `scripts/clean_temp.mjs`
-- [ ] `scripts/cleanupDuplicateMedicines.mjs`
-- [ ] `scripts/clear-all-data.mjs`
-- [ ] `scripts/createLicense.mjs`
-- [ ] `scripts/cross-check-images-aicamera.ts`
-- [ ] `scripts/debug_confidence.mjs`
-- [ ] `scripts/debug_single_match.mjs`
-- [ ] `scripts/deleteLicense.mjs`
-- [ ] `scripts/diagnose_scoring.mjs`
-- [ ] `scripts/download-inventory-images.mjs`
-- [ ] `scripts/download_20_catalog_images.ts`
-- [ ] `scripts/download_7_refs.mjs`
-- [ ] `scripts/download_core_refs.mjs`
-- [ ] `scripts/download_genuine_dytor20.mjs`
-- [ ] `scripts/download_more_refs.mjs`
-- [ ] `scripts/download_onnx_models.mjs`
-- [ ] `scripts/download_verified_items.mjs`
-- [ ] `scripts/dump_534.mjs`
-- [ ] `scripts/dump_all_rejected.mjs`
-- [ ] `scripts/dump_rejected_meds.mjs`
-- [ ] `scripts/dump_unique_rejected.mjs`
-- [ ] `scripts/enrich-clinical-knowledge.mjs`
-- [ ] `scripts/export-not-found-products.mjs`
-- [ ] `scripts/extract-clinical-categories.mjs`
-- [ ] `scripts/extract-styles.mjs`
-- [ ] `scripts/fast_image_downloader.ts`
-- [ ] `scripts/final_unresolved.json`
-- [ ] `scripts/find_all_subtle_mismatches.mjs`
-- [ ] `scripts/find_confirmed_mismatches.mjs`
-- [ ] `scripts/find_mismatched_images.mjs`
-- [ ] `scripts/find_popular_meds.ts`
-- [ ] `scripts/find_rejected_meds.mjs`
-- [ ] `scripts/fix_dytor_catalog_images.mjs`
-- [ ] `scripts/fix_legacy_catalog_images.ts`
-- [ ] `scripts/generate-3d-graph.mjs`
-- [ ] `scripts/generate-project-docs.mjs`
-- [ ] `scripts/generate_missing_website_products_report.mjs`
-- [ ] `scripts/get_top_companies.mjs`
-- [ ] `scripts/group_needs_download.mjs`
-- [ ] `scripts/group_rejected_identities.mjs`
-- [ ] `scripts/harvest_status.ts`
-- [ ] `scripts/harvest_top100_company_images.ts`
-- [ ] `scripts/heal-sales-gst.js`
-- [ ] `scripts/heal-sales-invoices.js`
-- [ ] `scripts/importCatalog.ts`
-- [ ] `scripts/importMasterMedicines.mjs`
-- [ ] `scripts/importMedicineNames.mjs`
-- [ ] `scripts/inspect_abzorb.mjs`
+- [x] `scripts/classify_true_clinical_errors.mjs`
+- [x] `scripts/clean_all_remaining_images.mjs`
+- [x] `scripts/clean_temp.mjs`
+- [x] `scripts/cleanupDuplicateMedicines.mjs`
+- [x] `scripts/clear-all-data.mjs`
+- [x] `scripts/createLicense.mjs`
+- [x] `scripts/cross-check-images-aicamera.ts`
+- [x] `scripts/debug_confidence.mjs`
+- [x] `scripts/debug_single_match.mjs`
+- [x] `scripts/deleteLicense.mjs`
+- [x] `scripts/diagnose_scoring.mjs`
+- [x] `scripts/download-inventory-images.mjs`
+- [x] `scripts/download_20_catalog_images.ts`
+- [x] `scripts/download_7_refs.mjs`
+- [x] `scripts/download_core_refs.mjs`
+- [x] `scripts/download_genuine_dytor20.mjs`
+- [x] `scripts/download_more_refs.mjs`
+- [x] `scripts/download_onnx_models.mjs`
+- [x] `scripts/download_verified_items.mjs`
+- [x] `scripts/dump_534.mjs`
+- [x] `scripts/dump_all_rejected.mjs`
+- [x] `scripts/dump_rejected_meds.mjs`
+- [x] `scripts/dump_unique_rejected.mjs`
+- [x] `scripts/enrich-clinical-knowledge.mjs`
+- [x] `scripts/export-not-found-products.mjs`
+- [x] `scripts/extract-clinical-categories.mjs`
+- [x] `scripts/extract-styles.mjs`
+- [x] `scripts/fast_image_downloader.ts`
+- [x] `scripts/final_unresolved.json`
+- [x] `scripts/find_all_subtle_mismatches.mjs`
+- [x] `scripts/find_confirmed_mismatches.mjs`
+- [x] `scripts/find_mismatched_images.mjs`
+- [x] `scripts/find_popular_meds.ts`
+- [x] `scripts/find_rejected_meds.mjs`
+- [x] `scripts/fix_dytor_catalog_images.mjs`
+- [x] `scripts/fix_legacy_catalog_images.ts`
+- [x] `scripts/generate-3d-graph.mjs`
+- [x] `scripts/generate-project-docs.mjs`
+- [x] `scripts/generate_missing_website_products_report.mjs`
+- [x] `scripts/get_top_companies.mjs`
+- [x] `scripts/group_needs_download.mjs`
+- [x] `scripts/group_rejected_identities.mjs`
+- [x] `scripts/harvest_status.ts`
+- [x] `scripts/harvest_top100_company_images.ts`
+- [x] `scripts/heal-sales-gst.js`
+- [x] `scripts/heal-sales-invoices.js`
+- [x] `scripts/importCatalog.ts`
+- [x] `scripts/importMasterMedicines.mjs`
+- [x] `scripts/importMedicineNames.mjs`
+- [x] `scripts/inspect_abzorb.mjs`
 
 ### Chunk 10 (Files 451 to 500)
 **Agent Assigned:** [ ]

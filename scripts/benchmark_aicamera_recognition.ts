@@ -31,7 +31,7 @@ async function runBenchmark() {
   console.log('===============================================================\n');
 
   const db = new Database(DB_PATH);
-  const masterCount = db.prepare('SELECT count(*) as count FROM medicines').get().count;
+  const masterCount = (db.prepare('SELECT count(*) as count FROM medicines').get() as any)?.count || 0;
   console.log(`Master Database: ${masterCount} medicines loaded from medicines.csv\n`);
 
   await aiCameraService.initialize();
@@ -104,7 +104,7 @@ async function runBenchmark() {
         WHERE medicine_name LIKE ? OR medicine_name_base LIKE ?
         ORDER BY CASE WHEN medicine_name LIKE ? THEN 1 ELSE 2 END
         LIMIT 1
-      `).get(`${cleanBrand}%`, `${cleanBrand}%`, `${cleanBrand}%`);
+      `).get(`${cleanBrand}%`, `${cleanBrand}%`, `${cleanBrand}%`) as any;
 
       if (direct) {
         masterMatch = `${direct.medicine_name} (${direct.manufacturer_name || 'N/A'})`;

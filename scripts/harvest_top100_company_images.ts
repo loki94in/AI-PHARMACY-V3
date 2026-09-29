@@ -1564,7 +1564,7 @@ async function main() {
     console.log(`🎯 ID ${medId}: "${medName}" (${mfg})`);
     console.log(`    Querying CDN for: "${searchQueries[0]}"...`);
 
-    const cdnResult = await fetchCdnImages(searchQueries, medName, sourceMode);
+    const cdnResult = await fetchCdnImages(searchQueries, medName, sourceMode as any);
     if (!cdnResult || Object.keys(cdnResult.images).length === 0) {
       let notFoundStatus = 'not_found_all_cdns';
       let notFoundReason = 'Exhausted across PharmEasy and Tata 1mg. Queued for human review.';
@@ -1744,7 +1744,7 @@ async function main() {
             }
 
             console.log(`    ✨ Sibling Packaging Verified! Attaching images to "${sibling.name}" (ID: ${sibling.id})! Zero downloads wasted!`);
-            const siblingCompanySlug = slugify(sibling.manufacturer || mfg || 'general');
+            const siblingCompanySlug = slugify((sibling as any).manufacturer || mfg || 'general');
             const siblingSlug = slugify(sibling.name);
             const siblingFrontendDir = path.join(TARGET_FRONTEND, siblingCompanySlug);
             const siblingUploadsDir = path.join(TARGET_UPLOADS, siblingCompanySlug);

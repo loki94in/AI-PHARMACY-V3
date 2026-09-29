@@ -36,7 +36,7 @@ async function buildMedicineDict() {
         .toLowerCase()
         .match(/[a-z0-9]+/g) || [];
 
-      parts.forEach(part => {
+      parts.forEach((part: string) => {
         // Skip very short words (likely not meaningful)
         if (part.length >= 2) {
           words.add(part);
