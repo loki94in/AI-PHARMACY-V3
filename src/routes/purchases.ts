@@ -1458,7 +1458,7 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     // 1. Revert old items from inventory
     const oldItems = await db.all('SELECT * FROM purchase_items WHERE purchase_id = ?', [id]);
     for (const old of oldItems) {
-      // We subtract the old quantity AND free_qty
+      // Shelf stock for a purchase line is billed quantity plus free quantity.
       const oldTotalQty = (old.quantity || 0) + (old.free_qty || 0);
       const batchVal = old.batch_no || '';
       await db.run(
@@ -1467,6 +1467,15 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
          WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
         [oldTotalQty, old.medicine_id, batchVal, old.batch_no]
       );
+      await recordStockLedger(db, {
+        medicine_id: old.medicine_id,
+        batch_no: old.batch_no,
+        quantity: -oldTotalQty,
+        loose_quantity: 0,
+        transaction_type: 'purchase_edit_revert',
+        transaction_id: String(id)
+      });
+      await applyPurchaseDelta(db, old.medicine_id, -oldTotalQty, old.cost_price, null, null);
       const invMasterRow = await db.get(
         `SELECT id FROM inventory_master WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
         [old.medicine_id, batchVal, old.batch_no]
@@ -1675,6 +1684,14 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
         await refreshInventoryActiveByBatch(db, medId, rawBatch);
       }
 
+      await recordStockLedger(db, {
+        medicine_id: medId,
+        batch_no: rawBatch,
+        quantity: totalQty,
+        loose_quantity: 0,
+        transaction_type: 'purchase_edit',
+        transaction_id: String(id)
+      });
       await applyPurchaseDelta(db, medId, totalQty, rawRate, distRow.id, distRow.name || null);
 
       if (rawMrp && rawMrp > 0) {

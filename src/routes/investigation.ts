@@ -3,6 +3,7 @@ import { dbManager } from '../database/connection.js';
 import { inventoryCache } from '../services/inventoryCache.js';
 import { rebuildPurchaseSummaryCache, triggerBackgroundSummaryRebuild } from '../services/summaryCacheService.js';
 import { applyStockDelta } from '../utils/stockRebuild.js';
+import { applyPurchaseDelta, applySaleDelta } from '../services/medicineSalesMetricsService.js';
 
 const router = express.Router();
 
@@ -1086,6 +1087,7 @@ router.put('/sales/:invoiceId', async (req, res) => {
         transaction_type: 'investigation_sale_edit',
         transaction_id: invoiceId
       });
+      await applySaleDelta(db, currentStock.medicine_id, netQty);
 
       itemAdjustments.push({
         inventoryId: invId,
@@ -1330,6 +1332,7 @@ router.put('/purchases/:purchaseId', async (req, res) => {
         transaction_type: 'investigation_purchase_edit',
         transaction_id: purchaseId
       });
+      await applyPurchaseDelta(db, entry.medicine_id, netChange, entry.cost_price, null, null);
     }
 
     // Step 3: Remove old and insert new purchase items

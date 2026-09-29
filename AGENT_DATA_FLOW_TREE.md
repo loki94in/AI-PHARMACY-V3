@@ -59,6 +59,8 @@ One shelf row is `inventory_master.id`. The numbers that move are `quantity` (st
 | POS sale | `sale_items.inventory_id`, `sale_items.quantity`, `sale_items.loose_qty`. Shelf drops through the strip/loose pool (`applyStockDelta`). `stock_ledger` stores the negative sale | Sale line joined on `sale_items.inventory_id`. Closing stock uses that same pool, so a loose sale that opens a strip matches the shelf |
 | Customer return of a sale | `inventory_master.quantity` back up. `return_items.quantity` with `returns.type = 'sale'` | Return line. Closing stock adds those strips back |
 | Investigation +/− | `PUT /api/investigation/inventory/:id` sets `quantity` and `loose_quantity` to the numbers the user typed, and appends `stock_ledger` (`transaction_type = investigation_adjustment`) for the difference | Adjustment row from `action_logs` metadata `quantity` / `looseQuantity`. Closing stock becomes those saved numbers |
+| Edit an old purchase bill | Reverses the old line’s `quantity + free_qty` from `inventory_master.quantity`, then adds the edited `quantity + free_qty`. `purchase_items.free_qty` keeps the free column. Bill money uses billed quantity only. `stock_ledger` rows: `purchase_edit_revert` then `purchase_edit` | The saved purchase line. Closing stock includes the new free quantity |
+| Edit an old sale bill | Restores the old `sale_items.quantity` and `loose_qty` onto the shelf, then sells the edited strips and loose through the same pool. `stock_ledger`: `sale_edit_restore` then `sale_edit` | The saved sale line joined on `inventory_id` |
 
 A sale bill edit on Investigation changes `sale_items` and the same shelf columns. It does not create a second stock table.
 
