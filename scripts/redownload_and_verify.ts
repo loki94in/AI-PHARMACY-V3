@@ -61,7 +61,7 @@ async function main() {
         console.log(`  STATUS: DOWNLOADED & VERIFIED`);
         console.log(`  Candidate Product: "${record.product_name}"`);
         console.log(`  Score: ${record.confidence_score}% (${record.verification_status})`);
-        console.log(`  Image Face / Type: ${record.image_type}`);
+        console.log(`  Image Face / Type: ${(record as any).image_type || 'primary'}`);
         console.log(`  Local File: ${record.image_path}`);
         console.log(`  Reason: ${record.verification_reason}`);
         console.log(`  Source: ${record.source_url}`);
@@ -72,7 +72,7 @@ async function main() {
           candidate_product: record.product_name,
           confidence_score: record.confidence_score,
           verification_status: record.verification_status,
-          image_type: record.image_type,
+          image_type: (record as any).image_type || 'primary',
           image_path: record.image_path,
           source_url: record.source_url,
           reason: record.verification_reason

@@ -501,59 +501,59 @@ Fix any dead code, duplicate logic, unused components, and unnecessary complexit
 - [x] `scripts/inspect_abzorb.mjs`
 
 ### Chunk 10 (Files 451 to 500)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `scripts/inspect_brands.mjs`
-- [ ] `scripts/inspect_calpol.mjs`
-- [ ] `scripts/inspect_calpol_ocr.mjs`
-- [ ] `scripts/inspect_catalog_images.ts`
-- [ ] `scripts/inspect_dytor.mjs`
-- [ ] `scripts/inspect_dytor_all.mjs`
-- [ ] `scripts/inspect_dytor_head.mjs`
-- [ ] `scripts/inspect_dytor_state.mjs`
-- [ ] `scripts/inspect_him_oil.mjs`
-- [ ] `scripts/inspect_honey_db.mjs`
-- [ ] `scripts/inspect_issues.mjs`
-- [ ] `scripts/inspect_other_items.mjs`
-- [ ] `scripts/inspect_reasons.mjs`
-- [ ] `scripts/inspect_rejected.mjs`
-- [ ] `scripts/inspect_unresolved_292.mjs`
-- [ ] `scripts/link_all_disk_images.ts`
-- [ ] `scripts/list_all_tables.mjs`
-- [ ] `scripts/local_verified.json`
-- [ ] `scripts/migrate.js`
-- [ ] `scripts/migrate_catalog_images_to_company_folders.ts`
-- [ ] `scripts/migrate_v53.ts`
-- [ ] `scripts/needs_download.json`
-- [ ] `scripts/normalizeSpecialOrderPhones.mjs`
-- [ ] `scripts/ocr_dytors.mjs`
-- [ ] `scripts/performance-guardrails.mjs`
-- [ ] `scripts/pick_20_medicines.ts`
-- [ ] `scripts/print_parachute_imgs.mjs`
-- [ ] `scripts/print_strength_clashes.mjs`
-- [ ] `scripts/purge_bad_harvested_images.cjs`
-- [ ] `scripts/purge_mismatched_images.mjs`
-- [ ] `scripts/purge_old_images.mjs`
-- [ ] `scripts/quick-update.mjs`
-- [ ] `scripts/read_recent_flow.mjs`
-- [ ] `scripts/redownload_and_run_ai_camera.ts`
-- [ ] `scripts/redownload_and_verify.ts`
-- [ ] `scripts/redownload_and_verify_rejected.ts`
-- [ ] `scripts/refetch_with_accurate_names.mjs`
-- [ ] `scripts/rejected_534.json`
-- [ ] `scripts/rejected_meds_list.json`
-- [ ] `scripts/release.mjs`
-- [ ] `scripts/reload_harvesters.mjs`
-- [ ] `scripts/remaining_unresolved.json`
-- [ ] `scripts/resetLicense.mjs`
-- [ ] `scripts/resolve_all_111.mjs`
-- [ ] `scripts/resolve_all_final.mjs`
-- [ ] `scripts/resolve_all_rejected.mjs`
-- [ ] `scripts/resolve_final_135.mjs`
-- [ ] `scripts/resolve_master_catalog.mjs`
-- [ ] `scripts/resolve_quarantined_66.mjs`
-- [ ] `scripts/resolve_true_mismatches.mjs`
+- [x] `scripts/inspect_brands.mjs`
+- [x] `scripts/inspect_calpol.mjs`
+- [x] `scripts/inspect_calpol_ocr.mjs`
+- [x] `scripts/inspect_catalog_images.ts`
+- [x] `scripts/inspect_dytor.mjs`
+- [x] `scripts/inspect_dytor_all.mjs`
+- [x] `scripts/inspect_dytor_head.mjs`
+- [x] `scripts/inspect_dytor_state.mjs`
+- [x] `scripts/inspect_him_oil.mjs`
+- [x] `scripts/inspect_honey_db.mjs`
+- [x] `scripts/inspect_issues.mjs`
+- [x] `scripts/inspect_other_items.mjs`
+- [x] `scripts/inspect_reasons.mjs`
+- [x] `scripts/inspect_rejected.mjs`
+- [x] `scripts/inspect_unresolved_292.mjs`
+- [x] `scripts/link_all_disk_images.ts`
+- [x] `scripts/list_all_tables.mjs`
+- [x] `scripts/local_verified.json`
+- [x] `scripts/migrate.js`
+- [x] `scripts/migrate_catalog_images_to_company_folders.ts`
+- [x] `scripts/migrate_v53.ts`
+- [x] `scripts/needs_download.json`
+- [x] `scripts/normalizeSpecialOrderPhones.mjs`
+- [x] `scripts/ocr_dytors.mjs`
+- [x] `scripts/performance-guardrails.mjs`
+- [x] `scripts/pick_20_medicines.ts`
+- [x] `scripts/print_parachute_imgs.mjs`
+- [x] `scripts/print_strength_clashes.mjs`
+- [x] `scripts/purge_bad_harvested_images.cjs`
+- [x] `scripts/purge_mismatched_images.mjs`
+- [x] `scripts/purge_old_images.mjs`
+- [x] `scripts/quick-update.mjs`
+- [x] `scripts/read_recent_flow.mjs`
+- [x] `scripts/redownload_and_run_ai_camera.ts`
+- [x] `scripts/redownload_and_verify.ts`
+- [x] `scripts/redownload_and_verify_rejected.ts`
+- [x] `scripts/refetch_with_accurate_names.mjs`
+- [x] `scripts/rejected_534.json`
+- [x] `scripts/rejected_meds_list.json`
+- [x] `scripts/release.mjs`
+- [x] `scripts/reload_harvesters.mjs`
+- [x] `scripts/remaining_unresolved.json`
+- [x] `scripts/resetLicense.mjs`
+- [x] `scripts/resolve_all_111.mjs`
+- [x] `scripts/resolve_all_final.mjs`
+- [x] `scripts/resolve_all_rejected.mjs`
+- [x] `scripts/resolve_final_135.mjs`
+- [x] `scripts/resolve_master_catalog.mjs`
+- [x] `scripts/resolve_quarantined_66.mjs`
+- [x] `scripts/resolve_true_mismatches.mjs`
 
 ### Chunk 11 (Files 501 to 550)
 **Agent Assigned:** [ ]
