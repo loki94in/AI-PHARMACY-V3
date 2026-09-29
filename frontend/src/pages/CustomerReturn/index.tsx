@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../services/api';
 import { CheckCircle, RotateCcw, AlertCircle, History, QrCode, Printer } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { formatDisplayDate } from '../../utils/date';
@@ -38,6 +38,8 @@ type LocalApiError = { response?: { data?: { error?: string } }; message?: strin
 
 export default function CustomerReturn() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const locationState = location.state as { prefillInvoiceNo?: string } | null;
   const [invoiceNo, setInvoiceNo] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +49,20 @@ export default function CustomerReturn() {
   const [reason, setReason] = useState('');
   const [barcodeInfo, setBarcodeInfo] = useState<LocalBarcodeInfo | null>(null);
   const [_, setSearchParams] = useSearchParams();
+
+  // Auto-prefill from Sells page Old FY bill flow
+  const didAutoPrefill = useRef(false);
+  useEffect(() => {
+    if (didAutoPrefill.current) return;
+    const prefill = locationState?.prefillInvoiceNo;
+    if (prefill) {
+      didAutoPrefill.current = true;
+      setInvoiceNo(prefill);
+      // slight delay so the input renders before we search
+      setTimeout(() => handleSearch(prefill), 120);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const cleanInvoiceNoString = (raw: string) => {
     let text = raw.trim();

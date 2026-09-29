@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Edit3, Trash2, X, User, FileText, Save, AlertTriangle, BookOpen, RefreshCw, ShieldAlert, Factory, Calendar, RotateCcw, Download, QrCode, Printer } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Edit3, Trash2, X, User, FileText, Save, AlertTriangle, BookOpen, RefreshCw, ShieldAlert, Factory, Calendar, RotateCcw, Download, QrCode, Printer, PackageCheck, SlidersHorizontal } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
 import { api } from '../../services/api';
@@ -119,6 +119,17 @@ type LocalApiError = { response?: { data?: { error?: string } }; message?: strin
 
 // Module-level cache for instant re-mount
 
+// Returns true if the bill date is before April 1 of the current financial year
+function isOldFinancialYear(dateStr: string): boolean {
+  if (!dateStr) return false;
+  const billDate = new Date(dateStr);
+  if (isNaN(billDate.getTime())) return false;
+  const today = new Date();
+  const fyStartYear = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const fyStart = new Date(fyStartYear, 3, 1); // April 1
+  return billDate < fyStart;
+}
+
 const exportColumns = [
   { key: 'invoice_no', label: 'Invoice No' },
   { key: 'customer_name', label: 'Patient Name' },
@@ -132,6 +143,7 @@ const exportColumns = [
 
 const Sells = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const todayStr = getTodayString();
   const thirtyDaysAgoStr = getNDaysAgoString(30);
@@ -161,6 +173,9 @@ const Sells = () => {
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+
+  // Old FY bill intercept state
+  const [oldFyBillConfirm, setOldFyBillConfirm] = useState<SaleInvoice | null>(null);
 
   // OpenFDA Enrichment Drawer State
   const [selectedEnrichedItem, setSelectedEnrichedItem] = useState<{ medicine_name: string; batch?: string } | null>(null);
@@ -269,13 +284,18 @@ const Sells = () => {
       const nameMatch = (inv.customer_name || 'Walk-in').toLowerCase().includes(searchLower) ||
         (compactClean.length > 1 && (inv.customer_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactClean));
       const phoneMatch = rawPhone.length > 0 && (inv.customer_phone || '').replace(/\D/g, '').includes(rawPhone);
-      const medicineMatch = inv.items?.some(it => {
-        const itName = (it.medicine_name || '').toLowerCase();
-        const itBatch = (it.batch_number || '').toLowerCase();
-        return itName.includes(searchLower) ||
-          (compactClean.length > 1 && itName.replace(/[^a-z0-9]/g, '').includes(compactClean)) ||
-          itBatch.includes(searchLower);
-      });
+      // When inv.items is not populated (list API doesn't include items by default),
+      // trust the server's EXISTS subquery which already matched medicine names.
+      // Only run client-side item filter when items are actually present.
+      const medicineMatch = (!inv.items || inv.items.length === 0)
+        ? true
+        : inv.items.some(it => {
+            const itName = (it.medicine_name || '').toLowerCase();
+            const itBatch = (it.batch_number || '').toLowerCase();
+            return itName.includes(searchLower) ||
+              (compactClean.length > 1 && itName.replace(/[^a-z0-9]/g, '').includes(compactClean)) ||
+              itBatch.includes(searchLower);
+          });
       if (!nameMatch && !phoneMatch && !medicineMatch) return false;
     }
     if (colFilterDrName) {
@@ -461,7 +481,14 @@ const Sells = () => {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number, bill?: SaleInvoice) => {
+    // Intercept old FY bills — show choice modal instead of direct delete
+    const billToCheck = bill || items.find(i => i.id === id) || viewInvoice;
+    if (billToCheck && isOldFinancialYear(billToCheck.date)) {
+      setDeleteConfirm(null);
+      setOldFyBillConfirm(billToCheck);
+      return;
+    }
     try {
       await api.deleteSale(id);
       toastEvent.trigger('Invoice deleted, stock restored', 'success');
@@ -479,6 +506,25 @@ const Sells = () => {
     } catch (_err) {
       toastEvent.trigger('Failed to delete invoice', 'error');
     }
+  };
+
+  // Old FY restoration: navigate to Customer Return pre-filled with this invoice
+  const handleCreateReturn = (bill: SaleInvoice) => {
+    setOldFyBillConfirm(null);
+    setViewInvoice(null);
+    navigate('/customer-returns', { state: { prefillInvoiceNo: bill.invoice_no } });
+  };
+
+  // Old FY restoration: navigate to Inventory with adjustment ref pre-filled
+  const handleStockAdjustment = (bill: SaleInvoice) => {
+    setOldFyBillConfirm(null);
+    setViewInvoice(null);
+    navigate('/inventory', {
+      state: {
+        adjustmentRef: bill.invoice_no,
+        adjustmentNote: `Old FY bill adjustment — ${bill.invoice_no} (${bill.date})`
+      }
+    });
   };
 
   const updateItemQty = (index: number, qty: number) => {
@@ -506,6 +552,10 @@ const Sells = () => {
   };
 
   const removeItem = (index: number) => {
+    if (editItems.length <= 1) {
+      toastEvent.trigger('Cannot remove the last item. Delete the entire bill instead.', 'error');
+      return;
+    }
     setEditItems(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -824,7 +874,7 @@ const Sells = () => {
                         {deleteConfirm === inv.id ? (
                           <div className="flex items-center gap-1.5 p-1 rounded-lg bg-red/10 border border-red/20 w-full justify-center">
                             <button
-                              onClick={() => handleDelete(inv.id)}
+                              onClick={() => handleDelete(inv.id, inv)}
                               className="px-2 py-1 bg-red text-white rounded-md text-[9px] font-bold hover:bg-red/80 shadow-md transform hover:scale-105 transition-all"
                             >
                               Confirm
@@ -1359,7 +1409,7 @@ const Sells = () => {
                   <div className="flex items-center gap-2 p-1 rounded-lg bg-red-500/10 border border-red-500/30">
                     <span className="text-xs text-red font-semibold px-2">Delete this bill?</span>
                     <button
-                      onClick={() => handleDelete(viewInvoice.id)}
+                      onClick={() => handleDelete(viewInvoice.id, viewInvoice)}
                       className="px-3 py-1.5 bg-red hover:bg-red/80 text-white rounded-lg text-xs font-bold transition-all shadow-md cursor-pointer"
                     >
                       Yes, Delete
@@ -1406,7 +1456,7 @@ const Sells = () => {
       )}
       {/* Sliding Details Drawer for OpenFDA Enrichment */}
       {createPortal(
-        <div className={`fixed top-0 right-0 h-full w-full max-w-[450px] bg-glass-bg backdrop-blur-xl border-l border-glass-border shadow-[-8px_0_30px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-in-out z-drawer flex flex-col ${panelOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        <div className={`fixed top-0 right-0 h-full w-full max-w-[450px] bg-glass-bg border-l border-glass-border transition-all duration-300 ease-in-out z-drawer flex flex-col ${panelOpen ? 'translate-x-0 shadow-[-8px_0_30px_rgba(0,0,0,0.5)] pointer-events-auto' : 'translate-x-full shadow-none pointer-events-none'}`}>
         {selectedEnrichedItem && (
           <>
             {/* Header */}
@@ -1671,6 +1721,78 @@ const Sells = () => {
 
           <div style={{ textAlign: 'center', marginTop: '18px', fontSize: '11px', color: '#777' }}>
             Thank you for your visit! &middot; Get Well Soon
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Old Financial Year Bill Action Modal */}
+      {oldFyBillConfirm && createPortal(
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="glass-panel w-full max-w-md border-amber-500/40 overflow-hidden">
+            {/* Header */}
+            <div className="p-5 border-b border-glass-border bg-amber-500/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 border border-amber-500/30">
+                  <AlertTriangle size={20} className="text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-text">Old Financial Year Bill</h3>
+                  <p className="text-xs text-amber-400 font-semibold mt-0.5">Bill {oldFyBillConfirm.invoice_no} &bull; {formatDate(oldFyBillConfirm.date)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-muted leading-relaxed">
+                This bill belongs to a <span className="text-amber-400 font-bold">previous financial year</span>. 
+                Direct deletion is blocked to protect closed financial records and audit trails.
+              </p>
+              <p className="text-sm text-text font-semibold">How would you like to handle this?</p>
+
+              {/* Option 1: Create Return */}
+              <button
+                onClick={() => handleCreateReturn(oldFyBillConfirm)}
+                className="w-full flex items-start gap-3 p-4 rounded-xl bg-green/10 border border-green/30 hover:bg-green/20 hover:border-green/50 transition-all text-left group cursor-pointer"
+              >
+                <div className="p-2 rounded-lg bg-green/20 group-hover:bg-green/30 transition-all shrink-0 mt-0.5">
+                  <PackageCheck size={18} className="text-green" />
+                </div>
+                <div>
+                  <div className="font-bold text-text text-sm">Create Return / Credit Note</div>
+                  <div className="text-xs text-muted mt-0.5 leading-relaxed">
+                    Opens the Customer Return page pre-filled with this bill. Stock is automatically restored when the return is processed. Audit trail preserved.
+                  </div>
+                </div>
+              </button>
+
+              {/* Option 2: Stock Adjustment */}
+              <button
+                onClick={() => handleStockAdjustment(oldFyBillConfirm)}
+                className="w-full flex items-start gap-3 p-4 rounded-xl bg-sky/10 border border-sky/30 hover:bg-sky/20 hover:border-sky/50 transition-all text-left group cursor-pointer"
+              >
+                <div className="p-2 rounded-lg bg-sky/20 group-hover:bg-sky/30 transition-all shrink-0 mt-0.5">
+                  <SlidersHorizontal size={18} className="text-sky" />
+                </div>
+                <div>
+                  <div className="font-bold text-text text-sm">Stock Adjustment (Manual)</div>
+                  <div className="text-xs text-muted mt-0.5 leading-relaxed">
+                    Opens Inventory with this bill pre-filled as reference. Manually adjust stock quantities with a reason note.
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-glass-border bg-bg2/60 flex justify-end">
+              <button
+                onClick={() => setOldFyBillConfirm(null)}
+                className="px-4 py-2 bg-bg3 hover:bg-glass-border text-muted hover:text-text border border-glass-border rounded-lg text-sm font-semibold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>,
         document.body

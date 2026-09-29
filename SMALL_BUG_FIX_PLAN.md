@@ -7,6 +7,39 @@
 
 ## Fixed
 
+### [Fixed] P3-52 — Right-Side Blurry Black Shadow Effect Over Quick Assist (Off-Screen Sliding Drawer Box-Shadow Bleed)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | A faint, hazy, blurry black shadow effect was visible vertically down the right edge of the screen, rendered directly over the Quick Assist area. |
+| **Root cause** | Three sliding side drawers (`Sells`, `Purchases`, and `Inventory`) portaled directly to `document.body` remained in the DOM with `z-drawer` (`z-index: 9000`). When closed, they used `translate-x-full` (`translateX(100%)`) but retained permanent negative horizontal box-shadows (`shadow-[-8px_0_30px_rgba(0,0,0,0.5)]` and `shadow-[-12px_0_48px_rgba(0,0,0,0.4)]`). Because CSS box-shadows radiate outside the element's bounding box, 38px to 60px of semi-transparent black blurry shadow cast to the left across the viewport edge directly over the Quick Assist sidebar (which has `z-20` and collapsed width of 40px). |
+| **How it was fixed** | Updated the sliding drawer `className` in `frontend/src/pages/Sells/index.tsx`, `frontend/src/pages/Purchases/index.tsx`, and `frontend/src/pages/Inventory/index.tsx` to conditionally apply the shadow and pointer events: `${panelOpen ? 'translate-x-0 shadow-[-...px] pointer-events-auto' : 'translate-x-full shadow-none pointer-events-none'}` with `transition-all duration-300 ease-in-out`. When closed, the box shadow is completely removed (`shadow-none`) and pointer events are disabled, eliminating any shadow projection. |
+| **Priority** | P3 |
+| **What not to touch** | Drawer contents, open/close state logic, Quick Assist layout, and sliding drawer animation transition duration. |
+| **Verified by** | `npm run guardrails` (TypeScript `tsc --noEmit` + architectural rules: PASS, 0 violations); `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P3-51 — Sells Page: Medicine Name Search Returns "No Invoices Found" (Client Filter Nullifies Server Match)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the Sells page, typing a medicine name (e.g. `EVION 400 CAP 10`) in the patient/phone/medicine search field returned "No invoices found", even though invoices for that medicine existed. Patient name search worked correctly. |
+| **Root cause** | Two-layer search architecture mismatch: (1) The server-side `GET /sales/list` correctly runs an `EXISTS` subquery on `sale_items → inventory_master → medicines` to match medicine names, returning the right invoices. (2) The frontend's `clientFilterFn` then re-filters those invoices on `inv.items?.some(it => it.medicine_name.includes(...))` — but `inv.items` is `undefined` because the list API does not return line items by default (no `include_items=1`). `undefined?.some(...)` evaluates to `undefined` (falsy), so `medicineMatch = false`. With `nameMatch = false` and `phoneMatch = false`, the condition `!nameMatch && !phoneMatch && !medicineMatch` becomes `true` and the invoice is **removed from the displayed list**, despite the server having correctly returned it. Patient name search used `inv.customer_name` (always present in the list response), so it was unaffected. |
+| **How it was fixed** | In `clientFilterFn` in `frontend/src/pages/Sells/index.tsx` (line ~287): changed `medicineMatch` from `inv.items?.some(...)` to: `!inv.items ? true : inv.items.some(...)`. When `inv.items` is not populated, we trust the server's EXISTS subquery result (pass-through = `true`). When items are loaded (e.g. after opening a full invoice detail), client-side filtering still applies correctly. One-line surgical change, zero backend impact. |
+| **Priority** | P3 |
+| **What not to touch** | The backend `GET /sales/list` query, the `include_items` logic, and the `clientFilterFn` behaviour for invoice number and doctor name filters. |
+| **Verified by** | `npx tsc --noEmit -p frontend/tsconfig.json` (0 errors); `npm run guardrails` (PASS, 0 violations); `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P3-50 — Bill Lifecycle Guard: Empty Bill Prevention + Old FY Bill Protection + Stock Restoration Paths
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. A bill (e.g. S-2026-0001) could be left with zero items after removing items in the edit modal — resulting in an orphan "empty bill" with no items. 2. Bills from the previous financial year (before April 1 of the current FY) could be directly deleted without any safeguard, risking changes to closed financial records. 3. No guided path existed for restoring stock from old bills accidentally created or needing reversal. |
+| **Root cause** | 1. `removeItem()` in `Sells/index.tsx` applied `Array.filter()` without checking if it was the last item, allowing `editItems` to become empty. 2. `handleDelete()` had no awareness of the bill's date relative to the current financial year boundary (April 1). 3. Customer Return and Stock Adjustment flows were not connected as guided resolution paths from the Sells page. |
+| **How it was fixed** | 1. **Block last-item removal**: `removeItem()` now guards `editItems.length <= 1` and shows error toast "Cannot remove the last item. Delete the entire bill instead." instead of filtering. 2. **FY boundary detection**: Added `isOldFinancialYear(dateStr)` pure function that compares bill date against April 1 of the current FY. 3. **Old FY intercept**: `handleDelete()` now checks the bill's date — if it's before the current FY start, `oldFyBillConfirm` state is set instead of proceeding to delete. 4. **OldFyActionModal**: A portal modal with amber styling shows when an old FY bill deletion is attempted, offering two clear paths: "Create Return / Credit Note" and "Stock Adjustment (Manual)". 5. **handleCreateReturn**: Navigates to `/customer-returns` with `state.prefillInvoiceNo` so the return form auto-populates the invoice. 6. **handleStockAdjustment**: Navigates to `/inventory` with `state.adjustmentRef` and `state.adjustmentNote`. 7. **CustomerReturn prefill**: Added `useLocation()` + `useEffect` on mount to auto-fill invoice search field and trigger the search when `location.state.prefillInvoiceNo` is present. 8. **Inventory adjustment banner**: Sky-colored banner appears at the top of the Inventory page when `location.state.adjustmentRef` is set, showing the bill reference and instructions to override stock with that bill number as reason. |
+| **Priority** | P3 |
+| **What not to touch** | Existing delete route `DELETE /api/sales/:id` (backend stock reversal is correct and untouched). Customer Returns backend route (existing CR flow already handles stock restoration). POS bill edit flow (edit via POS is not restricted — only deletion is gated). |
+| **Verified by** | `npx tsc --noEmit -p frontend/tsconfig.json` (0 errors); `npm run guardrails` (PASS, 0 violations); `node scripts/quick-update.mjs` (1163 nodes, 546 edges). |
+
 ### [Fixed] P3-49 — POS Manual Entry Button: `idx` Undefined TypeScript Error Blocking Build
 
 | Field | Content |

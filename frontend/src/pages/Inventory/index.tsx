@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useQueryClient } from '@tanstack/react-query';
@@ -108,6 +108,10 @@ const formatExpiryToMMYY = (val: string): string => {
 
 const Inventory = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as { adjustmentRef?: string; adjustmentNote?: string } | null;
+  const adjustmentRef = locationState?.adjustmentRef ?? null;
+  const adjustmentNote = locationState?.adjustmentNote ?? null;
   const queryClient = useQueryClient();
   const [colFilters, setColFilters] = useState({
     medicine: '', id: '', batch: '', expiry: '', packs: '', loose: '', mrp: '', rack: ''
@@ -519,6 +523,31 @@ const Inventory = () => {
   return (
     <div className="h-full flex flex-col fade-in relative gap-0">
       <div className="glass-panel flex-1 flex flex-col overflow-hidden">
+
+        {/* Old FY Bill Stock Adjustment Banner */}
+        {adjustmentRef && (
+          <div className="mx-4 mt-3 mb-1 px-4 py-3 rounded-xl bg-sky/10 border border-sky/30 flex items-center gap-3 shrink-0">
+            <div className="p-2 rounded-lg bg-sky/20 shrink-0">
+              <AlertTriangle size={16} className="text-sky" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-sky text-sm">Old Financial Year Bill — Stock Adjustment Mode</div>
+              <div className="text-xs text-muted mt-0.5 truncate">
+                {adjustmentNote || `Adjusting stock for: ${adjustmentRef}`}
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Find the medicine below, click the <span className="text-text font-semibold">stock override</span> icon to adjust quantity, and enter <span className="font-mono text-sky">{adjustmentRef}</span> as the reason.
+              </div>
+            </div>
+            <button
+              onClick={() => navigate('/inventory', { replace: true, state: null })}
+              className="p-1.5 rounded-lg hover:bg-sky/20 text-muted hover:text-sky transition-all shrink-0 cursor-pointer"
+              title="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {/* ── Top Toolbar ───────────────────────────────────────────────── */}
         <div className="px-4 py-2.5 border-b border-glass-border/30 flex items-center justify-between bg-bg2/50 shrink-0">
@@ -938,7 +967,7 @@ const Inventory = () => {
 
       {/* ── Sliding Details Drawer ─────────────────────────────────────── */}
       {createPortal(
-        <div className={`fixed top-0 right-0 h-full w-full max-w-[480px] bg-bg/97 backdrop-blur-2xl border-l border-glass-border shadow-[-12px_0_48px_rgba(0,0,0,0.4)] transition-transform duration-300 ease-in-out z-drawer flex flex-col ${panelOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        <div className={`fixed top-0 right-0 h-full w-full max-w-[480px] bg-bg/97 border-l border-glass-border transition-all duration-300 ease-in-out z-drawer flex flex-col ${panelOpen ? 'translate-x-0 shadow-[-12px_0_48px_rgba(0,0,0,0.4)] pointer-events-auto' : 'translate-x-full shadow-none pointer-events-none'}`}>
           {selectedItem && (
             <>
               {/* Drawer Header */}
