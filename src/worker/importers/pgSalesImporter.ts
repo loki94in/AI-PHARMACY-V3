@@ -5,7 +5,7 @@
  */
 
 import { Database } from 'sqlite';
-import { medicineMap, doctorMap, patientMap } from './pgMasterImporter.js';
+import { doctorMap, patientMap } from './pgMasterImporter.js';
 import { batchMap, legacyBatchIdToNoMap } from './pgPurchaseImporter.js';
 import { normalizeDateOrRaw } from '../../utils/migrationUtils.js';
 import { recordAuditEntry } from '../../utils/migrationAudit.js';
@@ -171,8 +171,8 @@ export async function importOrderItem(row: Record<string, string | null>, db: Da
   if (!invoiceId) return; // Parent order was deleted or not imported
 
   // Resolve medicine
-  const legacyMedId = row['medicine_id'];
-  const medicineId = legacyMedId ? medicineMap.get(legacyMedId) : null;
+//   const legacyMedId = row['medicine_id'];
+//   const _medicineId = legacyMedId ? medicineMap.get(legacyMedId) : null;
 
   // Resolve batch → inventory_master
   const legacyBatchId = row['batch_id'];

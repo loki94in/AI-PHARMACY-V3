@@ -156,7 +156,7 @@ enquiriesRouter.get('/', async (req: Request, res: Response) => {
  * GET /api/enquiries/panel
  * Grouped-by-phone enquiries panel (mirrors refills /panel)
  */
-enquiriesRouter.get('/panel', async (req: Request, res: Response) => {
+enquiriesRouter.get('/panel', async (_req: Request, res: Response) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all(`

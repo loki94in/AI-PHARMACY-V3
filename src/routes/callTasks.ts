@@ -1,4 +1,4 @@
-﻿/**
+/**
  * callTasks.ts
  * API routes for the non-WhatsApp patient call task board.
  *
@@ -13,7 +13,7 @@
 
 import { Router } from 'express';
 import { dbManager } from '../database/connection.js';
-import { nonWaFallbackService } from '../services/nonWaFallbackService.js';
+
 import { eventService } from '../services/eventService.js';
 
 const router: Router = Router();
@@ -58,7 +58,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/call-tasks/count
-router.get('/count', async (req, res) => {
+router.get('/count', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const row = await db.get(

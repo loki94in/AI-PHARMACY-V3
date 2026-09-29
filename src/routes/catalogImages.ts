@@ -41,7 +41,7 @@ router.get('/', async (req, res) => {
 /**
  * GET /api/catalog/images/counts — Summary counts by verification status
  */
-router.get('/counts', async (req, res) => {
+router.get('/counts', async (_req, res) => {
   try {
     const counts = await catalogImageService.getCounts();
     res.json({
@@ -86,7 +86,7 @@ router.get('/queue', async (req, res) => {
 /**
  * GET /api/catalog/images/stats — Dedicated Correction Quality Dashboard stats
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', async (_req, res) => {
   try {
     const stats = await catalogImageService.getCorrectionStats();
     res.json({
@@ -303,7 +303,7 @@ router.post('/:id/redownload', async (req, res) => {
 /**
  * POST /api/catalog/images/sync-state — Backfill existing downloaded images from state file
  */
-router.post('/sync-state', async (req, res) => {
+router.post('/sync-state', async (_req, res) => {
   try {
     const result = await catalogImageService.syncExistingDownloadedImages();
     res.json({
@@ -319,7 +319,7 @@ router.post('/sync-state', async (req, res) => {
 /**
  * POST /api/catalog/images/audit — Run Image Health Auditor (Section 6, 19, 34)
  */
-router.post('/audit', async (req, res) => {
+router.post('/audit', async (_req, res) => {
   try {
     const report = await catalogImageService.auditImageHealth();
     res.json({
@@ -335,7 +335,7 @@ router.post('/audit', async (req, res) => {
 /**
  * POST /api/catalog/images/auto-approve — Batch auto-approve high confidence matches (Section 10 & 34)
  */
-router.post('/auto-approve', async (req, res) => {
+router.post('/auto-approve', async (_req, res) => {
   try {
     const result = await catalogImageService.autoApproveHighConfidence();
     res.json({
@@ -352,7 +352,7 @@ router.post('/auto-approve', async (req, res) => {
 /**
  * POST /api/catalog/images/scan-local — Scan uploads/products/ and auto-match filenames to medicines
  */
-router.post('/scan-local', async (req, res) => {
+router.post('/scan-local', async (_req, res) => {
   try {
     const result = await catalogImageService.scanAndAutoMatchLocalImages();
     res.json({
@@ -391,7 +391,7 @@ router.post('/cleanup', async (req, res) => {
 /**
  * POST /api/catalog/images/audit-fix — Re-audit all images and deactivate form/strength/brand mismatches
  */
-router.post('/audit-fix', async (req, res) => {
+router.post('/audit-fix', async (_req, res) => {
   try {
     const result = await catalogImageService.auditAndDeactivateMismatchedImages();
     res.json({

@@ -11,7 +11,7 @@ import { resolveStoreId } from '../services/storeContextService.js';
 
 const router = express.Router();
 
-const getDistributorsHandler = async (req: express.Request, res: express.Response) => {
+const getDistributorsHandler = async (_req: express.Request, res: express.Response) => {
   try {
     const db = await dbManager.getConnection();
     const distributors = await db.all('SELECT * FROM distributors ORDER BY name LIMIT 1000');

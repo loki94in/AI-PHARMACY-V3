@@ -1,13 +1,13 @@
 // Telegram Prescription Routes for cart management
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 import { telegramPrescriptionService } from '../services/telegramPrescriptionService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -103,7 +103,7 @@ router.delete('/cart/:chatId', async (req, res) => {
 router.post('/bill/generate', async (req, res) => {
   let db;
   try {
-    const { chatId, patient_id, doctor_id, discount = 0, payment_medium } = req.body;
+    const { chatId, patient_id, doctor_id: _doctor_id, discount = 0, payment_medium } = req.body;
 
     if (!chatId) {
       return res.status(400).json({ error: 'Chat ID is required' });

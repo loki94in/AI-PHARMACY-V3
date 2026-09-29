@@ -1,4 +1,4 @@
-import { sendMessage, type SendMessageResult } from '../whatsappClient.js';
+// import { type SendMessageResult } from '../whatsappClient.js';
 import { whatsappQueueWorker } from './whatsappQueueWorker.js';
 import { telegramBotService } from '../telegramBot.js';
 import { whatsappBusinessService } from './whatsappBusinessService.js';
@@ -29,7 +29,7 @@ export interface CartOrderNotifyResult {
   suppressedCount: number;
 }
 
-function isSendSuccess(result: SendMessageResult | boolean): boolean {
+/* function isSendSuccess(result: SendMessageResult | boolean): boolean {
   return (result as any) === true || (!!result && typeof result === 'object' && result.sent === true);
 }
 
@@ -38,7 +38,7 @@ function sendLogStatus(result: SendMessageResult | boolean): 'sent' | 'suppresse
   if (!result || typeof result !== 'object' || !result.sent) return 'failed';
   if (result.suppressed) return 'suppressed';
   return 'sent';
-}
+} */
 
 export function formatDisplayPhone(rawPhone?: string | null): string {
   if (!rawPhone) return 'N/A';
@@ -403,12 +403,12 @@ export class NotificationService {
       let sentCount = 0;
       for (const phone of uniqueDistPhones) {
         try {
-          const queueId = await whatsappQueueWorker.enqueue(
+/*           const _queueId = await whatsappQueueWorker.enqueue(
             phone,
             message,
             'distributor_invoice_order',
             purchase.distributor_name
-          );
+          ); */
           sentCount++;
 
           await db.run(
@@ -614,12 +614,12 @@ export class NotificationService {
         } else {
           for (const phone of uniqueDistPhones) {
             try {
-              const queueId = await whatsappQueueWorker.enqueue(
+/*               const _queueId = await whatsappQueueWorker.enqueue(
                 phone,
                 message,
                 'distributor_cart_order',
                 storeName
-              );
+              ); */
               sentCount++;
               await db.run(
                 `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)

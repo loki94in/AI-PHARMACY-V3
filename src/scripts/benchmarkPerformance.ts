@@ -1,11 +1,11 @@
 import { dbManager } from '../database/connection.js';
 import { ensureSchema } from '../database.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 import { config } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 async function runBenchmark() {
   console.log('=== AI Pharmacy Full-Stack Performance Benchmark ===\n');

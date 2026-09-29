@@ -1,14 +1,14 @@
 // Telegram Prescription Service for managing prescription-to-cart workflow
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { aiCameraService } from './aiCameraService.js';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
+// import { aiCameraService } from './aiCameraService.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import TelegramBot from 'node-telegram-bot-api';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
 
 // Cart item interface
 interface CartItem {
@@ -195,7 +195,7 @@ class TelegramPrescriptionService {
       const strength = medicineInfo.strength || '';
       const batchNumber = medicineInfo.batchNumber || '';
       const expiryDate = medicineInfo.expiryDate || null;
-      const mrp = medicineInfo.mrp || 0;
+//       const _mrp = medicineInfo.mrp || 0;
 
       if (!potentialName || potentialName.trim() === '') {
         // No medicine detected, send to audit queue for review

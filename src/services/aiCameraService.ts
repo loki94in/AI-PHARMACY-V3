@@ -3,11 +3,11 @@ import { createWorker, PSM } from 'tesseract.js';
 import { Jimp } from 'jimp';
 import {
   productNameFilterService,
-  extractDrugStrength,
-  areStrengthsEqual,
-  areStrengthsConflicting,
+//   extractDrugStrength,
+//   areStrengthsEqual,
+//   areStrengthsConflicting,
   extractVolumeOrWeight,
-  extractFormulationModifiers,
+//   extractFormulationModifiers,
   hasFormulationModifierConflict,
   detectDosageFormFromText,
   detectFlavourFromText,
@@ -17,8 +17,8 @@ import { isPlausibleMedicineName } from './intentKeywords.js';
 import {
   isDisqualifiedPackagingLine,
   cleanBrandToken,
-  isPureDosageOrPackLine,
-  getLineTypographyMetrics,
+//   isPureDosageOrPackLine,
+//   getLineTypographyMetrics,
   extractMultiSaltDrugStrength,
   areMultiSaltStrengthsEqual,
   areMultiSaltStrengthsConflicting,
@@ -35,10 +35,10 @@ import { visualIndexService } from './visualIndexService.js';
 import { dbManager } from '../database/connection.js';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 interface OCRResult {
   text: string;
@@ -122,7 +122,7 @@ class AICameraService {
   /** Company names extracted from medicines.manufacturer + catalog_images.company_name */
   public readonly KNOWN_COMPANIES = new Set<string>();
   private companyAliasMap = new Map<string, string>(); // core -> full
-  private companyNamesLoaded = false;
+//   private _companyNamesLoaded = false;
 
   /**
    * Load all API composition and drug generic words from the database
@@ -544,7 +544,7 @@ class AICameraService {
     }
   }
 
-  private async getGeminiKey(): Promise<string | null> {
+/*   private async _getGeminiKey(): Promise<string | null> {
     let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!key || key.trim() === '') {
       try {
@@ -556,9 +556,9 @@ class AICameraService {
       } catch (_) {}
     }
     return key && key.trim().length > 10 ? key.trim() : null;
-  }
+  } */
 
-  private async extractWithGeminiVision(buffer: Buffer, apiKey: string): Promise<any | null> {
+/*   private async _extractWithGeminiVision(buffer: Buffer, apiKey: string): Promise<any | null> {
     try {
       const base64Data = buffer.toString('base64');
       const prompt = `You are an expert Indian Pharmacy and Medical Vision AI.
@@ -658,7 +658,7 @@ If PACKAGING, return ONLY valid JSON matching:
       console.warn('[AiCamera] Gemini Vision extraction bypassed (offline fallback will run):', err?.message || err);
       return null;
     }
-  }
+  } */
 
   /**
    * Calculate typography font metrics (max and average font height in pixels)
@@ -688,7 +688,7 @@ If PACKAGING, return ONLY valid JSON matching:
     return { maxHeight, avgHeight };
   }
 
-  async processImage(imageData: string | Buffer, skipEnrichment: boolean = false, offlineOnly: boolean = false): Promise<any> {
+  async processImage(imageData: string | Buffer, skipEnrichment: boolean = false, _offlineOnly: boolean = false): Promise<any> {
     let buffer: Buffer;
     if (typeof imageData === 'string') {
       if (imageData.startsWith('data:')) {
@@ -1372,7 +1372,7 @@ If PACKAGING, return ONLY valid JSON matching:
 
     // Save to SQLite database
     try {
-      const activeDbPath = process.env.DB_PATH || path.resolve(process.cwd(), 'data', 'app.db');
+//       const _activeDbPath = process.env.DB_PATH || path.resolve(process.cwd(), 'data', 'app.db');
       const db = await dbManager.getConnection();
       await db.run(
         `INSERT OR REPLACE INTO ocr_audit_queue (id, image_path, raw_ocr_text, cloud_suggested_text, status, created_at)

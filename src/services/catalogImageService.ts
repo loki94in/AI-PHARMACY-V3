@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { aiCameraService } from './aiCameraService.js';
+// import { aiCameraService } from './aiCameraService.js';
 import { hasFormulationModifierConflict } from './productNameFilterService.js';
 import { Jimp } from 'jimp';
 
@@ -572,7 +572,7 @@ export class CatalogImageService {
         strengthMatch = true;
         strengthScore = 20;
       } else {
-        const isMgStrength = (medStr.endsWith('MG') || medStr.endsWith('MCG')) && (candStr.endsWith('MG') || candStr.endsWith('MCG'));
+//         const _isMgStrength = (medStr.endsWith('MG') || medStr.endsWith('MCG')) && (candStr.endsWith('MG') || candStr.endsWith('MCG'));
         const medNum = parseFloat(medStr);
         const candNum = parseFloat(candStr);
         const ratio = (medNum > 0 && candNum > 0) ? (Math.max(medNum, candNum) / Math.min(medNum, candNum)) : 1;

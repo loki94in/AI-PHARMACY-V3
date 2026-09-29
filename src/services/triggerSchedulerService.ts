@@ -21,7 +21,8 @@ class TriggerSchedulerService {
   private scheduledTasks: Map<string, ScheduledTask> = new Map();
   private intervalHandles: Map<string, NodeJS.Timeout> = new Map();
   private snoozedUntil: Map<string, number> = new Map();
-  private isInitialized = false;
+  // @ts-ignore - needed for future use
+  private _isInitialized = false;
 
   /**
    * Parse HH:MM string to node-cron minute & hour representation
@@ -490,7 +491,7 @@ class TriggerSchedulerService {
       }
     }
 
-    this.isInitialized = true;
+    this._isInitialized = true;
     console.log('[TriggerScheduler] Dynamic trigger schedule initialization complete.');
   }
 
@@ -509,8 +510,8 @@ class TriggerSchedulerService {
     const database = await dbManager.getConnection();
     const cfg = await this.getTriggerConfigs(database);
     const now = new Date();
-    const nowSec = Math.floor(now.getTime() / 1000);
-    const maxFutureSec = nowSec + (lookaheadMinutes * 60);
+//     const nowSec = Math.floor(now.getTime() / 1000);
+//     const _maxFutureSec = nowSec + (lookaheadMinutes * 60);
 
     const upcoming: Array<{
       id: string;

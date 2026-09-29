@@ -8,12 +8,12 @@ import zlib from 'zlib';
 import { pipeline } from 'stream/promises';
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { config, getAppDataDir, isPackagedApp } from '../config/index.js';
+import { config, getAppDataDir } from '../config/index.js';
 
 export type TxPriority = 'VIP' | 'NORMAL' | 'BACKGROUND';
 export const txPriorityStorage = new AsyncLocalStorage<TxPriority>();
 
-const DB_PATH = config.dbPath;
+
 
 class DatabaseManager {
   private static instance: DatabaseManager;

@@ -1,14 +1,14 @@
 import express from 'express';
 import {
   initClient,
-  sendMessage,
+//   sendMessage,
   currentQr,
   isReady,
   forceReconnect,
   reconnectClient,
   destroyClient,
   shouldRouteToBusiness,
-  isPuppeteerDetachedError,
+//   isPuppeteerDetachedError,
   hasSavedSession,
   isWhatsAppAutoConnectAllowed,
   getWhatsAppStatus,
@@ -21,19 +21,19 @@ import {
 } from '../whatsappClient.js';
 import QRCode from 'qrcode';
 import { dbManager } from '../database/connection.js';
-import { eventService } from '../services/eventService.js';
+// import { eventService } from '../services/eventService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 
 import fs from 'fs';
 import path from 'path';
-import { getPuppeteer } from '../utils/lazyPuppeteer.js';
+// import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { getAppDataDir } from '../config/index.js';
 import { cleanProfileLockFiles } from '../services/tokenRefreshScheduler.js';
 
 const router = express.Router();
 
 // GET /api/messaging/readiness — Returns unified WhatsApp lifecycle readiness & progress (0-100%)
-router.get('/readiness', async (req, res) => {
+router.get('/readiness', async (_req, res) => {
   try {
     const readiness = getWhatsAppReadiness();
     res.json({ success: true, readiness });
@@ -44,7 +44,7 @@ router.get('/readiness', async (req, res) => {
 });
 
 // POST /api/messaging/prewarm — Shared concurrency-safe pre-warm endpoint
-router.post('/prewarm', async (req, res) => {
+router.post('/prewarm', async (_req, res) => {
   try {
     const readiness = await prewarmWhatsApp();
     res.json({ success: true, readiness });
@@ -85,7 +85,7 @@ function findChromePath() {
 }
 
 // Get current WhatsApp authentication status and QR code (read-only)
-router.get('/qr', async (req, res) => {
+router.get('/qr', async (_req, res) => {
   try {
     if (isWhatsAppLoginWindowActive()) {
       return res.json({ isReady: false, qrUrl: null, initializing: true, message: 'Chrome login window is open. Scan the QR code in Chrome.' });
@@ -147,7 +147,7 @@ router.get('/qr', async (req, res) => {
 });
 
 // Explicitly trigger WhatsApp QR code initialization upon user request
-router.post('/connect', async (req, res) => {
+router.post('/connect', async (_req, res) => {
   try {
     const explicitlyDisabled = await isWhatsAppExplicitlyDisabled();
     if (explicitlyDisabled) {
@@ -166,7 +166,7 @@ router.post('/connect', async (req, res) => {
 });
 
 // Launch non-headless login window for WhatsApp Web
-router.post('/login-window', async (req, res) => {
+router.post('/login-window', async (_req, res) => {
   const chromePath = findChromePath();
   if (!chromePath) {
     return res.status(404).json({ error: 'Google Chrome was not found on your system. Please install Google Chrome to use this feature.' });
@@ -254,7 +254,7 @@ router.post('/login-window', async (req, res) => {
 
 
 // Logout WhatsApp session and clear all stored login data (.wwebjs_auth)
-router.post('/logout', async (req, res) => {
+router.post('/logout', async (_req, res) => {
   try {
     console.log('[WhatsApp] User requested logout. Purging session data...');
     await forceReconnect();
@@ -267,7 +267,7 @@ router.post('/logout', async (req, res) => {
 
 // Non-destructive reconnect (P4): restarts the client with the SAVED session.
 // NEVER deletes .wwebjs_auth — credentials survive disconnects/crashes/restarts.
-router.post('/reconnect', async (req, res) => {
+router.post('/reconnect', async (_req, res) => {
 
   try {
     // Return early to the client, the reconnect runs asynchronously
@@ -308,7 +308,7 @@ router.post('/send', async (req, res) => {
 });
 
 // Get all WhatsApp chats
-router.get('/chats', async (req, res) => {
+router.get('/chats', async (_req, res) => {
   try {
     const { getChats } = await import('../whatsappClient.js');
     const chats = await getChats();
@@ -480,7 +480,7 @@ router.get('/wa-requests', async (req, res) => {
 });
 
 // GET list of ignored numbers
-router.get('/ignored-phones', async (req, res) => {
+router.get('/ignored-phones', async (_req, res) => {
   try {
     const { dbManager } = await import('../database/connection.js');
     const db = await dbManager.getConnection();
@@ -503,7 +503,7 @@ router.post('/toggle-ignore', async (req, res) => {
     const { dbManager } = await import('../database/connection.js');
     const db = await dbManager.getConnection();
 
-    const isGroupOrBroadcast = phone.endsWith('@g.us') || phone.endsWith('@broadcast') || phone.includes('broadcast') || phone === 'status@broadcast' || phone.includes('-');
+//     const _isGroupOrBroadcast = phone.endsWith('@g.us') || phone.endsWith('@broadcast') || phone.includes('broadcast') || phone === 'status@broadcast' || phone.includes('-');
 
     if (ignore) {
       // Always INSERT the ignore record (groups, broadcasts, and regular numbers)
@@ -547,7 +547,7 @@ router.post('/chats/:id/resolve', async (req, res) => {
 
 // POST manual trigger scan of a specific message ID (OCR intent pipeline)
 router.post('/chats/:chatId/messages/:messageId/scan', async (req, res) => {
-  const { chatId, messageId } = req.params;
+  const { chatId: _chatId, messageId } = req.params;
   try {
     const { dbManager } = await import('../database/connection.js');
     const db = await dbManager.getConnection();
@@ -657,7 +657,7 @@ router.delete('/chats/:chatId/messages/:messageId', async (req, res) => {
 // ── Message Templates Endpoints ───────────────────────────────────────────────
 
 // GET /messaging/templates — List all message templates
-router.get('/templates', async (req, res) => {
+router.get('/templates', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     let rows = await db.all(

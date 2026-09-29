@@ -1,6 +1,6 @@
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
-import path from 'path';
+// import path from 'path';
 
 /**
  * Generate a simple PDF containing a title and a list of items.

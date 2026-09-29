@@ -168,231 +168,231 @@ Fix any dead code, duplicate logic, unused components, and unnecessary complexit
 - [x] `frontend/src/components/StagedQueueFloatingWidget.tsx`
 - [x] `frontend/src/components/StagedReviewModal.tsx`
 - [x] `frontend/src/components/StoreSelector.tsx`
-- [ ] `frontend/src/components/UniversalMedicineEditModal.tsx`
+- [x] `frontend/src/components/UniversalMedicineEditModal.tsx`
 
 ### Chunk 4 (Files 151 to 200)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `frontend/src/components/UpdateBanner.tsx`
-- [ ] `frontend/src/components/VirtualRow.tsx`
-- [ ] `frontend/src/components/WhatsAppQueuePopover.tsx`
-- [ ] `frontend/src/context/StoreContext.tsx`
-- [ ] `frontend/src/hooks/useApiQuery.ts`
-- [ ] `frontend/src/hooks/useDeferredEffect.ts`
-- [ ] `frontend/src/hooks/useDropdownAutoScroll.ts`
-- [ ] `frontend/src/hooks/useFetchMode.ts`
-- [ ] `frontend/src/hooks/useGlobalSseInvalidation.ts`
-- [ ] `frontend/src/hooks/useInfiniteScroll.ts`
-- [ ] `frontend/src/hooks/useOnClickOutside.ts`
-- [ ] `frontend/src/hooks/usePWAInstall.ts`
-- [ ] `frontend/src/hooks/usePersistedDateRange.ts`
-- [ ] `frontend/src/hooks/useSettingsQuery.ts`
-- [ ] `frontend/src/hooks/useVirtualizer.ts`
-- [ ] `frontend/src/hooks/useWaPhoneStatus.ts`
-- [ ] `frontend/src/index.css`
-- [ ] `frontend/src/lib/keepAlive/KeepAliveOutlet.tsx`
-- [ ] `frontend/src/lib/keepAlive/PageActiveContext.tsx`
-- [ ] `frontend/src/lib/keepAlive/PageErrorBoundary.tsx`
-- [ ] `frontend/src/lib/keepAlive/PageQueryTracker.tsx`
-- [ ] `frontend/src/lib/keepAlive/routePool.ts`
-- [ ] `frontend/src/lib/pageImports.ts`
-- [ ] `frontend/src/lib/queryClient.ts`
-- [ ] `frontend/src/main.tsx`
-- [ ] `frontend/src/pages/AIEngineering/WaRequestsPanel.tsx`
-- [ ] `frontend/src/pages/AIEngineering/index.tsx`
-- [ ] `frontend/src/pages/AIEngineering/panels/CompliancePanel.tsx`
-- [ ] `frontend/src/pages/AIEngineering/panels/CompositionPanel.tsx`
-- [ ] `frontend/src/pages/AIEngineering/panels/ScheduleDrugsPanel.tsx`
-- [ ] `frontend/src/pages/AIEngineering/panels/ScheduleResearchModal.tsx`
-- [ ] `frontend/src/pages/AIEngineering/panels/ScheduleReviewQueue.tsx`
-- [ ] `frontend/src/pages/AuditCenter/index.tsx`
-- [ ] `frontend/src/pages/CRM/EnquiriesSection.tsx`
-- [ ] `frontend/src/pages/CRM/index.tsx`
-- [ ] `frontend/src/pages/CatalogUpload/index.tsx`
-- [ ] `frontend/src/pages/CustomerPortal/PublicCatalogView.tsx`
-- [ ] `frontend/src/pages/CustomerPortal/index.tsx`
-- [ ] `frontend/src/pages/CustomerReturn/index.tsx`
-- [ ] `frontend/src/pages/CustomerReturnHistory/index.tsx`
-- [ ] `frontend/src/pages/Dashboard/index.tsx`
-- [ ] `frontend/src/pages/Database/CatalogImageVerificationTab.tsx`
-- [ ] `frontend/src/pages/Database/index.tsx`
-- [ ] `frontend/src/pages/Dispatch/index.tsx`
-- [ ] `frontend/src/pages/Expiry/index.tsx`
-- [ ] `frontend/src/pages/Inventory/index.tsx`
-- [ ] `frontend/src/pages/Investigation/index.tsx`
-- [ ] `frontend/src/pages/Learning/index.tsx`
-- [ ] `frontend/src/pages/LiveCart/index.tsx`
-- [ ] `frontend/src/pages/Mail/index.tsx`
+- [x] `frontend/src/components/UpdateBanner.tsx`
+- [x] `frontend/src/components/VirtualRow.tsx`
+- [x] `frontend/src/components/WhatsAppQueuePopover.tsx`
+- [x] `frontend/src/context/StoreContext.tsx`
+- [x] `frontend/src/hooks/useApiQuery.ts`
+- [x] `frontend/src/hooks/useDeferredEffect.ts`
+- [x] `frontend/src/hooks/useDropdownAutoScroll.ts`
+- [x] `frontend/src/hooks/useFetchMode.ts`
+- [x] `frontend/src/hooks/useGlobalSseInvalidation.ts`
+- [x] `frontend/src/hooks/useInfiniteScroll.ts`
+- [x] `frontend/src/hooks/useOnClickOutside.ts`
+- [x] `frontend/src/hooks/usePWAInstall.ts`
+- [x] `frontend/src/hooks/usePersistedDateRange.ts`
+- [x] `frontend/src/hooks/useSettingsQuery.ts`
+- [x] `frontend/src/hooks/useVirtualizer.ts`
+- [x] `frontend/src/hooks/useWaPhoneStatus.ts`
+- [x] `frontend/src/index.css`
+- [x] `frontend/src/lib/keepAlive/KeepAliveOutlet.tsx`
+- [x] `frontend/src/lib/keepAlive/PageActiveContext.tsx`
+- [x] `frontend/src/lib/keepAlive/PageErrorBoundary.tsx`
+- [x] `frontend/src/lib/keepAlive/PageQueryTracker.tsx`
+- [x] `frontend/src/lib/keepAlive/routePool.ts`
+- [x] `frontend/src/lib/pageImports.ts`
+- [x] `frontend/src/lib/queryClient.ts`
+- [x] `frontend/src/main.tsx`
+- [x] `frontend/src/pages/AIEngineering/WaRequestsPanel.tsx`
+- [x] `frontend/src/pages/AIEngineering/index.tsx`
+- [x] `frontend/src/pages/AIEngineering/panels/CompliancePanel.tsx`
+- [x] `frontend/src/pages/AIEngineering/panels/CompositionPanel.tsx`
+- [x] `frontend/src/pages/AIEngineering/panels/ScheduleDrugsPanel.tsx`
+- [x] `frontend/src/pages/AIEngineering/panels/ScheduleResearchModal.tsx`
+- [x] `frontend/src/pages/AIEngineering/panels/ScheduleReviewQueue.tsx`
+- [x] `frontend/src/pages/AuditCenter/index.tsx`
+- [x] `frontend/src/pages/CRM/EnquiriesSection.tsx`
+- [x] `frontend/src/pages/CRM/index.tsx`
+- [x] `frontend/src/pages/CatalogUpload/index.tsx`
+- [x] `frontend/src/pages/CustomerPortal/PublicCatalogView.tsx`
+- [x] `frontend/src/pages/CustomerPortal/index.tsx`
+- [x] `frontend/src/pages/CustomerReturn/index.tsx`
+- [x] `frontend/src/pages/CustomerReturnHistory/index.tsx`
+- [x] `frontend/src/pages/Dashboard/index.tsx`
+- [x] `frontend/src/pages/Database/CatalogImageVerificationTab.tsx`
+- [x] `frontend/src/pages/Database/index.tsx`
+- [x] `frontend/src/pages/Dispatch/index.tsx`
+- [x] `frontend/src/pages/Expiry/index.tsx`
+- [x] `frontend/src/pages/Inventory/index.tsx`
+- [x] `frontend/src/pages/Investigation/index.tsx`
+- [x] `frontend/src/pages/Learning/index.tsx`
+- [x] `frontend/src/pages/LiveCart/index.tsx`
+- [x] `frontend/src/pages/Mail/index.tsx`
 
 ### Chunk 5 (Files 201 to 250)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `frontend/src/pages/Migration/components/ColumnMapper.tsx`
-- [ ] `frontend/src/pages/Migration/components/ErrorRows.tsx`
-- [ ] `frontend/src/pages/Migration/components/LocalBackupPanel.tsx`
-- [ ] `frontend/src/pages/Migration/components/ModuleSection.tsx`
-- [ ] `frontend/src/pages/Migration/components/RedBookUploader.tsx`
-- [ ] `frontend/src/pages/Migration/components/ReviewModal.tsx`
-- [ ] `frontend/src/pages/Migration/index.tsx`
-- [ ] `frontend/src/pages/OnlineCatalog/index.tsx`
-- [ ] `frontend/src/pages/POS/index.tsx`
-- [ ] `frontend/src/pages/PharmarackCart/index.tsx`
-- [ ] `frontend/src/pages/PhoneSales/index.tsx`
-- [ ] `frontend/src/pages/PurchaseHistory/index.tsx`
-- [ ] `frontend/src/pages/Purchases/index.tsx`
-- [ ] `frontend/src/pages/Reports/index.tsx`
-- [ ] `frontend/src/pages/Returns/ExpiryReturnReview.tsx`
-- [ ] `frontend/src/pages/Returns/index.tsx`
-- [ ] `frontend/src/pages/Sells/index.tsx`
-- [ ] `frontend/src/pages/Settings/index.tsx`
-- [ ] `frontend/src/pages/WebsiteOrders/index.tsx`
-- [ ] `frontend/src/services/api.ts`
-- [ ] `frontend/src/services/dataFetchControl.ts`
-- [ ] `frontend/src/services/events.ts`
-- [ ] `frontend/src/services/keyboardShortcuts.ts`
-- [ ] `frontend/src/services/stagedQueueService.ts`
-- [ ] `frontend/src/types/api.ts`
-- [ ] `frontend/src/types/window.d.ts`
-- [ ] `frontend/src/utils/cacheInvalidation.ts`
-- [ ] `frontend/src/utils/currency.ts`
-- [ ] `frontend/src/utils/date.ts`
-- [ ] `frontend/src/utils/distributorValidator.ts`
-- [ ] `frontend/src/utils/export.ts`
-- [ ] `frontend/src/utils/fuzzy.ts`
-- [ ] `frontend/src/utils/imageOptimizer.ts`
-- [ ] `frontend/src/utils/onlineOrders.ts`
-- [ ] `frontend/src/utils/orderFuzzyMatcher.ts`
-- [ ] `frontend/src/utils/packagingMatcher.ts`
-- [ ] `frontend/src/utils/pageModuleCaches.ts`
-- [ ] `frontend/src/utils/phone.ts`
-- [ ] `frontend/src/utils/printBill.ts`
-- [ ] `frontend/src/utils/searchRanker.ts`
-- [ ] `frontend/src/utils/settingsSync.ts`
-- [ ] `frontend/src/utils/whatsappFailureReason.ts`
-- [ ] `frontend/tailwind.config.js`
-- [ ] `frontend/tsconfig.app.json`
-- [ ] `frontend/tsconfig.json`
-- [ ] `frontend/tsconfig.node.json`
-- [ ] `frontend/vercel.json`
-- [ ] `frontend/vite.config.ts`
-- [ ] `gas/licenseServer.js`
-- [ ] `heal_db.js`
+- [x] `frontend/src/pages/Migration/components/ColumnMapper.tsx`
+- [x] `frontend/src/pages/Migration/components/ErrorRows.tsx`
+- [x] `frontend/src/pages/Migration/components/LocalBackupPanel.tsx`
+- [x] `frontend/src/pages/Migration/components/ModuleSection.tsx`
+- [x] `frontend/src/pages/Migration/components/RedBookUploader.tsx`
+- [x] `frontend/src/pages/Migration/components/ReviewModal.tsx`
+- [x] `frontend/src/pages/Migration/index.tsx`
+- [x] `frontend/src/pages/OnlineCatalog/index.tsx`
+- [x] `frontend/src/pages/POS/index.tsx`
+- [x] `frontend/src/pages/PharmarackCart/index.tsx`
+- [x] `frontend/src/pages/PhoneSales/index.tsx`
+- [x] `frontend/src/pages/PurchaseHistory/index.tsx`
+- [x] `frontend/src/pages/Purchases/index.tsx`
+- [x] `frontend/src/pages/Reports/index.tsx`
+- [x] `frontend/src/pages/Returns/ExpiryReturnReview.tsx`
+- [x] `frontend/src/pages/Returns/index.tsx`
+- [x] `frontend/src/pages/Sells/index.tsx`
+- [x] `frontend/src/pages/Settings/index.tsx`
+- [x] `frontend/src/pages/WebsiteOrders/index.tsx`
+- [x] `frontend/src/services/api.ts`
+- [x] `frontend/src/services/dataFetchControl.ts`
+- [x] `frontend/src/services/events.ts`
+- [x] `frontend/src/services/keyboardShortcuts.ts`
+- [x] `frontend/src/services/stagedQueueService.ts`
+- [x] `frontend/src/types/api.ts`
+- [x] `frontend/src/types/window.d.ts`
+- [x] `frontend/src/utils/cacheInvalidation.ts`
+- [x] `frontend/src/utils/currency.ts`
+- [x] `frontend/src/utils/date.ts`
+- [x] `frontend/src/utils/distributorValidator.ts`
+- [x] `frontend/src/utils/export.ts`
+- [x] `frontend/src/utils/fuzzy.ts`
+- [x] `frontend/src/utils/imageOptimizer.ts`
+- [x] `frontend/src/utils/onlineOrders.ts`
+- [x] `frontend/src/utils/orderFuzzyMatcher.ts`
+- [x] `frontend/src/utils/packagingMatcher.ts`
+- [x] `frontend/src/utils/pageModuleCaches.ts`
+- [x] `frontend/src/utils/phone.ts`
+- [x] `frontend/src/utils/printBill.ts`
+- [x] `frontend/src/utils/searchRanker.ts`
+- [x] `frontend/src/utils/settingsSync.ts`
+- [x] `frontend/src/utils/whatsappFailureReason.ts`
+- [x] `frontend/tailwind.config.js`
+- [x] `frontend/tsconfig.app.json`
+- [x] `frontend/tsconfig.json`
+- [x] `frontend/tsconfig.node.json`
+- [x] `frontend/vercel.json`
+- [x] `frontend/vite.config.ts`
+- [x] `gas/licenseServer.js`
+- [x] `heal_db.js`
 
 ### Chunk 6 (Files 251 to 300)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `import_reference.mjs`
-- [ ] `index.js`
-- [ ] `jest.config.js`
-- [ ] `license.txt`
-- [ ] `package.json`
-- [ ] `packaging/portable.env`
-- [ ] `pharmacy-mobile/.claude/settings.json`
-- [ ] `pharmacy-mobile/.vscode/extensions.json`
-- [ ] `pharmacy-mobile/.vscode/settings.json`
-- [ ] `pharmacy-mobile/app.json`
-- [ ] `pharmacy-mobile/app/(tabs)/_layout.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/billing/index.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/inbox/index.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/index.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/inventory/index.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/more/index.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/purchases/index.tsx`
-- [ ] `pharmacy-mobile/app/(tabs)/refills/index.tsx`
-- [ ] `pharmacy-mobile/app/+not-found.tsx`
-- [ ] `pharmacy-mobile/app/_layout.tsx`
-- [ ] `pharmacy-mobile/app/camera/index.tsx`
-- [ ] `pharmacy-mobile/app/devices/index.tsx`
-- [ ] `pharmacy-mobile/app/notifications/index.tsx`
-- [ ] `pharmacy-mobile/app/product-search/index.tsx`
-- [ ] `pharmacy-mobile/app/scan/index.tsx`
-- [ ] `pharmacy-mobile/components/AppLock.tsx`
-- [ ] `pharmacy-mobile/components/Card.tsx`
-- [ ] `pharmacy-mobile/components/CartItem.tsx`
-- [ ] `pharmacy-mobile/components/DeviceStatusHeader.tsx`
-- [ ] `pharmacy-mobile/components/DrawerMenu.tsx`
-- [ ] `pharmacy-mobile/components/EditScreenInfo.tsx`
-- [ ] `pharmacy-mobile/components/ExternalLink.tsx`
-- [ ] `pharmacy-mobile/components/MedicineRow.tsx`
-- [ ] `pharmacy-mobile/components/ProductListPanel.tsx`
-- [ ] `pharmacy-mobile/components/SearchBar.tsx`
-- [ ] `pharmacy-mobile/components/ServerSetup.tsx`
-- [ ] `pharmacy-mobile/components/StatCard.tsx`
-- [ ] `pharmacy-mobile/components/StyledText.tsx`
-- [ ] `pharmacy-mobile/components/SwipeToDelete.tsx`
-- [ ] `pharmacy-mobile/components/Themed.tsx`
-- [ ] `pharmacy-mobile/components/UpwardSearchDropdown.tsx`
-- [ ] `pharmacy-mobile/components/useClientOnlyValue.ts`
-- [ ] `pharmacy-mobile/components/useClientOnlyValue.web.ts`
-- [ ] `pharmacy-mobile/components/useColorScheme.ts`
-- [ ] `pharmacy-mobile/components/useColorScheme.web.ts`
-- [ ] `pharmacy-mobile/constants/Colors.ts`
-- [ ] `pharmacy-mobile/expo-env.d.ts`
-- [ ] `pharmacy-mobile/lib/api.ts`
-- [ ] `pharmacy-mobile/lib/api/admin.ts`
-- [ ] `pharmacy-mobile/lib/api/client.ts`
+- [x] `import_reference.mjs`
+- [x] `index.js`
+- [x] `jest.config.js`
+- [x] `license.txt`
+- [x] `package.json`
+- [x] `packaging/portable.env`
+- [x] `pharmacy-mobile/.claude/settings.json`
+- [x] `pharmacy-mobile/.vscode/extensions.json`
+- [x] `pharmacy-mobile/.vscode/settings.json`
+- [x] `pharmacy-mobile/app.json`
+- [x] `pharmacy-mobile/app/(tabs)/_layout.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/billing/index.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/inbox/index.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/index.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/inventory/index.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/more/index.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/purchases/index.tsx`
+- [x] `pharmacy-mobile/app/(tabs)/refills/index.tsx`
+- [x] `pharmacy-mobile/app/+not-found.tsx`
+- [x] `pharmacy-mobile/app/_layout.tsx`
+- [x] `pharmacy-mobile/app/camera/index.tsx`
+- [x] `pharmacy-mobile/app/devices/index.tsx`
+- [x] `pharmacy-mobile/app/notifications/index.tsx`
+- [x] `pharmacy-mobile/app/product-search/index.tsx`
+- [x] `pharmacy-mobile/app/scan/index.tsx`
+- [x] `pharmacy-mobile/components/AppLock.tsx`
+- [x] `pharmacy-mobile/components/Card.tsx`
+- [x] `pharmacy-mobile/components/CartItem.tsx`
+- [x] `pharmacy-mobile/components/DeviceStatusHeader.tsx`
+- [x] `pharmacy-mobile/components/DrawerMenu.tsx`
+- [x] `pharmacy-mobile/components/EditScreenInfo.tsx`
+- [x] `pharmacy-mobile/components/ExternalLink.tsx`
+- [x] `pharmacy-mobile/components/MedicineRow.tsx`
+- [x] `pharmacy-mobile/components/ProductListPanel.tsx`
+- [x] `pharmacy-mobile/components/SearchBar.tsx`
+- [x] `pharmacy-mobile/components/ServerSetup.tsx`
+- [x] `pharmacy-mobile/components/StatCard.tsx`
+- [x] `pharmacy-mobile/components/StyledText.tsx`
+- [x] `pharmacy-mobile/components/SwipeToDelete.tsx`
+- [x] `pharmacy-mobile/components/Themed.tsx`
+- [x] `pharmacy-mobile/components/UpwardSearchDropdown.tsx`
+- [x] `pharmacy-mobile/components/useClientOnlyValue.ts`
+- [x] `pharmacy-mobile/components/useClientOnlyValue.web.ts`
+- [x] `pharmacy-mobile/components/useColorScheme.ts`
+- [x] `pharmacy-mobile/components/useColorScheme.web.ts`
+- [x] `pharmacy-mobile/constants/Colors.ts`
+- [x] `pharmacy-mobile/expo-env.d.ts`
+- [x] `pharmacy-mobile/lib/api.ts`
+- [x] `pharmacy-mobile/lib/api/admin.ts`
+- [x] `pharmacy-mobile/lib/api/client.ts`
 
 ### Chunk 7 (Files 301 to 350)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [ ] In Progress / [x] Completed
 
-- [ ] `pharmacy-mobile/lib/api/gmail.ts`
-- [ ] `pharmacy-mobile/lib/api/inventory.ts`
-- [ ] `pharmacy-mobile/lib/api/misc.ts`
-- [ ] `pharmacy-mobile/lib/api/notifications.ts`
-- [ ] `pharmacy-mobile/lib/api/orders.ts`
-- [ ] `pharmacy-mobile/lib/api/purchases.ts`
-- [ ] `pharmacy-mobile/lib/api/refills.ts`
-- [ ] `pharmacy-mobile/lib/api/sales.ts`
-- [ ] `pharmacy-mobile/lib/api/scan.ts`
-- [ ] `pharmacy-mobile/lib/api/scanBill.ts`
-- [ ] `pharmacy-mobile/lib/api/sync.ts`
-- [ ] `pharmacy-mobile/lib/cartEvents.ts`
-- [ ] `pharmacy-mobile/lib/helpers.ts`
-- [ ] `pharmacy-mobile/lib/secureStore.ts`
-- [ ] `pharmacy-mobile/lib/stock.ts`
-- [ ] `pharmacy-mobile/lib/theme.ts`
-- [ ] `pharmacy-mobile/package.json`
-- [ ] `pharmacy-mobile/tsconfig.json`
-- [ ] `productResolver.ts`
-- [ ] `python/scan_nlp/requirements.txt`
-- [ ] `real_eval.ts`
-- [ ] `scanGateAlgorithms.ts`
-- [ ] `scan_benchmark.ts`
-- [ ] `scratch/aicamera_benchmark_report.json`
-- [ ] `scratch/all_valid_keys.json`
-- [ ] `scratch/analyze_catalog_inventory.mjs`
-- [ ] `scratch/check_batch2.cjs`
-- [ ] `scratch/check_exact_brand.mjs`
-- [ ] `scratch/check_keys.cjs`
-- [ ] `scratch/check_quarantine_on_disk.mjs`
-- [ ] `scratch/cleanup_purged_files.mjs`
-- [ ] `scratch/cross_check_state.mjs`
-- [ ] `scratch/filter_keys.cjs`
-- [ ] `scratch/find_genuine_wrong.mjs`
-- [ ] `scratch/get_mfg.cjs`
-- [ ] `scratch/get_stats.cjs`
-- [ ] `scratch/get_top_mfg.cjs`
-- [ ] `scratch/inspect_db.mjs`
-- [ ] `scratch/inspect_medicines_search.js`
-- [ ] `scratch/inspect_products_folder.mjs`
-- [ ] `scratch/inspect_state_json.mjs`
-- [ ] `scratch/list_purged.mjs`
-- [ ] `scratch/pending_overview.cjs`
-- [ ] `scratch/save_clean_keys.cjs`
-- [ ] `scratch/sniff_1mg.cjs`
-- [ ] `scratch/sniff_headers.cjs`
-- [ ] `scratch/tables_with_data.mjs`
-- [ ] `scratch/test3.cjs`
-- [ ] `scratch/test_batch4.cjs`
-- [ ] `scratch/test_search_api.mjs`
+- [x] `pharmacy-mobile/lib/api/gmail.ts`
+- [x] `pharmacy-mobile/lib/api/inventory.ts`
+- [x] `pharmacy-mobile/lib/api/misc.ts`
+- [x] `pharmacy-mobile/lib/api/notifications.ts`
+- [x] `pharmacy-mobile/lib/api/orders.ts`
+- [x] `pharmacy-mobile/lib/api/purchases.ts`
+- [x] `pharmacy-mobile/lib/api/refills.ts`
+- [x] `pharmacy-mobile/lib/api/sales.ts`
+- [x] `pharmacy-mobile/lib/api/scan.ts`
+- [x] `pharmacy-mobile/lib/api/scanBill.ts`
+- [x] `pharmacy-mobile/lib/api/sync.ts`
+- [x] `pharmacy-mobile/lib/cartEvents.ts`
+- [x] `pharmacy-mobile/lib/helpers.ts`
+- [x] `pharmacy-mobile/lib/secureStore.ts`
+- [x] `pharmacy-mobile/lib/stock.ts`
+- [x] `pharmacy-mobile/lib/theme.ts`
+- [x] `pharmacy-mobile/package.json`
+- [x] `pharmacy-mobile/tsconfig.json`
+- [x] `productResolver.ts`
+- [x] `python/scan_nlp/requirements.txt`
+- [x] `real_eval.ts`
+- [x] `scanGateAlgorithms.ts`
+- [x] `scan_benchmark.ts`
+- [x] `scratch/aicamera_benchmark_report.json`
+- [x] `scratch/all_valid_keys.json`
+- [x] `scratch/analyze_catalog_inventory.mjs`
+- [x] `scratch/check_batch2.cjs`
+- [x] `scratch/check_exact_brand.mjs`
+- [x] `scratch/check_keys.cjs`
+- [x] `scratch/check_quarantine_on_disk.mjs`
+- [x] `scratch/cleanup_purged_files.mjs`
+- [x] `scratch/cross_check_state.mjs`
+- [x] `scratch/filter_keys.cjs`
+- [x] `scratch/find_genuine_wrong.mjs`
+- [x] `scratch/get_mfg.cjs`
+- [x] `scratch/get_stats.cjs`
+- [x] `scratch/get_top_mfg.cjs`
+- [x] `scratch/inspect_db.mjs`
+- [x] `scratch/inspect_medicines_search.js`
+- [x] `scratch/inspect_products_folder.mjs`
+- [x] `scratch/inspect_state_json.mjs`
+- [x] `scratch/list_purged.mjs`
+- [x] `scratch/pending_overview.cjs`
+- [x] `scratch/save_clean_keys.cjs`
+- [x] `scratch/sniff_1mg.cjs`
+- [x] `scratch/sniff_headers.cjs`
+- [x] `scratch/tables_with_data.mjs`
+- [x] `scratch/test3.cjs`
+- [x] `scratch/test_batch4.cjs`
+- [x] `scratch/test_search_api.mjs`
 
 ### Chunk 8 (Files 351 to 400)
-**Agent Assigned:** [ ]
-**Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
+**Agent Assigned:** [Antigravity]
+**Status:** [ ] Not Started / [x] In Progress / [ ] Completed
 
 - [ ] `scripts/activate_calpol.mjs`
 - [ ] `scripts/all_541_rejected.json`
@@ -651,70 +651,70 @@ Fix any dead code, duplicate logic, unused components, and unnecessary complexit
 - [ ] `src/middleware/notFoundHandler.ts`
 - [ ] `src/middleware/tenantAuth.ts`
 - [ ] `src/process/processGuardian.ts`
-- [ ] `src/routes/aiCamera.ts`
-- [ ] `src/routes/api/adminRoutes.ts`
-- [ ] `src/routes/api/customerRoutes.ts`
-- [ ] `src/routes/audit.ts`
-- [ ] `src/routes/auth.ts`
-- [ ] `src/routes/automation.ts`
-- [ ] `src/routes/callTasks.ts`
-- [ ] `src/routes/catalog.ts`
-- [ ] `src/routes/catalogImages.ts`
-- [ ] `src/routes/clinical.ts`
-- [ ] `src/routes/compliance.ts`
-- [ ] `src/routes/contacts.ts`
-- [ ] `src/routes/crm.ts`
+- [x] `src/routes/aiCamera.ts`
+- [x] `src/routes/api/adminRoutes.ts`
+- [x] `src/routes/api/customerRoutes.ts`
+- [x] `src/routes/audit.ts`
+- [x] `src/routes/auth.ts`
+- [x] `src/routes/automation.ts`
+- [x] `src/routes/callTasks.ts`
+- [x] `src/routes/catalog.ts`
+- [x] `src/routes/catalogImages.ts`
+- [x] `src/routes/clinical.ts`
+- [x] `src/routes/compliance.ts`
+- [x] `src/routes/contacts.ts`
+- [x] `src/routes/crm.ts`
 
 ### Chunk 13 (Files 601 to 650)
 **Agent Assigned:** [ ]
 **Status:** [ ] Not Started / [ ] In Progress / [ ] Completed
 
-- [ ] `src/routes/customerPortal.ts`
-- [ ] `src/routes/customerReturns.ts`
-- [ ] `src/routes/dashboard.ts`
-- [ ] `src/routes/dispatch.ts`
-- [ ] `src/routes/distributors.ts`
-- [ ] `src/routes/email.ts`
-- [ ] `src/routes/emailOrderReviews.ts`
-- [ ] `src/routes/enquiries.ts`
-- [ ] `src/routes/enrichment.ts`
-- [ ] `src/routes/expiry.ts`
-- [ ] `src/routes/inventory.ts`
-- [ ] `src/routes/investigation.ts`
-- [ ] `src/routes/learning.ts`
-- [ ] `src/routes/license.ts`
-- [ ] `src/routes/medicineAvailability.ts`
-- [ ] `src/routes/medicines.ts`
-- [ ] `src/routes/messaging.ts`
-- [ ] `src/routes/migration.ts`
-- [ ] `src/routes/notifications.ts`
-- [ ] `src/routes/orders.ts`
-- [ ] `src/routes/pharmarack.ts`
-- [ ] `src/routes/prescriptions.ts`
-- [ ] `src/routes/purchases.ts`
-- [ ] `src/routes/quickAssistant.ts`
-- [ ] `src/routes/refills.ts`
-- [ ] `src/routes/reports.ts`
-- [ ] `src/routes/returns.ts`
-- [ ] `src/routes/sales.ts`
-- [ ] `src/routes/scan.ts`
-- [ ] `src/routes/scheduleDrugs.ts`
-- [ ] `src/routes/security.ts`
-- [ ] `src/routes/sellPrice.ts`
-- [ ] `src/routes/serviceStatus.ts`
-- [ ] `src/routes/settings.ts`
-- [ ] `src/routes/stores.ts`
-- [ ] `src/routes/sync.ts`
-- [ ] `src/routes/telegramPrescription.ts`
-- [ ] `src/routes/triggers.ts`
-- [ ] `src/routes/tunnel.ts`
-- [ ] `src/routes/upload.ts`
-- [ ] `src/routes/utilities.ts`
-- [ ] `src/routes/verification.ts`
-- [ ] `src/routes/websiteOrders.ts`
-- [ ] `src/routes/websiteOwner.ts`
-- [ ] `src/routes/whatsappBusiness.ts`
-- [ ] `src/routes/whatsappQueue.ts`
+- [x] `src/routes/customerPortal.ts`
+- [x] `src/routes/customerReturns.ts`
+- [x] `src/routes/dashboard.ts`
+- [x] `src/routes/dispatch.ts`
+- [x] `src/routes/distributors.ts`
+- [x] `src/routes/email.ts`
+- [x] `src/routes/emailOrderReviews.ts`
+- [x] `src/routes/enquiries.ts`
+- [x] `src/routes/enrichment.ts`
+- [x] `src/routes/expiry.ts`
+- [x] `src/routes/inventory.ts`
+- [x] `src/routes/investigation.ts`
+- [x] `src/routes/learning.ts`
+- [x] `src/routes/license.ts`
+- [x] `src/routes/medicineAvailability.ts`
+- [x] `src/routes/medicines.ts`
+- [x] `src/routes/messaging.ts`
+- [x] `src/routes/migration.ts`
+- [x] `src/routes/notifications.ts`
+- [x] `src/routes/orders.ts`
+- [x] `src/routes/pharmarack.ts`
+- [x] `src/routes/prescriptions.ts`
+- [x] `src/routes/purchases.ts`
+- [x] `src/routes/quickAssistant.ts`
+- [x] `src/routes/refills.ts`
+- [x] `src/routes/reports.ts`
+- [x] `src/routes/returns.ts`
+- [x] `src/routes/sales.ts`
+- [x] `src/routes/scan.ts`
+- [x] `src/routes/scheduleDrugs.ts`
+- [x] `src/routes/security.ts`
+- [x] `src/routes/sellPrice.ts`
+- [x] `src/routes/serviceStatus.ts`
+- [x] `src/routes/settings.ts`
+- [x] `src/routes/stores.ts`
+- [x] `src/routes/sync.ts`
+- [x] `src/routes/telegramPrescription.ts`
+- [x] `src/routes/triggers.ts`
+- [x] `src/routes/tunnel.ts`
+- [x] `src/routes/upload.ts`
+- [x] `src/routes/utilities.ts`
+- [x] `src/routes/verification.ts`
+- [x] `src/routes/websiteOrders.ts`
+- [x] `src/routes/websiteOwner.ts`
+- [x] `src/routes/whatsappBusiness.ts`
+- [x] `src/routes/whatsappQueue.ts`
 - [ ] `src/scripts/benchmarkPerformance.ts`
 - [ ] `src/scripts/check_email.ts`
 - [ ] `src/scripts/fixDb.ts`

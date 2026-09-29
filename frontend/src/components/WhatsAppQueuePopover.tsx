@@ -260,17 +260,6 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
     }
   };
 
-  const handleSetPacingPreset = async (preset: 'safe') => {
-    try {
-      await api.setWhatsAppQueuePacingPreset(preset);
-      const msg = '🛡️ Safe Pacing enabled (10-15s, anti-ban floor)';
-      toastEvent.trigger(msg, 'success');
-      await fetchStatus();
-    } catch (_err) {
-      toastEvent.trigger('Failed to update pacing preset', 'error');
-    }
-  };
-
   const handleTogglePause = async () => {
     // Optimistic: flip isPaused immediately so the button responds at click-time
     setQueueState(prev => prev ? { ...prev, isPaused: !prev.isPaused } : prev);

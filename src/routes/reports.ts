@@ -1,7 +1,7 @@
 import express from 'express';
-import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
+// import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
 import { dbManager } from '../database/connection.js';
-import { exportToExcel, exportToPdf, exportToCsv } from '../utils/reportExporter.js';
+import { exportToPdf, exportToCsv } from '../utils/reportExporter.js';
 import { nonMovingReportService } from '../services/nonMovingReportService.js';
 import { getReportCutoverDate, effectiveReportFromDate } from '../utils/reportCutover.js';
 import { resolveStoreId } from '../services/storeContextService.js';
@@ -377,36 +377,36 @@ router.get('/export-excel', async (req, res) => {
     const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
     const to = toDate ? String(toDate) : '9999-12-31';
 
-    let title = 'Pharmacy OS Report';
+    // let // _title = 'Pharmacy OS Report';
     let headers: string[] = [];
     let keys: string[] = [];
     let query = '';
     let params: any[] = [];
 
     if (type === 'sales') {
-      title = 'Sales History Report';
+      // _title = 'Sales History Report';
       headers = ['Invoice No', 'Date', 'Amount (Rs.)'];
       keys = ['invoice_no', 'date', 'total_amount'];
       query = `SELECT invoice_no, COALESCE(date, business_date) as date, total_amount FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC`;
       params = [from, to];
     } else if (type === 'purchases') {
-      title = 'Purchase History Report';
+      // _title = 'Purchase History Report';
       headers = ['Invoice / Bill No', 'Distributor / Supplier', 'Date', 'Amount (Rs.)'];
       keys = ['invoice_no', 'distributor_name', 'date', 'total_amount'];
       query = `SELECT p.invoice_no, d.name as distributor_name, COALESCE(p.date, p.business_date) as date, p.total_amount FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC`;
       params = [from, to];
     } else if (type === 'inventory') {
-      title = 'Current Inventory Status Report';
+      // _title = 'Current Inventory Status Report';
       headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'MRP (Rs.)', 'Valuation Cost (Rs.)'];
       keys = ['medicine_name', 'batch_no', 'quantity', 'expiry_date', 'cost_price', 'mrp', 'value'];
       query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.expiry_date, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(im.is_active, 1) = 1 ORDER BY medicine_name ASC';
     } else if (type === 'expiry') {
       if (fromDate || toDate) {
-        title = `Expiry Warning Report (${from} to ${to})`;
+        // _title = `Expiry Warning Report (${from} to ${to})`;
         query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
         params = [from, to];
       } else {
-        title = 'Expiry Warning Report (Next 180 Days)';
+        // _title = 'Expiry Warning Report (Next 180 Days)';
         query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date(\'now\', \'+180 days\') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
         params = [];
       }
@@ -414,7 +414,7 @@ router.get('/export-excel', async (req, res) => {
       keys = ['medicine_name', 'batch_no', 'quantity', 'cost_price', 'expiry_date', 'value'];
     } else if (type === 'nonMoving') {
       const periodDays = req.query.days ? parseInt(String(req.query.days)) : 200;
-      title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
+      // _title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
       headers = ['Medicine Name', 'Batch No', 'Purchase Date', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'Hold Value Cost (Rs.)', 'Hold Value MRP (Rs.)', 'Dormant Period'];
       keys = ['medicineName', 'batchNo', 'purchaseDate', 'quantity', 'expiryDate', 'costPrice', 'totalCostValue', 'totalValue', 'dormantDaysLabel'];
       
@@ -459,36 +459,36 @@ router.get('/export-csv', async (req, res) => {
     const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
     const to = toDate ? String(toDate) : '9999-12-31';
 
-    let title = 'Pharmacy OS Report';
+    // let // _title = 'Pharmacy OS Report';
     let headers: string[] = [];
     let keys: string[] = [];
     let query = '';
     let params: any[] = [];
 
     if (type === 'sales') {
-      title = 'Sales History Report';
+      // _title = 'Sales History Report';
       headers = ['Invoice No', 'Date', 'Amount (Rs.)'];
       keys = ['invoice_no', 'date', 'total_amount'];
       query = `SELECT invoice_no, COALESCE(date, business_date) as date, total_amount FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC`;
       params = [from, to];
     } else if (type === 'purchases') {
-      title = 'Purchase History Report';
+      // _title = 'Purchase History Report';
       headers = ['Invoice / Bill No', 'Distributor / Supplier', 'Date', 'Amount (Rs.)'];
       keys = ['invoice_no', 'distributor_name', 'date', 'total_amount'];
       query = `SELECT p.invoice_no, d.name as distributor_name, COALESCE(p.date, p.business_date) as date, p.total_amount FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC`;
       params = [from, to];
     } else if (type === 'inventory') {
-      title = 'Current Inventory Status Report';
+      // _title = 'Current Inventory Status Report';
       headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'MRP (Rs.)', 'Valuation Cost (Rs.)'];
       keys = ['medicine_name', 'batch_no', 'quantity', 'expiry_date', 'cost_price', 'mrp', 'value'];
       query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.expiry_date, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(im.is_active, 1) = 1 ORDER BY medicine_name ASC';
     } else if (type === 'expiry') {
       if (fromDate || toDate) {
-        title = `Expiry Warning Report (${from} to ${to})`;
+        // _title = `Expiry Warning Report (${from} to ${to})`;
         query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
         params = [from, to];
       } else {
-        title = 'Expiry Warning Report (Next 180 Days)';
+        // _title = 'Expiry Warning Report (Next 180 Days)';
         query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date(\'now\', \'+180 days\') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
         params = [];
       }
@@ -496,7 +496,7 @@ router.get('/export-csv', async (req, res) => {
       keys = ['medicine_name', 'batch_no', 'quantity', 'cost_price', 'expiry_date', 'value'];
     } else if (type === 'nonMoving') {
       const periodDays = req.query.days ? parseInt(String(req.query.days)) : 200;
-      title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
+      // _title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
       headers = ['Medicine Name', 'Batch No', 'Purchase Date', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'Hold Value Cost (Rs.)', 'Hold Value MRP (Rs.)', 'Dormant Period'];
       keys = ['medicineName', 'batchNo', 'purchaseDate', 'quantity', 'expiryDate', 'costPrice', 'totalCostValue', 'totalValue', 'dormantDaysLabel'];
       

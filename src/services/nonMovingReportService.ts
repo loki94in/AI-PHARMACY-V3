@@ -1,14 +1,14 @@
-import { Database } from 'sqlite';
+// import { Database } from 'sqlite';
 import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
 import { dbManager } from '../database/connection.js';
-import { sendMessage } from '../whatsappClient.js';
+// import { sendMessage } from '../whatsappClient.js';
 import { telegramBotService } from '../telegramBot.js';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 export interface NonMovingItem {
   id: number;

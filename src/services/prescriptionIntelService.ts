@@ -1,7 +1,7 @@
 import fs from 'fs';
-import path from 'path';
+// import path from 'path';
 import { dbManager } from '../database/connection.js';
-import { prescriptionScannerService } from './prescriptionScannerService.js';
+// import { prescriptionScannerService } from './prescriptionScannerService.js';
 import { performPharmarackSearch } from '../routes/pharmarack.js';
 import { sendMessage } from '../whatsappClient.js';
 import { eventService } from './eventService.js';

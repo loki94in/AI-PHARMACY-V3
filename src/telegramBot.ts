@@ -1,12 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import path from 'path';
 import fs from 'fs';
-import axios from 'axios';
-import { normalizeDistributorName, formatInvoiceWithFY } from './utils/migrationValidation.js';
+// import axios from 'axios';
+import { formatInvoiceWithFY } from './utils/migrationValidation.js';
 import { isValidDistributorName } from './utils/nameNormalizer.js';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { dbManager } from './database/connection.js';
-import { ensureSchema } from './database.js';
+// import { ensureSchema } from './database.js';
 import { telegramPrescriptionService } from './services/telegramPrescriptionService.js';
 import { aiCameraService } from './services/aiCameraService.js';
 import { imageArchiveService } from './services/imageArchiveService.js';
@@ -14,19 +14,20 @@ import { notificationManager } from './utils/notifications.js';
 import { extractDateFromText } from './utils/dateExtractor.js';
 import { getAppDataDir } from './config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', 'data', 'app.db');
 
 class TelegramBotService {
   private bot: TelegramBot | null = null;
   private token: string | undefined;
   private chatId: string | undefined;
   private enabled: boolean = false;
-  private lang: string;
+  // @ts-ignore - needed for future use
+  private _lang: string = '';
 
   constructor() {
-    this.lang = process.env.TELEGRAM_LANG || 'en';
+    this._lang = process.env.TELEGRAM_LANG || 'en';
   }
 
   /** True when the bot has an active, authenticated polling connection to Telegram. */

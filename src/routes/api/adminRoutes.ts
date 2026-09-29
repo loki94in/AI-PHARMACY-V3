@@ -7,7 +7,7 @@ const router = express.Router();
 
 // ─── Pricing Management Endpoints ─────────────────────────────────────────────
 
-router.get('/pricing/rules', async (req: Request, res: Response) => {
+router.get('/pricing/rules', async (_req: Request, res: Response) => {
   try {
     const rules = await pricingService.getActiveRules();
     return sendSuccess(res, { rules });

@@ -3,7 +3,7 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { aiCameraService } from '../services/aiCameraService.js';
 import { inventoryCache } from '../services/inventoryCache.js';
 import { getAppDataDir } from '../config/index.js';
@@ -11,9 +11,9 @@ import { applyStockDelta, recordStockLedger } from '../utils/stockRebuild.js';
 import { eventService } from '../services/eventService.js';
 
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -1071,7 +1071,7 @@ router.get('/expiry-reviews', async (req, res) => {
 });
 
 // 2. Trigger on-demand expiry scan to detect expired stock and populate pending reviews
-router.post('/expiry-reviews/scan', async (req, res) => {
+router.post('/expiry-reviews/scan', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const { scanAndCreateExpiryReviews } = await import('../services/returnsService.js');
@@ -1488,7 +1488,7 @@ router.post('/expiry-reviews/bulk-approve', async (req, res) => {
 });
 
 // 6. Get Audit History for Expiry Returns
-router.get('/expiry-reviews/audit-history', async (req, res) => {
+router.get('/expiry-reviews/audit-history', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const logs = await db.all(`

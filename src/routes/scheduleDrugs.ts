@@ -98,7 +98,7 @@ router.get('/', async (req, res) => {
       likeParams = [`${q}%`, `${q}%`];
     }
 
-    const sql = (extraLike: string, extraParams: string[], orderLimit: string) => `
+    const sql = (extraLike: string, _extraParams: string[], orderLimit: string) => `
       SELECT m.id, m.name, m.generic_name, m.manufacturer, m.mrp,
              m.pack_unit, m.packaging, m.schedule_type, inv.stock
       FROM medicines m

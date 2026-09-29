@@ -4,7 +4,7 @@ import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
 import { dbManager } from '../database/connection.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import fs from 'fs';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -18,8 +18,8 @@ import { getMigrationAuditSummary, getMigrationAuditRecords } from '../utils/mig
 import { setReportCutoverDate } from '../utils/reportCutover.js';
 import { config, getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
+
 // Both must come from config.dbPath / getAppDataDir(), the same value dbManager opens. Deriving them
 // from __dirname instead lets the finalize step write app.db to a different location
 // than every page reads from (they diverge in a packaged build), and lets this module
@@ -104,7 +104,7 @@ router.post('/upload', (req, res) => {
 });
 
 // Get live migration status
-router.get('/status', (req, res) => {
+router.get('/status', (_req, res) => {
   res.json(migrationStatus);
 });
 
@@ -215,7 +215,7 @@ router.post('/analyze', async (req, res) => {
     }
 
     const stat = fs.statSync(filePath);
-    const lowercaseHeaders = headers.map(h => h.toLowerCase().trim());
+    headers.map(h => h.toLowerCase().trim());
     const detected = detectDataModules(headers);
 
     res.json({

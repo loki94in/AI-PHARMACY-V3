@@ -5,7 +5,7 @@ import { autoUpdateService } from '../services/autoUpdateService.js';
 const router = Router();
 
 /** GET /api/license/status — current license status (called by frontend on boot) */
-router.get('/status', async (req, res) => {
+router.get('/status', async (_req, res) => {
   try {
     const status = await checkLicense();
     res.json(status);
@@ -33,7 +33,7 @@ router.post('/activate', async (req, res) => {
 });
 
 /** GET /api/license/machine-id — returns this PC's machine fingerprint (for support) */
-router.get('/machine-id', (req, res) => {
+router.get('/machine-id', (_req, res) => {
   try {
     const machineId = getMachineId();
     // Return only first 8 chars for display; full ID used internally
@@ -44,7 +44,7 @@ router.get('/machine-id', (req, res) => {
 });
 
 /** POST /api/license/check-update — manual update check trigger */
-router.post('/check-update', async (req, res) => {
+router.post('/check-update', async (_req, res) => {
   try {
     const result = await autoUpdateService.triggerCheck();
     res.json(result || { hasUpdate: false, latestVersion: null });

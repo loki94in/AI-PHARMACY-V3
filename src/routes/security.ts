@@ -1,13 +1,13 @@
 import crypto from 'crypto';
 import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 import { dbManager } from '../database/connection.js';
 import { verifyPassword } from '../utils/password.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -81,7 +81,7 @@ router.post('/admin/login', async (req, res) => {
 });
 
 // Reset Remote Device Authorization (Accessible from local PC)
-router.post('/admin/reset-device', async (req, res) => {
+router.post('/admin/reset-device', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', '')");

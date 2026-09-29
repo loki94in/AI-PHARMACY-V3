@@ -87,7 +87,7 @@ export class VisualIndexService {
   /**
    * Build / backfill phash for all active images missing it.
    */
-  public async backfillPhash(batchSize = 200): Promise<{ total: number; updated: number; failed: number }> {
+  public async backfillPhash(_batchSize = 200): Promise<{ total: number; updated: number; failed: number }> {
     const db = await dbManager.getConnection();
     const rows = await db.all('SELECT id, image_path FROM catalog_images WHERE phash IS NULL AND is_active=1');
     let updated = 0;
@@ -141,7 +141,7 @@ export class VisualIndexService {
     // 2. Textual candidates via productNameFilterService (if OCR has tokens)
     // We reuse catalogImageService.computeConfidence for re-ranking instead of duplicating logic
     const db = await dbManager.getConnection();
-    const visualIds = new Set(visualHits.map(h => h.medicine_id));
+//     const _visualIds = new Set(visualHits.map(h => h.medicine_id));
     let fused: Array<any> = [];
 
     for (const hit of visualHits) {

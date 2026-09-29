@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import cron, { type ScheduledTask } from 'node-cron';
 import { dbManager } from '../database/connection.js';
 import Database from 'better-sqlite3';
@@ -10,8 +10,8 @@ import { pipeline } from 'stream/promises';
 import { config } from '../config/index.js';
 import { getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const DB_PATH = config.dbPath;
 const BACKUP_DIR = config.backupDir;
 

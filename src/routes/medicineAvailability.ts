@@ -114,7 +114,7 @@ router.post('/medicines/learn-correction', async (req, res) => {
   }
 });
 
-router.post('/medicines/recalculate-stock', async (req, res) => {
+router.post('/medicines/recalculate-stock', async (_req, res) => {
   try {
     await recalculateStockLimits();
     medicineAvailabilityEngine.refreshStockCache();
@@ -125,7 +125,7 @@ router.post('/medicines/recalculate-stock', async (req, res) => {
   }
 });
 
-router.post('/medicines/rebuild-substitutes', async (req, res) => {
+router.post('/medicines/rebuild-substitutes', async (_req, res) => {
   try {
     await precomputeSubstitutes();
     res.json({ success: true, message: 'Substitutes rebuilt' });

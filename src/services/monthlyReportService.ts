@@ -6,10 +6,10 @@ import PDFDocument from 'pdfkit';
 import XLSX from 'xlsx';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.resolve(getAppDataDir(), 'uploads', 'temp');
 
 export interface MonthlyReportData {
@@ -109,8 +109,8 @@ export class MonthlyReportService {
     const nameRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmacy_name'");
     const pharmacyName = (nameRow && nameRow.value && nameRow.value.trim()) ? nameRow.value.trim() : 'AI Pharmacy';
 
-    const startDateTime = `${startDate} 00:00:00`;
-    const endDateTime = `${endDate} 23:59:59`;
+//     const _startDateTime = `${startDate} 00:00:00`;
+//     const _endDateTime = `${endDate} 23:59:59`;
 
     const salesDateExpr = "COALESCE(date(business_date), date(date), date(substr(date, 1, 10)))";
     const salesInvDateExpr = "COALESCE(date(sinv.business_date), date(sinv.date), date(substr(sinv.date, 1, 10)))";
@@ -764,9 +764,9 @@ export class MonthlyReportService {
         return;
       }
 
-      const autoRow = await db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'");
+//       const autoRow = await db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'");
       const waRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_enabled'");
-      const isAuto = autoRow && autoRow.value === 'true';
+//       const _isAuto = autoRow && autoRow.value === 'true';
       const isWa = waRow && waRow.value === 'true';
 
       const now = new Date();

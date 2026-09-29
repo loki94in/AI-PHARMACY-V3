@@ -11,8 +11,8 @@ import { getAppDataDir } from '../config/index.js';
 import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const getDbPath = () => process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __dirname = path.dirname(__filename);
+// const getDbPath = () => process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
 const getUploadsDir = () => process.env.UPLOADS_DIR || path.resolve(getAppDataDir(), 'uploads');
 
 const router = express.Router();
@@ -122,7 +122,7 @@ router.post('/:id/seen', async (req, res) => {
 });
 
 // POST /api/email/sync — trigger a manual IMAP delta sync
-router.post('/sync', async (req, res) => {
+router.post('/sync', async (_req, res) => {
   try {
     const synced = await emailService.syncNewEmailsFromIMAP();
     await emailService.pruneOldEmails();
@@ -204,7 +204,7 @@ router.post('/import-manual', async (req, res) => {
 });
 
 // GET /api/email/attachments
-router.get('/attachments', async (req, res) => {
+router.get('/attachments', async (_req, res) => {
   try {
     const uploadsDir = getUploadsDir();
     if (!fs.existsSync(uploadsDir)) {
@@ -323,7 +323,7 @@ router.post('/attachments/parse', async (req, res) => {
 });
 
 // DELETE /api/email/attachments/cache
-router.delete('/attachments/cache', async (req, res) => {
+router.delete('/attachments/cache', async (_req, res) => {
   try {
     const uploadsDir = getUploadsDir();
     if (!fs.existsSync(uploadsDir)) {

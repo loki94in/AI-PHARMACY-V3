@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn, exec, execSync, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import { getAppDataDir } from '../config/index.js';
 
 /**

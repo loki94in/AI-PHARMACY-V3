@@ -6,8 +6,8 @@ import {
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
   CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera, Upload,
-  LayoutGrid, Eye, EyeOff, Star, Image, Filter, ChevronLeft,
-  UserPlus, Sparkles, BadgeCheck, Truck, Info, HelpCircle, Lock, User
+  LayoutGrid, Eye, EyeOff, Image, ChevronLeft,
+  UserPlus, Sparkles, BadgeCheck, Truck, Lock, User
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -181,7 +181,7 @@ export default function CustomerPortal() {
 
   // ─── Selection & Checkout States ───────────────────────────────────────────
   const [selectedItems, setSelectedItems] = useState<Record<string, SelectedMedicine>>({});
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COUNTER_PICKUP'>('UPI');
+  const [paymentMethod, _setPaymentMethod] = useState<'UPI' | 'COUNTER_PICKUP'>('UPI');
   const [deliveryMode, setDeliveryMode] = useState<'pickup' | 'delivery'>('pickup');
   const [deliveryEnabled, setDeliveryEnabled] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState('');

@@ -74,8 +74,8 @@ export async function checkAllRefills(db: Database): Promise<void> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const weeklyOffLower = (operatingSchedule.weeklyOff || 'monday').toLowerCase();
+//   const _dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+//   const _weeklyOffLower = (operatingSchedule.weeklyOff || 'monday').toLowerCase();
 
   for (const refill of activeRefills) {
     const nextDate = new Date(refill.next_refill_date);
@@ -568,7 +568,7 @@ export async function buildDailyOperationalBriefing(
     slaLines.push(`🚨 *OVERDUE (>24h SLA BREACH — ${incomplete24hAudit.overdue.length} Orders)*:\n${overdueDetails}${extraOverdue}`);
   }
   if (incomplete24hAudit.marketPaused.length > 0) {
-    const pausedDetails = incomplete24hAudit.marketPaused.slice(0, 5).map((c: any, idx: number) => {
+    const pausedDetails = incomplete24hAudit.marketPaused.slice(0, 5).map((c: any, _idx: number) => {
       const medStr = c.medicines.map((m: any) => `${m.name} × ${m.qty}`).join(', ');
       const resumeStr = c.resumedWorkingDate ? ` • Resumes: ${c.resumedWorkingDate}` : '';
       return `  • *${c.name}*: ${medStr} (${c.pauseReason || 'Market closure'}${resumeStr})`;

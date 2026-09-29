@@ -17,7 +17,7 @@ import { ensureSchema } from './database.js';
 import { registerProcessGuardian } from './process/processGuardian.js';
 import { activityTracker } from './utils/activityTracker.js';
 import { runHeavyJob } from './utils/backgroundJobLane.js';
-import { getBackendFetchMode } from './services/dataFetchControl.js';
+// import { getBackendFetchMode } from './services/dataFetchControl.js';
 import { config, getAppDataDir, isPackagedApp } from './config/index.js';
 import { launchAppBrowser, closeAppBrowser } from './utils/chromeBrowser.js';
 
@@ -139,7 +139,7 @@ app.use(compression());
 // closing the DB connection — without this, a request mid-query when SIGINT/SIGTERM
 // arrives hits an already-closed connection (SQLITE_MISUSE: Database is closed).
 let inFlightRequests = 0;
-app.use((req, res, next) => {
+app.use((_req, res, next) => {
   inFlightRequests++;
   // 'finish' (normal completion) and 'close' (aborted connection) can both fire for the
   // same response — guard so a request is only ever decremented once.
@@ -150,7 +150,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   // Don't treat status polling or background worker queries as blocking activity
   const isEnrichmentStatus = req.path.startsWith('/api/enrichment/status') || req.path.startsWith('/api/enrichment/queue');
   const isCatalogStatus = req.path.startsWith('/api/catalog/job') || req.path.startsWith('/api/jobs');
@@ -244,7 +244,7 @@ app.use(rateLimit({
 app.use(express.json({ limit: '15mb' }));
 
 // Handle malformed JSON body payloads cleanly without spewing stack traces to console
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err instanceof SyntaxError && 'status' in err && (err as any).status === 400 && 'body' in err) {
     return res.status(400).json({ success: false, error: 'Invalid or malformed JSON payload' });
   }
@@ -264,7 +264,7 @@ app.use('/data/inbound_media', express.static(path.resolve(process.cwd(), 'data'
 app.use('/api/wa-business/webhook', lazyRoute(() => import('./routes/whatsappBusiness.js')));
 
 // Public health check endpoint for mobile connection testing
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({ success: true, status: 'ok', time: new Date().toISOString() });
 });
 
@@ -272,7 +272,7 @@ app.get('/api/health', (req, res) => {
 // process liveness. The frontend axios interceptor already retries 503s with
 // backoff (see frontend/src/services/api.ts), so gating on this needs no
 // separate frontend polling loop.
-app.get('/api/health/ready', (req, res) => {
+app.get('/api/health/ready', (_req, res) => {
   if (schemaReady) return res.json({ success: true, ready: true });
   res.status(503).json({ success: false, ready: false, retryAfter: 1 });
 });
@@ -323,7 +323,7 @@ app.use('/api/call-tasks', lazyRoute(() => import('./routes/callTasks.js')));
 let pendingShutdownTimer: NodeJS.Timeout | null = null;
 
 // Client-initiated cancellation of pending tab-close shutdown
-app.post('/api/system/cancel-shutdown', (req, res) => {
+app.post('/api/system/cancel-shutdown', (_req, res) => {
   if (pendingShutdownTimer) {
     clearTimeout(pendingShutdownTimer);
     pendingShutdownTimer = null;
@@ -359,7 +359,7 @@ app.post('/api/system/shutdown', (req, res) => {
 });
 
 // Client-initiated 1-click silent update install and auto-restart
-app.post('/api/system/apply-update', async (req, res) => {
+app.post('/api/system/apply-update', async (_req, res) => {
   console.log('[System] Received apply-update request. Installing update and restarting...');
   try {
     const { autoUpdateService } = await import('./services/autoUpdateService.js');

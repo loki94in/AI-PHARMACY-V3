@@ -19,7 +19,7 @@ async function testMigration() {
   const existingCols = tableInfo.map(c => c.name.toLowerCase());
   
   // Standard mapped columns
-  const standardCols = ['id', 'medicine_id', 'quantity', 'rack_location', 'batch_no', 'expiry_date', 'unit_price', 'cost_price', 'reorder_level', 'mrp', 'legacy_batch_id'];
+//   const _standardCols = ['id', 'medicine_id', 'quantity', 'rack_location', 'batch_no', 'expiry_date', 'unit_price', 'cost_price', 'reorder_level', 'mrp', 'legacy_batch_id'];
 
   console.log('Reading CSV...');
   const results: any[] = [];

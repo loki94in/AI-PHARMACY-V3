@@ -1,6 +1,6 @@
-import { Database } from 'sqlite';
+// import { Database } from 'sqlite';
 import { dbManager } from '../database/connection.js';
-import { config } from '../config/index.js';
+// import { config } from '../config/index.js';
 import { enhancedSimilarity, productNameFilterService } from './productNameFilterService.js';
 
 export interface MedicineData {

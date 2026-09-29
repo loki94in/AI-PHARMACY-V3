@@ -1,12 +1,12 @@
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import { sendMessage } from '../whatsappClient.js';
+
 import { AUTOMATION_CATALOG, getAutomationToggleStates } from '../services/automationCatalog.js';
 
 const router = express.Router();
 
 // List every known WhatsApp automation type with its current enabled state
-router.get('/catalog', async (req, res) => {
+router.get('/catalog', async (_req, res) => {
   try {
     const states = await getAutomationToggleStates();
     const result = AUTOMATION_CATALOG.map(entry => ({
@@ -47,7 +47,7 @@ router.post('/catalog/:id/toggle', async (req, res) => {
 });
 
 // Merged live/recent WhatsApp send status for the Automation Hub header badge + popover
-router.get('/hub-summary', async (req, res) => {
+router.get('/hub-summary', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
 
@@ -214,7 +214,7 @@ router.get('/notifications', async (req, res) => {
 });
 
 // Daily notification summary (sent count today, staged count, sent map, and today's log)
-router.get('/notifications/daily-summary', async (req, res) => {
+router.get('/notifications/daily-summary', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     

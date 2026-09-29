@@ -496,9 +496,9 @@ export class MarketClosureService {
       nextDeliveryTime?: string;
       reason?: string;
     },
-    dbInstance?: any
+//     dbInstance?: any
   ): Promise<{ sentCount: number }> {
-    const db = dbInstance || (await dbManager.getConnection());
+//     const _db = dbInstance || (await dbManager.getConnection());
     const pharmacyName = (await getConfiguredPharmacyName()) || 'Pharmacy';
     const patients = Array.isArray(params.selectedPatients) ? params.selectedPatients : [];
 

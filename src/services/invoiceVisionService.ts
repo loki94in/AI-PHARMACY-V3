@@ -1,7 +1,7 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import { Jimp } from 'jimp';
+// import { Jimp } from 'jimp';
 import { createWorker } from 'tesseract.js';
 import { dbManager } from '../database/connection.js';
 import { normalizeMedicineName } from '../utils/nameNormalizer.js';

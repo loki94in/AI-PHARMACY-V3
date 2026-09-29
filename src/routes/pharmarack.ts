@@ -2,14 +2,14 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { getPuppeteer } from '../utils/lazyPuppeteer.js';
+// import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { dbManager } from '../database/connection.js';
 import { eventService } from '../services/eventService.js';
 import { notificationService } from '../services/notificationService.js';
 import { searchCache } from '../services/searchCache.js';
 import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses, extractTokenFromProfile } from '../services/tokenRefreshScheduler.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+// import { exec } from 'child_process';
+// import { promisify } from 'util';
 import { getAppDataDir } from '../config/index.js';
 import { syncDistributorPhoneAcrossTables, resolveDistributorContact } from '../utils/distributorSyncHelper.js';
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
@@ -19,11 +19,11 @@ import { findChromePath as findChromiumPath, copyProfileFolder as copyChromeProf
 import { sanitizePharmarackQuery } from '../services/intentKeywords.js';
 import { marketClosureService } from '../services/marketClosureService.js';
 
-const execAsync = promisify(exec);
+// const execAsync = promisify(exec);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
 
 const router = express.Router();
 
@@ -43,9 +43,9 @@ async function getPharmarackSettings() {
   return settings;
 }
 
-async function copyProfileFolder(src: string, dest: string) {
+/* async function copyProfileFolder(src: string, dest: string) {
   await copyChromeProfileFolder(src, dest, '[Pharmarack Sync]');
-}
+} */
 
 
 
@@ -209,7 +209,7 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
             if (!seenKeys.has(key)) {
               seenKeys.add(key);
               const mappedStatus = isMapped !== undefined ? isMapped : (lp.isMappedProfile === 1);
-              const stockDisplay = lp.currentStock > 0 ? (lp.currentStock >= 10 ? 'High' : String(lp.currentStock)) : 'Low';
+//               const _stockDisplay = lp.currentStock > 0 ? (lp.currentStock >= 10 ? 'High' : String(lp.currentStock)) : 'Low';
               
               results.push({
                 name: lp.medicineName,
@@ -527,7 +527,7 @@ router.get('/search', async (req, res) => {
 });
 
 // Fetch store list grouped by mapped vs non-mapped (Strictly from local AI Learning database)
-router.get('/distributors', async (req, res) => {
+router.get('/distributors', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     
@@ -653,7 +653,7 @@ router.post('/session/warmup', async (_req, res) => {
 });
 
 // Launch non-headless login window
-router.post('/login-window', async (req, res) => {
+router.post('/login-window', async (_req, res) => {
   const chromePath = findChromePath();
   if (!chromePath) {
     return res.status(404).json({ error: 'Google Chrome was not found on your system. Please install Google Chrome to use this feature.' });
@@ -1728,11 +1728,11 @@ interface PharmarackDeleteQueueItem {
   storeName?: string;
 }
 
-const pharmarackDeleteQueue: PharmarackDeleteQueueItem[] = [];
-let isProcessingPharmarackDeleteQueue = false;
+// const _pharmarackDeleteQueue: PharmarackDeleteQueueItem[] = [];
+// let _isProcessingPharmarackDeleteQueue = false;
 
 async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise<boolean> {
-  const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = item;
+  const { storeId, productId, productCode, productName, company, ptr, mrp, storeName } = item;
   try {
     const settings = await getPharmarackSettings();
     let token = settings['pharmarack_session_token'] || '';
@@ -2445,12 +2445,12 @@ router.get('/cart', async (req, res) => {
 });
 
 // GET /api/pharmarack/startup-sync-status
-router.get('/startup-sync-status', (req, res) => {
+router.get('/startup-sync-status', (_req, res) => {
   res.json({ success: true, ...startupSyncCoordinator.getStatus() });
 });
 
 // GET /api/pharmarack/live-cart-summary
-router.get('/live-cart-summary', async (req, res) => {
+router.get('/live-cart-summary', async (_req, res) => {
   try {
     const settings = await getPharmarackSettings();
     const token = settings['pharmarack_session_token'] || '';
@@ -2668,7 +2668,7 @@ router.get('/live-cart-summary', async (req, res) => {
 });
 
 // Auto-verify saved session token and update mode
-router.get('/auto-verify', async (req, res) => {
+router.get('/auto-verify', async (_req, res) => {
   try {
     const settings = await getPharmarackSettings();
     const token = settings['pharmarack_session_token'] || '';
@@ -2715,7 +2715,7 @@ router.get('/auto-verify', async (req, res) => {
 });
 
 // Check Pharmarack session status
-router.get('/session-status', async (req, res) => {
+router.get('/session-status', async (_req, res) => {
   try {
     const isRefreshing = tokenRefreshScheduler.getStatus().isRefreshing;
     const settings = await getPharmarackSettings();
@@ -2780,7 +2780,7 @@ router.get('/session-status', async (req, res) => {
 });
 
 // Logout endpoint (clears credentials & Puppeteer Chrome profile folder to delete cookies)
-router.post('/logout', async (req, res) => {
+router.post('/logout', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
@@ -2806,7 +2806,7 @@ router.post('/logout', async (req, res) => {
  * GET /api/pharmarack/sent-orders/dates
  * Returns a distinct list of all historical dates (order_date) where orders were sent.
  */
-router.get('/sent-orders/dates', async (req, res) => {
+router.get('/sent-orders/dates', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all(
@@ -2870,7 +2870,7 @@ router.get('/sent-orders', async (req, res) => {
  * GET /api/pharmarack/sent-orders/latest-map
  * Returns a map of the latest placed order info (placed_at timestamp + sent item codes/names) for each store.
  */
-router.get('/sent-orders/latest-map', async (req, res) => {
+router.get('/sent-orders/latest-map', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     // Only check past orders placed within the last 3 days (72 hours)
@@ -3242,7 +3242,7 @@ router.post('/log-placed-order', async (req, res) => {
  */
 router.post('/check-overstock', async (req, res) => {
   try {
-    const { productName, company, packaging, distributorStoreId, requestedQty = 1 } = req.body;
+    const { productName, _company, _packaging, _distributorStoreId, requestedQty = 1 } = req.body;
     if (!productName || typeof productName !== 'string') {
       return res.status(400).json({ error: 'productName is required' });
     }

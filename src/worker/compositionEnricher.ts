@@ -1,14 +1,14 @@
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { dbManager } from '../database/connection.js';
 import csvParser from 'csv-parser';
 import { activityTracker } from '../utils/activityTracker.js';
-import { onlineDataEnricher } from '../services/onlineDataEnricher.js';
+// import { onlineDataEnricher } from '../services/onlineDataEnricher.js';
 import { getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(getAppDataDir(), 'data');
 const REFERENCE_CSV = path.join(DATA_DIR, 'reference_medicines.csv');
 
@@ -346,7 +346,7 @@ let enrichmentStopRequested = true; // Permanently stopped by user request
 // Daily auto-enrichment quota — tracks how many items were auto-processed today
 // so background runs (triggered after catalog import) are capped at AUTO_DAILY_LIMIT.
 // Manual runs (user clicks Start Enrichment) bypass this counter entirely.
-const AUTO_DAILY_LIMIT = 0; // Disabled auto enrichment
+// const AUTO_DAILY_LIMIT = 0; // Disabled auto enrichment
 let autoEnrichedDate = ''; // 'YYYY-MM-DD' of the current day's run
 let autoEnrichedTodayCount = 0; // items processed today by auto-trigger
 

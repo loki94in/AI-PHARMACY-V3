@@ -1,5 +1,5 @@
 import { applyStockDelta, rebuildStockFromLedger, type RebuiltStock } from './stockRebuild.js';
-import { computeIsActive, isExpiredForSale } from './inventoryActive.js';
+import { computeIsActive} from './inventoryActive.js';
 
 export interface MigrationStockRebuildResult {
   updated: number;

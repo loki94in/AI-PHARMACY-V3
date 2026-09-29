@@ -178,7 +178,7 @@ router.use(requireOwnerAuth);
 
 // ─── GET /api/website/owner/stores ───────────────────────────────────────────
 // Returns all stores authorized for the logged-in owner.
-router.get('/stores', async (req: Request, res: Response) => {
+router.get('/stores', async (_req: Request, res: Response) => {
   try {
     const session = (res.locals as any).ownerSession as OwnerSession;
     const db = await dbManager.getConnection();
@@ -330,7 +330,7 @@ router.post('/orders/:orderId/notify', async (req: Request, res: Response) => {
     // message_type: one of the preset templates, or 'manual' for custom body
     const { message_type, custom_message } = req.body;
     const ALLOWED_TYPES = ['order_received', 'order_ready', 'pickup_reminder', 'manual'] as const;
-    type NotifyType = typeof ALLOWED_TYPES[number];
+
 
     if (!message_type || !(ALLOWED_TYPES as readonly string[]).includes(message_type)) {
       return res.status(400).json({

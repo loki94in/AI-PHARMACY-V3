@@ -10,20 +10,16 @@ import {
   Search,
   RefreshCw,
   Eye,
-  FileText,
   MessageSquare,
   AlertCircle,
   ExternalLink,
   ChevronRight,
   ShieldAlert,
-  ArrowRight,
   Check,
   X,
-  Store as StoreIcon,
   Calendar,
   User,
   Phone,
-  MapPin,
   FileImage,
   Sparkles,
   CreditCard,
@@ -75,7 +71,7 @@ export const getMediaUrl = (rawPath: string | null | undefined): string => {
 
 export default function WebsiteOrders() {
   const navigate = useNavigate();
-  const { activeStore, activeStoreId } = useStore();
+  const { activeStoreId } = useStore();
 
   const [orders, setOrders] = useState<any[]>(() => cachedOrders);
   const [loading, setLoading] = useState(() => cachedOrders.length === 0);

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import Tesseract from 'tesseract.js';
 import AdmZip from 'adm-zip';
 import cron from 'node-cron';
@@ -8,8 +8,8 @@ import { Jimp } from 'jimp';
 import { getAppDataDir } from '../config/index.js';
 import { runHeavyJob } from '../utils/backgroundJobLane.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 const BASE_UPLOAD_DIR = path.resolve(getAppDataDir(), 'uploads');
 const TEMP_DIR = path.join(BASE_UPLOAD_DIR, 'temp');

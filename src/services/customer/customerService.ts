@@ -1,5 +1,5 @@
 import { dbManager } from '../../database/connection.js';
-import { logger } from '../../utils/logger.js';
+// import { logger } from '../../utils/logger.js';
 import { formatCustomerName } from '../../utils/nameFormatter.js';
 import { pricingService } from '../pricing/pricingService.js';
 
@@ -135,7 +135,7 @@ class CustomerService {
   /**
    * Load medicines from a previous bill for quick reordering with current catalog pricing
    */
-  async getReorderMedicinesFromBill(customerId: number, billId: number) {
+  async getReorderMedicinesFromBill(_customerId: number, billId: number) {
     const db = await dbManager.getConnection();
     const items = await db.all(
       `SELECT 

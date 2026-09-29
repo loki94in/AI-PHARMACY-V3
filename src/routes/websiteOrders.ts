@@ -424,7 +424,7 @@ router.post('/orders/:orderId/mark-paid', async (req, res) => {
     const orderId = parseInt(req.params.orderId, 10);
     if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
 
-    const { screenshot_base64, filename } = req.body || {};
+    const { screenshot_base64, filename: _filename } = req.body || {};
 
     const db = await dbManager.getConnection();
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);

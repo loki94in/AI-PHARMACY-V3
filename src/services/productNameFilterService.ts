@@ -703,7 +703,8 @@ export class ProductNameFilterService {
   private medicineNames: string[] = [];
   public getMedicineNames(): string[] { return this.medicineNames; }
   private initialized: boolean = false;
-  private dbPath: string;
+  // @ts-ignore - needed for future use
+  private _dbPath: string;
   private readonly DEFAULT_THRESHOLD = 0.8; // 80% similarity threshold
   private readonly DEFAULT_TIMEOUT = 5000; // 5 seconds
   private corrections: Map<string, { correctName: string; count: number }> = new Map();
@@ -717,7 +718,7 @@ export class ProductNameFilterService {
   private readonly FILTER_CACHE_MAX = 2000;
 
   constructor(dbPath: string = './data/app.db') {
-    this.dbPath = dbPath;
+    this._dbPath = dbPath;
     this.correctionsPath = path.resolve(process.cwd(), 'data', 'ocr_corrections.json');
     this.loadCorrections();
   }

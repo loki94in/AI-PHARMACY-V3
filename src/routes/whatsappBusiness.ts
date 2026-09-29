@@ -4,13 +4,13 @@ import express from 'express';
 import { whatsappBusinessService } from '../services/whatsappBusinessService.js';
 import { eventService } from '../services/eventService.js';
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 import { whatsappIntentService } from '../services/whatsappIntentService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 

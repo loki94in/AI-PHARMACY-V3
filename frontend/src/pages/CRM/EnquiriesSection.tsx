@@ -3,13 +3,8 @@ import {
   MessageSquare,
   Search,
   Plus,
-  ArrowRight,
   RefreshCw,
   Phone,
-  CheckCircle2,
-  Calendar,
-  Pill,
-  ExternalLink,
   X,
   Send,
   ShoppingCart,
@@ -39,7 +34,6 @@ export const EnquiriesSection: React.FC = () => {
   const [formMrp, setFormMrp] = useState<number | null>(null);
   const [formNotes, setFormNotes] = useState('');
   const [browseSuggestions, setBrowseSuggestions] = useState<any[]>([]);
-  const [isBrowsing, setIsBrowsing] = useState(false);
 
   const fetchEnquiries = useCallback(async () => {
     try {
@@ -81,7 +75,6 @@ export const EnquiriesSection: React.FC = () => {
     if (!isNewModalOpen) return;
     let cancelled = false;
     const fetchBrowse = async () => {
-      setIsBrowsing(true);
       try {
         const res = await api.browseMedicines(formGroup, formMedName, 1, 20);
         if (!cancelled && res.success && Array.isArray(res.items)) {
@@ -89,8 +82,6 @@ export const EnquiriesSection: React.FC = () => {
         }
       } catch (err) {
         console.warn('[EnquiriesSection] Browse failed:', err);
-      } finally {
-        if (!cancelled) setIsBrowsing(false);
       }
     };
 

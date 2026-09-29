@@ -2,7 +2,7 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth, MessageMedia } = pkg;
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { eventService } from './services/eventService.js';
@@ -17,8 +17,8 @@ type WAClient = InstanceType<typeof Client>;
 
 const execAsync = promisify(exec);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const UPLOADS_DIR = path.resolve(getAppDataDir(), 'uploads');
 // Env override lets tests (and portable installs) point at an isolated auth dir so a
 // developer's REAL saved session can never be loaded or wiped by non-app processes.
@@ -945,7 +945,7 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
         if ((window as any).WWebJS && !(window as any).WWebJS.__chatModelPatched) {
           (window as any).WWebJS.__chatModelPatched = true;
           const origGetChatModel = (window as any).WWebJS.getChatModel;
-          (window as any).WWebJS.getChatModel = async function(this: any, chat: any, opts: any) {
+          (window as any).WWebJS.getChatModel = async function(this: any, chat: any, _opts: any) {
             try {
               return await origGetChatModel.apply(this, arguments as any);
             } catch (err: any) {
@@ -979,7 +979,7 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
         if ((window as any).WWebJS && !(window as any).WWebJS.__sendMsgSafePatched) {
           (window as any).WWebJS.__sendMsgSafePatched = true;
           const origSendMessage = (window as any).WWebJS.sendMessage;
-          (window as any).WWebJS.sendMessage = async function(this: any, chat: any, content: any, options: any = {}) {
+          (window as any).WWebJS.sendMessage = async function(this: any, chat: any, _content: any, _options: any = {}) {
             try {
               const collections = (window as any).require?.('WAWebCollections');
               if (chat && collections?.Contact) {

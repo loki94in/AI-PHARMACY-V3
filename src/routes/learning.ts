@@ -1,14 +1,14 @@
 // Learning Engine API (Agent 2)
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { getSummaryCache, rebuildLearningStatsCache, triggerBackgroundSummaryRebuild } from '../services/summaryCacheService.js';
+import { getSummaryCache, rebuildLearningStatsCache } from '../services/summaryCacheService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -41,7 +41,7 @@ router.post('/analyze', async (req, res) => {
     // Try to parse as JSON first
     let parsedData;
     let headers: string[] = [];
-    let sampleRows = [];
+    // let sampleRows: any[] = [];
 
     try {
       parsedData = JSON.parse(sampleData);
@@ -50,12 +50,12 @@ router.post('/analyze', async (req, res) => {
         const firstItem = parsedData[0];
         if (typeof firstItem === 'object' && firstItem !== null) {
           headers = Object.keys(firstItem);
-          sampleRows = parsedData.slice(0, 3); // Take first 3 rows as sample
+          // sampleRows = parsedData.slice(0, 3); // Take first 3 rows as sample
         }
       } else if (typeof parsedData === 'object' && parsedData !== null) {
         // Single object
         headers = Object.keys(parsedData);
-        sampleRows = [parsedData];
+        // sampleRows = [parsedData];
       }
     } catch (e) {
       // Not JSON, try to parse as CSV-like format
@@ -63,14 +63,14 @@ router.post('/analyze', async (req, res) => {
       if (lines.length > 0) {
         // Assume first line is header
         headers = lines[0].split(',').map((h: string) => h.trim());
-        sampleRows = lines.slice(1, 4).map((line: string) => {
+        /* sampleRows = lines.slice(1, 4).map((line: string) => {
           const values = line.split(',').map((v: string) => v.trim());
           const rowObj: Record<string, string> = {};
           headers.forEach((header, index) => {
             rowObj[header] = values[index] || '';
           });
           return rowObj;
-        });
+        }); */
       }
     }
 
@@ -268,7 +268,7 @@ router.delete('/corrections/:id', async (req, res) => {
 });
 
 // GET /api/learning/profiles - fetch all learning profiles
-router.get('/profiles', async (req, res) => {
+router.get('/profiles', async (_req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
@@ -544,7 +544,7 @@ router.delete('/historical-files/:fileId', async (req, res) => {
 });
 
 // GET /api/learning/dashboard-stats - unified learning activity overview
-router.get('/dashboard-stats', async (req, res) => {
+router.get('/dashboard-stats', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const [ocrCount, aliasCount, distAliasCount, pharmCount, totalMedicines] = await Promise.all([

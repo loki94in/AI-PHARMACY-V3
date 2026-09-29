@@ -244,7 +244,7 @@ export default function InboxScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
-  const [errorText, setErrorText] = useState<string | null>(null);
+  const [_errorText, setErrorText] = useState<string | null>(null);
 
   // Email Detail View Modal
   const [selectedEmail, setSelectedEmail] = useState<GmailMessagePreview | null>(null);

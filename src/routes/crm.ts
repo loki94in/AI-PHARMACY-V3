@@ -1,24 +1,24 @@
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+
+// import { fileURLToPath } from 'url';
 import { sendDailyDoctorReports } from '../services/doctorReportingService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
-import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
+
 import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { getMessage } from '../i18n/getMessage.js';
 import { sanitizeDoctorName } from '../utils/doctorUtils.js';
-import { getAppDataDir } from '../config/index.js';
+
 import { resolveStoreId } from '../services/storeContextService.js';
 import { eventService } from '../services/eventService.js';
 import { getStoreMedicalName } from '../services/storeSettingsService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -209,7 +209,7 @@ router.delete('/patients/:id', async (req, res) => {
 });
 
 // Get customers (legacy alias)
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const customers = await db.all('SELECT * FROM customers ORDER BY id DESC LIMIT 1000');
@@ -361,7 +361,7 @@ router.get('/history-by-phone/:phone', async (req, res) => {
 });
 
 // Get doctors list
-router.get('/doctors', async (req, res) => {
+router.get('/doctors', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const doctors = await db.all('SELECT * FROM doctors ORDER BY name ASC LIMIT 1000');
@@ -570,7 +570,7 @@ router.get('/doctors/:id/combinations/:medicineId', async (req, res) => {
 });
 
 // Customer Credit Ledger - List all credit customers with dues & dates (High-Performance Single-Pass Indexed Query)
-router.get('/credit-customers', async (req, res) => {
+router.get('/credit-customers', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
 

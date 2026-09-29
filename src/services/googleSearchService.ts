@@ -1,21 +1,21 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { getPuppeteer } from '../utils/lazyPuppeteer.js';
+// import { fileURLToPath } from 'url';
+// import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { dbManager } from '../database/connection.js';
-import { eventService } from './eventService.js';
-import { aiCameraService } from './aiCameraService.js';
+// import { eventService } from './eventService.js';
+// import { aiCameraService } from './aiCameraService.js';
 import { getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 const SCREENSHOTS_DIR = path.resolve(getAppDataDir(), 'data', 'search_screenshots');
 if (!fs.existsSync(SCREENSHOTS_DIR)) {
   fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 }
 
-function findChromePath(): string | null {
+/* function findChromePath(): string | null {
   const paths = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -28,7 +28,7 @@ function findChromePath(): string | null {
     }
   }
   return null;
-}
+} */
 
 export interface SearchEnrichmentResult {
   api_reference?: string;
@@ -42,20 +42,20 @@ export interface SearchEnrichmentResult {
 }
 
 class GoogleSearchService {
-  private activePage: any = null;
-  private isVerificationActive = false;
+//   private _activePage: any = null;
+//   private _isVerificationActive = false;
 
-  private sleep(ms: number): Promise<void> {
+/*   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
-  }
+  } */
 
   /**
    * Log Google searches to DB for rate limiting
    */
-  private async logSearch(query: string) {
+/*   private async _logSearch(query: string) {
     const db = await dbManager.getConnection();
     await db.run('INSERT INTO google_search_logs (query) VALUES (?)', [query]);
-  }
+  } */
 
   /**
    * Check if the daily search limit is exceeded
@@ -205,7 +205,7 @@ class GoogleSearchService {
    * Run Google Search via Puppeteer, handle verification, and return OCR parsed data.
    * Disabled to prevent background Puppeteer browser spawns, CAPTCHAs, and resource freezing.
    */
-  public async discoverMedicineInfo(medicineName: string, searchTerm?: string): Promise<SearchEnrichmentResult | null> {
+  public async discoverMedicineInfo(medicineName: string, _searchTerm?: string): Promise<SearchEnrichmentResult | null> {
     if (!medicineName) return null;
     console.log(`[GoogleSearchService] Online Google discovery crawler is disabled. Skipping search for "${medicineName}".`);
     return null;

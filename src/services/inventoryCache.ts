@@ -23,11 +23,12 @@ export interface CompactInventoryItem {
 
 class InventoryCache {
   private cache: CompactInventoryItem[] | null = null;
-  private lastUpdated = 0;
+  // @ts-ignore - needed for future use
+  private _lastUpdated = 0;
   private refreshInterval: NodeJS.Timeout | null = null;
   private rebuildPromise: Promise<void> | null = null;
 
-  public initialize(db?: Database) {
+  public initialize(_db?: Database) {
     // P3 gated worker (API_OPTIMIZATION plan): registry key `bg.inventoryCache`
     // + idle backoff — 10 min rebuild while active, 30 min when user idle >30 min.
     if (this.refreshInterval) {
@@ -101,7 +102,7 @@ class InventoryCache {
         );
 
         this.cache = items;
-        this.lastUpdated = Date.now();
+        this._lastUpdated = Date.now();
       } catch (err) {
         console.error('[InventoryCache] Error rebuilding cache:', err);
       } finally {
@@ -114,7 +115,7 @@ class InventoryCache {
   public invalidate(): void {
     // Force rebuild next time get() is called
     this.cache = null;
-    this.lastUpdated = 0;
+    this._lastUpdated = 0;
     this.rebuild().catch(err => console.error('[InventoryCache] On-demand rebuild failed:', err));
   }
 }

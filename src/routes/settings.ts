@@ -2,7 +2,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { dbManager } from '../database/connection.js';
 import { telegramBotService } from '../telegramBot.js';
 import { extractCleanEmail } from '../utils/emailSanitizer.js';
@@ -10,9 +10,9 @@ import { getAppDataDir } from '../config/index.js';
 import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper.js';
 import { hashPassword } from '../utils/password.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 const UPLOADS_DIR = path.resolve(getAppDataDir(), 'uploads');
 
 import { triggerSchedulerService } from '../services/triggerSchedulerService.js';

@@ -4,7 +4,7 @@ import { verificationService } from '../services/verificationService.js';
 const router = express.Router();
 
 // Health check endpoint (Observes database and backend service health)
-router.get('/health', async (req, res) => {
+router.get('/health', async (_req, res) => {
   try {
     const dbHealth = await verificationService.verifyDatabaseHealth();
     res.json({

@@ -1,11 +1,11 @@
-import sqlite3 from 'sqlite3';
+// import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite';
-import { parseValues, cleanValue, normalizeDate } from '../../utils/migrationUtils.js';
+import { parseValues, normalizeDate } from '../../utils/migrationUtils.js';
 
 // Cache for database lookups to avoid repeated queries
-const invoiceCache = new Map<string, number>();
-let linesProcessed = 0;
-const CACHE_RESET_THRESHOLD = 10000;
+// const _invoiceCache = new Map<string, number>();
+// let _linesProcessed = 0;
+// const CACHE_RESET_THRESHOLD = 10000;
 
 /**
  * Process a single line of SQL that may be a legacy returns INSERT statement.

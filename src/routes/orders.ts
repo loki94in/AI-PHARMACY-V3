@@ -2,8 +2,8 @@ import express from 'express';
 import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { sendMessage, normalizeWhatsAppPhone, ensureWhatsAppReady } from '../whatsappClient.js';
+// import { fileURLToPath } from 'url';
+import { normalizeWhatsAppPhone, ensureWhatsAppReady } from '../whatsappClient.js';
 import { getStoreMedicalName, getStoreMedicalNameAndPhone, buildOrderReadyNotificationMessage, buildMultiOrderNotificationMessage, type MultiOrderItemArrival } from '../services/storeSettingsService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
@@ -15,9 +15,9 @@ import { returnWindowService } from '../services/returnWindowService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 

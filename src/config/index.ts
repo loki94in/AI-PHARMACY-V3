@@ -1,5 +1,5 @@
 import { config as dotenvConfig } from 'dotenv';
-import path, { join } from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import fs from 'fs';

@@ -603,7 +603,7 @@ router.get('/marketed-by', async (req, res) => {
 });
 
 // GET compact inventory cache instantly
-router.get('/medicines/compact', async (req, res) => {
+router.get('/medicines/compact', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const items = await inventoryCache.get(db);
@@ -822,7 +822,7 @@ router.get('/medicines/:id/composition-intelligence', async (req, res) => {
 });
 
 // POST /api/medicines/seed-master - seed master reference catalog
-router.post('/medicines/seed-master', async (req, res) => {
+router.post('/medicines/seed-master', async (_req, res) => {
   try {
     const { seedMasterMedicines } = await import('../services/masterMedicinesSeedService.js');
     const result = await seedMasterMedicines(true);
@@ -834,7 +834,7 @@ router.post('/medicines/seed-master', async (req, res) => {
 });
 
 // POST /api/medicines/sync-from-inventory - pull purchase/sale items missing from master catalog
-router.post('/medicines/sync-from-inventory', async (req, res) => {
+router.post('/medicines/sync-from-inventory', async (_req, res) => {
   try {
     const { syncInventoryToMaster } = await import('../services/masterMedicinesSeedService.js');
     const result = await syncInventoryToMaster();

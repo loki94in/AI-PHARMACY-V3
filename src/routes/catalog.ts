@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'fs';
 import { dbManager } from '../database/connection.js';
-import { runEnrichment, getEnrichmentRunningState } from '../worker/compositionEnricher.js';
+
 import { medicineService } from '../services/medicineService.js';
 
 const router = express.Router();
@@ -195,35 +195,7 @@ router.post('/catalog/import-job/:id', async (req, res) => {
   }
 });
 
-async function findSimilarMedicine(db: any, name: string): Promise<any | null> {
-  const firstWord = name.split(' ')[0] || '';
-  if (firstWord.length < 3) return null;
-  
-  const candidates = await db.all(
-    'SELECT id, name, api_reference, strength, manufacturer FROM medicines WHERE name LIKE ?',
-    [`${firstWord}%`]
-  );
-  
-  const { scoreProductName } = await import('../services/pharmarackCatalogCache.js');
-  
-  let bestCandidate = null;
-  let bestScore = 0;
-  
-  for (const cand of candidates) {
-    if (cand.name.toLowerCase() === name.toLowerCase()) continue;
-    
-    const score = scoreProductName(name, cand.name);
-    if (score > bestScore) {
-      bestScore = score;
-      bestCandidate = cand;
-    }
-  }
-  
-  if (bestScore >= 0.75) {
-    return bestCandidate;
-  }
-  return null;
-}
+
 
 // New Catalog Import Endpoint (Receives confirmed preview data)
 router.post('/catalog/import', async (req, res) => {
@@ -235,7 +207,7 @@ router.post('/catalog/import', async (req, res) => {
     const db = await dbManager.getConnection();
     
     const { normalizeMedicineName } = await import('../utils/nameNormalizer.js');
-    const { recordApiSubstance } = await import('../worker/compositionEnricher.js');
+
     
     for (const med of medicines) {
       if (!med.name) continue;
@@ -269,7 +241,7 @@ router.post('/catalog/import', async (req, res) => {
 });
 
 // API to fetch all catalog jobs
-router.get('/jobs', async (req, res) => {
+router.get('/jobs', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const jobs = await db.all('SELECT * FROM catalog_jobs ORDER BY created_at DESC LIMIT 1000');
@@ -425,7 +397,7 @@ router.post('/catalog/review/:id/approve', async (req, res) => {
     }
     
     const customMappings = Object.entries(mapping)
-      .filter(([csvCol, targetCol]) => targetCol && String(targetCol).startsWith('custom_col_'))
+      .filter(([_csvCol, targetCol]) => targetCol && String(targetCol).startsWith('custom_col_'))
       .map(([csvCol, targetCol]) => ({
         csvCol,
         dbCol: String(targetCol).substring(11).trim().replace(/\s+/g, '_').toLowerCase()
@@ -607,7 +579,7 @@ router.post('/catalog/review/:id/enrich', async (req, res) => {
 });
 
 // Get daily google search usage stats
-router.get('/catalog/search-status', async (req, res) => {
+router.get('/catalog/search-status', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const limitRow = await db.get("SELECT value FROM app_settings WHERE key = 'google_search_daily_limit'");

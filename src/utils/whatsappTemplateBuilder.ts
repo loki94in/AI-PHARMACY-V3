@@ -1,5 +1,5 @@
 import { dbManager } from '../database/connection.js';
-import { getStoreMedicalName, getStorePhone } from '../services/storeSettingsService.js';
+import { getStorePhone } from '../services/storeSettingsService.js';
 
 export interface DeliveryBoyInfo {
   name: string;

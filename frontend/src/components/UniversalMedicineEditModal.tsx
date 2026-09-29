@@ -385,46 +385,6 @@ interface LocalUniversalMedicineForm {
   tb_medicine: boolean;
 }
 
-interface LocalQuickEditResponse {
-  medicine: {
-    name?: string;
-    packaging?: string;
-    metadata?: string | Record<string, unknown>;
-    item_type?: string;
-    category?: string;
-    pack_unit?: string;
-    pack_size?: number | null;
-    therapeutic?: string;
-    sub_therapeutic?: string;
-    schedule_type?: string;
-    generic_name?: string;
-    manufacturer?: string;
-    marketed_by?: string;
-    item_code?: string;
-    short_code?: string;
-    ucode?: string;
-    hsn_code?: string;
-    cgst_per?: number | null;
-    sgst_per?: number | null;
-    igst_per?: number | null;
-    api_reference?: string;
-    mrp?: number | null;
-    rate?: number | null;
-    sell_price?: number | null;
-    max_stock_level?: number | null;
-    rack?: string;
-    allow_loose_sale?: number | boolean | null;
-    disable_auto_barcode?: boolean | number | null;
-    tb_medicine?: boolean | number | null;
-  };
-  inventory?: {
-    inventory_id?: number;
-    quantity?: number | null;
-    reorder_level?: number | null;
-    rack_location?: string;
-  } | null;
-  total_stock?: number;
-}
 
 interface LocalSavedMedicine {
   id?: number;
@@ -653,14 +613,6 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
           }
           if (med.category && !STANDARD_CATEGORIES.includes(med.category)) {
             setIsCustomCategory(true);
-          }
-          
-          let isLooseVal = false;
-          if (med.metadata) {
-            try {
-              const meta = typeof med.metadata === 'string' ? JSON.parse(med.metadata) : med.metadata;
-              isLooseVal = !!meta.is_loose;
-            } catch (_) {}
           }
 
           const allowLoose = med.allow_loose_sale !== undefined 

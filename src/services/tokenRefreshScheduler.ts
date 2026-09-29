@@ -1,17 +1,17 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { dbManager } from '../database/connection.js';
 import { getAppDataDir } from '../config/index.js';
-import { activityTracker } from '../utils/activityTracker.js';
+// import { activityTracker } from '../utils/activityTracker.js';
 import { findChromePath, copyProfileFolder } from '../utils/chromeBrowser.js';
 
 const execAsync = promisify(exec);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_profile'): Promise<void> {
   if (process.platform !== 'win32') return;
@@ -145,7 +145,7 @@ export function extractTokenFromProfile(profilePath: string): string | null {
 
 export class TokenRefreshScheduler {
   private static instance: TokenRefreshScheduler;
-  private intervalId: NodeJS.Timeout | null = null;
+//   private _intervalId: NodeJS.Timeout | null = null;
   private isRefreshing = false;
   public isLoginWindowActive = false;
   private lastCapturedAt: number | null = null;

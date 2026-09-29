@@ -243,7 +243,7 @@ export class OrderScheduleService {
   /**
    * Helper to format YYYY-MM-DD and HH:mm with IST timezone into ISO string.
    */
-  combineYmdAndTime(ymd: string, timeStr: string, timeZone: string = 'Asia/Kolkata'): string {
+  combineYmdAndTime(ymd: string, timeStr: string, _timeZone: string = 'Asia/Kolkata'): string {
     const [hStr, mStr] = (timeStr || '00:00').split(':');
     const h = String(parseInt(hStr, 10) || 0).padStart(2, '0');
     const m = String(parseInt(mStr, 10) || 0).padStart(2, '0');

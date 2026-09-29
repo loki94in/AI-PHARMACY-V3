@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 
-export function errorHandler(err: any, req: Request, res: Response, next: NextFunction) {
+export function errorHandler(err: any, _req: Request, res: Response, next: NextFunction) {
   // If headers already sent, delegate to Express default error handler
   if (res.headersSent) {
     return next(err);

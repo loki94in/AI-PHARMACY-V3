@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import axios from 'axios';
-import fs from 'fs';
-import path from 'path';
+// import fs from 'fs';
+// import path from 'path';
 
 export interface DecryptMediaOptions {
   directPath?: string;

@@ -4,14 +4,14 @@ import fs from 'fs';
 import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery, fuzzySearchLocalMedicines } from './intentKeywords.js';
+import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery, fuzzySearchLocalMedicines } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
 import { waAdminEscalationService } from './waAdminEscalationService.js';
 import { isItemInStock, resolveCommonOrFrequentDistributor, addItemsToPharmarackCart } from '../routes/pharmarack.js';
 import { paymentQrService } from './paymentQrService.js';
-import { startupSyncCoordinator } from './startupSyncCoordinator.js';
+// import { startupSyncCoordinator } from './startupSyncCoordinator.js';
 import { visualIndexService } from './visualIndexService.js';
 import { GATE_VARIANTS, type GateDecision, DOC_SIGNS } from '../../scanGateAlgorithms.js';
 import { getAppDataDir } from '../config/index.js';
@@ -110,7 +110,7 @@ export function resolveOcrGateDecision(ocrRaw: string, finalName: string, knownA
   return v2Gate.decide(ocrRaw, finalName, { knownApis });
 }
 
-interface MatchResult {
+/* interface MatchResult {
   customer: { id: number; name: string; phone: string } | null;
   isNewCustomer: boolean;
   medicineName: string;
@@ -122,7 +122,7 @@ interface MatchResult {
   isRepeat: boolean;
   source: 'text' | 'ocr' | 'both';
   messageBody: string;
-}
+} */
 
 async function isIgnored(phone: string): Promise<boolean> {
   const db = await dbManager.getConnection();
@@ -2139,10 +2139,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             `4️⃣ Talk to pharmacist 📞`;
           await whatsappQueueWorker.enqueue(phone, refillMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         } else {
-          // No past prescription or special order found — offer fresh order or pharmacist
-          const { getStorePhone: getPhoneForRefill, getStoreMedicalName: getNameForRefill } = await import('./storeSettingsService.js');
-          const storePhoneForRefill = await getPhoneForRefill(db);
-          const storeNameForRefill = await getNameForRefill(db);
+          const { getStorePhone } = await import('./storeSettingsService.js');
+          const storePhoneForRefill = await getStorePhone(db);
 
           await db.run(
             `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
@@ -2209,7 +2207,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const hasMedicineIntent = directMedCandidates.length > 0 && isPlausibleMedicineName(directMedCandidates[0]?.medicineName || '');
       if (hasMedicineIntent) {
         const detectedName = directMedCandidates[0].medicineName;
-        const detectedQty  = directMedCandidates[0].quantity || 1;
+//         const _detectedQty  = directMedCandidates[0].quantity || 1;
         // Notify customer we caught it and are searching
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         const searchingMsg = `🔍 Searching for *${detectedName}* — one moment! 💊`;
@@ -3353,7 +3351,7 @@ async function proceedWithConfirmedProcurement(
   pending: any,
   customerName: string,
   db: any,
-  chatId?: string
+  _chatId?: string
 ): Promise<boolean> {
   const medName = pending.suggested_name;
   const medQty = pending.quantity || 1;

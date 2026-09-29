@@ -2,29 +2,29 @@ import express from 'express';
 import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { checkAllRefills, cleanupStagedRefillNotifications } from '../services/refillService.js';
-import { sendMessage, normalizeWhatsAppPhone } from '../whatsappClient.js';
+import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
-import { getMessage } from '../i18n/getMessage.js';
+
 import { getConfiguredPharmacyName, getPharmacyOperatingSchedule } from '../services/storeSettingsService.js';
 import { eventService } from '../services/eventService.js';
 import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
-import { orderScheduleService } from '../services/orderScheduleService.js';
+
 import { resolveStoreId } from '../services/storeContextService.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+
 
 const router = express.Router();
 
 let refillsTableInitialized = false;
 
-export async function initRefillsTable(db: any) {
+export async function initRefillsTable(_db: any) {
   if (refillsTableInitialized) return;
   refillsTableInitialized = true;
 }
@@ -418,7 +418,7 @@ router.get('/', async (req, res) => {
 });
 
 // Trigger a manual run of checkAllRefills
-router.post('/check', async (req, res) => {
+router.post('/check', async (_req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
@@ -544,10 +544,10 @@ router.get('/panel', async (req, res) => {
     db = await dbManager.getConnection();
     
     // Fetch refill notice days setting
-    let noticeDays = 3;
+    // let _noticeDays = 3;
     const setting = await db.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
     if (setting && setting.value) {
-      noticeDays = parseInt(setting.value, 10) || 3;
+      // _noticeDays = parseInt(setting.value, 10) || 3;
     }
 
     // Optional upcoming_days query parameter (if omitted, returns all patient refills for CRM management)

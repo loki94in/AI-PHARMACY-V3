@@ -1,5 +1,5 @@
 import fs from 'fs';
-import path from 'path';
+// import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, PSM } from 'tesseract.js';
 import { dbManager } from '../database/connection.js';

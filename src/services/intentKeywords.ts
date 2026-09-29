@@ -1,6 +1,6 @@
 // Intent keywords and text parser for WhatsApp medicine requests.
 // Pure data + small functions. No network calls.
-import { dbManager } from '../database/connection.js';
+// import { dbManager } from '../database/connection.js';
 import { COSMETIC_MARKERS } from '../utils/drugSchedules.js';
 
 // --- Intent words: is the message a medicine order request? ---

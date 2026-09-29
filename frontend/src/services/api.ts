@@ -219,6 +219,7 @@ export const peekWhatsAppQueueStatusCache = (maxAgeMs = 2500): WhatsAppQueueStat
 };
 
 let compactInventoryLoaded = false;
+let lastCompactInventoryFetchTime = 0;
 let compactInventoryFetchPromise: Promise<CompactInventoryItem[]> | null = null;
 
 export const ensureCompactInventoryReady = async (): Promise<CompactInventoryItem[]> => {
@@ -239,7 +240,6 @@ export const ensureCompactInventoryReady = async (): Promise<CompactInventoryIte
   return compactInventoryFetchPromise;
 };
 
-let lastCompactInventoryFetchTime = 0;
 
 export interface PrecomputedInventoryIndex {
   nameLower: string;

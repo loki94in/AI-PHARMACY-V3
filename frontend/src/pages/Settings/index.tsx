@@ -220,7 +220,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
   const [stampPreview, setStampPreview] = useState<string | null>(null);
   const [sigPreview, setSigPreview] = useState<string | null>(null);
   const [rawStampImage, setRawStampImage] = useState<string | null>(null);
-  const [rawSigImage, setRawSigImage] = useState<string | null>(null);
+  const [_rawSigImage, setRawSigImage] = useState<string | null>(null);
   const [stampUploading, setStampUploading] = useState(false);
   const [sigUploading, setSigUploading] = useState(false);
   const [autoRemoveBg, setAutoRemoveBg] = useState(true);

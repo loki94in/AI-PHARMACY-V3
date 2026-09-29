@@ -1,11 +1,11 @@
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -206,7 +206,7 @@ router.put('/:id/doctor', async (req, res) => {
 });
 
 // Export CSV for Statutory Inspector Audits
-router.get('/export', async (req, res) => {
+router.get('/export', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all('SELECT date, drug_name, patient_name, doctor_name, license_no, qty, bill_no, schedule_type FROM compliance_logs ORDER BY id DESC');

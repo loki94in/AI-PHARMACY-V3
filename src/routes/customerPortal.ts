@@ -1630,7 +1630,7 @@ router.get('/public-catalog', async (req, res) => {
 
 
 // GET /api/customer-portal/categories-summary — Live count by category for portal-visible medicines
-router.get('/categories-summary', async (req, res) => {
+router.get('/categories-summary', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all(
@@ -1651,7 +1651,7 @@ router.get('/categories-summary', async (req, res) => {
 });
 
 // GET /api/customer-portal/standalone-catalog — Serves the standalone responsive website
-router.get('/standalone-catalog', (req, res) => {
+router.get('/standalone-catalog', (_req, res) => {
   const filePath = path.resolve(process.cwd(), 'exports/Live_Pharmacy_Catalog_Website.html');
   if (fs.existsSync(filePath)) {
     return res.sendFile(filePath);
@@ -2209,7 +2209,7 @@ router.post('/admin/catalog-visibility/publish-in-stock', async (req, res) => {
 });
 
 // ─── 24/7 Cloud Catalog & Orders Sync ──────────────────────────────
-router.post('/cloud/sync-catalog', async (req, res) => {
+router.post('/cloud/sync-catalog', async (_req, res) => {
   try {
     const { pushLocalCatalogToCloud } = await import('../services/cloudCatalogSyncService.js');
     const result = await pushLocalCatalogToCloud();
@@ -2219,7 +2219,7 @@ router.post('/cloud/sync-catalog', async (req, res) => {
   }
 });
 
-router.post('/cloud/pull-orders', async (req, res) => {
+router.post('/cloud/pull-orders', async (_req, res) => {
   try {
     const { pullCloudOrdersToLocal } = await import('../services/cloudCatalogSyncService.js');
     const result = await pullCloudOrdersToLocal();

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { apiClient, api, type CompactInventoryItem } from '../../services/api';
+import { apiClient, api } from '../../services/api';
 import {
   RefreshCw, Send, Users, MessageSquare, Phone, Calendar,
   CheckCircle2, AlertCircle, Clock, Search, Repeat2, Bell,
@@ -4305,7 +4305,7 @@ const SpecialOrdersSection: React.FC = () => {
   const [dateTo, setDateTo] = useState(getTodayString());
   const [manualToDate, setManualToDate] = useState(false);
 
-  const [notifyingId, setNotifyingId] = useState<number | null>(null);
+
   const [resendingId, setResendingId] = useState<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -4743,22 +4743,6 @@ const SpecialOrdersSection: React.FC = () => {
         status: o.status
       }))
     });
-  };
-
-  const handleResendBooking = async (order: SpecialOrderItem) => {
-    if (resendingId === order.id) return;
-    setResendingId(order.id);
-    try {
-      messageSendEvent.triggerSendProgress(order.requester || order.phone || 'Customer', `Booking confirmation for ${order.product}`, 10);
-      await api.resendSpecialOrderBooking(order.id);
-      toastEvent.trigger(`Booking WhatsApp resent to ${order.requester}!`, 'success', '/crm');
-      whatsappQueueEvent.triggerUpdated();
-      await loadOrders();
-    } catch (err) {
-      toastEvent.trigger((err as LocalApiError).response?.data?.error || (err as LocalApiError).message || 'Failed to resend booking message', 'error', '/crm');
-    } finally {
-      setResendingId(null);
-    }
   };
 
   const handleUpdateStatus = async (id: number, newStatus: string) => {
@@ -5426,22 +5410,20 @@ const SpecialOrdersSection: React.FC = () => {
             {order.notified === 1 ? (
               <button
                 onClick={() => handleNotifyArrival(order)}
-                disabled={notifyingId === order.id}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-sm shadow-sky-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
                 title="Re-send arrival reminder WhatsApp notification to customer"
               >
-                <MessageCircle size={12} className={notifyingId === order.id ? 'animate-spin' : ''} />
-                <span>{notifyingId === order.id ? '...' : `Resend WA`}</span>
+                <MessageCircle size={12} />
+                <span>Resend WA</span>
               </button>
             ) : (
               <button
                 onClick={() => handleNotifyArrival(order)}
-                disabled={notifyingId === order.id}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-sm shadow-sky-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
                 title="Manually send WhatsApp arrival notification to customer"
               >
-                <MessageCircle size={12} className={notifyingId === order.id ? 'animate-spin' : ''} />
-                <span>{notifyingId === order.id ? 'Sending...' : '📱 Ready'}</span>
+                <MessageCircle size={12} />
+                <span>📱 Ready</span>
               </button>
             )}
 

@@ -9,12 +9,12 @@
  */
 import { dbManager } from '../database/connection.js';
 import { whatsappQueueWorker } from './whatsappQueueWorker.js';
-import { formatDisplayPhone } from './notificationService.js';
+// import { formatDisplayPhone } from './notificationService.js';
 import { resolveDistributorContact } from '../utils/distributorSyncHelper.js';
 import { formatPackagingAndUnit } from '../utils/whatsappTemplateBuilder.js';
 
 const CYCLE_DAYS = 45;
-const BAND_START_HOUR = 11;
+// const BAND_START_HOUR = 11;
 const BAND_WINDOW_MINUTES = 10;
 const MAX_OFFSET_MINUTES = 15;
 const PRE_ROTATE_DAYS_BEFORE = 2;

@@ -92,7 +92,7 @@ export const GATE_VARIANTS: GateVariant[] = [
     id: 'V1',
     name: 'Conservative',
     description: 'Adds: any plausible name. Skips: only when a plausible name is missing AND >=2 weak doc signs. Fewest skips.',
-    decide(ocrText, potentialName, ctx) {
+    decide(ocrText, potentialName, _ctx) {
       const name = (potentialName || '').trim();
       if (!name || !isPlausibleMedicineName(name)) return 'skip';
       if (countDocSigns(ocrText.toLowerCase()) >= 2) return 'skip';
@@ -118,7 +118,7 @@ export const GATE_VARIANTS: GateVariant[] = [
     id: 'V3',
     name: 'Doc-Strict',
     description: 'Adds: any plausible name. Skips: if ANY strong document sign present (invoice/booking/train/bank/...).',
-    decide(ocrText, potentialName, ctx) {
+    decide(ocrText, potentialName, _ctx) {
       const name = (potentialName || '').trim();
       if (!name || !isPlausibleMedicineName(name)) return 'skip';
       if (hasStrongDoc(ocrText.toLowerCase())) return 'skip';
@@ -129,7 +129,7 @@ export const GATE_VARIANTS: GateVariant[] = [
     id: 'V4',
     name: 'Hybrid-Balanced',
     description: 'Adds: any plausible name. Skips: if >=1 doc sign (any). Middle ground between V1 and V3.',
-    decide(ocrText, potentialName, ctx) {
+    decide(ocrText, potentialName, _ctx) {
       const name = (potentialName || '').trim();
       if (!name || !isPlausibleMedicineName(name)) return 'skip';
       if (countDocSigns(ocrText.toLowerCase()) >= 1) return 'skip';

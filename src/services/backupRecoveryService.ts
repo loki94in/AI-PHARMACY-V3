@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import AdmZip from 'adm-zip';
 import axios from 'axios';
 import { dbManager } from '../database/connection.js';
-import { telegramBotService } from '../telegramBot.js';
+// import { telegramBotService } from '../telegramBot.js';
 import { eventService } from './eventService.js';
 import zlib from 'zlib';
 import { pipeline } from 'stream/promises';
@@ -24,7 +24,7 @@ if (!fs.existsSync(ARCHIVES_DIR)) {
   fs.mkdirSync(ARCHIVES_DIR, { recursive: true });
 }
 
-let snapshotTimeout: NodeJS.Timeout | null = null;
+// let _snapshotTimeout: NodeJS.Timeout | null = null;
 
 export class BackupRecoveryService {
   private static instance: BackupRecoveryService;

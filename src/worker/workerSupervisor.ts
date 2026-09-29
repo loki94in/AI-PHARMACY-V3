@@ -62,7 +62,7 @@ export class WorkerSupervisor {
       clearInterval(this.healthCheckInterval);
       this.healthCheckInterval = null;
     }
-    for (const [key, config] of Object.entries(this.workers)) {
+    for (const [_key, config] of Object.entries(this.workers)) {
       if (config.instance) {
         config.instance.removeAllListeners('exit');
         if (process.platform === 'win32' && config.instance.pid) {

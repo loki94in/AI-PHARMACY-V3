@@ -119,7 +119,7 @@ class MedicineAvailabilityEngine {
   private async checkAvailability(
     db: any,
     medicine: any,
-    context: SearchContext
+    _context: SearchContext
   ): Promise<MedicineAvailabilityResult> {
     const stock = await this.getStock(db, medicine.id);
     const cached = this.stockCache.get(medicine.id);
@@ -196,7 +196,7 @@ class MedicineAvailabilityEngine {
 
   private async findFuzzyMatches(
     db: any,
-    query: string,
+    _query: string,
     context: SearchContext
   ): Promise<any[]> {
     const allMeds = await db.all(

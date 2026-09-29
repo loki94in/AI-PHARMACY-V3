@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../lib/theme';
 import { stockLevel } from '../lib/stock';
 

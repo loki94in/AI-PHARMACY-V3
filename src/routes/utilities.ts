@@ -210,7 +210,7 @@ router.get('/barcode/:code', async (req, res) => {
 // Telegram functionality has been moved to src/telegramBot.ts
 
 // Cloud storage with AWS S3
-router.post('/cloud/push', async (req, res) => {
+router.post('/cloud/push', async (_req, res) => {
   try {
     const { default: AWS } = await import('aws-sdk');
     const s3 = new AWS.S3();
@@ -276,7 +276,7 @@ router.post('/restore', async (_req, res) => {
 });
 
 // GET /api/utilities/backup/status
-router.get('/backup/status', async (req, res) => {
+router.get('/backup/status', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     
@@ -417,7 +417,7 @@ router.post('/backup/clean-preupdate', async (req, res) => {
 });
 
 // POST /api/utilities/backup/fresh-install
-router.post('/backup/fresh-install', async (req, res) => {
+router.post('/backup/fresh-install', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_fresh_installed', 'true')");
@@ -479,7 +479,7 @@ router.delete('/backup/archive/:filename', async (req, res) => {
 });
 
 // POST /api/utilities/backup/manual
-router.post('/backup/manual', async (req, res) => {
+router.post('/backup/manual', async (_req, res) => {
   try {
     const BACKUP_DIR = config.backupDir;
     const SNAPSHOTS_DIR = path.join(BACKUP_DIR, 'snapshots');
@@ -489,7 +489,7 @@ router.post('/backup/manual', async (req, res) => {
     const archivePath = path.join(ARCHIVES_DIR, archiveName);
     
     // Create new snapshot
-    const snapshotFile = await backupRecoveryService.createSnapshot();
+//     const _snapshotFile = await backupRecoveryService.createSnapshot();
     const files = fs.readdirSync(SNAPSHOTS_DIR).filter(f => f.startsWith('snapshot_') && (f.endsWith('.db') || f.endsWith('.db.gz')));
     
     if (files.length > 0) {
@@ -526,7 +526,7 @@ router.post('/backup/manual', async (req, res) => {
 });
 
 // POST /api/utilities/backup/toggle-pause
-router.post('/backup/toggle-pause', async (req, res) => {
+router.post('/backup/toggle-pause', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const row = await db.get("SELECT value FROM app_settings WHERE key = 'backup_is_paused'");
@@ -553,7 +553,7 @@ router.post('/backup/gdrive/toggle', async (req, res) => {
 });
 
 // POST /api/utilities/backup/gdrive/test
-router.post('/backup/gdrive/test', async (req, res) => {
+router.post('/backup/gdrive/test', async (_req, res) => {
   try {
     const result = await backupRecoveryService.testGoogleDriveConnection();
     res.json(result);
@@ -563,7 +563,7 @@ router.post('/backup/gdrive/test', async (req, res) => {
 });
 
 // POST /api/utilities/backup/gdrive/upload-now
-router.post('/backup/gdrive/upload-now', async (req, res) => {
+router.post('/backup/gdrive/upload-now', async (_req, res) => {
   try {
     const { createBackup } = await import('../services/backupService.js');
     const result = await createBackup('Manual Drive Upload');
@@ -617,7 +617,7 @@ router.post('/backup/gdrive/folder', async (req, res) => {
 });
 
 // Gmail test‑connection endpoint as requested
-router.get('/gmail/test', async (req, res) => {
+router.get('/gmail/test', async (_req, res) => {
   try {
     console.log('TEST_CONNECTION_GMAIL');
     const db = await dbManager.getConnection();
@@ -630,7 +630,7 @@ router.get('/gmail/test', async (req, res) => {
 });
 
 // WhatsApp test‑connection endpoint as requested
-router.get('/whatsapp/test', async (req, res) => {
+router.get('/whatsapp/test', async (_req, res) => {
   try {
     console.log('TEST_CONNECTION_WHATSAPP');
     const db = await dbManager.getConnection();
@@ -643,7 +643,7 @@ router.get('/whatsapp/test', async (req, res) => {
 });
 
 // WhatsApp send‑test‑message endpoint as requested (blocked in production)
-router.post('/whatsapp/send', async (req, res) => {
+router.post('/whatsapp/send', async (_req, res) => {
   if (process.env.NODE_ENV === 'production') {
     return res.status(403).json({ error: 'Mock test message endpoint is disabled in production' });
   }
@@ -676,7 +676,7 @@ router.get('/test-connection', async (req, res) => {
   }
 });
 // GET /api/utilities/data-counts — returns live record counts for reset confirmation dialog
-router.get('/data-counts', async (req, res) => {
+router.get('/data-counts', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const safe = async (sql: string) => {
@@ -1099,7 +1099,7 @@ router.post('/reset-data', async (req, res) => {
 });
 
 // POST /api/utilities/clear-cache
-router.post('/clear-cache', async (req, res) => {
+router.post('/clear-cache', async (_req, res) => {
   try {
     const dataDir = path.resolve(getAppDataDir(), 'data');
     
@@ -1140,7 +1140,7 @@ router.post('/clear-cache', async (req, res) => {
 });
 
 // POST /api/utilities/db/unlock
-router.post('/db/unlock', async (req, res) => {
+router.post('/db/unlock', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run('ROLLBACK');

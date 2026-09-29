@@ -14,7 +14,7 @@ import { resolveInventoryStock, classifyAvailability } from './whatsappIntentSer
 import { sanitizePharmarackQuery, isPlausibleMedicineName } from './intentKeywords.js';
 import { searchCatalog } from './pharmarackCatalogCache.js';
 import { aiCameraService } from './aiCameraService.js';
-import { parseDoctorRxNumberedItems, extractDoctorRxSig, extractDoctorRxDuration } from './aiCameraRuleEngine.js';
+import { parseDoctorRxNumberedItems} from './aiCameraRuleEngine.js';
 
 export type ScanSource = 'whatsapp' | 'website' | 'mobile' | 'pos' | 'telegram';
 

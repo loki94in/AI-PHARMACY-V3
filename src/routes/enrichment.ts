@@ -1,15 +1,15 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { dbManager } from '../database/connection.js';
 import { loadReferenceData, loadApiSubstances, getEnrichmentStatus, runEnrichment, getEnrichmentRunningState, requestEnrichmentStop, ensureEnrichmentColumns, backfillSuggestedCompositions, reclassifyNonPharmaProducts, DOSAGE_FORM_SET } from '../worker/compositionEnricher.js';
 import { onlineDataEnricher } from '../services/onlineDataEnricher.js';
 import { getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+
 const DATA_DIR = path.resolve(getAppDataDir(), 'data');
 const REFERENCE_CSV = path.join(DATA_DIR, 'reference_medicines.csv');
 
@@ -41,7 +41,7 @@ router.post('/enrichment/start', async (_req, res) => {
     console.log('Reference data status:', loadResult);
 
     // Run enrichment in background (don't await)
-    runEnrichment((pct, matched) => {
+    runEnrichment((_pct, _matched) => {
       // Progress logged in the worker
     }).catch(err => console.error('Enrichment failed:', err));
 

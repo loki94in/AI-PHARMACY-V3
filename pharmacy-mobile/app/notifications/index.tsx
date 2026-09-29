@@ -9,7 +9,6 @@ import {
   markAllNotificationsAsRead, 
   clearAllNotifications, 
   SavedNotification,
-  isAdminMode,
   getOfflineSalesQueue,
   getOfflinePurchasesQueue,
   getOfflineStockQueue,

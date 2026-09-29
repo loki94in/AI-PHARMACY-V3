@@ -2,13 +2,13 @@ import { PaddleOcrService } from 'paddleocr';
 import * as ort from 'onnxruntime-node';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { Jimp } from 'jimp';
 import { getAppDataDir } from '../config/index.js';
 
 // Resolve paths relative to THIS file, not CWD — fixes flake in Jest / different launch dirs
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const MODELS_DIR = path.resolve(getAppDataDir(), 'data', 'models');
 
 class OnnxOcrService {

@@ -1,13 +1,13 @@
 import { dbManager } from '../database/connection.js';
 import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
 
 export async function runExpiryScanAndAlert(days = 90): Promise<boolean> {
   console.log(`[ExpiryScan] Executing automatic 15-day near-expiry inventory scan (horizon: ${days} days)...`);

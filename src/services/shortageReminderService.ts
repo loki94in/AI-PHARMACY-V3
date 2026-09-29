@@ -31,7 +31,7 @@ export async function trackMedicineRequest(req: {
   const name = req.medicine_name.trim();
   const qty = req.quantity || 1;
   const source = req.source || 'whatsapp';
-  const dist = req.distributor_name || 'Standard Distributor';
+//   const _dist = req.distributor_name || 'Standard Distributor';
 
   // Prevent duplicate open requests for the same medicine & customer/distributor in the last 23 hours
   const existing = await db.get(

@@ -1,16 +1,16 @@
 // Dispatch & Support API
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 import { notificationService } from '../services/notificationService.js';
 import { syncTodayActiveDistributors, getTodayDistributorRemindersFast } from '../services/distributorDispatchReminderWorker.js';
 import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 const router = express.Router();
 
@@ -147,7 +147,7 @@ const ensureDeliveryBoysTable = async (_db: any) => {
 };
 
 // GET /api/dispatch/delivery-boys
-router.get('/delivery-boys', async (req, res) => {
+router.get('/delivery-boys', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await ensureDeliveryBoysTable(db);

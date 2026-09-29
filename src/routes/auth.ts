@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { dbManager } from '../database/connection.js';
-import { createStaffToken, tenantAuthMiddleware, requirePermission } from '../middleware/tenantAuth.js';
+import { createStaffToken, tenantAuthMiddleware } from '../middleware/tenantAuth.js';
 import { storeContextService } from '../services/storeContextService.js';
 
 const router = express.Router();

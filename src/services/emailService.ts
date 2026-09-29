@@ -4,26 +4,26 @@ import { dbManager } from '../database/connection.js';
 import { createTransport, Transporter, SendMailOptions } from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { ensureSchema } from '../database.js';
-import { waitForWhatsAppReady } from '../whatsappClient.js';
+// import { waitForWhatsAppReady } from '../whatsappClient.js';
 import { whatsappQueueWorker } from './whatsappQueueWorker.js';
 import { telegramBotService } from '../telegramBot.js';
 import { notificationManager } from '../utils/notifications.js';
-import { extractDateFromText } from '../utils/dateExtractor.js';
+// import { extractDateFromText } from '../utils/dateExtractor.js';
 import { parse } from 'csv-parse/sync';
 import * as XLSX from 'xlsx';
 import { eventService } from './eventService.js';
 import { aiCameraService } from './aiCameraService.js';
 import { extractCleanEmail } from '../utils/emailSanitizer.js';
-import { getEmailRetentionLimit, getEmailRetentionDays, getStorePhone, getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
+import { getEmailRetentionLimit, getEmailRetentionDays, getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
 import { config, getAppDataDir } from '../config/index.js';
 import { medicineService } from './medicineService.js';
 import { isValidDistributorName } from '../utils/nameNormalizer.js';
 import { classifyEmailMessage } from './messageClassifier.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const getDbPath = () => config.dbPath;
 const getUploadsDir = () => process.env.UPLOADS_DIR || path.resolve(getAppDataDir(), 'uploads');
 
@@ -314,7 +314,7 @@ interface EmailOptions {
   authTimeout?: number;
 }
 
-interface SmtpOptions {
+/* interface SmtpOptions {
   host: string;
   port: number;
   secure: boolean;
@@ -322,7 +322,7 @@ interface SmtpOptions {
     user: string;
     pass: string;
   };
-}
+} */
 
 interface ProcessedEmail {
   from: string;
@@ -522,7 +522,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
   let invoice_date = '';
   let total_amount = 0;
   let global_cd_per = 0;
-  let cd_amount = 0;
+  // let _cd_amount = 0;
   const items: any[] = [];
 
   const headerRow = csvRecords.find(row => row[0]?.trim() === 'H');
@@ -534,7 +534,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
     }
     const p13 = parseFloat(headerRow[13] || '0');
     if (!isNaN(p13) && p13 > 0) {
-      cd_amount = p13;
+      // _cd_amount = p13;
     }
 
     if (headerRow[5] && isNaN(Number(headerRow[5])) && headerRow[5].trim().length > 3 && !headerRow[5].includes('/') && !headerRow[5].includes('-')) {
@@ -797,8 +797,8 @@ function parseShriyashInvoice(content: string, globalCdPer: number): { items: an
 
     if (itemLines.length < 5) continue;
 
-    const srNo = itemLines[0];
-    const mfg = itemLines[1];
+//     const _srNo = itemLines[0];
+//     const _mfg = itemLines[1];
     const hsn_code = itemLines[2];
     const rawProductDesc = itemLines[3];
     const qty = parseFloat(itemLines[4]) || 0;
@@ -950,7 +950,7 @@ function parseNitinInvoice(content: string, globalCdPer: number): { items: any[]
       let remaining = rest.substring(expIndex + expiry.length).trim();
 
       const mfgMatch = partBeforeExp.match(/([A-Z]{3})$/);
-      const mfg = mfgMatch ? mfgMatch[1] : '';
+//       const _mfg = mfgMatch ? mfgMatch[1] : '';
       const productAndPack = mfgMatch ? partBeforeExp.substring(0, partBeforeExp.length - 3).trim() : partBeforeExp;
 
       const packMatch = productAndPack.match(/(\d+\s*(?:TAB|CAP|ML|Ta|Cap|Tab)s?)$/i);
@@ -970,8 +970,8 @@ function parseNitinInvoice(content: string, globalCdPer: number): { items: any[]
       const { decimals, remaining: batchPart } = splitConcatenatedDecimals(remaining);
       if (decimals.length < 5) continue;
 
-      const taxable = parseFloat(decimals[decimals.length - 1]);
-      const tdPercent = parseFloat(decimals[decimals.length - 2]);
+//       const _taxable = parseFloat(decimals[decimals.length - 1]);
+//       const _tdPercent = parseFloat(decimals[decimals.length - 2]);
       const amount = parseFloat(decimals[decimals.length - 3]);
       const rate = parseFloat(decimals[decimals.length - 4]);
       const rawMrpStr = decimals[decimals.length - 5];
@@ -1023,7 +1023,7 @@ function splitConcatenatedDecimals(str: string): { decimals: string[]; remaining
   while (true) {
     const match = remaining.match(/\.(\d{2})(\d+)\.(\d{2})$/);
     if (match) {
-      const decPart = match[1];
+//       const _decPart = match[1];
       const intPart = match[2];
       const lastDecPart = match[3];
 
@@ -1449,7 +1449,7 @@ export class EmailService {
   /**
    * Logs email receipt to database
    */
-  private async logEmailReceived(email: ProcessedEmail): Promise<void> {
+/*   private async _logEmailReceived(email: ProcessedEmail): Promise<void> {
     try {
       const db = await dbManager.getConnection();
       await db.run(
@@ -1459,7 +1459,7 @@ export class EmailService {
     } catch (error) {
       console.error('Failed to log email receipt:', error);
     }
-  }
+  } */
 
   /**
    * Processes email content to determine required actions
@@ -1848,9 +1848,9 @@ export class EmailService {
    * Deprecated delivery boy email notification method.
    * Incoming distributor email notifications now strictly go to Store Owner / Pharmacy only.
    */
-  private async notifyDeliveryBoys(orderInfo: any): Promise<void> {
+/*   private async _notifyDeliveryBoys(_orderInfo: any): Promise<void> {
     console.log('[EmailService] Delivery boys are excluded from email arrival notifications. Email alerts are routed exclusively to Store / Owner.');
-  }
+  } */
 
   /**
    * Send distributor invoice details via WhatsApp to configured recipients
@@ -2038,7 +2038,7 @@ export class EmailService {
   /**
    * Process a medicine order from email
    */
-  private async processMedicineOrder(email: ProcessedEmail): Promise<void> {
+/*   private async _processMedicineOrder(email: ProcessedEmail): Promise<void> {
     try {
       const orderInfo = await this.extractOrderInfo(email);
       const db = await dbManager.getConnection();
@@ -2101,7 +2101,7 @@ export class EmailService {
         console.error('Failed to log order processing error:', logError);
       }
     }
-  }
+  } */
 
   /**
    * Send an auto-response to an inquiry email

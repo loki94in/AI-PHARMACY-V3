@@ -9,7 +9,7 @@ import { verificationService } from '../services/verificationService.js';
 import { activityLogger } from '../services/activityLogger.js';
 import { eventService } from '../services/eventService.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
+
 
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
@@ -196,7 +196,7 @@ const calculateSalesGstAndTotals = async (
 
 
 // Get next sequential invoice number
-router.get('/next-invoice', async (req, res) => {
+router.get('/next-invoice', async (_req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
@@ -224,7 +224,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: verification.message, layer: verification.layer });
     }
 
-    const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = 'CASH', paymentStatus = 'PAID', sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId, prescription_image, online_order_id, order_id } = req.body;
+    const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = 'CASH', paymentStatus = 'PAID', sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId: _refillId, prescription_image, online_order_id, order_id } = req.body;
     const resolvedOnlineOrderId = online_order_id ? parseInt(String(online_order_id), 10) : (order_id ? parseInt(String(order_id), 10) : null);
 
     // Strict validation: check items parameters to prevent null values
@@ -751,7 +751,7 @@ router.post('/', async (req, res) => {
             if (posBillEnabledRow?.value === 'false') {
               return;
             }
-            const { sendMessage } = await import('../whatsappClient.js');
+            const { sendMessage: _sendMessage } = await import('../whatsappClient.js');
 
             const formatDate = (dStr?: string) => {
               if (!dStr) return '';
@@ -2125,7 +2125,7 @@ router.get('/universal-search', async (req, res) => {
 });
 
 // List all held bills
-router.get('/hold', async (req, res) => {
+router.get('/hold', async (_req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
@@ -2151,7 +2151,7 @@ router.post('/staged', async (req, res) => {
     for (const item of items) {
       const name = item.name || item.medicine_name;
       const quantity = Number(item.quantity || 1);
-      const unit = item.unit || '';
+      // const _unit = item.unit || '';
 
       // Try to resolve locally
       const local = await db.get(`
@@ -2874,7 +2874,7 @@ router.post('/staged/:id/approve', async (req, res) => {
 
     // Save items & update stock
     for (const item of itemsToProcess) {
-      const { inventory_id, quantity, unit_price, loose_qty = 0, discount_per = 0, pack_size = 1 } = item;
+      const { inventory_id, quantity, unit_price, loose_qty = 0, discount_per = 0, pack_size: _pack_size = 1 } = item;
       const currentStock = await db.get(
         `SELECT im.quantity, im.loose_quantity, COALESCE(m.pack_size, 1) as pack_size
          FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?`,
@@ -3516,7 +3516,7 @@ router.get('/patient-refill-medicines', async (req, res) => {
 // Upload Prescription Image (from mobile Wi-Fi capture or web)
 router.post('/prescription/upload', async (req, res) => {
   try {
-    const { image, fileName } = req.body;
+    const { image, fileName: _fileName } = req.body;
     if (!image) {
       return res.status(400).json({ error: 'Image data (base64) is required' });
     }

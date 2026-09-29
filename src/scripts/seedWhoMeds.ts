@@ -47,12 +47,12 @@ async function seedWhoMeds() {
         if (!fullName) continue;
 
         let api = fullName;
-        let strength = '';
+//         let _strength = '';
         
         if (dosageForm && fullName.includes(dosageForm)) {
            const parts = fullName.split(dosageForm);
            api = parts[0].trim();
-           strength = parts[1] ? parts[1].trim() : '';
+//            _strength = parts[1] ? parts[1].trim() : '';
         }
 
         // Check if exists

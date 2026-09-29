@@ -3,19 +3,19 @@ import path from 'path';
 import readline from 'readline';
 import { config } from '../config/index.js';
 import { dbManager } from '../database/connection.js';
-import { ensureSchema } from '../database.js';
-import { extractFromPdf, ExtractedMedicine } from '../extractor.js';
+// import { ensureSchema } from '../database.js';
+import { extractFromPdf} from '../extractor.js';
 import { eventService } from '../services/eventService.js';
 import { activityTracker } from '../utils/activityTracker.js';
 import csvParser from 'csv-parser';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { Worker } from 'worker_threads';
-import { runEnrichment, getEnrichmentRunningState } from './compositionEnricher.js';
+// import { runEnrichment, getEnrichmentRunningState } from './compositionEnricher.js';
 
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// import { fileURLToPath } from 'url';
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 const getDbPath = () => config.dbPath;
 
@@ -693,7 +693,7 @@ export async function runCatalogImport(jobId: number) {
     const tableInfo = await db.all('PRAGMA table_info(medicines)');
     const existingMedicinesCols = tableInfo.map(c => c.name.toLowerCase());
 
-    for (const [csvCol, targetCol] of Object.entries(mapping)) {
+    for (const [_csvCol, targetCol] of Object.entries(mapping)) {
       if (targetCol && String(targetCol).startsWith('custom_col_')) {
         const dbColName = String(targetCol).substring(11).trim().replace(/\s+/g, '_').toLowerCase();
         if (dbColName && !existingMedicinesCols.includes(dbColName)) {
@@ -709,7 +709,7 @@ export async function runCatalogImport(jobId: number) {
     }
 
     const customMappings = Object.entries(mapping)
-      .filter(([csvCol, targetCol]) => targetCol && String(targetCol).startsWith('custom_col_'))
+      .filter(([_csvCol, targetCol]) => targetCol && String(targetCol).startsWith('custom_col_'))
       .map(([csvCol, targetCol]) => ({
         csvCol,
         dbCol: String(targetCol).substring(11).trim().replace(/\s+/g, '_').toLowerCase()

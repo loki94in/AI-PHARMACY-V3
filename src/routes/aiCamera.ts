@@ -2,21 +2,21 @@ import express from 'express';
 import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import { aiCameraService } from '../services/aiCameraService.js';
 import { prescriptionScannerService } from '../services/prescriptionScannerService.js';
 import { productNameFilterService } from '../services/productNameFilterService.js';
 import { getAppDataDir } from '../config/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 const AUDIT_QUEUE_PATH = path.resolve(getAppDataDir(), 'data', 'audit_queue.json');
 
 const router = express.Router();
 
 // Retrieve all pending audits
-router.get('/audit/queue', async (req, res) => {
+router.get('/audit/queue', async (_req, res) => {
   try {
     if (!fs.existsSync(AUDIT_QUEUE_PATH)) {
       return res.json([]);

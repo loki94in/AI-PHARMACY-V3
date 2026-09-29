@@ -3,21 +3,21 @@ import { recordStockLedger } from '../utils/stockRebuild.js';
 import { dbManager } from '../database/connection.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { notificationService } from '../services/notificationService.js';
+// import { notificationService } from '../services/notificationService.js';
 import multer from 'multer';
-import pdfParse from 'pdf-parse';
-import { parse } from 'csv-parse/sync';
-import * as XLSX from 'xlsx';
-import AdmZip from 'adm-zip';
-import { aiCameraService } from '../services/aiCameraService.js';
+// import pdfParse from 'pdf-parse';
+// import { parse } from 'csv-parse/sync';
+// import * as XLSX from 'xlsx';
+// import AdmZip from 'adm-zip';
+// import { aiCameraService } from '../services/aiCameraService.js';
 import { productNameFilterService } from '../services/productNameFilterService.js';
 import { emailService, isNonMedicineNoise, cleanMedicineName } from '../services/emailService.js';
-import { onlineDataEnricher } from '../services/onlineDataEnricher.js';
-import { activityTracker } from '../utils/activityTracker.js';
+// import { onlineDataEnricher } from '../services/onlineDataEnricher.js';
+// import { activityTracker } from '../utils/activityTracker.js';
 import { getAppDataDir } from '../config/index.js';
 import { refreshInventoryActiveStatus, refreshInventoryActiveByBatch } from '../utils/inventoryActive.js';
 import { inventoryCache } from '../services/inventoryCache.js';
-import { activityLogger } from '../services/activityLogger.js';
+// import { activityLogger } from '../services/activityLogger.js';
 import fs from 'fs';
 import { medicineService } from '../services/medicineService.js';
 import { OrderFulfillmentService } from '../services/orderFulfillmentService.js';
@@ -30,9 +30,9 @@ import { resolveStoreId } from '../services/storeContextService.js';
 
 
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -52,7 +52,7 @@ router.get('/summary', async (_req, res) => {
   }
 });
 
-function normalizeDateToYYYYMMDD(dateStr: string): string {
+/* function normalizeDateToYYYYMMDD(dateStr: string): string {
   if (!dateStr) return '';
   const match = dateStr.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (match) {
@@ -65,7 +65,7 @@ function normalizeDateToYYYYMMDD(dateStr: string): string {
     return `${year}-${month}-${day}`;
   }
   return '';
-}
+} */
 
 function formatExpiryToMMYY(val: string): string {
   if (!val) return '';
@@ -105,7 +105,7 @@ function formatExpiryToMMYY(val: string): string {
   return cleaned;
 }
 
-function extractDiscountAndTotalFromText(text: string) {
+/* function extractDiscountAndTotalFromText(text: string) {
   const cleanLines = text.split('\n').map(l => l.trim()).filter(Boolean);
   let global_cd_per = 0;
   let total_amount = 0;
@@ -161,9 +161,9 @@ function extractDiscountAndTotalFromText(text: string) {
   }
 
   return { global_cd_per, total_amount };
-}
+} */
 
-function parseTextInvoice(text: string, filename: string) {
+/* function parseTextInvoice(text: string, filename: string) {
   const cleanLines = text.split('\n').map(l => l.trim()).filter(Boolean);
   let distributorName = '';
   let invoiceNo = '';
@@ -232,7 +232,7 @@ function parseTextInvoice(text: string, filename: string) {
       const pricesLine = cleanLines[i - 2];
       const pricesTokens = pricesLine ? pricesLine.split(/\s+/) : [];
       const batchExpHsnLine = cleanLines[i - 3];
-      const gstAmtLine = cleanLines[i - 4];
+//       const _gstAmtLine = cleanLines[i - 4];
       const gstPerLine = cleanLines[i - 5];
       const productNameLine = cleanLines[i - 7];
       
@@ -342,9 +342,9 @@ function parseTextInvoice(text: string, filename: string) {
     global_cd_per,
     data: extractedItems
   };
-}
+} */
 
-async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise<any> {
+/* async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise<any> {
   const nameLower = filename.toLowerCase();
   
   if (nameLower.endsWith('.zip')) {
@@ -719,7 +719,7 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
   }
 
   throw new Error('Unsupported or unreadable file format');
-}
+} */
 
 // Handle Invoice Uploads
 router.post('/upload', upload.single('file'), async (req, res) => {
@@ -883,7 +883,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get date of the earliest transaction (purchase or sales invoice) in the system
-router.get('/earliest-date', async (req, res) => {
+router.get('/earliest-date', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const row = await db.get(`
@@ -1078,7 +1078,7 @@ router.post('/manual', async (req, res) => {
     const reconcileNames: string[] = []; // ponytail: collected for background reconcile after COMMIT
     const unresolvedMedicines: { name: string }[] = []; // strict verification: lines with no real master match
     for (const item of items) {
-      const { medicine, medicine_id, original_name, batch_no, expiry_date, qty, free_qty, rate, mrp, discPer, discRs, additional_discount, cgst, sgst } = item;
+      const { medicine, medicine_id, original_name, batch_no, expiry_date, _qty, free_qty, _rate, _mrp, _discPer, _discRs, additional_discount, _cgst, sgst } = item;
       
       const medInputName = medicine || item.medicine_name;
       const medInputId = medicine_id;
@@ -1584,7 +1584,7 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     // 4. Insert new items
     const savedItems: any[] = [];
     for (const item of items) {
-      const { medicine, medicine_id, original_name, batch_no, expiry_date, qty, free_qty, rate, mrp, discPer, discRs, additional_discount, cgst, sgst } = item;
+      const { medicine, medicine_id, _original_name, batch_no, expiry_date, _qty, free_qty, _rate, _mrp, _discPer, _discRs, additional_discount, _cgst, sgst } = item;
       
       const medInputName = medicine || item.medicine_name;
       const medInputId = medicine_id;
@@ -2606,7 +2606,7 @@ function tokensMatchFuzzy(term1: string, term2: string, aliasMap?: Map<string, s
 }
 
 // GET /reconciliation - Detect missing/unreconciled orders from distributor emails with canonical normalization & alias matching
-router.get('/reconciliation', async (req, res) => {
+router.get('/reconciliation', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
 
@@ -2957,7 +2957,7 @@ router.get('/reconciliation', async (req, res) => {
 });
 
 // GET /ignored-words - Fetch all permanently ignored words
-router.get('/ignored-words', async (req, res) => {
+router.get('/ignored-words', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all('SELECT id, word, source, created_at FROM permanently_ignored_words ORDER BY created_at DESC');
@@ -3520,7 +3520,7 @@ router.post('/match-items', async (req, res) => {
 });
 
 // Retrieve pending staged purchases
-router.get('/staged', async (req, res) => {
+router.get('/staged', async (_req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
@@ -3538,7 +3538,7 @@ router.get('/staged', async (req, res) => {
 });
 
 // GET /reconciliation/bounced - Manually check and send bounced products alert
-router.get('/reconciliation/bounced', async (req, res) => {
+router.get('/reconciliation/bounced', async (_req, res) => {
   try {
     const { bouncedAlertService } = await import('../services/bouncedAlertService.js');
     const sent = await bouncedAlertService.checkAndSendBouncedProductsAlert();

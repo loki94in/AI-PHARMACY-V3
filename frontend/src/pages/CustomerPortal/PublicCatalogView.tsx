@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Search, ShoppingCart, CheckCircle2, AlertCircle, RefreshCw,
+  Search, ShoppingCart, CheckCircle2, RefreshCw,
   Plus, Minus, MessageSquare, MapPin, Pill, Activity, Heart,
-  Wind, ShieldCheck, ChevronRight, Store as StoreIcon, ExternalLink,
-  Eye, Camera, Layers, X, Sparkles, Trash2
+  ShieldCheck, ChevronRight, Store as StoreIcon,
+  Eye, Camera, X, Trash2
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { PrescriptionUploadModal } from '../../components/PrescriptionUploadModal';
@@ -59,10 +59,8 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   onUpdateQuantity,
   onClearCart,
   onOpenCartModal,
-  onOpenLogin,
   preferredStoreId,
   isLoggedIn,
-  customerName,
   configuredPharmacyName: initialPharmacyName
 }) => {
   const [category, setCategory] = useState('all');

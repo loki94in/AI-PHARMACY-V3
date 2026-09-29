@@ -7,7 +7,7 @@
 
 import { Database } from 'sqlite';
 import { medicineMap, distributorMap, patientMap, customerMap } from './pgMasterImporter.js';
-import { purchaseMap, legacyBatchIdToNoMap } from './pgPurchaseImporter.js';
+import { /* purchaseMap, */ legacyBatchIdToNoMap } from './pgPurchaseImporter.js';
 import { salesInvoiceMap } from './pgSalesImporter.js';
 import { normalizeDateOrRaw } from '../../utils/migrationUtils.js';
 import { queueMigrationAudit } from '../../utils/migrationAudit.js';

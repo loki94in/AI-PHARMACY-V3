@@ -8,14 +8,14 @@ import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { logMutationAudit } from '../services/auditLoggerService.js';
 
-import path from 'path';
-import { fileURLToPath } from 'url';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 
 const router = express.Router();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+// const __filename = fileURLToPath(import.meta.url);
+
+
 
 // P1 push event (API_OPTIMIZATION plan): any successful non-GET mutation on this
 // router broadcasts `inventory_changed` so UIs (Inventory/POS/Dashboard) update
@@ -40,22 +40,6 @@ router.use((req, res, next) => {
   }
   next();
 });
-
-// Helper to normalize numeric search terms (e.g., stripping trailing decimal zeros like "31.00" -> "31")
-// to align with SQLite CAST(value AS TEXT) representations.
-const normalizeNumericSearch = (val: string): string => {
-  const cleaned = val.trim();
-  if (!cleaned) return '';
-  // If it's a decimal number, parse it to strip trailing zeros (e.g., 31.00 -> 31, 31.50 -> 31.5)
-  if (/^\d+\.\d+$/.test(cleaned)) {
-    return String(parseFloat(cleaned));
-  }
-  // If it ends with a dot, strip it (e.g., 31. -> 31)
-  if (/^\d+\.$/.test(cleaned)) {
-    return cleaned.slice(0, -1);
-  }
-  return cleaned;
-};
 
 // Cached COUNT(*) for GET /api/inventory — counting the full inventory×medicines join on
 // every keystroke/page-switch was a top latency source. Keyed by filter signature,
@@ -510,7 +494,7 @@ router.post('/bulk-action', async (req, res) => {
 
 // Create new medicine and inventory batch
 router.post('/', async (req, res) => {
-  const { name, api_reference, mrp, cost_price, batch_no, expiry_date, quantity, rack_location, category } = req.body;
+  const { name, api_reference, mrp, cost_price: _cost_price, batch_no: _batch_no, expiry_date: _expiry_date, quantity: _quantity, rack_location: _rack_location, category } = req.body;
   if (!name) return res.status(400).json({ error: 'Medicine name is required' });
   
   let db;

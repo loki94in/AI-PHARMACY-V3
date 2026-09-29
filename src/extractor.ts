@@ -4,9 +4,7 @@ import pdfParse from 'pdf-parse';
 import { parse } from 'csv-parse/sync';
 import { aiCameraService } from './services/aiCameraService.js';
 
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
 
 export interface ExtractedMedicine {
   name: string;
@@ -324,6 +322,6 @@ export async function extractFromCsv(filePath: string, onProgress?: (percent: nu
   return extracted;
 }
 
-export async function mergeIntoSuggestions(newNames: string[]): Promise<string[]> {
+export async function mergeIntoSuggestions(_newNames: string[]): Promise<string[]> {
   return []; // deprecated / not needed with DB ingestion
 }

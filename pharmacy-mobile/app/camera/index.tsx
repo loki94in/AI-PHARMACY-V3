@@ -4,7 +4,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors, spacing, typography, radius, shadows } from '../../lib/theme';
+import { colors, spacing, typography, radius } from '../../lib/theme';
 import { analyzeMedicineImage, scanPurchaseBillWithVision, uploadPrescriptionPhoto } from '../../lib/api';
 
 type ScanMode = 'medicine' | 'purchase_bill' | 'prescription';

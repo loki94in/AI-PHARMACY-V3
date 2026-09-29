@@ -89,11 +89,11 @@ export const IncompleteOrders24hCard: React.FC<IncompleteOrders24hCardProps> = (
         action: 'push_to_cart',
         orderIds
       });
-      toastEvent.emit(res?.message || 'Orders pushed to cart queue.', 'success');
+      toastEvent.trigger(res?.message || 'Orders pushed to cart queue.', 'success');
       fetchAudit();
       if (onOrderUpdated) onOrderUpdated();
     } catch (err: any) {
-      toastEvent.emit(err?.message || 'Failed to push orders to cart.', 'error');
+      toastEvent.trigger(err?.message || 'Failed to push orders to cart.', 'error');
     } finally {
       setActionInProgress(null);
     }
@@ -107,11 +107,11 @@ export const IncompleteOrders24hCard: React.FC<IncompleteOrders24hCardProps> = (
         orderIds,
         hours: 24
       });
-      toastEvent.emit(res?.message || 'Orders snoozed for 24 hours.', 'info');
+      toastEvent.trigger(res?.message || 'Orders snoozed for 24 hours.', 'info');
       fetchAudit();
       if (onOrderUpdated) onOrderUpdated();
     } catch (err: any) {
-      toastEvent.emit(err?.message || 'Failed to snooze orders.', 'error');
+      toastEvent.trigger(err?.message || 'Failed to snooze orders.', 'error');
     } finally {
       setActionInProgress(null);
     }
@@ -129,11 +129,11 @@ export const IncompleteOrders24hCard: React.FC<IncompleteOrders24hCardProps> = (
         template: customNoticeTemplate,
         nextWorkingDate: nextDate
       });
-      toastEvent.emit(res?.message || 'Delay notices dispatched.', 'success');
+      toastEvent.trigger(res?.message || 'Delay notices dispatched.', 'success');
       setIsNoticeModalOpen(false);
       fetchAudit();
     } catch (err: any) {
-      toastEvent.emit(err?.message || 'Failed to send delay notices.', 'error');
+      toastEvent.trigger(err?.message || 'Failed to send delay notices.', 'error');
     } finally {
       setActionInProgress(null);
     }

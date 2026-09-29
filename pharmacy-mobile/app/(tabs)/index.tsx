@@ -333,7 +333,6 @@ export default function AssistantScreen() {
 
       if (!result.canceled && result.assets[0]) {
         setLoading(true);
-        const imageUri = result.assets[0].uri;
 
         // Add user upload message to chat
         const uploadMsg: Message = {
@@ -399,7 +398,7 @@ export default function AssistantScreen() {
     }
   };
 
-  const handleAddPharmarackCart = async (item: any) => {
+  const _handleAddPharmarackCart = async (item: any) => {
     Alert.alert(
       'Add to Pharmarack Cart',
       `Add ${item.name} from ${item.distributor}?`,

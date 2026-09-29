@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+// import { fileURLToPath } from 'url';
 import unzipper from 'unzipper';
 import zlib from 'zlib';
 import { open } from 'sqlite';
@@ -20,7 +20,7 @@ import { findOrCreateDistributor, resetDistributorLookupCache } from '../utils/m
 import { formatInvoiceWithFY } from '../utils/migrationValidation.js';
 import { isValidCustomerName, isValidDoctorName, isValidDistributorName } from '../utils/nameNormalizer.js';
 import { sanitizeDoctorName } from '../utils/doctorUtils.js';
-import { ensureMigrationAuditTable, flushMigrationAudits, queueMigrationAudit, clearMigrationAudit, saveMigrationAuditSummary, getMigrationAuditSummary } from '../utils/migrationAudit.js';
+import { flushMigrationAudits, queueMigrationAudit, clearMigrationAudit, saveMigrationAuditSummary, getMigrationAuditSummary } from '../utils/migrationAudit.js';
 import { config, getAppDataDir } from '../config/index.js';
 import { MedicineSimilarityMatcher, MasterMedicineRecord } from '../utils/medicineSimilarityMatcher.js';
 
@@ -29,7 +29,8 @@ import { parseCopyHeader, parseCopyDataRow, isCopyEndMarker, isPgDump } from './
 
 // Importers
 import {
-  clearAllMaps, categoryMap, manufacturerMap, distributorMap, doctorMap, patientMap, medicineMap,
+  clearAllMaps, // categoryMap, manufacturerMap
+  distributorMap, doctorMap, patientMap, medicineMap,
   importCategory, importManufacturer, importDistributor, flushDistributors,
   importDoctor, flushDoctors, importPatient, flushPatients,
   importCustomer, flushCustomers,
@@ -85,8 +86,8 @@ import { processReturnsLine } from './parsers/returnsParser.js';
 import { processInventoryLine } from './parsers/inventoryParser.js';
 import { processSalesLine } from './parsers/salesParser.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 const MIGRATION_DIR = path.join(getAppDataDir(), 'MIGRATION SAMPEL');
 const TEMP_DIR = path.join(getAppDataDir(), 'data', 'temp_migration');
 // Same single source of truth as dbManager and the migration routes, so the worker
@@ -833,8 +834,8 @@ async function parseAndImportPgDump(sqlPath: string, targetDbPath: string) {
   try {
     await db.run(`DELETE FROM medicines WHERE source = 'master_reference'`);
   } catch (err) { }
-
-  const totalPasses = 4;
+// 
+//   const _totalPasses = 4;
   const stats = {
     categories: 0,
     manufacturers: 0,
@@ -1383,7 +1384,7 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
 
   // Alter schema for custom fields dynamically
   if (mapping) {
-    for (const [csvCol, targetCol] of Object.entries(mapping)) {
+    for (const [_csvCol, targetCol] of Object.entries(mapping)) {
       if (targetCol && String(targetCol).startsWith('custom_col_')) {
         const dbColName = String(targetCol).substring(11).trim().replace(/\s+/g, '_').toLowerCase();
 

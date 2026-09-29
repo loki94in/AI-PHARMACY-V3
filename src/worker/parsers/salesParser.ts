@@ -1,5 +1,5 @@
 import { Database } from 'sqlite';
-import { parseValues, cleanValue, normalizeDate } from '../../utils/migrationUtils.js';
+import { parseValues, cleanValue} from '../../utils/migrationUtils.js';
 import { recordAuditEntry } from '../../utils/migrationAudit.js';
 
 /**

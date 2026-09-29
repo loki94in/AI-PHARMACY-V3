@@ -1,7 +1,7 @@
-import fs from 'fs';
-import path from 'path';
-import { open } from 'sqlite';
-import sqlite3 from 'sqlite3';
+// import fs from 'fs';
+// import path from 'path';
+// import { open } from 'sqlite';
+// import sqlite3 from 'sqlite3';
 import { normalizeDate } from './migrationUtils.js';
 
 // Auto-detect which data modules are present based on column headers
@@ -107,7 +107,7 @@ export function matchesFilters(row: any, mapping: Record<string, string>, filter
 export function runSimulation(
   samples: any[],
   mapping: Record<string, string>,
-  dataType: string,
+  _dataType: string,
   existingMedicines: string[]
 ): { created: number; updated: number; skipped: number } {
   let created = 0;

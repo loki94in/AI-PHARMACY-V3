@@ -1,8 +1,8 @@
-import { Database } from 'sqlite';
+// import { Database } from 'sqlite';
 import { dbManager } from '../database/connection.js';
-import { config } from '../config/index.js';
-import { sendMessage } from '../whatsappClient.js';
-import { telegramBotService } from '../telegramBot.js';
+// import { config } from '../config/index.js';
+// import { sendMessage } from '../whatsappClient.js';
+// import { telegramBotService } from '../telegramBot.js';
 
 export interface InventoryItem {
   id: number;

@@ -35,7 +35,7 @@ export interface MigrationAuditSummary {
   records: MigrationAuditRecord[];
 }
 
-export function getDefaultSuggestedAction(entityType: string, action: string, rawVal?: any): string {
+export function getDefaultSuggestedAction(entityType: string, action: string, _rawVal?: any): string {
   if (entityType === 'customer') {
     return action === 'preserved_null'
       ? 'Review original sales invoice receipt to verify customer details, or leave as direct OTC walk-in sale.'

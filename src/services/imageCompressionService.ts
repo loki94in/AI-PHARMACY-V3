@@ -26,7 +26,7 @@ class ImageCompressionService {
     inputBuffer: Buffer,
     targetPath: string,
     maxDim: number = 1400,
-    quality: number = 82
+    _quality: number = 82
   ): Promise<{ path: string; sizeBytes: number; originalSizeBytes: number; savedPercent: number }> {
     const originalSizeBytes = inputBuffer.length;
 

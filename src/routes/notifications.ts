@@ -9,7 +9,7 @@ import { config } from '../config/index.js';
 const router = express.Router();
 
 // Get server connection info (IPs, Port, pre-generated QR code) for mobile app setup
-router.get('/notifications/connection-info', async (req, res) => {
+router.get('/notifications/connection-info', async (_req, res) => {
   try {
     const interfaces = os.networkInterfaces();
     const ips: string[] = [];
@@ -50,7 +50,7 @@ router.get('/notifications/connection-info', async (req, res) => {
 });
 
 // Download Android APK file for mobile installation and pairing
-router.get('/notifications/download-apk', (req, res) => {
+router.get('/notifications/download-apk', (_req, res) => {
   const fs = require('fs');
   const path = require('path');
   const candidatePaths = [
@@ -240,7 +240,7 @@ router.post('/notifications/register-token', async (req, res) => {
 });
 
 // Get all registered devices and check if they are currently online
-router.get('/notifications/devices', async (req, res) => {
+router.get('/notifications/devices', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await ensureDeviceUuidColumn(db);
@@ -336,7 +336,7 @@ router.patch('/notifications/devices/:token/rename', async (req, res) => {
 });
 
 // Get device activity logs
-router.get('/notifications/devices/logs', async (req, res) => {
+router.get('/notifications/devices/logs', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all('SELECT * FROM device_connection_logs ORDER BY timestamp DESC LIMIT 150');
@@ -348,7 +348,7 @@ router.get('/notifications/devices/logs', async (req, res) => {
 });
 
 // Clear device activity logs
-router.post('/notifications/devices/logs/clear', async (req, res) => {
+router.post('/notifications/devices/logs/clear', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run('DELETE FROM device_connection_logs');
@@ -414,7 +414,7 @@ router.get('/notifications/action-logs', async (req, res) => {
 });
 
 // Clear general app action logs
-router.post('/notifications/action-logs/clear', async (req, res) => {
+router.post('/notifications/action-logs/clear', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run('DELETE FROM action_logs');
@@ -505,7 +505,7 @@ router.post('/notifications/chat-logs', async (req, res) => {
 });
 
 // Get assistant chat logs
-router.get('/notifications/chat-logs', async (req, res) => {
+router.get('/notifications/chat-logs', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all('SELECT * FROM assistant_chat_logs ORDER BY created_at ASC LIMIT 1000');
@@ -517,7 +517,7 @@ router.get('/notifications/chat-logs', async (req, res) => {
 });
 
 // Clear assistant chat logs
-router.post('/notifications/chat-logs/clear', async (req, res) => {
+router.post('/notifications/chat-logs/clear', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run('DELETE FROM assistant_chat_logs');
