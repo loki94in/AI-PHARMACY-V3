@@ -124,10 +124,11 @@ async function testLiveFixes() {
     if (zocefResult) {
       console.log(`  Zocef 500 downloaded product: "${zocefResult.product_name}"`);
       console.log(`  Image path: ${zocefResult.image_path}`);
-      console.log(`  Image type: ${zocefResult.image_type}`);
+      const zocefImageType = (zocefResult as any).image_type;
+      console.log(`  Image type: ${zocefImageType}`);
       console.log(`  Source URL: ${zocefResult.source_url}`);
-      assert(zocefResult.image_type === 'combined' || zocefResult.image_type === 'box' || zocefResult.image_type === 'back',
-        `Zocef 500 image_type must be combined/box/back with visible text (got ${zocefResult.image_type})`
+      assert(zocefImageType === 'combined' || zocefImageType === 'box' || zocefImageType === 'back',
+        `Zocef 500 image_type must be combined/box/back with visible text (got ${zocefImageType})`
       );
       assert(!zocefResult.source_url?.includes('front-2'), `Must NOT be the blank front-2 bubble view`);
     }
