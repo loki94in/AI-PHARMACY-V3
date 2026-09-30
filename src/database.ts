@@ -739,11 +739,18 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
   }
 }
 
+// Number of ensureSchema() runs in flight. `dbManager.isBooting` must stay true until the LAST one
+// ends: with a plain boolean, the first overlapping run to finish cleared it while another was still
+// running, so that run's bill-date UPDATE on sales_invoices looked like a stock write and fired a
+// full stock-metrics + expiry-cache rebuild (bug P2-82, ~17 per day in the real shop log).
+let ensureSchemaRuns = 0;
+
 /**
  * Ensure required SQLite tables exist.
  * Creates `medicines`, `catalog_jobs`, `processed_files`, `message_templates` and others if they are missing.
  */
 export async function ensureSchema(dbPath: string) {
+  ensureSchemaRuns++;
   dbManager.isBooting = true;
   try {
     const db = await dbManager.getConnection();
@@ -4695,6 +4702,7 @@ export async function ensureSchema(dbPath: string) {
     console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
     // ponytail: don't close — we reuse the dbManager shared connection
   } finally {
-    dbManager.isBooting = false;
+    ensureSchemaRuns--;
+    if (ensureSchemaRuns === 0) dbManager.isBooting = false;
   }
 }

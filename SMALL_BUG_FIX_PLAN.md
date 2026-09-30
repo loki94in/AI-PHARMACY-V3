@@ -986,6 +986,32 @@
 
 ---
 
+### [Fixed] P2-81 — App opens slowly and freezes for 1–2 s right after it starts
+
+| Field | Content |
+|-------|---------|
+| **What the user saw** | After double-clicking the app nothing appeared until the backend was up, and then the first screen froze. The real shop log (2026-09-30) showed route pre-warm 46.7 s on the first start after a PC restart and ~5 s on warm starts. |
+| **Root cause** | (1) Boot-time jobs (refill check, shortage check, monthly-report check, catalog worker) imported modules that load heavy libraries at the top of the file: `refillService → telegramBot → aiCameraService/onnxOcr/imageArchive` (node-telegram-bot-api 0.42 s + jimp/onnx), `refillOrderReconciler → whatsappClient` (whatsapp-web.js 0.74 s), `shortageReminderService → notificationService → emailService` (imap, mailparser, xlsx), `monthlyReportService` (pdfkit, xlsx), `catalogWorker → extractor → aiCameraService`. Loading them blocked the backend's event loop for 1.47 s + 0.67 s (warm disk, measured with an event-loop probe) exactly when the POS screen asks for its first data; `/api/health` and `/api/medicines/compact` waited up to 1.5 s. (2) `electron/main.ts` created the window only after a blocking `netstat` and after the backend answered, polling every 250 ms. |
+| **How it was fixed** | (1) Each owning module loads its heavy library on first use: `whatsappClient.ts` (`loadWwebjs()` in `launchClientInstance` / media send), `telegramBot.ts` (bot library only when a bot starts; aiCamera/imageArchive in the photo handler), `emailService.ts` (imap, mailparser, xlsx, aiCamera via lazy loaders), `monthlyReportService.ts` (pdfkit/xlsx inside the generate methods), `catalogWorker.ts` (`extractor.js` only for a PDF job). Types use `import type`. (2) Electron shows the window at once with an inline "Starting…" page (one small spinner, no GPU), runs the port check asynchronously, polls the backend every 50 ms and then loads the app. Closing the window on the splash no longer starts an orphan backend. |
+| **Priority** | P2 |
+| **What not to touch** | No-GPU switches in `electron/main.ts` (guardrail E1). Do not re-add top-level value imports of these libraries in boot-path modules (`tests/bootLazyImports.test.ts`). WhatsApp still restores at boot when a session exists; only the library load moved to that moment. |
+| **Verified by** | Production-style bundle, isolated dev data: post-start event-loop stalls 1,468 + 671 ms → none ≥ 100 ms; worst `/api/medicines/compact` wait 1,494 ms → 66 ms; route pre-warm 3.6 s → 2.1 s. Splash window visible 0.27–0.43 s after Electron starts (CPU rendering). Lazy loaders checked under tsx and the esbuild CJS bundle (8/8). `tests/bootLazyImports.test.ts` (5/5); `npx tsc --noEmit`; `npm run guardrails` clean. |
+
+---
+
+### [Fixed] P2-82 — Full stock recalculation ran ~17 times a day with no stock change
+
+| Field | Content |
+|-------|---------|
+| **What the user saw** | Short freezes during the day. The real shop log showed `Recalculating precalculated stock metrics for 10530 medicines` + a full rebuild of all 111 expiry files 17 times on 2026-09-30, including 65 s after a start with no bill saved. |
+| **Root cause** | `emailService` called `ensureSchema()` on every mail sync and inbox action (303 runs that day). `ensureSchema` set the global `dbManager.isBooting` to `true` and back to `false` in `finally`, so when two runs overlapped the first to finish cleared the flag while the other was still running. That run's `normalizeBillDatesToLocalTime` `UPDATE sales_invoices …` then passed the write interceptor as a stock write with no batch id, which triggers a FULL stock-metrics recalculation and expiry-cache rebuild. Every sale saved during an `ensureSchema` window was also skipped by the interceptor. |
+| **How it was fixed** | `database.ts`: a run counter (`ensureSchemaRuns`); `isBooting` is cleared only when the last run ends. `emailService.ts`: `ensureEmailSchema()` runs `ensureSchema` once per process (boot and backup restore already ensure it). |
+| **Priority** | P2 |
+| **What not to touch** | Both boot paths of `ensureSchema` are unchanged; no schema/DDL change. Backup restore still calls `ensureSchema` itself. |
+| **Verified by** | `tests/ensureSchemaOverlap.test.ts`: fails on the old boolean (`[true, false]`), passes with the counter. Isolated repro before the fix: 1 run → 0 rebuilds, 2 overlapping runs → full rebuild. `npx tsc --noEmit`; `npm run guardrails` clean. |
+
+---
+
 ## Open
 
 > P0-74 … P2-80 come from one owner-requested audit (2026-09-30): "the purchase bill is the only truth;

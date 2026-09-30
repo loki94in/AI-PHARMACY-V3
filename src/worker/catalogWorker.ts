@@ -4,7 +4,6 @@ import readline from 'readline';
 import { config } from '../config/index.js';
 import { dbManager } from '../database/connection.js';
 // import { ensureSchema } from '../database.js';
-import { extractFromPdf} from '../extractor.js';
 import { eventService } from '../services/eventService.js';
 import { activityTracker } from '../utils/activityTracker.js';
 import csvParser from 'csv-parser';
@@ -459,6 +458,7 @@ export async function runCatalogAnalysis(jobId: number) {
         });
       }
     } else if (ext === '.pdf') {
+      const { extractFromPdf } = await import('../extractor.js'); // OCR stack (jimp/onnx/tesseract) loads only for a PDF job (bug P2-81)
       const extracted = await extractFromPdf(job.file_path);
       const seenNames = new Set<string>();
       previewData = extracted.slice(0, 100).map(item => {
@@ -749,6 +749,7 @@ export async function runCatalogImport(jobId: number) {
         rows.push(...excelRows);
       }
     } else if (ext === '.pdf') {
+      const { extractFromPdf } = await import('../extractor.js'); // OCR stack (jimp/onnx/tesseract) loads only for a PDF job (bug P2-81)
       const extracted = await extractFromPdf(job.file_path);
       const pdfRows = extracted.map(item => ({
         'Product Name': item.name,

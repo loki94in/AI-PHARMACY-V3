@@ -1,4 +1,4 @@
-import TelegramBot from 'node-telegram-bot-api';
+import type TelegramBot from 'node-telegram-bot-api';
 import path from 'path';
 import fs from 'fs';
 // import axios from 'axios';
@@ -8,8 +8,9 @@ import { isValidDistributorName } from './utils/nameNormalizer.js';
 import { dbManager } from './database/connection.js';
 // import { ensureSchema } from './database.js';
 import { telegramPrescriptionService } from './services/telegramPrescriptionService.js';
-import { aiCameraService } from './services/aiCameraService.js';
-import { imageArchiveService } from './services/imageArchiveService.js';
+// aiCameraService / imageArchiveService (jimp + onnxruntime) and node-telegram-bot-api are loaded
+// only when a bot actually starts or a photo arrives — every module importing this file for
+// telegramBotService used to pay ~0.6 s of blocked event loop at boot (bug P2-81).
 import { notificationManager } from './utils/notifications.js';
 import { extractDateFromText } from './utils/dateExtractor.js';
 import { getAppDataDir } from './config/index.js';
@@ -86,7 +87,8 @@ class TelegramBotService {
       }
 
       console.log('[Telegram] Starting new bot polling client...');
-      this.bot = new TelegramBot(this.token, { polling: true });
+      const TelegramBotCtor: typeof TelegramBot = await import('node-telegram-bot-api').then((m: any) => m.default ?? m);
+      this.bot = new TelegramBotCtor(this.token, { polling: true });
       this.setupCommandHandlers();
       this.setupErrorHandling();
       console.log('[Telegram] Bot initialized successfully.');
@@ -408,9 +410,11 @@ class TelegramBotService {
                 fs.writeFileSync(tempFilePath, buffer);
 
                 // Route through AI archiving service
+                const { imageArchiveService } = await import('./services/imageArchiveService.js');
                 await imageArchiveService.processAndRouteImage(tempFilePath);
 
                 // Process with AI camera service
+                const { aiCameraService } = await import('./services/aiCameraService.js');
                 const result = await aiCameraService.processImage(buffer);
 
                 // Determine if it is a bill/invoice photo

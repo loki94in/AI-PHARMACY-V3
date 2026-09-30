@@ -1,5 +1,4 @@
-import imap from 'imap-simple';
-import { simpleParser } from 'mailparser';
+import type imapSimple from 'imap-simple';
 import { dbManager } from '../database/connection.js';
 import { createTransport, Transporter, SendMailOptions } from 'nodemailer';
 import path from 'path';
@@ -12,9 +11,7 @@ import { telegramBotService } from '../telegramBot.js';
 import { notificationManager } from '../utils/notifications.js';
 // import { extractDateFromText } from '../utils/dateExtractor.js';
 import { parse } from 'csv-parse/sync';
-import * as XLSX from 'xlsx';
 import { eventService } from './eventService.js';
-import { aiCameraService } from './aiCameraService.js';
 import { extractCleanEmail } from '../utils/emailSanitizer.js';
 import { getEmailRetentionLimit, getEmailRetentionDays, getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
 import { config, getAppDataDir } from '../config/index.js';
@@ -26,6 +23,25 @@ import { classifyEmailMessage } from './messageClassifier.js';
 // const __dirname = path.dirname(__filename);
 const getDbPath = () => config.dbPath;
 const getUploadsDir = () => process.env.UPLOADS_DIR || path.resolve(getAppDataDir(), 'uploads');
+
+// This module is imported at boot (email poller, notificationService), so its heavy parsers load on
+// first use instead: they blocked the event loop ~0.6 s right after startup (bug P2-81).
+// CommonJS packages: `default` is the real exports object under both tsx and the bundled exe.
+const loadImap = (): Promise<typeof imapSimple> => import('imap-simple').then((m: any) => m.default ?? m);
+const loadSimpleParser = (): Promise<typeof import('mailparser').simpleParser> => import('mailparser').then((m: any) => (m.default ?? m).simpleParser);
+const loadXlsx = (): Promise<typeof import('xlsx')> => import('xlsx').then((m: any) => m.default ?? m);
+const loadAiCamera = () => import('./aiCameraService.js').then(m => m.aiCameraService);
+
+// The schema is ensured at boot (server.ts Phase 1) and again after a backup restore
+// (backupService). Running the whole fast-boot path on every mail sync / inbox read cost ~300 runs a
+// day on the shared DB connection (bug P2-82), so this module does it once per process.
+let emailSchemaReady: Promise<void> | null = null;
+function ensureEmailSchema(): Promise<void> {
+  if (!emailSchemaReady) {
+    emailSchemaReady = ensureSchema(getDbPath()).catch((err) => { emailSchemaReady = null; throw err; });
+  }
+  return emailSchemaReady;
+}
 
 function getJaccardSimilarity(arr1: string[], arr2: string[]): number {
   const set1 = new Set(arr1.map(s => s.toLowerCase().trim()));
@@ -2376,6 +2392,7 @@ export class EmailService {
           }
         } else {
           const fileBuffer = fs.readFileSync(filePath);
+          const XLSX = await loadXlsx();
           const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
           const sheetName = workbook.SheetNames[0];
           if (sheetName) {
@@ -2646,7 +2663,7 @@ export class EmailService {
           content = pdfData.text || '';
         } else if (isImage) {
           const fileBuffer = fs.readFileSync(filePath);
-          const ocrResult = await aiCameraService.processImage(fileBuffer, true);
+          const ocrResult = await (await loadAiCamera()).processImage(fileBuffer, true);
           content = ocrResult?.text || '';
         } else {
           content = fs.readFileSync(filePath, 'utf-8');
@@ -2711,7 +2728,7 @@ export class EmailService {
                 pageBuffer = await image.getBuffer('image/png');
               }
 
-              const pageOcr = await aiCameraService.extractTextFromImage(pageBuffer);
+              const pageOcr = await (await loadAiCamera()).extractTextFromImage(pageBuffer);
               if (pageOcr?.text) {
                 ocrText += pageOcr.text + '\n';
               }
@@ -2723,7 +2740,7 @@ export class EmailService {
             console.error('[emailService] OCR PDF rendering failed, attempting direct image OCR:', ocrErr);
             if (!filePath.toLowerCase().endsWith('.pdf')) {
               try {
-                const directOcr = await aiCameraService.processImage(fileBuffer, true);
+                const directOcr = await (await loadAiCamera()).processImage(fileBuffer, true);
                 if (directOcr?.text) content = directOcr.text;
               } catch (err2) {
                 console.error('[emailService] Direct image OCR fallback also failed:', err2);
@@ -3194,7 +3211,7 @@ export class EmailService {
    */
   public async pruneOldEmails(dbInstance?: any): Promise<{ deletedCount: number }> {
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = dbInstance || (await dbManager.getConnection());
       const limit = await getEmailRetentionLimit(db);
       const retentionDays = await getEmailRetentionDays(db);
@@ -3284,7 +3301,7 @@ export class EmailService {
    */
   public async getEmailBody(uid: number): Promise<string> {
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = await dbManager.getConnection();
       const row = await db.get('SELECT body FROM emails WHERE uid = ?', [uid]);
       return row?.body || '';
@@ -3299,7 +3316,7 @@ export class EmailService {
    */
   public async getLocalInbox(limit: number = 30, since?: string): Promise<Array<any>> {
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = await dbManager.getConnection();
 
       let rows: any[] = [];
@@ -3357,7 +3374,7 @@ export class EmailService {
    */
   public async deleteEmail(uid: number): Promise<{ success: boolean; deleted: boolean }> {
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = await dbManager.getConnection();
 
       // 1. Check and cancel any pending unsent WhatsApp queue items or notifications for this email/invoice
@@ -3564,7 +3581,7 @@ export class EmailService {
     let syncedCount = 0;
 
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = await dbManager.getConnection();
 
       // Find the highest UID already stored
@@ -3573,7 +3590,7 @@ export class EmailService {
 
       console.log(`[Sync] Last stored UID: ${lastStoredUid}. Connecting to IMAP for delta sync...`);
 
-      connection = await imap.connect({ imap: imapConfig });
+      connection = await (await loadImap()).connect({ imap: imapConfig });
       this.activeConnection = connection;
       await connection.openBox('INBOX');
 
@@ -3620,7 +3637,7 @@ export class EmailService {
           const bodyPart = msg.parts.find((p: any) => p.which === '');
           if (!bodyPart) continue;
 
-          const parsed = await simpleParser(bodyPart.body);
+          const parsed = await (await loadSimpleParser())(bodyPart.body);
           const isSeen = msg.attributes.flags.includes('\\Seen') ? 1 : 0;
 
           const processedEmail: ProcessedEmail = {
@@ -3852,7 +3869,7 @@ export class EmailService {
    */
   public async markEmailSaved(uid: number): Promise<boolean> {
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = await dbManager.getConnection();
       await db.run('UPDATE emails SET is_saved = 1, is_seen = 1 WHERE uid = ?', [uid]);
       return true;
@@ -3882,7 +3899,7 @@ export class EmailService {
     let connection = null;
     try {
       const config = { imap: imapConfig };
-      connection = await imap.connect(config);
+      connection = await (await loadImap()).connect(config);
       await connection.openBox('INBOX');
 
       // Search specific UID
@@ -3898,7 +3915,7 @@ export class EmailService {
       const bodyPart = item.parts.find((p: any) => p.which === '');
       if (!bodyPart) return this.getLocalAttachmentsForUid(uid);
 
-      const parsed = await simpleParser(bodyPart.body);
+      const parsed = await (await loadSimpleParser())(bodyPart.body);
       const attachments = parsed.attachments || [];
 
       const uploadsDir = process.env.UPLOADS_DIR || path.join(getAppDataDir(), 'uploads');
@@ -3986,7 +4003,7 @@ export class EmailService {
    */
   public async markEmailSeen(uid: number): Promise<void> {
     try {
-      await ensureSchema(getDbPath());
+      await ensureEmailSchema();
       const db = await dbManager.getConnection();
       await db.run('UPDATE emails SET is_seen = 1 WHERE uid = ?', [uid]);
     } catch (err) {
@@ -4007,7 +4024,7 @@ export class EmailService {
     let connection: any = null;
     try {
       const config = { imap: imapConfig };
-      connection = await imap.connect(config);
+      connection = await (await loadImap()).connect(config);
       await connection.openBox('INBOX');
 
       // Mark as seen via underlying node-imap connection

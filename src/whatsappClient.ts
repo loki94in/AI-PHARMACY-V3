@@ -1,5 +1,4 @@
-import pkg from 'whatsapp-web.js';
-const { Client, LocalAuth, MessageMedia } = pkg;
+import type WAWebJS from 'whatsapp-web.js';
 import fs from 'fs';
 import path from 'path';
 // import { fileURLToPath } from 'url';
@@ -11,9 +10,17 @@ import { config as appConfig, getAppDataDir, isPackagedApp } from './config/inde
 import { whatsappBusinessService } from './services/whatsappBusinessService.js';
 import { cleanProfileLockFiles } from './services/tokenRefreshScheduler.js';
 
-// whatsapp-web.js uses CommonJS default export, so Client is a value not a type.
-// Use InstanceType<typeof Client> to get the correct instance type.
-type WAClient = InstanceType<typeof Client>;
+type WAClient = WAWebJS.Client;
+
+// whatsapp-web.js (+ puppeteer) blocks the event loop ~0.75 s (far more on a cold disk) while it
+// loads, so it is loaded on first real use (client launch / media send), never at boot. Modules that
+// import this file only for helpers (phone normalising, status) no longer pay for it (bug P2-81).
+let wwebjsPromise: Promise<typeof WAWebJS> | null = null;
+function loadWwebjs(): Promise<typeof WAWebJS> {
+  // CommonJS package: the bundle/tsx give either the exports object or a namespace with `default`.
+  if (!wwebjsPromise) wwebjsPromise = import('whatsapp-web.js').then((m: any) => (m.default ?? m) as typeof WAWebJS);
+  return wwebjsPromise;
+}
 
 const execAsync = promisify(exec);
 
@@ -1007,7 +1014,7 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
 
 /** Internal helper to instantiate WAClient and bind event listeners */
 function launchClientInstance(forceQr: boolean): Promise<WAClient> {
-  return new Promise<WAClient>((resolve, reject) => {
+  return loadWwebjs().then(({ Client, LocalAuth }) => new Promise<WAClient>((resolve, reject) => {
     let execPath = '';
     const paths = [
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -1507,7 +1514,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       setLifecycleProgress('failed', 0, `Initialization failed: ${errMsg}`, errMsg);
       reject(err);
     });
-  });
+  }));
 }
 
 /** Initialize the WhatsApp client and return it — Boot check + manual invocation contract:
@@ -1944,6 +1951,8 @@ export async function sendMessage(
             } catch (_) {}
           }
 
+          // Already loaded by the time a client exists; this just reads the cached module.
+          const { MessageMedia } = await loadWwebjs();
           let sentMsg: any = null;
           if (file && file.mimetype && file.data) {
             let tempSavedPath: string | null = null;

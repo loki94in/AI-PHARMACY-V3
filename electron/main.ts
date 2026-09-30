@@ -13,7 +13,8 @@
  */
 
 import { app, BrowserWindow, shell } from 'electron';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, exec, execSync, ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
@@ -77,15 +78,14 @@ function cleanAllSessionLocks(targetDir: string): void {
   }
 }
 
-/** Forcibly reclaim port if occupied by any stale/zombie process from previous runs */
-function reclaimPort(port: number): void {
+/** Forcibly reclaim port if occupied by any stale/zombie process from previous runs.
+ *  Async: a blocking netstat on the main thread held back the window's first paint (bug P2-81). */
+async function reclaimPort(port: number): Promise<void> {
   if (process.platform !== 'win32') return;
+  const run = promisify(exec);
   try {
-    const netstatOut = execSync(`netstat -ano -p tcp | findstr :${port} | findstr LISTENING`, {
-      encoding: 'utf8',
-      timeout: 1500,
-    });
-    const lines = netstatOut.trim().split('\n');
+    const { stdout } = await run(`netstat -ano -p tcp | findstr :${port} | findstr LISTENING`, { timeout: 1500 });
+    const lines = stdout.trim().split('\n');
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
       const pidStr = parts[parts.length - 1];
@@ -93,7 +93,7 @@ function reclaimPort(port: number): void {
       if (pid && pid !== process.pid) {
         console.log(`[ElectronMain] Port ${port} is occupied by stale PID ${pid}. Terminating process tree...`);
         try {
-          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 2000 });
+          await run(`taskkill /F /T /PID ${pid}`, { timeout: 2000 });
         } catch (_) {}
       }
     }
@@ -101,6 +101,17 @@ function reclaimPort(port: number): void {
     // Port is already free
   }
 }
+
+// Shown the moment the window opens, while the backend starts (bug P2-81). Plain inline HTML: no
+// network, no framework. Kept cheap for CPU-only rendering (No-GPU contract): one small spinner.
+const SPLASH_URL = 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><title>AI Pharmacy OS</title>
+<style>html,body{margin:0;height:100%;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+body{display:flex;align-items:center;justify-content:center}.box{text-align:center}
+.spin{width:28px;height:28px;margin:0 auto 14px;border:3px solid #334155;border-top-color:#38bdf8;border-radius:50%;animation:s .9s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}h1{margin:0 0 6px;font-size:18px;color:#38bdf8;font-weight:600}p{margin:0;font-size:13px;color:#94a3b8}</style></head>
+<body><div class="box"><div class="spin"></div><h1>AI Pharmacy OS</h1><p>Starting…</p></div></body></html>`);
+
+let backendReady = false;
 
 // OWNER POLICY (2026-09-30): the app must never need a graphics card. It must run on any PC,
 // including ones with only the CPU's integrated graphics. Everything is drawn by the CPU, so the UI
@@ -137,7 +148,7 @@ function waitForBackend(timeoutMs = 30_000): Promise<void> {
         reject(new Error(`Backend did not start within ${timeoutMs}ms`));
         return;
       }
-      setTimeout(probe, 250);
+      setTimeout(probe, 50); // a local probe costs nothing; 250 ms added up to a quarter second of blank wait
     }
     probe();
   });
@@ -296,8 +307,9 @@ function createWindow() {
     }
   });
 
-  // Load the React SPA served by our Express backend
-  mainWindow.loadURL(BACKEND_URL);
+  // The splash paints at once; the React SPA (served by our Express backend) replaces it as soon as
+  // the backend answers. A window re-created later (macOS 'activate') goes straight to the app.
+  mainWindow.loadURL(backendReady ? BACKEND_URL : SPLASH_URL);
 
   // Open external links in system browser, not Electron
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -338,9 +350,14 @@ app.whenReady().then(async () => {
     yieldReq.end();
   } catch (_) {}
 
+  // Window first (bug P2-81): the user sees the app open immediately instead of an empty desktop
+  // for the whole backend start-up; the splash is swapped for the SPA once the backend answers.
+  createWindow();
+
   // Startup Sanitation: Reclaim port 5175 if occupied by any lingering zombie, and clear session locks
   const exeDir = path.dirname(process.execPath);
-  reclaimPort(PORT);
+  await reclaimPort(PORT);
+  if (!mainWindow) return; // closed on the splash: the app is quitting, don't start an orphan backend
   cleanAllSessionLocks(exeDir);
 
   console.log('[ElectronMain] Starting AI Pharmacy OS backend...');
@@ -348,8 +365,9 @@ app.whenReady().then(async () => {
 
   try {
     await waitForBackend();
-    console.log('[ElectronMain] Backend ready. Creating window...');
-    createWindow();
+    backendReady = true;
+    console.log('[ElectronMain] Backend ready. Loading the app...');
+    mainWindow?.loadURL(BACKEND_URL); // no window = it was closed on the splash and the app is quitting
   } catch (err) {
     console.error('[ElectronMain] Backend failed to start:', err);
     app.quit();

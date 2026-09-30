@@ -2,8 +2,8 @@ import { dbManager } from '../database/connection.js';
 import { whatsappQueueWorker } from './whatsappQueueWorker.js';
 import { isReady, isPuppeteerDetachedError } from '../whatsappClient.js';
 import { getAppDataDir } from '../config/index.js';
-import PDFDocument from 'pdfkit';
-import XLSX from 'xlsx';
+// pdfkit / xlsx load inside the two generate methods: the boot-time "is a report due?" check
+// imports this service and was paying ~0.4 s of blocked event loop for them (bug P2-81).
 import fs from 'fs';
 import path from 'path';
 // import { fileURLToPath } from 'url';
@@ -350,6 +350,7 @@ export class MonthlyReportService {
     }
 
     const finalPath = outputPath || path.join(TEMP_DIR, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
+    const PDFDocument: typeof import('pdfkit') = await import('pdfkit').then((m: any) => m.default ?? m);
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 40, size: 'A4' });
@@ -592,6 +593,7 @@ export class MonthlyReportService {
       ...data.weeklyBreakdown.map(w => [w.label, w.sales, w.purchases, w.sales - w.purchases])
     ];
 
+    const XLSX: typeof import('xlsx') = await import('xlsx').then((m: any) => m.default ?? m);
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(wsData);
 
