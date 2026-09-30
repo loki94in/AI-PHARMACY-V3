@@ -337,47 +337,43 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     let response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
       method: 'POST',
       body: JSON.stringify(buildPayload(primaryKeyword)),
-      signal: AbortSignal.timeout(8000)
-    });
+      signal: AbortSignal.timeout(3500)
+    }).catch(() => null);
 
-    let data: any = response.ok ? await response.json().catch(() => null) : null;
+    let data: any = response && response.ok ? await response.json().catch(() => null) : null;
 
-    // Retry 1: If primaryKeyword returned 0 items and differs from qRaw, retry with raw query
-    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && primaryKeyword !== qRaw) {
-      response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
-        method: 'POST',
-        body: JSON.stringify(buildPayload(qRaw)),
-        signal: AbortSignal.timeout(5000)
-      });
-      if (response.ok) {
-        data = await response.json().catch(() => null);
-      }
-    }
-
-    // Retry 2: If still 0 items and contains hyphens/slashes, try with cleaned search term
-    const cleanedTerm = qRaw.replace(/[-_/]/g, ' ').replace(/\s+/g, ' ').trim();
-    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && cleanedTerm !== qRaw && cleanedTerm !== primaryKeyword && cleanedTerm.length >= 2) {
-      response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
-        method: 'POST',
-        body: JSON.stringify(buildPayload(cleanedTerm)),
-        signal: AbortSignal.timeout(5000)
-      });
-      if (response.ok) {
-        data = await response.json().catch(() => null);
-      }
-    }
-
-    // Retry 3: Casing fallback — ensure search is never blocked by strict capital or lowercase font rules
+    // Turbo Fallback: If primaryKeyword returned 0 items, gather unique candidate terms
+    // and query them concurrently in parallel (race to first non-empty response) with a tight 3s timeout
     if (!data || !Array.isArray(data.data) || data.data.length === 0) {
+      const candidates: string[] = [];
+      if (primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
+        candidates.push(qRaw);
+      }
+      const cleanedTerm = qRaw.replace(/[-_/]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (cleanedTerm.length >= 2 && cleanedTerm.toLowerCase() !== primaryKeyword.toLowerCase() && cleanedTerm.toLowerCase() !== qRaw.toLowerCase()) {
+        candidates.push(cleanedTerm);
+      }
       const altCase = qRaw === qRaw.toUpperCase() ? qRaw.toLowerCase().trim() : qRaw.toUpperCase().trim();
-      if (altCase !== qRaw && altCase !== primaryKeyword && altCase !== cleanedTerm && altCase.length >= 2) {
-        response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
-          method: 'POST',
-          body: JSON.stringify(buildPayload(altCase)),
-          signal: AbortSignal.timeout(5000)
-        });
-        if (response.ok) {
-          data = await response.json().catch(() => null);
+      if (altCase.length >= 2 && altCase !== qRaw && !candidates.includes(altCase)) {
+        candidates.push(altCase);
+      }
+
+      if (candidates.length > 0) {
+        const parallelFetches = candidates.map(term =>
+          fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
+            method: 'POST',
+            body: JSON.stringify(buildPayload(term)),
+            signal: AbortSignal.timeout(3000)
+          })
+            .then(res => res.ok ? res.json().catch(() => null) : null)
+            .then(resJson => (resJson && Array.isArray(resJson.data) && resJson.data.length > 0 ? resJson : null))
+            .catch(() => null)
+        );
+
+        const results = await Promise.all(parallelFetches);
+        const successful = results.find(r => r && Array.isArray(r.data) && r.data.length > 0);
+        if (successful) {
+          data = successful;
         }
       }
     }

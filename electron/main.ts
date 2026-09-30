@@ -102,12 +102,9 @@ function reclaimPort(port: number): void {
   }
 }
 
-// Chromium Performance & Hardware Acceleration Switches (Crucial for Low-Spec / Integrated Display PCs)
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('enable-features', 'CanvasOopRasterization');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
+// Chromium Performance & Efficiency Switches
+// Allow standard D3D11 compositor without forced 3D pipeline pegging or continuous unthrottled raster loops
+app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 
 /** Poll the health endpoint until the backend is ready (max 30s) */
 function waitForBackend(timeoutMs = 30_000): Promise<void> {
@@ -266,7 +263,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      backgroundThrottling: false, // Prevent frame rate drops and timer clamping
+      backgroundThrottling: true, // Allow Chromium to sleep idle/hidden tabs and eliminate GPU overheating
     },
   });
 

@@ -1324,7 +1324,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
           setSearchLoading(false);
         }
       }
-    }, 300);
+    }, 200);
 
     return () => {
       clearTimeout(delayDebounce);
