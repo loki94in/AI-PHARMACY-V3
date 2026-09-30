@@ -66,6 +66,8 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+let lastHealthCheckAt = 0;
+
 // Interceptor to handle errors centrally and OPTIONAL data standardization
 apiClient.interceptors.response.use(
   (response) => {
@@ -129,8 +131,12 @@ apiClient.interceptors.response.use(
       }
     }
 
-    // Diagnostics check for false backend errors — result attached to the rejected error so callers can inspect it
-    if (isNetworkError && config && config.url !== '/verification/health' && config.url !== '/api/verification/health') {
+    // Diagnostics check for false backend errors — result attached to the rejected error so callers can inspect it.
+    // Throttled to one check per 30s: a busy backend fails many requests at once, and each
+    // check runs a DB write transaction, so an unthrottled burst piled load onto the backend.
+    if (isNetworkError && config && config.url !== '/verification/health' && config.url !== '/api/verification/health'
+      && Date.now() - lastHealthCheckAt > 30_000) {
+      lastHealthCheckAt = Date.now();
       console.warn(`[Verification Layer] Request to ${config.url} failed. Performing silent health check...`);
       axios.get('/api/verification/health')
       .then(res => {

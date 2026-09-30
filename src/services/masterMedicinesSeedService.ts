@@ -478,6 +478,16 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
     return { enriched: 0 };
   }
 
+  // One full pass per CSV version. Re-running an unchanged 120 MB CSV on every
+  // boot pegged a CPU core for ~2 min and bloated the WAL (FTS update trigger
+  // fired for all ~290K rows each boot).
+  const csvStat = fs.statSync(csvPath);
+  const csvFingerprint = `${csvStat.size}:${Math.round(csvStat.mtimeMs)}`;
+  try {
+    const done = await db.get("SELECT value FROM app_settings WHERE key = 'master_enrich_csv_fingerprint'");
+    if (done?.value === csvFingerprint) return { enriched: 0 };
+  } catch (_) {}
+
   // Ensure legacy_id unique index exists for conflict resolution
   try {
     const idxList: any[] = await db.all("PRAGMA index_list('medicines')");
@@ -533,15 +543,32 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
           cgst_per       = CASE WHEN (medicines.cgst_per IS NULL OR medicines.cgst_per = 0) THEN excluded.cgst_per ELSE medicines.cgst_per END,
           sgst_per       = CASE WHEN (medicines.sgst_per IS NULL OR medicines.sgst_per = 0) THEN excluded.sgst_per ELSE medicines.sgst_per END,
           sell_price     = CASE WHEN (medicines.sell_price IS NULL OR medicines.sell_price = 0) THEN excluded.sell_price ELSE medicines.sell_price END
-        WHERE medicines.source = 'master_reference'
+        WHERE medicines.source = 'master_reference' AND (
+             (COALESCE(medicines.packaging,      '') = '' AND COALESCE(excluded.packaging,      '') <> '')
+          OR (COALESCE(medicines.manufacturer,   '') = '' AND COALESCE(excluded.manufacturer,   '') <> '')
+          OR (COALESCE(medicines.marketed_by,    '') = '' AND COALESCE(excluded.marketed_by,    '') <> '')
+          OR (COALESCE(medicines.item_type,      '') = '' AND COALESCE(excluded.item_type,      '') <> '')
+          OR (COALESCE(medicines.hsn_code,       '') = '' AND COALESCE(excluded.hsn_code,       '') <> '')
+          OR (COALESCE(medicines.therapeutic,    '') = '' AND COALESCE(excluded.therapeutic,    '') <> '')
+          OR (COALESCE(medicines.sub_therapeutic,'') = '' AND COALESCE(excluded.sub_therapeutic,'') <> '')
+          OR (COALESCE(medicines.short_code,     '') = '' AND COALESCE(excluded.short_code,     '') <> '')
+          OR (COALESCE(medicines.ucode,          '') = '' AND COALESCE(excluded.ucode,          '') <> '')
+          OR (COALESCE(medicines.barcode,        '') = '' AND COALESCE(excluded.barcode,        '') <> '')
+          OR (COALESCE(medicines.rack,           '') = '' AND COALESCE(excluded.rack,           '') <> '')
+          OR (COALESCE(medicines.cgst_per,   0) = 0 AND COALESCE(excluded.cgst_per,   0) <> 0)
+          OR (COALESCE(medicines.sgst_per,   0) = 0 AND COALESCE(excluded.sgst_per,   0) <> 0)
+          OR (COALESCE(medicines.sell_price, 0) = 0 AND COALESCE(excluded.sell_price, 0) <> 0)
+        )
       `);
+      let changed = 0;
       for (const row of rows) {
         if (cancelEnrichmentRequested) break;
-        await stmt.run(...row);
+        const res = await stmt.run(...row);
+        changed += res?.changes || 0;
       }
       await stmt.finalize();
       await db.run('COMMIT');
-      enriched += rows.length;
+      enriched += changed;
     } catch (err) {
       await db.run('ROLLBACK');
       throw err;
@@ -629,6 +656,14 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
         const { ensureMedicinesFts } = await import('../database.js');
         await ensureMedicinesFts(db);
       } catch (_) {}
+    }
+
+    // Only a completed pass marks this CSV version done; a cancelled one re-runs next boot.
+    if (!cancelEnrichmentRequested) {
+      await db.run(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('master_enrich_csv_fingerprint', ?)",
+        [csvFingerprint]
+      ).catch(() => {});
     }
 
     console.log(`[MasterEnrich] Enriched/upserted ${enriched} master medicines from CSV (${csvPath}).`);

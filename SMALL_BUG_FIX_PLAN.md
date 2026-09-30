@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P1-54 — Backend pegged one CPU core for ~2 min after every boot (master CSV re-import)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | App used 22–37% total CPU for the first ~2 minutes after every start (owner goal: ≤20%); WhatsApp bot replies and searches lagged in that window; `app.db-wal` grew to 350 MB. Log: `Master medicines enriched: 286210 rows updated from CSV` on every boot. |
+| **Root cause** | `enrichMasterMedicinesFromCsv()` (`src/services/masterMedicinesSeedService.ts`) re-read the 120 MB `reference_medicines.csv` on every boot and its `ON CONFLICT … DO UPDATE` rewrote every `master_reference` row even when no field changed — ~290K row writes, each firing the `medicines_au` FTS trigger, through 290K awaited `stmt.run()` calls. The counter added `rows.length`, so it never reported "nothing to do". |
+| **How it was fixed** | (1) CSV fingerprint (`size:mtime`) stored in `app_settings.master_enrich_csv_fingerprint` after a completed pass; unchanged CSV skips entirely. (2) `DO UPDATE … WHERE` now also requires at least one empty field that the CSV can fill, so re-scans write nothing. (3) `enriched` counts real `changes`. Fill-only-empty semantics and user-edited-row protection unchanged. |
+| **Priority** | P1 |
+| **What not to touch** | Never-overwrite rule for populated fields and `source != 'master_reference'` rows; the per-boot call site in `server.ts`. |
+| **Verified by** | `tests/masterEnrichIdempotent.test.ts` (fails on old code: 3 changes/rewrites; passes on new); live-process sampling before fix (backend 13–15% for 130 s after boot, 0–1% after); `npm run guardrails` PASS. |
+
+### [Fixed] P0-53 — DB health check left the shared connection in an open transaction (later writes could be lost)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | `backend.log`: `[VerificationService] Database health check crashed: Error: Data inserted is not retrievable` (336 times; 58 in one burst); 26 `VERIFICATION_TEST` rows committed in `action_logs` although the check always rolls back. |
+| **Root cause** | `verifyDatabaseHealth()` called `dbManager.acquireTxLock('VIP')` itself and THEN `BEGIN TRANSACTION`; the write interceptor saw the lock held and turned BEGIN into `SAVEPOINT sp_2` and the final ROLLBACK into `ROLLBACK TO SAVEPOINT sp_2`, which does not end the transaction. Every later autocommit write on the shared connection joined that open transaction — lost on close/orphan-rollback, or committed together with the test row. Frontend `services/api.ts` fired one health check per failed GET, so a slow boot produced bursts. |
+| **How it was fixed** | Removed the manual `acquireTxLock` — BEGIN/ROLLBACK go through the interceptor as a real top-level transaction (lock taken/released there), ROLLBACK only after a successful BEGIN. Frontend silent health check throttled to one per 30 s. |
+| **Priority** | P0 (data loss) |
+| **What not to touch** | Write-interceptor savepoint nesting in `database/connection.ts` (correct for genuinely nested BEGINs); `/api/verification/health` response shape. |
+| **Verified by** | `tests/verificationHealthTx.test.ts` (old code: write after 3 health checks not persisted; new: persisted, 0 test rows, lock free); `npm run guardrails` PASS; frontend `tsc --noEmit` clean. |
+
 ### [Fixed] P3-52 — Right-Side Blurry Black Shadow Effect Over Quick Assist (Off-Screen Sliding Drawer Box-Shadow Bleed)
 
 | Field | Content |

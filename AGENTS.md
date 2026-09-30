@@ -348,7 +348,7 @@ To prevent daily session expiration and repetitive OTP prompts:
 ## WhatsApp Idle-Sleep Contract (added 2026-08)
 
 The resident headless Chrome (~250–400 MB steady RAM) now sleeps when idle instead of running 24/7:
-1. **Sleep trigger**: `whatsappClient.ts` evaluates every ~60 s while a browser is resident; when idle ≥ `whatsapp_idle_sleep_min` (app_settings, default 15, `0` = never sleep) AND no init/QR/sync flow is active, it destroys the client and broadcasts SSE `wa_status_changed {status:'sleeping'}`. LocalAuth session stays on disk.
+1. **Sleep trigger**: `whatsappClient.ts` evaluates every ~60 s while a browser is resident; when idle ≥ `whatsapp_idle_sleep_min` (app_settings, default `0` = never sleep, so the inbound bot always replies instantly; owner opts in with N>0) AND no init/QR/sync flow is active, it destroys the client and broadcasts SSE `wa_status_changed {status:'sleeping'}`. LocalAuth session stays on disk.
 2. **Wake paths are demand-driven and already exist** — do not add poll-based wakes: `sendMessage()`/`getChats()` auto-init; `whatsappQueueWorker`'s existing 60 s-cooldown silent `initClient()` restores for pending queue items; explicit Connect/Reconnect. Every activity (`markWhatsAppActivity()`: sends, inbox views) re-arms the evaluator.
 3. **Status truthfulness**: `getWhatsAppStatus()` exposes `sleeping`; `GET /messaging/qr` must NOT auto-restore a sleeping client (returns `status:'SLEEPING'` + message) — never let status polls wake the browser or label sleep as "disconnected". Settings renders the SLEEPING chip + idle-sleep-minutes control.
 4. **Ban profile unchanged**: same number, same whatsapp-web.js automation surface — only WHEN Chrome runs changed, never how WhatsApp is driven.

@@ -83,11 +83,12 @@ export class VerificationService {
       }
 
       // 4. Transaction & Write verification (Insert, Commit, and Rollback test)
-      // Acquire prioritized transaction lock so verification NEVER deadlocks the SQLite mutex
-      let releaseLock: (() => void) | null = null;
+      // BEGIN goes through dbManager's write interceptor, which takes the tx lock itself.
+      // Never pre-acquire the lock here: the interceptor then treats BEGIN as nested
+      // (SAVEPOINT), ROLLBACK only rolls back to the savepoint, and the connection is
+      // left inside an open transaction that swallows every later autocommit write.
+      await db.run('BEGIN TRANSACTION');
       try {
-        releaseLock = await dbManager.acquireTxLock('VIP');
-        await db.run('BEGIN TRANSACTION');
         const testUuid = `VERIFY_TEST_${Date.now()}`;
         const insertResult = await db.run(
           "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
@@ -108,9 +109,8 @@ export class VerificationService {
           throw new Error('Data inserted is not retrievable');
         }
       } finally {
-        // Always roll back to clean the database and release lock
+        // Always roll back to clean the database (the interceptor releases the lock)
         await db.run('ROLLBACK').catch(() => {});
-        if (releaseLock) releaseLock();
       }
 
       return {
