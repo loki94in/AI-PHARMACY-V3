@@ -1603,10 +1603,10 @@ function deduplicateBlisterPocketLines(lines) {
   const seen = /* @__PURE__ */ new Set();
   const uniqueLines = [];
   for (const line of lines) {
-    const norm = line.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (!norm) continue;
-    if (!seen.has(norm)) {
-      seen.add(norm);
+    const norm2 = line.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!norm2) continue;
+    if (!seen.has(norm2)) {
+      seen.add(norm2);
       uniqueLines.push(line);
     }
   }
@@ -12961,6 +12961,40 @@ async function ensureMedicineSearchSummaryTriggers(db2) {
     console.warn("[Database] ensureMedicineSearchSummaryTriggers warning:", err.message);
   }
 }
+async function ensureRefillCartLinkSchema(db2) {
+  await db2.run(`
+    CREATE TABLE IF NOT EXISTS medicine_distributor_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      medicine_id INTEGER NOT NULL REFERENCES medicines(id) ON DELETE CASCADE,
+      store_id INTEGER NOT NULL,
+      store_name TEXT NOT NULL,
+      product_code TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT,
+      packaging TEXT,
+      company TEXT,
+      mapped INTEGER DEFAULT 1,
+      pick_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(medicine_id, store_id, product_code)
+    )
+  `);
+  const cols = await db2.all("PRAGMA table_info(patient_refills)");
+  const names = new Set(cols.map((c) => c.name));
+  const cartCols = [
+    ["cart_store_id", "INTEGER"],
+    ["cart_store_name", "TEXT"],
+    ["cart_product_code", "TEXT"],
+    ["cart_product_name", "TEXT"],
+    ["cart_qty", "INTEGER"]
+  ];
+  for (const [col, type] of cartCols) {
+    if (cols.length > 0 && !names.has(col)) {
+      await db2.run(`ALTER TABLE patient_refills ADD COLUMN ${col} ${type} DEFAULT NULL`);
+    }
+  }
+}
 async function ensureOrderTimingSchema(db2) {
   await db2.run(`
     CREATE TABLE IF NOT EXISTS pharmacy_holidays (
@@ -13996,6 +14030,7 @@ async function ensureSchema(dbPath) {
         } catch (_) {
         }
         await ensureOrderTimingSchema(db2);
+        await ensureRefillCartLinkSchema(db2);
         await ensureMedicinesFts(db2);
         await ensureMedicineSearchSummaryTriggers(db2);
         return;
@@ -16793,6 +16828,7 @@ async function ensureSchema(dbPath) {
     } catch (_) {
     }
     await ensureOrderTimingSchema(db2);
+    await ensureRefillCartLinkSchema(db2);
     await ensureMultiPharmacyAndSnapshotSchema(db2);
     await ensureMedicineSearchSummaryTriggers(db2);
     await db2.exec(`
@@ -18583,45 +18619,45 @@ async function getSuggestedMappingFromHeaders(headers, db2) {
     }
   ];
   const mappedHeaders = /* @__PURE__ */ new Set();
-  const isExcluded = (field, norm) => {
+  const isExcluded = (field, norm2) => {
     if (field === "invoice_date") {
-      return /exp|expiry|due|lr|deliv/i.test(norm);
+      return /exp|expiry|due|lr|deliv/i.test(norm2);
     }
     if (field === "invoice_no") {
-      return /date/i.test(norm);
+      return /date/i.test(norm2);
     }
     if (field === "total_amount") {
-      return /tax|disc|discount|qty|free|rate|per|prcode|barcode/i.test(norm);
+      return /tax|disc|discount|qty|free|rate|per|prcode|barcode/i.test(norm2);
     }
     if (field === "quantity") {
-      return /free|sch|adj|amt/i.test(norm);
+      return /free|sch|adj|amt/i.test(norm2);
     }
     if (field === "rate") {
-      return /mrp|free|sch|cgst|sgst|disc|discount|tax|qty|quantity|amount|total|value|hsn|batch|exp/i.test(norm);
+      return /mrp|free|sch|cgst|sgst|disc|discount|tax|qty|quantity|amount|total|value|hsn|batch|exp/i.test(norm2);
     }
     if (field === "cgst" || field === "sgst") {
-      return /amt|val|tax/i.test(norm);
+      return /amt|val|tax/i.test(norm2);
     }
     if (field === "expiry_date") {
-      return /export|expense/i.test(norm);
+      return /export|expense/i.test(norm2);
     }
     if (field === "cd_per") {
-      return /amt|val|rs|net/i.test(norm);
+      return /amt|val|rs|net/i.test(norm2);
     }
     if (field === "cn_amount") {
-      return /rate|mrp|tax|qty|free|disc|discount/i.test(norm);
+      return /rate|mrp|tax|qty|free|disc|discount/i.test(norm2);
     }
     if (field === "cn_number") {
-      return /date|amt|amount|val|value/i.test(norm);
+      return /date|amt|amount|val|value/i.test(norm2);
     }
     return false;
   };
   for (const rule of rules) {
     for (const h of headers) {
       if (mappedHeaders.has(h)) continue;
-      const norm = normalize(h);
-      if (isExcluded(rule.field, norm)) continue;
-      if (rule.priority1.test(norm)) {
+      const norm2 = normalize(h);
+      if (isExcluded(rule.field, norm2)) continue;
+      if (rule.priority1.test(norm2)) {
         suggested[h] = rule.field;
         mappedHeaders.add(h);
         break;
@@ -18634,9 +18670,9 @@ async function getSuggestedMappingFromHeaders(headers, db2) {
     if (rule.priority2) {
       for (const h of headers) {
         if (mappedHeaders.has(h)) continue;
-        const norm = normalize(h);
-        if (isExcluded(rule.field, norm)) continue;
-        if (rule.priority2.test(norm)) {
+        const norm2 = normalize(h);
+        if (isExcluded(rule.field, norm2)) continue;
+        if (rule.priority2.test(norm2)) {
           suggested[h] = rule.field;
           mappedHeaders.add(h);
           break;
@@ -20619,9 +20655,9 @@ AI Pharmacy Team`
                 }
                 const keys = Object.keys(r);
                 for (const k of keys) {
-                  const norm = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+                  const norm2 = k.toLowerCase().replace(/[^a-z0-9]/g, "");
                   for (const syn of synonyms) {
-                    if (syn.test(norm)) {
+                    if (syn.test(norm2)) {
                       const val = r[k];
                       if (val !== void 0 && val !== null && String(val).trim() !== "") {
                         return val;
@@ -26924,6 +26960,7 @@ __export(pharmarack_exports, {
   default: () => pharmarack_default,
   invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
   isItemInStock: () => isItemInStock,
+  loadLiveCartCore: () => loadLiveCartCore,
   performPharmarackSearch: () => performPharmarackSearch,
   rankSpecialOrderDistributorCandidates: () => rankSpecialOrderDistributorCandidates,
   resolveCommonOrFrequentDistributor: () => resolveCommonOrFrequentDistributor,
@@ -27894,16 +27931,16 @@ async function addItemsToPharmarackCart(items) {
       try {
         let cleanKeyword = (item.productName || item.product || item.name || "").trim();
         cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
-        const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
-        const wantName = norm(cleanKeyword);
+        const norm2 = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
+        const wantName = norm2(cleanKeyword);
         const wantStore = String(item.storeName || "").toLowerCase().trim();
         if (wantName) {
           let best = null;
           let bestIsStoreMatch = false;
           for (const [_, cacheEntry] of searchCache.entries()) {
             for (const p of cacheEntry.data || []) {
-              const nShort = norm(p.shortName || p.name);
-              const nFull = norm(p.fullName || p.name);
+              const nShort = norm2(p.shortName || p.name);
+              const nFull = norm2(p.fullName || p.name);
               if (nShort !== wantName && nFull !== wantName) continue;
               const storeMatch = !wantStore || String(p.distributor || "").toLowerCase().includes(wantStore);
               if (!best || storeMatch && !bestIsStoreMatch) {
@@ -28310,7 +28347,7 @@ async function adjustSpecialOrderInLiveCart(order) {
         if (matchedItem) break;
       }
     }
-    if (!matchedItem) {
+    if (!matchedItem && !order.exactOnly) {
       for (const dist of cart.distributors) {
         const distNorm = normalize(dist.storeName || "");
         const distMatches = !targetDistNorm || distNorm.includes(targetDistNorm) || targetDistNorm.includes(distNorm);
@@ -28325,7 +28362,7 @@ async function adjustSpecialOrderInLiveCart(order) {
         if (matchedItem) break;
       }
     }
-    if (!matchedItem) {
+    if (!matchedItem && !order.exactOnly) {
       for (const dist of cart.distributors) {
         for (const it of dist.items || []) {
           const itNorm = normalize(it.productName || "");
@@ -28338,7 +28375,7 @@ async function adjustSpecialOrderInLiveCart(order) {
         if (matchedItem) break;
       }
     }
-    if (!matchedItem && targetNorm.length >= 4) {
+    if (!matchedItem && !order.exactOnly && targetNorm.length >= 4) {
       for (const dist of cart.distributors) {
         for (const it of dist.items || []) {
           const itNorm = normalize(it.productName || "");
@@ -28371,11 +28408,18 @@ async function adjustSpecialOrderInLiveCart(order) {
       const task = pharmarackDeleteChain.catch(() => {
       }).then(() => executeSingleItemDelete(deleteItem));
       pharmarackDeleteChain = task;
-      await Promise.race([
-        task.catch(() => {
-        }),
-        new Promise((r) => setTimeout(r, 2500))
-      ]);
+      if (order.exactOnly) {
+        const deleted = await task.catch(() => false);
+        if (!deleted) {
+          return { action: "none", productName: matchedItem.productName, storeName, message: "Pharmarack did not confirm the removal" };
+        }
+      } else {
+        await Promise.race([
+          task.catch(() => {
+          }),
+          new Promise((r) => setTimeout(r, 2500))
+        ]);
+      }
       return {
         action: "removed",
         productName: matchedItem.productName,
@@ -30137,8 +30181,8 @@ var init_prescriptionOrchestratorService = __esm({
         if (candidateLines.length === 0) {
           const numberedItems = parseDoctorRxNumberedItems(text);
           for (const item of numberedItems) {
-            const norm = this.normalizeHandwritingGlyphs(item.text);
-            candidateLines.push({ raw: item.text, normalized: norm, qty: item.qty });
+            const norm2 = this.normalizeHandwritingGlyphs(item.text);
+            candidateLines.push({ raw: item.text, normalized: norm2, qty: item.qty });
           }
         }
         return { doctorName, clinicName, patientName, patientAge, candidateLines };
@@ -30725,13 +30769,13 @@ var init_prescriptionScannerService = __esm({
         const db2 = await dbManager.getConnection();
         const items = [];
         for (const cand of candidateMedLines) {
-          const norm = cand.normalized;
+          const norm2 = cand.normalized;
           let form = "TABLET";
-          if (/\b(cap|capsule)\b/i.test(norm)) form = "CAPSULE";
-          else if (/\b(syp|syrup)\b/i.test(norm)) form = "SYRUP";
-          else if (/\b(inj|injection)\b/i.test(norm)) form = "INJECTION";
-          else if (/\b(drops?)\b/i.test(norm)) form = "DROPS";
-          const strengthMatches = Array.from(norm.matchAll(/(\d+(?:\.\d+)?\s*(?:mg|gm|g|ml|k|iu)?)/gi)).map((m) => m[1]);
+          if (/\b(cap|capsule)\b/i.test(norm2)) form = "CAPSULE";
+          else if (/\b(syp|syrup)\b/i.test(norm2)) form = "SYRUP";
+          else if (/\b(inj|injection)\b/i.test(norm2)) form = "INJECTION";
+          else if (/\b(drops?)\b/i.test(norm2)) form = "DROPS";
+          const strengthMatches = Array.from(norm2.matchAll(/(\d+(?:\.\d+)?\s*(?:mg|gm|g|ml|k|iu)?)/gi)).map((m) => m[1]);
           let targetStrength = "";
           for (const sm of strengthMatches) {
             if (/(?:mg|gm|k|iu)/i.test(sm)) targetStrength = sm;
@@ -30739,7 +30783,7 @@ var init_prescriptionScannerService = __esm({
           if (!targetStrength && strengthMatches.length > 0) {
             targetStrength = strengthMatches[strengthMatches.length - 1];
           }
-          const deGlued = norm.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2");
+          const deGlued = norm2.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2");
           const cleanedText = deGlued.replace(/\b(th\.?|tb\.?|tab\.?|tablet|tablets|cap\.?|capsule|capsules|sus\.?|susp\.?|suspension|syp\.?|syr\.?|syrup|inj\.?|injection|inf\.?|drop|drops?|drp|drps|vati|bhasma|churna|kwath|taila|asav|arishta|ras|guggulu|oint\.?|ointment|gel|cream|lotion)\b/gi, " ").replace(/\b(1-0-1|1-1-1|0-1-0|1-0-0|0-0-1|od|bd|tds|qid|hs|sos|stat|po|prn|ac|pc|daily)\b/gi, " ").replace(/\(\d+\)|\bx\s*\d+\b/g, " ").replace(/[^a-zA-Z0-9]/g, " ").trim();
           const tokens = cleanedText.split(/\s+/).filter((t) => t.length >= 2 && !/^(mg|gm|ml|iu|tab|cap|sus|syp)$/i.test(t));
           const brandTokens = tokens.filter((t) => !/^\d+k?$/i.test(t));
@@ -38967,11 +39011,11 @@ async function searchAndBroadcast(opts) {
         const seenNorm = /* @__PURE__ */ new Set();
         const deduplicated = [];
         for (const m of rawMatches) {
-          const norm = String(m).toUpperCase().replace(/\s+/g, " ").trim();
-          const key = norm.replace(/[^A-Z0-9]/g, "");
+          const norm2 = String(m).toUpperCase().replace(/\s+/g, " ").trim();
+          const key = norm2.replace(/[^A-Z0-9]/g, "");
           if (!seenNorm.has(key) && key.length > 2) {
             seenNorm.add(key);
-            deduplicated.push(norm);
+            deduplicated.push(norm2);
             if (deduplicated.length >= 45) break;
           }
         }
@@ -51456,36 +51500,36 @@ async function getSuggestedMapping(headers, db2) {
     console.warn("Smart learning mapping load failed:", err);
   }
   for (const h of headers) {
-    const norm = h.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (/name|brand|product|item|inn|title|description/i.test(norm)) {
+    const norm2 = h.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (/name|brand|product|item|inn|title|description/i.test(norm2)) {
       suggested[h] = "name";
-    } else if (/api|composition|generic|salt|formula|active|molecule/i.test(norm)) {
+    } else if (/api|composition|generic|salt|formula|active|molecule/i.test(norm2)) {
       suggested[h] = "api_reference";
-    } else if (/strength|dosage|potency|mg|ml/i.test(norm)) {
+    } else if (/strength|dosage|potency|mg|ml/i.test(norm2)) {
       suggested[h] = "strength";
-    } else if (/pack|dosageform|packaging|type|unit/i.test(norm)) {
+    } else if (/pack|dosageform|packaging|type|unit/i.test(norm2)) {
       suggested[h] = "packaging";
-    } else if (/mfg|manufactur|applicant|vendor|supplier|company|maker/i.test(norm)) {
+    } else if (/mfg|manufactur|applicant|vendor|supplier|company|maker/i.test(norm2)) {
       suggested[h] = "manufacturer";
-    } else if (/mkt|market/i.test(norm)) {
+    } else if (/mkt|market/i.test(norm2)) {
       suggested[h] = "marketed_by";
-    } else if (/hsn/i.test(norm)) {
+    } else if (/hsn/i.test(norm2)) {
       suggested[h] = "hsn_code";
-    } else if (/schedule/i.test(norm)) {
+    } else if (/schedule/i.test(norm2)) {
       suggested[h] = "schedule_type";
-    } else if (/mrp|price|selling|rate/i.test(norm)) {
+    } else if (/mrp|price|selling|rate/i.test(norm2)) {
       suggested[h] = "mrp";
-    } else if (/cgst/i.test(norm)) {
+    } else if (/cgst/i.test(norm2)) {
       suggested[h] = "cgst";
-    } else if (/sgst|gst/i.test(norm)) {
+    } else if (/sgst|gst/i.test(norm2)) {
       suggested[h] = "sgst";
-    } else if (/rack|shelf|location/i.test(norm)) {
+    } else if (/rack|shelf|location/i.test(norm2)) {
       suggested[h] = "rack";
-    } else if (/qty|quantity|stock|count|avail/i.test(norm)) {
+    } else if (/qty|quantity|stock|count|avail/i.test(norm2)) {
       suggested[h] = "quantity";
-    } else if (/batch|lot/i.test(norm)) {
+    } else if (/batch|lot/i.test(norm2)) {
       suggested[h] = "batch_no";
-    } else if (/exp/i.test(norm)) {
+    } else if (/exp/i.test(norm2)) {
       suggested[h] = "expiry_date";
     } else {
       suggested[h] = "";
@@ -52702,7 +52746,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.24";
+    APP_VERSION = "0.1.25";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -57592,26 +57636,26 @@ async function findOrCreateDistributor(db2, name) {
     return null;
   }
   const trimmed = rawTrimmed;
-  const norm = normalizeDistributorName(trimmed);
-  if (norm && normalizedCache.has(norm)) {
-    return { id: normalizedCache.get(norm) };
+  const norm2 = normalizeDistributorName(trimmed);
+  if (norm2 && normalizedCache.has(norm2)) {
+    return { id: normalizedCache.get(norm2) };
   }
   const exact = await db2.get("SELECT id FROM distributors WHERE LOWER(name) = LOWER(?)", [trimmed]);
   if (exact?.id) {
-    if (norm) normalizedCache.set(norm, exact.id);
+    if (norm2) normalizedCache.set(norm2, exact.id);
     return { id: exact.id };
   }
-  if (norm) {
+  if (norm2) {
     const rows = await db2.all("SELECT id, name FROM distributors");
-    const matched = rows.find((r) => normalizeDistributorName(r.name) === norm);
+    const matched = rows.find((r) => normalizeDistributorName(r.name) === norm2);
     if (matched) {
-      normalizedCache.set(norm, matched.id);
+      normalizedCache.set(norm2, matched.id);
       return { id: matched.id };
     }
   }
   const result = await db2.run("INSERT INTO distributors (name) VALUES (?)", [trimmed]);
   const id = result.lastID;
-  if (norm) normalizedCache.set(norm, id);
+  if (norm2) normalizedCache.set(norm2, id);
   return { id };
 }
 var normalizedCache;
@@ -57986,8 +58030,8 @@ function normalizeToken2(token) {
   return token.replace(/^(\d+)(mg|mcg|ml|gm|g|iu)$/, "$1");
 }
 function extractTokens(name) {
-  const norm = normalizeString(name);
-  const words = norm.split(" ").filter((w) => w.length > 0);
+  const norm2 = normalizeString(name);
+  const words = norm2.split(" ").filter((w) => w.length > 0);
   const coreTokens = [];
   const strengths = [];
   for (const rawWord of words) {
@@ -61855,7 +61899,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
       } else if (dataType === "customers") {
         const patientKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "patient_name");
         const nameKeyCust = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name") || patientKey;
-        const phoneKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "phone") || Object.keys(mapping || {}).find((k) => mapping?.[k] === "mobile");
+        const phoneKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "phone") || Object.keys(mapping || {}).find((k) => mapping?.[k] === "mobile");
         const addressKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "address");
         const notesKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "notes");
         const name = nameKeyCust ? String(cleanRow[nameKeyCust] || "").trim() : "";
@@ -61868,7 +61912,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           insertCount++;
           return;
         }
-        const phone = phoneKey ? String(cleanRow[phoneKey] || "").trim() : "";
+        const phone = phoneKey2 ? String(cleanRow[phoneKey2] || "").trim() : "";
         const address = addressKey ? String(cleanRow[addressKey] || "").trim() : "";
         const notes = notesKey ? String(cleanRow[notesKey] || "").trim() : "";
         let customer = await db2.get("SELECT id FROM customers WHERE LOWER(name) = LOWER(?)", [name]);
@@ -61906,10 +61950,10 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         if (nameKeyCust && cleanRow[nameKeyCust] && patientKey) {
           const patientName = String(cleanRow[nameKeyCust] || "").trim();
           if (isValidCustomerName(patientName)) {
-            const phoneKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "phone") || Object.keys(mapping || {}).find((k) => mapping?.[k] === "mobile");
+            const phoneKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "phone") || Object.keys(mapping || {}).find((k) => mapping?.[k] === "mobile");
             const addressKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "address");
             const notesKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "notes");
-            const phone = phoneKey ? String(cleanRow[phoneKey] || "").trim() : "";
+            const phone = phoneKey2 ? String(cleanRow[phoneKey2] || "").trim() : "";
             const address = addressKey ? String(cleanRow[addressKey] || "").trim() : "";
             const notes = notesKey ? String(cleanRow[notesKey] || "").trim() : "";
             let customer = await db2.get("SELECT id FROM customers WHERE LOWER(name) = LOWER(?)", [patientName]);
@@ -65929,9 +65973,9 @@ var init_bouncedAlertService = __esm({
             };
             const receivedMap = /* @__PURE__ */ new Map();
             for (const item of receivedItems) {
-              const norm = normalizeName(item.medicine_name);
+              const norm2 = normalizeName(item.medicine_name);
               const totalQty = (Number(item.quantity) || 0) + (Number(item.free_qty) || 0) + (Number(item.loose_quantity) || 0);
-              receivedMap.set(norm, (receivedMap.get(norm) || 0) + totalQty);
+              receivedMap.set(norm2, (receivedMap.get(norm2) || 0) + totalQty);
             }
             for (const expected of expectedItems) {
               const normExp = normalizeName(expected.name);
@@ -70151,6 +70195,280 @@ var init_telegramPrescription = __esm({
   }
 });
 
+// src/services/refillCartService.ts
+function flattenCart(cart) {
+  const lines = [];
+  for (const d of cart.distributors || []) {
+    for (const it of d.items || []) {
+      lines.push({
+        storeId: Number(it.storeId || d.storeId || 0),
+        storeName: String(d.storeName || ""),
+        productCode: String(it.productCode || ""),
+        productName: String(it.productName || ""),
+        qty: Number(it.qty) || 0
+      });
+    }
+  }
+  return lines;
+}
+function cartErrorMessage(err) {
+  if (err?.code === "NEED_LOGIN") return "Pharmarack is not logged in. Log in from the Live Cart page, then retry.";
+  if (err?.code === "SESSION_EXPIRED") return "Pharmarack session expired. Re-login, then retry.";
+  return `Could not read the Pharmarack live cart (${err?.message || "network error"}). Retry.`;
+}
+async function processRefillCartItem(refillId, opts = {}) {
+  const db2 = await dbManager.getConnection();
+  const refill = await db2.get(
+    `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
+            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name
+     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+     WHERE pr.id = ?`,
+    [refillId]
+  );
+  if (!refill) throw Object.assign(new Error("Refill not found"), { httpStatus: 404 });
+  const medicineName = String(refill.medicine_name || "");
+  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
+  const base = { refillId, medicineName, qty, linked: [], candidates: [] };
+  const fail = (message, extra = {}) => ({ ...base, ...extra, status: "failed", message });
+  if (refill.is_active === 0 || ["canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
+    return fail("This refill is paused or cancelled.");
+  }
+  if (Array.isArray(opts.pick) && opts.pick.length > 0) {
+    const picks = opts.pick.filter((p) => Number(p.storeId) > 0 && String(p.productCode || "").trim() && String(p.storeName || "").trim());
+    if (picks.length === 0) return fail("Tick a distributor product from the list.");
+    await db2.run("BEGIN");
+    try {
+      await db2.run("DELETE FROM medicine_distributor_links WHERE medicine_id = ?", [refill.medicine_id]);
+      for (let i = 0; i < picks.length; i++) {
+        const p = picks[i];
+        await db2.run(
+          `INSERT OR REPLACE INTO medicine_distributor_links
+             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          [
+            refill.medicine_id,
+            Number(p.storeId),
+            String(p.storeName).trim(),
+            String(p.productCode).trim(),
+            p.productId != null ? String(p.productId) : null,
+            p.productName || null,
+            p.packaging || null,
+            p.company || null,
+            p.mapped === false ? 0 : 1,
+            i
+          ]
+        );
+      }
+      await db2.run("COMMIT");
+    } catch (err) {
+      await db2.run("ROLLBACK").catch(() => {
+      });
+      throw err;
+    }
+  }
+  const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+  let lines;
+  try {
+    lines = flattenCart(await pr.loadLiveCartCore());
+  } catch (err) {
+    return fail(cartErrorMessage(err));
+  }
+  const links = await db2.all(
+    "SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id",
+    [refill.medicine_id]
+  );
+  let hit = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
+  for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
+  if (!hit) {
+    const want = norm(medicineName);
+    hit = lines.find((l) => want && norm(l.productName) === want);
+  }
+  if (hit) {
+    return {
+      ...base,
+      status: "in_cart",
+      message: `Already in the cart at ${hit.storeName} (qty ${hit.qty}).`,
+      line: { storeName: hit.storeName, productName: hit.productName, qty: hit.qty }
+    };
+  }
+  const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "";
+  const outcome = await pr.performPharmarackSearch(medicineName, null, false);
+  if (outcome.status === "need_login") return fail(cartErrorMessage({ code: "NEED_LOGIN" }));
+  if (outcome.status === "connection_error") return fail("Pharmarack search did not answer (network). Retry.");
+  const items = outcome.items.filter(isLive);
+  const findItem = (l) => items.find((i) => Number(i.storeId) === Number(l.store_id) && String(i.productCode) === String(l.product_code));
+  for (const l of links.filter((l2) => !findItem(l2)).slice(0, 3)) {
+    const o = await pr.performPharmarackSearch(l.product_name || medicineName, Number(l.store_id), l.mapped !== 0);
+    if (o.status === "ok") items.push(...o.items.filter(isLive));
+  }
+  const linkedKeys = new Set(links.map((l) => `${l.store_id}|${l.product_code}`));
+  const seen = /* @__PURE__ */ new Set();
+  const candidates = [];
+  for (const i of items) {
+    const key = `${Number(i.storeId)}|${String(i.productCode)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({
+      storeId: Number(i.storeId),
+      storeName: String(i.distributor || ""),
+      productCode: String(i.productCode),
+      productId: i.productId ?? null,
+      productName: String(i.name || ""),
+      packaging: String(i.packaging || ""),
+      company: String(i.company || ""),
+      mapped: i.mapped !== false,
+      rate: i.rate != null ? Number(i.rate) : null,
+      mrp: i.mrp != null ? Number(i.mrp) : null,
+      scheme: String(i.scheme || ""),
+      stock: String(i.stock ?? ""),
+      inStock: pr.isItemInStock(i.stock),
+      inCart: !!findLine(lines, i.storeId, i.productCode),
+      linked: linkedKeys.has(key)
+    });
+    if (candidates.length >= 30) break;
+  }
+  if (links.length === 0) {
+    return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor saved for this medicine yet. Tick one or more." } : { ...base, status: "not_found", message: "Pharmarack returned no distributor for this name. Search another spelling." };
+  }
+  const linkedState = links.map((l) => {
+    const item = findItem(l);
+    return { link: l, item, inStock: !!item && pr.isItemInStock(item.stock) };
+  });
+  const linked = linkedState.map((s) => ({
+    storeName: String(s.link.store_name),
+    productName: String(s.link.product_name || ""),
+    stock: s.item ? String(s.item.stock ?? "") : "not listed now",
+    inStock: s.inStock
+  }));
+  const available = linkedState.filter((s) => s.inStock);
+  if (available.length === 0) {
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "linked_oos",
+      message: `Out of stock at ${linked.map((l) => l.storeName).join(", ")}. Tick another distributor.`
+    };
+  }
+  const cartStores = new Set(lines.map((l) => l.storeId));
+  let chosen = available.find((s) => cartStores.has(Number(s.link.store_id)));
+  if (!chosen && available.length > 1) {
+    const freq = await db2.all(
+      `SELECT d.name, COUNT(p.id) AS n FROM distributors d JOIN purchases p ON p.distributor_id = d.id
+       GROUP BY d.id ORDER BY n DESC LIMIT 50`
+    ).catch(() => []);
+    for (const f of freq) {
+      const fn = norm(f.name);
+      if (fn.length < 4) continue;
+      chosen = available.find((s) => {
+        const sn = norm(s.link.store_name);
+        return sn === fn || sn.includes(fn) || fn.includes(sn);
+      });
+      if (chosen) break;
+    }
+  }
+  chosen = chosen || available[0];
+  const it = chosen.item;
+  const addRes = await pr.addItemsToPharmarackCart([{
+    productId: it.productId,
+    storeId: Number(it.storeId),
+    productCode: String(it.productCode),
+    productName: String(it.name || chosen.link.product_name || medicineName),
+    storeName: String(it.distributor || chosen.link.store_name),
+    company: it.company || void 0,
+    rate: it.rate != null ? Number(it.rate) : void 0,
+    mrp: it.mrp != null ? Number(it.mrp) : void 0,
+    scheme: it.scheme || void 0,
+    packaging: it.packaging || void 0,
+    mapped: it.mapped !== false,
+    qty
+  }]);
+  if (!addRes.success || addRes.offline) {
+    return fail(`Pharmarack did not accept the item: ${addRes.details || addRes.error || addRes.message || "offline"}`, { linked, candidates });
+  }
+  pr.invalidatePharmarackCartCache();
+  let added;
+  for (let attempt = 0; attempt < 2 && !added; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+    try {
+      added = findLine(flattenCart(await pr.loadLiveCartCore()), it.storeId, it.productCode);
+    } catch (_) {
+    }
+  }
+  if (!added) {
+    return fail("Pharmarack accepted the add, but the item is not showing in the cart yet. Check the Live Cart, or retry.", { linked, candidates });
+  }
+  await db2.run(
+    `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+    [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
+  );
+  await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [chosen.link.id]);
+  const firstLink = linkedState[0];
+  const note = firstLink !== chosen && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
+  return {
+    ...base,
+    linked,
+    candidates,
+    status: "added",
+    message: `Added ${qty} to ${added.storeName}${note}.`,
+    line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
+  };
+}
+function removeRefillCartLines(rows, clearRows) {
+  const tracked = (rows || []).filter((r) => r && r.cart_product_code && Number(r.cart_store_id) > 0);
+  if (tracked.length === 0) return;
+  setImmediate(async () => {
+    const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+    const db2 = await dbManager.getConnection();
+    for (const r of tracked) {
+      const name = String(r.cart_product_name || "medicine");
+      const store = String(r.cart_store_name || "distributor");
+      let type = "error";
+      let message;
+      try {
+        const adj = await pr.adjustSpecialOrderInLiveCart({
+          product: name,
+          qty: Number(r.cart_qty) || 1,
+          productCode: String(r.cart_product_code),
+          storeId: Number(r.cart_store_id),
+          distributor: store,
+          exactOnly: true
+        });
+        if (adj.action === "removed") {
+          type = "success";
+          message = `Refill cancelled: removed "${name}" from the ${store} cart.`;
+        } else if (adj.action === "adjusted") {
+          type = "info";
+          message = `Refill cancelled: "${name}" in the ${store} cart reduced from ${adj.previousQty} to ${adj.remainingQty}.`;
+        } else if (adj.message === "Item not found in current live cart" || adj.message === "Live cart is empty") {
+          type = "info";
+          message = `Refill cancelled: "${name}" is no longer in the live cart (already ordered or removed).`;
+        } else {
+          message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${adj.message || "unknown error"}). Remove it in Live Cart.`;
+        }
+      } catch (err) {
+        message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${err?.message || "error"}). Remove it in Live Cart.`;
+      }
+      if (clearRows && type !== "error") {
+        await db2.run("UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?", [r.id]).catch(() => {
+        });
+      }
+      eventService.broadcast("toast_alert", { type, message, link: "/crm?tab=refills" });
+    }
+  });
+}
+var norm, findLine, REFILL_CART_COLUMNS;
+var init_refillCartService = __esm({
+  "src/services/refillCartService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    findLine = (lines, storeId, code) => lines.find((l) => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ""));
+    REFILL_CART_COLUMNS = "id, cart_store_id, cart_store_name, cart_product_code, cart_product_name, cart_qty";
+  }
+});
+
 // src/routes/refills.ts
 var refills_exports = {};
 __export(refills_exports, {
@@ -70265,6 +70583,7 @@ var init_refills = __esm({
     init_nameFormatter();
     init_storeContextService();
     init_pharmacyCalendar();
+    init_refillCartService();
     router19 = import_express19.default.Router();
     refillsTableInitialized = false;
     router19.use(async (_req, _res, next) => {
@@ -70496,8 +70815,10 @@ var init_refills = __esm({
             );
           }
         }
+        const removedRows = [];
         for (const [medId, r] of existingMap.entries()) {
           if (!processedMedicineIds.has(medId)) {
+            removedRows.push(r);
             await db2.run("DELETE FROM patient_refills WHERE id = ?", [r.id]);
             await db2.run(
               `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
@@ -70506,6 +70827,7 @@ var init_refills = __esm({
             });
           }
         }
+        removeRefillCartLines(removedRows, false);
         await checkAllRefills(db2);
         res.json({ success: true, message: "Patient refill schedule synchronized successfully", interval_days: intervalDays, next_refill_date: defaultNextRefillStr });
       } catch (err) {
@@ -70745,7 +71067,10 @@ var init_refills = __esm({
               batch_quantity: stock?.batch_quantity || 0,
               batch_loose_quantity: stock?.batch_loose_quantity || 0,
               patient_confirmed: row.patient_confirmed || 0,
-              confirmed_at: row.confirmed_at || null
+              confirmed_at: row.confirmed_at || null,
+              // Live-cart line this refill cycle added (refill cart popup); null when none
+              cart_store_name: row.cart_product_code ? row.cart_store_name : null,
+              cart_qty: row.cart_product_code ? row.cart_qty : null
             });
           }
         }
@@ -70856,11 +71181,24 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
+    router19.post("/:id/add-to-cart", async (req, res) => {
+      const id = parseInt(req.params.id, 10);
+      if (!id || isNaN(id)) return res.status(400).json({ error: "Valid refill ID required" });
+      try {
+        const pick = Array.isArray(req.body?.pick) ? req.body.pick : void 0;
+        const result = await processRefillCartItem(id, { qty: req.body?.qty, pick });
+        res.json({ success: result.status === "added", ...result });
+      } catch (err) {
+        console.error("Refill add-to-cart failed:", err);
+        res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to add refill to live cart" });
+      }
+    });
     router19.post("/:id/cancel", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
         db2 = await dbManager.getConnection();
+        const cartRow = await db2.get(`SELECT ${REFILL_CART_COLUMNS} FROM patient_refills WHERE id = ?`, [id]);
         await db2.run(
           "UPDATE patient_refills SET is_active = 0, is_ready = 0, hold_for_stock = 0 WHERE id = ?",
           [id]
@@ -70871,6 +71209,7 @@ var init_refills = __esm({
           [String(id)]
         );
         res.json({ success: true, message: "Refill schedule canceled successfully" });
+        removeRefillCartLines([cartRow], true);
         setImmediate(() => {
           checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after cancel:", e));
         });
@@ -70890,7 +71229,7 @@ var init_refills = __esm({
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        let query = "SELECT id FROM patient_refills WHERE 0 = 1";
+        let query = `SELECT ${REFILL_CART_COLUMNS} FROM patient_refills WHERE 0 = 1`;
         const params = [];
         if (ids.length > 0) {
           const placeholders = ids.map(() => "?").join(",");
@@ -70932,6 +71271,7 @@ var init_refills = __esm({
             deletedCount: result.changes || refillIds.length,
             message: "Patient refill schedule deleted successfully"
           });
+          removeRefillCartLines(matchingRefills, false);
           setImmediate(() => {
             checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after delete:", e));
           });
@@ -70979,6 +71319,7 @@ var init_refills = __esm({
           [String(numId), `${numId},%`, `%,${numId}%`]
         );
         await db2.run("DELETE FROM patient_refills WHERE id = ?", [numId]);
+        removeRefillCartLines([refill], false);
         await checkAllRefills(db2);
         res.json({ success: true, message: "Refill item deleted successfully" });
       } catch (err) {
@@ -71083,6 +71424,7 @@ var init_refills = __esm({
            next_refill_date = ?,
            stock_verified_override = 0,
            ordering_triggered = 0,
+           cart_product_code = NULL,
            is_ready = 0,
            hold_for_stock = 0,
            acknowledged = 0,
@@ -71174,6 +71516,7 @@ var init_refills = __esm({
              next_refill_date = ?,
              stock_verified_override = 0,
              ordering_triggered = 0,
+             cart_product_code = NULL,
              is_ready = 0,
              hold_for_stock = 0,
              acknowledged = 0,
@@ -71279,6 +71622,7 @@ var init_refills = __esm({
              next_refill_date = ?,
              stock_verified_override = 0,
              ordering_triggered = 0,
+             cart_product_code = NULL,
              is_ready = 0,
              hold_for_stock = 0,
              acknowledged = 0,
@@ -71305,12 +71649,13 @@ var init_refills = __esm({
           return res.json({ success: true, message: "Refill status updated to notified" });
         } else if (normalizedStatus === "canceled" || normalizedStatus === "cancelled") {
           await db2.run(
-            `UPDATE patient_refills 
+            `UPDATE patient_refills
          SET status = 'canceled', is_active = 0, is_ready = 0, hold_for_stock = 0
          WHERE id = ?`,
             [id]
           );
           await cleanupStagedRefillNotifications(db2, [Number(id)], "cancelled");
+          removeRefillCartLines([refill], true);
           return res.json({ success: true, message: "Refill cancelled" });
         } else {
           await db2.run(
@@ -72243,7 +72588,7 @@ var automation_exports = {};
 __export(automation_exports, {
   default: () => automation_default
 });
-var import_express20, router20, automation_default;
+var import_express20, router20, SENT_STATUSES, phoneKey, automation_default;
 var init_automation = __esm({
   "src/routes/automation.ts"() {
     "use strict";
@@ -72436,42 +72781,51 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.get("/notifications/daily-summary", async (_req, res) => {
+    SENT_STATUSES = ["sent", "sent_manually", "delivered"];
+    phoneKey = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+    router20.get("/notifications/daily-summary", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
-        const sentTodayRow = await db2.get(`
-      SELECT COUNT(*) as count 
-      FROM automation_notifications 
-      WHERE status IN ('sent', 'sent_manually', 'delivered') 
-        AND (DATE(created_at) = DATE('now', 'localtime') OR DATE(resolved_at) = DATE('now', 'localtime'))
-    `);
-        const stagedCountRow = await db2.get(`
-      SELECT COUNT(*) as count 
-      FROM automation_notifications 
-      WHERE status = 'staged'
-    `);
-        const sentPhones = await db2.all(`
-      SELECT recipient_phone, recipient_name, MAX(created_at) as last_sent_at, message, type
-      FROM automation_notifications
-      WHERE status IN ('sent', 'sent_manually', 'delivered')
-        AND (DATE(created_at) = DATE('now', 'localtime') OR DATE(resolved_at) = DATE('now', 'localtime'))
-      GROUP BY recipient_phone
-    `);
-        const todayLog = await db2.all(`
-      SELECT id, type, recipient_name, recipient_phone, message, status, created_at, resolved_at, reference_id
-      FROM automation_notifications
-      WHERE DATE(created_at) = DATE('now', 'localtime')
-         OR DATE(resolved_at) = DATE('now', 'localtime')
-         OR status = 'staged'
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
+        const wantsLog = req.query.days !== void 0;
+        const days = Math.min(30, Math.max(1, parseInt(String(req.query.days || "1"), 10) || 1));
+        const todayStart = /* @__PURE__ */ new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const windowStart = todayStart.getTime() - (days - 1) * 864e5;
+        const rows = await db2.all(`
+      SELECT id, type, recipient_name, recipient_phone, message, status, reference_id, error_message,
+             COALESCE(resolved_ms, created_ms) AS activity_ms
+      FROM (
+        SELECT *,
+          CASE WHEN typeof(created_at) IN ('integer', 'real') THEN CAST(created_at AS INTEGER)
+               ELSE CAST(strftime('%s', created_at) AS INTEGER) * 1000 END AS created_ms,
+          CASE WHEN typeof(resolved_at) IN ('integer', 'real') THEN CAST(resolved_at AS INTEGER)
+               WHEN resolved_at IS NOT NULL THEN CAST(strftime('%s', resolved_at, 'utc') AS INTEGER) * 1000 END AS resolved_ms
+        FROM automation_notifications
+      )
+      WHERE COALESCE(resolved_ms, created_ms) >= ? OR status IN ('staged', 'snoozed')
+      ORDER BY activity_ms DESC
+      LIMIT 2000
+    `, [windowStart]);
+        const sentToday = rows.filter((r) => SENT_STATUSES.includes(r.status) && r.activity_ms >= todayStart.getTime());
+        const sentTodayCount = new Set(sentToday.map((r) => `${phoneKey(r.recipient_phone)}|${(r.message || "").trim()}`)).size;
+        const phoneMap = /* @__PURE__ */ new Map();
+        for (const r of sentToday) {
+          const key = phoneKey(r.recipient_phone);
+          if (!key || phoneMap.has(key)) continue;
+          phoneMap.set(key, {
+            recipient_phone: r.recipient_phone,
+            recipient_name: r.recipient_name,
+            last_sent_at: new Date(r.activity_ms).toISOString(),
+            message: r.message,
+            type: r.type
+          });
+        }
         res.json({
           success: true,
-          sentTodayCount: sentTodayRow?.count || 0,
-          stagedCount: stagedCountRow?.count || 0,
-          sentPhones,
-          todayLog
+          sentTodayCount,
+          stagedCount: rows.filter((r) => r.status === "staged").length,
+          sentPhones: [...phoneMap.values()],
+          ...wantsLog ? { log: rows } : {}
         });
       } catch (err) {
         console.error("Failed to get daily notification summary:", err);
@@ -72628,6 +72982,60 @@ var init_automation = __esm({
       } catch (err) {
         console.error("Failed to mark manual status:", err);
         res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router20.post("/notifications/:id/send", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const row = await db2.get("SELECT * FROM automation_notifications WHERE id = ?", [req.params.id]);
+        if (!row) return res.status(404).json({ error: "Notification not found" });
+        const { normalizeWhatsAppPhone: normalizeWhatsAppPhone2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        const message = String(req.body?.message ?? row.message ?? "").trim();
+        const phone = normalizeWhatsAppPhone2(String(req.body?.phone ?? row.recipient_phone ?? ""));
+        if (!message) return res.status(400).json({ error: "Message text is empty" });
+        if (!phone || phone.length < 10) return res.status(400).json({ error: "A valid 10-digit WhatsApp number is required" });
+        const queueId = await whatsappQueueWorker2.enqueue(
+          phone,
+          message,
+          row.type || "crm_notification",
+          row.recipient_name || void 0,
+          void 0,
+          void 0,
+          void 0,
+          { skipDedupe: true }
+        );
+        const edited = message !== String(row.message || "").trim() || phoneKey(phone) !== phoneKey(row.recipient_phone);
+        let notificationId = row.id;
+        if (edited && SENT_STATUSES.includes(row.status)) {
+          const ins = await db2.run(
+            `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id, lifecycle_status, resolved_at)
+         VALUES (?, ?, ?, ?, 'queued', ?, 'sent', ?)`,
+            [row.type, row.recipient_name, phone, message, row.reference_id, Date.now()]
+          );
+          notificationId = ins.lastID;
+        } else {
+          await db2.run(
+            `UPDATE automation_notifications
+         SET recipient_phone = ?, message = ?, status = 'queued', lifecycle_status = 'sent', error_message = NULL, resolved_at = ?
+         WHERE id = ?`,
+            [phone, message, Date.now(), row.id]
+          );
+        }
+        if ((row.status === "staged" || row.status === "snoozed") && row.reference_id && (row.type === "refill_collection" || row.type === "refill_reminder")) {
+          const refIds = String(row.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
+          for (const refId of refIds) {
+            await db2.run(
+              "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
+              [refId]
+            ).catch(() => {
+            });
+          }
+        }
+        res.json({ success: true, queueId, notificationId, edited });
+      } catch (err) {
+        console.error("Failed to send notification:", err);
+        res.status(500).json({ error: "Failed to send notification: " + err.message });
       }
     });
     router20.post("/convert-to-refill", async (req, res) => {
@@ -81886,8 +82294,9 @@ var init_sales = __esm({
            SET last_refill_date = datetime('now'), 
                next_refill_date = ?, 
                acknowledged = 0, 
-               ordering_triggered = 0, 
-               is_ready = 0, 
+               ordering_triggered = 0,
+               cart_product_code = NULL,
+               is_ready = 0,
                hold_for_stock = 0, 
                quick_bill_id = NULL,
                stock_verified_override = 0,
@@ -93618,10 +94027,10 @@ var init_medicines = __esm({
           params.push(`%${apiFilter}%`);
         }
         if (mrpFilter) {
-          const norm = normalizeNumericSearch2(mrpFilter);
-          if (norm) {
+          const norm2 = normalizeNumericSearch2(mrpFilter);
+          if (norm2) {
             whereClauses.push("CAST(COALESCE(medicines.mrp, 0) AS TEXT) LIKE ?");
-            params.push(`%${norm}%`);
+            params.push(`%${norm2}%`);
           }
         }
         if (packagingFilter) {
