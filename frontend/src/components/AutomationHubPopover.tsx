@@ -293,7 +293,7 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   return (
     <div className="fixed inset-0 z-modal flex items-start justify-end p-4 pt-16" onClick={onClose}>
       <div
-        className="w-full max-w-md max-h-[85vh] overflow-y-auto bg-glass-bg backdrop-blur-xl border border-glass-border rounded-2xl shadow-2xl flex flex-col"
+        className="w-[95vw] max-w-md max-h-[85vh] overflow-y-auto bg-glass-bg backdrop-blur-xl border border-glass-border rounded-2xl shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-4 border-b border-glass-border sticky top-0 bg-glass-bg backdrop-blur-xl z-10">

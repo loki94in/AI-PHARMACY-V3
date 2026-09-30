@@ -5702,7 +5702,7 @@ export default function PharmarackCart() {
       {/* ── Reorder Same Confirmation Modal ── */}
       {reorderSameModalTarget && createPortal(
         <div className="fixed inset-0 z-modal bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[500px] max-h-[760px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
@@ -5724,7 +5724,7 @@ export default function PharmarackCart() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+            <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               {/* Side-by-side: Previous Purchase vs Current Stock */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Previous Purchase Record */}
@@ -5847,7 +5847,7 @@ export default function PharmarackCart() {
       {/* ── Purchase History Modal ── */}
       {purchaseHistoryModalTarget && createPortal(
         <div className="fixed inset-0 z-modal bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
@@ -5869,7 +5869,7 @@ export default function PharmarackCart() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+            <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               {purchaseHistoryModalTarget.loading ? (
                 <div className="flex items-center justify-center py-16 text-muted gap-2 text-xs">
                   <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
@@ -5939,7 +5939,7 @@ export default function PharmarackCart() {
       {/* ── Confirm Batch WhatsApp Dispatch Modal ── */}
       {showConfirmBatchModal && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
@@ -6005,7 +6005,7 @@ export default function PharmarackCart() {
             )}
 
             {/* Modal Body: Distributor Table (Distributor Name, Total Qty, Cart Value, Delivery Person) */}
-            <div className="p-4 sm:p-5 overflow-y-auto flex-1 custom-scrollbar space-y-3">
+            <div className="p-4 sm:p-5 flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-3">
               <div className="border border-glass-border rounded-xl overflow-hidden bg-bg/40">
                 <table className="w-full text-left text-xs">
                   <thead>
@@ -6054,7 +6054,7 @@ export default function PharmarackCart() {
                                 setSelectedBatchDeliveryBoys((prev) => ({
                                   ...prev,
                                   [item.storeId]: val,
-                                }));
+                                  }));
                               }}
                               className="w-full text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
                             >
@@ -6132,7 +6132,7 @@ export default function PharmarackCart() {
       {/* ── Confirm Single WhatsApp Order Dispatch Modal ── */}
       {singleDispatchTarget && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-md shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between">
               <div className="flex items-center gap-2.5">

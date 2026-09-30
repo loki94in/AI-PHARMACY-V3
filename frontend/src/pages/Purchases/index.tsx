@@ -3233,15 +3233,15 @@ const Purchases: React.FC = () => {
                   autoComplete="off"
                 />
                 {showDistributorDropdown && distributorSearch.trim().length >= 2 && (
-                  <div ref={distributorDropdownRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 overflow-y-auto dropdown-scroll shadow-2xl">
-                    <div className="px-3 py-1 bg-bg3 border-b border-glass-border/40 flex items-center justify-end">
+                  <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 flex flex-col shadow-2xl">
+                    <div className="px-3 py-1 bg-bg3 border-b border-glass-border/40 flex items-center justify-end shrink-0">
                       <button
                         type="button"
                         onMouseDown={(e) => {
                           e.preventDefault();
                           setOnlyMappedFilter(prev => !prev);
                         }}
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-all ${
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-all cursor-pointer ${
                           onlyMappedFilter
                             ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                             : 'bg-white/5 text-muted border-glass-border'
@@ -3250,6 +3250,8 @@ const Purchases: React.FC = () => {
                         {onlyMappedFilter ? '⚡ Only Mapped' : 'All Distributors'}
                       </button>
                     </div>
+
+                    <div ref={distributorDropdownRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-glass-border/20">
 
                     {filteredDistributors.length === 0 ? (
                       <div className="px-4 py-3 text-muted text-xs">
@@ -3296,6 +3298,7 @@ const Purchases: React.FC = () => {
                         );
                       })
                     )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -3887,13 +3890,13 @@ const Purchases: React.FC = () => {
                             </div>
                           )}
                           {activeSearchIndex === index && searchResults.length > 0 && (
-                            <div className={`absolute z-[9999] w-[460px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
+                            <div className={`absolute z-[9999] w-[460px] max-w-[90vw] max-h-80 bg-bg2 border border-glass-border rounded-xl shadow-2xl flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
                             }`}>
                               {/* PINNED TOP SECTION: Always visible New Medicine Creation Header */}
-                              <div className="p-2 border-b border-glass-border/30 bg-bg/80 backdrop-blur-sm flex-shrink-0">
+                              <div className="p-2 border-b border-glass-border bg-bg3 flex-shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => openAddMedicineModal(index)}
@@ -3920,7 +3923,7 @@ const Purchases: React.FC = () => {
                               </div>
 
                               {/* SCROLLABLE MATCHING RESULTS */}
-                              <div ref={searchResultsRef} data-scrollable="true" className="max-h-60 overflow-y-auto dropdown-scroll flex-1">
+                              <div ref={searchResultsRef} data-scrollable="true" className="flex-1 min-h-0 overflow-y-auto dropdown-scroll">
                               {item.original_name && (
                                 <div className="px-4 py-2 bg-blue-500/10 border-b border-glass-border/30 text-xs text-blue-300 font-bold select-none flex items-center gap-1.5 font-mono">
                                   📄 Original Bill Name: {item.original_name}
@@ -4078,9 +4081,9 @@ const Purchases: React.FC = () => {
 
                       return (
                         <div 
-                          className="absolute left-0 top-full mt-1 z-dropdown min-w-[280px] max-w-[340px] bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150"
+                          className="absolute left-0 top-full mt-1 z-dropdown min-w-[280px] max-w-[340px] max-h-60 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-1 duration-150"
                         >
-                          <div className="px-3 py-1.5 bg-bg3 border-b border-glass-border/40 flex items-center justify-between">
+                          <div className="px-3 py-1.5 bg-bg3 border-b border-glass-border/40 flex items-center justify-between shrink-0">
                             <span className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
                               <span>🏷️</span> Old Batches ({filteredBatches.length})
                             </span>
@@ -4089,7 +4092,7 @@ const Purchases: React.FC = () => {
                             )}
                           </div>
 
-                          <div ref={batchDropdownRef} className="max-h-52 overflow-y-auto dropdown-scroll divide-y divide-glass-border/20">
+                          <div ref={batchDropdownRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-glass-border/20">
                             {rowBatchesLoading && rowBatchesList.length === 0 ? (
                               <div className="p-3 text-center text-xs text-muted">
                                 Fetching past batches...
@@ -4457,7 +4460,7 @@ const Purchases: React.FC = () => {
       {/* Add/Edit Distributor Modal */}
       {showDistributorModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-bg2 border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
+          <div className="bg-bg2 border border-border rounded-xl p-6 w-[95vw] max-w-md shadow-2xl">
             <h3 className="text-lg font-semibold text-text mb-4">{editDistributorId ? 'Edit Distributor' : 'Add New Distributor'}</h3>
             
             <div className="space-y-4">

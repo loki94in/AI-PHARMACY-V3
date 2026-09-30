@@ -209,11 +209,11 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm motion-modal-backdrop">
       <div 
-        className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-bg2 border border-glass-border rounded-2xl shadow-2xl overflow-hidden motion-modal-content"
+        className="relative w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col bg-bg2 border border-glass-border rounded-2xl shadow-2xl overflow-hidden motion-modal-content"
         onClick={(e) => e.stopPropagation()}
       >
         {/* MODAL HEADER */}
-        <div className="flex items-start justify-between p-5 border-b border-glass-border bg-bg3/50">
+        <div className="flex items-start justify-between p-5 border-b border-glass-border bg-bg3/50 shrink-0">
           <div className="flex items-start gap-3.5">
             <div className="p-2.5 rounded-xl bg-primary/10 border border-primary/20 text-primary mt-0.5">
               <Pill size={24} />
@@ -261,7 +261,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
         </div>
 
         {/* TAB NAVIGATION */}
-        <div className="flex items-center gap-2 px-5 pt-3 border-b border-glass-border bg-bg overflow-x-auto">
+        <div className="flex items-center gap-2 px-5 pt-3 border-b border-glass-border bg-bg overflow-x-auto shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab('instock')}
@@ -358,7 +358,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
         </div>
 
         {/* MODAL CONTENT */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted gap-3">
               <Loader2 size={32} className="animate-spin text-primary" />
@@ -805,7 +805,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
         </div>
 
         {/* MODAL FOOTER */}
-        <div className="flex items-center justify-between p-4 border-t border-glass-border bg-bg3/50 text-xs text-muted">
+        <div className="flex items-center justify-between p-4 border-t border-glass-border bg-bg3/50 text-xs text-muted shrink-0">
           <span>Press <kbd className="px-1.5 py-0.5 rounded bg-bg border border-border/40 font-mono text-[10px]">Esc</kbd> to exit</span>
           <button
             type="button"
@@ -824,7 +824,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
           onClick={() => setLightboxIndex(null)}
         >
           <div 
-            className="relative max-w-3xl max-h-[85vh] flex flex-col bg-bg2 border border-glass-border rounded-2xl overflow-hidden shadow-2xl p-4"
+            className="relative w-[95vw] max-w-3xl h-[80vh] min-h-[500px] max-h-[750px] flex flex-col bg-bg2 border border-glass-border rounded-2xl overflow-hidden shadow-2xl p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-glass-border mb-3">

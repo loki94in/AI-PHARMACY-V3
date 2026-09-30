@@ -200,9 +200,9 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
 
   return (
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-bg border border-border w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+      <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2">
+        <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
               <Truck size={20} />
@@ -269,7 +269,7 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
         </div>
 
         {/* Modal Body */}
-        <div className="p-4 overflow-y-auto flex-1 space-y-4">
+        <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-4">
           {loading ? (
             <div className="py-12 flex flex-col items-center justify-center text-muted gap-2">
               <RefreshCw size={24} className="animate-spin text-primary" />

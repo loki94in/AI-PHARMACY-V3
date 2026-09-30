@@ -1244,8 +1244,8 @@ const Dispatch = () => {
       {/* Prescription Zoom Lightbox Modal */}
       {selectedPrescription && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
-          <div className="bg-bg border border-border w-full max-w-2xl rounded-3xl p-5 space-y-4 shadow-2xl relative">
-            <div className="flex justify-between items-center border-b border-border pb-3">
+          <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col rounded-3xl p-5 space-y-4 shadow-2xl relative overflow-hidden">
+            <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <FileImage size={18} className="text-primary" />
                 <h3 className="font-bold text-sm text-text">Customer Prescription Verification</h3>
@@ -1258,15 +1258,15 @@ const Dispatch = () => {
               </button>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto flex items-center justify-center bg-bg/40 rounded-2xl p-2">
+            <div className="flex-1 min-h-0 overflow-auto flex items-center justify-center bg-bg/40 rounded-2xl p-2">
               <img
                 src={selectedPrescription}
                 alt="Doctor's Prescription"
-                className="max-w-full max-h-[65vh] object-contain rounded-xl shadow-md"
+                className="max-w-full max-h-[55vh] object-contain rounded-xl shadow-md"
               />
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <div className="flex justify-end gap-2 border-t border-border pt-3 shrink-0">
               <a
                 href={selectedPrescription}
                 target="_blank"
@@ -2164,7 +2164,7 @@ const Dispatch = () => {
       {/* ── MODAL: CREATE NEW DISPATCH ORDER ── */}
       {showModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-modal flex items-center justify-center p-4">
-          <div className="glass-panel p-6 w-full max-w-lg space-y-4 rounded-2xl border border-glass-border shadow-2xl animate-in fade-in zoom-in-95">
+          <div className="glass-panel p-6 w-[95vw] max-w-lg space-y-4 rounded-2xl border border-glass-border shadow-2xl animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-glass-border pb-3">
               <h3 className="font-bold flex items-center gap-2 text-sm text-text">
                 <Truck size={18} className="text-primary" /> Create Home Delivery Order
@@ -2276,7 +2276,7 @@ const Dispatch = () => {
       {/* ── MODAL: MANAGE STAFF PERSONNEL ── */}
       {showBoysModal && createPortal(
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-modal flex items-center justify-center p-4 overflow-y-auto">
-          <div className="glass-panel p-6 w-full max-w-lg space-y-4 max-h-[90vh] flex flex-col rounded-2xl border border-sky-500/30 shadow-2xl animate-in fade-in zoom-in-95">
+          <div className="glass-panel p-6 w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] space-y-4 flex flex-col rounded-2xl border border-sky-500/30 shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden">
             <div className="flex items-center justify-between shrink-0 border-b border-glass-border pb-3">
               <h3 className="font-bold flex items-center gap-2 text-sm text-text">
                 <User size={18} className="text-sky" /> Delivery Personnel Management
@@ -2316,7 +2316,7 @@ const Dispatch = () => {
             </form>
 
             {/* Personnel List */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
               <p className="text-xs font-bold text-muted uppercase tracking-wider">All Personnel ({allBoys.length})</p>
               {allBoys.length === 0 ? (
                 <div className="p-6 text-center text-muted text-xs border border-dashed border-glass-border rounded-xl">
@@ -2432,7 +2432,7 @@ const Dispatch = () => {
 
       {showTemplateModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-global-modal flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl max-w-lg w-full bg-bg2 border border-glass-border shadow-2xl space-y-4">
+          <div className="glass-panel p-6 rounded-2xl w-[95vw] max-w-lg bg-bg2 border border-glass-border shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-glass-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
                 <MessageSquare className="text-amber-400" size={18} /> Edit Default Reminder Message Template
@@ -2492,7 +2492,7 @@ const Dispatch = () => {
 
       {showManualOrderModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-global-modal flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl max-w-md w-full bg-bg2 border border-glass-border shadow-2xl space-y-4">
+          <div className="glass-panel p-6 rounded-2xl w-[95vw] max-w-md bg-bg2 border border-glass-border shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-glass-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
                 <PhoneCall className="text-emerald-400" size={18} /> Record Phone Call Order Reminder

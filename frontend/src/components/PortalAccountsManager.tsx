@@ -473,7 +473,7 @@ export function PortalAccountsManager() {
       {/* Modal: Create / Generate Account */}
       {isModalOpen && (
         <div className="fixed inset-0 z-global-modal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-primary" />
@@ -585,7 +585,7 @@ export function PortalAccountsManager() {
       {/* Modal: Override / Edit PIN */}
       {overrideModalAcc && (
         <div className="fixed inset-0 z-global-modal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-2xl">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-base font-bold text-text flex items-center gap-2">
                 <Key className="w-5 h-5 text-amber-500" />
@@ -667,7 +667,7 @@ export function PortalAccountsManager() {
       {/* Modal: Session History & Usage Auditing */}
       {sessionModalAcc && (
         <div className="fixed inset-0 z-global-modal bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-2xl h-[75vh] min-h-[480px] max-h-[680px] p-6 space-y-4 shadow-2xl flex flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-border pb-3 shrink-0">
               <div>
                 <h3 className="text-base font-bold text-text flex items-center gap-2">
@@ -709,7 +709,7 @@ export function PortalAccountsManager() {
             </div>
 
             {/* Sessions Table */}
-            <div className="flex-1 overflow-y-auto border border-border rounded-xl bg-bg">
+            <div className="flex-1 min-h-0 overflow-y-auto border border-border rounded-xl bg-bg">
               {loadingSessions ? (
                 <div className="py-12 text-center text-muted text-xs">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />

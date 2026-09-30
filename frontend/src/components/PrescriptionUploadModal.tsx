@@ -428,11 +428,11 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
       onClick={onClose}
     >
       <div
-        className="bg-bg2 border border-border rounded-3xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto flex flex-col"
+        className="bg-bg2 border border-border rounded-3xl shadow-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[750px] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="p-5 sm:p-6 border-b border-border flex items-center justify-between sticky top-0 bg-bg2/95 backdrop-blur-sm z-10">
+        <div className="p-5 sm:p-6 border-b border-border flex items-center justify-between shrink-0 bg-bg2/95 backdrop-blur-sm z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
               <Camera className="w-5 h-5" />
@@ -457,7 +457,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 sm:p-6 space-y-5">
+        <div className="p-5 sm:p-6 space-y-5 flex-1 min-h-0 overflow-y-auto">
           {successResult ? (
             /* SUCCESS CONFIRMATION STATE */
             <div className="text-center py-6 space-y-5">

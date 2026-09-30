@@ -1592,7 +1592,7 @@ const Learning: React.FC = () => {
       {/* ========================================================================= */}
       {showAddDistributorModal && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-lg space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <Building2 size={18} className="text-primary" />
@@ -1724,7 +1724,7 @@ const Learning: React.FC = () => {
       {/* ========================================================================= */}
       {showMergeModal && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <GitMerge size={18} className="text-amber-500" />
@@ -1802,7 +1802,7 @@ const Learning: React.FC = () => {
       {/* ========================================================================= */}
       {editingDistributor && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-lg space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <Edit size={18} className="text-primary" />
@@ -1895,7 +1895,7 @@ const Learning: React.FC = () => {
       {/* ========================================================================= */}
       {editingDoctor && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <Stethoscope size={18} className="text-primary" />

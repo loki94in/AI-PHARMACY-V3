@@ -491,9 +491,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
         transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-        className="relative w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl bg-bg2 border border-border shadow-2xl flex flex-col z-10"
+        className="relative w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] overflow-hidden rounded-2xl bg-bg2 border border-border shadow-2xl flex flex-col z-10"
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border shrink-0">
           <div>
             <h3 className="text-xl font-semibold text-text">
               {phase === 'review' && 'Review & Map Columns'}
@@ -512,7 +512,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 relative">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 relative">
           <AnimatePresence mode="wait">
 
             {phase === 'review' && (

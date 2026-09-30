@@ -1005,7 +1005,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
       {/* Interactive Stamp & Signature Placement Studio Modal */}
       {showStudioModal && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 backdrop-blur-md p-4 sm:p-6 fade-in overflow-y-auto">
-          <div className="bg-bg border border-border rounded-3xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col my-auto max-h-[92vh]">
+          <div className="bg-bg border border-border rounded-3xl w-[95vw] max-w-5xl h-[85vh] min-h-[580px] max-h-[860px] shadow-2xl overflow-hidden flex flex-col">
             
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-border bg-bg3/40 flex items-center justify-between shrink-0">
@@ -1032,7 +1032,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
             </div>
 
             {/* Modal Body: Left side Canvas, Right side Controls */}
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 overflow-y-auto">
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 overflow-y-auto">
               
               {/* Left Side: Live Bill Canvas Preview (7 cols) */}
               <div className="lg:col-span-7 flex flex-col items-center">
@@ -3558,7 +3558,7 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
       {/* Full Backup Modal */}
       {showBackupModal && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border rounded-2xl p-6 w-full max-w-3xl max-h-[85vh] overflow-y-auto relative shadow-2xl">
+          <div className="bg-bg border border-border rounded-2xl p-6 w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] overflow-y-auto relative shadow-2xl">
             <button
               onClick={() => setShowBackupModal(false)}
               className="absolute top-4 right-4 p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
@@ -3582,7 +3582,7 @@ function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<
       {/* Purge Confirmation Modal (Human-in-the-Loop) */}
       {showPurgeConfirmModal && storageStats && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-bg border border-border rounded-2xl p-5 w-[95vw] max-w-md space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
                 <Trash2 size={18} className="text-amber-500" />
@@ -3706,7 +3706,7 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
 
   return (
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-bg border border-border rounded-2xl p-6 w-full max-w-xl relative shadow-2xl space-y-5">
+      <div className="bg-bg border border-border rounded-2xl p-6 w-[95vw] max-w-xl relative shadow-2xl space-y-5">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
@@ -4867,7 +4867,7 @@ function MultiStoreTab() {
       {/* Add Branch Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left">
-          <div className="bg-bg border border-border w-full max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
+          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <StoreIcon size={18} className="text-primary" />

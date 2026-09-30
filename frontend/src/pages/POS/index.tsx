@@ -121,7 +121,7 @@ const UniversalMedicineEditModal = lazy(() => import('../../components/Universal
 const ModalSkeleton = () => (
   <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 fade-in">
     <div className="absolute inset-0 bg-bg/80 backdrop-blur-md" />
-    <div className="relative bg-bg border border-glass-border rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden slide-up">
+    <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up">
       <div className="p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-6 w-32 bg-glass-border/40 rounded animate-pulse" />
@@ -4221,12 +4221,13 @@ const POS = () => {
                     aria-label="Patient Name"
                   />
                   {showPatientSuggestions && (
-                    <div ref={patientSuggestionsRef} className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto dropdown-scroll shadow-2xl">
+                    <div className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
                       {isPatientFuzzyMatch && (
-                        <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5">
+                        <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5 shrink-0 select-none">
                           <span>🔍</span> No exact match. Did you mean:
                         </div>
                       )}
+                      <div ref={patientSuggestionsRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                       {patientSuggestions.map((c, idx) => {
                         const hasCreditDue = (c.credit_balance && c.credit_balance > 0) || c.credit_enabled === 1;
                         return (
@@ -4287,6 +4288,7 @@ const POS = () => {
                           </button>
                         );
                       })}
+                      </div>
                     </div>
                   )}
                   <button
@@ -4414,7 +4416,8 @@ const POS = () => {
                     title="Select or Type Doctor Name"
                   />
                   {isDoctorDropdownOpen && doctor.trim().length >= 2 && (
-                    <div ref={doctorSuggestionsRef} className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto dropdown-scroll shadow-2xl">
+                    <div className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
+                      <div ref={doctorSuggestionsRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                       {filteredDoctors.length > 0 ? (
                         filteredDoctors.map((doc, idx) => (
                           <button
@@ -4449,6 +4452,7 @@ const POS = () => {
                           Press Enter to add: "{doctor}"
                         </div>
                       )}
+                      </div>
                     </div>
                   )}
 
@@ -4747,9 +4751,9 @@ const POS = () => {
                 
                 {/* Search results dropdown */}
                 {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
+                  <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-96 [will-change:scroll-position]">
                     {/* PINNED TOP SECTION: Quick Add Header */}
-                    <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center justify-between gap-2">
+                    <div className="p-2 border-b border-border bg-bg3 flex-shrink-0 flex items-center justify-between gap-2">
                       <div className="text-xs text-muted px-2 min-w-0 truncate">
                         Found <span className="text-text font-semibold">{searchResults.length}</span> matching {searchResults.length === 1 ? 'medicine' : 'medicines'}
                       </div>
@@ -4779,7 +4783,7 @@ const POS = () => {
                       </button>
                     </div>
 
-                    <div ref={searchResultsRef} data-scrollable="true" className="max-h-72 overflow-y-auto dropdown-scroll flex-1 divide-y divide-border/10">
+                    <div ref={searchResultsRef} data-scrollable="true" className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                     {suggestions.length > 0 && (
                       <div className="p-3 border-b border-border/30 bg-violet-500/5">
                         <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
@@ -5406,14 +5410,14 @@ const POS = () => {
                               
                               {activeRowSearchIndex === cart.indexOf(item) && rowSearchTerm.trim().length >= 2 && (
                                 <div 
-                                  className={`absolute left-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden w-[380px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] flex flex-col ${
+                                  className={`absolute left-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden w-[380px] max-h-72 shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] flex flex-col ${
                                     rowSearchDropUp
                                       ? 'bottom-full mb-1'
                                       : 'top-full mt-1'
                                   }`}
                                 >
                                   {rowSearchResults.length === 0 && (
-                                    <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm shrink-0">
+                                    <div className="p-2 border-b border-border bg-bg3 shrink-0">
                                       <button
                                         type="button"
                                         onMouseDown={(e) => {
@@ -5455,7 +5459,7 @@ const POS = () => {
                                   )}
 
                                   {rowSearchResults.length > 0 ? (
-                                    <div ref={rowSearchResultsRef} data-scrollable="true" className="max-h-56 overflow-y-auto dropdown-scroll flex-1 divide-y divide-border/10">
+                                    <div ref={rowSearchResultsRef} data-scrollable="true" className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                                       {rowSearchResults.map((med, mIdx) => {
                                         const rowPendingMatches = specialOrders.filter(
                                           o => o.product.toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim() ||
@@ -5626,11 +5630,12 @@ const POS = () => {
                             </button>
                             
                             {activeBatchRowId === String(item.id) && rowBatchesList.length > 0 && (
-                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto dropdown-scroll w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-                                <div className="p-2 border-b border-border/30 bg-bg3/60 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
+                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                                <div className="p-2 border-b border-border/30 bg-bg3 shrink-0 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
                                   <span>Switch Batch</span>
                                   <span className="text-xs font-normal text-muted/70">{rowBatchesList.length} available</span>
                                 </div>
+                                <div className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                                 {rowBatchesList.map(b => {
                                   const otherCartQty = cart.reduce((sum, c) => {
                                     if (c.id === item.id) return sum; // exclude current row
@@ -5686,6 +5691,7 @@ const POS = () => {
                                     </button>
                                   );
                                 })}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -6245,7 +6251,7 @@ const POS = () => {
       {/* Credit Phone Number Requirement Prompt Modal */}
       {showPhonePromptModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-modal p-4 animate-fade-in">
-          <div className="glass-panel max-w-md w-full p-6 space-y-4 border-border bg-bg2/95 rounded-2xl relative shadow-2xl">
+          <div className="glass-panel w-[95vw] max-w-md p-6 space-y-4 border-border bg-bg2/95 rounded-2xl relative shadow-2xl">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <h3 className="font-bold flex items-center gap-2 text-base text-text">
                 <Send size={18} className="text-primary" />
@@ -6306,7 +6312,7 @@ const POS = () => {
       {/* Patient Profile & Auto-Refills Modal */}
       {showPatientModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-modal p-4 animate-fade-in">
-          <div className="glass-panel max-w-md w-full p-6 space-y-5 border-border bg-bg2/95 rounded-2xl relative shadow-2xl">
+          <div className="glass-panel w-[95vw] max-w-md p-6 space-y-5 border-border bg-bg2/95 rounded-2xl relative shadow-2xl">
             {/* Modal Header */}
             <div className="flex justify-between items-center border-b border-border pb-3">
               <h3 className="font-bold flex items-center gap-2 text-lg text-text">
@@ -6472,7 +6478,7 @@ const POS = () => {
       {/* Doctor Registration / Edit Modal */}
       {showDoctorModal && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm fade-in">
-          <div className="bg-bg border border-border rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col">
+          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-sm shadow-2xl overflow-hidden flex flex-col">
             <div className="px-5 py-4 border-b border-border bg-bg3/30 flex items-center justify-between">
               <h3 className="font-bold flex items-center gap-2 text-sky text-sm">
                 {editingDoctorId ? <Edit size={18} className="text-amber-400" /> : <Plus size={18} />}
@@ -6678,7 +6684,7 @@ const POS = () => {
       {/* Post-Sale Saved Bill Confirmation Modal */}
       {showBarcodeModal && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md fade-in">
-          <div className="bg-bg border border-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col p-6 space-y-5">
+          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-md shadow-2xl overflow-hidden flex flex-col p-6 space-y-5">
             <div className="text-center space-y-2">
               <div className="inline-flex p-3 rounded-full bg-green/10 border border-green/20 text-green mb-1">
                 <CheckCircle size={32} className="animate-bounce" />
@@ -6849,7 +6855,7 @@ const POS = () => {
           onClick={() => setShowInteractionsModal(false)}
         >
           <div 
-            className="w-full max-w-lg bg-bg2 border border-glass-border rounded-2xl p-5 shadow-2xl space-y-4"
+            className="w-[95vw] max-w-lg bg-bg2 border border-glass-border rounded-2xl p-5 shadow-2xl space-y-4"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-glass-border">

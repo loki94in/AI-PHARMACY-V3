@@ -2330,7 +2330,8 @@ export async function ensureSchema(dbPath: string) {
       needs_confirmation INTEGER DEFAULT 0,
       lifecycle_status TEXT DEFAULT 'sent',
       acknowledged INTEGER DEFAULT 0,
-      resolved_at INTEGER DEFAULT NULL
+      resolved_at INTEGER DEFAULT NULL,
+      snoozed_until TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS session_refresh_logs (
@@ -2899,7 +2900,8 @@ export async function ensureSchema(dbPath: string) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       reference_id TEXT,
       needs_confirmation INTEGER DEFAULT 0,
-      lifecycle_status TEXT DEFAULT 'sent'
+      lifecycle_status TEXT DEFAULT 'sent',
+      snoozed_until TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS staged_sales (
@@ -4416,6 +4418,15 @@ export async function ensureSchema(dbPath: string) {
         if (!mapNames.has('store_id')) {
           await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1');
         }
+      }
+    } catch (_) { }
+
+    // Schema v64: Additive check for snoozed_until column on automation_notifications
+    try {
+      const notifCols = await db.all('PRAGMA table_info(automation_notifications)');
+      const notifNames = new Set(notifCols.map((c: any) => c.name));
+      if (notifCols.length > 0 && !notifNames.has('snoozed_until')) {
+        await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL');
       }
     } catch (_) { }
 

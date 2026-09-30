@@ -1349,8 +1349,8 @@ export default function WebsiteOrders() {
         const currentPhoto = photos[prescriptionPhotoIndex] || photos[0] || '';
         return (
           <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
-            <div className="bg-bg border border-border w-full max-w-2xl rounded-3xl p-5 space-y-4 shadow-2xl relative">
-              <div className="flex justify-between items-center border-b border-border pb-3">
+            <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col rounded-3xl p-5 shadow-2xl relative overflow-hidden">
+              <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
                 <div className="flex items-center gap-2">
                   <FileImage size={18} className="text-primary" />
                   <h3 className="font-bold text-sm text-text">
@@ -1370,103 +1370,105 @@ export default function WebsiteOrders() {
                 </button>
               </div>
 
-              {/* Main Image Preview with Previous/Next Controls */}
-              <div className="relative max-h-[65vh] overflow-hidden flex items-center justify-center bg-bg3/20 rounded-2xl p-2 group">
-                <img
-                  src={getMediaUrl(currentPhoto)}
-                  alt={`Doctor's Prescription - Page ${prescriptionPhotoIndex + 1}`}
-                  className="max-w-full max-h-[60vh] object-contain rounded-xl shadow-md"
-                />
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-4 py-2">
+                {/* Main Image Preview with Previous/Next Controls */}
+                <div className="relative max-h-[50vh] overflow-hidden flex items-center justify-center bg-bg3/20 rounded-2xl p-2 group">
+                  <img
+                    src={getMediaUrl(currentPhoto)}
+                    alt={`Doctor's Prescription - Page ${prescriptionPhotoIndex + 1}`}
+                    className="max-w-full max-h-[48vh] object-contain rounded-xl shadow-md"
+                  />
 
+                  {photos.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={prescriptionPhotoIndex === 0}
+                        onClick={() => setPrescriptionPhotoIndex(p => Math.max(0, p - 1))}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-bg2/90 border border-border shadow-lg flex items-center justify-center text-text disabled:opacity-30 hover:scale-105 transition-all cursor-pointer"
+                      >
+                        ←
+                      </button>
+                      <button
+                        type="button"
+                        disabled={prescriptionPhotoIndex === photos.length - 1}
+                        onClick={() => setPrescriptionPhotoIndex(p => Math.min(photos.length - 1, p + 1))}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-bg2/90 border border-border shadow-lg flex items-center justify-center text-text disabled:opacity-30 hover:scale-105 transition-all cursor-pointer"
+                      >
+                        →
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Thumbnail Strip if Multiple Photos */}
                 {photos.length > 1 && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={prescriptionPhotoIndex === 0}
-                      onClick={() => setPrescriptionPhotoIndex(p => Math.max(0, p - 1))}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-bg2/90 border border-border shadow-lg flex items-center justify-center text-text disabled:opacity-30 hover:scale-105 transition-all cursor-pointer"
-                    >
-                      ←
-                    </button>
-                    <button
-                      type="button"
-                      disabled={prescriptionPhotoIndex === photos.length - 1}
-                      onClick={() => setPrescriptionPhotoIndex(p => Math.min(photos.length - 1, p + 1))}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-bg2/90 border border-border shadow-lg flex items-center justify-center text-text disabled:opacity-30 hover:scale-105 transition-all cursor-pointer"
-                    >
-                      →
-                    </button>
-                  </>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                    {photos.map((url, idx) => (
+                      <button
+                        key={url}
+                        type="button"
+                        onClick={() => setPrescriptionPhotoIndex(idx)}
+                        className={`relative w-16 h-14 rounded-lg overflow-hidden border-2 transition-all shrink-0 cursor-pointer ${
+                          prescriptionPhotoIndex === idx
+                            ? 'border-primary shadow-sm ring-1 ring-primary'
+                            : 'border-border opacity-60 hover:opacity-100'
+                        }`}
+                      >
+                        <img src={getMediaUrl(url)} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
+                        <span className="absolute bottom-0 right-0 px-1 text-[9px] bg-bg/90 text-text font-bold rounded-tl">
+                          {idx + 1}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Scanned Prescription Items Table */}
+                {prescriptionScanDetails?.items && prescriptionScanDetails.items.length > 0 && (
+                  <div className="p-3 bg-bg2 rounded-2xl border border-border space-y-2 max-h-48 overflow-y-auto text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                        <Sparkles size={13} className="text-primary" />
+                        <span>Prescription Scan Intelligence ({prescriptionScanDetails.items.length} Medicines)</span>
+                      </span>
+                      {prescriptionScanDetails.scan?.doctor_name && (
+                        <span className="text-[10px] text-muted">
+                          Prescribed by: {prescriptionScanDetails.scan.doctor_name}
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      {prescriptionScanDetails.items.map((item: any, idx: number) => (
+                        <div key={idx} className="flex items-center justify-between p-2 rounded-xl bg-bg border border-border text-xs">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-text block">
+                              {item.matched_medicine_name || item.line_text}
+                            </span>
+                            <div className="flex items-center gap-2 text-[10px] text-muted">
+                              <span>Type: {item.dosage_group || 'TAB'}</span>
+                              {item.frequency && <span>Dose: {item.frequency}</span>}
+                              {item.duration_days && <span>Duration: {item.duration_days} days</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              item.in_stock
+                                ? 'bg-green/15 text-green border-green/30'
+                                : 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+                            }`}>
+                              {item.in_stock ? 'IN STOCK' : 'ORDER REQUIRED'}
+                            </span>
+                            {item.mrp && <span className="font-mono text-muted text-[11px]">₹{item.mrp}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
 
-              {/* Thumbnail Strip if Multiple Photos */}
-              {photos.length > 1 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                  {photos.map((url, idx) => (
-                    <button
-                      key={url}
-                      type="button"
-                      onClick={() => setPrescriptionPhotoIndex(idx)}
-                      className={`relative w-16 h-14 rounded-lg overflow-hidden border-2 transition-all shrink-0 cursor-pointer ${
-                        prescriptionPhotoIndex === idx
-                          ? 'border-primary shadow-sm ring-1 ring-primary'
-                          : 'border-border opacity-60 hover:opacity-100'
-                      }`}
-                    >
-                      <img src={getMediaUrl(url)} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
-                      <span className="absolute bottom-0 right-0 px-1 text-[9px] bg-bg/90 text-text font-bold rounded-tl">
-                        {idx + 1}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Scanned Prescription Items Table */}
-              {prescriptionScanDetails?.items && prescriptionScanDetails.items.length > 0 && (
-                <div className="p-3 bg-bg2 rounded-2xl border border-border space-y-2 max-h-48 overflow-y-auto text-left">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-text flex items-center gap-1.5">
-                      <Sparkles size={13} className="text-primary" />
-                      <span>Prescription Scan Intelligence ({prescriptionScanDetails.items.length} Medicines)</span>
-                    </span>
-                    {prescriptionScanDetails.scan?.doctor_name && (
-                      <span className="text-[10px] text-muted">
-                        Prescribed by: {prescriptionScanDetails.scan.doctor_name}
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-1.5">
-                    {prescriptionScanDetails.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between p-2 rounded-xl bg-bg border border-border text-xs">
-                        <div className="space-y-0.5">
-                          <span className="font-bold text-text block">
-                            {item.matched_medicine_name || item.line_text}
-                          </span>
-                          <div className="flex items-center gap-2 text-[10px] text-muted">
-                            <span>Type: {item.dosage_group || 'TAB'}</span>
-                            {item.frequency && <span>Dose: {item.frequency}</span>}
-                            {item.duration_days && <span>Duration: {item.duration_days} days</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                            item.in_stock
-                              ? 'bg-green/15 text-green border-green/30'
-                              : 'bg-amber-500/15 text-amber-500 border-amber-500/30'
-                          }`}>
-                            {item.in_stock ? 'IN STOCK' : 'ORDER REQUIRED'}
-                          </span>
-                          {item.mrp && <span className="font-mono text-muted text-[11px]">₹{item.mrp}</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center border-t border-border pt-3">
+              <div className="flex justify-between items-center border-t border-border pt-3 shrink-0">
                 <div className="text-xs text-muted">
                   {photos.length > 1 ? `${photos.length} photos uploaded` : '1 photo attached'}
                 </div>
@@ -1498,7 +1500,7 @@ export default function WebsiteOrders() {
       {/* Return Override Authorization Modal */}
       {overrideModalOrder && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
+          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <ShieldAlert size={18} className="text-amber-500" />
@@ -1564,7 +1566,7 @@ export default function WebsiteOrders() {
       {/* Staff Delivery ETA Override Modal */}
       {deliveryOverrideOrder && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
+          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <Clock size={18} className="text-primary" />
@@ -1640,8 +1642,8 @@ export default function WebsiteOrders() {
       {/* WhatsApp Payment Screenshot Review Modal (Human-in-the-Loop) */}
       {selectedScreenshot && (
         <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-bg border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <FileImage size={18} className="text-primary" />
                 <div>
@@ -1659,7 +1661,7 @@ export default function WebsiteOrders() {
             </div>
 
             {/* Amount Verification Bar */}
-            <div className="p-3 bg-bg2 rounded-xl border border-border flex items-center justify-between text-xs">
+            <div className="p-3 bg-bg2 rounded-xl border border-border flex items-center justify-between text-xs shrink-0 mt-3">
               <div>
                 <span className="text-muted block text-[11px]">Expected Total</span>
                 <span className="font-bold text-text text-sm">₹{selectedScreenshot.amount.toFixed(2)}</span>
@@ -1681,11 +1683,11 @@ export default function WebsiteOrders() {
             </div>
 
             {/* Image Preview */}
-            <div className="flex-1 overflow-auto rounded-xl border border-border bg-bg3 flex flex-col items-center justify-center p-2 min-h-[250px] relative">
+            <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-bg3 flex flex-col items-center justify-center p-2 my-3 relative">
               <img
                 src={getMediaUrl(selectedScreenshot.path)}
                 alt="Payment Screenshot"
-                className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-sm"
+                className="max-h-[45vh] max-w-full object-contain rounded-lg shadow-sm"
                 onError={(e) => {
                   (e.target as HTMLElement).style.display = 'none';
                   const fallback = document.getElementById('modal-receipt-fallback');
@@ -1714,7 +1716,7 @@ export default function WebsiteOrders() {
             </div>
 
             {/* Actions */}
-            <div className="pt-2 flex items-center justify-between gap-2 border-t border-border/60">
+            <div className="pt-3 flex items-center justify-between gap-2 border-t border-border/60 shrink-0">
               <div className="flex items-center gap-2">
                 <button
                   type="button"

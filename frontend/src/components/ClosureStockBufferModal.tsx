@@ -160,7 +160,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
 
   return (
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-bg border border-border w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+      <div className="bg-bg border border-border w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -227,7 +227,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
         </div>
 
         {/* Content Table / Checklist */}
-        <div className="p-4 overflow-y-auto flex-1 space-y-2">
+        <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-2">
           {loading ? (
             <div className="py-16 text-center text-muted flex flex-col items-center justify-center gap-2">
               <RefreshCw size={24} className="animate-spin text-amber-500" />

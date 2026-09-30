@@ -270,9 +270,9 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-bg border border-border rounded-2xl max-w-2xl w-full p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[92vh] text-left">
+      <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col text-left overflow-hidden">
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-border/60 pb-3">
+        <div className="flex items-start justify-between border-b border-border/60 pb-3 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
               <Edit3 size={18} />
@@ -307,9 +307,9 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
             <span className="text-xs">Loading order items...</span>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden space-y-4">
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden space-y-4">
             {/* Search and Add Item Section */}
-            <div className="space-y-1.5" ref={searchContainerRef}>
+            <div className="space-y-1.5 shrink-0" ref={searchContainerRef}>
               <label className="text-xs font-bold text-text flex items-center gap-1.5">
                 <Plus size={13} className="text-primary" />
                 <span>Add Medicine to Order</span>
@@ -375,7 +375,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
             </div>
 
             {/* Line Items Table */}
-            <div className="flex-1 overflow-y-auto border border-border rounded-xl bg-bg2/40 divide-y divide-border/60">
+            <div className="flex-1 min-h-0 overflow-y-auto border border-border rounded-xl bg-bg2/40 divide-y divide-border/60">
               <div className="bg-bg3/60 px-3 py-2 text-[10px] font-bold text-muted uppercase tracking-wider grid grid-cols-12 gap-2">
                 <span className="col-span-5 sm:col-span-6">Medicine / Product</span>
                 <span className="col-span-3 sm:col-span-2 text-center">Qty</span>

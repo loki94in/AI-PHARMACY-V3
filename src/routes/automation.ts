@@ -291,13 +291,18 @@ router.post('/notifications/:id/snooze', async (req, res) => {
       return res.status(404).json({ error: 'Notification not found' });
     }
 
+    const snoozeUntilDate = new Date();
+    snoozeUntilDate.setDate(snoozeUntilDate.getDate() + days);
+    const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+
     await db.run(
       `UPDATE automation_notifications 
        SET status = 'snoozed', 
            lifecycle_status = 'snoozed',
+           snoozed_until = ?,
            error_message = ? 
        WHERE id = ?`,
-      [`Snoozed by ${days} day(s) until tomorrow`, id]
+      [snoozedUntilStr, `Snoozed for ${days} day(s) until ${snoozedUntilStr}`, id]
     );
 
     // If associated with patient_refills, shift next_refill_date by +days
@@ -314,7 +319,11 @@ router.post('/notifications/:id/snooze', async (req, res) => {
       }
     }
 
-    res.json({ success: true, message: `Notification snoozed for ${days} day(s)` });
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('automation_hub_updated', { type: 'snoozed', id });
+    eventService.broadcast('refill_updated', { type: 'snoozed', id });
+
+    res.json({ success: true, message: `Notification snoozed for ${days} day(s) until ${snoozedUntilStr}` });
   } catch (err: any) {
     console.error('Failed to snooze notification:', err);
     res.status(500).json({ error: 'Failed to snooze notification: ' + err.message });
@@ -331,6 +340,10 @@ router.post('/notifications/group/snooze', async (req, res) => {
 
   try {
     const db = await dbManager.getConnection();
+    const snoozeUntilDate = new Date();
+    snoozeUntilDate.setDate(snoozeUntilDate.getDate() + snoozeDays);
+    const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+
     for (const notifId of ids) {
       const existing = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [notifId]);
       if (!existing) continue;
@@ -339,9 +352,10 @@ router.post('/notifications/group/snooze', async (req, res) => {
         `UPDATE automation_notifications 
          SET status = 'snoozed', 
              lifecycle_status = 'snoozed',
+             snoozed_until = ?,
              error_message = ? 
          WHERE id = ?`,
-        [`Snoozed by ${snoozeDays} day(s)`, notifId]
+        [snoozedUntilStr, `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`, notifId]
       );
 
       if (existing.reference_id && (existing.type === 'refill_collection' || existing.type === 'refill_reminder')) {
@@ -358,10 +372,60 @@ router.post('/notifications/group/snooze', async (req, res) => {
       }
     }
 
-    res.json({ success: true, message: `Snoozed ${ids.length} notification(s) for ${snoozeDays} day(s)` });
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('automation_hub_updated', { type: 'group_snoozed', count: ids.length });
+    eventService.broadcast('refill_updated', { type: 'group_snoozed', count: ids.length });
+
+    res.json({ success: true, message: `Snoozed ${ids.length} notification(s) for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
   } catch (err: any) {
     console.error('Failed to batch snooze notifications:', err);
     res.status(500).json({ error: 'Failed to batch snooze: ' + err.message });
+  }
+});
+
+// Snooze all reminders for a specific patient phone/name (from CRM / Quick Assist)
+router.post('/notifications/snooze-patient', async (req, res) => {
+  const { patient_phone, patient_name, days = 1 } = req.body;
+  const snoozeDays = Math.max(1, parseInt(String(days), 10));
+
+  if (!patient_phone && !patient_name) {
+    return res.status(400).json({ error: 'patient_phone or patient_name is required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    const snoozeUntilDate = new Date();
+    snoozeUntilDate.setDate(snoozeUntilDate.getDate() + snoozeDays);
+    const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+
+    // Update notifications
+    await db.run(
+      `UPDATE automation_notifications 
+       SET status = 'snoozed', 
+           lifecycle_status = 'snoozed',
+           snoozed_until = ?,
+           error_message = ? 
+       WHERE (recipient_phone = ? OR recipient_name = ?) AND status IN ('staged', 'snoozed')`,
+      [snoozedUntilStr, `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`, patient_phone || '', patient_name || '']
+    );
+
+    // Shift next_refill_date on patient_refills
+    await db.run(
+      `UPDATE patient_refills 
+       SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
+           reminder_status = 'NOT_SENT'
+       WHERE (patient_phone = ? OR patient_name = ?) AND is_active = 1`,
+      [`+${snoozeDays} day`, patient_phone || '', patient_name || '']
+    );
+
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('automation_hub_updated', { type: 'patient_snoozed', patient_phone });
+    eventService.broadcast('refill_updated', { type: 'patient_snoozed', patient_phone });
+
+    res.json({ success: true, message: `Refill reminder snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
+  } catch (err: any) {
+    console.error('Failed to snooze patient refills:', err);
+    res.status(500).json({ error: 'Failed to snooze patient refills: ' + err.message });
   }
 });
 

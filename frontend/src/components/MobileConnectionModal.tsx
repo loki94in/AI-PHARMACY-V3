@@ -136,7 +136,7 @@ export const MobileConnectionModal: React.FC<Props> = ({ onClose }) => {
       />
       
       {/* Modal Content */}
-      <div className="relative bg-glass-bg border border-glass-border rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden slide-up max-h-[90vh]">
+      <div className="relative bg-glass-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] flex flex-col shadow-2xl overflow-hidden slide-up">
         {/* Header */}
         <div className="p-5 border-b border-glass-border bg-white/5 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -157,7 +157,7 @@ export const MobileConnectionModal: React.FC<Props> = ({ onClose }) => {
         </div>
 
         {/* Body */}
-        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto space-y-6">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted">
               <RefreshCw size={32} className="animate-spin mb-4 text-primary" />

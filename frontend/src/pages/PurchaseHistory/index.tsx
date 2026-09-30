@@ -895,8 +895,8 @@ const PurchaseHistory = () => {
       {/* Investigation Modal */}
       {selectedOrder && createPortal(
         <div className="fixed inset-0 bg-bg/80 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="glass-panel w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in duration-200">
-            <div className="p-6 border-b border-glass-border flex justify-between items-start bg-bg2">
+          <div className="glass-panel w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col overflow-hidden shadow-2xl animate-in fade-in duration-200">
+            <div className="p-6 border-b border-glass-border flex justify-between items-start bg-bg2 shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-text flex items-center gap-2">
                   <AlertCircle size={20} className="text-primary" />
@@ -914,7 +914,7 @@ const PurchaseHistory = () => {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto max-h-[65vh] space-y-5 text-xs">
+            <div className="p-6 flex-1 min-h-0 overflow-y-auto space-y-5 text-xs">
               {/* Raw Body Snippet */}
               {selectedOrder.body_snippet && (
                 <div className="space-y-1.5">
@@ -979,7 +979,7 @@ const PurchaseHistory = () => {
               </div>
             </div>
 
-            <div className="p-4 border-t border-glass-border bg-bg2 flex flex-wrap gap-3 justify-end">
+            <div className="p-4 border-t border-glass-border bg-bg2 flex flex-wrap gap-3 justify-end shrink-0">
               {!selectedOrder.is_saved && (
                 <>
                   <button
@@ -1022,8 +1022,8 @@ const PurchaseHistory = () => {
       {/* View Purchase Modal */}
       {viewPurchase && createPortal(
         <div className="fixed inset-0 bg-bg/80 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="glass-panel w-full max-w-4xl overflow-hidden shadow-2xl animate-in fade-in duration-200">
-            <div className="p-6 border-b border-glass-border flex justify-between items-center bg-bg2">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden shadow-2xl animate-in fade-in duration-200">
+            <div className="p-6 border-b border-glass-border flex justify-between items-center bg-bg2 shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-text flex items-center gap-2">
                   <Eye size={20} className="text-primary" />
@@ -1041,7 +1041,7 @@ const PurchaseHistory = () => {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+            <div className="p-6 flex-1 min-h-0 overflow-y-auto space-y-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-bg3 p-4 rounded-xl border border-glass-border">
                 <div>
                   <span className="text-sm text-muted block mb-1">Invoice No.</span>
@@ -1169,7 +1169,7 @@ const PurchaseHistory = () => {
               </div>
             </div>
 
-            <div className="p-5 border-t border-glass-border bg-bg2 flex justify-end gap-3">
+            <div className="p-5 border-t border-glass-border bg-bg2 flex justify-end gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => handlePrintBillBarcodes(viewPurchase.purchase.id, viewPurchase.items)}

@@ -283,21 +283,37 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   const msg = `Hi ${patientName}, your ${noun} for ${formattedMeds} ${medNames.length > 1 ? 'are' : 'is'} in stock and ready. You may collect your ${medNoun} anytime from ${storeLabel}.`;
   const referenceIdStr = refillIds.join(',');
 
-  // Check if a staged notification already exists for this patient
+  // Check if a staged or active snoozed notification already exists for this patient
   const existing = await db.get(
-    `SELECT id FROM automation_notifications 
-     WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?)
-     ORDER BY id ASC LIMIT 1`,
+    `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+     WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+     ORDER BY id DESC LIMIT 1`,
     [patientPhone, patientName]
   );
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   if (existing) {
-    await db.run(
-      `UPDATE automation_notifications 
-       SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
-       WHERE id = ?`,
-      [msg, referenceIdStr, patientName, patientPhone, existing.id]
-    );
+    if (existing.status === 'snoozed') {
+      // If active snoozed and snooze date is still in the future, honor the snooze and do NOT re-stage!
+      if (existing.snoozed_until && existing.snoozed_until > todayStr) {
+        return;
+      }
+      // If snooze duration expired, transition back to staged
+      await db.run(
+        `UPDATE automation_notifications 
+         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
+         WHERE id = ?`,
+        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+      );
+    } else {
+      await db.run(
+        `UPDATE automation_notifications 
+         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
+         WHERE id = ?`,
+        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+      );
+    }
     // Remove any duplicate staged rows for this patient
     await db.run(
       `DELETE FROM automation_notifications 

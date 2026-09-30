@@ -2041,7 +2041,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-all duration-300">
       {/* ponytail: fix height to h-[85vh] to prevent modal size from jumping when cart preview loads */}
-      <div className="glass-panel max-w-5xl lg:max-w-6xl xl:max-w-7xl w-full h-[85vh] max-h-[85vh] p-3.5 md:p-4.5 relative border border-glass-border/60 shadow-[0_0_60px_rgba(59,130,246,0.25)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 flex flex-col">
+      <div className="glass-panel w-[95vw] max-w-6xl xl:max-w-7xl h-[85vh] min-h-[560px] max-h-[840px] p-3.5 md:p-4.5 relative border border-glass-border/60 shadow-[0_0_60px_rgba(59,130,246,0.25)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 flex flex-col overflow-hidden">
         
         {/* Header Action Buttons (Side-by-side flex container prevents button overlaps) */}
         <div className="absolute top-3.5 right-3.5 flex items-center gap-2 z-20">
@@ -2499,114 +2499,116 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                   )}
                   
                   {showSuggestions && suggestions.length > 0 && (
-                    <ul ref={suggestionsListRef} className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[520px] md:max-h-[calc(80vh-210px)] overflow-y-auto dropdown-scroll bg-bg2 border-2 border-primary/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] divide-y divide-border/30 py-1 scrollbar-thin">
+                    <div className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[520px] md:max-h-[calc(80vh-210px)] flex flex-col bg-bg2 border-2 border-primary/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] overflow-hidden">
                       {!suggestions[0]?.isErrorMessage && (
-                        <li className="px-3.5 py-1.5 bg-bg3/90 sticky top-0 z-10 border-b border-border/40 text-[10.5px] text-muted flex items-center justify-between select-none">
+                        <div className="px-3.5 py-1.5 bg-bg3 shrink-0 border-b border-border/40 text-[10.5px] text-muted flex items-center justify-between select-none">
                           <span className="flex items-center gap-1.5 font-medium">
                             <Zap size={12} className="text-primary shrink-0" />
                             <span>Found <strong className="text-text font-bold">{suggestions.filter(s => !s.isErrorMessage).length}</strong> distributor options</span>
                           </span>
                           <span className="text-[9.5px] text-muted font-mono font-semibold uppercase tracking-wider">Live Distributor Data</span>
-                        </li>
+                        </div>
                       )}
-                      {suggestions.map((med, index) => (
-                        <li
-                          key={index}
-                          data-highlighted={index === activeSuggestionIndex ? "true" : "false"}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            selectSuggestion(med);
-                          }}
-                          className={`px-3.5 py-2.5 text-xs cursor-pointer flex justify-between items-center transition-all ${
-                            med.isErrorMessage
-                              ? 'bg-red-500/10 text-red border-l-2 border-red cursor-default'
-                              : index === activeSuggestionIndex 
-                              ? 'bg-primary/20 text-text font-bold border-l-4 border-primary ring-1 ring-primary/40' 
-                              : 'text-muted hover:text-text hover:bg-bg3/60'
-                          }`}
-                        >
-                          <div className="flex-1 min-w-0 pr-2">
-                            {/* Line 1: Product name + In Cart badge + scheme badge + Best Rate badge */}
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-bold text-text truncate text-sm">
-                                {med.medicine_name}
-                              </span>
-                              {med.cartItemCount !== undefined && med.cartItemCount > 0 && (
-                                <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase flex items-center gap-1 shrink-0 select-none animate-in fade-in">
-                                  <ShoppingCart size={10} className="text-emerald-400" /> In Cart ({med.cartItemCount} items • ₹{Math.round(med.cartTotalAmount || 0)})
+                      <ul ref={suggestionsListRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/30 py-1">
+                        {suggestions.map((med, index) => (
+                          <li
+                            key={index}
+                            data-highlighted={index === activeSuggestionIndex ? "true" : "false"}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectSuggestion(med);
+                            }}
+                            className={`px-3.5 py-2.5 text-xs cursor-pointer flex justify-between items-center transition-all ${
+                              med.isErrorMessage
+                                ? 'bg-red-500/10 text-red border-l-2 border-red cursor-default'
+                                : index === activeSuggestionIndex 
+                                ? 'bg-primary/20 text-text font-bold border-l-4 border-primary ring-1 ring-primary/40' 
+                                : 'text-muted hover:text-text hover:bg-bg3/60'
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                              {/* Line 1: Product name + In Cart badge + scheme badge + Best Rate badge */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-text truncate text-sm">
+                                  {med.medicine_name}
                                 </span>
-                              )}
-                              {med.scheme && !med.isErrorMessage && (
-                                <span className="text-[10px] bg-amber-500/15 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase shrink-0 flex items-center gap-1">
-                                  <Tag size={10} /> {med.scheme}
-                                </span>
-                              )}
-                              {med.rate !== undefined && med.rate !== null && !med.isErrorMessage && getEffectiveRate(med.rate, med.scheme, qty) === minEffectiveRate && (
-                                <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase flex items-center gap-0.5 shrink-0 select-none">
-                                  <Sparkles size={9} className="text-emerald-400 animate-pulse" /> Best Rate
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Line 2: Distributor name + company */}
-                            {!med.isErrorMessage && (
-                              <div className="flex items-center gap-2 flex-wrap mt-1 text-xs">
-                                <span className={`font-semibold flex items-center gap-1 ${ med.isPharmarack ? (med.mapped ? 'text-sky-400' : 'text-purple-400') : 'text-muted' }`}>
-                                  <Store size={11} /> {med.isPharmarack ? (med.distributor || 'No Distributor') : 'Local Inventory'}
-                                  {med.isPharmarack && med.mapped && (
-                                    <span className="text-[8.5px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/25 uppercase font-bold tracking-wider">
-                                      Mapped
-                                    </span>
-                                  )}
-                                </span>
-                                {(med.company || med.manufacturer) && (
-                                  <span className="text-[10px] text-muted/70 font-semibold uppercase tracking-wider">
-                                    • {med.company || med.manufacturer}
+                                {med.cartItemCount !== undefined && med.cartItemCount > 0 && (
+                                  <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase flex items-center gap-1 shrink-0 select-none animate-in fade-in">
+                                    <ShoppingCart size={10} className="text-emerald-400" /> In Cart ({med.cartItemCount} items • ₹{Math.round(med.cartTotalAmount || 0)})
+                                  </span>
+                                )}
+                                {med.scheme && !med.isErrorMessage && (
+                                  <span className="text-[10px] bg-amber-500/15 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase shrink-0 flex items-center gap-1">
+                                    <Tag size={10} /> {med.scheme}
+                                  </span>
+                                )}
+                                {med.rate !== undefined && med.rate !== null && !med.isErrorMessage && getEffectiveRate(med.rate, med.scheme, qty) === minEffectiveRate && (
+                                  <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase flex items-center gap-0.5 shrink-0 select-none">
+                                    <Sparkles size={9} className="text-emerald-400 animate-pulse" /> Best Rate
                                   </span>
                                 )}
                               </div>
-                            )}
 
-                            {/* Line 3: PTR, MRP, packaging & stock pill */}
-                            {!med.isErrorMessage && (
-                              <div className="flex items-center gap-2.5 text-[11px] mt-1 flex-wrap">
-                                {med.rate !== undefined && med.rate !== null && (
-                                  <span className="font-bold text-emerald-400 font-mono">PTR: ₹{med.rate}</span>
-                                )}
-                                {med.mrp !== undefined && med.mrp !== null && (
-                                  <span className="text-muted font-mono">MRP: ₹{med.mrp}</span>
-                                )}
-                                {med.packaging && (
-                                  <span className="text-muted font-mono font-semibold">{med.packaging}</span>
-                                )}
-                                {med.stock !== undefined && (
-                                  (med.isOffline || String(med.stock).toLowerCase() === 'offline') ? (
-                                    <span className="font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 bg-bg3 text-muted border border-border" title="Saved Offline History">
-                                      <WifiOff size={10} className="text-muted" /> Offline
+                              {/* Line 2: Distributor name + company */}
+                              {!med.isErrorMessage && (
+                                <div className="flex items-center gap-2 flex-wrap mt-1 text-xs">
+                                  <span className={`font-semibold flex items-center gap-1 ${ med.isPharmarack ? (med.mapped ? 'text-sky-400' : 'text-purple-400') : 'text-muted' }`}>
+                                    <Store size={11} /> {med.isPharmarack ? (med.distributor || 'No Distributor') : 'Local Inventory'}
+                                    {med.isPharmarack && med.mapped && (
+                                      <span className="text-[8.5px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/25 uppercase font-bold tracking-wider">
+                                        Mapped
+                                      </span>
+                                    )}
+                                  </span>
+                                  {(med.company || med.manufacturer) && (
+                                    <span className="text-[10px] text-muted/70 font-semibold uppercase tracking-wider">
+                                      • {med.company || med.manufacturer}
                                     </span>
-                                  ) : (
-                                    <span className={`font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 ${
-                                      (med.stock.toLowerCase() === 'high' || parseInt(med.stock) >= 15)
-                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                        : (med.stock.toLowerCase() === 'low' || parseInt(med.stock) > 0)
-                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                        : 'bg-red-500/10 text-red border border-red-500/20'
-                                    }`}>
-                                      <Package size={10} /> {med.stock}
-                                    </span>
-                                  )
-                                )}
-                              </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Line 3: PTR, MRP, packaging & stock pill */}
+                              {!med.isErrorMessage && (
+                                <div className="flex items-center gap-2.5 text-[11px] mt-1 flex-wrap">
+                                  {med.rate !== undefined && med.rate !== null && (
+                                    <span className="font-bold text-emerald-400 font-mono">PTR: ₹{med.rate}</span>
+                                  )}
+                                  {med.mrp !== undefined && med.mrp !== null && (
+                                    <span className="text-muted font-mono">MRP: ₹{med.mrp}</span>
+                                  )}
+                                  {med.packaging && (
+                                    <span className="text-muted font-mono font-semibold">{med.packaging}</span>
+                                  )}
+                                  {med.stock !== undefined && (
+                                    (med.isOffline || String(med.stock).toLowerCase() === 'offline') ? (
+                                      <span className="font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 bg-bg3 text-muted border border-border" title="Saved Offline History">
+                                        <WifiOff size={10} className="text-muted" /> Offline
+                                      </span>
+                                    ) : (
+                                      <span className={`font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 ${
+                                        (med.stock.toLowerCase() === 'high' || parseInt(med.stock) >= 15)
+                                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                          : (med.stock.toLowerCase() === 'low' || parseInt(med.stock) > 0)
+                                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                          : 'bg-red-500/10 text-red border border-red-500/20'
+                                      }`}>
+                                        <Package size={10} /> {med.stock}
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {index === activeSuggestionIndex && !med.isErrorMessage && (
+                              <span className="text-[11px] bg-primary text-white font-bold px-2 py-1 rounded-lg shadow-sm shrink-0 flex items-center gap-1">
+                                ↵ Enter
+                              </span>
                             )}
-                          </div>
-                          {index === activeSuggestionIndex && !med.isErrorMessage && (
-                            <span className="text-[11px] bg-primary text-white font-bold px-2 py-1 rounded-lg shadow-sm shrink-0 flex items-center gap-1">
-                              ↵ Enter
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </div>
 

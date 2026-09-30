@@ -434,7 +434,7 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-bg border border-border w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden relative"
+        className="bg-bg border border-border w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] rounded-2xl shadow-2xl flex flex-col overflow-hidden relative"
       >
 
         {/* Header */}

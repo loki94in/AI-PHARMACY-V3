@@ -51,7 +51,7 @@ const RefillCartModal: React.FC<{ job: RefillCartJob }> = ({ job }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-bg2 border border-border rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-text">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-3xl h-[80vh] min-h-[520px] max-h-[760px] shadow-2xl overflow-hidden flex flex-col text-text">
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-primary">
@@ -67,7 +67,7 @@ const RefillCartModal: React.FC<{ job: RefillCartJob }> = ({ job }) => {
           </button>
         </div>
 
-        <div className="p-4 overflow-y-auto flex-1 space-y-2.5 text-xs">
+        <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-2.5 text-xs">
           {job.rows.map(row => {
             const chip = STATE_CHIP[row.state];
             const highlight = row.state === 'linked_oos' || row.state === 'failed'

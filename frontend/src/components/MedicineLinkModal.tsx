@@ -121,7 +121,7 @@ export const MedicineLinkModal: React.FC<{
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-bg2 border border-border rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-text">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-2xl overflow-hidden flex flex-col text-text">
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-primary">
@@ -217,29 +217,35 @@ export const MedicineLinkModal: React.FC<{
             {searchNote && <div className="text-[11px] text-muted">{searchNote}</div>}
 
             {results.length > 0 && (
-              <ul className="max-h-[50vh] overflow-y-auto dropdown-scroll divide-y divide-border/40 rounded-lg border border-border">
-                {results.map(c => {
-                  const k = linkKeyOf(c);
-                  return (
-                    <li key={k}>
-                      <label className="flex items-center gap-2 px-2.5 py-2 cursor-pointer hover:bg-bg3/60">
-                        <input type="checkbox" checked={selectedKeys.has(k)} onChange={() => toggle(c)} className="accent-primary" />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[11px] font-semibold text-text truncate">
-                            {c.productName} {c.packaging && <span className="text-muted font-normal">({c.packaging})</span>}
+              <div className="flex flex-col max-h-[50vh] rounded-lg border border-border bg-bg2 overflow-hidden">
+                <div className="px-3 py-1.5 bg-bg3 shrink-0 border-b border-border/40 text-[10.5px] text-muted flex items-center justify-between select-none">
+                  <span className="font-semibold text-text">Matching Live Candidates ({results.length})</span>
+                  <span className="text-[9.5px] text-muted font-mono uppercase">Distributor Links</span>
+                </div>
+                <ul className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/40">
+                  {results.map(c => {
+                    const k = linkKeyOf(c);
+                    return (
+                      <li key={k}>
+                        <label className="flex items-center gap-2 px-2.5 py-2 cursor-pointer hover:bg-bg3/60">
+                          <input type="checkbox" checked={selectedKeys.has(k)} onChange={() => toggle(c)} className="accent-primary" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] font-semibold text-text truncate">
+                              {c.productName} {c.packaging && <span className="text-muted font-normal">({c.packaging})</span>}
+                            </div>
+                            <div className="text-[10px] text-muted truncate">
+                              {c.storeName} · bought {bought(c.storeName)}×{c.rate != null ? ` · PTR ₹${c.rate}` : ''}{c.mrp != null ? ` · MRP ₹${c.mrp}` : ''}{c.scheme ? ` · ${c.scheme}` : ''}
+                            </div>
                           </div>
-                          <div className="text-[10px] text-muted truncate">
-                            {c.storeName} · bought {bought(c.storeName)}×{c.rate != null ? ` · PTR ₹${c.rate}` : ''}{c.mrp != null ? ` · MRP ₹${c.mrp}` : ''}{c.scheme ? ` · ${c.scheme}` : ''}
-                          </div>
-                        </div>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${c.inStock ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
-                          {c.inStock ? `stock ${c.stock}` : 'out of stock'}
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${c.inStock ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+                            {c.inStock ? `stock ${c.stock}` : 'out of stock'}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
           </div>
         </div>

@@ -395,7 +395,7 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal Container */}
-      <div className="relative bg-bg border border-border rounded-2xl w-full max-w-5xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden slide-up text-text">
+      <div className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-5xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up text-text">
         {/* Header */}
         <div className="p-5 border-b border-border bg-bg2 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -439,10 +439,10 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
         </div>
 
         {/* Modal Main Content Area */}
-        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row">
           
           {/* Left panel: List of staged transactions */}
-          <div className="w-full lg:w-2/5 border-r border-border overflow-y-auto p-4 scrollbar-custom bg-bg2">
+          <div className="w-full lg:w-2/5 border-r border-border min-h-0 overflow-y-auto p-4 scrollbar-custom bg-bg2">
             {error && !selectedTx && (
               <div className="mb-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3">
                 <AlertTriangle className="text-red-500 shrink-0" size={20} />
@@ -557,7 +557,7 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
           </div>
 
           {/* Right panel: Detail editing and confirmation */}
-          <div className="flex-1 overflow-y-auto p-6 scrollbar-custom bg-bg">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6 scrollbar-custom bg-bg">
             {selectedTx ? (
               <div className="space-y-6">
                 <div className="flex justify-between items-center border-b border-border pb-4">

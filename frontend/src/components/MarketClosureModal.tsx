@@ -72,9 +72,9 @@ export const MarketClosureModal: React.FC<MarketClosureModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-bg border border-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <div className="bg-bg border border-border w-[95vw] max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2">
+        <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className={`p-2 rounded-xl ${type === 'market_closed' ? 'bg-amber-500/10 text-amber-500' : 'bg-rose-500/10 text-rose-500'}`}>
               {type === 'market_closed' ? <Truck size={20} /> : <Store size={20} />}
@@ -93,7 +93,7 @@ export const MarketClosureModal: React.FC<MarketClosureModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-5 space-y-4 overflow-y-auto max-h-[75vh]">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0 max-h-[75vh]">
           {/* Active Toggle Switch */}
           <div className="flex items-center justify-between p-3 rounded-xl bg-bg2 border border-border/50">
             <div className="space-y-0.5">

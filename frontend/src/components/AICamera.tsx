@@ -221,8 +221,8 @@ const AICamera: React.FC<AICameraProps> = ({ onScanResult, onClose, initialMode 
 
   return createPortal(
     <div className="fixed inset-0 z-camera flex items-center justify-center p-4 bg-bg/85 backdrop-blur-sm fade-in">
-      <div className="bg-bg2 border border-border rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative">
-        <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50">
+      <div className="bg-bg2 border border-border rounded-2xl shadow-2xl w-[95vw] max-w-2xl overflow-hidden flex flex-col relative max-h-[90vh]">
+        <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-bold flex items-center gap-2 text-text">
               <Camera className="text-primary" /> AI Scanner

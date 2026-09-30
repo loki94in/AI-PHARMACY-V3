@@ -1904,7 +1904,7 @@ const Returns: React.FC = () => {
 
                   {/* Distributor Autocomplete Dropdown */}
                   {showDistDropdown && (
-                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto dropdown-scroll">
+                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto dropdown-scroll divide-y divide-border/30">
                       {filteredMasterDistributors.length === 0 ? (
                         <div className="p-3 text-xs text-muted italic">
                           No registered distributor found. Type name to use as custom distributor.
@@ -2285,7 +2285,7 @@ const Returns: React.FC = () => {
                                   </button>
                                 </div>
                                 {activeSearchIndex === originalIndex && (
-                                  <div ref={searchResultsRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-60 overflow-y-auto dropdown-scroll">
+                                  <div ref={searchResultsRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-60 overflow-y-auto dropdown-scroll divide-y divide-border/30">
                                     {searchResults.length > 0 ? (
                                       <>
                                         {searchResults.map((result, idx) => (
@@ -2641,7 +2641,7 @@ const Returns: React.FC = () => {
       {/* Process Return Confirmation Modal */}
       {showProcessConfirmModal && (
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
@@ -2725,7 +2725,7 @@ const Returns: React.FC = () => {
       {/* Delete Return History Confirmation Modal */}
       {deleteConfirmReturn && (
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm p-5 shadow-2xl space-y-4">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-xl bg-red-500/10 text-red-500 border border-red-500/20">
                 <AlertTriangle size={20} />

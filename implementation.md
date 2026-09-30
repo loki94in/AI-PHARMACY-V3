@@ -1,20 +1,33 @@
-# Implementation Tracking — Sub-10ms UI Actions & Fast App Startup Launch Optimization
+# Active Implementation Plan: Header Dropdown Scroll Standard & CRM Snooze Engine
 
-## Plan Reference
-See `SUB_10MS_PERFORMANCE_AND_FAST_BOOT_OPTIMIZATION_PLAN.md` for full requirements and architectural context.
+> **Master Specification**: [HEADER_DROPDOWN_SCROLL_AND_CRM_SNOOZE_IMPLEMENTATION_PLAN.md](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/HEADER_DROPDOWN_SCROLL_AND_CRM_SNOOZE_IMPLEMENTATION_PLAN.md)
+> **Goal**: 
+> 1. Fix CRM Snooze Engine so snoozing notifications and refill alerts permanently sticks without background worker re-staging loops.
+> 2. Standardize all 21 dropdown scrolling containers across 10 files into invariant 2-tier frames (pinned `shrink-0` header + `flex-1 min-h-0 overflow-y-auto dropdown-scroll` body).
+> **Status**: COMPLETED & VERIFIED (Passes `npm run guardrails` and quick-update sync)
 
-## Tasks Status
-- [x] Task 1: Backend SSE Delta Streaming (`src/routes/orders.ts` & `src/routes/websiteOrders.ts`)
-  - *Completed*: Updated `broadcastOrdersChanged` in both route files to emit `order_delta` with exact action and patch fields on `restore`, `update_status`, `update_items`, and `delete`.
-- [x] Task 2: Global SSE Hook Delta Dispatcher (`frontend/src/hooks/useGlobalSseInvalidation.ts`)
-  - *Completed*: Registered `order_delta` in `SSE_CUSTOM_EVENTS` and wired DOM `CustomEvent('app-order-delta')` passing unpacked payload directly to components.
-- [x] Task 3: Sub-10ms Optimistic UI in Website Orders (`frontend/src/pages/WebsiteOrders/index.tsx`)
-  - *Completed*: Implemented immediate synchronous state mutation (<2ms) for `handleRestoreOrder`, `handleMarkReady`, and `handleMarkDelivered` with snapshot rollback on error. Subscribed to `app-order-delta` for instant cross-tab memory patching without database re-fetching.
-- [x] Task 4: Sub-10ms Optimistic UI in CRM Special Orders (`frontend/src/pages/CRM/index.tsx`)
-  - *Completed*: Implemented immediate synchronous state mutation (<2ms) for `handleRestoreOrder`, `handleDeleteOrder`, and `handleUpdateStatus` with snapshot rollback on error. Added `app-order-delta` listener for zero-delay synchronization.
-- [x] Task 5: Fast App Startup Optimization (`src/server.ts` & `src/utils/chromeBrowser.ts`)
-  - *Completed*: Replaced `localhost` with explicit `127.0.0.1` binding, eliminating 2–3s Windows IPv6 DNS stall. Reduced browser spawn delay to 50ms for packaged app. Added Chrome boot optimization flags (`--disable-component-update`, `--disable-features=Translate,OptimizationHints,MediaRouter`, `--dns-prefetch-disable`).
-- [x] Task 6: Instant Boot UI Skeleton (`frontend/index.html`)
-  - *Completed*: Added inline lightweight branded splash skeleton inside `<div id="root">` to render the UI shell on screen in under 15ms upon window open.
-- [x] Task 7: Verification & Quality Assurance (`npm run guardrails` and quick-update)
-  - *Completed*: Ran `npm run guardrails` — TypeScript compilation (`tsc --noEmit`) succeeded with 0 errors; all speed and theme rules passed. Ran `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+---
+
+## 1. Status & Work Breakdown
+
+### Phase 1: CRM & Refill Snooze Engine
+- [x] `Task 1.1`: Add `snoozed_until` column check to [src/database.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/database.ts) schema migrations.
+- [x] `Task 1.2`: Update [src/services/refillService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillService.ts) (`stageRefillCollectionNotifications` and `checkAllRefills`) to respect active snoozes and eliminate the infinite re-staging loop.
+- [x] `Task 1.3`: Enhance [src/routes/automation.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/automation.ts) (`/notifications/:id/snooze`, `/group/snooze`, and add `/snooze-patient`) to record `snoozed_until` and emit proper SSE updates.
+- [x] `Task 1.4`: Add Snooze dropdown menu (+1d, +3d, +7d) to [frontend/src/pages/CRM/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/index.tsx) patient refill toolbar.
+
+### Phase 2: Dropdown Layout & Scroll Isolation (21 Instances Across 10 Files)
+- [x] `Task 2.1`: POS 6 Dropdowns in [frontend/src/pages/POS/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/POS/index.tsx).
+- [x] `Task 2.2`: Purchases 4 Dropdowns in [frontend/src/pages/Purchases/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/Purchases/index.tsx).
+- [x] `Task 2.3`: Returns 2 Dropdowns in [frontend/src/pages/Returns/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/Returns/index.tsx).
+- [x] `Task 2.4`: Investigation 1 Dropdown in [frontend/src/pages/Investigation/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/Investigation/index.tsx).
+- [x] `Task 2.5`: CRM 2 Dropdowns in [frontend/src/pages/CRM/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/index.tsx).
+- [x] `Task 2.6`: UniversalMedicineEditModal 2 Dropdowns in [frontend/src/components/UniversalMedicineEditModal.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/UniversalMedicineEditModal.tsx).
+- [x] `Task 2.7`: QuickOrderModal & LiveCartAddModal in [frontend/src/components/QuickOrderModal.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickOrderModal.tsx) and [frontend/src/components/LiveCartAddModal.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx).
+- [x] `Task 2.8`: OrderModifyModal & MedicineLinkModal in [frontend/src/components/OrderModifyModal.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/OrderModifyModal.tsx) and [frontend/src/components/MedicineLinkModal.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/MedicineLinkModal.tsx).
+
+### Phase 3: Verification & Guardrails
+- [x] `Task 3.1`: Verify backend snooze retention and database consistency.
+- [x] `Task 3.2`: Run `npm run guardrails` (PASS — 0 errors, clean TypeScript build).
+- [x] `Task 3.3`: Run `node scripts/quick-update.mjs` (PASS — knowledge graph synchronized).
+

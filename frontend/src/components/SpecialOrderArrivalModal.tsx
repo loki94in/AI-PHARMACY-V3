@@ -269,7 +269,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/50 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-bg2 border border-glass-border rounded-3xl shadow-2xl shadow-emerald-500/10 w-full max-w-2xl flex flex-col max-h-[92vh] overflow-hidden text-text transition-all">
+      <div className="bg-bg2 border border-glass-border rounded-3xl shadow-2xl shadow-emerald-500/10 w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col overflow-hidden text-text transition-all">
         
         {/* Top Accent Gradient Bar */}
         <div className="h-1.5 w-full bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-500 shrink-0" />
@@ -337,7 +337,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-5 custom-scrollbar">
           
           {/* 60-Minute Recent Notification Warning Banner */}
           {recentNotif?.recentlyNotified && (

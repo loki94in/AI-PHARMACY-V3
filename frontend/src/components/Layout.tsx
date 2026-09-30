@@ -178,7 +178,7 @@ const ExitAppButton = () => {
       {/* Confirmation Modal */}
       {showConfirmModal && !isShuttingDown && createPortal(
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left animate-fade-in">
-          <div className="bg-bg border border-glass-border w-full max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
+          <div className="bg-bg border border-glass-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
             <div className="flex items-start gap-3">
               <div className="p-3 rounded-2xl bg-red-500/10 text-red-500 border border-red-500/20 shrink-0">
                 <Power size={22} />
@@ -5047,8 +5047,8 @@ const KeyboardShortcutsModal = ({
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left">
-      <div className="bg-bg border border-glass-border w-full max-w-2xl rounded-3xl p-6 space-y-4 text-left shadow-2xl">
-        <div className="flex justify-between items-center border-b border-glass-border pb-3">
+      <div className="bg-bg border border-glass-border w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[700px] rounded-3xl p-6 space-y-4 text-left shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex justify-between items-center border-b border-glass-border pb-3 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-sky-500/10 text-sky border border-sky-500/20">
               <Keyboard size={20} />
@@ -5067,7 +5067,7 @@ const KeyboardShortcutsModal = ({
         </div>
 
         {/* Category Tabs */}
-        <div className="flex gap-1.5 border-b border-glass-border/30 pb-2 flex-wrap">
+        <div className="flex gap-1.5 border-b border-glass-border/30 pb-2 flex-wrap shrink-0">
           {categories.map(cat => (
             <button
               key={cat}
@@ -5083,7 +5083,7 @@ const KeyboardShortcutsModal = ({
         </div>
 
         {/* Shortcuts Directory Grid */}
-        <div className="max-h-80 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
           {filtered.map((item, idx) => (
             <div
               key={idx}

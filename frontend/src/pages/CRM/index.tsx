@@ -258,6 +258,8 @@ const RefillsSection: React.FC = () => {
   const [loading, setLoading] = useState(cachedRefillsData.length === 0);
   const [search, setSearch] = useState('');
   const [sending, setSending] = useState<string | null>(null);
+  const [snoozing, setSnoozing] = useState(false);
+  const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const [runningCheck, setRunningCheck] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'overdue' | 'lead' | 'active' | 'paused' | 'canceled'>('all');
   const [activeDetailTab, setActiveDetailTab] = useState<'prescriptions' | 'fulfillments' | 'invoices'>('prescriptions');
@@ -873,6 +875,27 @@ const RefillsSection: React.FC = () => {
     } catch (err) {
       toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to send reminder', 'error', '/crm');
     } finally { setSending(null); }
+  };
+
+  // ── Snooze Patient Refill Reminder (+1d, +3d, +7d) ────────────────────────
+  const handleSnoozePatient = async (patient: RefillPatient, days: number) => {
+    setSnoozing(true);
+    try {
+      await apiClient.post('/automation/notifications/snooze-patient', {
+        patient_phone: patient.patient_phone,
+        patient_name: patient.patient_name,
+        days
+      });
+      toastEvent.trigger(`Refill reminder for ${patient.patient_name} snoozed for ${days} day(s)`, 'success', '/crm');
+      refillEvent.triggerRefresh();
+      automationHubEvent.triggerUpdated();
+      await load(true);
+    } catch {
+      toastEvent.trigger('Failed to snooze reminder', 'error', '/crm');
+    } finally {
+      setSnoozing(false);
+      setShowSnoozeMenu(false);
+    }
   };
 
   // ── Sell Refill Patient → POS ─────────────────────────────────────────────
@@ -1617,6 +1640,49 @@ const RefillsSection: React.FC = () => {
                     <span>{sending === selectedPatient.patient_phone ? 'Sending…' : 'Remind Now'}</span>
                   </button>
 
+                  {/* Snooze Reminder Menu */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowSnoozeMenu(prev => !prev)}
+                      disabled={snoozing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-text text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                      title="Snooze refill reminders for this patient"
+                    >
+                      <Clock size={12} className="text-amber-400" />
+                      <span>{snoozing ? 'Snoozing…' : '💤 Snooze'}</span>
+                      <ChevronDown size={11} className="text-muted" />
+                    </button>
+                    {showSnoozeMenu && (
+                      <div className="absolute right-0 top-full mt-1 z-50 bg-bg2 border border-border rounded-xl shadow-2xl p-1.5 min-w-[150px] flex flex-col gap-1 animate-in fade-in">
+                        <button
+                          type="button"
+                          onClick={() => handleSnoozePatient(selectedPatient, 1)}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center justify-between cursor-pointer"
+                        >
+                          <span>+1 Day</span>
+                          <span className="text-[10px] text-muted font-mono">Tomorrow</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSnoozePatient(selectedPatient, 3)}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center justify-between cursor-pointer"
+                        >
+                          <span>+3 Days</span>
+                          <span className="text-[10px] text-muted font-mono">+3d</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSnoozePatient(selectedPatient, 7)}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center justify-between cursor-pointer"
+                        >
+                          <span>+7 Days</span>
+                          <span className="text-[10px] text-muted font-mono">+1 week</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Add Medicine to this Patient */}
                   <button
                     onClick={handleOpenAddMedicineForSelected}
@@ -2124,7 +2190,7 @@ const RefillsSection: React.FC = () => {
       {/* ── Add / Edit Refill Modal ── */}
       {showAddModal && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-2xl flex flex-col">
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex items-center justify-between shrink-0 bg-bg3/40">
               <div>
@@ -2150,7 +2216,7 @@ const RefillsSection: React.FC = () => {
             </div>
 
             {/* Modal Body */}
-            <form onSubmit={handleSaveRefill} className="p-5 space-y-5 overflow-y-auto flex-1">
+            <form onSubmit={handleSaveRefill} className="p-5 space-y-5 overflow-y-auto flex-1 min-h-0">
               {/* Restored Draft Notice */}
               {hasRefillDraft && !editingPatient && (
                 <div className="flex items-center justify-between p-2.5 px-3 rounded-xl bg-primary/10 border border-primary/25 text-xs animate-fade-in">
@@ -2442,7 +2508,7 @@ const RefillsSection: React.FC = () => {
 
                           {/* Dropdown Suggestions List */}
                           {row.isOpen && (
-                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll backdrop-blur-xl ${
+                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll ${
                               dropUpIndex === idx
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -2612,7 +2678,7 @@ const RefillsSection: React.FC = () => {
       {/* ── Inline Edit Refill Frequency Modal ── */}
       {editingRefill && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <Sliders size={16} className="text-primary" />
@@ -2703,7 +2769,7 @@ const RefillsSection: React.FC = () => {
       {/* ── Bill / Invoice Preview Modal ── */}
       {viewInvoice && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-full max-w-4xl max-h-[90vh] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-2xl overflow-hidden">
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <div>
@@ -2722,7 +2788,7 @@ const RefillsSection: React.FC = () => {
             </div>
 
             {/* Modal Body */}
-            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+            <div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
               {/* Customer & Invoice Summary */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-bg3/30 p-3.5 rounded-xl border border-border text-xs">
                 <div>
@@ -4126,21 +4192,21 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
       {/* Template Manager Modal */}
       {showManageModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="p-4 border-b border-border flex items-center justify-between">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-lg h-[75vh] min-h-[480px] max-h-[680px] overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <Zap size={16} className="text-primary" />
                 <span>Manage Quick Message Templates</span>
               </h3>
               <button
                 onClick={() => setShowManageModal(false)}
-                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3"
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-4 overflow-y-auto space-y-4 flex-1">
+            <div className="p-4 overflow-y-auto space-y-4 flex-1 min-h-0">
               {/* Form */}
               <form onSubmit={handleSaveTemplate} className="p-3 bg-bg3/50 border border-border rounded-xl space-y-3">
                 <div className="grid grid-cols-2 gap-2">
@@ -4248,7 +4314,7 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
       {/* New Chat Modal */}
       {showNewChatModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl flex flex-col">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm overflow-hidden shadow-2xl flex flex-col">
             <div className="p-4 border-b border-border flex items-center justify-between">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <MessageSquare size={16} className="text-emerald-400" />
@@ -5840,8 +5906,8 @@ const SpecialOrdersSection: React.FC = () => {
       {/* Add Special Request Modal inside CRM */}
       {showAddModal && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-full max-w-lg bg-bg2 rounded-2xl border border-primary/20 p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-border pb-3">
+          <div className="glass-panel w-[95vw] max-w-lg h-[85vh] min-h-[560px] max-h-[840px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <h3 className="font-bold text-sm text-text flex items-center gap-2">
                 <ClipboardList size={16} className="text-primary" />
                 Register Out-of-Stock Special Request
@@ -5854,7 +5920,7 @@ const SpecialOrdersSection: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateRequest} className="space-y-3.5 text-xs">
+            <form onSubmit={handleCreateRequest} className="p-4 space-y-3.5 text-xs flex-1 min-h-0 overflow-y-auto">
               {/* Restored Draft Notice */}
               {hasSpecialOrderDraft && (
                 <div className="flex items-center justify-between p-2.5 px-3 rounded-xl bg-primary/10 border border-primary/25 text-xs animate-fade-in">
@@ -5916,17 +5982,18 @@ const SpecialOrdersSection: React.FC = () => {
 
                 {/* Dropdown Live Results from Pharmarack */}
                 {showPrDropdown && prSearchResults.length > 0 && (
-                  <div ref={prDropdownRef} className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto dropdown-scroll">
-                    <div className="p-2 border-b border-border/40 bg-bg3/50 text-[9px] font-bold text-muted uppercase tracking-wider flex justify-between items-center">
+                  <div className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 flex flex-col overflow-hidden">
+                    <div className="p-2 border-b border-border/40 bg-bg3 shrink-0 text-[9px] font-bold text-muted uppercase tracking-wider flex justify-between items-center">
                       <span>Pharmarack Live Matches</span>
                       <button
                         type="button"
                         onClick={() => setShowPrDropdown(false)}
-                        className="text-muted hover:text-text font-bold"
+                        className="text-muted hover:text-text font-bold cursor-pointer"
                       >
                         Close
                       </button>
                     </div>
+                    <div ref={prDropdownRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/30">
                     {prSearchResults.map((item, idx) => (
                       <div
                         key={idx}
@@ -5978,6 +6045,7 @@ const SpecialOrdersSection: React.FC = () => {
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -6202,7 +6270,7 @@ const SpecialOrdersSection: React.FC = () => {
                 </button>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <div className="flex justify-end gap-2 pt-3 mt-2 border-t border-border shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -6227,8 +6295,8 @@ const SpecialOrdersSection: React.FC = () => {
       {/* Edit Special Request Modal */}
       {showEditModal && editingOrder && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-full max-w-lg bg-bg2 rounded-2xl border border-primary/20 p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-border pb-3">
+          <div className="glass-panel w-[95vw] max-w-lg h-[80vh] min-h-[500px] max-h-[760px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <h3 className="font-bold text-sm text-text flex items-center gap-2">
                 <Pencil size={16} className="text-primary" />
                 Edit Special Order Request #{editingOrder.id}
@@ -6244,7 +6312,7 @@ const SpecialOrdersSection: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="space-y-3.5 text-xs">
+            <form onSubmit={handleSaveEdit} className="p-4 space-y-3.5 text-xs flex-1 min-h-0 overflow-y-auto">
               {/* Product Name */}
               <div className="space-y-1.5">
                 <label className="block font-semibold text-text">Requested Medicine Name *</label>
@@ -6359,7 +6427,7 @@ const SpecialOrdersSection: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <div className="flex justify-end gap-2 pt-3 mt-2 border-t border-border shrink-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -6481,7 +6549,7 @@ const SpecialOrdersSection: React.FC = () => {
       {/* ₹50 Advance Payment QR Modal */}
       {paymentQrModalData && createPortal(
         <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
@@ -7294,7 +7362,7 @@ const CustomerCreditSection: React.FC = () => {
       {/* Bill Preview Modal (Matching Sales History Page Popup) */}
       {viewInvoice && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-full max-w-4xl max-h-[90vh] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-2xl overflow-hidden">
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <div>
@@ -7313,7 +7381,7 @@ const CustomerCreditSection: React.FC = () => {
             </div>
 
             {/* Modal Body */}
-            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+            <div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
               {/* Customer & Invoice Summary */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-bg3/30 p-3.5 rounded-xl border border-border text-xs">
                 <div>

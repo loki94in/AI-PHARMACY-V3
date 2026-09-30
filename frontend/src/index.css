@@ -808,3 +808,55 @@ button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primar
     transform: none !important;
   }
 }
+
+/* ═══════════════════════════════════════════
+   UNIFORM MODAL & POPUP SIZING SYSTEM
+   Prevents container resizing, jumping, and stretching when content changes
+   ═══════════════════════════════════════════ */
+.modal-frame-large {
+  width: 95vw !important;
+  max-width: 80rem !important;
+  height: 85vh !important;
+  min-height: 580px !important;
+  max-height: 860px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.modal-frame-medium {
+  width: 95vw !important;
+  max-width: 56rem !important;
+  height: 85vh !important;
+  min-height: 560px !important;
+  max-height: 840px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.modal-frame-standard {
+  width: 95vw !important;
+  max-width: 42rem !important;
+  height: 75vh !important;
+  min-height: 480px !important;
+  max-height: 700px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.modal-frame-compact {
+  width: 95vw !important;
+  max-width: 28rem !important;
+  max-height: 90vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.modal-body-scroll {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+}

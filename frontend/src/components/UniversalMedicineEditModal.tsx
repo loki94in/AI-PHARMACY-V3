@@ -912,7 +912,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
         onClick={onClose}
       />
       
-      <div className="relative bg-bg border border-glass-border rounded-2xl w-[96vw] max-w-5xl h-[88vh] min-h-[600px] max-h-[900px] flex flex-col shadow-2xl overflow-hidden slide-up">
+      <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-5xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -1502,7 +1502,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
                       />
                       {showMfgSuggestions && mfgSuggestions.length > 0 && (
-                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto dropdown-scroll z-dropdown">
+                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto dropdown-scroll divide-y divide-glass-border/20 z-dropdown">
                           {mfgSuggestions.map((mfgName, idx) => (
                             <button
                               key={idx}
@@ -1530,7 +1530,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
                       />
                       {showMrkSuggestions && mrkSuggestions.length > 0 && (
-                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto dropdown-scroll z-dropdown">
+                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto dropdown-scroll divide-y divide-glass-border/20 z-dropdown">
                           {mrkSuggestions.map((mrkName, idx) => (
                             <button
                               key={idx}
@@ -1972,7 +1972,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-modal flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-bg2 border border-red-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+          <div className="bg-bg2 border border-red-500/30 rounded-2xl p-6 w-[95vw] max-w-md shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-red-400">
               <div className="p-2.5 bg-red-500/20 rounded-xl border border-red-500/30">
                 <AlertTriangle size={24} />

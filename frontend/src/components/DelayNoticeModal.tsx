@@ -197,7 +197,7 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-bg2 border border-border rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-text">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 text-text">
         {/* Modal Header */}
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -227,7 +227,7 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
         </div>
 
         {/* Modal Body */}
-        <div className="p-4 sm:p-5 overflow-y-auto flex-1 custom-scrollbar space-y-4 text-xs">
+        <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0 custom-scrollbar space-y-4 text-xs">
           {/* Section 1: Presets & Template Composer */}
           <div className="p-3.5 rounded-xl bg-bg border border-border space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">

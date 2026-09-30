@@ -737,7 +737,7 @@ const InvestigationCenter = () => {
       {/* Confirmation Modal — portalled to document.body to escape overflow-hidden stacking context */}
       {confirmModal && confirmModal.show && createPortal(
         <div className="fixed inset-0 z-submodal bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border max-w-md w-full rounded-2xl shadow-2xl overflow-hidden p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-bg2 border border-glass-border w-[95vw] max-w-md rounded-2xl shadow-2xl overflow-hidden p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 text-amber-500">
               <AlertTriangle size={24} />
               <h3 className="font-bold text-base text-text">{confirmModal.title}</h3>
@@ -1373,7 +1373,7 @@ const InvestigationCenter = () => {
                           className="w-full bg-bg3 border border-glass-border rounded-xl pl-9 pr-4 py-2.5 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-primary/50 transition-colors"
                         />
                         {searchMedicineResults.length > 0 && (
-                          <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-bg2/95 backdrop-blur-xl border border-glass-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                          <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-200">
                             {searchMedicineResults.map((med, idx) => (
                               <button
                                 key={idx}

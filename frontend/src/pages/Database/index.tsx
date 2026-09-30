@@ -969,10 +969,10 @@ const DatabasePage = () => {
 
       {/* Price History Modal */}
       {showPriceHistoryModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md">
-          <div className="bg-bg border border-glass-border rounded-2xl w-11/12 max-w-4xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
+          <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-2xl flex flex-col overflow-hidden">
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border bg-bg3/50">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border bg-bg3/50 shrink-0">
               <div>
                 <h3 className="text-base font-bold text-text">Supplier Rates & Purchase History</h3>
                 <p className="text-xs text-muted mt-1 font-semibold">{priceHistoryMedicine}</p>
@@ -986,7 +986,7 @@ const DatabasePage = () => {
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 min-h-0 overflow-y-auto p-6">
               {loadingHistory ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">
                   <RefreshCw className="animate-spin text-sky-400" size={24} />
@@ -1035,7 +1035,7 @@ const DatabasePage = () => {
             </div>
 
             {/* Modal Footer */}
-            <div className="flex justify-end px-6 py-4 border-t border-glass-border bg-bg3/50">
+            <div className="flex justify-end px-6 py-4 border-t border-glass-border bg-bg3/50 shrink-0">
               <button
                 onClick={() => setShowPriceHistoryModal(false)}
                 className="px-5 py-2 bg-sky-500 hover:bg-sky-400 text-white rounded-xl text-xs font-bold uppercase transition-all"
@@ -1080,7 +1080,7 @@ const DatabasePage = () => {
       {/* Bulk Multi-Add Medicine Modal */}
       {showBulkAddModal && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="relative bg-bg border border-glass-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] shadow-2xl overflow-hidden flex flex-col">
             {/* Header */}
             <div className="p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-3">
@@ -1101,7 +1101,7 @@ const DatabasePage = () => {
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6 scrollbar-custom space-y-4">
+            <div className="flex-1 min-h-0 overflow-y-auto p-6 scrollbar-custom space-y-4">
               {addMessage && (
                 <div className={`p-3 rounded-lg text-xs font-medium border ${addMessage.includes('Added') || addMessage.includes('Adding') ? 'bg-sky-500/10 border-sky-500/20 text-sky-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}>
                   {addMessage}

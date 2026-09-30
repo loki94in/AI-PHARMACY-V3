@@ -953,9 +953,9 @@ const Sells = () => {
       {/* Edit Modal */}
       {editInvoice && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-panel w-full max-w-4xl max-h-[90vh] overflow-y-auto border-primary/20">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden border-primary/20">
             {/* Modal Header */}
-            <div className="p-5 border-b border-glass-border flex justify-between items-center bg-white/5 sticky top-0 z-10">
+            <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
               <div>
                 <h3 className="font-bold text-lg flex items-center gap-2">
                   <Edit3 size={18} className="text-primary" />
@@ -965,14 +965,14 @@ const Sells = () => {
               </div>
               <button
                 onClick={() => setEditInvoice(null)}
-                className="p-2 rounded-lg hover:bg-white/10 text-muted hover:text-text transition-all"
+                className="p-2 rounded-lg hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer"
               >
                 <X size={18} />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="p-5 space-y-5">
+            <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
               {/* Customer Info */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
@@ -1221,9 +1221,9 @@ const Sells = () => {
       {/* View Modal */}
       {viewInvoice && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-panel w-full max-w-4xl max-h-[90vh] flex flex-col border-sky-500/20">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden border-sky-500/20">
             {/* Modal Header */}
-            <div className="p-5 border-b border-glass-border flex justify-between items-center bg-white/5 shrink-0">
+            <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
               <div>
                 <h3 className="font-bold text-lg flex items-center gap-2">
                   <FileText size={18} className="text-sky-500" />
@@ -1233,14 +1233,14 @@ const Sells = () => {
               </div>
               <button
                 onClick={() => { setViewInvoice(null); setBarcodeModalInvoice(null); }}
-                className="p-2 rounded-lg hover:bg-white/10 text-muted hover:text-text transition-all"
+                className="p-2 rounded-lg hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer"
               >
                 <X size={18} />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="p-5 space-y-5 flex-1 overflow-y-auto">
+            <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
               {/* Customer Info */}
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 bg-bg2/50 p-4 rounded-xl border border-glass-border">
                 <div>
@@ -1579,7 +1579,7 @@ const Sells = () => {
       {/* Standalone Barcode Modal Portal */}
       {barcodeModalInvoice && !viewInvoice && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-panel w-full max-w-lg p-6 border-purple-500/30 flex flex-col items-center space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="glass-panel w-[95vw] max-w-lg p-6 border-purple-500/30 flex flex-col items-center space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="w-full flex justify-between items-center border-b border-glass-border pb-3">
               <h3 className="font-bold text-base flex items-center gap-2 text-text">
                 <QrCode size={18} className="text-purple-400" />
@@ -1729,7 +1729,7 @@ const Sells = () => {
       {/* Old Financial Year Bill Action Modal */}
       {oldFyBillConfirm && createPortal(
         <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-panel w-full max-w-md border-amber-500/40 overflow-hidden">
+          <div className="glass-panel w-[95vw] max-w-md border-amber-500/40 overflow-hidden">
             {/* Header */}
             <div className="p-5 border-b border-glass-border bg-amber-500/10">
               <div className="flex items-center gap-3">
