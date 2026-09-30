@@ -507,7 +507,7 @@ export interface RefillCartCandidate extends RefillCartPick {
 /** POST /refills/:id/add-to-cart — one medicine, real outcome (see services/refillCartService.ts). */
 export interface RefillCartResult {
   success: boolean;
-  status: 'added' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
+  status: 'added' | 'ready' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
   message: string;
   refillId: number;
   medicineName: string;
@@ -1697,8 +1697,19 @@ export const api = {
   updateRefill: (id: number, data: Partial<Refill>) => apiClient.put(`/refills/${id}`, data).then(res => res.data),
   deleteRefill: (id: number) => apiClient.delete(`/refills/${id}`).then(res => res.data),
   // Server does cart read → live search → add → cart re-read; slow Pharmarack can take a while.
-  addRefillToCart: (id: number, body: { qty?: number; pick?: RefillCartPick[] }) =>
+  // dryRun: plan only (never writes the cart) → 'ready' with the distributor it would use.
+  addRefillToCart: (id: number, body: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean }) =>
     apiClient.post<RefillCartResult>(`/refills/${id}/add-to-cart`, body, { timeout: 90000 }).then(res => res.data),
+  getDistributorRanks: () =>
+    apiClient.get<{ success: boolean; ranks: Array<{ name: string; purchases: number }> }>('/refills/distributor-ranks').then(res => res.data),
+  // One WhatsApp to the OWNER after a refill cart run; queued:false + reason when no owner number.
+  sendRefillCartSummary: (patientName: string, rows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; message?: string }>) =>
+    apiClient.post<{ ok: boolean; queued: boolean; reason?: string }>('/refills/cart-summary', { patientName, rows }).then(res => res.data),
+  // Saved Pharmarack distributor products per medicine (PUT replaces the set; [] unlinks; no cart write)
+  getMedicineLinks: (medicineId: number) =>
+    apiClient.get<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`).then(res => res.data),
+  saveMedicineLinks: (medicineId: number, links: RefillCartPick[]) =>
+    apiClient.put<{ success: boolean; saved: number; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`, { links }).then(res => res.data),
   sendRefillNow: (id: number) => apiClient.post<{ success: boolean; queueId?: number; message: string }>(`/refills/${id}/send`).then(res => res.data),
   sendGroupedRefill: (data: { patient_phone: string; patient_name: string; refill_ids?: number[]; medicines?: Array<{ id: number; medicine_name: string; quantity_needed?: number }> }) =>
     apiClient.post<{ success: boolean; queueId?: number; updatedRefillCount?: number; message: string }>('/refills/send-grouped', data).then(res => res.data),

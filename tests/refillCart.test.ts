@@ -61,6 +61,17 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => {
   return m;
 });
 
+// The owner summary must be QUEUED, never really sent, in tests. Every method is a
+// no-op jest.fn; 'then' stays undefined so the object is never mistaken for a promise.
+const mockEnqueue = jest.fn(async (..._args: any[]) => 101);
+const queueFns: Record<string, any> = { enqueue: mockEnqueue };
+jest.unstable_mockModule('../src/services/whatsappQueueWorker.js', () => ({
+  __esModule: true,
+  whatsappQueueWorker: new Proxy({}, {
+    get: (_t, p) => (typeof p !== 'string' || p === 'then' ? undefined : (queueFns[p] ||= jest.fn(async () => undefined)))
+  })
+}));
+
 jest.unstable_mockModule('../src/telegramBot.js', () => ({
   __esModule: true,
   telegramBotService: { sendDefaultNotification: jest.fn(() => Promise.resolve(true)) }
@@ -228,6 +239,136 @@ describe('Refill → Live Cart (saved distributor links, one medicine at a time)
     expect(toast?.[1]).toMatchObject({ type: 'success' });
     const row = await db.get('SELECT cart_product_code FROM patient_refills WHERE id = ?', [refillId]);
     expect(row.cart_product_code).toBeNull();
+  });
+
+  test('Link distributor window: PUT saves ticked products in order, GET returns them, panel shows the names, no cart write', async () => {
+    const put = await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_BETA), pickOf(TELMA_ALPHA)] });
+    expect(put.status).toBe(200);
+    expect(put.body.saved).toBe(2);
+    const get = await request(app).get(`/api/refills/medicine-links/${medId}`);
+    expect(get.body.links.map((l: any) => l.storeName)).toEqual(['BETA MEDICOS', 'ALPHA PHARMA']);
+    expect(get.body.links[0]).toMatchObject({ storeId: 22, productCode: 'B-200', mapped: true });
+    const panel = await request(app).get('/api/refills/panel');
+    const med = panel.body.flatMap((p: any) => p.medicines).find((m: any) => m.id === refillId);
+    expect(med.linked_distributors).toEqual(['BETA MEDICOS', 'ALPHA PHARMA']);
+    expect(mockAdd).not.toHaveBeenCalled();
+    expect(mockLoadLiveCartCore).not.toHaveBeenCalled();
+  });
+
+  test('Link distributor window: invalid product rejected without touching saved links; [] unlinks; unknown medicine 404', async () => {
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_ALPHA)] });
+    const bad = await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [{ storeId: 0, storeName: 'X', productCode: '' }] });
+    expect(bad.status).toBe(400);
+    const still = await request(app).get(`/api/refills/medicine-links/${medId}`);
+    expect(still.body.links).toHaveLength(1);
+    const cleared = await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [] });
+    expect(cleared.body).toMatchObject({ success: true, saved: 0, links: [] });
+    const missing = await request(app).put('/api/refills/medicine-links/999999').send({ links: [] });
+    expect(missing.status).toBe(404);
+    const noBody = await request(app).put(`/api/refills/medicine-links/${medId}`).send({});
+    expect(noBody.status).toBe(400);
+  });
+
+  test('links saved in the window are what the cart popup uses next time', async () => {
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_BETA)] });
+    const res = await svc.processRefillCartItem(refillId, { qty: 2 });
+    expect(res.status).toBe('added');
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 22, productCode: 'B-200', qty: 2 });
+  });
+
+  test('modify existing links: reorder, remove and re-add persist, and the cart run follows the new first priority', async () => {
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_ALPHA), pickOf(TELMA_BETA)] });
+    // reorder (BETA first)
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_BETA), pickOf(TELMA_ALPHA)] });
+    let get = await request(app).get(`/api/refills/medicine-links/${medId}`);
+    expect(get.body.links.map((l: any) => l.storeName)).toEqual(['BETA MEDICOS', 'ALPHA PHARMA']);
+    // remove ALPHA
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_BETA)] });
+    get = await request(app).get(`/api/refills/medicine-links/${medId}`);
+    expect(get.body.links.map((l: any) => l.storeName)).toEqual(['BETA MEDICOS']);
+    // re-add ALPHA at the end
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_BETA), pickOf(TELMA_ALPHA)] });
+    const res = await svc.processRefillCartItem(refillId, { qty: 1 });
+    expect(res.status).toBe('added');
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 22 });
+  });
+
+  test('carry-forward: one link for a medicine serves every patient who has it (no re-selecting)', async () => {
+    const other = await db.run(
+      "INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, quantity_needed, is_active, status) VALUES ('Asha', '9876509999', ?, 2, 1, 'pending')",
+      [medId]
+    );
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_ALPHA)] });
+    const panel = await request(app).get('/api/refills/panel');
+    const meds = panel.body.flatMap((p: any) => p.medicines);
+    expect(meds.find((m: any) => m.id === refillId).linked_distributors).toEqual(['ALPHA PHARMA']);
+    expect(meds.find((m: any) => m.id === other.lastID).linked_distributors).toEqual(['ALPHA PHARMA']);
+    const res = await svc.processRefillCartItem(other.lastID, { qty: 2 });
+    expect(res.status).toBe('added'); // second patient: no needs_link, straight to the cart
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 11, qty: 2 });
+  });
+
+  test('dryRun (re-check right after linking) answers "ready" and never writes the cart', async () => {
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_ALPHA)] });
+    const res = await request(app).post(`/api/refills/${refillId}/add-to-cart`).send({ qty: 3, dryRun: true });
+    expect(res.body).toMatchObject({ success: false, status: 'ready', line: { storeName: 'ALPHA PHARMA', qty: 3 } });
+    expect(mockAdd).not.toHaveBeenCalled();
+    const row = await db.get('SELECT cart_product_code FROM patient_refills WHERE id = ?', [refillId]);
+    expect(row.cart_product_code).toBeNull();
+  });
+
+  test('not in the cart → the pharmacist priority order decides (first linked in stock)', async () => {
+    await request(app).put(`/api/refills/medicine-links/${medId}`).send({ links: [pickOf(TELMA_BETA), pickOf(TELMA_ALPHA)] });
+    const res = await svc.processRefillCartItem(refillId, { qty: 3 });
+    expect(res.status).toBe('added');
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 22 });
+  });
+
+  test('unmapped distributors are never offered for linking', async () => {
+    searchItems = [TELMA_ALPHA, { ...TELMA_BETA, mapped: false }];
+    const res = await svc.processRefillCartItem(refillId, { qty: 3 });
+    expect(res.status).toBe('needs_link');
+    expect(res.candidates.map(c => c.storeName)).toEqual(['ALPHA PHARMA']);
+  });
+
+  test('distributor-ranks: purchase-bill count per distributor, most purchased first', async () => {
+    const a = await db.run("INSERT INTO distributors (name) VALUES ('ALPHA PHARMA')");
+    const b = await db.run("INSERT INTO distributors (name) VALUES ('BETA MEDICOS')");
+    for (let i = 0; i < 3; i++) await db.run('INSERT INTO purchases (distributor_id, invoice_no) VALUES (?, ?)', [b.lastID, `B${i}`]);
+    await db.run('INSERT INTO purchases (distributor_id, invoice_no) VALUES (?, ?)', [a.lastID, 'A1']);
+    const res = await request(app).get('/api/refills/distributor-ranks');
+    expect(res.body.ranks.slice(0, 2)).toEqual([{ name: 'BETA MEDICOS', purchases: 3 }, { name: 'ALPHA PHARMA', purchases: 1 }]);
+  });
+
+  test('owner WhatsApp summary: not queued without an owner number (truthful reason)', async () => {
+    await db.run("DELETE FROM app_settings WHERE key IN ('owner_whatsapp_number','admin_whatsapp_number','admin_whatsapp','shop_phone','store_phone')");
+    const res = await request(app).post('/api/refills/cart-summary').send({ patientName: 'Ravi', rows: [{ refillId, medicineName: 'TELMA 40MG TAB', status: 'needs_link' }] });
+    expect(res.body).toMatchObject({ ok: true, queued: false });
+    expect(res.body.reason).toMatch(/Owner WhatsApp number/);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  test('owner WhatsApp summary: distributor + qty per medicine; "Added" only when the DB confirms the cart line', async () => {
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('owner_whatsapp_number', '919800000001')");
+    await svc.processRefillCartItem(refillId, { qty: 3, pick: [pickOf(TELMA_ALPHA)] });
+    const r2 = await db.run(
+      "INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, quantity_needed, is_active, status) VALUES ('Ravi', '9876501234', ?, 2, 1, 'pending')",
+      [medId]
+    );
+    const res = await request(app).post('/api/refills/cart-summary').send({
+      patientName: 'Ravi',
+      rows: [
+        { refillId, medicineName: 'TELMA 40MG TAB', status: 'added' },
+        { refillId: r2.lastID, medicineName: 'ROSUVAS 10', status: 'added' }, // claimed, but no cart line in DB
+      ]
+    });
+    expect(res.body).toMatchObject({ ok: true, queued: true });
+    const [to, message, type] = mockEnqueue.mock.calls[0] as any[];
+    expect(to).toBe('919800000001');
+    expect(type).toBe('refill_cart_summary');
+    expect(message).toContain('TELMA 40MG TAB → ALPHA PHARMA × 3');
+    expect(message).toMatch(/Needs you \(1\)[\s\S]*ROSUVAS 10/);
+    expect(message).not.toMatch(/ROSUVAS 10 →/);
   });
 
   test('route: cancelling a refill that added nothing never touches the cart', async () => {

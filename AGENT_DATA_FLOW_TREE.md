@@ -42,7 +42,7 @@ Before editing:
 | Patient | Name and phone captured on a sale, or edited on the patient the sale already created | POS save creates the person from the name and phone on the bill. CRM edits that person | `customers` | sale save; `GET/POST /api/customers` |
 | Special order | Shortage request for a patient | CRM special-orders tab | `special_orders` | `GET/POST/PUT/DELETE /api/orders` |
 | Refill | Repeat medicine for a patient | CRM refills tab | `patient_refills` | `GET/POST/PUT /api/refills` |
-| Refill cart link | Pharmarack distributor products the pharmacist ticked for a medicine, and the one cart line a refill cycle added | CRM refills → Live Cart popup (`RefillCartModal`, user click) | `medicine_distributor_links`, `patient_refills.cart_*` | `POST /api/refills/:id/add-to-cart` |
+| Refill cart link | Pharmarack distributor products the pharmacist ticked for a medicine, and the one cart line a refill cycle added | CRM refill card **🔗 Link distributor** (`MedicineLinkModal`, links only) and the Live Cart popup (`RefillCartModal` Save & add) — user click | `medicine_distributor_links`, `patient_refills.cart_*` | `GET/PUT /api/refills/medicine-links/:medicineId`, `POST /api/refills/:id/add-to-cart` (`dryRun` = check only), `POST /api/refills/cart-summary` (owner WhatsApp) |
 
 Mail and OCR may stage a bill for review. They become a purchase only after the user confirms the verification modal. They do not create shelf stock by themselves.
 
@@ -117,19 +117,24 @@ Quick Assist (`QuickAssistSidebar` in `frontend/src/components/Layout.tsx`) is a
 
 ### Refill → Live Cart (added 2026-09-30)
 
-CRM **Order to Cart** (patient) and **+ Live Cart** (one medicine) open `RefillCartModal`. It sends one `POST /api/refills/:id/add-to-cart` at a time. `services/refillCartService.ts` handles each:
+CRM **Order to Cart** (patient) and **+ Live Cart** (one medicine) start a run in the frontend store `services/refillCartJobs.ts`. The popup (`RefillCartModal`, mounted once in Layout as `RefillCartJobHost`) shows it. The run sends one `POST /api/refills/:id/add-to-cart` at a time, and `services/refillCartService.ts` handles each:
 
 ```text
 live cart has it (saved product, this refill's line, or exact name)  → in_cart, never re-added
-no saved distributor                                                 → needs_link (pharmacist ticks; saved)
-every saved distributor out of stock                                 → linked_oos (highlighted; tick another)
-else add to ONE saved in-stock product: already in cart → most purchased from → first ticked
+no linked distributor                                                → needs_link (pharmacist links it)
+every linked distributor out of stock                                → linked_oos (highlighted; link another)
+else add to ONE linked in-stock product: already in cart → priority order (links' pick_order)
      → re-read the cart → only then 'added' and patient_refills.cart_* is written
 ```
 
-- `medicine_distributor_links` holds only what the pharmacist ticked. Search results and offline catalog rows never become links.
+- Linking never adds. The popup's Link / Change distributor opens `MedicineLinkModal`, then re-checks the row with `dryRun` → `ready`, and the pharmacist presses Add.
+- Closing the popup does not stop the run. A small corner card shows progress, then each medicine → distributor × qty and what still needs the pharmacist. Open reopens the popup.
+- When a run that added something finishes, ONE WhatsApp summary is queued to the OWNER number (`POST /api/refills/cart-summary`). It is never sent to the patient. Its "Added" lines come from `patient_refills.cart_*`, not from what the client claims.
+- A refill that is queued or working is never queued again, and a second click for the same patient joins the running run.
+- `medicine_distributor_links` holds only what the pharmacist ticked, in priority order. Only MAPPED Pharmarack distributors are offered. Search results and offline catalog rows never become links.
 - Cancel, delete, and removing a medicine from the prescription remove exactly the recorded `cart_store_id + cart_product_code` line, in the background, and push the real result as a toast. Fulfill, fulfill-all, status completed and a POS refill sale clear `cart_product_code`. Skip does not.
-- Also shows on: CRM refill card chip `🛒 <distributor> ×qty` (`/refills/panel` → `cart_store_name`, `cart_qty`).
+- **🔗 Link distributor** on each refill medicine opens `MedicineLinkModal`: the medicine and its links in priority order on the left, a Pharmarack search (3+ typed letters, any spelling) with a tick-list on the right. A newly ticked product is placed by purchase-bill count (`GET /api/refills/distributor-ranks`). ▲▼ and "Sort by most purchased" change the order. `PUT /api/refills/medicine-links/:medicineId` replaces the set, and `[]` unlinks. It never touches the cart.
+- Also shows on: CRM refill card chip `🛒 <distributor> ×qty` (`/refills/panel` → `cart_store_name`, `cart_qty`), and the link button's label (`/refills/panel` → `linked_distributors`).
 - No worker, cron or listener calls this. Cart writes happen only from the click.
 
 ---

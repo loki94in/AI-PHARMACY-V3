@@ -23,7 +23,8 @@ import { MedicineVisualReferenceModal } from '../../components/MedicineVisualRef
 import { CallTaskBoard, CallTaskBadge } from '../../components/CallTaskBoard';
 import { OrderModifyModal } from '../../components/OrderModifyModal';
 import { IncompleteOrders24hCard } from '../../components/IncompleteOrders24hCard';
-import { RefillCartModal, type RefillCartItemInput } from '../../components/RefillCartModal';
+import { startRefillCartJob, type RefillCartItemInput } from '../../services/refillCartJobs';
+import { MedicineLinkModal } from '../../components/MedicineLinkModal';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -85,6 +86,7 @@ interface RefillPatient {
     confirmed_at?: string | null;
     cart_store_name?: string | null;
     cart_qty?: number | null;
+    linked_distributors?: string[];
   }[];
 }
 
@@ -378,7 +380,7 @@ const RefillsSection: React.FC = () => {
 
   // Frequency slider modal
   const [editingRefill, setEditingRefill] = useState<{ id: number; currentInterval: number; name: string } | null>(null);
-  const [refillCartPopup, setRefillCartPopup] = useState<{ patientName: string; items: RefillCartItemInput[] } | null>(null);
+  const [linkingMedicine, setLinkingMedicine] = useState<{ id: number; name: string } | null>(null);
   const [editIntervalVal, setEditIntervalVal] = useState<number>(30);
   const [updatingFreq, setUpdatingFreq] = useState(false);
 
@@ -921,19 +923,20 @@ const RefillsSection: React.FC = () => {
     toastEvent.trigger(`Transferring ${sellableMeds.length} prescribed medicine(s) for ${patient.patient_name} to POS...${skipNote}`, 'info', '/pos');
   };
 
-  // Refill → Live Cart popup: the server adds one medicine at a time to the saved
-  // distributor and confirms it in the cart. (Replaced a name-only add that let the
+  // Refill → Live Cart run (services/refillCartJobs.ts, popup in Layout): the server
+  // adds one medicine at a time to the linked distributor and confirms it in the
+  // cart; closing the popup keeps it running. (Replaced a name-only add that let the
   // server guess the first search hit, and toasted "Added" on offline no-ops.)
   const handleOrderRefillShortages = (patient: RefillPatient) => {
     const items: RefillCartItemInput[] = patient.medicines
       .filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused')
-      .map(m => ({ refillId: m.id, medicineName: m.medicine_name, qty: Math.max(0, Number(m.quantity_needed ?? 3) - Number(m.in_stock_qty || 0)) }))
+      .map(m => ({ refillId: m.id, medicineId: m.medicine_id, medicineName: m.medicine_name, qty: Math.max(0, Number(m.quantity_needed ?? 3) - Number(m.in_stock_qty || 0)) }))
       .filter(i => i.qty > 0);
     if (items.length === 0) {
       toastEvent.trigger(`All active medicines for ${patient.patient_name} are in shop stock. Nothing to order.`, 'info', '/crm');
       return;
     }
-    setRefillCartPopup({ patientName: patient.patient_name, items });
+    startRefillCartJob(patient.patient_name, items);
   };
 
   // ── Medicine row search & inventory dropdown ──────────────────────────────
@@ -1831,10 +1834,9 @@ const RefillsSection: React.FC = () => {
                                 {/* Direct Live Cart Addition */}
                                 <button
                                   type="button"
-                                  onClick={() => setRefillCartPopup({
-                                    patientName: selectedPatient.patient_name,
-                                    items: [{ refillId: med.id, medicineName: med.medicine_name, qty: cartOrderQty }]
-                                  })}
+                                  onClick={() => startRefillCartJob(selectedPatient.patient_name, [
+                                    { refillId: med.id, medicineId: med.medicine_id, medicineName: med.medicine_name, qty: cartOrderQty }
+                                  ])}
                                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-[11px] font-bold transition-all cursor-pointer shadow-xs"
                                   title={`Add ${cartOrderQty} unit(s) of "${med.medicine_name}" to the Pharmarack Live Cart using its saved distributor`}
                                 >
@@ -1846,6 +1848,23 @@ const RefillsSection: React.FC = () => {
                                     🛒 {med.cart_store_name} ×{med.cart_qty}
                                   </span>
                                 )}
+
+                                {/* Link this medicine to Pharmarack distributor product(s) */}
+                                {med.medicine_id ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLinkingMedicine({ id: med.medicine_id as number, name: med.medicine_name })}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-bg2 border border-border hover:border-primary/50 text-muted hover:text-text text-[11px] font-semibold transition-all cursor-pointer max-w-[220px]"
+                                    title={med.linked_distributors?.length ? `Linked: ${med.linked_distributors.join(', ')} (click to change)` : 'Link this medicine to a Pharmarack distributor'}
+                                  >
+                                    <span>🔗</span>
+                                    <span className="truncate">
+                                      {med.linked_distributors?.length
+                                        ? `${med.linked_distributors[0]}${med.linked_distributors.length > 1 ? ` +${med.linked_distributors.length - 1}` : ''}`
+                                        : 'Link distributor'}
+                                    </span>
+                                  </button>
+                                ) : null}
 
                                 {/* Stock Override Toggle */}
                                 <button
@@ -2578,12 +2597,15 @@ const RefillsSection: React.FC = () => {
         document.body
       )}
 
-      {/* ── Refill → Live Cart popup (one medicine at a time) ── */}
-      {refillCartPopup && (
-        <RefillCartModal
-          patientName={refillCartPopup.patientName}
-          items={refillCartPopup.items}
-          onClose={() => setRefillCartPopup(null)}
+      {/* ── Link medicine ↔ Pharmarack distributor product(s) ── */}
+      {linkingMedicine && (
+        <MedicineLinkModal
+          medicineId={linkingMedicine.id}
+          medicineName={linkingMedicine.name}
+          // Reload the refill cards right away (same as every other CRM refill action);
+          // don't rely only on the SSE refill_updated, which is dropped if it lands within 1.5 s of another.
+          onSaved={() => refillEvent.triggerRefresh()}
+          onClose={() => setLinkingMedicine(null)}
         />
       )}
 

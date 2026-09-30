@@ -15,7 +15,10 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 
 import { resolveStoreId } from '../services/storeContextService.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
-import { processRefillCartItem, removeRefillCartLines, REFILL_CART_COLUMNS } from '../services/refillCartService.js';
+import {
+  processRefillCartItem, removeRefillCartLines, REFILL_CART_COLUMNS, getMedicineLinks, saveMedicineLinks,
+  getDistributorPurchaseRanks, sendRefillCartSummary
+} from '../services/refillCartService.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 // const __dirname = path.dirname(__filename);
@@ -588,6 +591,7 @@ router.get('/panel', async (req, res) => {
     // soonest-expiry batch (single window pass instead of two full inventory scans).
     const medIds = Array.from(new Set(rows.map(r => Number(r.medicine_id)).filter(Boolean)));
     const stockByMedicine = new Map<number, any>();
+    const linksByMedicine = new Map<number, string[]>();
     const stockStoreCond = allStores ? '' : 'AND (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))';
     for (let i = 0; i < medIds.length; i += 500) {
       const chunk = medIds.slice(i, i + 500);
@@ -619,6 +623,15 @@ router.get('/panel', async (req, res) => {
         ) w
         GROUP BY w.medicine_id`, chunkParams);
       for (const sr of stockRows) stockByMedicine.set(Number(sr.medicine_id), sr);
+      // Saved Pharmarack distributors per medicine (unique-index prefix seek on medicine_id)
+      const linkRows = await db.all(
+        `SELECT medicine_id, store_name FROM medicine_distributor_links WHERE medicine_id IN (${placeholders}) ORDER BY pick_order, id`,
+        chunk
+      );
+      for (const lr of linkRows) {
+        const key = Number(lr.medicine_id);
+        linksByMedicine.set(key, [...(linksByMedicine.get(key) || []), String(lr.store_name)]);
+      }
     }
 
     const patientGroups: Record<string, any> = {};
@@ -679,7 +692,8 @@ router.get('/panel', async (req, res) => {
           confirmed_at: row.confirmed_at || null,
           // Live-cart line this refill cycle added (refill cart popup); null when none
           cart_store_name: row.cart_product_code ? row.cart_store_name : null,
-          cart_qty: row.cart_product_code ? row.cart_qty : null
+          cart_qty: row.cart_product_code ? row.cart_qty : null,
+          linked_distributors: linksByMedicine.get(Number(row.medicine_id)) || []
         });
       }
     }
@@ -808,18 +822,65 @@ router.post('/:id/toggle-pause', async (req, res) => {
 });
 
 // Refill → Pharmarack Live Cart, one medicine per call (CRM refill cart popup).
-// User-clicked only. Body: { qty?, pick?: ticked distributor products to save }.
+// User-clicked only. Body: { qty?, pick?: ticked distributor products to save,
+// dryRun?: plan only — never writes the cart, answers 'ready' }.
 // `success` is true only when the cart really changed, so refill_updated fires only then.
 router.post('/:id/add-to-cart', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || isNaN(id)) return res.status(400).json({ error: 'Valid refill ID required' });
   try {
     const pick = Array.isArray(req.body?.pick) ? req.body.pick : undefined;
-    const result = await processRefillCartItem(id, { qty: req.body?.qty, pick });
+    const result = await processRefillCartItem(id, { qty: req.body?.qty, pick, dryRun: req.body?.dryRun === true });
     res.json({ success: result.status === 'added', ...result });
   } catch (err: any) {
     console.error('Refill add-to-cart failed:', err);
     res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to add refill to live cart' });
+  }
+});
+
+// Purchase-bill count per distributor (Link window auto-orders linked distributors by it).
+router.get('/distributor-ranks', async (_req, res) => {
+  try {
+    res.json({ success: true, ranks: await getDistributorPurchaseRanks() });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load distributor purchase counts' });
+  }
+});
+
+// After a refill cart popup run: ONE WhatsApp summary to the OWNER (never the patient).
+// Response says truthfully whether it was queued (no owner number → queued:false + reason).
+// Answers `ok`, not `success`: no refill row changed, so no refill_updated broadcast.
+router.post('/cart-summary', async (req, res) => {
+  if (!Array.isArray(req.body?.rows)) return res.status(400).json({ error: 'rows array is required' });
+  try {
+    const out = await sendRefillCartSummary(String(req.body.patientName || ''), req.body.rows);
+    res.json({ ok: true, ...out });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to queue refill cart summary' });
+  }
+});
+
+// Saved Pharmarack distributor products for a medicine (CRM "Link distributor" window).
+// PUT replaces the whole set; [] unlinks. Never touches the live cart.
+router.get('/medicine-links/:medicineId', async (req, res) => {
+  const medicineId = parseInt(req.params.medicineId, 10);
+  if (!medicineId || isNaN(medicineId)) return res.status(400).json({ error: 'Valid medicine ID required' });
+  try {
+    res.json({ success: true, links: await getMedicineLinks(medicineId) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load linked distributors' });
+  }
+});
+
+router.put('/medicine-links/:medicineId', async (req, res) => {
+  const medicineId = parseInt(req.params.medicineId, 10);
+  if (!medicineId || isNaN(medicineId)) return res.status(400).json({ error: 'Valid medicine ID required' });
+  if (!Array.isArray(req.body?.links)) return res.status(400).json({ error: 'links array is required' });
+  try {
+    const saved = await saveMedicineLinks(medicineId, req.body.links);
+    res.json({ success: true, saved, links: await getMedicineLinks(medicineId) });
+  } catch (err: any) {
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to save linked distributors' });
   }
 });
 

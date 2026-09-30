@@ -24,18 +24,57 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:5174',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err, req, res) => {
+            if ((err as any)?.code === 'ECONNREFUSED' || (err as any)?.code === 'ECONNRESET') {
+              if (res && 'writeHead' in res && !res.headersSent) {
+                res.writeHead(503, {
+                  'Content-Type': 'application/json',
+                  'Retry-After': '1',
+                });
+                res.end(JSON.stringify({ error: 'Backend server is initializing. Please wait...', code: 'BOOTING' }));
+              }
+              return;
+            }
+            console.error(`[vite] proxy error on ${req.url}:`, err.message);
+          });
+        },
       },
       '/uploads': {
         target: 'http://127.0.0.1:5174',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, res) => {
+            if ((err as any)?.code === 'ECONNREFUSED' && res && 'writeHead' in res && !res.headersSent) {
+              res.writeHead(503);
+              res.end();
+            }
+          });
+        },
       },
       '/data': {
         target: 'http://127.0.0.1:5174',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, res) => {
+            if ((err as any)?.code === 'ECONNREFUSED' && res && 'writeHead' in res && !res.headersSent) {
+              res.writeHead(503);
+              res.end();
+            }
+          });
+        },
       },
       '/products': {
         target: 'http://127.0.0.1:5174',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, res) => {
+            if ((err as any)?.code === 'ECONNREFUSED' && res && 'writeHead' in res && !res.headersSent) {
+              res.writeHead(503);
+              res.end();
+            }
+          });
+        },
       }
     }
   },

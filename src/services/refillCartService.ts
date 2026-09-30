@@ -4,20 +4,24 @@
  * The CRM refill popup calls processRefillCartItem() for each medicine in turn:
  *   already in the cart?  → 'in_cart' (never re-add: AddUserProductCartDetail
  *                           SETS a line's qty, so a second add would overwrite it)
- *   no saved distributor  → 'needs_link' (pharmacist ticks products; saved)
- *   saved ones all OOS    → 'linked_oos' (highlighted; pharmacist ticks another)
+ *   no saved distributor  → 'needs_link' (pharmacist links it; linking never adds)
+ *   saved ones all OOS    → 'linked_oos' (highlighted; pharmacist links another)
  *   otherwise             → add to ONE saved in-stock product: the distributor
- *                           already in the cart, else the most-purchased-from,
- *                           else the first ticked; then re-read the cart and
- *                           only report 'added' when the line is really there.
+ *                           already in the cart, else the pharmacist's priority
+ *                           order (auto-set by most purchased, editable); then
+ *                           re-read the cart and only report 'added' when the
+ *                           line is really there. dryRun stops before the add
+ *                           and reports 'ready' (used right after linking).
  *
  * removeRefillCartLines() undoes a refill's recorded line when the refill is
  * cancelled/deleted, in the background, and pushes the real result as a toast.
+ * sendRefillCartSummary() queues ONE WhatsApp to the OWNER (never the patient)
+ * after a popup run: which distributor and qty the app used per medicine.
  */
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 
-export type RefillCartStatus = 'added' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
+export type RefillCartStatus = 'added' | 'ready' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
 
 export interface RefillCartPick {
   storeId: number;
@@ -71,6 +75,64 @@ function flattenCart(cart: { distributors: any[] }): CartLine[] {
   return lines;
 }
 
+const isValidPick = (p: any) =>
+  Number(p?.storeId) > 0 && String(p?.productCode || '').trim() !== '' && String(p?.storeName || '').trim() !== '';
+
+/** The distributor products saved for a medicine, in the order they were ticked. */
+export async function getMedicineLinks(medicineId: number): Promise<RefillCartPick[]> {
+  const db = await dbManager.getConnection();
+  const rows: any[] = await db.all(
+    `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+     FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id`,
+    [medicineId]
+  );
+  return rows.map(r => ({
+    storeId: Number(r.store_id),
+    storeName: String(r.store_name),
+    productCode: String(r.product_code),
+    productId: r.product_id,
+    productName: r.product_name || '',
+    packaging: r.packaging || '',
+    company: r.company || '',
+    mapped: r.mapped !== 0
+  }));
+}
+
+/**
+ * Replace a medicine's saved links with exactly these ticked products (order =
+ * tick order). An empty list unlinks the medicine. Writers: the CRM Link
+ * Distributor window and the refill cart popup's "Save & add".
+ */
+export async function saveMedicineLinks(medicineId: number, picks: RefillCartPick[]): Promise<number> {
+  const clean = picks.filter(isValidPick);
+  if (clean.length !== picks.length) {
+    throw Object.assign(new Error('Each linked product needs a Pharmarack distributor and product code.'), { httpStatus: 400 });
+  }
+  const db = await dbManager.getConnection();
+  const med = await db.get('SELECT id FROM medicines WHERE id = ?', [medicineId]);
+  if (!med) throw Object.assign(new Error('Medicine not found'), { httpStatus: 404 });
+  await db.run('BEGIN');
+  try {
+    await db.run('DELETE FROM medicine_distributor_links WHERE medicine_id = ?', [medicineId]);
+    for (let i = 0; i < clean.length; i++) {
+      const p = clean[i];
+      await db.run(
+        `INSERT OR REPLACE INTO medicine_distributor_links
+           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [medicineId, Number(p.storeId), String(p.storeName).trim(), String(p.productCode).trim(),
+         p.productId != null ? String(p.productId) : null, p.productName || null, p.packaging || null,
+         p.company || null, p.mapped === false ? 0 : 1, i]
+      );
+    }
+    await db.run('COMMIT');
+  } catch (err) {
+    await db.run('ROLLBACK').catch(() => {});
+    throw err;
+  }
+  return clean.length;
+}
+
 const findLine = (lines: CartLine[], storeId: unknown, code: unknown) =>
   lines.find(l => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ''));
 
@@ -82,7 +144,7 @@ function cartErrorMessage(err: any): string {
 
 export async function processRefillCartItem(
   refillId: number,
-  opts: { qty?: number; pick?: RefillCartPick[] } = {}
+  opts: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean } = {}
 ): Promise<RefillCartResult> {
   const db = await dbManager.getConnection();
   const refill = await db.get(
@@ -106,27 +168,9 @@ export async function processRefillCartItem(
 
   // 1. Save the pharmacist's ticked distributors as this medicine's links.
   if (Array.isArray(opts.pick) && opts.pick.length > 0) {
-    const picks = opts.pick.filter(p => Number(p.storeId) > 0 && String(p.productCode || '').trim() && String(p.storeName || '').trim());
+    const picks = opts.pick.filter(isValidPick);
     if (picks.length === 0) return fail('Tick a distributor product from the list.');
-    await db.run('BEGIN');
-    try {
-      await db.run('DELETE FROM medicine_distributor_links WHERE medicine_id = ?', [refill.medicine_id]);
-      for (let i = 0; i < picks.length; i++) {
-        const p = picks[i];
-        await db.run(
-          `INSERT OR REPLACE INTO medicine_distributor_links
-             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-          [refill.medicine_id, Number(p.storeId), String(p.storeName).trim(), String(p.productCode).trim(),
-           p.productId != null ? String(p.productId) : null, p.productName || null, p.packaging || null,
-           p.company || null, p.mapped === false ? 0 : 1, i]
-        );
-      }
-      await db.run('COMMIT');
-    } catch (err) {
-      await db.run('ROLLBACK').catch(() => {});
-      throw err;
-    }
+    await saveMedicineLinks(refill.medicine_id, picks);
   }
 
   const pr = await import('../routes/pharmarack.js');
@@ -181,7 +225,8 @@ export async function processRefillCartItem(
   const candidates: RefillCartCandidate[] = [];
   for (const i of items) {
     const key = `${Number(i.storeId)}|${String(i.productCode)}`;
-    if (seen.has(key)) continue;
+    // Owner rule: only MAPPED distributors are offered for linking.
+    if (seen.has(key) || i.mapped === false) continue;
     seen.add(key);
     candidates.push({
       storeId: Number(i.storeId),
@@ -205,8 +250,8 @@ export async function processRefillCartItem(
 
   if (links.length === 0) {
     return candidates.length > 0
-      ? { ...base, candidates, status: 'needs_link', message: 'No distributor saved for this medicine yet. Tick one or more.' }
-      : { ...base, status: 'not_found', message: 'Pharmarack returned no distributor for this name. Search another spelling.' };
+      ? { ...base, candidates, status: 'needs_link', message: 'No distributor linked to this medicine yet. Link one to add it.' }
+      : { ...base, status: 'not_found', message: 'No mapped Pharmarack distributor found for this name. Link it by searching another spelling.' };
   }
 
   const linkedState = links.map(l => {
@@ -224,31 +269,26 @@ export async function processRefillCartItem(
     return {
       ...base, linked, candidates,
       status: 'linked_oos',
-      message: `Out of stock at ${linked.map(l => l.storeName).join(', ')}. Tick another distributor.`
+      message: `Out of stock at ${linked.map(l => l.storeName).join(', ')}. Link another distributor.`
     };
   }
 
-  // 5. One distributor: already in the cart → most purchased from → first ticked.
+  // 5. One distributor: already in the cart → the pharmacist's priority order
+  //    (links are stored in priority order; the Link window auto-orders them by
+  //    most purchased and the pharmacist can move them).
   const cartStores = new Set(lines.map(l => l.storeId));
-  let chosen = available.find(s => cartStores.has(Number(s.link.store_id)));
-  if (!chosen && available.length > 1) {
-    const freq: any[] = await db.all(
-      `SELECT d.name, COUNT(p.id) AS n FROM distributors d JOIN purchases p ON p.distributor_id = d.id
-       GROUP BY d.id ORDER BY n DESC LIMIT 50`
-    ).catch(() => []);
-    for (const f of freq) {
-      const fn = norm(f.name);
-      if (fn.length < 4) continue;
-      chosen = available.find(s => {
-        const sn = norm(s.link.store_name);
-        return sn === fn || sn.includes(fn) || fn.includes(sn);
-      });
-      if (chosen) break;
-    }
-  }
-  chosen = chosen || available[0];
-
+  const chosen = available.find(s => cartStores.has(Number(s.link.store_id))) || available[0];
   const it = chosen.item;
+
+  if (opts.dryRun) {
+    return {
+      ...base, linked, candidates,
+      status: 'ready',
+      message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? '?'}). Press Add.`,
+      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ''), qty }
+    };
+  }
+
   const addRes = await pr.addItemsToPharmarackCart([{
     productId: it.productId,
     storeId: Number(it.storeId),
@@ -296,6 +336,78 @@ export async function processRefillCartItem(
     message: `Added ${qty} to ${added.storeName}${note}.`,
     line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
   };
+}
+
+/**
+ * Purchase-bill count per local distributor, most purchased first. The Link
+ * window uses it to auto-order a medicine's linked distributors (priority).
+ */
+export async function getDistributorPurchaseRanks(): Promise<Array<{ name: string; purchases: number }>> {
+  const db = await dbManager.getConnection();
+  const rows: any[] = await db.all(
+    `SELECT d.name, COUNT(p.id) AS purchases FROM distributors d JOIN purchases p ON p.distributor_id = d.id
+     GROUP BY d.id ORDER BY purchases DESC LIMIT 300`
+  );
+  return rows.map(r => ({ name: String(r.name || ''), purchases: Number(r.purchases) || 0 })).filter(r => r.name);
+}
+
+export interface RefillCartSummaryRow {
+  refillId: number;
+  medicineName: string;
+  status: string;
+  storeName?: string;
+  qty?: number;
+  message?: string;
+}
+
+/**
+ * ONE WhatsApp to the pharmacy OWNER (Settings owner number) after a refill cart
+ * popup run: which distributor + qty the app used for each medicine, and what
+ * still needs the pharmacist. Never sent to the patient. An "Added" line is
+ * printed only when patient_refills.cart_* confirms the verified add.
+ */
+export async function sendRefillCartSummary(
+  patientName: string,
+  rows: RefillCartSummaryRow[]
+): Promise<{ queued: boolean; reason?: string }> {
+  if (!Array.isArray(rows) || rows.length === 0) return { queued: false, reason: 'Nothing to report.' };
+  const db = await dbManager.getConnection();
+  const { resolveAdminWhatsappNumber } = await import('./waAdminEscalationService.js');
+  const owner = await resolveAdminWhatsappNumber(db);
+  if (!owner) return { queued: false, reason: 'Owner WhatsApp number is not set in Settings.' };
+
+  const ids = rows.map(r => Number(r.refillId)).filter(n => n > 0);
+  const saved = new Map<number, any>();
+  if (ids.length > 0) {
+    const dbRows: any[] = await db.all(
+      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => '?').join(',')})`,
+      ids
+    );
+    for (const r of dbRows) saved.set(Number(r.id), r);
+  }
+
+  const added: string[] = [];
+  const inCart: string[] = [];
+  const needs: string[] = [];
+  for (const r of rows) {
+    const name = String(r.medicineName || 'Medicine');
+    const db_ = saved.get(Number(r.refillId));
+    if (r.status === 'added' && db_?.cart_product_code) {
+      added.push(`• ${name} → ${db_.cart_store_name} × ${db_.cart_qty}`);
+    } else if (r.status === 'in_cart') {
+      inCart.push(`• ${name} → ${r.storeName || 'distributor'} (cart qty ${r.qty ?? '?'})`);
+    } else {
+      needs.push(`• ${name} — ${r.message || r.status}`);
+    }
+  }
+
+  const parts = [`🛒 *Refill cart — ${patientName || 'Patient'}*`];
+  if (added.length) parts.push(`\n✅ Added (${added.length})\n${added.join('\n')}`);
+  if (inCart.length) parts.push(`\n🛒 Already in cart (${inCart.length})\n${inCart.join('\n')}`);
+  if (needs.length) parts.push(`\n⚠️ Needs you (${needs.length})\n${needs.join('\n')}\nOpen CRM → Refills to fix.`);
+  const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+  await whatsappQueueWorker.enqueue(owner, parts.join('\n'), 'refill_cart_summary', 'Admin / Store Owner');
+  return { queued: true };
 }
 
 /** Columns a cancel/delete path must read BEFORE it changes the refill row. */

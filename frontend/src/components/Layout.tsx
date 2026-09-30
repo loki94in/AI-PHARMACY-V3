@@ -72,6 +72,8 @@ import type { WhatsAppReadinessState } from '../types/api';
 // Lazy-loaded modals & popovers — prevents bundling heavy components into the main shell
 const QuickOrderModal = lazy(() => import('./QuickOrderModal').then(m => ({ default: m.QuickOrderModal })));
 const LiveCartAddModal = lazy(() => import('./LiveCartAddModal').then(m => ({ default: m.LiveCartAddModal })));
+// Refill → Live Cart popup + background-run result cards (store: services/refillCartJobs.ts)
+const RefillCartJobHost = lazy(() => import('./RefillCartModal').then(m => ({ default: m.RefillCartJobHost })));
 const WhatsAppQueuePopover = lazy(() => import('./WhatsAppQueuePopover').then(m => ({ default: m.WhatsAppQueuePopover })));
 const AutomationHubPopover = lazy(() => import('./AutomationHubPopover'));
 const StagedReviewModal = lazy(() => import('./StagedReviewModal').then(m => ({ default: m.StagedReviewModal })));
@@ -4936,6 +4938,9 @@ export const Layout = ({
         />
 
         {/* Global Modals */}
+        <Suspense fallback={null}>
+          <RefillCartJobHost />
+        </Suspense>
         {showQuickOrder && (
           <Suspense fallback={null}>
             <QuickOrderModal onClose={() => setShowQuickOrder(false)} />
