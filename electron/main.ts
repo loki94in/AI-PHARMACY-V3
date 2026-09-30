@@ -102,8 +102,16 @@ function reclaimPort(port: number): void {
   }
 }
 
-// Chromium Performance & Efficiency Switches
-// Allow standard D3D11 compositor without forced 3D pipeline pegging or continuous unthrottled raster loops
+// Completely disable GPU hardware acceleration before app is ready
+// Eliminates GPU spikes on legacy/integrated GPUs (e.g. NVIDIA GT 730, Intel HD) -> 0.0% GPU load
+app.disableHardwareAcceleration();
+
+// Pure software CPU rasterization & rendering switches (Zero GPU footprint)
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-gpu-rasterization');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('use-gl', 'swiftshader');
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 
 /** Poll the health endpoint until the backend is ready (max 30s) */
@@ -152,6 +160,7 @@ function startBackend(): ChildProcess {
     ...(process.env as Record<string, string>),
     ELECTRON_MODE: 'true',
     PORT: String(PORT),
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=512`.trim(),
   };
 
   if (isPackaged && fs.existsSync(packagedBackendExe)) {
