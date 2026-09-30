@@ -52702,7 +52702,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.23";
+    APP_VERSION = "0.1.24";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -56790,6 +56790,13 @@ async function enrichMasterMedicinesFromCsv() {
     console.warn("[MasterEnrich] medicines.csv not found in any candidate path \u2014 skipping enrichment.");
     return { enriched: 0 };
   }
+  const csvStat = import_fs34.default.statSync(csvPath);
+  const csvFingerprint = `${csvStat.size}:${Math.round(csvStat.mtimeMs)}`;
+  try {
+    const done2 = await db2.get("SELECT value FROM app_settings WHERE key = 'master_enrich_csv_fingerprint'");
+    if (done2?.value === csvFingerprint) return { enriched: 0 };
+  } catch (_) {
+  }
   try {
     const idxList = await db2.all("PRAGMA index_list('medicines')");
     const legacyIdx = idxList.find((i) => i.name === "idx_medicines_legacy_id");
@@ -56842,15 +56849,32 @@ async function enrichMasterMedicinesFromCsv() {
           cgst_per       = CASE WHEN (medicines.cgst_per IS NULL OR medicines.cgst_per = 0) THEN excluded.cgst_per ELSE medicines.cgst_per END,
           sgst_per       = CASE WHEN (medicines.sgst_per IS NULL OR medicines.sgst_per = 0) THEN excluded.sgst_per ELSE medicines.sgst_per END,
           sell_price     = CASE WHEN (medicines.sell_price IS NULL OR medicines.sell_price = 0) THEN excluded.sell_price ELSE medicines.sell_price END
-        WHERE medicines.source = 'master_reference'
+        WHERE medicines.source = 'master_reference' AND (
+             (COALESCE(medicines.packaging,      '') = '' AND COALESCE(excluded.packaging,      '') <> '')
+          OR (COALESCE(medicines.manufacturer,   '') = '' AND COALESCE(excluded.manufacturer,   '') <> '')
+          OR (COALESCE(medicines.marketed_by,    '') = '' AND COALESCE(excluded.marketed_by,    '') <> '')
+          OR (COALESCE(medicines.item_type,      '') = '' AND COALESCE(excluded.item_type,      '') <> '')
+          OR (COALESCE(medicines.hsn_code,       '') = '' AND COALESCE(excluded.hsn_code,       '') <> '')
+          OR (COALESCE(medicines.therapeutic,    '') = '' AND COALESCE(excluded.therapeutic,    '') <> '')
+          OR (COALESCE(medicines.sub_therapeutic,'') = '' AND COALESCE(excluded.sub_therapeutic,'') <> '')
+          OR (COALESCE(medicines.short_code,     '') = '' AND COALESCE(excluded.short_code,     '') <> '')
+          OR (COALESCE(medicines.ucode,          '') = '' AND COALESCE(excluded.ucode,          '') <> '')
+          OR (COALESCE(medicines.barcode,        '') = '' AND COALESCE(excluded.barcode,        '') <> '')
+          OR (COALESCE(medicines.rack,           '') = '' AND COALESCE(excluded.rack,           '') <> '')
+          OR (COALESCE(medicines.cgst_per,   0) = 0 AND COALESCE(excluded.cgst_per,   0) <> 0)
+          OR (COALESCE(medicines.sgst_per,   0) = 0 AND COALESCE(excluded.sgst_per,   0) <> 0)
+          OR (COALESCE(medicines.sell_price, 0) = 0 AND COALESCE(excluded.sell_price, 0) <> 0)
+        )
       `);
+      let changed = 0;
       for (const row of rows) {
         if (cancelEnrichmentRequested) break;
-        await stmt.run(...row);
+        const res = await stmt.run(...row);
+        changed += res?.changes || 0;
       }
       await stmt.finalize();
       await db2.run("COMMIT");
-      enriched += rows.length;
+      enriched += changed;
     } catch (err) {
       await db2.run("ROLLBACK");
       throw err;
@@ -56931,6 +56955,13 @@ async function enrichMasterMedicinesFromCsv() {
         await ensureMedicinesFts2(db2);
       } catch (_) {
       }
+    }
+    if (!cancelEnrichmentRequested) {
+      await db2.run(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('master_enrich_csv_fingerprint', ?)",
+        [csvFingerprint]
+      ).catch(() => {
+      });
     }
     console.log(`[MasterEnrich] Enriched/upserted ${enriched} master medicines from CSV (${csvPath}).`);
     return { enriched };
@@ -65354,10 +65385,8 @@ var init_verificationService = __esm({
           if (missingIndexes.length > 0) {
             console.warn(`[Verification] Warning: Recommended indexes missing: ${missingIndexes.join(", ")}`);
           }
-          let releaseLock = null;
+          await db2.run("BEGIN TRANSACTION");
           try {
-            releaseLock = await dbManager.acquireTxLock("VIP");
-            await db2.run("BEGIN TRANSACTION");
             const testUuid = `VERIFY_TEST_${Date.now()}`;
             const insertResult = await db2.run(
               "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
@@ -65377,7 +65406,6 @@ var init_verificationService = __esm({
           } finally {
             await db2.run("ROLLBACK").catch(() => {
             });
-            if (releaseLock) releaseLock();
           }
           return {
             success: true,
