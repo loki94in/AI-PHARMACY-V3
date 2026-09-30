@@ -27230,40 +27230,34 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     let response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
       method: "POST",
       body: JSON.stringify(buildPayload(primaryKeyword)),
-      signal: AbortSignal.timeout(8e3)
-    });
-    let data = response.ok ? await response.json().catch(() => null) : null;
-    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && primaryKeyword !== qRaw) {
-      response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-        method: "POST",
-        body: JSON.stringify(buildPayload(qRaw)),
-        signal: AbortSignal.timeout(5e3)
-      });
-      if (response.ok) {
-        data = await response.json().catch(() => null);
-      }
-    }
-    const cleanedTerm = qRaw.replace(/[-_/]/g, " ").replace(/\s+/g, " ").trim();
-    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && cleanedTerm !== qRaw && cleanedTerm !== primaryKeyword && cleanedTerm.length >= 2) {
-      response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-        method: "POST",
-        body: JSON.stringify(buildPayload(cleanedTerm)),
-        signal: AbortSignal.timeout(5e3)
-      });
-      if (response.ok) {
-        data = await response.json().catch(() => null);
-      }
-    }
+      signal: AbortSignal.timeout(3500)
+    }).catch(() => null);
+    let data = response && response.ok ? await response.json().catch(() => null) : null;
     if (!data || !Array.isArray(data.data) || data.data.length === 0) {
+      const candidates = [];
+      if (primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
+        candidates.push(qRaw);
+      }
+      const cleanedTerm = qRaw.replace(/[-_/]/g, " ").replace(/\s+/g, " ").trim();
+      if (cleanedTerm.length >= 2 && cleanedTerm.toLowerCase() !== primaryKeyword.toLowerCase() && cleanedTerm.toLowerCase() !== qRaw.toLowerCase()) {
+        candidates.push(cleanedTerm);
+      }
       const altCase = qRaw === qRaw.toUpperCase() ? qRaw.toLowerCase().trim() : qRaw.toUpperCase().trim();
-      if (altCase !== qRaw && altCase !== primaryKeyword && altCase !== cleanedTerm && altCase.length >= 2) {
-        response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-          method: "POST",
-          body: JSON.stringify(buildPayload(altCase)),
-          signal: AbortSignal.timeout(5e3)
-        });
-        if (response.ok) {
-          data = await response.json().catch(() => null);
+      if (altCase.length >= 2 && altCase !== qRaw && !candidates.includes(altCase)) {
+        candidates.push(altCase);
+      }
+      if (candidates.length > 0) {
+        const parallelFetches = candidates.map(
+          (term) => fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+            method: "POST",
+            body: JSON.stringify(buildPayload(term)),
+            signal: AbortSignal.timeout(3e3)
+          }).then((res) => res.ok ? res.json().catch(() => null) : null).then((resJson) => resJson && Array.isArray(resJson.data) && resJson.data.length > 0 ? resJson : null).catch(() => null)
+        );
+        const results = await Promise.all(parallelFetches);
+        const successful = results.find((r) => r && Array.isArray(r.data) && r.data.length > 0);
+        if (successful) {
+          data = successful;
         }
       }
     }
@@ -52708,7 +52702,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.21";
+    APP_VERSION = "0.1.22";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
