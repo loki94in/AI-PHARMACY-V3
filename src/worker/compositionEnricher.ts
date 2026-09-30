@@ -671,6 +671,7 @@ export async function runEnrichment(
 
       await dbManager.runWithPriority('BACKGROUND', async () => {
         await db.run('BEGIN TRANSACTION');
+        try {
       for (const med of batch) {
         const cleanedName = cleanMedicineName(med.name);
         if (!cleanedName) {
@@ -734,6 +735,12 @@ export async function runEnrichment(
         }
       }
         await db.run('COMMIT');
+        } catch (batchErr) {
+          // Never leave the shared connection inside an open transaction: the watchdog
+          // would later roll back every other write made on it in the meantime.
+          await db.run('ROLLBACK').catch(() => {});
+          throw batchErr;
+        }
       });
 
       // Cooperative yield between micro-batches

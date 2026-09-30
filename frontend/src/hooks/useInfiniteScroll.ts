@@ -85,20 +85,9 @@ export function useInfiniteScroll<T>({
     return globalMeta[cacheKey] || {};
   });
 
-  // Listen for global cache clear events to update mounted states immediately
-  useEffect(() => {
-    const handleClear = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      const targetKey = customEvent.detail?.cacheKey;
-      if (!targetKey || targetKey === cacheKey) {
-        setItems([]);
-        setTotalItems(0);
-        setMeta({});
-      }
-    };
-    window.addEventListener('clear-module-cache', handleClear);
-    return () => window.removeEventListener('clear-module-cache', handleClear);
-  }, [cacheKey]);
+  // A mounted list is never blanked by clearInfiniteScrollCache(): it keeps its last rows
+  // until its own refetch replaces them. Blanking here left kept-alive Inventory/Sells empty
+  // after a write, because an identical refetch never re-fired the sync effect below.
 
   const [prevFilters, setPrevFilters] = useState<InfiniteScrollFilters>(serverFilters);
 
@@ -123,6 +112,7 @@ export function useInfiniteScroll<T>({
 
   const {
     data,
+    dataUpdatedAt,
     fetchNextPage,
     hasNextPage,
     isFetching,
@@ -147,7 +137,9 @@ export function useInfiniteScroll<T>({
     refetchOnMount: false,         // paint module cache instantly; SSE invalidation refreshes on writes
   });
 
-  // Sync React Query data with local state & module cache
+  // Sync React Query data with local state & module cache. dataUpdatedAt is a dep because an
+  // identical refetch keeps the same `data` reference (structural sharing) — every successful
+  // fetch must still re-sync rows and refill a module cache emptied by clearInfiniteScrollCache().
   useEffect(() => {
     if (data && data.pages.length > 0) {
       const flat = data.pages.flatMap(page => page.data);
@@ -166,7 +158,7 @@ export function useInfiniteScroll<T>({
 
       setItems(flat);
     }
-  }, [data, cacheKey]);
+  }, [data, dataUpdatedAt, cacheKey]);
 
   // Keep latest dependencies in a ref to avoid stale closures in stable callback
   const latestDepsRef = useRef({ hasNextPage, fetchNextPage, isFetching, isFetchingNextPage });
@@ -193,6 +185,25 @@ export function useInfiniteScroll<T>({
     }
   }, []);
 
+  // Optimistic row eviction (e.g. on delete)
+  const removeItem = useCallback((predicate: (item: T) => boolean) => {
+    setItems(prev => {
+      const next = prev.filter(item => !predicate(item));
+      globalModuleCache[cacheKey] = next.slice(0, 200);
+      return next;
+    });
+    setTotalItems(prev => Math.max(0, prev - 1));
+  }, [cacheKey]);
+
+  // Optimistic row update (e.g. on modify/save)
+  const updateItem = useCallback((predicate: (item: T) => boolean, updater: (item: T) => T) => {
+    setItems(prev => {
+      const next = prev.map(item => predicate(item) ? updater(item) : item);
+      globalModuleCache[cacheKey] = next.slice(0, 200);
+      return next;
+    });
+  }, [cacheKey]);
+
   // Apply synchronous client-side filtering on the retrieved list
   const filteredItems = useMemo(() => {
     return clientFilterFn ? items.filter(clientFilterFn) : items;
@@ -209,5 +220,7 @@ export function useInfiniteScroll<T>({
     fetchNextPage,
     refetch,
     sentinelRef,
+    removeItem,
+    updateItem,
   };
 }

@@ -143,7 +143,7 @@ export class InvoiceService {
 
       // Insert invoice
       const result = await db.run(
-        'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status) VALUES (?, ?, ?, ?, ?, ?)',
+        "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
         [invoiceNo, customerId, total, tax, paymentMedium, paymentStatus]
       );
       const invoiceId = result.lastID;

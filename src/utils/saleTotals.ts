@@ -1,0 +1,100 @@
+import { Database } from 'sqlite';
+
+// Sale bill money: prices are MRP-based and GST-INCLUSIVE. The bill total is
+// round(subtotal - bill discount); GST is extracted from each line, never added on top.
+// Shared by POS save (POST /sales), sale edit (PUT /sales/:id) and the Investigation
+// sale correction (via services/saleBillEditService.ts) so every path totals the same way.
+
+export interface GstItemBreakdown {
+  item: any;
+  cgst_value: number;
+  sgst_value: number;
+}
+
+export const calculateSalesGstAndTotals = async (
+  db: Database,
+  items: any[],
+  discount: number
+) => {
+  let subtotal = 0;
+  let totalCgst = 0;
+  let totalSgst = 0;
+  const itemTaxBreakdowns: GstItemBreakdown[] = [];
+
+  const missingInventoryIds = items
+    .filter(item => {
+      const c = Number(item.cgst_per !== undefined ? item.cgst_per : (item.cgst !== undefined ? item.cgst : NaN));
+      const s = Number(item.sgst_per !== undefined ? item.sgst_per : (item.sgst !== undefined ? item.sgst : NaN));
+      return (isNaN(c) || isNaN(s) || (c === 0 && s === 0)) && item.inventory_id;
+    })
+    .map(item => item.inventory_id);
+
+  const medTaxMap = new Map<number, { cgst_per: number; sgst_per: number }>();
+  if (missingInventoryIds.length > 0) {
+    const placeholders = missingInventoryIds.map(() => '?').join(',');
+    const rows = await db.all(
+      `SELECT im.id as inventory_id, m.cgst_per, m.sgst_per FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
+      missingInventoryIds
+    );
+    for (const r of rows) {
+      medTaxMap.set(r.inventory_id, { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
+    }
+  }
+
+  for (const item of items) {
+    const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0, inventory_id } = item;
+    const q = Number(quantity);
+    const l = Number(loose_qty);
+    const pSize = Math.max(1, Number(pack_size || 1));
+    const d = Number(discount_per || item.discountPer || 0);
+    const uPrice = Number(unit_price);
+    const dPrice = uPrice * (1 - d / 100);
+    const lineGross = (q * dPrice) + (l * (dPrice / pSize));
+    subtotal += lineGross;
+
+    let cgstPer = Number(item.cgst_per !== undefined ? item.cgst_per : (item.cgst !== undefined ? item.cgst : NaN));
+    let sgstPer = Number(item.sgst_per !== undefined ? item.sgst_per : (item.sgst !== undefined ? item.sgst : NaN));
+
+    if ((isNaN(cgstPer) || isNaN(sgstPer) || (cgstPer === 0 && sgstPer === 0)) && inventory_id) {
+      const medTax = medTaxMap.get(inventory_id);
+      if (medTax) {
+        if (isNaN(cgstPer) || cgstPer === 0) cgstPer = Number(medTax.cgst_per) || 0;
+        if (isNaN(sgstPer) || sgstPer === 0) sgstPer = Number(medTax.sgst_per) || 0;
+      }
+    }
+
+    if (isNaN(cgstPer) || cgstPer === 0) cgstPer = 2.5;
+    if (isNaN(sgstPer) || sgstPer === 0) sgstPer = 2.5;
+
+    const gstRate = cgstPer + sgstPer;
+    const taxable = gstRate > 0 ? (lineGross / (1 + (gstRate / 100))) : lineGross;
+    const lineTax = lineGross - taxable;
+    const cgst_value = Number(((lineTax * cgstPer) / (gstRate || 1)).toFixed(2));
+    const sgst_value = Number(((lineTax * sgstPer) / (gstRate || 1)).toFixed(2));
+
+    totalCgst += cgst_value;
+    totalSgst += sgst_value;
+
+    itemTaxBreakdowns.push({
+      item,
+      cgst_value,
+      sgst_value
+    });
+  }
+
+  const roundedCgst = Number(totalCgst.toFixed(2));
+  const roundedSgst = Number(totalSgst.toFixed(2));
+  const total = Math.round(subtotal - Number(discount));
+  const tax = Number((roundedCgst + roundedSgst).toFixed(2));
+  const roff = Number((total - (subtotal - Number(discount))).toFixed(2));
+
+  return {
+    subtotal,
+    total,
+    tax,
+    roff,
+    totalCgst: roundedCgst,
+    totalSgst: roundedSgst,
+    itemTaxBreakdowns
+  };
+};

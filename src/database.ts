@@ -305,6 +305,28 @@ export async function ensureMedicineSearchSummaryTriggers(db: any): Promise<void
 }
 
 /**
+ * Bill dates in ONE form (bug P1-72, 2026-09-30). Idempotent; runs on BOTH boot paths.
+ * Every bill date is shop local time 'YYYY-MM-DD HH:MM:SS' (utils/localTime.ts) and is read
+ * with no time-zone conversion. POS and the phone app used to save sales as UTC ISO
+ * ('...T...Z'); those rows are rewritten to the SAME moment in shop time. Only ISO rows are
+ * touched (the format proves they are UTC), so the pass is a no-op once they are converted.
+ */
+export async function normalizeBillDatesToLocalTime(db: any): Promise<void> {
+  try {
+    const res = await db.run(
+      `UPDATE sales_invoices SET date = datetime(date, 'localtime') WHERE date LIKE '____-__-__T%'`
+    );
+    const res2 = await db.run(
+      `UPDATE sales_invoices SET business_date = datetime(business_date, 'localtime') WHERE business_date LIKE '____-__-__T%'`
+    );
+    const changed = (res?.changes || 0) + (res2?.changes || 0);
+    if (changed > 0) console.log(`[Boot] Bill dates: ${changed} sale date(s) moved from UTC to shop local time.`);
+  } catch (err: any) {
+    console.warn('[Boot] Bill date normalization skipped:', err?.message || err);
+  }
+}
+
+/**
  * Refill → Live Cart (added 2026-09-30). Idempotent; runs on BOTH boot paths.
  * - medicine_distributor_links: the Pharmarack distributor products the pharmacist
  *   ticked for a medicine (one medicine can have several; the refill cart popup
@@ -1452,6 +1474,7 @@ export async function ensureSchema(dbPath: string) {
 
         await ensureOrderTimingSchema(db);
         await ensureRefillCartLinkSchema(db);
+        await normalizeBillDatesToLocalTime(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
         return;
@@ -4357,6 +4380,9 @@ export async function ensureSchema(dbPath: string) {
 
     // Refill → Live Cart saved distributor links + per-refill cart line (2026-09-30)
     await ensureRefillCartLinkSchema(db);
+
+    // Bill dates in one form: UTC ISO sale dates -> shop local time (2026-09-30)
+    await normalizeBillDatesToLocalTime(db);
 
     // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
     await ensureMultiPharmacyAndSnapshotSchema(db);

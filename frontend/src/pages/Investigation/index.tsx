@@ -110,6 +110,7 @@ interface LocalBillItem {
   pack_size?: number;
   cost_price?: number | string | null;
   mrp?: number | string | null;
+  discount_per?: number | null;
   free_qty?: number;
   cgst_per?: number | null;
   sgst_per?: number | null;
@@ -124,6 +125,9 @@ interface LocalMedSearchRow {
   batch_no?: string;
   expiry_date?: string;
   quantity?: number;
+  pack_size?: number;
+  sell_price?: number | string | null;
+  unit_price?: number | string | null;
   mrp?: number | string | null;
   cost_price?: number | string | null;
   cgst_per?: number | null;
@@ -161,12 +165,20 @@ interface LocalLedgerRow {
 
 interface LocalSaleDetailItem {
   inventory_id?: number;
+  medicine_id?: number;
   medicine_name?: string;
+  name?: string;
   batch_number?: string;
+  batch_no?: string;
+  expiry_date?: string;
   quantity?: number;
   unit_price?: number | string | null;
+  mrp?: number | string | null;
+  medicine_mrp?: number | string | null;
   loose_qty?: number;
   pack_size?: number;
+  discount_per?: number | null;
+  discount?: number | null;
 }
 
 interface LocalPurchaseDetailItem {
@@ -485,13 +497,18 @@ const InvestigationCenter = () => {
         }
         const mapped = ((invoiceDetails && invoiceDetails.items) || []).map((it: LocalSaleDetailItem) => ({
           inventory_id: it.inventory_id,
-          medicine_name: it.medicine_name,
-          batch_no: it.batch_number,
-          quantity: it.quantity as number,
+          medicine_id: it.medicine_id,
+          // Saved bill values only; nothing is substituted for a missing one.
+          medicine_name: it.medicine_name || it.name || '',
+          batch_no: it.batch_number || it.batch_no || '',
+          expiry_date: it.expiry_date || '',
+          quantity: Number(it.quantity || 0),
           unit_price: it.unit_price,
-          loose_qty: it.loose_qty || 0,
-          pack_size: it.pack_size || 1,
-          original_qty: it.quantity as number
+          mrp: it.mrp ?? it.medicine_mrp ?? null,
+          loose_qty: Number(it.loose_qty || 0),
+          pack_size: Number(it.pack_size || 1),
+          discount_per: Number(it.discount_per || 0),
+          original_qty: Number(it.quantity || 0)
         }));
         setBillItems(mapped);
         setEditingType('sale');
@@ -530,8 +547,10 @@ const InvestigationCenter = () => {
   };
 
   // Billed sale line: strips at unit price, loose at unit price / pack. Free purchase qty is stock, not billed.
+  // Same math as POS and the server (src/utils/saleTotals.ts): the line discount % comes
+  // off the price, and GST is already inside the MRP-based price, so nothing is added on top.
   const saleLineAmount = (it: LocalBillItem) => {
-    const price = Number(it.unit_price) || 0;
+    const price = (Number(it.unit_price) || 0) * (1 - (Number(it.discount_per) || 0) / 100);
     const pack = Math.max(1, Number(it.pack_size) || 1);
     return (Number(it.quantity) || 0) * price + ((Number(it.loose_qty) || 0) * price) / pack;
   };
@@ -540,8 +559,7 @@ const InvestigationCenter = () => {
   const calculateRecalculatedTotal = () => {
     if (editingType === 'sale') {
       const subtotal = billItems.reduce((acc, it) => acc + saleLineAmount(it), 0);
-      const tax = subtotal * 0.05;
-      return Math.round(subtotal + tax - billDiscount);
+      return Math.round(subtotal - billDiscount);
     }
     if (editingType === 'purchase') {
       return Math.round(billItems.reduce((acc, it) => {
@@ -612,15 +630,26 @@ const InvestigationCenter = () => {
         showToast('Medicine already present in list', 'error');
         return;
       }
+      // The price can't be typed here, so it must be a saved one. Never bill it at ₹0.
+      const savedPrice = Number(med.sell_price || med.mrp) || 0;
+      if (savedPrice <= 0) {
+        showToast(`${med.medicine_name || 'This batch'} has no saved selling price or MRP. Set it first, then add it.`, 'error');
+        return;
+      }
       setBillItems(prev => [
         ...prev,
         {
           inventory_id: med.inventory_id,
+          medicine_id: med.medicine_id,
           medicine_name: med.medicine_name,
-          batch_no: med.batch_no,
+          batch_no: med.batch_no || '',
+          expiry_date: med.expiry_date || '',
           quantity: 1,
-          unit_price: med.mrp,
+          unit_price: savedPrice,
+          mrp: Number(med.mrp) || null,
           loose_qty: 0,
+          pack_size: Number(med.pack_size || 1),
+          discount_per: 0,
           original_qty: 0
         }
       ]);
@@ -1571,10 +1600,8 @@ const InvestigationCenter = () => {
                       {/* Taxes */}
                       {editingType === 'sale' && (
                         <div className="flex justify-between items-center text-muted">
-                          <span>GST / Taxes (5%)</span>
-                          <span className="font-mono font-bold text-text">
-                            ₹{(billItems.reduce((acc, it) => acc + saleLineAmount(it), 0) * 0.05).toFixed(2)}
-                          </span>
+                          <span>GST</span>
+                          <span className="text-[10px]">Included in MRP</span>
                         </div>
                       )}
 

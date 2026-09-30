@@ -14907,7 +14907,8 @@ async function ensureSchema(dbPath) {
       needs_confirmation INTEGER DEFAULT 0,
       lifecycle_status TEXT DEFAULT 'sent',
       acknowledged INTEGER DEFAULT 0,
-      resolved_at INTEGER DEFAULT NULL
+      resolved_at INTEGER DEFAULT NULL,
+      snoozed_until TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS session_refresh_logs (
@@ -15444,7 +15445,8 @@ async function ensureSchema(dbPath) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       reference_id TEXT,
       needs_confirmation INTEGER DEFAULT 0,
-      lifecycle_status TEXT DEFAULT 'sent'
+      lifecycle_status TEXT DEFAULT 'sent',
+      snoozed_until TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS staged_sales (
@@ -16879,6 +16881,14 @@ async function ensureSchema(dbPath) {
         if (!mapNames.has("store_id")) {
           await db2.run("ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1");
         }
+      }
+    } catch (_) {
+    }
+    try {
+      const notifCols = await db2.all("PRAGMA table_info(automation_notifications)");
+      const notifNames = new Set(notifCols.map((c) => c.name));
+      if (notifCols.length > 0 && !notifNames.has("snoozed_until")) {
+        await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL");
       }
     } catch (_) {
     }
@@ -44937,18 +44947,31 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   const msg = `Hi ${patientName}, your ${noun} for ${formattedMeds} ${medNames.length > 1 ? "are" : "is"} in stock and ready. You may collect your ${medNoun} anytime from ${storeLabel}.`;
   const referenceIdStr = refillIds.join(",");
   const existing = await db2.get(
-    `SELECT id FROM automation_notifications 
-     WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?)
-     ORDER BY id ASC LIMIT 1`,
+    `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+     WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+     ORDER BY id DESC LIMIT 1`,
     [patientPhone, patientName]
   );
+  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   if (existing) {
-    await db2.run(
-      `UPDATE automation_notifications 
-       SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
-       WHERE id = ?`,
-      [msg, referenceIdStr, patientName, patientPhone, existing.id]
-    );
+    if (existing.status === "snoozed") {
+      if (existing.snoozed_until && existing.snoozed_until > todayStr2) {
+        return;
+      }
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
+         WHERE id = ?`,
+        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+      );
+    } else {
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
+         WHERE id = ?`,
+        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+      );
+    }
     await db2.run(
       `DELETE FROM automation_notifications 
        WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
@@ -52746,7 +52769,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.26";
+    APP_VERSION = "0.1.27";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -72963,13 +72986,17 @@ var init_automation = __esm({
         if (!existing) {
           return res.status(404).json({ error: "Notification not found" });
         }
+        const snoozeUntilDate = /* @__PURE__ */ new Date();
+        snoozeUntilDate.setDate(snoozeUntilDate.getDate() + days);
+        const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
         await db2.run(
           `UPDATE automation_notifications 
        SET status = 'snoozed', 
            lifecycle_status = 'snoozed',
+           snoozed_until = ?,
            error_message = ? 
        WHERE id = ?`,
-          [`Snoozed by ${days} day(s) until tomorrow`, id]
+          [snoozedUntilStr, `Snoozed for ${days} day(s) until ${snoozedUntilStr}`, id]
         );
         if (existing.reference_id && (existing.type === "refill_collection" || existing.type === "refill_reminder")) {
           const refIds = String(existing.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
@@ -72984,7 +73011,10 @@ var init_automation = __esm({
             });
           }
         }
-        res.json({ success: true, message: `Notification snoozed for ${days} day(s)` });
+        const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+        eventService2.broadcast("automation_hub_updated", { type: "snoozed", id });
+        eventService2.broadcast("refill_updated", { type: "snoozed", id });
+        res.json({ success: true, message: `Notification snoozed for ${days} day(s) until ${snoozedUntilStr}` });
       } catch (err) {
         console.error("Failed to snooze notification:", err);
         res.status(500).json({ error: "Failed to snooze notification: " + err.message });
@@ -72998,6 +73028,9 @@ var init_automation = __esm({
       const snoozeDays = Math.max(1, parseInt(String(days), 10));
       try {
         const db2 = await dbManager.getConnection();
+        const snoozeUntilDate = /* @__PURE__ */ new Date();
+        snoozeUntilDate.setDate(snoozeUntilDate.getDate() + snoozeDays);
+        const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
         for (const notifId of ids) {
           const existing = await db2.get("SELECT * FROM automation_notifications WHERE id = ?", [notifId]);
           if (!existing) continue;
@@ -73005,9 +73038,10 @@ var init_automation = __esm({
             `UPDATE automation_notifications 
          SET status = 'snoozed', 
              lifecycle_status = 'snoozed',
+             snoozed_until = ?,
              error_message = ? 
          WHERE id = ?`,
-            [`Snoozed by ${snoozeDays} day(s)`, notifId]
+            [snoozedUntilStr, `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`, notifId]
           );
           if (existing.reference_id && (existing.type === "refill_collection" || existing.type === "refill_reminder")) {
             const refIds = String(existing.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
@@ -73023,10 +73057,49 @@ var init_automation = __esm({
             }
           }
         }
-        res.json({ success: true, message: `Snoozed ${ids.length} notification(s) for ${snoozeDays} day(s)` });
+        const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+        eventService2.broadcast("automation_hub_updated", { type: "group_snoozed", count: ids.length });
+        eventService2.broadcast("refill_updated", { type: "group_snoozed", count: ids.length });
+        res.json({ success: true, message: `Snoozed ${ids.length} notification(s) for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
       } catch (err) {
         console.error("Failed to batch snooze notifications:", err);
         res.status(500).json({ error: "Failed to batch snooze: " + err.message });
+      }
+    });
+    router20.post("/notifications/snooze-patient", async (req, res) => {
+      const { patient_phone, patient_name, days = 1 } = req.body;
+      const snoozeDays = Math.max(1, parseInt(String(days), 10));
+      if (!patient_phone && !patient_name) {
+        return res.status(400).json({ error: "patient_phone or patient_name is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const snoozeUntilDate = /* @__PURE__ */ new Date();
+        snoozeUntilDate.setDate(snoozeUntilDate.getDate() + snoozeDays);
+        const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+        await db2.run(
+          `UPDATE automation_notifications 
+       SET status = 'snoozed', 
+           lifecycle_status = 'snoozed',
+           snoozed_until = ?,
+           error_message = ? 
+       WHERE (recipient_phone = ? OR recipient_name = ?) AND status IN ('staged', 'snoozed')`,
+          [snoozedUntilStr, `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`, patient_phone || "", patient_name || ""]
+        );
+        await db2.run(
+          `UPDATE patient_refills 
+       SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
+           reminder_status = 'NOT_SENT'
+       WHERE (patient_phone = ? OR patient_name = ?) AND is_active = 1`,
+          [`+${snoozeDays} day`, patient_phone || "", patient_name || ""]
+        );
+        const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+        eventService2.broadcast("automation_hub_updated", { type: "patient_snoozed", patient_phone });
+        eventService2.broadcast("refill_updated", { type: "patient_snoozed", patient_phone });
+        res.json({ success: true, message: `Refill reminder snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
+      } catch (err) {
+        console.error("Failed to snooze patient refills:", err);
+        res.status(500).json({ error: "Failed to snooze patient refills: " + err.message });
       }
     });
     router20.post("/notifications/:id/retry", async (req, res) => {

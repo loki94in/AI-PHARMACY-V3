@@ -172,7 +172,7 @@ router.post('/bill/generate', async (req, res) => {
 
     // Insert invoice
     const result = await db.run(
-      'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status) VALUES (?, ?, ?, ?, ?, ?)',
+      "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
       [invoice_no, finalPatientId, total, tax, paymentMedium, paymentStatus]
     );
     const invoiceId = result.lastID!;

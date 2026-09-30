@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { api, apiClient } from '../../services/api';
+import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { Download, Eye, CheckCircle, AlertCircle, RefreshCw, Trash2, Edit, Calendar, Loader2, QrCode, Printer } from 'lucide-react';
 import { usePersistedDateRange } from '../../hooks/usePersistedDateRange';
@@ -96,6 +98,7 @@ const nextBillBarcodeRequestId = (): number => ++billBarcodeSeq;
 
 const PurchaseHistory = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [colFilterId, setColFilterId] = useState('');
@@ -725,6 +728,8 @@ const PurchaseHistory = () => {
                                     api.deletePurchase(tx.id).then(() => {
                                       alert('Purchase deleted and stock reverted');
                                       refetch();
+                                      // Drop the deleted stock from POS search and Inventory at once.
+                                      invalidateAfterStockWrite(queryClient);
                                     }).catch((err) => {
                                       alert('Failed to delete purchase: ' + (err.response?.data?.error || err.message));
                                     });

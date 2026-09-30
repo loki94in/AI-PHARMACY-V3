@@ -335,7 +335,7 @@ router.post('/create-return', async (req, res) => {
       const totalAmount = (purchaseItem.cost_price || 0) * quantity;
 
       const result = await db.run(
-        'INSERT INTO returns (return_no, type, total_amount, distributor_id, original_invoice_id, date, return_sub_type) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)',
+        "INSERT INTO returns (return_no, type, total_amount, distributor_id, original_invoice_id, date, return_sub_type) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), ?)",
         [returnNo, 'purchase', totalAmount, purchaseItem.distributor_id, purchaseItem.purchase_id, 'expiry']
       );
       const returnId = result.lastID;

@@ -13,7 +13,7 @@ import { useApiQuery } from '../../hooks/useApiQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import Expiry from '../Expiry';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
-import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils/date';
+import { getTodayString, getNDaysAgoString, toDateInputValue, getLocalDateString } from '../../utils/date';
 import CustomerReturn from '../CustomerReturn';
 import CustomerReturnHistory from '../CustomerReturnHistory';
 import ExpiryReturnReview from './ExpiryReturnReview';
@@ -1461,10 +1461,10 @@ const Returns: React.FC = () => {
                         key: 'month',
                         action: () => {
                           const n = new Date();
-                          const f = new Date(n.getFullYear(), n.getMonth(), 1).toISOString().slice(0, 10);
+                          const f = getLocalDateString(new Date(n.getFullYear(), n.getMonth(), 1));
                           dateRangeHelper.setDateRange({ from: f, to: todayStr });
                         },
-                        active: dateRangeHelper.dateRange.from === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10) && dateRangeHelper.dateRange.to === todayStr,
+                        active: dateRangeHelper.dateRange.from === getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) && dateRangeHelper.dateRange.to === todayStr,
                       },
                       {
                         label: 'All Time',

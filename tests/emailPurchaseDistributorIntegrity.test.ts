@@ -23,7 +23,22 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
-  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
+  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
+  // Stubs for whatsappClient exports added after this suite was written (loaded via whatsappQueueWorker).
+  isProductionAppRunning: jest.fn(() => false),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => false),
+  setLifecycleProgress: jest.fn(() => false),
+  getWhatsAppReadiness: jest.fn(() => false),
+  setLoginWindowActive: jest.fn(() => false),
+  isWhatsAppLoginWindowActive: jest.fn(() => false),
+  ensureWhatsAppReady: jest.fn(async () => undefined),
+  ensureSessionHealth: jest.fn(async () => undefined),
+  waitForChatStoreReady: jest.fn(async () => undefined),
+  patchWWebJSInternals: jest.fn(() => false),
+  prewarmWhatsApp: jest.fn(async () => undefined),
+  downloadMessageMediaReliably: jest.fn(async () => undefined),
+  checkPhoneWhatsAppRegistered: jest.fn(async () => undefined),
+  resolveChatSession: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule('../src/telegramBot.js', () => ({

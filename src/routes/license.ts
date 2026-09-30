@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { checkLicense, activateLicense, getMachineId } from '../services/licenseService.js';
+import { checkLicense, activateLicense, getMachineId, APP_VERSION } from '../services/licenseService.js';
 import { autoUpdateService } from '../services/autoUpdateService.js';
 
 const router = Router();
@@ -8,10 +8,23 @@ const router = Router();
 router.get('/status', async (_req, res) => {
   try {
     const status = await checkLicense();
-    res.json(status);
+    res.json({
+      ...status,
+      appVersion: APP_VERSION,
+      currentVersion: APP_VERSION,
+    });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, appVersion: APP_VERSION });
   }
+});
+
+/** GET /api/license/version — lightweight version endpoint */
+router.get('/version', (_req, res) => {
+  res.json({
+    version: APP_VERSION,
+    appVersion: APP_VERSION,
+    currentVersion: APP_VERSION,
+  });
 });
 
 /** POST /api/license/activate — activate a license key on this PC */
@@ -47,9 +60,24 @@ router.get('/machine-id', (_req, res) => {
 router.post('/check-update', async (_req, res) => {
   try {
     const result = await autoUpdateService.triggerCheck();
-    res.json(result || { hasUpdate: false, latestVersion: null });
+    res.json({
+      hasUpdate: !!result?.hasUpdate,
+      currentVersion: (result as any)?.currentVersion || APP_VERSION,
+      latestVersion: result?.latestVersion || APP_VERSION,
+      downloadUrl: result?.downloadUrl,
+      updatePackageUrl: result?.updatePackageUrl,
+      sha256: result?.sha256,
+      changelog: result?.changelog,
+      readyToInstall: result?.readyToInstall,
+      downloading: result?.downloading,
+    });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: err.message,
+      hasUpdate: false,
+      currentVersion: APP_VERSION,
+      latestVersion: APP_VERSION,
+    });
   }
 });
 

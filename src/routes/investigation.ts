@@ -3,7 +3,9 @@ import { dbManager } from '../database/connection.js';
 import { inventoryCache } from '../services/inventoryCache.js';
 import { rebuildPurchaseSummaryCache, triggerBackgroundSummaryRebuild } from '../services/summaryCacheService.js';
 import { applyStockDelta } from '../utils/stockRebuild.js';
-import { applyPurchaseDelta, applySaleDelta } from '../services/medicineSalesMetricsService.js';
+import { applySaleBillEdit, SaleEditError } from '../services/saleBillEditService.js';
+import { applyPurchaseStockChange, PurchaseEditError } from '../services/purchaseBillEditService.js';
+import { refreshInventoryActiveStatus } from '../utils/inventoryActive.js';
 
 const router = express.Router();
 
@@ -77,20 +79,20 @@ router.get('/timeline', async (req, res) => {
         sinv.discount AS discount,
         sinv.total_amount AS total_amount,
         sinv.subtotal AS subtotal,
-        c.name AS customer_name,
+        COALESCE(sinv.customer_name_snapshot, c.name, 'Customer') AS customer_name,
         si.quantity AS quantity,
         si.loose_qty AS loose_quantity,
         COALESCE(m.pack_size, 1) AS pack_size,
-        im.batch_no AS batch_no,
-        m.name AS medicine_name,
-        m.id AS medicine_id,
-        im.id AS inventory_id,
-        im.expiry_date AS expiry_date,
-        im.mrp AS mrp
+        COALESCE(si.batch_no_snapshot, im.batch_no, si.batch_no, '') AS batch_no,
+        COALESCE(si.medicine_name_snapshot, m.name, 'Medicine') AS medicine_name,
+        COALESCE(m.id, im.medicine_id, si.inventory_id) AS medicine_id,
+        COALESCE(im.id, si.inventory_id) AS inventory_id,
+        COALESCE(si.expiry_date_snapshot, im.expiry_date, '') AS expiry_date,
+        COALESCE(si.mrp_snapshot, im.mrp, m.mrp, 0) AS mrp
       FROM sale_items si
       JOIN sales_invoices sinv ON si.invoice_id = sinv.id
-      JOIN inventory_master im ON si.inventory_id = im.id
-      JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN inventory_master im ON si.inventory_id = im.id
+      LEFT JOIN medicines m ON (im.medicine_id = m.id OR (im.id IS NULL AND si.inventory_id = m.id))
       LEFT JOIN customers c ON sinv.customer_id = c.id
       WHERE 1=1
     `;
@@ -169,8 +171,8 @@ router.get('/timeline', async (req, res) => {
     // Apply filters directly in SQL queries to minimize database transfer size
     if (medicineName) {
       const medFilter = `%${medicineName}%`;
-      salesQuery += ` AND m.name LIKE ?`;
-      salesParams.push(medFilter);
+      salesQuery += ` AND (m.name LIKE ? OR si.medicine_name_snapshot LIKE ?)`;
+      salesParams.push(medFilter, medFilter);
       purchasesQuery += ` AND m.name LIKE ?`;
       purchasesParams.push(medFilter);
       returnsQuery += ` AND m.name LIKE ?`;
@@ -181,8 +183,8 @@ router.get('/timeline', async (req, res) => {
 
     if (batchNo) {
       const batchFilter = `%${batchNo}%`;
-      salesQuery += ` AND im.batch_no LIKE ?`;
-      salesParams.push(batchFilter);
+      salesQuery += ` AND (im.batch_no LIKE ? OR si.batch_no_snapshot LIKE ? OR si.batch_no LIKE ?)`;
+      salesParams.push(batchFilter, batchFilter, batchFilter);
       purchasesQuery += ` AND pi.batch_no LIKE ?`;
       purchasesParams.push(batchFilter);
       returnsQuery += ` AND ri.batch_no LIKE ?`;
@@ -203,8 +205,8 @@ router.get('/timeline', async (req, res) => {
 
     if (party) {
       const partyFilter = `%${party}%`;
-      salesQuery += ` AND c.name LIKE ?`;
-      salesParams.push(partyFilter);
+      salesQuery += ` AND (c.name LIKE ? OR sinv.customer_name_snapshot LIKE ?)`;
+      salesParams.push(partyFilter, partyFilter);
       purchasesQuery += ` AND d.name LIKE ?`;
       purchasesParams.push(partyFilter);
       returnsQuery += ` AND (c.name LIKE ? OR d.name LIKE ?)`;
@@ -213,8 +215,8 @@ router.get('/timeline', async (req, res) => {
 
     if (q) {
       const qFilter = `%${q}%`;
-      salesQuery += ` AND (m.name LIKE ? OR im.batch_no LIKE ? OR sinv.invoice_no LIKE ? OR c.name LIKE ?)`;
-      salesParams.push(qFilter, qFilter, qFilter, qFilter);
+      salesQuery += ` AND (m.name LIKE ? OR si.medicine_name_snapshot LIKE ? OR im.batch_no LIKE ? OR si.batch_no_snapshot LIKE ? OR si.batch_no LIKE ? OR sinv.invoice_no LIKE ? OR c.name LIKE ? OR sinv.customer_name_snapshot LIKE ?)`;
+      salesParams.push(qFilter, qFilter, qFilter, qFilter, qFilter, qFilter, qFilter, qFilter);
       purchasesQuery += ` AND (m.name LIKE ? OR pi.batch_no LIKE ? OR p.invoice_no LIKE ? OR d.name LIKE ?)`;
       purchasesParams.push(qFilter, qFilter, qFilter, qFilter);
       returnsQuery += ` AND (m.name LIKE ? OR ri.batch_no LIKE ? OR r.return_no LIKE ? OR c.name LIKE ? OR d.name LIKE ?)`;
@@ -932,9 +934,18 @@ router.put('/inventory/:inventoryId', async (req, res) => {
       });
     }
 
+    await refreshInventoryActiveStatus(db, Number(inventoryId));
+
     await db.run('COMMIT');
     inventoryCache.invalidate();
     invalidateInvestigationTimelineCache();
+
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('inventory_sync', { success: true });
+      eventService.broadcast('inventory_changed', { reason: 'investigation_inventory_adjustment', inventory_id: Number(inventoryId) });
+    } catch (_e) {}
+
     res.json({ success: true, message: 'Inventory record corrected successfully' });
   } catch (error) {
     if (db) await db.run('ROLLBACK');
@@ -965,176 +976,20 @@ router.put('/sales/:invoiceId', async (req, res) => {
       return res.status(404).json({ error: 'Sales invoice not found' });
     }
 
-    // Step 1: Fetch old items to calculate deltas
-    const oldItems = await db.all('SELECT inventory_id, quantity, loose_qty, batch_no FROM sale_items WHERE invoice_id = ?', [invoiceId]);
+    // Steps 1-6: one shared rule set with Sells / POS edit (services/saleBillEditService.ts).
+    // Stock moves only by the net change per batch; totals use the POS tax-inclusive math.
+    const { subtotal, total, tax, roff, totalCgst, totalSgst, oldItems, adjustments: itemAdjustments } =
+      await applySaleBillEdit(db, invoiceId, items, Number(discount || 0));
 
-    // Group items by inventory_id to calculate net changes (accumulating duplicates if any)
-    const deltaMap = new Map<number, {
-      inventory_id: number;
-      oldQty: number;
-      oldLoose: number;
-      newQty: number;
-      newLoose: number;
-    }>();
-
-    for (const oi of oldItems) {
-      if (!oi.inventory_id && oi.batch_no) {
-        const invRow = await db.get(
-          `SELECT id FROM inventory_master 
-           WHERE batch_no = ? LIMIT 1`,
-          [(oi.batch_no || '').trim()]
-        );
-        if (invRow) oi.inventory_id = invRow.id;
-      }
-      if (!oi.inventory_id) continue;
-      const invId = Number(oi.inventory_id);
-      const existing = deltaMap.get(invId);
-      if (existing) {
-        existing.oldQty += Number(oi.quantity || 0);
-        existing.oldLoose += Number(oi.loose_qty || 0);
-      } else {
-        deltaMap.set(invId, {
-          inventory_id: invId,
-          oldQty: Number(oi.quantity || 0),
-          oldLoose: Number(oi.loose_qty || 0),
-          newQty: 0,
-          newLoose: 0
-        });
-      }
-    }
-
-    // Resolve any item in `items` missing inventory_id
-    for (const ni of items) {
-      if (!ni.inventory_id && (ni.medicine_id || ni.medicine_name) && ni.batch_no) {
-        const invRow = await db.get(
-          `SELECT id FROM inventory_master 
-           WHERE (medicine_id = ? OR medicine_id IN (SELECT id FROM medicines WHERE LOWER(name) = LOWER(?))) 
-             AND batch_no = ? LIMIT 1`,
-          [ni.medicine_id || 0, (ni.medicine_name || '').trim(), (ni.batch_no || '').trim()]
-        );
-        if (invRow) ni.inventory_id = invRow.id;
-      }
-
-      if (!ni.inventory_id) continue;
-      const invId = Number(ni.inventory_id);
-      const existing = deltaMap.get(invId);
-      if (existing) {
-        existing.newQty += Number(ni.quantity || 0);
-        existing.newLoose += Number(ni.loose_qty || 0);
-      } else {
-        deltaMap.set(invId, {
-          inventory_id: invId,
-          oldQty: 0,
-          oldLoose: 0,
-          newQty: Number(ni.quantity || 0),
-          newLoose: Number(ni.loose_qty || 0)
-        });
-      }
-    }
-
-    // Step 2: Validate and apply net changes in inventory_master
-    const { applyStockDelta, recordStockLedger } = await import('../utils/stockRebuild.js');
-    const itemAdjustments: Array<{ inventoryId: number; medicineName: string; qtyDelta: number; looseDelta: number }> = [];
-
-    for (const [invId, entry] of deltaMap.entries()) {
-      const netQty = entry.newQty - entry.oldQty;
-      const netLoose = entry.newLoose - entry.oldLoose;
-      if (netQty === 0 && netLoose === 0) continue;
-
-      const currentStock = await db.get(
-        `SELECT im.quantity, im.loose_quantity, im.batch_no, im.medicine_id, COALESCE(m.pack_size, 1) as pack_size, m.name as medicine_name
-         FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?`,
-        [invId]
-      );
-
-      if (!currentStock) {
-        throw new Error(`Inventory item ID ${invId} does not exist.`);
-      }
-
-      const packSize = currentStock.pack_size || 1;
-      const currentTotalUnits = currentStock.quantity * packSize + currentStock.loose_quantity;
-      const netUnitsSold = netQty * packSize + netLoose;
-
-      if (netUnitsSold > 0 && currentTotalUnits < netUnitsSold) {
-        throw new Error(
-          `Insufficient stock for "${currentStock.medicine_name}". ` +
-          `Available: ${currentStock.quantity} strips & ${currentStock.loose_quantity} loose. ` +
-          `Requested net addition of ${netQty} strips & ${netLoose} loose.`
-        );
-      }
-
-      const newStock = applyStockDelta(
-        { quantity: currentStock.quantity, loose_quantity: currentStock.loose_quantity },
-        -netQty,
-        -netLoose,
-        packSize
-      );
-
-      if (newStock.quantity < 0 || newStock.loose_quantity < 0) {
-        throw new Error(`Reconciliation resulted in negative stock for "${currentStock.medicine_name}".`);
-      }
-
-      await db.run(
-        'UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?',
-        [newStock.quantity, newStock.loose_quantity, invId]
-      );
-
-      await recordStockLedger(db, {
-        medicine_id: currentStock.medicine_id,
-        batch_no: currentStock.batch_no,
-        quantity: -netQty,
-        loose_quantity: -netLoose,
-        transaction_type: 'investigation_sale_edit',
-        transaction_id: invoiceId
-      });
-      await applySaleDelta(db, currentStock.medicine_id, netQty);
-
-      itemAdjustments.push({
-        inventoryId: invId,
-        medicineName: currentStock.medicine_name,
-        qtyDelta: netQty,
-        looseDelta: netLoose
-      });
-    }
-
-    // Step 3: Remove old items and insert corrected items
-    await db.run('DELETE FROM sale_items WHERE invoice_id = ?', [invoiceId]);
-    let subtotal = 0;
-    for (const item of items) {
-      const { inventory_id, quantity = 0, unit_price = 0, loose_qty = 0, batch_no } = item;
-      const cleanInvId = inventory_id ? Number(inventory_id) : null;
-      
-      const currentStock = cleanInvId ? await db.get(
-        'SELECT im.batch_no, COALESCE(m.pack_size, 1) as pack_size FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?',
-        [cleanInvId]
-      ) : null;
-
-      const pSize = currentStock ? (currentStock.pack_size || 1) : 1;
-      const bNo = batch_no || currentStock?.batch_no || null;
-
-      await db.run(
-        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, batch_no) VALUES (?, ?, ?, ?, ?, ?)',
-        [invoiceId, cleanInvId, Number(quantity), Number(unit_price), Number(loose_qty), bNo]
-      );
-
-      subtotal += (Number(quantity) * Number(unit_price)) + (Number(loose_qty) * (Number(unit_price) / pSize));
-    }
-
-    // Recalculate totals
-    const taxRate = 0.05;
-    const tax = subtotal * taxRate;
-    const rawTotal = subtotal + tax - Number(discount || 0);
-    const total = Math.round(rawTotal);
-    const roundOff = Number((total - rawTotal).toFixed(2));
-
+    // Step 7: Update sales invoice header
     await db.run(
       `UPDATE sales_invoices
-       SET total_amount = ?, tax_amount = ?, discount = ?, subtotal = ?, roff = ?
+       SET total_amount = ?, tax_amount = ?, cgst_value = ?, sgst_value = ?, discount = ?, subtotal = ?, roff = ?
        WHERE id = ?`,
-      [total, tax, Number(discount || 0), subtotal, roundOff, invoiceId]
+      [total, tax, totalCgst, totalSgst, Number(discount || 0), subtotal, roff, invoiceId]
     );
 
-    // Recalculate customer credit balance if customer exists
+    // Step 8: Recalculate customer credit balance if customer exists
     if (existingBill.customer_id) {
       const unpaidRow = await db.get(
         `SELECT COALESCE(SUM(total_amount), 0) as total 
@@ -1182,6 +1037,7 @@ router.put('/sales/:invoiceId', async (req, res) => {
       const { eventService } = await import('../services/eventService.js');
       eventService.broadcast('sales_sync', { success: true, action: 'update', id: Number(invoiceId) });
       eventService.broadcast('inventory_sync', { success: true });
+      eventService.broadcast('inventory_changed', { reason: 'investigation_sale_edit', invoice_id: Number(invoiceId) });
     } catch (_e) {}
 
     res.json({ success: true, message: 'Sales invoice corrected and inventory reconciled successfully', total, tax });
@@ -1195,7 +1051,7 @@ router.put('/sales/:invoiceId', async (req, res) => {
     }
     const err = error as Error;
     console.error('Sales invoice correction failed:', err);
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    res.status(error instanceof SaleEditError ? 400 : 500).json({ error: err.message || 'Internal server error' });
   }
 });
 
@@ -1219,121 +1075,44 @@ router.put('/purchases/:purchaseId', async (req, res) => {
       return res.status(404).json({ error: 'Purchase bill not found' });
     }
 
-    // Step 1: Fetch old items to calculate deltas
-    const oldItems = await db.all(
-      'SELECT medicine_id, batch_no, quantity, free_qty, expiry_date, cost_price, mrp FROM purchase_items WHERE purchase_id = ?',
-      [purchaseId]
-    );
-    // inventory_master.quantity moved by quantity + free_qty on purchase save.
-    const shelfUnits = (row: { quantity?: number; free_qty?: number }) =>
-      Number(row.quantity || 0) + Number(row.free_qty || 0);
-
-    // Group items by medicine_id and batch_no to calculate net changes (accumulating duplicates if any)
-    const deltaMap = new Map<string, {
-      medicine_id: number;
-      batch_no: string;
-      oldQty: number;
-      newQty: number;
-      expiry_date: string;
-      mrp: number;
-      cost_price: number;
-    }>();
-
-    for (const oi of oldItems) {
-      const key = `${oi.medicine_id}_${oi.batch_no}`;
-      const existing = deltaMap.get(key);
-      if (existing) {
-        existing.oldQty += shelfUnits(oi);
-      } else {
-        deltaMap.set(key, {
-          medicine_id: Number(oi.medicine_id),
-          batch_no: oi.batch_no,
-          oldQty: shelfUnits(oi),
-          newQty: 0,
-          expiry_date: oi.expiry_date || null,
-          mrp: Number(oi.mrp || 0),
-          cost_price: Number(oi.cost_price || 0)
-        });
-      }
+    // Step 1: every line must be a real master medicine with a batch and a quantity.
+    if (items.length === 0) {
+      throw new PurchaseEditError('A purchase bill needs at least one line. To remove every line, delete the bill from Purchase History instead.');
     }
-
     for (const ni of items) {
       if (!ni.batch_no || String(ni.batch_no).trim() === '') {
-        throw new Error('Batch number is required for all purchase items.');
+        throw new PurchaseEditError('Batch number is required for all purchase items.');
       }
-      const batchNo = String(ni.batch_no).trim();
-      const medId = Number(ni.medicine_id);
-      const key = `${medId}_${batchNo}`;
-      const existing = deltaMap.get(key);
-      if (existing) {
-        existing.newQty += shelfUnits(ni);
-        existing.expiry_date = ni.expiry_date || existing.expiry_date;
-        existing.mrp = Number(ni.mrp) || existing.mrp;
-        existing.cost_price = Number(ni.cost_price) || existing.cost_price;
-      } else {
-        deltaMap.set(key, {
-          medicine_id: medId,
-          batch_no: batchNo,
-          oldQty: 0,
-          newQty: shelfUnits(ni),
-          expiry_date: ni.expiry_date || null,
-          mrp: Number(ni.mrp) || 0,
-          cost_price: Number(ni.cost_price) || 0
-        });
+      const med = ni.medicine_id ? await db.get('SELECT id FROM medicines WHERE id = ?', [Number(ni.medicine_id)]) : null;
+      if (!med) {
+        throw new PurchaseEditError(`"${ni.medicine_name || 'A line'}" is not linked to a medicine in the master list.`);
+      }
+      if ((Number(ni.quantity) || 0) + (Number(ni.free_qty) || 0) <= 0) {
+        throw new PurchaseEditError(`"${ni.medicine_name || 'A line'}" has no quantity. Remove the line instead.`);
       }
     }
 
-    // Step 2: Validate and apply net changes in inventory_master
-    const { recordStockLedger } = await import('../utils/stockRebuild.js');
-    for (const [_, entry] of deltaMap.entries()) {
-      const netChange = entry.newQty - entry.oldQty;
-      if (netChange === 0) continue;
-
-      const invRecord = await db.get(
-        `SELECT id, quantity FROM inventory_master 
-         WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
-        [entry.medicine_id, entry.batch_no || '', entry.batch_no]
-      );
-
-      if (netChange < 0) {
-        // We are reducing the purchased quantity. This means we must deduct stock from inventory.
-        const deductQty = Math.abs(netChange);
-        if (!invRecord || invRecord.quantity < deductQty) {
-          throw new Error(
-            `Cannot reduce purchase quantity for "${entry.batch_no}". ` +
-            `Available stock is ${invRecord ? invRecord.quantity : 0}, but trying to reduce purchase by ${deductQty}.`
-          );
-        }
-        await db.run(
-          'UPDATE inventory_master SET quantity = quantity - ? WHERE id = ?',
-          [deductQty, invRecord.id]
-        );
-      } else {
-        // We are increasing the purchased quantity. This means we add stock to inventory.
-        if (invRecord) {
-          await db.run(
-            'UPDATE inventory_master SET quantity = quantity + ? WHERE id = ?',
-            [netChange, invRecord.id]
-          );
-        } else {
-          await db.run(
-            `INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, mrp, cost_price, loose_quantity)
-             VALUES (?, ?, ?, ?, ?, ?, 0)`,
-            [entry.medicine_id, netChange, entry.batch_no, entry.expiry_date, entry.mrp, entry.cost_price]
-          );
-        }
-      }
-
-      await recordStockLedger(db, {
-        medicine_id: entry.medicine_id,
-        batch_no: entry.batch_no,
-        quantity: netChange,
-        loose_quantity: 0,
-        transaction_type: 'investigation_purchase_edit',
-        transaction_id: purchaseId
-      });
-      await applyPurchaseDelta(db, entry.medicine_id, netChange, entry.cost_price, null, null);
-    }
+    // Step 2: shelf stock moves by the NET change per medicine + batch, one rule set with
+    // the Purchases edit and delete (services/purchaseBillEditService.ts).
+    const oldItems = await db.all(
+      'SELECT medicine_id, batch_no, quantity, free_qty FROM purchase_items WHERE purchase_id = ?',
+      [purchaseId]
+    );
+    await applyPurchaseStockChange(
+      db,
+      purchaseId,
+      oldItems,
+      items.map((ni: any) => ({
+        medicine_id: Number(ni.medicine_id),
+        batch_no: String(ni.batch_no).trim(),
+        quantity: Number(ni.quantity) || 0,
+        free_qty: Number(ni.free_qty) || 0,
+        expiry_date: ni.expiry_date || null,
+        cost_price: ni.cost_price !== undefined && ni.cost_price !== null && ni.cost_price !== '' ? Number(ni.cost_price) : null,
+        mrp: Number(ni.mrp) || 0
+      })),
+      'investigation_purchase_edit'
+    );
 
     // Step 3: Remove old and insert new purchase items
     await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [purchaseId]);
@@ -1363,10 +1142,12 @@ router.put('/purchases/:purchaseId', async (req, res) => {
       totalSgst += sgstValue;
     }
 
-    // Update purchase invoice total (preserving GST breakdown for audit trail)
+    // Update purchase invoice total (preserving GST breakdown for audit trail). The bill's
+    // saved credit-note deduction (cn_amount) still comes off the payable total.
+    const payable = Math.max(0, totalAmount - (Number(existingPurchase.cn_amount) || 0));
     await db.run(
       'UPDATE purchases SET total_amount = ?, cgst_value = ?, sgst_value = ?, original_amount = ? WHERE id = ?',
-      [totalAmount, totalCgst, totalSgst, totalAmount, purchaseId]
+      [payable, totalCgst, totalSgst, totalAmount, purchaseId]
     );
 
     // Audit logging
@@ -1387,6 +1168,8 @@ router.put('/purchases/:purchaseId', async (req, res) => {
       const { eventService } = await import('../services/eventService.js');
       eventService.broadcast('purchase_sync', { success: true, action: 'update', id: Number(purchaseId) });
       eventService.broadcast('inventory_sync', { success: true });
+      eventService.broadcast('invoice_saved', { purchase_id: Number(purchaseId), action: 'update' });
+      eventService.broadcast('inventory_changed', { reason: 'investigation_purchase_edit', purchase_id: Number(purchaseId) });
     } catch (_e) {}
 
     res.json({ success: true, message: 'Purchase bill corrected and inventory reconciled successfully', totalAmount });
@@ -1400,7 +1183,7 @@ router.put('/purchases/:purchaseId', async (req, res) => {
     }
     const err = error as Error;
     console.error('Purchase bill correction failed:', err);
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    res.status(error instanceof PurchaseEditError ? 400 : 500).json({ error: err.message || 'Internal server error' });
   }
 });
 

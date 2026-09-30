@@ -52,11 +52,11 @@ router.get('/', async (req, res) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (date_from) {
-      whereClause += ` AND DATE(r.date, 'localtime') >= DATE(?)`;
+      whereClause += ` AND DATE(r.date) >= DATE(?)`;
       params.push(date_from);
     }
     if (date_to) {
-      whereClause += ` AND DATE(r.date, 'localtime') <= DATE(?)`;
+      whereClause += ` AND DATE(r.date) <= DATE(?)`;
       params.push(date_to);
     }
     if (min_amount) {
@@ -148,7 +148,7 @@ router.post('/', async (req, res) => {
     db = await dbManager.getConnection();
     const resolvedSubType = return_sub_type || (is_expiry ? 'expiry' : 'good');
     const result = await db.run(
-      'INSERT INTO returns (return_no, original_invoice_id, type, total_amount, distributor_id, reason, return_invoice_id, return_sub_type, return_date_time) VALUES (?,?,?,?,?,?,?,?,?)',
+      "INSERT INTO returns (return_no, original_invoice_id, type, total_amount, distributor_id, reason, return_invoice_id, return_sub_type, return_date_time, date) VALUES (?,?,?,?,?,?,?,?,?, datetime('now', 'localtime'))",
       [return_no, original_invoice_id, type || null, total_amount || 0, distributor_id || null, req.body.reason || 'Supplier Return', return_invoice_id || null, resolvedSubType, return_date_time || null]
     );
     
@@ -577,7 +577,7 @@ router.post('/process-returns', async (req, res) => {
 
     const totalAmount = items.reduce((sum, item) => sum + ((item.cost_price || 0) * (item.quantity || 0)), 0);
     const result = await db.run(
-      'INSERT INTO returns (return_no, type, total_amount, distributor_id, original_invoice_id, return_invoice_id, date, return_sub_type, reason) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
+      "INSERT INTO returns (return_no, type, total_amount, distributor_id, original_invoice_id, return_invoice_id, date, return_sub_type, reason) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)",
       [returnNo, 'purchase', totalAmount, distributorId, originalInvoiceId, savedReturnInvoiceNo, resolvedSubType, resolvedReason]
     );
     const returnId = result.lastID;
@@ -942,6 +942,91 @@ router.get('/:id/resolve-missing', async (req, res) => {
 });
 
 // Update a return bill
+// A supplier return takes stock off the shelf when it is created ('return_to_distributor'
+// ledger rows keyed by the return id). Editing or deleting it must move the shelf by exactly
+// what that return recorded: never put back stock it never took (a credit-note-only return
+// has no such rows) and never take more than the shelf holds.
+const RETURN_STOCK_LEDGER_TYPES = ['return_to_distributor', 'return_edit', 'return_delete'];
+
+class ReturnEditError extends Error {
+  readonly status = 400;
+}
+
+type ReturnStockKey = { medicine_id: number; batch_no: string; strips: number };
+
+async function moveSupplierReturnStock(
+  db: any,
+  returnId: number | string,
+  oldLines: Array<{ medicine_id: number; batch_no: string | null }>,
+  newLines: Array<{ medicine_id: number; batch_no: string | null; quantity: number }>,
+  ledgerType: 'return_edit' | 'return_delete'
+) {
+  const keyOf = (m: number, b: string | null) => `${m}|${String(b ?? '').trim()}`;
+  const taken = new Map<string, ReturnStockKey>();
+  const ledgerRows = await db.all(
+    `SELECT medicine_id, batch_no, SUM(quantity) AS qty FROM stock_ledger
+     WHERE transaction_id = ? AND transaction_type IN (${RETURN_STOCK_LEDGER_TYPES.map(() => '?').join(',')})
+     GROUP BY medicine_id, TRIM(COALESCE(batch_no, ''))`,
+    [String(returnId), ...RETURN_STOCK_LEDGER_TYPES]
+  );
+  if (ledgerRows.length === 0) return; // this return never moved shelf stock
+  for (const r of ledgerRows) {
+    taken.set(keyOf(r.medicine_id, r.batch_no), { medicine_id: Number(r.medicine_id), batch_no: String(r.batch_no ?? '').trim(), strips: -Number(r.qty || 0) });
+  }
+
+  // Lines that were on the return when it was saved but took no stock (no batch on the shelf
+  // then) stay stock-free; a line added by this edit takes stock like a new return line.
+  const neverMoved = new Set(oldLines.map(l => keyOf(l.medicine_id, l.batch_no)).filter(k => !taken.has(k)));
+  const target = new Map<string, ReturnStockKey>();
+  for (const l of newLines) {
+    const k = keyOf(l.medicine_id, l.batch_no);
+    if (neverMoved.has(k)) continue;
+    const t = target.get(k) || { medicine_id: Number(l.medicine_id), batch_no: String(l.batch_no ?? '').trim(), strips: 0 };
+    t.strips += Number(l.quantity) || 0;
+    target.set(k, t);
+  }
+
+  const plans: Array<{ key: ReturnStockKey; delta: number; row: any }> = [];
+  const shortages: string[] = [];
+  for (const k of new Set([...taken.keys(), ...target.keys()])) {
+    const key = target.get(k) || taken.get(k)!;
+    const delta = (target.get(k)?.strips || 0) - (taken.get(k)?.strips || 0); // > 0: take more off the shelf
+    if (delta === 0) continue;
+    const row = await db.get(
+      `SELECT im.id, im.quantity, im.loose_quantity, COALESCE(m.pack_size, 10) AS pack_size, m.name AS medicine_name
+       FROM inventory_master im JOIN medicines m ON m.id = im.medicine_id
+       WHERE im.medicine_id = ? AND TRIM(COALESCE(im.batch_no, '')) = ? ORDER BY im.id LIMIT 1`,
+      [key.medicine_id, key.batch_no]
+    );
+    if (!row) {
+      if (delta > 0) shortages.push(`medicine #${key.medicine_id} (batch ${key.batch_no || '—'}) is not on the shelf`);
+      continue; // nothing on the shelf to put stock back into
+    }
+    const pack = Math.max(1, Number(row.pack_size) || 1);
+    const onShelf = Number(row.quantity) * pack + Number(row.loose_quantity);
+    if (delta > 0 && onShelf < delta * pack) {
+      shortages.push(`${row.medicine_name} (batch ${key.batch_no || '—'}): returning ${delta} more strip(s), but only ${Math.floor(onShelf / pack)} strip(s) are on the shelf`);
+    }
+    plans.push({ key, delta, row });
+  }
+  if (shortages.length > 0) {
+    throw new ReturnEditError(`Not enough stock for this return change: ${shortages.join('; ')}.`);
+  }
+
+  const { refreshInventoryActiveStatus } = await import('../utils/inventoryActive.js');
+  for (const { key, delta, row } of plans) {
+    const pack = Math.max(1, Number(row.pack_size) || 1);
+    const after = applyStockDelta({ quantity: Number(row.quantity), loose_quantity: Number(row.loose_quantity) }, -delta, 0, pack);
+    await db.run('UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?', [after.quantity, after.loose_quantity, row.id]);
+    await refreshInventoryActiveStatus(db, row.id);
+    await recordStockLedger(db, {
+      medicine_id: key.medicine_id, batch_no: key.batch_no,
+      quantity: -delta, loose_quantity: 0,
+      transaction_type: ledgerType, transaction_id: returnId
+    });
+  }
+}
+
 router.put('/:id', async (req, res) => {
   let db;
   try {
@@ -950,8 +1035,20 @@ router.put('/:id', async (req, res) => {
     if (!items || !Array.isArray(items)) {
       return res.status(400).json({ error: 'items array is required' });
     }
+    for (const item of items) {
+      if (!Number(item.medicine_id) || !(Number(item.quantity) > 0)) {
+        return res.status(400).json({ error: 'Every return line needs a medicine and a quantity above 0.' });
+      }
+    }
     db = await dbManager.getConnection();
     await db.run('BEGIN TRANSACTION');
+    const existing = await db.get('SELECT id FROM returns WHERE id = ?', [id]);
+    if (!existing) {
+      await db.run('ROLLBACK');
+      return res.status(404).json({ error: 'Return not found' });
+    }
+    const oldLines = await db.all('SELECT medicine_id, batch_no FROM return_items WHERE return_id = ?', [id]);
+    await moveSupplierReturnStock(db, id, oldLines, items, 'return_edit');
     await db.run('DELETE FROM return_items WHERE return_id = ?', [id]);
     for (const item of items) {
       await db.run(
@@ -962,28 +1059,38 @@ router.put('/:id', async (req, res) => {
     const computed = items.reduce((s, i) => s + (i.cost_price || 0) * (i.quantity || 0), 0);
     await db.run('UPDATE returns SET total_amount = ? WHERE id = ?', [total_amount ?? computed, id]);
     await db.run('COMMIT');
+    inventoryCache.invalidate();
+    eventService.broadcast('inventory_sync', { success: true });
+    eventService.broadcast('inventory_changed', { reason: 'return_edit', return_id: Number(id) });
     res.json({ success: true, message: 'Return updated' });
   } catch (err: any) {
-    if (db) await db.run('ROLLBACK');
+    if (db) { try { await db.run('ROLLBACK'); } catch (_e) {} }
     console.error('Error updating return:', err);
+    if (err instanceof ReturnEditError) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Delete a return bill and its items
+// Delete a return bill and its items. Stock the return took off the shelf goes back.
 router.delete('/:id', async (req, res) => {
   let db;
   try {
     const { id } = req.params;
     db = await dbManager.getConnection();
     await db.run('BEGIN TRANSACTION');
+    const oldLines = await db.all('SELECT medicine_id, batch_no FROM return_items WHERE return_id = ?', [id]);
+    await moveSupplierReturnStock(db, id, oldLines, [], 'return_delete');
     await db.run('DELETE FROM return_items WHERE return_id = ?', [id]);
     await db.run('DELETE FROM returns WHERE id = ?', [id]);
     await db.run('COMMIT');
+    inventoryCache.invalidate();
+    eventService.broadcast('inventory_sync', { success: true });
+    eventService.broadcast('inventory_changed', { reason: 'return_delete', return_id: Number(id) });
     res.json({ success: true, message: 'Return deleted' });
   } catch (err: any) {
-    if (db) await db.run('ROLLBACK');
+    if (db) { try { await db.run('ROLLBACK'); } catch (_e) {} }
     console.error('Error deleting return:', err);
+    if (err instanceof ReturnEditError) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1170,7 +1277,7 @@ router.post('/expiry-reviews/:id/approve', async (req, res) => {
     // 2. Create Master Return Record
     const result = await db.run(
       `INSERT INTO returns (return_no, type, total_amount, distributor_id, reason, date, return_sub_type)
-       VALUES (?, 'purchase', ?, ?, 'Approved Expiry Return', CURRENT_TIMESTAMP, 'expiry')`,
+       VALUES (?, 'purchase', ?, ?, 'Approved Expiry Return', datetime('now', 'localtime'), 'expiry')`,
       [returnNo, totalAmount, review.distributor_id || null]
     );
     const returnId = result.lastID;
@@ -1401,7 +1508,7 @@ router.post('/expiry-reviews/bulk-approve', async (req, res) => {
 
       const result = await db.run(
         `INSERT INTO returns (return_no, type, total_amount, distributor_id, reason, date, return_sub_type)
-         VALUES (?, 'purchase', ?, ?, 'Approved Expiry Return', CURRENT_TIMESTAMP, 'expiry')`,
+         VALUES (?, 'purchase', ?, ?, 'Approved Expiry Return', datetime('now', 'localtime'), 'expiry')`,
       [returnNo, totalAmount, distributorId]
       );
       const returnId = result.lastID;

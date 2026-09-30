@@ -43,7 +43,7 @@ describe('Old purchase bill edit keeps free quantity on the shelf', () => {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
   });
 
-  test('changing free quantity moves inventory_master.quantity and writes both ledger rows', async () => {
+  test('changing free quantity moves inventory_master.quantity by the net change', async () => {
     const res = await request(app).put('/purchases/70/full').send({
       distributor: 'Free Dist',
       distributor_id: 70,
@@ -75,9 +75,9 @@ describe('Old purchase bill edit keeps free quantity on the shelf', () => {
     expect(shelf.quantity).toBe(15);
     expect(line.quantity).toBe(10);
     expect(line.free_qty).toBe(5);
+    // One net row: the bill went from 12 shelf strips to 15 (10 billed + 5 free).
     expect(ledger.map((r: { transaction_type: string; quantity: number }) => [r.transaction_type, r.quantity])).toEqual([
-      ['purchase_edit_revert', -12],
-      ['purchase_edit', 15]
+      ['purchase_edit', 3]
     ]);
   });
 });

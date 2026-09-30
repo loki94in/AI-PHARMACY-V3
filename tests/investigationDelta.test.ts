@@ -128,13 +128,14 @@ describe('Investigation Delta-Based Stock Reconciliation', () => {
     // Ending units: 62 units.
     // Represented as strips and loose: 6 strips, 2 loose (6 * 10 + 2 = 62).
     const inv = await dbVerify.get('SELECT quantity, loose_quantity FROM inventory_master WHERE id = 501');
-    // Verify invoice total updated: 1 strip * 100 + 5 loose * 10 = 150. Tax = 7.5. Round(157.5) = 158.
+    // Verify invoice total updated: 1 strip * 100 + 5 loose * 10 = 150. Prices already include
+    // GST (same math as POS), so the total stays 150; nothing is added on top.
     const sale = await dbVerify.get('SELECT total_amount, subtotal FROM sales_invoices WHERE id = 501');
     await dbVerify.close();
 
     expect(inv.quantity).toBe(6);
     expect(inv.loose_quantity).toBe(2);
     expect(sale.subtotal).toBe(150);
-    expect(sale.total_amount).toBe(158);
+    expect(sale.total_amount).toBe(150);
   });
 });

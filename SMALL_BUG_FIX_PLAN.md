@@ -7,6 +7,127 @@
 
 ## Fixed
 
+### [Fixed] P1-72 — Bills saved in the evening (or after midnight) showed on another day
+
+| Field | Content |
+|---|---|
+| **What the user saw** | A saved bill showed under the next day. The owner asked for the real stored date everywhere, with no shifting. Reported 2026-09-30. |
+| **Root cause** | Bill dates were stored in two forms. Migrated history, purchases and returns imported from the old software hold shop local text (`2026-09-22 21:43:10`). POS and the phone app saved sales as UTC ISO (`toISOString()`), and Telegram/invoiceService sales plus in-app returns used SQLite `CURRENT_TIMESTAMP` (UTC). Screens then guessed: Purchase History, Sells, supplier and customer return history wrapped the column in `'localtime'` (+5:30), while Reports did not. So a bill saved after 6:30 PM moved to the next day on one page, and a UTC sale made before 5:30 AM counted on the previous day in Reports. The "This month" preset on Sells and Returns started on the last day of the previous month (`toISOString().slice(0, 10)` of local midnight). |
+| **How it was fixed** | One form for every bill date: shop local `YYYY-MM-DD HH:MM:SS` (`src/utils/localTime.ts`: `toLocalSqlDateTime`, `normalizeToLocalSqlDateTime`, `SQL_LOCAL_NOW`). Writers: POS save (an invalid `sale_date` is refused, not replaced), phone-sale approve, Telegram and invoiceService sales, customer returns, process-returns, expiry returns (Returns + Expiry pages), manual supplier return. Readers: no `'localtime'` on Sells, supplier/customer return history (Purchase History in P1-71). Existing UTC ISO sale dates are rewritten once to the same moment in shop time by `normalizeBillDatesToLocalTime()` (both boot paths; ISO rows only, so it is idempotent). The presets use `getLocalDateString`. New guardrail **B4** blocks `toISOString().slice(0, 10/19)` / `split('T')[0]` and `'localtime'` on stored bill dates in changed lines. |
+| **Priority** | P1 |
+| **What not to touch** | Columns whose value really is UTC (`DEFAULT CURRENT_TIMESTAMP`, e.g. `expiry_return_reviews.created_at`) keep their `'localtime'` read. |
+| **Verified by** | New `tests/billDates.test.ts`: local text kept, ISO → same moment in shop time, junk → null; ISO sale dates converted once and a second pass changes nothing; an evening sale, supplier return and customer return each list under their own day. Guardrail `--self-test` PASS (B4 fires on bad samples, silent on clean). 146 tests across the touched and regression suites pass. |
+
+### [Fixed] P1-71 — Reports showed a purchase bill that Purchase History did not show for that day
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Reports listed a purchase bill, but it seemed to be missing from Purchase History, even after restarting the app. Reported 2026-09-30. |
+| **Root cause** | Both pages read the live `purchases` table (nothing was cached, which is why a restart changed nothing), but they disagreed on the bill's DAY. `purchases.date` is saved in the shop's local time (`YYYY-MM-DD HH:MM:SS`). Reports groups by `date(p.date)`, while Purchase History (`GET /api/purchases`) filtered by `date(p.date, 'localtime')`, which treats the value as UTC and adds +5:30 again. Every bill saved after 6:30 PM moved to the NEXT day in Purchase History: 1,882 of 16,209 bills in the migrated shop DB (e.g. `NMC/110584`, 22 Sep 9:43 PM: Reports 22 Sep, Purchase History 23 Sep). |
+| **How it was fixed** | Purchase History now filters by `date(p.date)`, the same day as Reports. The sargable ±day pre-filter bounds are unchanged. The `src/AGENTS.md` contract was updated. |
+| **Priority** | P1 |
+| **What not to touch** | Sells (`GET /sales/list`) keeps `'localtime'`: POS stores sale times as UTC ISO. Migrated sales rows are local text, so 5,780 of 24,628 sales may show a similar evening shift in Sells; needs its own check before changing. |
+| **Verified by** | New case in `tests/purchaseReturnEdit.test.ts`: a bill at `2026-09-22 21:43:10` is listed for 22 Sep and not for 23 Sep (on this IST machine the old filter gave 23 Sep). `purchaseDateIntegrity` still passes. |
+
+### [Fixed] P0-69 — A deleted purchase bill came back in Purchase History (writes silently rolled back)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | A purchase bill that had been deleted in the app was showing in Purchase History again. Reported 2026-09-30. |
+| **Root cause** | `src/database/connection.ts` runs every request on ONE shared connection. When a route returned after `BEGIN` without `COMMIT`/`ROLLBACK`, the lock stayed held with `txDepth = 1`, and every later request's `BEGIN` became a nested `SAVEPOINT` inside it. The UI saw the delete (same connection), but 60 s later the watchdog rolled the whole orphan back, so the delete and every other write made in that window were undone. Orphan sources found and fixed: `DELETE /purchases/:id` "not found" path (P1-63), `PUT /sales/:id` "doctor required" 400 (P1-65, hit by every Sells edit of an old bill saved without a doctor), the `POST /inventory` stock-override sync catch (no ROLLBACK), and the composition enricher batch (no try/ROLLBACK). A code scan found no route that answers before committing. |
+| **How it was fixed** | Each orphan source now rolls back. As a safety net, `middleware/requestTransactionGuard.ts` (mounted in `server.ts`) tags each request, the connection records which request opened the top-level transaction (`txOwner`), and `dbManager.closeOrphanTransaction()` rolls it back as soon as that request's response finishes, logging `[DB-MUTEX] … answered with its transaction still open`. Background work started after the response, and other requests' transactions, are never touched. |
+| **Priority** | P0 |
+| **What not to touch** | The 60 s watchdog stays for non-request orphans. Routes must still `ROLLBACK` on every early return; the guard only limits the damage. |
+| **Verified by** | New `tests/requestTransactionGuard.test.ts`: an orphaning route, then a plain write and a committed transaction. The orphan's row is gone, the other two are visible from a separate connection, and the lock is free. With the guard switched off the same test fails (lock still held). `dbIntegrity`, `verificationHealthTx` still pass. |
+
+### [Fixed] P1-70 — Saving a bill with a reused invoice number overwrote an older bill; stale pages after a delete
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Found in the same audit, after the owner asked that every page shows the same data once a bill is saved, changed or deleted, with no duplicates made by the app. |
+| **Root cause** | (1) `POST /purchases/manual` treated ANY existing bill with the same distributor + invoice number as "the same bill" and silently turned the save into an EDIT of it, replacing its date, lines and stock. The migrated shop data has 70 such number pairs: 66 are different bills (the distributor reused the number in a later year), 4 are true duplicates from the old software. Staged approve and reissue refused the new bill outright, and the edit path refused to edit either bill of a pair. (2) `PUT /purchases/:id/full` never checked that the bill still exists, so an edit screen left open after a delete re-inserted lines and stock with no bill. (3) A purchase delete broadcast only `purchases_sync` + `inventory_sync`, so the Purchases batch/rate history, the Inventory drawer "last purchase per distributor", Expiry and dashboard/report keys kept the deleted bill, and the purchase summary cache was not rebuilt. |
+| **How it was fixed** | The same bill is now the same distributor + invoice number + invoice DATE on every path (manual save redirect, edit duplicate check, staged approve, reissue). An undated bill still matches by number alone. Re-saving the same bill updates it, and a reused number on another date is saved as a new bill. The edit answers 404 for a deleted bill. Purchase delete and the Investigation purchase correction also broadcast `invoice_saved`, and delete rebuilds the summary cache. Sale delete and supplier-return edit/delete broadcast `inventory_changed` so every window's POS stock list refreshes. |
+| **Priority** | P1 |
+| **What not to touch** | The existing 70 pairs are real migrated history and were left as is (nothing merged or deleted). |
+| **Verified by** | `tests/purchaseReturnEdit.test.ts` (3 new cases): same number + date re-save leaves one bill; a reused number on a new date makes a second bill and the old bill keeps its 10 strips; editing a deleted bill → 404, no lines, no stock. `purchaseDistributorIntegrity`, `emailPurchaseDistributorIntegrity`, `emailPurchaseDateIntegrity` (29/29) now run: their stale whatsappClient mocks got the missing export stubs. |
+
+### [Fixed] P1-65 — Editing an old sale bill (Sells / POS edit) failed or saved wrong data
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Found 2026-09-30 in the owner-requested audit of every edit-old-bill workflow ("check all the edit old bill workflow … do not fabricate any data"). |
+| **Root cause** | `PUT /api/sales/:id` (`src/routes/sales.ts`). (1) The "doctor required" 400 returned after `BEGIN` without `ROLLBACK`. Sells never sends a doctor, so editing any old bill saved without one failed AND left the shared connection inside the transaction. (2) It restored every old line and re-sold every new one, so an untouched line on a now-expired or sold-out batch hit "Cannot sell expired product" and old bills could not be edited at all. (3) Sells sends no `pack_size`, so the total priced a loose tablet like a whole strip (10× on a 10-pack). (4) The saved line copies were rewritten with invented values: `'Medicine'`, a 5% tax, `unit_price` as MRP. (5) Old lines without a batch link were re-linked by batch number across ALL medicines. (6) An edit could empty a bill. (7) Re-sending the same patient with a different phone format re-linked the bill to a new duplicate customer. A real patient or doctor change never showed, because the list reads `customer_name_snapshot` / `doctor_name_snapshot` first. |
+| **How it was fixed** | New `services/saleBillEditService.ts` `applySaleBillEdit()`, shared with the Investigation correction. It moves stock by the NET units per batch, with pack size from `medicines`. Selling more needs shelf stock and an unexpired batch. Selling less puts units back and re-activates the batch. Line copies are kept (snapshot + legacy `mrp`/`batch_no`/`legacy_id`), with NULL when unknown. Empty bills and lines with no batch link are refused. Totals use `utils/saleTotals.ts` (the POS calculator moved out of the router). The route re-links the patient only on a real change and then updates the snapshots, checks the doctor only when doctor fields are sent (with `ROLLBACK`), and answers refusals with 400 + a plain message. |
+| **Priority** | P1 |
+| **What not to touch** | POS new-sale save (`POST /sales`) is unchanged apart from importing the moved calculator. The calculator's own 2.5% + 2.5% default for medicines with no GST rate is pre-existing POS behavior and was left as is (see Open P2-68). |
+| **Verified by** | New `tests/saleBillEdit.test.ts` 9/9: expired sold-out bill re-saves; more-of-expired refused and untouched; over-shelf refused; lowering puts back only the difference and re-activates; loose priced by DB pack + discount kept + copies kept; no-doctor old bill saves and a cleared doctor is refused without a stuck transaction; empty bill refused; patient rename updates the copy; Investigation follows the same rules. |
+
+### [Fixed] P1-66 — Purchase bill edit made phantom stock, auto-created medicines and dropped lines
+
+| Field | Content |
+|---|---|
+| **What the user saw** | P1-64 (logged Open earlier the same day): re-saving a partly sold purchase bill put sold stock back on the shelf. The audit found more in the same handler. |
+| **Root cause** | `handleUpdatePurchaseFull` (`PUT /purchases/:id/full`, also reached by `POST /manual` for an existing invoice number). (1) Revert `MAX(0, quantity − old)` then add the new total: 10 bought, 7 sold, re-save → 10 on the shelf (7 phantom). The revert was strips-only too. (2) An unlinked line ran `INSERT OR IGNORE INTO medicines (name)` and a `LIKE 'name%' LIMIT 1` guess, breaking the strict purchase-resolution contract. (3) A line it still could not link was skipped with `continue` after its old stock was already removed. (4) Totals read `item.qty` only while the saved line read `qty ?? quantity`. The Investigation purchase correction worked on strips only, and delete floored at 0. |
+| **How it was fixed** | New `services/purchaseBillEditService.ts` `applyPurchaseStockChange()` for edit, Investigation correction and delete. It moves the net `(quantity + free_qty)` per medicine + batch through the strip/loose pool and writes one net ledger row. Taking back stock that was already sold or returned is refused with what is left. A batch still on the bill takes the line's rate/MRP/expiry. The edit parses each line once, links it through the `POST /manual` strict chain (`400 {unresolved_items}`), and computes totals from the same parsed values. Investigation also refuses empty bills and unlinked medicines, and keeps the saved credit-note deduction off the payable total. |
+| **Priority** | P1 |
+| **What not to touch** | Free quantity still counts as shelf stock both ways (`tests/purchaseEditFreeQty.test.ts`, now one net ledger row). |
+| **Verified by** | New `tests/purchaseReturnEdit.test.ts` (purchase cases): unchanged re-save adds nothing; lowering below sold refused and untouched; lowering takes strips + loose; raising adds and takes the new MRP; unknown medicine → `unresolved_items` and no master row; Investigation same rules + empty refused. `tests/purchaseDeleteStock.test.ts` now expects the partly-sold delete to be refused. |
+
+### [Fixed] P1-67 — Editing or deleting a supplier return did not move stock
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Found in the same audit. Changing a supplier return from 5 to 2 strips, or deleting it, left the shelf as if 5 had gone back to the distributor. |
+| **Root cause** | `PUT` / `DELETE /api/returns/:id` (`src/routes/returns.ts`) rewrote or deleted `return_items` only. Creation (`process-returns`, expiry approvals) takes stock off with `return_to_distributor` ledger rows. |
+| **How it was fixed** | `moveSupplierReturnStock()` in the same file reads that return's own ledger rows and moves the shelf by exactly the difference: `return_edit` / `return_delete` rows, strips put back or taken with a shelf check, and `is_active` refreshed. A return with no such rows (credit-note only) moves nothing. |
+| **Priority** | P1 |
+| **What not to touch** | Customer returns (`customerReturns.ts`) are not edited through these routes. |
+| **Verified by** | `tests/purchaseReturnEdit.test.ts` (return cases): 5→2 puts 3 back, 2→11 refused on shelf, 2→9 takes 7, delete puts 9 back; a credit-note-only return delete moves nothing. `crossDistributorReturns`, `expiryReturnReview`, `returnLossIntegrity` still pass. |
+
+### [Fixed] P1-61 — Investigation sale-bill correction added 5% to the bill and dropped line discounts
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Found 2026-09-30 while diagnosing P1-60 (logged Open, then fixed in the P1-65 audit). |
+| **Root cause** | `PUT /api/investigation/sales/:invoiceId` computed `round(subtotal × 1.05 − discount)`, dropped `discount_per` / GST split, and the edit panel previewed the same flat 5%. |
+| **How it was fixed** | The route now calls `applySaleBillEdit()` (P1-65). The Investigation panel preview uses the POS math (line discount off the price, no GST on top, "GST: Included in MRP") and no longer substitutes `'Medicine'` or the unit price as MRP. A newly added line must have a saved selling price or MRP instead of ₹0. |
+| **Priority** | P1 |
+| **What not to touch** | Stock-delta behavior (now the shared service). |
+| **Verified by** | `tests/investigationDelta.test.ts` (total 150, was 158) and `tests/investigation.test.ts` (86, was 90) updated to the POS math; `tests/saleBillEdit.test.ts` Investigation case. |
+
+### [Fixed] P1-63 — POS could still sell a medicine after its purchase bill was deleted
+
+| Field | Content |
+|---|---|
+| **What the user saw** | After deleting a purchase bill in Purchase History, POS could still sell that medicine. Reported 2026-09-30. |
+| **Root cause** | `DELETE /api/purchases/:id` (`src/routes/purchases.ts`). (1) It reversed stock with strips only, `quantity = MAX(0, quantity − (qty + free))`, and never touched `loose_quantity`. A batch bought as 10 strips with 3 tablets sold loose sits at 9 strips + 7 loose. The delete left the 7 loose on the shelf, active and sellable. (2) No `stock_ledger` row was written and `is_active` was not refreshed. (3) The 404 branch returned after `BEGIN` without `ROLLBACK`. A repeat or double-click delete left the shared connection inside the transaction, reading a frozen snapshot, so every later request saw stale data. (4) Only `purchases_sync` was broadcast (it maps to no inventory keys), and the Purchase History delete handler never called `invalidateAfterStockWrite`. POS's in-memory medicine list kept showing the deleted stock. |
+| **How it was fixed** | The route removes the bill's `(quantity + free_qty) × pack` units through the strip/loose pool (`applyStockDelta`). It writes a `purchase_delete` ledger row and calls `refreshInventoryActiveStatus`. **Changed the same day (P1-66):** when part of the bill was already sold or returned, the delete is now REFUSED with what is left on the shelf, instead of flooring at 0. It also does `ROLLBACK` before the 404 and broadcasts `inventory_sync`. `PurchaseHistory` calls `invalidateAfterStockWrite(queryClient)` after a delete, which also reloads the POS compact inventory. |
+| **Priority** | P1 |
+| **What not to touch** | Stock from other bills of the same batch stays. `medicine_sales_metrics` is not reversed: `applyPurchaseDelta` with a negative quantity would stamp `last_purchase_date = now`. The same strips-only revert in the purchase EDIT route is tracked separately as P1-64. |
+| **Verified by** | New `tests/purchaseDeleteStock.test.ts` 3/3. It failed before the fix: 7 loose were left, and a delete after a missing-bill delete returned 404 because of the stuck transaction. After the fix: 0/0 and inactive, `purchase_delete` ledger −9/−7, another bill's 5 strips of the same batch kept, and the follow-up delete returns 200. `purchaseEditFreeQty` and `purchaseDateIntegrity` pass. `purchaseMrpIntegrity` and `legitimateDataWorkflow` fail at import on stale whatsappClient mocks, which is pre-existing. Backend + frontend `tsc` clean, ESLint clean on PurchaseHistory, `npm run guardrails` PASS. Not yet clicked through in the running app. |
+
+### [Fixed] P1-62 — Deleting a sale bill did not bring the stock back
+
+| Field | Content |
+|---|---|
+| **What the user saw** | After deleting a sale bill (Sells → Delete), the sold stock did not come back: POS could not find it, and the Inventory "in stock" view did not show it. Reported 2026-09-30. |
+| **Root cause** | `DELETE /api/sales/:id` (`src/routes/sales.ts`). (1) A POS sale that empties a batch sets `inventory_master.is_active = 0` (`refreshInventoryActiveStatus`), and POS search (`inventoryCache`, `INVENTORY_ACTIVE_WHERE`) and the Inventory `stock_filter=positive` view only show `is_active = 1`. The delete added the quantity back but never re-activated the batch, so the stock stayed hidden. (2) It read every batch once before the loop and never updated that read. A bill with two lines on the same batch (for example strips + loose) had the second restore overwrite the first, so part of the stock was lost. (3) It broadcast only `sales_sync`, not `inventory_sync`. |
+| **How it was fixed** | The in-memory stock map is updated after each restore (same pattern as `PUT /sales/:id`). `refreshInventoryActiveStatus` runs for every touched batch before commit, and the route also broadcasts `inventory_sync`. |
+| **Priority** | P1 |
+| **What not to touch** | The Old-FY delete guard in Sells (P3-50) and the ledger type `sale_delete_restore`. `medicine_sales_metrics` is not reversed on delete: `applySaleDelta` with a negative quantity would stamp `last_sold_date = now`. |
+| **Verified by** | New `tests/saleDeleteRestore.test.ts` (sold-out batch, 2 strip + 3 loose lines on one batch). It failed before the fix (restored 0 strips) and passes after (2 strips + 3 loose, `is_active = 1`, 2 ledger rows, invoice and lines removed). `tests/inventoryActive.test.ts` passes, backend `tsc --noEmit` is clean, and `npm run guardrails` passes. Not yet clicked through in the running app. |
+
+### [Fixed] P1-60 — Inventory and Sells lists went empty after editing a sale bill on Investigation
+
+| Field | Content |
+|---|---|
+| **What the user saw** | After a sale bill was corrected on Investigation, the Inventory page and the Sells page showed no rows at all. The stock was really there: POS could still sell exactly what was left. Reported 2026-09-30. |
+| **Root cause** | `frontend/src/hooks/useInfiniteScroll.ts`. The save calls `invalidateAfterStockWrite()` → `clearInfiniteScrollCache()` → `clear-module-cache` event, and every mounted list (Inventory and Sells stay mounted under KeepAlive) set its rows to `[]`. Rows were refilled only by an effect keyed on `data`. When the refetch returned the same rows (an older bill, or a batch not on the loaded pages), React Query's structural sharing kept the same `data` reference, so the effect never ran and the list stayed empty. Checked on the installed `@tanstack/query-core` 5.101.2. POS reads the separate compact-inventory cache, which is why it was unaffected. Any stock write (POS sale, return, purchase) could trigger the same thing whenever the refetched pages were unchanged. |
+| **How it was fixed** | The `clear-module-cache` listener that blanked mounted lists was removed. `clearInfiniteScrollCache()` still empties the module cache for cold mounts. A mounted list keeps its last rows until its own refetch replaces them (cache-first paint). The sync effect now also depends on `dataUpdatedAt`, so every successful fetch re-syncs rows and refills the module cache even when the rows are identical. |
+| **Priority** | P1 |
+| **What not to touch** | Keep `invalidateAfterStockWrite` mark-stale-only, and keep the `filtersChanged` reset in the hook (a filter change does need an empty list). Do not re-add row blanking on `clear-module-cache`. |
+| **Verified by** | query-core check: an identical refetch keeps `data` the same reference while `dataUpdatedAt` changes, so the sync effect re-runs. Frontend `tsc --noEmit` clean, ESLint clean on the hook, `npm run guardrails` PASS. All six consumers (Inventory, Sells, PurchaseHistory, CustomerReturnHistory, Returns, Investigation) refetch after writes. Not yet clicked through in the running app. |
+
 ### [Fixed] P1-59 — CRM refill "+ Live Cart" guessed the product and could claim "Added" when nothing reached Pharmarack
 
 | Field | Content |
@@ -867,4 +988,106 @@
 
 ## Open
 
-(none)
+> P0-74 … P2-80 come from one owner-requested audit (2026-09-30): "the purchase bill is the only truth;
+> if data is missing, show an error the pharmacist understands". Full list with file:line, shop-data
+> numbers and the phased fix plan: **`PURCHASE_BILL_TRUTH_AUDIT_AND_FIX_PLAN.md`**. Fix in the phase
+> order given there.
+
+### [Open] P0-74 — Typing in the POS cart rewrites the batch and the saved purchase bills
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | The POS cart's MRP, cost and pack-size boxes call `api.updateMedicine` → `PUT /inventory/:id` on every keystroke (`frontend/src/pages/POS/index.tsx:3250-3272`, `:6029`). A blank box saves `0`, and `125` saves `1`, `12`, `125`. `PUT /inventory/:id` (`src/routes/inventory.ts:346-358`) then runs `UPDATE purchase_items … WHERE medicine_id = ? AND batch_no = ?`, which rewrites the MRP, batch and expiry on every purchase bill that carried that batch. |
+| **How it was fixed** | Open — Phase 1 of the plan. The cart boxes edit this bill only (MRP read-only from the batch). The inventory PUT stops writing `purchase_items` and refuses blank MRP/cost. |
+| **Priority** | P0 (silently changes the source of truth) |
+| **What not to touch** | Purchase edits through `purchaseBillEditService` (the legitimate path). |
+| **Verified by** | — |
+
+### [Open] P1-75 — Sale bill saves placeholders and values the batch does not have
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | `POST /sales` (`src/routes/sales.ts`): MRP snapshot from the client or 0 (`:441`, the stock query has no `im.mrp`); patient `'Customer'` saved and a customer record created (`:178, :205-207, :255`); `'AI Pharmacy'` shop name (`:251`); `'Medicine'` name (`:438`); `'CASH'/'PAID'` when missing (`:136`); pack size `COALESCE(m.pack_size, 1)` in stock math. `isExpiredForSale` treats a missing expiry as sellable (`src/utils/inventoryActive.ts:11`). POS reloads a saved ₹ discount into the % box and adds an advance payment to it (`POS:1206, 1457`), and back-dated bills overflow the month (`POS:3663-3671`). |
+| **How it was fixed** | Open — Phase 2 of the plan (with P2-68). |
+| **Priority** | P1 |
+| **What not to touch** | Bill totals and the tax-inclusive formula in `utils/saleTotals.ts`. |
+| **Verified by** | — |
+
+### [Open] P1-76 — Purchase save accepts or invents batch, expiry, rate, GST, invoice number and date
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | Frontend: new lines start at 6% + 6% GST (`PUR:1447-1448`), a missing invoice number becomes `INV-######` (`PUR:2521-2524`), the date starts as today, the credit-note amount is set to the computed-vs-bill difference (`PUR:2184-2186`), and uploads borrow MRP/rate from the catalog. Backend: `formatExpiryToMMYY` clamps the month to 1–12 and turns `31/03/2027` into `12/03` (`src/routes/purchases.ts:70-106`; same in `frontend/src/utils/date.ts:121-125`). Blank batch, missing expiry, rate 0 and GST 0 are saved (`purchases.ts:1097-1105`). |
+| **How it was fixed** | Open — Phase 3 of the plan. |
+| **Priority** | P1 |
+| **What not to touch** | The strict medicine-link chain and `400 unresolved_items` (already correct). |
+| **Verified by** | — |
+
+### [Open] P1-77 — Saving a purchase bill creates duplicate medicines; lines are linked by fuzzy guess
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | `POST /purchases/manual` queues the bill's own spelling in `masterMedItems` before the line is resolved (`purchases.ts:1127-1135`). After COMMIT, `upsertMasterMedicine` (`services/masterMedicinesSeedService.ts:703-717`) inserts a new `medicines` row whenever that spelling differs from the linked medicine (alias or fuzzy match). `resolveMedicineNameMultiTier` links at ≥ 72% fuzzy or by name prefix without confirmation, and the Purchases upload shows 60% matches as green "Ready" (`PUR:2279-2323`). |
+| **How it was fixed** | Open — Phase 3 of the plan. |
+| **Priority** | P1 |
+| **What not to touch** | The verified-id fast path. |
+| **Verified by** | — |
+
+### [Open] P1-78 — Side doors save bills and stock without the POS/purchase checks
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | Email reissue (`purchases.ts:3373-3395`: GST 0, no ledger), staged purchase approve (`:3832-3859`: no ledger), staged/phone sale (`sales.ts:2067-2085, 2725-2767`: first batch by name, price 0, flat 5%, no stock check), Telegram sale path, dead `invoiceService.createInvoice`, supplier return creating medicines (`returns.ts:505`), AI Camera creating a batch (`aiCamera.ts:78-82`), customer-return refund from the client price at 2.5 + 2.5 GST (`customerReturns.ts:104-111`). |
+| **How it was fixed** | Open — Phase 4 of the plan. |
+| **Priority** | P1 |
+| **What not to touch** | — |
+| **Verified by** | — |
+
+### [Open] P2-79 — Pack size guessed as 1, 10, or parsed from text
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | `COALESCE(m.pack_size, 1)` in sales, purchase edit/delete and Investigation. `10` in `utils/stockRebuild.ts:28, 58`, `returns.ts` (6 sites), `customerReturns.ts:173`, the boot sale-subtotal "healing" (`database.ts:3943-3972`) and the medicine editor (`UME:195, 228`). `parsePackSizeFromPackaging` saves `10x10` as 100. In the 27 Sep shop copy, 3,112 of 5,739 shelf batches have no pack size (27 are tablets/capsules). |
+| **How it was fixed** | Open — Phase 5 of the plan: unknown pack size refuses loose operations everywhere. |
+| **Priority** | P2 |
+| **What not to touch** | Medicines whose pack size is saved. |
+| **Verified by** | — |
+
+### [Open] P2-80 — Reports show guessed numbers (profit, paid, expiry, never-moved)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | Profit counts a missing cost as 0 and leaves out loose units and discounts (`reports.ts:86-98`, `monthlyReportService.ts:143`). GSTR-1 taxable = subtotal − discount, which still includes tax (`reports.ts:751`). Expiry reports use `date(expiry_date)`, which cannot read the `MM/YY` that purchases save; the Expiry page reads `05/27` as 2001. Purchase History "Total Paid" = total, and an empty range shows the all-time total (`PurchaseHistory/index.tsx:409-413`). Non-moving "never moved" = 0 days. |
+| **How it was fixed** | Open — Phase 6 of the plan. |
+| **Priority** | P2 |
+| **What not to touch** | Real zero totals (`COALESCE(SUM(x), 0)` for a day with no sales). |
+| **Verified by** | — |
+
+### [Open] P2-73 — Non-bill dates still use UTC "today" (refills, dispatch, WhatsApp queue, reports helpers)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported. Found 2026-09-30 while fixing P1-72. |
+| **Root cause** | About 20 backend files build dates with `toISOString().slice(0, 10)` (UTC "today") or `.slice(0, 19)` (UTC time written as if it were local). Refills (`routes/refills.ts` ×9, `sales.ts` refill next-date ×2), `creditNoteService` ×2, `purchases.ts` reconciled_date ×2, dispatch, whatsappQueue dedupe day, monthly/non-moving report helpers. Between 00:00 and 05:30 shop time "today" is still yesterday there, and refill due dates saved then are one day early. Refill readers mix `date('now')` (UTC) and `date('now','localtime')`. |
+| **How it was fixed** | Open. Planned: one subsystem at a time, switch writers AND readers together to `utils/localTime.ts` / `date('now','localtime')` (changing only writers would make refills less consistent). Guardrail B4 already stops new cases. |
+| **Priority** | P2 |
+| **What not to touch** | Bill dates (fixed in P1-72). |
+| **Verified by** | — |
+
+### [Open] P2-68 — Sale totals assume 2.5% + 2.5% GST when a medicine has no GST rate saved (raised to P1)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported. Found 2026-09-30 in the edit-old-bill audit. |
+| **Root cause** | `calculateSalesGstAndTotals` (`src/utils/saleTotals.ts`, moved unchanged from `routes/sales.ts`) sets CGST and SGST to 2.5% each when neither the line nor `medicines.cgst_per/sgst_per` has a rate. It also treats a real 0% as missing. The bill TOTAL is unaffected (prices are tax-inclusive), but the saved GST split is assumed, not real. **Wider than first thought (fallback audit, 2026-09-30):** POS sends no GST on any line (`POS:3628-3649`), and in the 27 Sep shop copy every one of the 5,739 shelf medicines has 0% in `medicines`. So EVERY POS sale gets 5%. Real rates live on the purchase lines: 12% (28,585 lines), 18% (14,408), 5% (11,892), 0% (8,558). `tax_percent_snapshot` is saved as 0 on the same line. Customer returns (`customerReturns.ts:110-111`) repeat the same rule. |
+| **How it was fixed** | Open — Phase 2 of `PURCHASE_BILL_TRUTH_AUDIT_AND_FIX_PLAN.md`. Proposed: GST % from the purchase line of the same batch, a 0% there is a real 0%, and no rate at all refuses the sale with a plain message. Needs the owner's yes. |
+| **Priority** | P1 (was P2) |
+| **What not to touch** | Bill totals. |
+| **Verified by** | — |

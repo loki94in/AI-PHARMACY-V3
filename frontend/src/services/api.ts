@@ -1131,7 +1131,7 @@ export const api = {
     apiClient.get('/sales/list', { params }).then(res => res.data),
   getSale: (id: number) => apiClient.get(`/sales/${id}`).then(res => res.data),
   updateSale: (id: number, data: Partial<SalePayload>) => apiClient.put(`/sales/${id}`, data).then(res => res.data),
-  deleteSale: (id: number) => apiClient.delete(`/sales/${id}`).then(res => res.data),
+  deleteSale: (id: number, data?: { reason?: string }) => apiClient.delete(`/sales/${id}`, { data }).then(res => res.data),
   
   // Purchases
   getPurchases: (params?: { limit?: number; page?: number; start?: string; end?: string; months?: number; search?: string }) => apiClient.get('/purchases', { params }).then(res => res.data),

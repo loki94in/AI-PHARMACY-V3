@@ -10,7 +10,7 @@ import {} from '../../components/DateRangeFilter';
 import { usePersistedDateRange } from '../../hooks/usePersistedDateRange';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
-import { getTodayString, getNDaysAgoString, formatDisplayDate, toDateInputValue } from '../../utils/date';
+import { getTodayString, getNDaysAgoString, formatDisplayDate, toDateInputValue, getLocalDateString } from '../../utils/date';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { InfiniteTable } from '../../components/InfiniteTable';
 import { VirtualRow } from '../../components/VirtualRow';
@@ -161,15 +161,19 @@ const Sells = () => {
   const [colFilterMaxAmount, setColFilterMaxAmount] = useState('');
   const [colFilterPayVia, setColFilterPayVia] = useState('');
 
-  // Edit modal state
+  // Edit & Management modal state
   const [editInvoice, setEditInvoice] = useState<SaleInvoice | null>(null);
+  const [originalEditItems, setOriginalEditItems] = useState<SaleItem[]>([]);
   const [viewInvoice, setViewInvoice] = useState<SaleInvoice | null>(null);
   const [editItems, setEditItems] = useState<SaleItem[]>([]);
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerPhone, setEditCustomerPhone] = useState('');
   const [editDiscount, setEditDiscount] = useState(0);
   const [editPaymentMedium, setEditPaymentMedium] = useState('CASH');
+  const [editReason, setEditReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmInEdit, setDeleteConfirmInEdit] = useState(false);
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
@@ -318,6 +322,8 @@ const Sells = () => {
     fetchNextPage,
     refetch,
     sentinelRef,
+    removeItem: removeInvoiceRow,
+    updateItem: updateInvoiceRow,
   } = useInfiniteScroll<SaleInvoice>({
     queryKey: 'sells-list',
     cacheKey: 'sells-invoices-cache',
@@ -410,6 +416,32 @@ const Sells = () => {
     }
   };
 
+  const openEditModal = async (invoice: SaleInvoice) => {
+    // Intercept old FY bills
+    if (isOldFinancialYear(invoice.date)) {
+      setOldFyBillConfirm(invoice);
+      return;
+    }
+    setViewInvoice(null);
+    setBarcodeModalInvoice(null);
+    setDeleteConfirm(null);
+    setDeleteConfirmInEdit(false);
+    try {
+      const full = await api.getSale(invoice.id);
+      const itemsList: SaleItem[] = Array.isArray(full.items) ? full.items : [];
+      setEditInvoice(full);
+      setEditItems(JSON.parse(JSON.stringify(itemsList)));
+      setOriginalEditItems(JSON.parse(JSON.stringify(itemsList)));
+      setEditCustomerName(full.customer_name || '');
+      setEditCustomerPhone(full.customer_phone || '');
+      setEditPaymentMedium(full.payment_medium || 'CASH');
+      setEditDiscount(Number(full.discount || 0));
+      setEditReason('');
+    } catch (_err) {
+      toastEvent.trigger('Failed to load invoice items for editing', 'error');
+    }
+  };
+
   const handleRepeatSale = async (invoice: SaleInvoice) => {
     try {
       const full = await api.getSale(invoice.id);
@@ -448,8 +480,22 @@ const Sells = () => {
 
   const handleSaveEdit = async () => {
     if (!editInvoice) return;
+    if (editItems.length === 0) {
+      toastEvent.trigger('Bill cannot be empty. Delete the entire bill instead.', 'error');
+      return;
+    }
     setSaving(true);
     try {
+      const subtotal = editItems.reduce((sum, item) => {
+        const pSize = item.pack_size || 1;
+        const q = item.quantity || 0;
+        const l = item.loose_qty || 0;
+        const d = item.discount_per || 0;
+        const dPrice = item.unit_price * (1 - d / 100);
+        return sum + (q * dPrice) + (l * (dPrice / pSize));
+      }, 0);
+      const grandTotal = Math.max(0, subtotal - editDiscount);
+
       await api.updateSale(editInvoice.id, {
         items: editItems.map(item => ({
           inventory_id: item.inventory_id,
@@ -463,9 +509,23 @@ const Sells = () => {
         discount: editDiscount,
         paymentMedium: editPaymentMedium,
       });
-      toastEvent.trigger('Invoice updated successfully', 'success');
+
+      // Optimistic row update in 0ms (no UI lag)
+      updateInvoiceRow(
+        item => item.id === editInvoice.id,
+        prev => ({
+          ...prev,
+          customer_name: editCustomerName,
+          customer_phone: editCustomerPhone,
+          payment_medium: editPaymentMedium,
+          discount: editDiscount,
+          subtotal: Math.round(subtotal),
+          total_amount: Math.round(grandTotal),
+        })
+      );
+
+      toastEvent.trigger('Invoice updated successfully, shelf stock reconciled', 'success');
       setEditInvoice(null);
-      fetchInvoices(true);
       
       // Centralized cache invalidation for frontend lists and local infinite scroll caches
       invalidateAfterStockWrite(queryClient);
@@ -481,22 +541,25 @@ const Sells = () => {
     }
   };
 
-  const handleDelete = async (id: number, bill?: SaleInvoice) => {
+  const handleDelete = async (id: number, bill?: SaleInvoice, reason?: string) => {
     // Intercept old FY bills — show choice modal instead of direct delete
-    const billToCheck = bill || items.find(i => i.id === id) || viewInvoice;
+    const billToCheck = bill || items.find(i => i.id === id) || viewInvoice || editInvoice;
     if (billToCheck && isOldFinancialYear(billToCheck.date)) {
       setDeleteConfirm(null);
+      setEditInvoice(null);
       setOldFyBillConfirm(billToCheck);
       return;
     }
+
+    // 1. Optimistic removal in 0ms (no UI lag or ghost rows)
+    removeInvoiceRow(i => i.id === id);
+    setDeleteConfirm(null);
+    if (viewInvoice?.id === id) setViewInvoice(null);
+    if (editInvoice?.id === id) setEditInvoice(null);
+
     try {
-      await api.deleteSale(id);
-      toastEvent.trigger('Invoice deleted, stock restored', 'success');
-      setDeleteConfirm(null);
-      if (viewInvoice?.id === id) {
-        setViewInvoice(null);
-      }
-      fetchInvoices(true);
+      await api.deleteSale(id, { reason: reason || editReason || 'Sale invoice deleted' });
+      toastEvent.trigger('Invoice deleted, stock restored to shelf', 'success');
       
       // Centralized cache invalidation for frontend lists and local infinite scroll caches
       invalidateAfterStockWrite(queryClient);
@@ -505,6 +568,8 @@ const Sells = () => {
       api.getCompactInventory().catch(() => {});
     } catch (_err) {
       toastEvent.trigger('Failed to delete invoice', 'error');
+      // If server failed, refetch to restore true state
+      fetchInvoices(true);
     }
   };
 
@@ -551,12 +616,66 @@ const Sells = () => {
     setEditItems(newItems);
   };
 
-  const removeItem = (index: number) => {
+  const removeItemInEdit = (index: number) => {
     if (editItems.length <= 1) {
       toastEvent.trigger('Cannot remove the last item. Delete the entire bill instead.', 'error');
       return;
     }
     setEditItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const getStockDeltaSummary = () => {
+    if (!originalEditItems || originalEditItems.length === 0) return [];
+    const deltas: { name: string; batch: string; text: string; type: 'restore' | 'deduct' | 'same' }[] = [];
+
+    originalEditItems.forEach(orig => {
+      const current = editItems.find(it => it.inventory_id === orig.inventory_id);
+      const name = orig.medicine_name || `Medicine #${orig.inventory_id}`;
+      const batch = orig.batch_number || orig.batch_no || '-';
+      const pSize = orig.pack_size || 1;
+
+      if (!current) {
+        deltas.push({
+          name,
+          batch,
+          text: `Returning ALL ${orig.quantity} strip(s)${orig.loose_qty ? ` + ${orig.loose_qty} loose` : ''} to shelf stock`,
+          type: 'restore'
+        });
+      } else {
+        const origTotalUnits = (orig.quantity * pSize) + (orig.loose_qty || 0);
+        const currTotalUnits = (current.quantity * pSize) + (current.loose_qty || 0);
+        const unitDiff = origTotalUnits - currTotalUnits;
+
+        if (unitDiff > 0) {
+          const strips = Math.floor(unitDiff / pSize);
+          const loose = unitDiff % pSize;
+          const parts = [];
+          if (strips > 0) parts.push(`${strips} strip(s)`);
+          if (loose > 0) parts.push(`${loose} loose unit(s)`);
+          deltas.push({
+            name,
+            batch,
+            text: `Returning ${parts.join(' and ')} to shelf stock`,
+            type: 'restore'
+          });
+        } else if (unitDiff < 0) {
+          const absDiff = Math.abs(unitDiff);
+          const strips = Math.floor(absDiff / pSize);
+          const loose = absDiff % pSize;
+          const parts = [];
+          if (strips > 0) parts.push(`${strips} strip(s)`);
+          if (loose > 0) parts.push(`${loose} loose unit(s)`);
+          deltas.push({
+            name,
+            batch,
+            text: `Deducting additional ${parts.join(' and ')} from shelf stock`,
+            type: 'deduct'
+          });
+        }
+      }
+    });
+
+    return deltas;
   };
 
   const formatDate = (d: string) => {
@@ -612,10 +731,10 @@ const Sells = () => {
                 key: 'month',
                 action: () => {
                   const now = new Date();
-                  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                  const firstDay = getLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
                   dateRangeHelper.setDateRange({ from: firstDay, to: todayStr });
                 },
-                active: dateRangeHelper.dateRange.from === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10) && dateRangeHelper.dateRange.to === todayStr,
+                active: dateRangeHelper.dateRange.from === getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) && dateRangeHelper.dateRange.to === todayStr,
               },
               {
                 label: 'All Time',
@@ -871,63 +990,44 @@ const Sells = () => {
                     </td>
                     <td className="px-3 py-3.5 w-32 shrink-0 flex items-center justify-center" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 min-w-[120px]">
-                        {deleteConfirm === inv.id ? (
-                          <div className="flex items-center gap-1.5 p-1 rounded-lg bg-red/10 border border-red/20 w-full justify-center">
-                            <button
-                              onClick={() => handleDelete(inv.id, inv)}
-                              className="px-2 py-1 bg-red text-white rounded-md text-[9px] font-bold hover:bg-red/80 shadow-md transform hover:scale-105 transition-all"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirm(null)}
-                              className="px-2 py-1 bg-white/10 text-text rounded-md text-[9px] font-bold hover:bg-white/20 shadow-sm transition-all"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => openView(inv)}
-                              className="p-2 rounded-lg bg-white/5 hover:bg-sky-500 hover:text-white border border-glass-border hover:border-sky-500 shadow-sm hover:shadow-[0_0_15px_rgba(14,165,233,0.4)] text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
-                              title="View invoice details"
-                            >
-                              <FileText size={14} />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenBarcode(inv.invoice_no);
-                              }}
-                              className="p-2 rounded-lg bg-bg2 hover:bg-purple-500 hover:text-white border border-glass-border hover:border-purple-500 shadow-sm hover:shadow-[0_0_15px_rgba(168,85,247,0.4)] text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
-                              title="View & Print Invoice Barcode (Code128 + QR)"
-                            >
-                              <QrCode size={14} />
-                            </button>
-                            <button
-                              onClick={() => handleRepeatSale(inv)}
-                              className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 hover:text-white border border-emerald-500/20 hover:border-emerald-500 shadow-sm text-emerald-400 transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
-                              title="Repeat Sale / Refill in POS"
-                            >
-                              <RotateCcw size={14} />
-                            </button>
-                            <button
-                              onClick={() => openEdit(inv)}
-                              className="p-2 rounded-lg bg-white/5 hover:bg-primary hover:text-white border border-glass-border hover:border-primary shadow-sm hover:shadow-primary/30 text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
-                              title="Edit bill in POS"
-                            >
-                              <Edit3 size={14} />
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirm(inv.id)}
-                              className="p-2 rounded-lg bg-white/5 hover:bg-red hover:text-white border border-glass-border hover:border-red shadow-sm hover:shadow-[0_0_15px_rgba(220,38,38,0.4)] text-muted transition-all transform hover:scale-105 active:scale-95"
-                              title="Delete invoice"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        )}
+                        <button
+                          onClick={() => openView(inv)}
+                          className="p-2 rounded-lg bg-bg2 hover:bg-sky-500 hover:text-white border border-glass-border hover:border-sky-500 shadow-sm hover:shadow-[0_0_15px_rgba(14,165,233,0.4)] text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+                          title="View invoice details"
+                        >
+                          <FileText size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenBarcode(inv.invoice_no);
+                          }}
+                          className="p-2 rounded-lg bg-bg2 hover:bg-purple-500 hover:text-white border border-glass-border hover:border-purple-500 shadow-sm hover:shadow-[0_0_15px_rgba(168,85,247,0.4)] text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+                          title="View & Print Invoice Barcode (Code128 + QR)"
+                        >
+                          <QrCode size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleRepeatSale(inv)}
+                          className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 hover:text-white border border-emerald-500/20 hover:border-emerald-500 shadow-sm text-emerald-400 transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+                          title="Repeat Sale / Refill in POS"
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                        <button
+                          onClick={() => openEditModal(inv)}
+                          className="p-2 rounded-lg bg-bg2 hover:bg-primary hover:text-white border border-glass-border hover:border-primary shadow-sm hover:shadow-primary/30 text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+                          title="Manage, Modify & Reconcile Bill"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                        <button
+                          onClick={() => openEditModal(inv)}
+                          className="p-2 rounded-lg bg-bg2 hover:bg-red hover:text-white border border-glass-border hover:border-red shadow-sm hover:shadow-[0_0_15px_rgba(220,38,38,0.4)] text-muted transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+                          title="Delete / Cancel Invoice (with stock preview)"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </td>
                   </VirtualRow>
@@ -951,21 +1051,34 @@ const Sells = () => {
       </div>
 
       {/* Edit Modal */}
+      {/* Bill Management & Deletion Modal */}
       {editInvoice && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden border-primary/20">
+          <div className="glass-panel w-[95vw] max-w-5xl h-[90vh] min-h-[580px] max-h-[880px] flex flex-col overflow-hidden border-primary/30 shadow-2xl">
             {/* Modal Header */}
             <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
-              <div>
-                <h3 className="font-bold text-lg flex items-center gap-2">
-                  <Edit3 size={18} className="text-primary" />
-                  Edit Invoice: {editInvoice.invoice_no}
-                </h3>
-                <p className="text-xs text-muted mt-1">Modify items, customer, or payment details</p>
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-primary/15 text-primary border border-primary/30">
+                  <SlidersHorizontal size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-lg text-text">
+                      Manage & Modify Bill: #{editInvoice.invoice_no}
+                    </h3>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-bg border border-glass-border text-muted">
+                      {formatDate(editInvoice.date)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted mt-0.5">
+                    Review items, modify quantities, restore partial stock, or permanently delete the entire bill
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setEditInvoice(null)}
                 className="p-2 rounded-lg hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer"
+                title="Close"
               >
                 <X size={18} />
               </button>
@@ -973,63 +1086,76 @@ const Sells = () => {
 
             {/* Modal Body */}
             <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
-              {/* Customer Info */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Customer & Payment Info Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-bg2/60 p-3.5 rounded-xl border border-glass-border">
                 <div>
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider mb-1 block">Customer Name</label>
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Patient / Customer Name</label>
                   <input
                     type="text"
                     value={editCustomerName}
                     onChange={e => setEditCustomerName(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/20 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
+                    className="w-full px-3 py-1.5 bg-bg3 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
                     placeholder="Customer name..."
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider mb-1 block">Phone</label>
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Phone Number</label>
                   <input
                     type="text"
                     value={editCustomerPhone}
                     onChange={e => setEditCustomerPhone(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/20 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
+                    className="w-full px-3 py-1.5 bg-bg3 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50 font-mono"
                     placeholder="Phone number..."
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider mb-1 block">Payment Method</label>
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Payment Method</label>
                   <select
                     value={editPaymentMedium}
                     onChange={e => setEditPaymentMedium(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/20 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
+                    className="w-full px-3 py-1.5 bg-bg3 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
                   >
                     <option value="CASH">Cash</option>
-                    <option value="UPI">UPI</option>
+                    <option value="UPI">UPI / Online</option>
                     <option value="CARD">Card</option>
                     <option value="CREDIT">Credit</option>
                   </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Doctor / Prescriber</label>
+                  <div className="px-3 py-1.5 bg-bg3/60 border border-glass-border rounded-lg text-sm text-muted truncate">
+                    {editInvoice.doctor_name || 'Self / Direct'}
+                  </div>
                 </div>
               </div>
 
               {/* Items Table */}
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-bold text-muted uppercase tracking-wider">Invoice Items</h4>
-                  <span className="text-xs text-muted">{editItems.length} item{editItems.length !== 1 ? 's' : ''}</span>
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-muted uppercase tracking-wider">Line Items in this Bill</h4>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                      {editItems.length} item{editItems.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-muted italic">
+                    Adjust Strips or Loose qty to return/deduct stock upon saving
+                  </span>
                 </div>
-                <div className="overflow-x-auto border border-glass-border rounded-lg">
+                <div className="overflow-x-auto border border-glass-border rounded-xl bg-bg2/40">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20">Medicine</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20">Batch</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20">Expiry</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20 text-center">Strips</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20 text-center">Loose</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20 text-center">CD %</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20">MRP</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20">Unit Price</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20">Subtotal</th>
-                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border bg-black/20"></th>
+                      <tr className="bg-bg3/60">
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border">Medicine</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border">Batch</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border">Expiry</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-center">Strips</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-center">Loose</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-center">CD %</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-right">MRP</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-right">Unit Price</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-right">Subtotal</th>
+                        <th className="p-3 text-[10px] font-bold text-muted uppercase tracking-wider border-b border-glass-border text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1040,15 +1166,16 @@ const Sells = () => {
                         const discountedPrice = item.unit_price * (1 - discPer / 100);
                         const itemTotal = (discountedPrice * item.quantity) + ((discountedPrice / packSize) * looseQty);
                         return (
-                          <tr key={item.id} className="hover:bg-white/5">
+                          <tr key={item.id || idx} className="hover:bg-bg3/40 transition-colors">
                             <td className="p-3 border-b border-glass-border/50 text-sm font-semibold">
                               <div className="flex items-center gap-2">
                                 <button
+                                  type="button"
                                   onClick={() => handleOpenEnrichment(item)}
                                   className="text-primary hover:text-sky-400 p-1 bg-primary/10 rounded-lg transition-colors border border-primary/20 shadow-sm"
                                   title="View Medical Profile"
                                 >
-                                  <BookOpen size={14} />
+                                  <BookOpen size={13} />
                                 </button>
                                 <button
                                   type="button"
@@ -1066,150 +1193,292 @@ const Sells = () => {
                                     }
                                   }}
                                   disabled={!item.medicine_id}
-                                  className={`p-1 rounded-lg transition-all border shadow-sm ${item.medicine_id ? 'bg-sky/10 border-sky/20 text-sky hover:text-white hover:bg-sky' : 'opacity-30 cursor-not-allowed border-glass-border text-muted bg-white/5'}`}
+                                  className={`p-1 rounded-lg transition-all border shadow-sm ${item.medicine_id ? 'bg-sky/10 border-sky/20 text-sky hover:text-white hover:bg-sky' : 'opacity-30 cursor-not-allowed border-glass-border text-muted bg-bg3'}`}
                                   title="Quick Edit Medicine"
                                 >
-                                  <Edit3 size={14} />
+                                  <Edit3 size={13} />
                                 </button>
-                                <span>{item.medicine_name || `Item #${item.inventory_id}`}</span>
+                                <span className="text-text">{item.medicine_name || `Item #${item.inventory_id}`}</span>
                               </div>
                             </td>
                             <td className="p-3 border-b border-glass-border/50">
-                              <span className="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded">{item.batch_number || '-'}</span>
+                              <span className="text-[10px] font-mono bg-bg3 px-2 py-0.5 rounded text-text border border-glass-border">{item.batch_number || item.batch_no || '-'}</span>
                             </td>
-                            <td className="p-3 border-b border-glass-border/50 text-[11px] text-muted">{item.expiry_date || '-'}</td>
-                            <td className="p-3 border-b border-glass-border/50">
-                              <input
-                                type="number"
-                                value={item.quantity !== undefined && item.quantity !== null ? item.quantity : 0}
-                                onChange={e => updateItemQty(idx, e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10)))}
-                                className="w-16 px-2 py-1 bg-black/20 border border-glass-border rounded text-sm text-text text-center focus:outline-none focus:border-primary/50"
-                                min={0}
-                              />
+                            <td className="p-3 border-b border-glass-border/50 text-xs font-mono text-muted">{item.expiry_date || '-'}</td>
+                            <td className="p-3 border-b border-glass-border/50 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => updateItemQty(idx, Math.max(0, (item.quantity || 0) - 1))}
+                                  className="w-6 h-6 flex items-center justify-center rounded bg-bg3 hover:bg-bg border border-glass-border text-text font-bold text-xs"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  value={item.quantity !== undefined && item.quantity !== null ? item.quantity : 0}
+                                  onChange={e => updateItemQty(idx, e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10)))}
+                                  className="w-14 px-1.5 py-1 bg-bg border border-glass-border rounded text-sm text-text text-center focus:outline-none focus:border-primary/50 font-bold"
+                                  min={0}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => updateItemQty(idx, (item.quantity || 0) + 1)}
+                                  className="w-6 h-6 flex items-center justify-center rounded bg-bg3 hover:bg-bg border border-glass-border text-text font-bold text-xs"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </td>
-                            <td className="p-3 border-b border-glass-border/50">
-                              <input
-                                type="number"
-                                value={looseQty || ''}
-                                placeholder="0"
-                                onFocus={e => e.target.select()}
-                                onChange={e => updateItemLooseQty(idx, e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10)))}
-                                className="w-16 px-2 py-1 bg-amber/10 border border-amber/30 rounded text-sm text-amber text-center focus:outline-none focus:border-amber/50"
-                                min={0}
-                                max={packSize - 1}
-                                title={`Loose units (max ${packSize - 1} per strip)`}
-                              />
+                            <td className="p-3 border-b border-glass-border/50 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => updateItemLooseQty(idx, Math.max(0, looseQty - 1))}
+                                  className="w-6 h-6 flex items-center justify-center rounded bg-amber/10 hover:bg-amber/20 border border-amber/30 text-amber font-bold text-xs"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  value={looseQty || ''}
+                                  placeholder="0"
+                                  onFocus={e => e.target.select()}
+                                  onChange={e => updateItemLooseQty(idx, e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10)))}
+                                  className="w-12 px-1.5 py-1 bg-amber/10 border border-amber/30 rounded text-sm text-amber text-center focus:outline-none focus:border-amber/50 font-bold"
+                                  min={0}
+                                  max={packSize - 1}
+                                  title={`Loose units (max ${packSize - 1} per strip)`}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => updateItemLooseQty(idx, Math.min(packSize - 1, looseQty + 1))}
+                                  className="w-6 h-6 flex items-center justify-center rounded bg-amber/10 hover:bg-amber/20 border border-amber/30 text-amber font-bold text-xs"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </td>
                             <td className="p-3 border-b border-glass-border/50 text-center">
                               <input
                                 type="number"
                                 value={item.discount_per || ''}
                                 onChange={e => updateItemDiscountPer(idx, parseFloat(e.target.value) || 0)}
-                                className="w-16 px-2 py-1 bg-sky/10 border border-sky/30 rounded text-sm text-sky text-center focus:outline-none focus:border-sky/50"
+                                className="w-14 px-1.5 py-1 bg-sky/10 border border-sky/30 rounded text-sm text-sky text-center focus:outline-none focus:border-sky/50"
                                 min={0}
                                 max={100}
-                                placeholder="%"
+                                placeholder="0%"
                               />
                             </td>
-                            <td className="p-3 border-b border-glass-border/50">
+                            <td className="p-3 border-b border-glass-border/50 text-right">
                               <input
                                 type="number"
                                 value={item.mrp || 0}
                                 onChange={e => updateItemMrp(idx, parseFloat(e.target.value) || 0)}
-                                className="w-20 px-2 py-1 bg-purple/10 border border-purple/30 rounded text-sm text-purple text-right focus:outline-none focus:border-purple/50"
+                                className="w-16 px-1.5 py-1 bg-purple/10 border border-purple/30 rounded text-sm text-purple text-right focus:outline-none focus:border-purple/50"
                                 min={0}
                                 step={0.01}
-                                title="MRP (Maximum Retail Price)"
                               />
                             </td>
-                            <td className="p-3 border-b border-glass-border/50">
+                            <td className="p-3 border-b border-glass-border/50 text-right">
                               <input
                                 type="number"
                                 value={item.unit_price}
                                 onChange={e => updateItemPrice(idx, parseFloat(e.target.value) || 0)}
-                                className="w-20 px-2 py-1 bg-black/20 border border-glass-border rounded text-sm text-text text-right focus:outline-none focus:border-primary/50"
+                                className="w-16 px-1.5 py-1 bg-bg border border-glass-border rounded text-sm text-text text-right focus:outline-none focus:border-primary/50 font-mono"
                                 min={0}
                                 step={0.01}
                               />
                             </td>
-                            <td className="p-3 border-b border-glass-border/50 text-sm font-bold text-green text-right">
+                            <td className="p-3 border-b border-glass-border/50 text-sm font-bold text-green text-right font-mono">
                               ₹{Math.round(itemTotal)}
                             </td>
-                            <td className="p-3 border-b border-glass-border/50">
+                            <td className="p-3 border-b border-glass-border/50 text-center">
                               <button
-                                onClick={() => removeItem(idx)}
-                                className="p-1 rounded hover:bg-red/20 text-muted hover:text-red transition-all"
-                                title="Remove item"
+                                type="button"
+                                onClick={() => removeItemInEdit(idx)}
+                                className="p-1.5 rounded-lg bg-red/10 hover:bg-red text-red hover:text-white transition-all cursor-pointer border border-red/20"
+                                title="Remove item line from bill"
                               >
-                                <X size={12} />
+                                <X size={13} />
                               </button>
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
-                    <tfoot>
-                      <tr className="bg-white/5">
-                        <td colSpan={6} className="p-3 text-sm font-bold text-muted text-right">Subtotal:</td>
-                        <td className="p-3 text-sm font-bold text-green text-right">
-                          ₹{Math.round(editItems.reduce((sum, item) => {
-                            const pSize = item.pack_size || 1;
-                            const q = item.quantity || 0;
-                            const l = item.loose_qty || 0;
-                            const d = item.discount_per || 0;
-                            const dPrice = item.unit_price * (1 - d / 100);
-                            return sum + (q * dPrice) + (l * (dPrice / pSize));
-                          }, 0))}
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
                   </table>
                 </div>
               </div>
 
-              {/* Discount */}
-              <div className="flex items-center gap-3">
-                <label className="text-xs font-bold text-muted uppercase tracking-wider">Discount (₹)</label>
+              {/* Real-time Shelf Stock Delta Preview Card */}
+              <div className="bg-bg2/80 p-4 rounded-xl border border-glass-border space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <PackageCheck size={16} className="text-emerald-400" />
+                    <span className="text-xs font-bold text-text uppercase tracking-wider">
+                      Real-Time Inventory Shelf Reconciliation Preview
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-muted">
+                    Auto-reconciles on Save or full restore on Delete
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {getStockDeltaSummary().length > 0 ? (
+                    getStockDeltaSummary().map((delta, dIdx) => (
+                      <div
+                        key={dIdx}
+                        className={`text-xs px-3 py-1.5 rounded-lg flex items-center justify-between border ${
+                          delta.type === 'restore'
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                            : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                        }`}
+                      >
+                        <span className="font-semibold">{delta.name} <span className="font-mono text-[10px] opacity-75">(Batch: {delta.batch})</span></span>
+                        <span className="font-bold">{delta.text}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-muted px-3 py-1.5 rounded-lg bg-bg3/60 border border-glass-border flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      Shelf stock matches original bill quantities (no stock delta pending).
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Reason Note & Quick Chips */}
+              <div className="bg-bg2/50 p-4 rounded-xl border border-glass-border space-y-2.5">
+                <label className="text-[11px] font-bold text-muted uppercase tracking-wider block">
+                  Modification / Deletion Reason (Recorded in Pharmacy Audit Logs)
+                </label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[
+                    'Customer returned medicine',
+                    'Wrong medicine billed',
+                    'Quantity correction',
+                    'Billing mistake / accidental entry',
+                    'Duplicate bill'
+                  ].map(chip => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setEditReason(chip)}
+                      className={`text-[11px] px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
+                        editReason === chip
+                          ? 'bg-primary text-white border-primary shadow-sm'
+                          : 'bg-bg3 hover:bg-glass-border text-muted hover:text-text border-glass-border'
+                      }`}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
                 <input
-                  type="number"
-                  value={editDiscount}
-                  onChange={e => setEditDiscount(parseFloat(e.target.value) || 0)}
-                  className="w-24 px-3 py-1.5 bg-black/20 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
-                  min={0}
+                  type="text"
+                  value={editReason}
+                  onChange={e => setEditReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-bg border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
+                  placeholder="e.g. Customer returned 1 strip, accidental wrong medicine entry..."
                 />
+              </div>
+
+              {/* Financial Breakdown */}
+              <div className="flex justify-end pt-2">
+                <div className="w-80 space-y-2 bg-bg2/60 p-4 rounded-xl border border-glass-border">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted">Calculated Subtotal:</span>
+                    <span className="font-semibold text-text">
+                      ₹{Math.round(editItems.reduce((sum, item) => {
+                        const pSize = item.pack_size || 1;
+                        const q = item.quantity || 0;
+                        const l = item.loose_qty || 0;
+                        const d = item.discount_per || 0;
+                        const dPrice = item.unit_price * (1 - d / 100);
+                        return sum + (q * dPrice) + (l * (dPrice / pSize));
+                      }, 0))}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted">Discount (₹):</span>
+                    <input
+                      type="number"
+                      value={editDiscount}
+                      onChange={e => setEditDiscount(parseFloat(e.target.value) || 0)}
+                      className="w-24 px-2 py-1 bg-bg border border-glass-border rounded text-sm text-amber text-right font-bold focus:outline-none focus:border-amber/50"
+                      min={0}
+                    />
+                  </div>
+                  <div className="flex justify-between text-base font-bold pt-2 border-t border-glass-border">
+                    <span className="text-text">Reconciled Total:</span>
+                    <span className="text-green text-xl font-bold">
+                      ₹{Math.round(Math.max(0, editItems.reduce((sum, item) => {
+                        const pSize = item.pack_size || 1;
+                        const q = item.quantity || 0;
+                        const l = item.loose_qty || 0;
+                        const d = item.discount_per || 0;
+                        const dPrice = item.unit_price * (1 - d / 100);
+                        return sum + (q * dPrice) + (l * (dPrice / pSize));
+                      }, 0) - editDiscount))}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="p-5 border-t border-glass-border flex justify-between items-center bg-white/5 sticky bottom-0">
+            <div className="p-4 border-t border-glass-border flex flex-col sm:flex-row justify-between items-center gap-3 bg-bg3 shrink-0">
               <button
+                type="button"
                 onClick={() => setEditInvoice(null)}
-                className="px-4 py-2 bg-white/10 text-muted rounded-lg text-sm font-semibold hover:bg-white/20 transition-all"
+                className="px-4 py-2.5 bg-bg2 hover:bg-glass-border text-muted hover:text-text rounded-xl text-sm font-semibold border border-glass-border transition-all cursor-pointer w-full sm:w-auto"
               >
-                Cancel
+                Close Without Saving
               </button>
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <div className="text-xs text-muted">Total</div>
-                  <div className="text-lg font-extrabold text-green">
-                    ₹{Math.round(editItems.reduce((sum, item) => {
-                      const pSize = item.pack_size || 1;
-                      const q = item.quantity || 0;
-                      const l = item.loose_qty || 0;
-                      const d = item.discount_per || 0;
-                      const dPrice = item.unit_price * (1 - d / 100);
-                      return sum + (q * dPrice) + (l * (dPrice / pSize));
-                    }, 0) - editDiscount)}
+
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                {deleteConfirmInEdit ? (
+                  <div className="flex items-center gap-2 p-1.5 rounded-xl bg-red-500/15 border border-red-500/40">
+                    <span className="text-xs text-red font-bold px-2">
+                      Permanently delete #{editInvoice.invoice_no}?
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editInvoice.id, editInvoice, editReason)}
+                      disabled={deleting}
+                      className="px-3.5 py-1.5 bg-red hover:bg-red/80 text-white rounded-lg text-xs font-bold transition-all shadow-md cursor-pointer"
+                    >
+                      {deleting ? 'Deleting...' : 'Yes, Delete Bill & Restore Stock'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirmInEdit(false)}
+                      className="px-2.5 py-1.5 bg-bg2 text-text rounded-lg text-xs font-semibold hover:bg-glass-border transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmInEdit(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-red/10 hover:bg-red text-red hover:text-white border border-red/30 rounded-xl text-sm font-bold transition-all cursor-pointer shadow-sm"
+                    title="Delete this entire bill and restore 100% of the medicine stock"
+                  >
+                    <Trash2 size={16} />
+                    Delete Entire Bill
+                  </button>
+                )}
+
                 <button
+                  type="button"
                   onClick={handleSaveEdit}
                   disabled={saving}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-lg text-sm font-bold hover:bg-primary/80 disabled:opacity-50 transition-all"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-bold disabled:opacity-50 transition-all shadow-lg cursor-pointer"
                 >
-                  <Save size={14} />
-                  {saving ? 'Saving...' : 'Save Changes'}
+                  <Save size={16} />
+                  {saving ? 'Saving...' : 'Save Changes & Reconcile Stock'}
                 </button>
               </div>
             </div>
@@ -1405,34 +1674,18 @@ const Sells = () => {
               </button>
 
               <div className="flex items-center gap-3">
-                {deleteConfirm === viewInvoice.id ? (
-                  <div className="flex items-center gap-2 p-1 rounded-lg bg-red-500/10 border border-red-500/30">
-                    <span className="text-xs text-red font-semibold px-2">Delete this bill?</span>
-                    <button
-                      onClick={() => handleDelete(viewInvoice.id, viewInvoice)}
-                      className="px-3 py-1.5 bg-red hover:bg-red/80 text-white rounded-lg text-xs font-bold transition-all shadow-md cursor-pointer"
-                    >
-                      Yes, Delete
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirm(null)}
-                      className="px-3 py-1.5 bg-bg3 text-text rounded-lg text-xs font-bold hover:bg-glass-border transition-all cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setDeleteConfirm(viewInvoice.id)}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red text-red hover:text-white border border-red-500/30 rounded-lg text-sm font-bold transition-all cursor-pointer"
-                    title="Delete invoice and restore inventory stock"
-                  >
-                    <Trash2 size={15} />
-                    Delete Invoice
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => openEditModal(viewInvoice)}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red text-red hover:text-white border border-red-500/30 rounded-lg text-sm font-bold transition-all cursor-pointer shadow-sm"
+                  title="Open full bill management to modify quantities, restore partial stock, or delete the entire bill"
+                >
+                  <Trash2 size={15} />
+                  Manage & Delete Bill
+                </button>
 
                 <button
+                  type="button"
                   onClick={() => handleRepeatSale(viewInvoice)}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-sm font-bold transition-all cursor-pointer shadow-sm"
                   title="Load all items and patient from this bill into POS for repeat sale / refill"
@@ -1442,11 +1695,13 @@ const Sells = () => {
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => openEdit(viewInvoice)}
-                  className="flex items-center gap-2 px-5 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg text-sm font-bold transition-all cursor-pointer"
+                  className="flex items-center gap-2 px-5 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg text-sm font-bold transition-all cursor-pointer shadow-sm"
+                  title="Edit this invoice in POS counter interface"
                 >
                   <Edit3 size={15} />
-                  Edit Invoice
+                  Edit in POS
                 </button>
               </div>
             </div>

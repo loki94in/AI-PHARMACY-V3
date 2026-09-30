@@ -1,5 +1,8 @@
 import express from 'express';
-import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
+import { INVENTORY_ACTIVE_WHERE, refreshInventoryActiveStatus } from '../utils/inventoryActive.js';
+import { calculateSalesGstAndTotals } from '../utils/saleTotals.js';
+import { applySaleBillEdit, SaleEditError } from '../services/saleBillEditService.js';
+import { normalizeToLocalSqlDateTime, toLocalSqlDateTime } from '../utils/localTime.js';
 import { Database } from 'sqlite';
 import { dbManager } from '../database/connection.js';
 import { productNameFilterService } from '../services/productNameFilterService.js';
@@ -22,6 +25,7 @@ import { returnWindowService } from '../services/returnWindowService.js';
 import { tenantAuthMiddleware } from '../middleware/tenantAuth.js';
 import { resolveStoreId, storeContextService } from '../services/storeContextService.js';
 import { imageCompressionService } from '../services/imageCompressionService.js';
+import { invalidateInvestigationTimelineCache } from './investigation.js';
 
 const router = express.Router();
 router.use(tenantAuthMiddleware);
@@ -99,101 +103,6 @@ const generateInvoiceNo = async (db: Database) => {
   const padded = String(nextNum).padStart(4, '0');
   return `${prefix}${padded}`;
 };
-
-interface GstItemBreakdown {
-  item: any;
-  cgst_value: number;
-  sgst_value: number;
-}
-
-const calculateSalesGstAndTotals = async (
-  db: Database,
-  items: any[],
-  discount: number
-) => {
-  let subtotal = 0;
-  let totalCgst = 0;
-  let totalSgst = 0;
-  const itemTaxBreakdowns: GstItemBreakdown[] = [];
-
-  const missingInventoryIds = items
-    .filter(item => {
-      const c = Number(item.cgst_per !== undefined ? item.cgst_per : (item.cgst !== undefined ? item.cgst : NaN));
-      const s = Number(item.sgst_per !== undefined ? item.sgst_per : (item.sgst !== undefined ? item.sgst : NaN));
-      return (isNaN(c) || isNaN(s) || (c === 0 && s === 0)) && item.inventory_id;
-    })
-    .map(item => item.inventory_id);
-
-  const medTaxMap = new Map<number, { cgst_per: number; sgst_per: number }>();
-  if (missingInventoryIds.length > 0) {
-    const placeholders = missingInventoryIds.map(() => '?').join(',');
-    const rows = await db.all(
-      `SELECT im.id as inventory_id, m.cgst_per, m.sgst_per FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
-      missingInventoryIds
-    );
-    for (const r of rows) {
-      medTaxMap.set(r.inventory_id, { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
-    }
-  }
-
-  for (const item of items) {
-    const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0, inventory_id } = item;
-    const q = Number(quantity);
-    const l = Number(loose_qty);
-    const pSize = Math.max(1, Number(pack_size || 1));
-    const d = Number(discount_per || item.discountPer || 0);
-    const uPrice = Number(unit_price);
-    const dPrice = uPrice * (1 - d / 100);
-    const lineGross = (q * dPrice) + (l * (dPrice / pSize));
-    subtotal += lineGross;
-
-    let cgstPer = Number(item.cgst_per !== undefined ? item.cgst_per : (item.cgst !== undefined ? item.cgst : NaN));
-    let sgstPer = Number(item.sgst_per !== undefined ? item.sgst_per : (item.sgst !== undefined ? item.sgst : NaN));
-
-    if ((isNaN(cgstPer) || isNaN(sgstPer) || (cgstPer === 0 && sgstPer === 0)) && inventory_id) {
-      const medTax = medTaxMap.get(inventory_id);
-      if (medTax) {
-        if (isNaN(cgstPer) || cgstPer === 0) cgstPer = Number(medTax.cgst_per) || 0;
-        if (isNaN(sgstPer) || sgstPer === 0) sgstPer = Number(medTax.sgst_per) || 0;
-      }
-    }
-
-    if (isNaN(cgstPer) || cgstPer === 0) cgstPer = 2.5;
-    if (isNaN(sgstPer) || sgstPer === 0) sgstPer = 2.5;
-
-    const gstRate = cgstPer + sgstPer;
-    const taxable = gstRate > 0 ? (lineGross / (1 + (gstRate / 100))) : lineGross;
-    const lineTax = lineGross - taxable;
-    const cgst_value = Number(((lineTax * cgstPer) / (gstRate || 1)).toFixed(2));
-    const sgst_value = Number(((lineTax * sgstPer) / (gstRate || 1)).toFixed(2));
-
-    totalCgst += cgst_value;
-    totalSgst += sgst_value;
-
-    itemTaxBreakdowns.push({
-      item,
-      cgst_value,
-      sgst_value
-    });
-  }
-
-  const roundedCgst = Number(totalCgst.toFixed(2));
-  const roundedSgst = Number(totalSgst.toFixed(2));
-  const total = Math.round(subtotal - Number(discount));
-  const tax = Number((roundedCgst + roundedSgst).toFixed(2));
-  const roff = Number((total - (subtotal - Number(discount))).toFixed(2));
-
-  return {
-    subtotal,
-    total,
-    tax,
-    roff,
-    totalCgst: roundedCgst,
-    totalSgst: roundedSgst,
-    itemTaxBreakdowns
-  };
-};
-
 
 // Get next sequential invoice number
 router.get('/next-invoice', async (_req, res) => {
@@ -317,7 +226,11 @@ router.post('/', async (req, res) => {
     const invoice_no = await generateInvoiceNo(db);
 
     // Insert invoice
-    const invoiceDateValue = sale_date ? new Date(sale_date).toISOString() : new Date().toISOString();
+    // Shop local time, never UTC (utils/localTime.ts): the bill shows on the day it was made.
+    const invoiceDateValue = sale_date ? normalizeToLocalSqlDateTime(sale_date) : toLocalSqlDateTime();
+    if (!invoiceDateValue) {
+      throw new Error(`Invalid sale date "${sale_date}".`);
+    }
     let resolvedDoctorId = doctor_id || null;
     if (doctor_name && typeof doctor_name === 'string' && doctor_name.trim().length > 0) {
       const cleanDocName = doctor_name.trim();
@@ -1327,21 +1240,21 @@ router.get('/list', async (req, res) => {
     if (search) {
       const searchTokens = search.split(/\s+/).filter(Boolean);
       const tokenLike = searchTokens.length > 1 ? `%${searchTokens.join('%')}%` : `%${search}%`;
-      whereClauses.push('(si.invoice_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR d.name LIKE ? OR EXISTS (SELECT 1 FROM sale_items sale_it JOIN inventory_master inv_m ON sale_it.inventory_id = inv_m.id JOIN medicines m_search ON inv_m.medicine_id = m_search.id WHERE sale_it.invoice_id = si.id AND (inv_m.batch_no LIKE ? OR m_search.name LIKE ?)))');
-      params.push(tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike);
+      whereClauses.push('(si.invoice_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR d.name LIKE ? OR EXISTS (SELECT 1 FROM sale_items sale_it LEFT JOIN inventory_master inv_m ON sale_it.inventory_id = inv_m.id LEFT JOIN medicines m_search ON inv_m.medicine_id = m_search.id WHERE sale_it.invoice_id = si.id AND (inv_m.batch_no LIKE ? OR sale_it.batch_no_snapshot LIKE ? OR sale_it.batch_no LIKE ? OR m_search.name LIKE ? OR sale_it.medicine_name_snapshot LIKE ?)))');
+      params.push(tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike);
     }
     // Constrain by date: if search is active, bypass date_from/date_to unless strict_date=true is explicitly requested
     if (date_from && (!search || isStrictDate)) {
-      whereClauses.push("DATE(si.date, 'localtime') >= DATE(?)");
+      whereClauses.push("DATE(si.date) >= DATE(?)");
       params.push(date_from);
     }
     if (date_to && (!search || isStrictDate)) {
-      whereClauses.push("DATE(si.date, 'localtime') <= DATE(?)");
+      whereClauses.push("DATE(si.date) <= DATE(?)");
       params.push(date_to);
     }
     if (batch && !search) {
-      whereClauses.push('EXISTS (SELECT 1 FROM sale_items sale_it JOIN inventory_master inv_m ON sale_it.inventory_id = inv_m.id WHERE sale_it.invoice_id = si.id AND inv_m.batch_no LIKE ?)');
-      params.push(`%${batch}%`);
+      whereClauses.push('EXISTS (SELECT 1 FROM sale_items sale_it LEFT JOIN inventory_master inv_m ON sale_it.inventory_id = inv_m.id WHERE sale_it.invoice_id = si.id AND (inv_m.batch_no LIKE ? OR sale_it.batch_no_snapshot LIKE ? OR sale_it.batch_no LIKE ?))');
+      params.push(`%${batch}%`, `%${batch}%`, `%${batch}%`);
     }
     if (!isNaN(min_amount)) {
       whereClauses.push('si.subtotal >= ?');
@@ -2381,157 +2294,82 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    // Resolve customer
+    // Patient: the bill keeps its saved patient unless the edit really changed the name or
+    // phone. Re-sending the same patient (Sells always sends it) must not re-link the bill
+    // or create a duplicate customer because of phone formatting.
+    const digitsOf = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+    const linkedCustomer = existing.customer_id
+      ? await db.get('SELECT name, phone FROM customers WHERE id = ?', [existing.customer_id])
+      : null;
+    const savedName = String(existing.customer_name_snapshot ?? linkedCustomer?.name ?? '').trim();
+    const savedPhone = digitsOf(existing.customer_phone_snapshot ?? linkedCustomer?.phone);
+    const newName = typeof patient_name === 'string' ? patient_name.trim() : '';
+    const customerChanged = !!newName && (
+      newName.toLowerCase() !== savedName.toLowerCase() ||
+      (patient_phone !== undefined && digitsOf(patient_phone) !== savedPhone)
+    );
     let customerId = existing.customer_id;
-    if (patient_name) {
-      const existingCust = await db.get('SELECT id FROM customers WHERE name = ? AND phone = ?', [patient_name, patient_phone || '']);
+    if (customerChanged) {
+      const existingCust = await db.get('SELECT id FROM customers WHERE name = ? AND phone = ?', [newName, patient_phone || '']);
       if (existingCust) {
         customerId = existingCust.id;
       } else {
-        const custResult = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [patient_name, patient_phone || '']);
+        const custResult = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [newName, patient_phone || '']);
         customerId = custResult.lastID;
       }
     }
 
-    // Resolve doctor
-    let resolvedDoctorId = doctor_id !== undefined ? (doctor_id || null) : (existing.doctor_id || null);
-    if (doctor_name !== undefined) {
-      if (doctor_name && typeof doctor_name === 'string' && doctor_name.trim().length > 0) {
-        const cleanDocName = doctor_name.trim();
-        const docRow = await db.get('SELECT id FROM doctors WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1', [cleanDocName]);
-        if (docRow) {
-          resolvedDoctorId = docRow.id;
-        } else {
-          const newDoc = await db.run('INSERT INTO doctors (name) VALUES (?)', [cleanDocName]);
-          resolvedDoctorId = newDoc.lastID;
-        }
-      } else {
-        resolvedDoctorId = null;
-      }
-    }
-
-    const reqDocSetting = await db.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
-    const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== 'false' : true;
-    if (isDoctorRequired && !resolvedDoctorId) {
-      return res.status(400).json({ error: 'Doctor name is required to save the bill. Please select or enter a doctor name.' });
-    }
-
-    // If items changed, reverse old stock and replace
-    if (Array.isArray(items)) {
-      // Reverse old stock (strips + loose as one pool, same as the original sale deduction).
-      // Batch-fetch once, restore through an in-memory map so multiple old lines on the
-      // same inventory_id accumulate correctly instead of racing on stale reads.
-      const oldItems = await db.all('SELECT inventory_id, quantity, loose_qty, batch_no FROM sale_items WHERE invoice_id = ?', [id]);
-      for (const oi of oldItems) {
-        if (!oi.inventory_id && oi.batch_no) {
-          const invRow = await db.get('SELECT id FROM inventory_master WHERE batch_no = ? LIMIT 1', [(oi.batch_no || '').trim()]);
-          if (invRow) oi.inventory_id = invRow.id;
-        }
-      }
-      const oldInventoryIds = oldItems.map((oi: any) => oi.inventory_id).filter(Boolean);
-      const oldStockMap = new Map<number, any>();
-      if (oldInventoryIds.length > 0) {
-        const placeholders = oldInventoryIds.map(() => '?').join(',');
-        const rows = await db.all(
-          `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, COALESCE(m.pack_size, 1) as pack_size
-           FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
-          oldInventoryIds
-        );
-        for (const r of rows) oldStockMap.set(r.inventory_id, r);
-      }
-      for (const oi of oldItems) {
-        const oldStock = oldStockMap.get(oi.inventory_id);
-        if (!oldStock) continue;
-        const restored = applyStockDelta(
-          { quantity: oldStock.quantity, loose_quantity: oldStock.loose_quantity },
-          Number(oi.quantity), Number(oi.loose_qty || 0), oldStock.pack_size || 1
-        );
-        await db.run('UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?', [restored.quantity, restored.loose_quantity, oi.inventory_id]);
-        await recordStockLedger(db, {
-          medicine_id: oldStock.medicine_id, batch_no: oldStock.batch_no,
-          quantity: Number(oi.quantity), loose_quantity: Number(oi.loose_qty || 0),
-          transaction_type: 'sale_edit_restore', transaction_id: id
-        });
-        await applySaleDelta(db, oldStock.medicine_id, -Number(oi.quantity || 0));
-        oldStockMap.set(oi.inventory_id, { ...oldStock, quantity: restored.quantity, loose_quantity: restored.loose_quantity });
-      }
-
-      // Delete old items
-      await db.run('DELETE FROM sale_items WHERE invoice_id = ?', [id]);
-
-      // Compute new totals and GST breakdown
-      const gstCalc = await calculateSalesGstAndTotals(db, items, Number(discount || 0));
-      const { subtotal, total, tax, roff, totalCgst, totalSgst, itemTaxBreakdowns } = gstCalc;
-
-      // Batch-fetch stock for the new item set the same way the checkout endpoint does —
-      // one query, then an in-memory map kept in sync after each decrement so two new
-      // lines sharing an inventory_id still see each other's deduction.
-      const newInventoryIds = items.map((it: any) => it.inventory_id).filter(Boolean);
-      const editStockMap = new Map<number, any>();
-      if (newInventoryIds.length > 0) {
-        const placeholders = newInventoryIds.map(() => '?').join(',');
-        const rows = await db.all(
-          `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(m.pack_size, 1) as pack_size
-           FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
-          newInventoryIds
-        );
-        for (const r of rows) editStockMap.set(r.inventory_id, r);
-      }
-
-      for (const item of items) {
-        const { inventory_id, quantity = 0, unit_price = 0, loose_qty = 0, discount_per = 0 } = item;
-
-        // Stock Level & Expiry Verification (strips + loose counted as one pool)
-        const currentStock = editStockMap.get(inventory_id);
-        const pSize = currentStock ? (currentStock.pack_size || 1) : 1;
-        const soldTotalUnits = Number(quantity) * pSize + Number(loose_qty);
-        const availableTotalUnits = currentStock ? (currentStock.quantity * pSize + currentStock.loose_quantity) : 0;
-        if (!currentStock || availableTotalUnits < soldTotalUnits) {
-          throw new Error(`Insufficient stock for inventory item ID ${inventory_id}. Available: ${currentStock ? currentStock.quantity : 0}, Requested: ${quantity}`);
-        }
-
-        if (currentStock.expiry_date) {
-          let expDate;
-          if (currentStock.expiry_date.includes('/')) {
-            const parts = currentStock.expiry_date.split('/');
-            let year = parseInt(parts[1], 10);
-            const month = parseInt(parts[0], 10) - 1;
-            if (year < 100) year += 2000;
-            expDate = new Date(year, month + 1, 0);
+    // Doctor: only an edit that sends doctor fields (POS edit mode) changes or re-checks it.
+    // An edit without them (Sells) keeps the doctor saved on the bill, even an old bill that
+    // was saved without one.
+    const doctorTouched = doctor_id !== undefined || doctor_name !== undefined;
+    let resolvedDoctorId = existing.doctor_id || null;
+    if (doctorTouched) {
+      resolvedDoctorId = doctor_id !== undefined ? (doctor_id || null) : resolvedDoctorId;
+      if (doctor_name !== undefined) {
+        if (doctor_name && typeof doctor_name === 'string' && doctor_name.trim().length > 0) {
+          const cleanDocName = doctor_name.trim();
+          const docRow = await db.get('SELECT id FROM doctors WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1', [cleanDocName]);
+          if (docRow) {
+            resolvedDoctorId = docRow.id;
           } else {
-            expDate = new Date(currentStock.expiry_date);
+            const newDoc = await db.run('INSERT INTO doctors (name) VALUES (?)', [cleanDocName]);
+            resolvedDoctorId = newDoc.lastID;
           }
-          if (expDate < new Date()) {
-            throw new Error(`Cannot sell expired product. Inventory ID ${inventory_id} expired on ${currentStock.expiry_date}.`);
-          }
+        } else {
+          resolvedDoctorId = null;
         }
-
-        const taxBreakdown = itemTaxBreakdowns.find(tb => tb.item === item);
-        const itemCgst = taxBreakdown ? taxBreakdown.cgst_value : 0;
-        const itemSgst = taxBreakdown ? taxBreakdown.sgst_value : 0;
-
-        await db.run('INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [id, inventory_id, quantity, unit_price, loose_qty, discount_per, itemCgst, itemSgst]);
-        const newStock = applyStockDelta(
-          { quantity: currentStock.quantity, loose_quantity: currentStock.loose_quantity },
-          -Number(quantity), -Number(loose_qty), pSize
-        );
-        await db.run('UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?', [newStock.quantity, newStock.loose_quantity, inventory_id]);
-        await recordStockLedger(db, {
-          medicine_id: currentStock.medicine_id, batch_no: currentStock.batch_no,
-          quantity: -Number(quantity), loose_quantity: -Number(loose_qty),
-          transaction_type: 'sale_edit', transaction_id: id
-        });
-        await applySaleDelta(db, currentStock.medicine_id, Number(quantity));
-        editStockMap.set(inventory_id, { ...currentStock, quantity: newStock.quantity, loose_quantity: newStock.loose_quantity });
       }
 
+      const reqDocSetting = await db.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+      const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== 'false' : true;
+      if (isDoctorRequired && !resolvedDoctorId) {
+        await db.run('ROLLBACK');
+        return res.status(400).json({ error: 'Doctor name is required to save the bill. Please select or enter a doctor name.' });
+      }
+    }
+    const doctorChanged = (resolvedDoctorId || null) !== (existing.doctor_id || null);
+
+    // Lines: one shared rule set with the Investigation correction (services/saleBillEditService.ts).
+    // Stock moves only by the net change per batch; totals use the POS math.
+    if (Array.isArray(items)) {
+      const { subtotal, total, tax, roff, totalCgst, totalSgst } = await applySaleBillEdit(db, id, items, Number(discount || 0));
       await db.run(
         'UPDATE sales_invoices SET customer_id = ?, total_amount = ?, tax_amount = ?, cgst_value = ?, sgst_value = ?, payment_medium = COALESCE(?, payment_medium), payment_status = COALESCE(?, payment_status), discount = ?, subtotal = ?, doctor_id = ?, roff = ? WHERE id = ?',
         [customerId, total, tax, totalCgst, totalSgst, paymentMedium || null, paymentStatus || null, Number(discount || 0), subtotal, resolvedDoctorId, roff, id]
       );
     } else {
-      // Just update customer/discount/doctor
-      await db.run('UPDATE sales_invoices SET customer_id = ?, doctor_id = ? WHERE id = ?', [customerId, resolvedDoctorId, id]);
+      await db.run('UPDATE sales_invoices SET customer_id = ?, doctor_id = ?, payment_medium = COALESCE(?, payment_medium), payment_status = COALESCE(?, payment_status) WHERE id = ?', [customerId, resolvedDoctorId, paymentMedium || null, paymentStatus || null, id]);
+    }
+
+    // The bill list and print read the saved name copies first, so a changed patient or
+    // doctor must update them or the edit would never show.
+    if (customerChanged) {
+      await db.run('UPDATE sales_invoices SET customer_name_snapshot = ?, customer_phone_snapshot = ? WHERE id = ?', [newName, patient_phone || '', id]);
+    }
+    if (doctorChanged) {
+      const doctorRow = resolvedDoctorId ? await db.get('SELECT name FROM doctors WHERE id = ?', [resolvedDoctorId]) : null;
+      await db.run('UPDATE sales_invoices SET doctor_name_snapshot = ? WHERE id = ?', [doctorRow?.name ?? null, id]);
     }
 
     // Recalculate customer credit balance for affected customers
@@ -2560,6 +2398,7 @@ router.put('/:id', async (req, res) => {
       const { eventService } = await import('../services/eventService.js');
       eventService.broadcast('sales_sync', { success: true, action: 'update', id: Number(id) });
       eventService.broadcast('inventory_sync', { success: true });
+      eventService.broadcast('inventory_changed', { reason: 'sale_edit', invoice_id: Number(id) });
     } catch (sseErr) {
       console.warn('Could not broadcast sale update:', sseErr);
     }
@@ -2582,7 +2421,7 @@ router.put('/:id', async (req, res) => {
     }
     const err = error as Error;
     console.error(JSON.stringify({ message: 'Failed to update sale', error: err.message, timestamp: new Date().toISOString() }));
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    res.status(error instanceof SaleEditError ? 400 : 500).json({ error: err.message || 'Internal server error' });
   }
 });
 
@@ -2590,7 +2429,10 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const rawReason = req.body?.reason || req.query?.reason || 'Sale invoice deleted';
+    const reason = String(rawReason).trim().slice(0, 255);
     let notFound = false;
+    let deletedInvoiceNo = '';
 
     await dbManager.transaction(async (db) => {
       const existing = await db.get('SELECT * FROM sales_invoices WHERE id = ?', [id]);
@@ -2598,6 +2440,7 @@ router.delete('/:id', async (req, res) => {
         notFound = true;
         return;
       }
+      deletedInvoiceNo = existing.invoice_no || '';
 
       // Reverse stock (strips + loose as one pool)
       const items = await db.all('SELECT inventory_id, quantity, loose_qty FROM sale_items WHERE invoice_id = ?', [id]);
@@ -2627,7 +2470,33 @@ router.delete('/:id', async (req, res) => {
           quantity: Number(item.quantity), loose_quantity: Number(item.loose_qty || 0),
           transaction_type: 'sale_delete_restore', transaction_id: id
         });
+        // Keep the map current so a second line on the same batch adds to this restore
+        // instead of overwriting it from the stale pre-delete read.
+        stockMap.set(item.inventory_id, { ...stock, quantity: restored.quantity, loose_quantity: restored.loose_quantity });
       }
+
+      // A sale that emptied a batch set is_active = 0; POS search and the Inventory
+      // "in stock" filter hide those rows, so restored stock must re-activate them.
+      for (const invId of stockMap.keys()) {
+        await refreshInventoryActiveStatus(db, invId);
+      }
+
+      // Record audit entry in action_logs
+      await db.run(
+        'INSERT INTO action_logs (action_type, description, metadata) VALUES (?, ?, ?)',
+        [
+          'sale_deleted',
+          `Sale #${existing.invoice_no || id} deleted (${existing.customer_name_snapshot || 'Customer'}, ₹${existing.total_amount || 0}): ${reason}`,
+          JSON.stringify({
+            invoice_id: Number(id),
+            invoice_no: existing.invoice_no,
+            customer_name: existing.customer_name_snapshot,
+            total_amount: existing.total_amount,
+            reason,
+            items_count: items.length
+          })
+        ]
+      ).catch(() => {});
 
       // Delete items then invoice
       await db.run('DELETE FROM sale_items WHERE invoice_id = ?', [id]);
@@ -2654,10 +2523,13 @@ router.delete('/:id', async (req, res) => {
     }
 
     inventoryCache.invalidate();
+    invalidateInvestigationTimelineCache();
 
     try {
       const { eventService } = await import('../services/eventService.js');
-      eventService.broadcast('sales_sync', { success: true, action: 'delete', id: Number(id) });
+      eventService.broadcast('sales_sync', { success: true, action: 'delete', id: Number(id), invoice_no: deletedInvoiceNo });
+      eventService.broadcast('inventory_sync', { success: true });
+      eventService.broadcast('inventory_changed', { reason: 'sale_delete', invoice_id: Number(id) });
     } catch (sseErr) {
       console.warn('Could not broadcast sale delete update:', sseErr);
     }
@@ -2869,7 +2741,8 @@ router.post('/staged/:id/approve', async (req, res) => {
     // Save invoice
     const result = await db.run(
       'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date, discount, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [invoice_no, customerId, total, tax, 'CASH', 'PAID', staged.sale_date, Number(finalDiscount), subtotal]
+      // The phone sends its sale time as UTC ISO; the bill keeps that moment in shop time.
+      [invoice_no, customerId, total, tax, 'CASH', 'PAID', normalizeToLocalSqlDateTime(staged.sale_date), Number(finalDiscount), subtotal]
     );
     const invoiceId = result.lastID;
 

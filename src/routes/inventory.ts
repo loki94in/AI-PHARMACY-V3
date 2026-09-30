@@ -1066,6 +1066,9 @@ router.post('/sync', async (req, res) => {
     await db.run('COMMIT');
     res.json({ success: true, message: `Successfully synced ${count} stock override(s).`, count });
   } catch (error: any) {
+    // Without this ROLLBACK a failed override left the shared connection inside the
+    // transaction, and the watchdog later rolled back everyone else's writes with it.
+    if (db) { try { await db.run('ROLLBACK'); } catch (_) {} }
     console.error('Failed to sync stock overrides:', error);
     res.status(500).json({ error: error.message || 'Internal server error during stock sync' });
   }

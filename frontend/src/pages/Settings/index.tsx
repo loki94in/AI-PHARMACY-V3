@@ -5686,8 +5686,10 @@ function LicenseManagementCard() {
 function SoftwareUpdateCard() {
   const [checking, setChecking] = React.useState(false);
   const [installing, setInstalling] = React.useState(false);
+  const [installedVersion, setInstalledVersion] = React.useState<string>('0.1.27');
   const [result, setResult] = React.useState<{
     hasUpdate: boolean;
+    currentVersion?: string;
     latestVersion?: string;
     downloadUrl?: string;
     changelog?: string;
@@ -5697,13 +5699,23 @@ function SoftwareUpdateCard() {
   const [error, setError] = React.useState<string | null>(null);
   const [lastChecked, setLastChecked] = React.useState<string | null>(null);
 
+  React.useEffect(() => {
+    apiClient.get('/license/version').then((res) => {
+      if (res.data?.version || res.data?.appVersion) {
+        setInstalledVersion(res.data.version || res.data.appVersion);
+      }
+    }).catch(() => {});
+  }, []);
+
   const handleCheckNow = async () => {
     setChecking(true);
     setError(null);
     setResult(null);
     try {
       const res = await apiClient.post('/license/check-update');
-      setResult(res.data);
+      const data = res.data;
+      if (data?.currentVersion) setInstalledVersion(data.currentVersion);
+      setResult(data);
       setLastChecked(new Date().toLocaleTimeString());
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Could not reach update server. Check internet connection.');
@@ -5722,6 +5734,7 @@ function SoftwareUpdateCard() {
       if (!data?.latestVersion) return;
       setResult({
         hasUpdate:      true,
+        currentVersion: data.currentVersion || installedVersion,
         latestVersion:  data.latestVersion,
         downloadUrl:    data.downloadUrl,
         changelog:      data.changelog || '',
@@ -5731,7 +5744,7 @@ function SoftwareUpdateCard() {
     };
     window.addEventListener('sse:update_available', handler);
     return () => window.removeEventListener('sse:update_available', handler);
-  }, []);
+  }, [installedVersion]);
 
   const handleInstallAndRestart = async () => {
     setInstalling(true);
@@ -5756,9 +5769,14 @@ function SoftwareUpdateCard() {
             <RefreshCw size={16} />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-text">Software Update</h3>
-            <p className="text-[11px] text-muted">
-              AI Pharmacy — auto-checks every 15 days when internet is available
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-text">Software Update</h3>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
+                Installed: v{installedVersion}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted mt-0.5">
+              AI Pharmacy OS — auto-checks every 15 days when internet is available
               {lastChecked && <span className="ml-1">· Last checked {lastChecked}</span>}
             </p>
           </div>
@@ -5779,20 +5797,20 @@ function SoftwareUpdateCard() {
         <div className={`p-3 rounded-xl border text-xs ${
           result.hasUpdate
             ? 'bg-primary/5 border-primary/20 text-text'
-            : 'bg-green-500/5 border-green-500/20 text-text'
+            : 'bg-emerald-500/10 border-emerald-500/25 text-text'
         }`}>
           {result.hasUpdate ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-primary">
-                  🎉 Update available — v{result.latestVersion}
+                  🎉 Update available — v{result.latestVersion} (Current: v{result.currentVersion || installedVersion})
                 </span>
                 {result.readyToInstall ? (
                   <button
                     type="button"
                     onClick={handleInstallAndRestart}
                     disabled={installing}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                    className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60 cursor-pointer"
                   >
                     <RefreshCw size={11} className={installing ? 'animate-spin' : ''} />
                     {installing ? 'Installing & restarting...' : 'Install & Restart'}
@@ -5821,9 +5839,9 @@ function SoftwareUpdateCard() {
               )}
             </div>
           ) : (
-            <span className="flex items-center gap-1.5 text-green-600 font-medium">
-              <CheckCircle2 size={13} />
-              You're up to date — v{result.latestVersion}
+            <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+              You're up to date — Installed: v{result.currentVersion || result.latestVersion || installedVersion}
             </span>
           )}
         </div>

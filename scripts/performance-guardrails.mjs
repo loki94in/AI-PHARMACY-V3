@@ -278,6 +278,22 @@ const RULES = [
     },
   },
   {
+    id: 'B4', name: 'utc-date-string',
+    scope: p => isBackendSrc(p) || isFrontend(p),
+    check(file, line) {
+      if (looksLikeComment(line)) return null;
+      const utcText = /toISOString\(\)\s*\.\s*(slice|substring)\(\s*0\s*,\s*(10|19)\s*\)|toISOString\(\)\s*\.\s*split\(\s*['"]T['"]\s*\)\s*\[\s*0\s*\]/;
+      const shiftedBillDate = /\b(date|datetime)\(\s*(si|sinv|p|r)\.date\s*,\s*'localtime'\s*\)/i;
+      if (utcText.test(line) || shiftedBillDate.test(line)) {
+        return 'Dates are shop local time (bugs P1-71/P1-72): toISOString() is UTC, and a \'localtime\' '
+          + 'conversion on a stored bill date adds +5:30 again. Either one moves evening or early-morning '
+          + 'records to another day. Use utils/localTime.ts (toLocalSqlDateTime / SQL_LOCAL_NOW) or '
+          + 'frontend utils/date.ts getLocalDateString.';
+      }
+      return null;
+    },
+  },
+  {
     id: 'E1', name: 'gpu-rendering-enabled',
     scope: p => norm(p).startsWith('electron/'),
     fileRule: true,
@@ -426,6 +442,8 @@ function selfTest() {
     ['F10', "deliveryBoyPhone: s.owner_whatsapp_number || ''"],
     ['B2', 'fs.copyFileSync(tempProfile, mainProfile);'],
     ['B3', 'await client.sendMessage(number + "@c.us", text);'],
+    ['B4', 'const day = new Date().toISOString().slice(0, 10);'],
+    ['B4', "conditions.push(\"date(p.date, 'localtime') >= date(?)\");"],
   ];
   const negatives = [
     ['F1', "void queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });"],
@@ -435,6 +453,8 @@ function selfTest() {
     ['F6', '<span className="bg-sky/10 group-hover:bg-sky group-hover:text-white">Add</span>'],
     ['F8', "source: invoice.source_flag"],
     ['F9', 'if (modalRef.confirm()) close();'],
+    ['B4', 'const day = toLocalSqlDateTime().slice(0, 10);'],
+    ['B4', "conditions.push(\"date(p.date) >= date(?)\");"],
   ];
   let failed = 0;
   for (const [id, sample] of cases) {

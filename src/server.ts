@@ -13,6 +13,7 @@ import axios from 'axios';
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
 import { dbManager } from './database/connection.js';
+import { requestTransactionGuard } from './middleware/requestTransactionGuard.js';
 import { ensureSchema } from './database.js';
 import { registerProcessGuardian } from './process/processGuardian.js';
 import { activityTracker } from './utils/activityTracker.js';
@@ -242,6 +243,8 @@ app.use(rateLimit({
   message: { error: 'Too many requests, please try again later' }
 }));
 app.use(express.json({ limit: '15mb' }));
+// Roll back a transaction a request left open as soon as it answers (see the middleware).
+app.use(requestTransactionGuard);
 
 // Handle malformed JSON body payloads cleanly without spewing stack traces to console
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {

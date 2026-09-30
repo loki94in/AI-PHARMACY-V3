@@ -348,7 +348,10 @@ const Sidebar = memo(({
               <h1 className="text-base font-black tracking-wider bg-gradient-to-r from-text to-sky bg-clip-text text-transparent leading-none">
                 AI PHARMACY
               </h1>
-              <p className="text-[9px] text-muted tracking-widest uppercase font-bold mt-1.5 leading-none">OS Version 2.0</p>
+              <p className="text-[9px] text-muted tracking-wider uppercase font-bold mt-1.5 leading-none flex items-center gap-1.5">
+                <span>OS 2.0</span>
+                <span className="text-primary font-mono text-[9.5px]">v0.1.27</span>
+              </p>
             </div>
             <div className="shrink-0 pl-2 flex items-center gap-2">
               <span className="relative flex h-2.5 w-2.5">

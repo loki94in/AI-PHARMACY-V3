@@ -142,7 +142,7 @@ describe('Investigation routes', () => {
         discount: 2.0
       });
     expect(res.status).toBe(200);
-    expect(res.body.total).toBe(90); // 8 * 11 = 88 subtotal. 88 * 0.05 = 4.4 tax. 88 + 4 - 2 discount = 90.
+    expect(res.body.total).toBe(86); // 8 * 11 = 88 subtotal - 2 discount. GST is inside the price (POS math), never added on top.
 
     // Verify stock
     const detailsRes = await request(app).get(`/investigation/details/${inventoryId}`);

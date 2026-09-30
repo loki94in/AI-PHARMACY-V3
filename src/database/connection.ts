@@ -13,6 +13,13 @@ import { config, getAppDataDir } from '../config/index.js';
 export type TxPriority = 'VIP' | 'NORMAL' | 'BACKGROUND';
 export const txPriorityStorage = new AsyncLocalStorage<TxPriority>();
 
+// One marker per HTTP request (set by middleware/requestTransactionGuard.ts). A transaction
+// that request opened before answering, and left open after answering, is an orphan: every
+// other request's writes would join it and be rolled back with it by the 60 s watchdog
+// (a deleted bill came back, a saved sale vanished). closeOrphanTransaction() ends it at once.
+export interface RequestTxContext { responded: boolean }
+export const requestTxStorage = new AsyncLocalStorage<RequestTxContext>();
+
 
 
 class DatabaseManager {
@@ -38,6 +45,8 @@ class DatabaseManager {
   private activeTxPriority: TxPriority | null = null;
   private activeTxRelease: (() => void) | null = null;
   private activeTxTimer: NodeJS.Timeout | null = null;
+  // The HTTP request that opened the current top-level transaction (null for workers).
+  private txOwner: RequestTxContext | null = null;
 
   private txWaiters: {
     VIP: Array<{ priority: TxPriority; resolve: (release: () => void) => void; enqueuedAt: number }>;
@@ -78,6 +87,24 @@ class DatabaseManager {
     return txPriorityStorage.run(priority, fn);
   }
 
+  /**
+   * Called when an HTTP request has finished. If that request opened a transaction before
+   * answering and never committed or rolled it back, roll it back now and free the lock,
+   * instead of letting later requests' writes pile into it until the watchdog discards all
+   * of them. Transactions of other requests and of background workers are never touched.
+   */
+  public async closeOrphanTransaction(ctx: RequestTxContext, label: string): Promise<void> {
+    if (!this.isTxLocked || this.txDepth === 0 || this.txOwner !== ctx) return;
+    this.txOwner = null;
+    console.error(`[DB-MUTEX] ${label} answered with its transaction still open. Rolling it back now so later writes are not lost with it.`);
+    await this.rollbackUnderlying().catch(() => {});
+    this.txDepth = 0;
+    const release = this.activeTxRelease;
+    this.activeTxRelease = null;
+    if (release) release();
+    else this.releaseTxLock();
+  }
+
   public async rollbackUnderlying(): Promise<void> {
     if (this.connection) {
       try {
@@ -112,6 +139,7 @@ class DatabaseManager {
       clearTimeout(this.activeTxTimer);
       this.activeTxTimer = null;
     }
+    this.txOwner = null;
 
     const next = this.popNextWaiter();
     if (next) {
@@ -363,6 +391,10 @@ class DatabaseManager {
           const release = await self.acquireTxLock(priority);
           self.activeTxRelease = release;
           self.txDepth = 1;
+          // Remember which HTTP request opened it (only if it hasn't answered yet: work a
+          // route starts after responding is legitimate background work).
+          const reqCtx = requestTxStorage.getStore();
+          self.txOwner = reqCtx && !reqCtx.responded ? reqCtx : null;
           try {
             return await originalRun(sql, ...params);
           } catch (err: any) {

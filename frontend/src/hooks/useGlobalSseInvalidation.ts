@@ -160,6 +160,22 @@ export function useGlobalSseInvalidation(enabled: boolean = true) {
           void ensureCompactInventoryReady();
         }
 
+        // Direct React Query cache eviction for deleted sales invoices
+        if (type === 'sales_sync' && parsed?.payload?.action === 'delete' && parsed?.payload?.id) {
+          const deletedId = Number(parsed.payload.id);
+          queryClient.setQueriesData({ queryKey: ['sells-list'] }, (oldData: any) => {
+            if (!oldData || !oldData.pages) return oldData;
+            return {
+              ...oldData,
+              pages: oldData.pages.map((page: any) => ({
+                ...page,
+                data: Array.isArray(page.data) ? page.data.filter((item: any) => item.id !== deletedId) : page.data,
+                totalItems: typeof page.totalItems === 'number' ? Math.max(0, page.totalItems - 1) : page.totalItems
+              }))
+            };
+          });
+        }
+
         (SSE_CUSTOM_EVENTS[type] || []).forEach(evtName => {
           // detail carries the full parsed SSE frame (or unpacked payload for toasts) so page-level listeners
           // can consume payloads without opening their own EventSource

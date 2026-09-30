@@ -134,7 +134,7 @@ router.post('/', asyncHandler(async (req: express.Request, res: express.Response
 
     // Insert return record
     const retRes = await db.run(
-      `INSERT INTO returns (return_no, original_invoice_id, type, total_amount, cgst_value, sgst_value, reason, return_sub_type) VALUES (?, ?, 'sale', ?, ?, ?, ?, 'good')`,
+      `INSERT INTO returns (return_no, original_invoice_id, type, total_amount, cgst_value, sgst_value, reason, return_sub_type, date) VALUES (?, ?, 'sale', ?, ?, ?, ?, 'good', datetime('now', 'localtime'))`,
       [returnNo, original_invoice_id, totalRefund, roundedCgst, roundedSgst, reason || 'Customer Return']
     );
     const returnId = retRes.lastID;
@@ -224,13 +224,13 @@ router.get('/history', asyncHandler(async (req: express.Request, res: express.Re
   const conditions: string[] = ["r.type = 'sale'"];
 
   if (start && end) {
-    conditions.push("date(r.date, 'localtime') BETWEEN date(?) AND date(?)");
+    conditions.push("date(r.date) BETWEEN date(?) AND date(?)");
     params.push(start, end);
   } else if (start) {
-    conditions.push("date(r.date, 'localtime') >= date(?)");
+    conditions.push("date(r.date) >= date(?)");
     params.push(start);
   } else if (end) {
-    conditions.push("date(r.date, 'localtime') <= date(?)");
+    conditions.push("date(r.date) <= date(?)");
     params.push(end);
   }
 

@@ -1,5 +1,5 @@
 import express from 'express';
-import { recordStockLedger } from '../utils/stockRebuild.js';
+import { applyStockDelta, recordStockLedger } from '../utils/stockRebuild.js';
 import { dbManager } from '../database/connection.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -27,6 +27,7 @@ import { extractDateFromText } from '../utils/dateExtractor.js';
 import { applyPurchaseDelta } from '../services/medicineSalesMetricsService.js';
 import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
+import { applyPurchaseStockChange, PurchaseEditError } from '../services/purchaseBillEditService.js';
 
 
 
@@ -785,23 +786,26 @@ router.get('/', async (req, res) => {
       params.push(targetStoreId, targetStoreId);
     }
     
-    // Sargable pre-filters: let idx_purchases_date prune rows first (superset bounds,
-    // ±1 day covers any timezone shift of date(p.date,'localtime')); the exact
-    // expression filters below still decide the final result set.
+    // Sargable pre-filters: let idx_purchases_date prune rows first (superset bounds); the
+    // exact expression filters below still decide the final result set.
+    // purchases.date is stored in the SHOP'S local time ('YYYY-MM-DD HH:MM:SS', never UTC), so
+    // the bill's day is date(p.date), the same day Reports uses. date(p.date, 'localtime')
+    // added +5:30 again and moved every bill saved after 6:30 PM to the next day (1,882 of
+    // 16,209 migrated bills): it showed in Reports but looked missing in Purchase History.
     if (start && end) {
       conditions.push("p.date >= datetime(?, '-1 day') AND p.date < datetime(?, '+2 days')");
       params.push(start, end);
-      conditions.push("date(p.date, 'localtime') BETWEEN date(?) AND date(?)");
+      conditions.push("date(p.date) BETWEEN date(?) AND date(?)");
       params.push(start, end);
     } else if (start) {
       conditions.push("p.date >= datetime(?, '-1 day')");
       params.push(start);
-      conditions.push("date(p.date, 'localtime') >= date(?)");
+      conditions.push("date(p.date) >= date(?)");
       params.push(start);
     } else if (end) {
       conditions.push("p.date <= datetime(?, '+2 days')");
       params.push(end);
-      conditions.push("date(p.date, 'localtime') <= date(?)");
+      conditions.push("date(p.date) <= date(?)");
       params.push(end);
     } else if (months > 0) {
       conditions.push(`p.date >= datetime('now', '-${months} months')`);
@@ -958,14 +962,22 @@ router.post('/manual', async (req, res) => {
       }
     }
 
-    // Check for duplicate invoice BEFORE starting transaction (eliminates Risk 1: rollback-redirect)
-    if (invoice_no && invoice_no.trim()) {
+    // Check for duplicate invoice BEFORE starting transaction (eliminates Risk 1: rollback-redirect).
+    // The SAME bill is the same distributor + invoice number + invoice date: re-saving it
+    // (double click, Mail "Proceed" again) updates it instead of storing a copy. Distributors
+    // reuse invoice numbers across years (66 such pairs in the migrated shop data), so a
+    // matching number on a DIFFERENT date is a different bill and is saved as a new one;
+    // it must never overwrite the old bill's date, lines and stock.
+    const invoiceDay = typeof date === 'string' ? date.trim().slice(0, 10) : '';
+    if (invoice_no && invoice_no.trim() && invoiceDay) {
       const existing = await db.get(
         `SELECT p.id FROM purchases p
          LEFT JOIN distributors d ON p.distributor_id = d.id
-         WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(d.name) = LOWER(?))) 
-         AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))`,
-        [distId || 0, distName, invoice_no.trim()]
+         WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(d.name) = LOWER(?)))
+         AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+         AND substr(p.date, 1, 10) = ?
+         ORDER BY p.id DESC LIMIT 1`,
+        [distId || 0, distName, invoice_no.trim(), invoiceDay]
       );
       if (existing) {
         return handleUpdatePurchaseFull(req, res, existing.id);
@@ -1455,39 +1467,24 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
 
     await db.run('BEGIN TRANSACTION');
 
-    // 1. Revert old items from inventory
-    const oldItems = await db.all('SELECT * FROM purchase_items WHERE purchase_id = ?', [id]);
-    for (const old of oldItems) {
-      // Shelf stock for a purchase line is billed quantity plus free quantity.
-      const oldTotalQty = (old.quantity || 0) + (old.free_qty || 0);
-      const batchVal = old.batch_no || '';
-      await db.run(
-        `UPDATE inventory_master 
-         SET quantity = MAX(0, quantity - ?) 
-         WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
-        [oldTotalQty, old.medicine_id, batchVal, old.batch_no]
-      );
-      await recordStockLedger(db, {
-        medicine_id: old.medicine_id,
-        batch_no: old.batch_no,
-        quantity: -oldTotalQty,
-        loose_quantity: 0,
-        transaction_type: 'purchase_edit_revert',
-        transaction_id: String(id)
-      });
-      await applyPurchaseDelta(db, old.medicine_id, -oldTotalQty, old.cost_price, null, null);
-      const invMasterRow = await db.get(
-        `SELECT id FROM inventory_master WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
-        [old.medicine_id, batchVal, old.batch_no]
-      );
-      if (invMasterRow?.id) {
-        await refreshInventoryActiveStatus(db, invMasterRow.id);
-      }
+    // The bill being edited must still exist. An edit screen left open after the bill was
+    // deleted would otherwise re-insert its lines and stock with no bill behind them.
+    const billRow = await db.get('SELECT id FROM purchases WHERE id = ?', [id]);
+    if (!billRow) {
+      await db.run('ROLLBACK');
+      return res.status(404).json({ error: 'This purchase bill no longer exists (it was deleted). Reload Purchase History.' });
     }
-    // Delete old items
-    await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [id]);
 
-    // 2. Handle distributor
+    const oldItems = await db.all('SELECT * FROM purchase_items WHERE purchase_id = ?', [id]);
+
+    // 1. Checks that need no stock change run first.
+    // STRICT VALIDATION: Invoice date is required. Never fall back to current date silently.
+    const cleanDate = typeof date === 'string' ? date.trim() : '';
+    if (!cleanDate) {
+      await db.run('ROLLBACK');
+      return res.status(400).json({ error: 'Invoice date is required. Please verify and enter the actual invoice date before saving.' });
+    }
+
     if (!distId && distName) {
       await db.run('INSERT OR IGNORE INTO distributors (name) VALUES (?)', [distName]);
       const dbDist = await db.get('SELECT id FROM distributors WHERE name = ?', [distName]);
@@ -1495,46 +1492,112 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     }
     const distRow = { id: distId, name: distName };
 
+    // Same bill = same distributor + invoice number + invoice date (see POST /manual): a
+    // distributor may reuse a number on another date, and that older bill stays editable.
     if (distRow && invoice_no) {
       const existing = await db.get(
-        'SELECT id FROM purchases WHERE distributor_id = ? AND invoice_no = ? AND id != ?',
-        [distRow.id, invoice_no, id]
+        'SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND substr(date, 1, 10) = ? AND id != ?',
+        [distRow.id, invoice_no, cleanDate.slice(0, 10), id]
       );
       if (existing) {
         await db.run('ROLLBACK');
-        return res.status(400).json({ error: 'Invoice number already exists for another purchase bill.' });
+        return res.status(400).json({ error: 'Another purchase bill from this distributor already has this invoice number and date.' });
       }
     }
 
-    // Calculate new totals
+    // 2. Parse every line once and link it to a REAL master medicine, the same strict chain
+    // as a new purchase (POST /manual): verified id -> multi-tier resolver -> OCR mapping.
+    // A line that can't be linked blocks the save; it is never auto-created, prefix-guessed
+    // or silently dropped.
+    const lines: any[] = [];
+    const unresolvedMedicines: { name: string }[] = [];
+    for (const item of items) {
+      const medInputName = item.medicine || item.medicine_name;
+      let medId = item.medicine_id ? Number(item.medicine_id) : null;
+      let medName = medInputName;
+      if (medId) {
+        const dbMed = await db.get('SELECT name FROM medicines WHERE id = ?', [medId]);
+        if (dbMed) {
+          medName = dbMed.name;
+          // Learn this alias mapping (the user linked this bill name to this medicine)
+          if (medInputName && medInputName !== medName) {
+            await db.run('INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)', [medInputName, medId]);
+          }
+        } else {
+          medId = null;
+        }
+      }
+      if (!medId && medName) {
+        const cleanName = String(medName).trim();
+        const resObj = await medicineService.resolveMedicineNameMultiTier(db, cleanName, distId);
+        if (resObj?.medicineId) {
+          medId = resObj.medicineId;
+        } else {
+          const ocrRow = await db.get('SELECT correct FROM ocr_corrections WHERE LOWER(ocr) = LOWER(?)', [cleanName]).catch(() => null);
+          if (ocrRow?.correct) {
+            const targetMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)', [ocrRow.correct.trim()]);
+            if (targetMed?.id) medId = targetMed.id;
+          }
+        }
+      }
+      if (!medId) {
+        unresolvedMedicines.push({ name: String(medName || medInputName || '').trim() });
+        continue;
+      }
+
+      const rawQty = parseFloat(item.qty !== undefined ? item.qty : item.quantity) || 0;
+      const rawRate = parseFloat(item.rate !== undefined ? item.rate : item.price) || 0;
+      const rawDiscPer = parseFloat(item.discPer !== undefined ? item.discPer : (item.cd_per !== undefined ? item.cd_per : 0)) || 0;
+      const rawDiscRs = parseFloat(item.discRs !== undefined ? item.discRs : (item.cd_rs !== undefined ? item.cd_rs : 0)) || 0;
+      const rawAddDisc = parseFloat(item.additional_discount) || 0;
+      const baseAmt = rawQty * rawRate;
+      lines.push({
+        medId,
+        medName,
+        batch: item.batch !== undefined ? item.batch : (item.batch_no || ''),
+        expiry: formatExpiryToMMYY(item.expiry !== undefined ? item.expiry : (item.expiry_date || '')),
+        qty: rawQty,
+        freeQty: parseFloat(item.free_qty !== undefined ? item.free_qty : (item.free_quantity !== undefined ? item.free_quantity : 0)) || 0,
+        rate: rawRate,
+        mrp: parseFloat(item.mrp) || 0,
+        cgst: parseFloat(item.cgst !== undefined ? item.cgst : (item.cgst_per !== undefined ? item.cgst_per : 0)) || 0,
+        sgst: parseFloat(item.sgst !== undefined ? item.sgst : (item.sgst_per !== undefined ? item.sgst_per : 0)) || 0,
+        discPer: rawDiscPer,
+        discRs: rawDiscRs,
+        lineDisc: rawDiscRs + rawAddDisc + (baseAmt * rawDiscPer / 100),
+        taxable: baseAmt - (rawDiscRs + rawAddDisc + (baseAmt * rawDiscPer / 100)),
+        hsn: item.hsn_code || item.hsn || null
+      });
+    }
+    if (unresolvedMedicines.length > 0) {
+      await db.run('ROLLBACK');
+      return res.status(400).json({
+        error: `Unresolved medicines on this bill: ${unresolvedMedicines.map(u => `"${u.name}"`).join(', ')}. Link each line to an existing medicine or register it via "New Medicine" before saving.`,
+        unresolved_items: unresolvedMedicines
+      });
+    }
+
+    // 3. Shelf stock moves by the NET change per medicine + batch (services/purchaseBillEditService.ts).
+    await applyPurchaseStockChange(
+      db,
+      String(id),
+      oldItems.map((o: any) => ({ medicine_id: o.medicine_id, batch_no: o.batch_no, quantity: o.quantity, free_qty: o.free_qty })),
+      lines.map(l => ({ medicine_id: l.medId, batch_no: l.batch, quantity: l.qty, free_qty: l.freeQty, expiry_date: l.expiry || null, cost_price: l.rate, mrp: l.mrp })),
+      'purchase_edit'
+    );
+
+    // 4. Totals from the same parsed lines that are saved below.
     let subtotal = 0;
     let totalCgst = 0;
     let totalSgst = 0;
-
-    for (const item of items) {
-      const qty = parseFloat(item.qty) || 0;
-      const rate = parseFloat(item.rate) || 0;
-      const discPer = parseFloat(item.discPer) || 0;
-      const discRs = parseFloat(item.discRs) || 0;
-      const addDisc = parseFloat(item.additional_discount) || 0;
-      const cgst = parseFloat(item.cgst) || 0;
-      const sgst = parseFloat(item.sgst) || 0;
-
-      const baseAmt = qty * rate;
-      const lineDisc = discRs + addDisc + (baseAmt * discPer / 100);
-      const taxable = baseAmt - lineDisc;
-      
-      subtotal += taxable;
-      totalCgst += taxable * (cgst / 100);
-      totalSgst += taxable * (sgst / 100);
+    for (const l of lines) {
+      subtotal += l.taxable;
+      totalCgst += l.taxable * (l.cgst / 100);
+      totalSgst += l.taxable * (l.sgst / 100);
     }
 
     const cdPerVal = parseFloat(cd_per) || 0;
-    const hasItemCd = items.some((item: any) => {
-      const discPer = parseFloat(item.discPer !== undefined ? item.discPer : (item.cd_per !== undefined ? item.cd_per : 0)) || 0;
-      const discRs = parseFloat(item.discRs !== undefined ? item.discRs : (item.cd_rs !== undefined ? item.cd_rs : 0)) || 0;
-      return discPer > 0 || discRs > 0;
-    });
+    const hasItemCd = lines.some(l => l.discPer > 0 || l.discRs > 0);
     const globalCdDisc = hasItemCd ? 0 : (subtotal * (cdPerVal / 100));
     const originalAmount = subtotal + totalCgst + totalSgst - globalCdDisc;
     const cnAmountVal = parseFloat(cn_amount) || 0;
@@ -1545,27 +1608,20 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
 
     // Revert old credit reconciliation
     await db.run(
-      `UPDATE expiry_returns_tracking 
+      `UPDATE expiry_returns_tracking
        SET status = 'pending', actual_credit_amount = 0, reconciled_date = NULL, reconciled_purchase_id = NULL
        WHERE reconciled_purchase_id = ?`,
       [id]
     );
 
-    // STRICT VALIDATION: Invoice date is required. Never fall back to current date silently.
-    const cleanDate = typeof date === 'string' ? date.trim() : '';
-    if (!cleanDate) {
-      await db.run('ROLLBACK');
-      return res.status(400).json({ error: 'Invoice date is required. Please verify and enter the actual invoice date before saving.' });
-    }
-
     const nowLocal = new Date();
     const localTimeStr = `${String(nowLocal.getHours()).padStart(2, '0')}:${String(nowLocal.getMinutes()).padStart(2, '0')}:${String(nowLocal.getSeconds()).padStart(2, '0')}`;
     const purchaseDate = cleanDate.includes(':') ? cleanDate : `${cleanDate} ${localTimeStr}`;
 
-    // 3. Update purchases record
+    // 5. Update purchases record
     await db.run(
-      `UPDATE purchases 
-       SET distributor_id = ?, invoice_no = ?, date = ?, total_amount = ?, cgst_value = ?, sgst_value = ?, cn_amount = ?, cn_number = ?, original_amount = ? 
+      `UPDATE purchases
+       SET distributor_id = ?, invoice_no = ?, date = ?, total_amount = ?, cgst_value = ?, sgst_value = ?, cn_amount = ?, cn_number = ?, original_amount = ?
        WHERE id = ?`,
       [distRow.id, invoice_no, purchaseDate, grandTotal, totalCgst, totalSgst, totalDeductions, cnNumberVal, originalAmount, id]
     );
@@ -1574,128 +1630,35 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     if (reconcile_expiry_return_id && cnAmountVal > 0) {
       const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
       await db.run(
-        `UPDATE expiry_returns_tracking 
+        `UPDATE expiry_returns_tracking
          SET status = 'reconciled', actual_credit_amount = ?, reconciled_date = ?, reconciled_purchase_id = ?
          WHERE id = ?`,
         [cnAmountVal, nowStr, id, reconcile_expiry_return_id]
       );
     }
 
-    // 4. Insert new items
+    // 6. Replace the bill lines (stock already moved in step 3).
+    await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [id]);
     const savedItems: any[] = [];
-    for (const item of items) {
-      const { medicine, medicine_id, _original_name, batch_no, expiry_date, _qty, free_qty, _rate, _mrp, _discPer, _discRs, additional_discount, _cgst, sgst } = item;
-      
-      const medInputName = medicine || item.medicine_name;
-      const medInputId = medicine_id;
-      const rawBatch = item.batch !== undefined ? item.batch : (batch_no || '');
-      const rawExpiry = formatExpiryToMMYY(item.expiry !== undefined ? item.expiry : (expiry_date || ''));
-      const rawQty = parseFloat(item.qty !== undefined ? item.qty : item.quantity) || 0;
-      const rawFreeQty = parseFloat(free_qty !== undefined ? free_qty : (item.free_quantity !== undefined ? item.free_quantity : 0)) || 0;
-      const rawRate = parseFloat(item.rate !== undefined ? item.rate : item.price) || 0;
-      const rawMrp = parseFloat(item.mrp) || 0;
-      const rawCgst = parseFloat(item.cgst !== undefined ? item.cgst : (item.cgst_per !== undefined ? item.cgst_per : 0)) || 0;
-      const rawSgst = parseFloat(item.sgst !== undefined ? item.sgst : (item.sgst_per !== undefined ? item.sgst_per : 0)) || 0;
-      const rawDiscPer = parseFloat(item.discPer !== undefined ? item.discPer : (item.cd_per !== undefined ? item.cd_per : 0)) || 0;
-      const rawDiscRs = parseFloat(item.discRs !== undefined ? item.discRs : (item.cd_rs !== undefined ? item.cd_rs : 0)) || 0;
-
-      let medId = medInputId;
-      let medName = medInputName;
-
-      if (medId) {
-        const dbMed = await db.get('SELECT name FROM medicines WHERE id = ?', [medId]);
-        if (dbMed) {
-          medName = dbMed.name;
-          // Learn this alias mapping automatically
-          if (medInputName && medInputName !== medName) {
-            await db.run('INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)', [medInputName, medId]);
-          }
-        }
-      } else if (medName) {
-        const cleanName = medName.trim();
-        let dbMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)', [cleanName]);
-        if (dbMed) {
-          medId = dbMed.id;
-        } else {
-          const aliasRow = await db.get('SELECT medicine_id FROM medicine_aliases WHERE LOWER(alias_name) = LOWER(?)', [cleanName]);
-          if (aliasRow?.medicine_id) {
-            medId = aliasRow.medicine_id;
-          } else {
-            const ocrRow = await db.get('SELECT correct FROM ocr_corrections WHERE LOWER(ocr) = LOWER(?)', [cleanName]).catch(() => null);
-            if (ocrRow?.correct) {
-              const targetMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)', [ocrRow.correct.trim()]);
-              if (targetMed?.id) medId = targetMed.id;
-            }
-            if (!medId && cleanName.length >= 4) {
-              const fuzzyMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) LIKE LOWER(?) LIMIT 1', [`${cleanName}%`]);
-              if (fuzzyMed?.id) medId = fuzzyMed.id;
-            }
-            if (!medId) {
-              await db.run('INSERT OR IGNORE INTO medicines (name) VALUES (?)', [cleanName]);
-              const newMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)', [cleanName]);
-              if (newMed) medId = newMed.id;
-            }
-          }
-        }
-      }
-
-      if (!medId) continue;
-
-      const baseAmt = rawQty * rawRate;
-      const rawAddDisc = parseFloat(additional_discount) || 0;
-      const lineDisc = rawDiscRs + rawAddDisc + (baseAmt * rawDiscPer / 100);
-      const taxable = baseAmt - lineDisc;
-      const cgstVal = taxable * (rawCgst / 100);
-      const sgstVal = taxable * (rawSgst / 100);
-
+    for (const l of lines) {
       await db.run(`
-        INSERT INTO purchase_items 
+        INSERT INTO purchase_items
         (purchase_id, medicine_id, batch_no, expiry_date, quantity, free_qty, cost_price, mrp, cgst_per, cgst_value, sgst_per, sgst_value, cd_value, hsn_code)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [id, medId, rawBatch, rawExpiry || null, rawQty, rawFreeQty, rawRate, rawMrp || 0, rawCgst, cgstVal, rawSgst, sgstVal, lineDisc, (item as any).hsn_code || (item as any).hsn || null]);
+      `, [id, l.medId, l.batch, l.expiry || null, l.qty, l.freeQty, l.rate, l.mrp || 0, l.cgst, l.taxable * (l.cgst / 100), l.sgst, l.taxable * (l.sgst / 100), l.lineDisc, l.hsn]);
 
-      // Fetch current sell_price for saved_items
-      const medRow = await db.get('SELECT sell_price FROM medicines WHERE id = ?', [medId]);
+      const medRow = await db.get('SELECT sell_price FROM medicines WHERE id = ?', [l.medId]);
       savedItems.push({
-        medicine_id: medId,
-        name: medName,
-        medicine_name: medName,
-        rate: rawRate,
-        mrp: rawMrp || 0,
+        medicine_id: l.medId,
+        name: l.medName,
+        medicine_name: l.medName,
+        rate: l.rate,
+        mrp: l.mrp || 0,
         sell_price: medRow?.sell_price ?? null
       });
 
-      // Update inventory_master (add new quantity and update cost_price, mrp, expiry_date)
-      const totalQty = rawQty + rawFreeQty;
-      const invRow = await db.get(
-        `SELECT id, quantity FROM inventory_master 
-         WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
-        [medId, rawBatch, rawBatch]
-      );
-      if (invRow) {
-        await db.run('UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = COALESCE(NULLIF(?, 0), mrp), expiry_date = COALESCE(?, expiry_date) WHERE id = ?', 
-          [totalQty, rawRate, rawMrp || 0, rawExpiry || null, invRow.id]);
-        await refreshInventoryActiveStatus(db, invRow.id);
-      } else {
-        await db.run(`
-          INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, cost_price, mrp, is_active)
-          VALUES (?, ?, ?, ?, ?, ?, 1)
-        `, [medId, totalQty, rawBatch, rawExpiry || null, rawRate, rawMrp || 0]);
-        await refreshInventoryActiveByBatch(db, medId, rawBatch);
-      }
-
-      await recordStockLedger(db, {
-        medicine_id: medId,
-        batch_no: rawBatch,
-        quantity: totalQty,
-        loose_quantity: 0,
-        transaction_type: 'purchase_edit',
-        transaction_id: String(id)
-      });
-      await applyPurchaseDelta(db, medId, totalQty, rawRate, distRow.id, distRow.name || null);
-
-      if (rawMrp && rawMrp > 0) {
-        await db.run('UPDATE medicines SET mrp = ?, rate = ? WHERE id = ?', [rawMrp, rawRate, medId]);
+      if (l.mrp && l.mrp > 0) {
+        await db.run('UPDATE medicines SET mrp = ?, rate = ? WHERE id = ?', [l.mrp, l.rate, l.medId]);
       }
     }
 
@@ -1729,7 +1692,7 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     if (db) {
       try { await db.run('ROLLBACK'); } catch (e) {}
     }
-    res.status(500).json({ error: error.message || 'Internal server error' });
+    res.status(error instanceof PurchaseEditError ? 400 : 500).json({ error: error.message || 'Internal server error' });
   }
 }
 
@@ -1772,18 +1735,18 @@ router.delete('/:id', async (req, res) => {
 
     const purchase = await db.get('SELECT * FROM purchases WHERE id = ?', [id]);
     if (!purchase) {
-            return res.status(404).json({ error: 'Purchase not found' });
+      // Without this ROLLBACK a repeat delete left the shared connection inside the
+      // transaction, frozen on a stale snapshot for every later request.
+      await db.run('ROLLBACK');
+      return res.status(404).json({ error: 'Purchase not found' });
     }
 
-    // Reverse stock
-    const items = await db.all('SELECT * FROM purchase_items WHERE purchase_id = ?', [id]);
-    for (const item of items) {
-      const totalQty = (item.quantity || 0) + (item.free_qty || 0);
-      await db.run(
-        'UPDATE inventory_master SET quantity = MAX(0, quantity - ?) WHERE medicine_id = ? AND (batch_no = ? OR (batch_no IS NULL AND ? IS NULL))',
-        [totalQty, item.medicine_id, item.batch_no, item.batch_no]
-      );
-    }
+    // Take the bill's (quantity + free_qty) back off each batch through the strip/loose pool
+    // (the old strips-only `quantity - n` left loose units sellable). If some of it was
+    // already sold or returned, the delete is refused with what is left on the shelf:
+    // flooring at 0 would leave those sales with no purchase behind them.
+    const items = await db.all('SELECT medicine_id, batch_no, quantity, free_qty FROM purchase_items WHERE purchase_id = ?', [id]);
+    await applyPurchaseStockChange(db, id, items, [], 'purchase_delete');
 
     // Delete items then purchase
     await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [id]);
@@ -1795,16 +1758,25 @@ router.delete('/:id', async (req, res) => {
     try {
       const { eventService } = await import('../services/eventService.js');
       eventService.broadcast('purchases_sync', { success: true, action: 'delete', id: Number(id) });
+      eventService.broadcast('inventory_sync', { success: true });
+      // Same readers as a save: Purchases batch/rate history, last-by-distributor, Expiry,
+      // dashboard/reports and the POS compact inventory all drop the deleted bill.
+      eventService.broadcast('invoice_saved', { purchase_id: Number(id), action: 'delete' });
     } catch (sseErr) {
       console.warn('Could not broadcast purchase delete update:', sseErr);
     }
 
     res.json({ success: true, message: 'Purchase deleted, stock reversed' });
+    // Purchase History KPI totals come from the summary cache; rebuild it after the delete.
+    setImmediate(() => triggerBackgroundSummaryRebuild());
   } catch (error) {
     if (db) {
       try { await db.run('ROLLBACK'); } catch (e) {}
           }
     console.error('Failed to delete purchase:', error);
+    if (error instanceof PurchaseEditError) {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3334,13 +3306,14 @@ router.post('/reconciliation/reissue', async (req, res) => {
 
     // Check for duplicate invoice number
     if (distId && invoiceNo) {
+      const billDay = String(resolvedInvoiceDate || '').slice(0, 10);
       const existing = await db.get(
-        'SELECT id FROM purchases WHERE distributor_id = ? AND invoice_no = ?',
-        [distId, invoiceNo]
+        "SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND (? = '' OR substr(date, 1, 10) = ?)",
+        [distId, invoiceNo, billDay, billDay]
       );
       if (existing) {
         await db.run('ROLLBACK');
-        return res.status(400).json({ error: 'Invoice number already exists for this distributor.' });
+        return res.status(400).json({ error: 'This bill (same invoice number and date) is already saved for this distributor.' });
       }
     }
 
@@ -3784,14 +3757,17 @@ router.post('/staged/:id/approve', async (req, res) => {
       return res.status(400).json({ error: 'Failed to resolve distributor.' });
     }
 
+    // Same bill = same distributor + invoice number + invoice date (see POST /manual). With
+    // no date the number alone decides, so an undated bill can never be saved twice.
     if (distId && finalInvoiceNo) {
+      const billDay = String(finalDate || '').slice(0, 10);
       const existing = await db.get(
-        'SELECT id FROM purchases WHERE distributor_id = ? AND invoice_no = ?',
-        [distId, finalInvoiceNo]
+        "SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND (? = '' OR substr(date, 1, 10) = ?)",
+        [distId, finalInvoiceNo, billDay, billDay]
       );
       if (existing) {
         await db.run('ROLLBACK');
-        return res.status(400).json({ error: 'Invoice number already exists for this distributor.' });
+        return res.status(400).json({ error: 'This bill (same invoice number and date) is already saved for this distributor.' });
       }
     }
 

@@ -8,6 +8,8 @@
  */
 
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 import { networkInterfaces } from 'os';
 import axios from 'axios';
@@ -15,7 +17,17 @@ import { dbManager } from '../database/connection.js';
 
 // Vercel license server URL — update after deploying
 const LICENSE_SERVER = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-license.vercel.app';
-export const APP_VERSION = process.env.APP_VERSION || '0.1.5';
+
+let defaultAppVersion = '0.1.27';
+try {
+  const pkgJsonPath = path.join(process.cwd(), 'package.json');
+  if (fs.existsSync(pkgJsonPath)) {
+    const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+    if (pkgJson?.version) defaultAppVersion = pkgJson.version;
+  }
+} catch (_) {}
+
+export const APP_VERSION = process.env.APP_VERSION || defaultAppVersion;
 
 // 1-year free testing window (ms)
 const TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
@@ -288,7 +300,8 @@ export async function activateLicense(licenseId: string, licenseKey: string): Pr
 // --- Check for app updates ---
 export async function checkForUpdate(): Promise<{
   hasUpdate: boolean;
-  latestVersion?: string;
+  currentVersion: string;
+  latestVersion: string;
   downloadUrl?: string;
   updatePackageUrl?: string;
   sha256?: string;
@@ -311,15 +324,17 @@ export async function checkForUpdate(): Promise<{
       timeout: 8000,
     });
 
+    const latestVersion = resp.data.latestVersion || currentVersion;
     const now = new Date().toISOString();
     await db.run(
       'UPDATE update_checks SET last_checked_at = ?, last_known_version = ? WHERE id = 1',
-      [now, resp.data.latestVersion]
+      [now, latestVersion]
     );
 
     return {
-      hasUpdate: resp.data.hasUpdate,
-      latestVersion: resp.data.latestVersion,
+      hasUpdate: !!resp.data.hasUpdate,
+      currentVersion,
+      latestVersion,
       downloadUrl: resp.data.downloadUrl,
       updatePackageUrl: resp.data.updatePackageUrl,
       sha256: resp.data.sha256,
