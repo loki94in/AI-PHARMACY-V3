@@ -101,6 +101,7 @@ const CHROME_INSTANT_KEYS: string[][] = [
 // CustomEvent consumers can read domain-specific properties off `detail`.
 interface SseFrame {
   type?: string;
+  payload?: any;
   [field: string]: unknown;
 }
 

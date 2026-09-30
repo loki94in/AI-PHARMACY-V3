@@ -29,6 +29,7 @@ interface SaleItem {
   loose_qty?: number;
   pack_size?: number;
   batch_number?: string;
+  batch_no?: string;
   expiry_date?: string;
   medicine_name?: string;
   mrp?: number;
