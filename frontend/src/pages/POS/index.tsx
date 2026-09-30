@@ -4221,7 +4221,7 @@ const POS = () => {
                     aria-label="Patient Name"
                   />
                   {showPatientSuggestions && (
-                    <div ref={patientSuggestionsRef} className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto shadow-2xl">
+                    <div ref={patientSuggestionsRef} className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto dropdown-scroll shadow-2xl">
                       {isPatientFuzzyMatch && (
                         <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5">
                           <span>🔍</span> No exact match. Did you mean:
@@ -4414,7 +4414,7 @@ const POS = () => {
                     title="Select or Type Doctor Name"
                   />
                   {isDoctorDropdownOpen && doctor.trim().length >= 2 && (
-                    <div ref={doctorSuggestionsRef} className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto shadow-2xl">
+                    <div ref={doctorSuggestionsRef} className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto dropdown-scroll shadow-2xl">
                       {filteredDoctors.length > 0 ? (
                         filteredDoctors.map((doc, idx) => (
                           <button
@@ -4688,7 +4688,7 @@ const POS = () => {
                         </button>
                       </div>
 
-                      <div className="max-h-64 overflow-y-auto flex-1">
+                      <div className="max-h-64 overflow-y-auto dropdown-scroll flex-1">
                         {suggestions.length > 0 && (
                           <div className="p-3 border-b border-border/30 bg-violet-500/5">
                             <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
@@ -4779,7 +4779,7 @@ const POS = () => {
                       </button>
                     </div>
 
-                    <div ref={searchResultsRef} data-scrollable="true" className="max-h-72 overflow-y-auto flex-1 divide-y divide-border/10">
+                    <div ref={searchResultsRef} data-scrollable="true" className="max-h-72 overflow-y-auto dropdown-scroll flex-1 divide-y divide-border/10">
                     {suggestions.length > 0 && (
                       <div className="p-3 border-b border-border/30 bg-violet-500/5">
                         <span className="text-[15px] font-bold text-violet-400 uppercase tracking-wider block mb-1.5">Did you mean:</span>
@@ -5455,7 +5455,7 @@ const POS = () => {
                                   )}
 
                                   {rowSearchResults.length > 0 ? (
-                                    <div ref={rowSearchResultsRef} data-scrollable="true" className="max-h-56 overflow-y-auto flex-1 divide-y divide-border/10">
+                                    <div ref={rowSearchResultsRef} data-scrollable="true" className="max-h-56 overflow-y-auto dropdown-scroll flex-1 divide-y divide-border/10">
                                       {rowSearchResults.map((med, mIdx) => {
                                         const rowPendingMatches = specialOrders.filter(
                                           o => o.product.toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim() ||
@@ -5470,7 +5470,8 @@ const POS = () => {
                                             tabIndex={0}
                                             key={med.inventory_id || med.id || `row_med_${mIdx}`}
                                             data-highlighted={isRowHighlighted ? "true" : "false"}
-                                            onMouseEnter={() => setRowSearchHighlightIndex(mIdx)}
+                                            // mousemove, not mouseenter: rows scrolling under a still cursor fire mouseenter and re-rendered all of POS per row
+                                            onMouseMove={() => { if (rowSearchHighlightIndex !== mIdx) setRowSearchHighlightIndex(mIdx); }}
                                             onMouseDown={(e) => {
                                               e.preventDefault();
                                               const idx = cart.indexOf(item);
@@ -5625,7 +5626,7 @@ const POS = () => {
                             </button>
                             
                             {activeBatchRowId === String(item.id) && rowBatchesList.length > 0 && (
-                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 overflow-y-auto dropdown-scroll w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
                                 <div className="p-2 border-b border-border/30 bg-bg3/60 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
                                   <span>Switch Batch</span>
                                   <span className="text-xs font-normal text-muted/70">{rowBatchesList.length} available</span>

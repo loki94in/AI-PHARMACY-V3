@@ -102,8 +102,10 @@ function reclaimPort(port: number): void {
   }
 }
 
-// Completely disable GPU hardware acceleration before app is ready
-// Eliminates GPU spikes on legacy/integrated GPUs (e.g. NVIDIA GT 730, Intel HD) -> 0.0% GPU load
+// OWNER POLICY (2026-09-30): the app must never need a graphics card. It must run on any PC,
+// including ones with only the CPU's integrated graphics. Everything is drawn by the CPU, so the UI
+// must stay cheap to draw (see frontend/AGENTS.md "Dropdown Scroll Performance Rule").
+// Guardrail E1 (scripts/performance-guardrails.mjs) blocks removing these lines or adding GPU-forcing switches.
 app.disableHardwareAcceleration();
 
 // Pure software CPU rasterization & rendering switches (Zero GPU footprint)

@@ -25,17 +25,19 @@ interface HoverPriceIntelTableProps {
    * these records (null/undefined falls back to the /price-history query).
    */
   records?: PriceRecord[] | null;
+  /** The caller's own load for `records` is in flight: show loading, don't fetch. */
+  pending?: boolean;
 }
 
-export const HoverPriceIntelTable: React.FC<HoverPriceIntelTableProps> = ({ medicineName, medicineId, records }) => {
-  const canFetch = !!medicineName && medicineName.length >= 2 && !records;
+export const HoverPriceIntelTable: React.FC<HoverPriceIntelTableProps> = ({ medicineName, medicineId, records, pending }) => {
+  const canFetch = !!medicineName && medicineName.length >= 2 && !records && !pending;
   const { data: historyRes, isFetching, isSuccess, isError } = useApiQuery<{ data?: PriceRecord[] }>(
     ['medicine-price-history', medicineId || medicineName],
     () => api.getMedicinePriceHistory(medicineName, medicineId),
     { enabled: canFetch }
   );
   const sourceRecords: PriceRecord[] = (records && records.length > 0 ? records : null) || historyRes?.data || [];
-  const loading = !records && isFetching;
+  const loading = !records && (pending || isFetching);
   const loaded = !!records || isSuccess || isError;
   const error = isError ? 'Could not load price history.' : null;
 

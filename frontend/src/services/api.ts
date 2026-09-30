@@ -482,6 +482,41 @@ interface AppSettings {
 
 // ── Row/payload shapes observed from the backend route handlers ──────────────
 
+/** A Pharmarack distributor product the pharmacist ticks for a refill medicine (saved as its link). */
+export interface RefillCartPick {
+  storeId: number;
+  storeName: string;
+  productCode: string;
+  productId?: string | number | null;
+  productName?: string;
+  packaging?: string;
+  company?: string;
+  mapped?: boolean;
+}
+
+export interface RefillCartCandidate extends RefillCartPick {
+  rate: number | null;
+  mrp: number | null;
+  scheme: string;
+  stock: string;
+  inStock: boolean;
+  inCart: boolean;
+  linked: boolean;
+}
+
+/** POST /refills/:id/add-to-cart — one medicine, real outcome (see services/refillCartService.ts). */
+export interface RefillCartResult {
+  success: boolean;
+  status: 'added' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
+  message: string;
+  refillId: number;
+  medicineName: string;
+  qty: number;
+  line?: { storeName: string; productName: string; qty: number };
+  linked: Array<{ storeName: string; productName: string; stock: string; inStock: boolean }>;
+  candidates: RefillCartCandidate[];
+}
+
 export interface LastPurchaseByDistributorRow {
   distributor_id: number;
   distributor_name: string;
@@ -532,6 +567,20 @@ export interface WhatsAppDeliveryRecord {
   sent_at: number;
   delivery_status: string;
   metadata?: string | null;
+}
+
+/** automation_notifications row from GET /automation/notifications/daily-summary?days=N */
+export interface DailyLogRow {
+  id: number;
+  type: string;
+  recipient_name: string;
+  recipient_phone: string;
+  message: string;
+  status: string;
+  reference_id: string | null;
+  error_message: string | null;
+  /** epoch ms of the last send/resolve, else creation — decides the day group */
+  activity_ms: number;
 }
 
 export interface WhatsAppQueueItem {
@@ -1647,6 +1696,9 @@ export const api = {
   createRefill: (data: Partial<Refill>) => apiClient.post('/refills', data).then(res => res.data),
   updateRefill: (id: number, data: Partial<Refill>) => apiClient.put(`/refills/${id}`, data).then(res => res.data),
   deleteRefill: (id: number) => apiClient.delete(`/refills/${id}`).then(res => res.data),
+  // Server does cart read → live search → add → cart re-read; slow Pharmarack can take a while.
+  addRefillToCart: (id: number, body: { qty?: number; pick?: RefillCartPick[] }) =>
+    apiClient.post<RefillCartResult>(`/refills/${id}/add-to-cart`, body, { timeout: 90000 }).then(res => res.data),
   sendRefillNow: (id: number) => apiClient.post<{ success: boolean; queueId?: number; message: string }>(`/refills/${id}/send`).then(res => res.data),
   sendGroupedRefill: (data: { patient_phone: string; patient_name: string; refill_ids?: number[]; medicines?: Array<{ id: number; medicine_name: string; quantity_needed?: number }> }) =>
     apiClient.post<{ success: boolean; queueId?: number; updatedRefillCount?: number; message: string }>('/refills/send-grouped', data).then(res => res.data),
@@ -1663,7 +1715,8 @@ export const api = {
   retryNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/retry`).then(res => res.data),
   cancelNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/cancel`).then(res => res.data),
   manualNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/manual`).then(res => res.data),
-  getDailyNotificationSummary: () =>
+  // Omit `days` for the lean Quick Assist counts; pass it to also get the day-grouped `log`.
+  getDailyNotificationSummary: (days?: number) =>
     apiClient.get<{
       success: boolean;
       sentTodayCount: number;
@@ -1675,18 +1728,10 @@ export const api = {
         message?: string;
         type?: string;
       }>;
-      todayLog: Array<{
-        id: number;
-        type: string;
-        recipient_name: string;
-        recipient_phone: string;
-        message: string;
-        status: string;
-        created_at: string;
-        resolved_at?: string;
-        reference_id?: string;
-      }>;
-    }>('/automation/notifications/daily-summary').then(res => res.data),
+      log?: DailyLogRow[];
+    }>('/automation/notifications/daily-summary', { params: days ? { days } : undefined }).then(res => res.data),
+  sendNotification: (id: number, edits?: { message?: string; phone?: string }) =>
+    apiClient.post<{ success: boolean; queueId: number; notificationId: number; edited: boolean }>(`/automation/notifications/${id}/send`, edits || {}).then(res => res.data),
   snoozeNotification: (id: number, days?: number) =>
     apiClient.post<{ success: boolean; message: string }>(`/automation/notifications/${id}/snooze`, { days }).then(res => res.data),
   snoozeNotificationGroup: (ids: number[], days?: number) =>

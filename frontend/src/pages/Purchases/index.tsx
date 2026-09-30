@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import {} from '../../hooks/useDeferredEffect';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Edit, Camera, CheckCircle, Mail, Package, X, Plus, BookOpen, AlertTriangle, ShieldAlert, Factory, RefreshCw, ExternalLink, Loader2 } from 'lucide-react';
@@ -285,24 +285,53 @@ interface MedicineBatchHistoryRow {
 const medicineHistoryCache = new Map<string, MedicineBatchHistoryRow[]>();
 const medicineHistoryPending = new Map<string, Promise<MedicineBatchHistoryRow[]>>();
 
-const historyCacheKey = (medId?: number | null, distId?: number | null): string =>
-  `${medId || 0}|${distId || 0}`;
+// Keyed by medicine only: /medicine-batches returns every distributor's lines,
+// so switching distributor must not cold-start the cache. Unlinked rows key by
+// name so two different unlinked medicines never share one history.
+const historyCacheKey = (medId?: number | null, medName?: string | null): string =>
+  medId ? `id:${medId}` : `name:${(medName || '').trim().toLowerCase()}`;
 
-const getCachedMedicineHistory = (medId?: number | null, distId?: number | null): MedicineBatchHistoryRow[] | null =>
-  medicineHistoryCache.get(historyCacheKey(medId, distId)) || null;
+const getCachedMedicineHistory = (medId?: number | null, medName?: string | null): MedicineBatchHistoryRow[] | null =>
+  medicineHistoryCache.get(historyCacheKey(medId, medName)) || null;
+
+const isMedicineHistoryPending = (medId?: number | null, medName?: string | null): boolean =>
+  medicineHistoryPending.has(historyCacheKey(medId, medName));
+
+// Render signal for the module cache (useSyncExternalStore): an open rate/MRP
+// hover repaints the moment the shared load settles instead of waiting on its
+// own /price-history fallback request.
+let medicineHistoryVersion = 0;
+const medicineHistoryListeners = new Set<() => void>();
+const subscribeMedicineHistory = (cb: () => void) => {
+  medicineHistoryListeners.add(cb);
+  return () => { medicineHistoryListeners.delete(cb); };
+};
+const getMedicineHistoryVersion = (): number => medicineHistoryVersion;
+const notifyMedicineHistory = (): void => {
+  medicineHistoryVersion++;
+  medicineHistoryListeners.forEach(cb => cb());
+};
+
+// Any saved/edited/approved purchase bill can add batches; drop the session
+// history so the next lookup refetches (~20 ms) instead of showing old batches.
+if (typeof window !== 'undefined') {
+  window.addEventListener('sse-invoice-saved', () => {
+    medicineHistoryCache.clear();
+    notifyMedicineHistory();
+  });
+}
 
 const loadMedicineHistory = (
   medId?: number | null,
-  medName?: string,
-  distId?: number | null
+  medName?: string
 ): Promise<MedicineBatchHistoryRow[]> => {
-  const key = historyCacheKey(medId, distId);
+  const key = historyCacheKey(medId, medName);
   const cached = medicineHistoryCache.get(key);
   if (cached) return Promise.resolve(cached);
   const pending = medicineHistoryPending.get(key);
   if (pending) return pending;
   // Single-flight per key: overlapping focus/selection events share one request.
-  const request = api.getMedicineBatches(medId ?? undefined, medName ?? undefined, distId ?? undefined)
+  const request = api.getMedicineBatches(medId ?? undefined, medName ?? undefined)
     .then((rows) => {
       const list = Array.isArray(rows) ? (rows as MedicineBatchHistoryRow[]) : [];
       medicineHistoryCache.set(key, list);
@@ -315,6 +344,7 @@ const loadMedicineHistory = (
     })
     .finally(() => {
       medicineHistoryPending.delete(key);
+      notifyMedicineHistory();
     });
   medicineHistoryPending.set(key, request);
   return request;
@@ -910,6 +940,8 @@ const sanitizeExpiryInput = (raw: string, prev: string): string => {
 };
 
 const Purchases: React.FC = () => {
+  // Re-render when a shared history load settles so open hover intel fills in.
+  useSyncExternalStore(subscribeMedicineHistory, getMedicineHistoryVersion);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -1508,7 +1540,7 @@ const Purchases: React.FC = () => {
   // cold, one load fires and the patch applies under a strict stale-guard — this
   // replaces the old per-keystroke network lookup whose late response could
   // overwrite values right after a suggestion click.
-  const applySameBatchHistory = (rowIndex: number, medId: number, medName: string | undefined, batchVal: string, distId: number | null) => {
+  const applySameBatchHistory = (rowIndex: number, medId: number, medName: string | undefined, batchVal: string) => {
     const patchFromRow = (row: MedicineBatchHistoryRow | null) => {
       if (!row) return;
       setItems(prev => {
@@ -1527,12 +1559,12 @@ const Purchases: React.FC = () => {
         return updated;
       });
     };
-    const cached = getCachedMedicineHistory(medId, distId);
+    const cached = getCachedMedicineHistory(medId, medName);
     if (cached) {
       patchFromRow(findSameBatchHistory(cached, batchVal));
       return;
     }
-    loadMedicineHistory(medId, medName, distId)
+    loadMedicineHistory(medId, medName)
       .then(list => patchFromRow(findSameBatchHistory(list, batchVal)))
       .catch(() => { /* history unavailable — user-entered values stay */ });
   };
@@ -2022,34 +2054,6 @@ const Purchases: React.FC = () => {
     setActiveSearchIndex(null);
     setSearchHighlightIndex(-1);
 
-    // Instant local memory cache hydration:
-    // If the medicine exists in frontend compact inventory, immediately populate rowBatchesList
-    // and pre-warm medicineHistoryCache with 0ms latency!
-    const compact = getCompactInventoryCache();
-    if (compact && compact.length > 0) {
-      const localMatches = compact.filter(m => 
-        (medicine.id && m.medicine_id === medicine.id) ||
-        (m.name || m.medicine_name || '').toLowerCase().trim() === (medicine.name || '').toLowerCase().trim()
-      );
-      if (localMatches.length > 0) {
-        const formatted: MedicineBatchHistoryRow[] = localMatches.map(m => ({
-          batch_no: m.batch_no || '',
-          expiry_date: m.expiry_date || '',
-          rate: Number(m.cost_price || 0),
-          mrp: Number(m.mrp || 0),
-          cgst_per: (m as any).cgst_per ?? null,
-          sgst_per: (m as any).sgst_per ?? null,
-          quantity: Number(m.quantity || 0),
-          distributor_name: null,
-          purchase_date: null
-        })).filter(b => b.batch_no.trim() !== '');
-        if (formatted.length > 0) {
-          setRowBatchesList(formatted);
-          medicineHistoryCache.set(historyCacheKey(medicine.id, selectedDistributor), formatted);
-        }
-      }
-    }
-
     // Focus Batch field of the current row so the user can enter batch and price details!
     focusRowField(index, 'batch_no');
 
@@ -2060,7 +2064,7 @@ const Purchases: React.FC = () => {
 
     // One-shot history load for this medicine+distributor warms the cache for batch suggestions
     // and price intel hover tooltip without auto-overwriting manual fields.
-    loadMedicineHistory(medicine.id, medicine.name, selectedDistributor || undefined)
+    loadMedicineHistory(medicine.id, medicine.name)
       .then(fullBatches => {
         if (Array.isArray(fullBatches) && fullBatches.length > 0) {
           setRowBatchesList(fullBatches);
@@ -2358,7 +2362,7 @@ const Purchases: React.FC = () => {
       // expiry; GST only when the user hasn't manually set it; qty never touched).
       const trimmedBatch = typeof value === 'string' ? value.trim() : '';
       if (item.medicine_id && trimmedBatch) {
-        applySameBatchHistory(index, item.medicine_id, item.medicine_name, trimmedBatch, selectedDistributor || null);
+        applySameBatchHistory(index, item.medicine_id, item.medicine_name, trimmedBatch);
       }
     } else if (field === 'qty' || field === 'free_qty' || field === 'rate' || field === 'mrp' ||
         field === 'cgst_per' || field === 'sgst_per' || field === 'cd_rs' || field === 'cd_per' || field === 'additional_discount') {
@@ -3229,7 +3233,7 @@ const Purchases: React.FC = () => {
                   autoComplete="off"
                 />
                 {showDistributorDropdown && distributorSearch.trim().length >= 2 && (
-                  <div ref={distributorDropdownRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 overflow-y-auto shadow-2xl">
+                  <div ref={distributorDropdownRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 overflow-y-auto dropdown-scroll shadow-2xl">
                     <div className="px-3 py-1 bg-bg3 border-b border-glass-border/40 flex items-center justify-end">
                       <button
                         type="button"
@@ -3483,7 +3487,7 @@ const Purchases: React.FC = () => {
             />
             
             {showCreditNotesPanel && pendingReturns.length > 0 && (
-              <div className="absolute z-dropdown w-64 mt-1 bg-bg2 border border-purple-500/30 rounded-xl shadow-2xl p-2 max-h-48 overflow-y-auto">
+              <div className="absolute z-dropdown w-64 mt-1 bg-bg2 border border-purple-500/30 rounded-xl shadow-2xl p-2 max-h-48 overflow-y-auto dropdown-scroll">
                 {pendingReturns.map(ret => (
                   <button
                     key={ret.id}
@@ -3630,7 +3634,7 @@ const Purchases: React.FC = () => {
                           // other endpoint ever fires. Cold cache warms silently;
                           // hover intel + Old Batches then render instantly.
                           if (item.medicine_id || item.medicine_name) {
-                            loadMedicineHistory(item.medicine_id ?? undefined, item.medicine_name ?? undefined, selectedDistributor)
+                            loadMedicineHistory(item.medicine_id ?? undefined, item.medicine_name ?? undefined)
                               .catch(() => {});
                           }
                         }}
@@ -3916,7 +3920,7 @@ const Purchases: React.FC = () => {
                               </div>
 
                               {/* SCROLLABLE MATCHING RESULTS */}
-                              <div ref={searchResultsRef} data-scrollable="true" className="max-h-60 overflow-y-auto flex-1">
+                              <div ref={searchResultsRef} data-scrollable="true" className="max-h-60 overflow-y-auto dropdown-scroll flex-1">
                               {item.original_name && (
                                 <div className="px-4 py-2 bg-blue-500/10 border-b border-glass-border/30 text-xs text-blue-300 font-bold select-none flex items-center gap-1.5 font-mono">
                                   📄 Original Bill Name: {item.original_name}
@@ -3927,7 +3931,8 @@ const Purchases: React.FC = () => {
                                   key={medicine.id}
                                   type="button"
                                   data-highlighted={idx === searchHighlightIndex ? "true" : "false"}
-                                  onMouseEnter={() => setSearchHighlightIndex(idx)}
+                                  // mousemove, not mouseenter: rows scrolling under a still cursor fire mouseenter and re-rendered the whole page per row
+                                  onMouseMove={() => { if (searchHighlightIndex !== idx) setSearchHighlightIndex(idx); }}
                                   onClick={() => selectMedicine(medicine, index)}
                                   className={`w-full text-left px-4 py-2.5 transition-all text-text border-b border-glass-border/10 last:border-0 ${
                                     idx === searchHighlightIndex 
@@ -4027,36 +4032,10 @@ const Purchases: React.FC = () => {
                           setRowBatchesList([]);
                           return;
                         }
-                        const cached = getCachedMedicineHistory(medId, selectedDistributor);
+                        const cached = getCachedMedicineHistory(medId, medName);
                         if (cached && cached.length > 0) {
                           setRowBatchesList(cached);
                           return;
-                        }
-                        // Check local memory cache synchronously
-                        const compact = getCompactInventoryCache();
-                        if (compact && compact.length > 0) {
-                          const localMatches = compact.filter(m => 
-                            (medId && m.medicine_id === medId) ||
-                            (m.name || m.medicine_name || '').toLowerCase().trim() === (medName || '').toLowerCase().trim()
-                          );
-                          if (localMatches.length > 0) {
-                            const formatted: MedicineBatchHistoryRow[] = localMatches.map(m => ({
-                              batch_no: m.batch_no || '',
-                              expiry_date: m.expiry_date || '',
-                              rate: Number(m.cost_price || 0),
-                              mrp: Number(m.mrp || 0),
-                              cgst_per: (m as any).cgst_per ?? null,
-                              sgst_per: (m as any).sgst_per ?? null,
-                              quantity: Number(m.quantity || 0),
-                              distributor_name: null,
-                              purchase_date: null
-                            })).filter(b => b.batch_no.trim() !== '');
-                            if (formatted.length > 0) {
-                              setRowBatchesList(formatted);
-                              medicineHistoryCache.set(historyCacheKey(medId, selectedDistributor), formatted);
-                              return;
-                            }
-                          }
                         }
                         // Cold cache: one shared request; tag it so a late
                         // response for another row/medicine/distributor is dropped.
@@ -4064,7 +4043,7 @@ const Purchases: React.FC = () => {
                         activeBatchRequestRef.current = requestKey;
                         setRowBatchesList([]);
                         setRowBatchesLoading(true);
-                        loadMedicineHistory(medId ?? undefined, medName ?? undefined, selectedDistributor)
+                        loadMedicineHistory(medId ?? undefined, medName ?? undefined)
                           .then(batches => {
                             if (activeBatchRequestRef.current === requestKey) {
                               setRowBatchesList(batches);
@@ -4110,7 +4089,7 @@ const Purchases: React.FC = () => {
                             )}
                           </div>
 
-                          <div ref={batchDropdownRef} className="max-h-52 overflow-y-auto divide-y divide-glass-border/20 [will-change:scroll-position]">
+                          <div ref={batchDropdownRef} className="max-h-52 overflow-y-auto dropdown-scroll divide-y divide-glass-border/20">
                             {rowBatchesLoading && rowBatchesList.length === 0 ? (
                               <div className="p-3 text-center text-xs text-muted">
                                 Fetching past batches...
@@ -4226,7 +4205,8 @@ const Purchases: React.FC = () => {
                           <HoverPriceIntelTable
                             medicineName={item.medicine_name}
                             medicineId={item.medicine_id}
-                            records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, selectedDistributor))}
+                            records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, item.medicine_name))}
+                            pending={isMedicineHistoryPending(item.medicine_id, item.medicine_name)}
                           />
                         </div>
                       </div>
@@ -4270,7 +4250,8 @@ const Purchases: React.FC = () => {
                           <HoverPriceIntelTable
                             medicineName={item.medicine_name}
                             medicineId={item.medicine_id}
-                            records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, selectedDistributor))}
+                            records={historyRowsAsPriceRecords(getCachedMedicineHistory(item.medicine_id, item.medicine_name))}
+                            pending={isMedicineHistoryPending(item.medicine_id, item.medicine_name)}
                           />
                         </div>
                       </div>

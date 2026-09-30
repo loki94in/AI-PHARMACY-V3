@@ -15,6 +15,7 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 
 import { resolveStoreId } from '../services/storeContextService.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
+import { processRefillCartItem, removeRefillCartLines, REFILL_CART_COLUMNS } from '../services/refillCartService.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 // const __dirname = path.dirname(__filename);
@@ -374,8 +375,10 @@ router.put('/patient-medicines', async (req, res) => {
     }
 
     // Delete or deactivate only medicines explicitly removed from the prescription
+    const removedRows: any[] = [];
     for (const [medId, r] of existingMap.entries()) {
       if (!processedMedicineIds.has(medId)) {
+        removedRows.push(r);
         await db.run('DELETE FROM patient_refills WHERE id = ?', [r.id]);
         await db.run(
           `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
@@ -383,6 +386,8 @@ router.put('/patient-medicines', async (req, res) => {
         ).catch(() => {});
       }
     }
+
+    removeRefillCartLines(removedRows, false);
 
     // Re-check inventory stock and trigger necessary alerts/schedules
     await checkAllRefills(db);
@@ -671,7 +676,10 @@ router.get('/panel', async (req, res) => {
           batch_quantity: stock?.batch_quantity || 0,
           batch_loose_quantity: stock?.batch_loose_quantity || 0,
           patient_confirmed: row.patient_confirmed || 0,
-          confirmed_at: row.confirmed_at || null
+          confirmed_at: row.confirmed_at || null,
+          // Live-cart line this refill cycle added (refill cart popup); null when none
+          cart_store_name: row.cart_product_code ? row.cart_store_name : null,
+          cart_qty: row.cart_product_code ? row.cart_qty : null
         });
       }
     }
@@ -799,12 +807,29 @@ router.post('/:id/toggle-pause', async (req, res) => {
   }
 });
 
+// Refill → Pharmarack Live Cart, one medicine per call (CRM refill cart popup).
+// User-clicked only. Body: { qty?, pick?: ticked distributor products to save }.
+// `success` is true only when the cart really changed, so refill_updated fires only then.
+router.post('/:id/add-to-cart', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id || isNaN(id)) return res.status(400).json({ error: 'Valid refill ID required' });
+  try {
+    const pick = Array.isArray(req.body?.pick) ? req.body.pick : undefined;
+    const result = await processRefillCartItem(id, { qty: req.body?.qty, pick });
+    res.json({ success: result.status === 'added', ...result });
+  } catch (err: any) {
+    console.error('Refill add-to-cart failed:', err);
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to add refill to live cart' });
+  }
+});
+
 // Soft-cancel a refill record
 router.post('/:id/cancel', async (req, res) => {
   const { id } = req.params;
   let db;
   try {
     db = await dbManager.getConnection();
+    const cartRow = await db.get(`SELECT ${REFILL_CART_COLUMNS} FROM patient_refills WHERE id = ?`, [id]);
     await db.run(
       'UPDATE patient_refills SET is_active = 0, is_ready = 0, hold_for_stock = 0 WHERE id = ?',
       [id]
@@ -816,6 +841,7 @@ router.post('/:id/cancel', async (req, res) => {
     );
     // Respond immediately — background the full-table scan
     res.json({ success: true, message: 'Refill schedule canceled successfully' });
+    removeRefillCartLines([cartRow], true);
     setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after cancel:', e)); });
   } catch (err: any) {
     console.error('Failed to cancel refill:', err);
@@ -838,8 +864,8 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
   try {
     db = await dbManager.getConnection();
 
-    // Collect all matching refill records first
-    let query = 'SELECT id FROM patient_refills WHERE 0 = 1';
+    // Collect all matching refill records first (cart columns too: deleted rows' cart lines are removed below)
+    let query = `SELECT ${REFILL_CART_COLUMNS} FROM patient_refills WHERE 0 = 1`;
     const params: any[] = [];
 
     if (ids.length > 0) {
@@ -891,6 +917,7 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
         deletedCount: result.changes || refillIds.length,
         message: 'Patient refill schedule deleted successfully'
       });
+      removeRefillCartLines(matchingRefills, false);
       setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after delete:', e)); });
       return;
     } else {
@@ -943,6 +970,7 @@ router.delete('/:id', async (req, res) => {
     );
 
     await db.run('DELETE FROM patient_refills WHERE id = ?', [numId]);
+    removeRefillCartLines([refill], false);
 
     await checkAllRefills(db);
 
@@ -1069,6 +1097,7 @@ router.post('/:id/fulfill', async (req, res) => {
            next_refill_date = ?,
            stock_verified_override = 0,
            ordering_triggered = 0,
+           cart_product_code = NULL,
            is_ready = 0,
            hold_for_stock = 0,
            acknowledged = 0,
@@ -1175,6 +1204,7 @@ router.post('/patient/:phone/fulfill-all', async (req, res) => {
              next_refill_date = ?,
              stock_verified_override = 0,
              ordering_triggered = 0,
+             cart_product_code = NULL,
              is_ready = 0,
              hold_for_stock = 0,
              acknowledged = 0,
@@ -1298,6 +1328,7 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
              next_refill_date = ?,
              stock_verified_override = 0,
              ordering_triggered = 0,
+             cart_product_code = NULL,
              is_ready = 0,
              hold_for_stock = 0,
              acknowledged = 0,
@@ -1327,12 +1358,13 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
       return res.json({ success: true, message: 'Refill status updated to notified' });
     } else if (normalizedStatus === 'canceled' || normalizedStatus === 'cancelled') {
       await db.run(
-        `UPDATE patient_refills 
+        `UPDATE patient_refills
          SET status = 'canceled', is_active = 0, is_ready = 0, hold_for_stock = 0
          WHERE id = ?`,
         [id]
       );
       await cleanupStagedRefillNotifications(db, [Number(id)], 'cancelled');
+      removeRefillCartLines([refill], true);
       return res.json({ success: true, message: 'Refill cancelled' });
     } else {
       await db.run(

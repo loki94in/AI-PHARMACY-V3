@@ -42,6 +42,7 @@ Before editing:
 | Patient | Name and phone captured on a sale, or edited on the patient the sale already created | POS save creates the person from the name and phone on the bill. CRM edits that person | `customers` | sale save; `GET/POST /api/customers` |
 | Special order | Shortage request for a patient | CRM special-orders tab | `special_orders` | `GET/POST/PUT/DELETE /api/orders` |
 | Refill | Repeat medicine for a patient | CRM refills tab | `patient_refills` | `GET/POST/PUT /api/refills` |
+| Refill cart link | Pharmarack distributor products the pharmacist ticked for a medicine, and the one cart line a refill cycle added | CRM refills → Live Cart popup (`RefillCartModal`, user click) | `medicine_distributor_links`, `patient_refills.cart_*` | `POST /api/refills/:id/add-to-cart` |
 
 Mail and OCR may stage a bill for review. They become a purchase only after the user confirms the verification modal. They do not create shelf stock by themselves.
 
@@ -113,6 +114,23 @@ Quick Assist (`QuickAssistSidebar` in `frontend/src/components/Layout.tsx`) is a
 - Do not give Quick Assist its own table, its own patient list, or a private copy of refills.
 
 `pending_shortage_requests` is not a patient store. Do not point new code at it.
+
+### Refill → Live Cart (added 2026-09-30)
+
+CRM **Order to Cart** (patient) and **+ Live Cart** (one medicine) open `RefillCartModal`. It sends one `POST /api/refills/:id/add-to-cart` at a time. `services/refillCartService.ts` handles each:
+
+```text
+live cart has it (saved product, this refill's line, or exact name)  → in_cart, never re-added
+no saved distributor                                                 → needs_link (pharmacist ticks; saved)
+every saved distributor out of stock                                 → linked_oos (highlighted; tick another)
+else add to ONE saved in-stock product: already in cart → most purchased from → first ticked
+     → re-read the cart → only then 'added' and patient_refills.cart_* is written
+```
+
+- `medicine_distributor_links` holds only what the pharmacist ticked. Search results and offline catalog rows never become links.
+- Cancel, delete, and removing a medicine from the prescription remove exactly the recorded `cart_store_id + cart_product_code` line, in the background, and push the real result as a toast. Fulfill, fulfill-all, status completed and a POS refill sale clear `cart_product_code`. Skip does not.
+- Also shows on: CRM refill card chip `🛒 <distributor> ×qty` (`/refills/panel` → `cart_store_name`, `cart_qty`).
+- No worker, cron or listener calls this. Cart writes happen only from the click.
 
 ---
 

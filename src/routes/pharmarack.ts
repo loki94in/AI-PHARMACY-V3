@@ -793,7 +793,7 @@ export const invalidatePharmarackCartCache = () => {
 // Core live-cart loader shared by GET /cart and the boot warm-up (startup-sync fix) so
 // both paths parse the upstream payload identically. Errors carry .code
 // ('NEED_LOGIN' | 'SESSION_EXPIRED') or .httpStatus so routes can map them faithfully.
-async function loadLiveCartCore(): Promise<{ distributors: any[]; totalItems: number }> {
+export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalItems: number }> {
   const settings = await getPharmarackSettings();
   const token = settings['pharmarack_session_token'] || '';
 
@@ -2000,6 +2000,10 @@ export async function adjustSpecialOrderInLiveCart(order: {
   distributor?: string | null;
   productCode?: string | null;
   storeId?: number | null;
+  // Refill cancel: touch ONLY the exact productCode+storeId line this app added
+  // (no name/prefix passes — "TELMA 40" must never hit "TELMA 40 H") and report
+  // the delete's real outcome instead of assuming success after 2.5 s.
+  exactOnly?: boolean;
 }): Promise<SpecialOrderCartAdjustmentResult> {
   try {
     const rawProd = (order.product || '').trim();
@@ -2035,7 +2039,7 @@ export async function adjustSpecialOrderInLiveCart(order: {
     }
 
     // Pass 1: Match by distributor + exact normalized product name
-    if (!matchedItem) {
+    if (!matchedItem && !order.exactOnly) {
       for (const dist of cart.distributors) {
         const distNorm = normalize(dist.storeName || '');
         const distMatches = !targetDistNorm || distNorm.includes(targetDistNorm) || targetDistNorm.includes(distNorm);
@@ -2052,7 +2056,7 @@ export async function adjustSpecialOrderInLiveCart(order: {
     }
 
     // Pass 2: Match by exact normalized product name across any distributor
-    if (!matchedItem) {
+    if (!matchedItem && !order.exactOnly) {
       for (const dist of cart.distributors) {
         for (const it of dist.items || []) {
           const itNorm = normalize(it.productName || '');
@@ -2067,7 +2071,7 @@ export async function adjustSpecialOrderInLiveCart(order: {
     }
 
     // Pass 3: Match prefix / contains if product name is distinct enough
-    if (!matchedItem && targetNorm.length >= 4) {
+    if (!matchedItem && !order.exactOnly && targetNorm.length >= 4) {
       for (const dist of cart.distributors) {
         for (const it of dist.items || []) {
           const itNorm = normalize(it.productName || '');
@@ -2104,11 +2108,18 @@ export async function adjustSpecialOrderInLiveCart(order: {
 
       const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
       pharmarackDeleteChain = task;
-      // Non-blocking race: wait up to 2.5s for fast response, otherwise continue in background
-      await Promise.race([
-        task.catch(() => {}),
-        new Promise(r => setTimeout(r, 2500))
-      ]);
+      if (order.exactOnly) {
+        const deleted = await task.catch(() => false);
+        if (!deleted) {
+          return { action: 'none', productName: matchedItem.productName, storeName, message: 'Pharmarack did not confirm the removal' };
+        }
+      } else {
+        // Non-blocking race: wait up to 2.5s for fast response, otherwise continue in background
+        await Promise.race([
+          task.catch(() => {}),
+          new Promise(r => setTimeout(r, 2500))
+        ]);
+      }
 
       return {
         action: 'removed',

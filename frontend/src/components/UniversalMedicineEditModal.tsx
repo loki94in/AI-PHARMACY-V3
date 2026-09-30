@@ -1502,7 +1502,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
                       />
                       {showMfgSuggestions && mfgSuggestions.length > 0 && (
-                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto z-dropdown">
+                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto dropdown-scroll z-dropdown">
                           {mfgSuggestions.map((mfgName, idx) => (
                             <button
                               key={idx}
@@ -1530,7 +1530,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
                       />
                       {showMrkSuggestions && mrkSuggestions.length > 0 && (
-                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto z-dropdown">
+                        <div className="absolute top-full left-0 w-full mt-1 bg-bg2 border border-glass-border rounded-lg shadow-lg max-h-40 overflow-y-auto dropdown-scroll z-dropdown">
                           {mrkSuggestions.map((mrkName, idx) => (
                             <button
                               key={idx}

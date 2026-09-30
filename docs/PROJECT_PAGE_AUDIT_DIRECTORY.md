@@ -171,9 +171,9 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 
 ### 14. Chronic Patient Refills (`/crm?tab=refills`)
 * **Component Path**: CRM refills tab in `frontend/src/pages/CRM/index.tsx`. `/refills` redirects there. Quick Assist lists the same `api.getRefills()` rows.
-* **Authoritative Responsibilities**: Managing chronic patient medicine refills, calculating next due dates, holding stock, triggering Pharmarack live cart search via `LiveCartAddModal`.
-* **Authoritative Data Sources**: `GET /api/refills`, `POST /api/refills`, `PUT /api/refills/:id`.
-* **Database Tables**: `patient_refills`.
+* **Authoritative Responsibilities**: Managing chronic patient medicine refills, calculating next due dates, holding stock, triggering Pharmarack live cart search via `LiveCartAddModal`, and adding refill shortages to the live cart through `RefillCartModal`. That popup works one medicine at a time using the distributors saved for each medicine, and confirms every add in the cart.
+* **Authoritative Data Sources**: `GET /api/refills`, `POST /api/refills`, `PUT /api/refills/:id`, `POST /api/refills/:id/add-to-cart`.
+* **Database Tables**: `patient_refills` (incl. `cart_*` line columns), `medicine_distributor_links`.
 
 ---
 

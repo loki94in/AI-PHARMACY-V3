@@ -1904,7 +1904,7 @@ const Returns: React.FC = () => {
 
                   {/* Distributor Autocomplete Dropdown */}
                   {showDistDropdown && (
-                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto">
+                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto dropdown-scroll">
                       {filteredMasterDistributors.length === 0 ? (
                         <div className="p-3 text-xs text-muted italic">
                           No registered distributor found. Type name to use as custom distributor.
@@ -2285,7 +2285,7 @@ const Returns: React.FC = () => {
                                   </button>
                                 </div>
                                 {activeSearchIndex === originalIndex && (
-                                  <div ref={searchResultsRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                                  <div ref={searchResultsRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-60 overflow-y-auto dropdown-scroll">
                                     {searchResults.length > 0 ? (
                                       <>
                                         {searchResults.map((result, idx) => (

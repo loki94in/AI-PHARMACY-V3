@@ -213,51 +213,66 @@ router.get('/notifications', async (req, res) => {
   }
 });
 
-// Daily notification summary (sent count today, staged count, sent map, and today's log)
-router.get('/notifications/daily-summary', async (_req, res) => {
+const SENT_STATUSES = ['sent', 'sent_manually', 'delivered'];
+const phoneKey = (p: unknown) => String(p || '').replace(/\D/g, '').slice(-10);
+
+// Daily notification summary. Without `days` it is the lean Quick Assist payload
+// (counts + phones sent today). With `days=N` it also returns `log`: every row
+// active in the last N local days plus all staged/snoozed rows, for the
+// Daily Communications modal's day-grouped history.
+router.get('/notifications/daily-summary', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
-    
-    // Count sent today across all types
-    const sentTodayRow = await db.get(`
-      SELECT COUNT(*) as count 
-      FROM automation_notifications 
-      WHERE status IN ('sent', 'sent_manually', 'delivered') 
-        AND (DATE(created_at) = DATE('now', 'localtime') OR DATE(resolved_at) = DATE('now', 'localtime'))
-    `);
-    
-    const stagedCountRow = await db.get(`
-      SELECT COUNT(*) as count 
-      FROM automation_notifications 
-      WHERE status = 'staged'
-    `);
+    const wantsLog = req.query.days !== undefined;
+    const days = Math.min(30, Math.max(1, parseInt(String(req.query.days || '1'), 10) || 1));
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const windowStart = todayStart.getTime() - (days - 1) * 86400000;
 
-    // Phones sent today with latest timestamp
-    const sentPhones = await db.all(`
-      SELECT recipient_phone, recipient_name, MAX(created_at) as last_sent_at, message, type
-      FROM automation_notifications
-      WHERE status IN ('sent', 'sent_manually', 'delivered')
-        AND (DATE(created_at) = DATE('now', 'localtime') OR DATE(resolved_at) = DATE('now', 'localtime'))
-      GROUP BY recipient_phone
-    `);
+    // created_at is UTC (CURRENT_TIMESTAMP or ISO 'Z'); resolved_at is either
+    // Date.now() ms or a datetime('now','localtime') string. Normalise both to
+    // epoch ms so day boundaries follow the shop's local calendar.
+    const rows: Array<{
+      id: number; type: string; recipient_name: string; recipient_phone: string; message: string;
+      status: string; reference_id: string | null; error_message: string | null; activity_ms: number;
+    }> = await db.all(`
+      SELECT id, type, recipient_name, recipient_phone, message, status, reference_id, error_message,
+             COALESCE(resolved_ms, created_ms) AS activity_ms
+      FROM (
+        SELECT *,
+          CASE WHEN typeof(created_at) IN ('integer', 'real') THEN CAST(created_at AS INTEGER)
+               ELSE CAST(strftime('%s', created_at) AS INTEGER) * 1000 END AS created_ms,
+          CASE WHEN typeof(resolved_at) IN ('integer', 'real') THEN CAST(resolved_at AS INTEGER)
+               WHEN resolved_at IS NOT NULL THEN CAST(strftime('%s', resolved_at, 'utc') AS INTEGER) * 1000 END AS resolved_ms
+        FROM automation_notifications
+      )
+      WHERE COALESCE(resolved_ms, created_ms) >= ? OR status IN ('staged', 'snoozed')
+      ORDER BY activity_ms DESC
+      LIMIT 2000
+    `, [windowStart]);
 
-    // Full log for today (sent, staged, cancelled)
-    const todayLog = await db.all(`
-      SELECT id, type, recipient_name, recipient_phone, message, status, created_at, resolved_at, reference_id
-      FROM automation_notifications
-      WHERE DATE(created_at) = DATE('now', 'localtime')
-         OR DATE(resolved_at) = DATE('now', 'localtime')
-         OR status = 'staged'
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
+    // Identical text to the same number counts once — re-sends are not new messages.
+    const sentToday = rows.filter(r => SENT_STATUSES.includes(r.status) && r.activity_ms >= todayStart.getTime());
+    const sentTodayCount = new Set(sentToday.map(r => `${phoneKey(r.recipient_phone)}|${(r.message || '').trim()}`)).size;
+    const phoneMap = new Map<string, { recipient_phone: string; recipient_name?: string; last_sent_at: string; message?: string; type?: string }>();
+    for (const r of sentToday) {
+      const key = phoneKey(r.recipient_phone);
+      if (!key || phoneMap.has(key)) continue; // rows are newest-first
+      phoneMap.set(key, {
+        recipient_phone: r.recipient_phone,
+        recipient_name: r.recipient_name,
+        last_sent_at: new Date(r.activity_ms).toISOString(),
+        message: r.message,
+        type: r.type,
+      });
+    }
 
     res.json({
       success: true,
-      sentTodayCount: sentTodayRow?.count || 0,
-      stagedCount: stagedCountRow?.count || 0,
-      sentPhones,
-      todayLog
+      sentTodayCount,
+      stagedCount: rows.filter(r => r.status === 'staged').length,
+      sentPhones: [...phoneMap.values()],
+      ...(wantsLog ? { log: rows } : {})
     });
   } catch (err: any) {
     console.error('Failed to get daily notification summary:', err);
@@ -436,6 +451,64 @@ router.post('/notifications/:id/manual', async (req, res) => {
   } catch (err: any) {
     console.error('Failed to mark manual status:', err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// User-clicked Send / Re-send (optionally edited) from the Daily Communications
+// log. Manual-only patient messaging: nothing but a pharmacist's click calls this.
+// The row goes to 'queued'; the queue worker flips it to 'sent' on real delivery.
+router.post('/notifications/:id/send', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const row = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Notification not found' });
+
+    const { normalizeWhatsAppPhone } = await import('../whatsappClient.js');
+    const { whatsappQueueWorker } = await import('../services/whatsappQueueWorker.js');
+    const message = String(req.body?.message ?? row.message ?? '').trim();
+    const phone = normalizeWhatsAppPhone(String(req.body?.phone ?? row.recipient_phone ?? ''));
+    if (!message) return res.status(400).json({ error: 'Message text is empty' });
+    if (!phone || phone.length < 10) return res.status(400).json({ error: 'A valid 10-digit WhatsApp number is required' });
+
+    const queueId = await whatsappQueueWorker.enqueue(
+      phone, message, row.type || 'crm_notification', row.recipient_name || undefined,
+      undefined, undefined, undefined, { skipDedupe: true }
+    );
+
+    const edited = message !== String(row.message || '').trim() || phoneKey(phone) !== phoneKey(row.recipient_phone);
+    let notificationId = row.id;
+    if (edited && SENT_STATUSES.includes(row.status)) {
+      // The original send stays in the log; edited text is a new message.
+      const ins = await db.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id, lifecycle_status, resolved_at)
+         VALUES (?, ?, ?, ?, 'queued', ?, 'sent', ?)`,
+        [row.type, row.recipient_name, phone, message, row.reference_id, Date.now()]
+      );
+      notificationId = ins.lastID;
+    } else {
+      await db.run(
+        `UPDATE automation_notifications
+         SET recipient_phone = ?, message = ?, status = 'queued', lifecycle_status = 'sent', error_message = NULL, resolved_at = ?
+         WHERE id = ?`,
+        [phone, message, Date.now(), row.id]
+      );
+    }
+
+    // Same refill hand-off as /manual so background sync does not re-stage it
+    if ((row.status === 'staged' || row.status === 'snoozed') && row.reference_id && (row.type === 'refill_collection' || row.type === 'refill_reminder')) {
+      const refIds = String(row.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
+      for (const refId of refIds) {
+        await db.run(
+          "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
+          [refId]
+        ).catch(() => {});
+      }
+    }
+
+    res.json({ success: true, queueId, notificationId, edited });
+  } catch (err: any) {
+    console.error('Failed to send notification:', err);
+    res.status(500).json({ error: 'Failed to send notification: ' + err.message });
   }
 });
 

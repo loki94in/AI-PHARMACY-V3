@@ -259,4 +259,66 @@ describe('Smart Auto Reminder & Communication Center APIs', () => {
     expect(log.recipient_name).toBe('Jane Doe');
     expect(refill.status).toBe('notified');
   });
+
+  test('GET daily-summary is lean without days, adds the log with days=N, and counts a repeated message once', async () => {
+    const { open } = await import('sqlite');
+    const sqlite3 = await import('sqlite3');
+    const db = await open({ filename: dbPath, driver: sqlite3.default.Database });
+    await db.run('DELETE FROM automation_notifications');
+    // Same text to the same number twice (two phone formats) + a staged row from months ago
+    await db.run(`INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status) VALUES
+      ('refill_reminder', 'Asha', '919876543210', 'Your refill is ready', 'sent'),
+      ('refill_reminder', 'Asha', '9876543210', 'Your refill is ready', 'sent')`);
+    await db.run(`INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, created_at)
+      VALUES ('refill_collection', 'Bala', '919800000001', 'Collect your medicines', 'staged', '2026-01-01 08:00:00')`);
+    await db.close();
+
+    const lean = await request(app).get('/api/automation/notifications/daily-summary');
+    expect(lean.status).toBe(200);
+    expect(lean.body.log).toBeUndefined();
+    expect(lean.body.sentTodayCount).toBe(1);
+    expect(lean.body.stagedCount).toBe(1);
+    expect(lean.body.sentPhones).toHaveLength(1);
+
+    const full = await request(app).get('/api/automation/notifications/daily-summary?days=7');
+    expect(full.status).toBe(200);
+    expect(full.body.log).toHaveLength(3);
+    expect(full.body.log.find((r: any) => r.status === 'staged').recipient_name).toBe('Bala');
+    for (const r of full.body.log) expect(typeof r.activity_ms).toBe('number');
+  });
+
+  test('POST /notifications/:id/send queues a staged row in place and logs an edited re-send as a new row', async () => {
+    const { open } = await import('sqlite');
+    const sqlite3 = await import('sqlite3');
+    const db = await open({ filename: dbPath, driver: sqlite3.default.Database });
+    const staged = await db.get("SELECT id FROM automation_notifications WHERE recipient_name = 'Bala'");
+    const sent = await db.get("SELECT id FROM automation_notifications WHERE recipient_name = 'Asha' ORDER BY id DESC LIMIT 1");
+    await db.close();
+
+    const sendStaged = await request(app).post(`/api/automation/notifications/${staged.id}/send`).send({});
+    expect(sendStaged.status).toBe(200);
+    expect(sendStaged.body.notificationId).toBe(staged.id);
+    expect(sendStaged.body.edited).toBe(false);
+
+    const editedResend = await request(app)
+      .post(`/api/automation/notifications/${sent.id}/send`)
+      .send({ message: 'Your refill is ready — collect by 6 pm', phone: '9876543210' });
+    expect(editedResend.status).toBe(200);
+    expect(editedResend.body.edited).toBe(true);
+    expect(editedResend.body.notificationId).not.toBe(sent.id);
+
+    const empty = await request(app).post(`/api/automation/notifications/${sent.id}/send`).send({ message: '   ' });
+    expect(empty.status).toBe(400);
+
+    const db2 = await open({ filename: dbPath, driver: sqlite3.default.Database });
+    const stagedAfter = await db2.get('SELECT status FROM automation_notifications WHERE id = ?', [staged.id]);
+    const original = await db2.get('SELECT status, message FROM automation_notifications WHERE id = ?', [sent.id]);
+    const editedRow = await db2.get('SELECT status, message FROM automation_notifications WHERE id = ?', [editedResend.body.notificationId]);
+    await db2.close();
+
+    expect(['queued', 'sending', 'sent']).toContain(stagedAfter.status);
+    expect(original).toEqual({ status: 'sent', message: 'Your refill is ready' });
+    expect(editedRow.message).toBe('Your refill is ready — collect by 6 pm');
+    expect(['queued', 'sending', 'sent']).toContain(editedRow.status);
+  });
 });

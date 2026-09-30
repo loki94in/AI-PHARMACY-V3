@@ -7,6 +7,61 @@
 
 ## Fixed
 
+### [Fixed] P1-59 — CRM refill "+ Live Cart" guessed the product and could claim "Added" when nothing reached Pharmarack
+
+| Field | Content |
+|---|---|
+| **What the user saw** | The refill card's "+ Live Cart" button always toasted success. There was no way to say which distributor to use, no stock check, and nothing was remembered for next time. Found 2026-09-30 while building the refill → live cart feature the owner asked for. |
+| **Root cause** | CRM sent `{productId:0, storeId:0, productName}`. `addItemsToPharmarackCart` then (1) copied ids from the newest special order whose product `LIKE %name%`, so "TELMA 40" could take a "TELMA 40 H" order's product, and (2) otherwise took `searchData.data[0]`: the first hit, with no stock or variant check. When the add failed it returned `success:true, offline:true`, and CRM toasted "Added … to Pharmarack Live Cart!". |
+| **How it was fixed** | The button now opens `RefillCartModal` (with a patient-level "Order to Cart" beside it). `POST /api/refills/:id/add-to-cart` works one medicine at a time. It reads the cart first and skips anything already there. It adds only to a distributor product the pharmacist ticked (saved in `medicine_distributor_links`) that has live stock, and highlights the row when every saved one is out of stock. It treats offline as failure and re-reads the cart before saying Added. Cancelling or deleting the refill removes exactly that recorded line (`adjustSpecialOrderInLiveCart` `exactOnly`) and toasts the real result. |
+| **Priority** | P1 |
+| **What not to touch** | Other `addItemsToPharmarackCart` callers still use its enrichment and offline semantics (Live Cart modal, special orders, WhatsApp flow). This fix changes only the refill path. |
+| **Verified by** | `tests/refillCart.test.ts` 11/11 (needs_link, save+add+verify, in_cart no re-add, linked_oos, pick-in-cart rule, offline=failed, ghost add=failed, route outcomes, cancel exact removal + toast, cancel with nothing added). Schema applied to a copy of the real shop DB (v70 → full path 12.3 s, v71 fast-boot upgrade 0.35 s, row counts unchanged, `quick_check` ok). Backend + frontend `tsc` clean, `npm run guardrails` PASS. Not yet clicked through in the running app against live Pharmarack. |
+
+### [Fixed] P2-58 — Daily Communications log re-fetched in a loop while open; wrong day near midnight; repeats listed many times
+
+| Field | Content |
+|---|---|
+| **What the user saw** | The Daily Communications & Staged Log listed every message as a full card. The same message sent several times showed several times, older days were not viewable, and Re-send needed a confirm dialog with no way to edit first. Reported 2026-09-30 as a feature request. |
+| **Root cause** | (1) `DailyCommunicationsModal` ran `useEffect(() => onRefresh(), [isOpen, onRefresh])`, and Layout passed `onRefresh` as an inline arrow. Each refresh set Layout state, which made a new `onRefresh`, which re-ran the effect: a continuous `daily-summary` fetch loop for as long as the modal was open. (2) `daily-summary` compared `DATE(created_at)` (UTC `CURRENT_TIMESTAMP`) with `DATE('now','localtime')`, so in IST messages from 00:00–05:30 fell on the wrong day. It also ran `DATE(resolved_at)` on epoch-ms integers, which never matches. (3) The modal only ever received today's rows, capped at 100. |
+| **How it was fixed** | The modal now loads its own 7-day log (`daily-summary?days=7`) on open, keeps it in a module cache, and reloads on `app-wa-queue-updated` or after its own actions. Rows are one line and expand to the full message; identical text to the same number on the same day is one row with `×N`; today is open and older days are collapsed date cards. Send, Re-send and Edit are one click through the new `POST /automation/notifications/:id/send`, which queues the message, marks the row `queued` (the worker flips it to `sent` on delivery), and inserts a new row for an edited re-send. The backend normalises `created_at`/`resolved_at` to epoch ms, so day boundaries follow local time. Without `days`, the endpoint returns counts only, which makes Quick Assist's refresh lighter. |
+| **Priority** | P2 |
+| **What not to touch** | Manual-only patient messaging: `/send` is called only from a click. Staged/snoozed rows never merge, because their actions are per row. |
+| **Verified by** | `tests/automation.test.ts` 8/8 (2 new: lean vs `days` payload and repeat counting; staged send in place vs edited re-send as new row). New SQL checked on in-memory rows covering UTC, ISO, local-string and epoch-ms timestamps. Frontend + backend `tsc --noEmit` clean; `npm run guardrails` PASS. Not yet clicked through in the running app. |
+
+### [Fixed] P2-56 — Dropdown lists (Pharmarack search, POS, Purchases, CRM) scroll laggy and freeze
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Scrolling the Pharmarack search dropdown, and most other dropdowns, felt laggy and slow, with short freezes. Reported 2026-09-30, the same day Electron was switched to software-only rendering (commit `e6fa5c28`). |
+| **Root cause** | Since `e6fa5c28`, every frame is drawn and composited on the CPU (`disableHardwareAcceleration` + `disable-gpu-compositing`), so any scroll frame that repaints costs CPU. Four frontend patterns turned that cost into jank: (1) POS row-search, Purchases medicine-search and CRM Pharmarack dropdown rows set the highlight index in `onMouseEnter`. Rows sliding under a still cursor fire mouseenter, so each row passing during a scroll re-rendered the whole 4.7k–7.4k-line page. (2) Every dropdown row had `transition-all`, and a few had endless `animate-pulse`/`animate-ping` badges, so rows kept repainting mid-scroll. (3) `index.css` gave sticky table headers `backdrop-filter: blur(12px) !important`, which overrode the global blur kill and re-blurred rows on the CPU every scroll frame (invisible at 0.98 opacity). (4) `.glass-panel` ran a 500 ms `transition-all` hover lift on every card and whole modals (incl. the Pharmarack modal). The earlier `[will-change:scroll-position]` hints in POS/Purchases sat on non-scrolling outer wrappers, so the real lists never got composited scrolling. |
+| **How it was fixed** | New `.dropdown-scroll` class in `index.css` (composited scrolling, `overscroll-behavior: contain`, no row transitions, static pulse/ping badges), put on all 20 dropdown scrollers: LiveCartAddModal, QuickOrderModal, OrderModifyModal, UniversalMedicineEditModal ×2, CRM ×2, Investigation, POS ×6, Purchases ×4, Returns ×2. The three hover handlers are now `onMouseMove` with a same-index guard. Removed the sticky-thead blur and the `.glass-panel` hover lift/transition. |
+| **Priority** | P2 |
+| **What not to touch** | `useDropdownAutoScroll` keyboard scrolling; `animate-spin` loaders inside dropdowns; the Electron GPU switches (owner policy, see P2-57). |
+| **Verified by** | `npm run guardrails` PASS (incl. `tsc --noEmit`). Not yet scrolled in the installed app. |
+
+### [Fixed] P2-57 — App must never need a graphics card: no-GPU rendering locked, idle CPU from endless animations cut
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Follow-up to P2-56. Owner decision (2026-09-30): the app must never need a dedicated graphics card and must run on any PC, including ones with only the CPU's integrated graphics. |
+| **Root cause** | (1) The software-rendering switches in `electron/main.ts` (commit `e6fa5c28`) had nothing protecting them; an earlier commit had forced the GPU on (`ignore-gpu-blocklist`, `enable-gpu-rasterization`, …), causing 99% GPU load. (2) With the CPU drawing every frame, the ~170 endless `animate-pulse`/`ping`/`bounce` uses (many always visible in the sidebar/topbar/footer) kept the CPU redrawing ~60×/s at idle. |
+| **How it was fixed** | Kept software rendering and documented the policy in `electron/main.ts`. New guardrail **E1** (`scripts/performance-guardrails.mjs`, with self-test cases) fails if `disableHardwareAcceleration()` / `disable-gpu-compositing` are removed or a GPU-forcing switch is added. `index.css` caps `animate-pulse`/`ping`/`bounce` at 3 cycles; `animate-spin` loaders stay endless. Contract added to root `AGENTS.md` ("No-GPU Desktop Rendering Contract") and `frontend/AGENTS.md`. |
+| **Priority** | P2 |
+| **What not to touch** | Backend `--max-old-space-size=512` cap; `backgroundThrottling: true`. |
+| **Verified by** | Electron 44 probe in the app's exact no-GPU mode, 1600×900 window, 10 s idle, 3 runs each, window confirmed drawing (rAF 62–63/s): 8 endless dots = 7.4 / 8.5 / 9.7% of one core; no animation = 0.6 / 0.2 / 2.2%; 3-cycle cap = 0.13 / 0.13 / 0.14%. `performance-guardrails --self-test` PASS; `npm run guardrails` PASS. |
+
+### [Fixed] P1-55 — Purchases: Old Batches missing for medicines bought many times; rate/MRP history hover slow or showing one "Unknown" row
+
+| Field | Content |
+|---|---|
+| **What the user saw** | On `/purchases`, picking a medicine that had been bought many times showed only 1–2 batch numbers in Old Batches (or none). Hovering Rate/MRP for past purchase history either showed a single "Unknown" distributor row, or sat on "Loading price history..." for a noticeable time. |
+| **Root cause** | `pages/Purchases/index.tsx` — (1) on selection and on batch focus, the page pre-filled the module history cache from `getCompactInventoryCache()`. That list holds only IN-STOCK active batches, with no distributor and no purchase date. Once filled, `loadMedicineHistory` returned that cache and never called `/purchases/medicine-batches`. Measured on the installed DB: ORS 30 LIQUID has 126 purchased batches but 1 in-stock row, so the dropdown showed 1. (2) The hover popup read the module Map, which does not trigger a re-render. On a cold medicine it fired a second, separate `/price-history` request and waited on that. (3) The cache key included the distributor although the backend ignores it, so a distributor switch made every medicine cold again. Unlinked rows all shared key `0|dist`, so they could show another medicine's history. (4) The cache was never cleared after a bill was saved. Backend SQL was not the problem: 10–22 ms for the heaviest medicines. |
+| **How it was fixed** | Removed both compact-inventory pre-fill blocks, so the cache holds only real `/medicine-batches` responses. The cache key is now the medicine (`id:` or `name:`), not the distributor. The page subscribes to the cache with `useSyncExternalStore`; `HoverPriceIntelTable` got a `pending` prop, so a hover during a load shows the spinner (no parallel `/price-history`) and fills in when the load settles. The cache clears on the `sse-invoice-saved` DOM event, which all four purchase write paths broadcast. |
+| **Priority** | P1 |
+| **What not to touch** | One single-flight `loadMedicineHistory` per medicine (no per-focus or per-keystroke calls); backend sibling-id expansion in `/medicine-batches`; `HoverPriceIntelTable`'s `/price-history` fallback for other pages. |
+| **Verified by** | Read-only timing of the `/medicine-batches` queries against `D:\AI Pharmacy OS\data\app.db` (top 5 most-purchased medicines: 10–22 ms; purchased batches vs in-stock rows 126/1, 23/1, 104/3, 90/1, 69/1); frontend `tsc --noEmit` clean; ESLint on Purchases page 44 → 40 errors (4 `any` removed, none added); `npm run guardrails` PASS. Not yet clicked through in the running app. |
+
 ### [Fixed] P1-54 — Backend pegged one CPU core for ~2 min after every boot (master CSV re-import)
 
 | Field | Content |

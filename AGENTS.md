@@ -124,7 +124,7 @@ npm run guardrails        # = node scripts/performance-guardrails.mjs
 - Default mode scans only lines ADDED/CHANGED vs git HEAD (`<2 s`). Exit `0` = pass. Exit `1` = violations that **MUST be fixed before the task is done** — no exceptions.
 - `--all` runs a full-repository legacy audit (advisory; use it when refactoring a whole subsystem).
 - `--self-test` verifies the rule engine itself (run after editing the scanner).
-- Rules enforce: clean TypeScript compilation (`tsc --noEmit`), no syntax/regex errors, no eager refetch storms (mark-stale-only), no ungated polling timers (`refetchInterval`/`setInterval`), one global SSE connection, semantic Tailwind colors only, no simulation/mock UI, zero dummy-data tokens (`B-*`, `BATCH123`, invented fallbacks), no native `alert()/confirm()`, delivery-boy data only from `delivery_boys` via `/dispatch`, async Pharmarack profile copies, and no autonomous patient messaging from cron/worker files. Git `pre-push` hook enforces this automatically before any push to remote.
+- Rules enforce: clean TypeScript compilation (`tsc --noEmit`), no syntax/regex errors, no eager refetch storms (mark-stale-only), no ungated polling timers (`refetchInterval`/`setInterval`), one global SSE connection, semantic Tailwind colors only, no simulation/mock UI, zero dummy-data tokens (`B-*`, `BATCH123`, invented fallbacks), no native `alert()/confirm()`, delivery-boy data only from `delivery_boys` via `/dispatch`, async Pharmarack profile copies, no autonomous patient messaging from cron/worker files, and (E1) the no-GPU rendering lock in `electron/main.ts`. Git `pre-push` hook enforces this automatically before any push to remote.
 - Sanctioned exceptions live in the `ALLOW` block of `scripts/performance-guardrails.mjs`. Extend them ONLY with a written rationale referencing the governing contract section.
 
 ---
@@ -335,6 +335,12 @@ This breaks the light mode/theme toggle.
 - **Only display live features and live data at all times.** Do not present placeholder or mockup screens for development features in the user-facing UI; if a feature is in development, do not expose a simulated front-end for it.
 
 ---
+
+## No-GPU Desktop Rendering Contract (owner policy, added 2026-09-30)
+
+The app must never need a graphics card. It must run on any PC, including ones with only the CPU's integrated graphics.
+1. **Locked in `electron/main.ts`**: `app.disableHardwareAcceleration()` + `disable-gpu` / `disable-gpu-compositing` / `disable-gpu-rasterization` + `use-gl=swiftshader`. Never remove them, and never add GPU-forcing switches (`ignore-gpu-blocklist`, `enable-gpu-rasterization`, `enable-zero-copy`, `CanvasOopRasterization`, `force_high_performance_gpu`). Guardrail E1 blocks both. Do not propose re-enabling the GPU as a speed fix.
+2. **The CPU draws every frame, so the UI must stay cheap to draw**: no `backdrop-filter` (killed globally in `index.css`); `animate-pulse` / `animate-ping` / `animate-bounce` play 3 cycles and stop (measured: 8 endless dots = 7–10% of one core at idle, 0.1% once stopped); only `animate-spin` loaders stay endless; every dropdown list uses `.dropdown-scroll`; row hover highlight uses guarded `onMouseMove`. Details: `frontend/AGENTS.md` "Dropdown Scroll Performance Rule".
 
 ## Pharmarack Session Persistence Contract
 

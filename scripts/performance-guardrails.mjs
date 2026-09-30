@@ -277,6 +277,30 @@ const RULES = [
         + '(or the sanctioned queue worker flushing user-staged items).';
     },
   },
+  {
+    id: 'E1', name: 'gpu-rendering-enabled',
+    scope: p => norm(p).startsWith('electron/'),
+    fileRule: true,
+    checkFile(file, content) {
+      const MSG = 'No-GPU Desktop Rendering contract (owner policy 2026-09-30): the app must never need a '
+        + 'graphics card, so electron/main.ts keeps app.disableHardwareAcceleration() + disable-gpu-compositing '
+        + 'and no switch may force GPU use.';
+      const out = [];
+      const lines = content.split('\n');
+      const code = lines.filter(l => !looksLikeComment(l)).join('\n');
+      if (norm(file) === 'electron/main.ts'
+        && !(/app\.disableHardwareAcceleration\(\)/.test(code) && /['"]disable-gpu-compositing['"]/.test(code))) {
+        out.push({ rule: 'E1', name: 'gpu-rendering-enabled', file, line: 1, msg: 'GPU rendering lock removed. ' + MSG });
+      }
+      lines.forEach((l, i) => {
+        if (!looksLikeComment(l)
+          && /ignore-gpu-bl(ock|ack)list|enable-gpu-rasterization|enable-zero-copy|CanvasOopRasterization|force_high_performance_gpu/.test(l)) {
+          out.push({ rule: 'E1', name: 'gpu-rendering-enabled', file, line: i + 1, msg: 'GPU-forcing switch. ' + MSG });
+        }
+      });
+      return out;
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -430,6 +454,17 @@ function selfTest() {
   }
   if (b1.checkFile('src/services/newThing.ts', "await getBackendFetchMode('bg.x','auto');\nsetInterval(run, 5000);").length) {
     console.error('SELF-TEST FAIL: B1 flagged gated timer.'); failed++;
+  }
+  const e1 = RULES.find(r => r.id === 'E1');
+  const lockedMain = "app.disableHardwareAcceleration();\napp.commandLine.appendSwitch('disable-gpu-compositing');";
+  if (e1.checkFile('electron/main.ts', lockedMain).length) {
+    console.error('SELF-TEST FAIL: E1 flagged the locked no-GPU config.'); failed++;
+  }
+  if (!e1.checkFile('electron/main.ts', "// app.disableHardwareAcceleration();\napp.commandLine.appendSwitch('disable-gpu-compositing');").length) {
+    console.error('SELF-TEST FAIL: E1 silent when the GPU lock is removed.'); failed++;
+  }
+  if (!e1.checkFile('electron/main.ts', lockedMain + "\napp.commandLine.appendSwitch('ignore-gpu-blocklist');").length) {
+    console.error('SELF-TEST FAIL: E1 silent on a GPU-forcing switch.'); failed++;
   }
   if (failed) { console.error('\n--self-test: ' + failed + ' failure(s)'); process.exit(1); }
   console.log('--self-test: PASS — every rule fires on bad samples, stays silent on clean ones.');

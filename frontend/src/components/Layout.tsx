@@ -82,7 +82,7 @@ import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
 import type { QuickAssistEditGroup } from './QuickAssistOrderEditModal';
-import { DailyCommunicationsModal, type DailyLogItem } from './DailyCommunicationsModal';
+import { DailyCommunicationsModal } from './DailyCommunicationsModal';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -2621,7 +2621,6 @@ const QuickAssistSidebar = memo(({
     sentTodayCount: number;
     stagedCount: number;
     sentPhones: Array<{ recipient_phone: string; last_sent_at: string; recipient_name?: string }>;
-    todayLog: DailyLogItem[];
   };
   onOpenDailyModal: () => void;
   onRefreshDailyLog: () => void;
@@ -4569,12 +4568,10 @@ export const Layout = ({
     sentTodayCount: number;
     stagedCount: number;
     sentPhones: Array<{ recipient_phone: string; last_sent_at: string; recipient_name?: string }>;
-    todayLog: DailyLogItem[];
   }>({
     sentTodayCount: 0,
     stagedCount: 0,
-    sentPhones: [],
-    todayLog: []
+    sentPhones: []
   });
 
   const loadDailySummary = useCallback(() => {
@@ -4584,8 +4581,7 @@ export const Layout = ({
           setDailySummary({
             sentTodayCount: res.sentTodayCount || 0,
             stagedCount: res.stagedCount || 0,
-            sentPhones: res.sentPhones || [],
-            todayLog: (res.todayLog as any) || []
+            sentPhones: res.sentPhones || []
           });
         }
       })
@@ -5011,9 +5007,6 @@ export const Layout = ({
           <DailyCommunicationsModal
             isOpen={isDailyModalOpen}
             onClose={() => setIsDailyModalOpen(false)}
-            dailyLog={dailySummary.todayLog}
-            sentTodayCount={dailySummary.sentTodayCount}
-            stagedCount={dailySummary.stagedCount}
             onRefresh={() => {
               loadDailySummary();
               handleQuickAssistActionComplete();

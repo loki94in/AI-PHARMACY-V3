@@ -55,6 +55,20 @@
 }
 
 /* ═══════════════════════════════════════════
+   PERFORMANCE: FINITE ATTENTION ANIMATIONS
+   The desktop app draws everything on the CPU (owner policy: never needs a
+   graphics card). An endless pulse/ping/bounce keeps the CPU redrawing ~60×/s
+   even while nobody touches the app — measured 2026-09-30 in the app's own
+   no-GPU Electron mode: 8 small pulsing dots = 7–10% of one core at idle,
+   0.1% once they stop. They now play 3 cycles (3–6 s) and settle, replaying
+   whenever the element appears again or the class is re-applied.
+   Loaders (animate-spin) stay endless: a stopped spinner looks frozen.
+   ═══════════════════════════════════════════ */
+.animate-pulse, .animate-ping, .animate-bounce {
+  animation-iteration-count: 3;
+}
+
+/* ═══════════════════════════════════════════
    GLASS PANELS
    ═══════════════════════════════════════════ */
 .glass-panel,
@@ -254,7 +268,32 @@ thead[class*="sticky"],
 .light thead[class*="sticky"] {
   background-color: rgba(243, 244, 246, 0.98) !important;
   border-bottom-color: rgba(34, 197, 94, 0.2) !important;
-  backdrop-filter: blur(12px) !important;
+  /* no backdrop blur: at 0.98 opacity it was invisible, yet it re-blurred the rows
+     under every sticky header on the CPU for every scroll frame */
+}
+
+/* ═══════════════════════════════════════════
+   DROPDOWN SCROLLERS (`.dropdown-scroll`)
+   Electron renders in software (no GPU compositing), so any scroll frame that
+   repaints rows costs CPU. Put this class on every dropdown/autocomplete list's
+   scrolling element:
+   - composited scrolling moves already-drawn tiles instead of repainting rows
+   - overscroll containment stops the wheel chaining into the heavy page behind
+   - rows highlight instantly instead of each running a paint transition as it
+     slides under the cursor
+   - decorative pulse/ping badges on rows stay static: a never-ending animation
+     inside the list forces a redraw every frame (loaders use animate-spin, untouched)
+   ═══════════════════════════════════════════ */
+.dropdown-scroll {
+  will-change: scroll-position;
+  overscroll-behavior: contain;
+}
+.dropdown-scroll * {
+  transition: none !important;
+}
+.dropdown-scroll .animate-pulse,
+.dropdown-scroll .animate-ping {
+  animation: none;
 }
 
 /* ═══════════════════════════════════════════
@@ -388,7 +427,10 @@ select option.bg-\[\#18181b\],
    ═══════════════════════════════════════════ */
 @layer components {
   .glass-panel {
-    @apply bg-glass-bg border border-glass-border backdrop-blur-xl rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-500 hover:-translate-y-1;
+    /* No hover lift/transition: a 500ms translate on every panel (incl. whole modals) fired
+       each time a card scrolled under the cursor — pure CPU repaint in software rendering.
+       Shadow comes from the unlayered .glass-panel rule near the top; backdrop blur is off globally. */
+    @apply bg-glass-bg border border-glass-border rounded-[2rem];
   }
 
   .premium-input {

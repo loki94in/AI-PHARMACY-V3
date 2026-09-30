@@ -305,6 +305,49 @@ export async function ensureMedicineSearchSummaryTriggers(db: any): Promise<void
 }
 
 /**
+ * Refill → Live Cart (added 2026-09-30). Idempotent; runs on BOTH boot paths.
+ * - medicine_distributor_links: the Pharmarack distributor products the pharmacist
+ *   ticked for a medicine (one medicine can have several; the refill cart popup
+ *   picks the in-stock one already in the cart, else the most-purchased-from).
+ * - patient_refills.cart_*: the exact cart line a refill added, so cancelling the
+ *   refill removes that line again. Cleared when the refill cycle resets.
+ */
+async function ensureRefillCartLinkSchema(db: any) {
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS medicine_distributor_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      medicine_id INTEGER NOT NULL REFERENCES medicines(id) ON DELETE CASCADE,
+      store_id INTEGER NOT NULL,
+      store_name TEXT NOT NULL,
+      product_code TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT,
+      packaging TEXT,
+      company TEXT,
+      mapped INTEGER DEFAULT 1,
+      pick_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(medicine_id, store_id, product_code)
+    )
+  `);
+  const cols = await db.all('PRAGMA table_info(patient_refills)');
+  const names = new Set(cols.map((c: any) => c.name));
+  const cartCols: Array<[string, string]> = [
+    ['cart_store_id', 'INTEGER'],
+    ['cart_store_name', 'TEXT'],
+    ['cart_product_code', 'TEXT'],
+    ['cart_product_name', 'TEXT'],
+    ['cart_qty', 'INTEGER'],
+  ];
+  for (const [col, type] of cartCols) {
+    if (cols.length > 0 && !names.has(col)) {
+      await db.run(`ALTER TABLE patient_refills ADD COLUMN ${col} ${type} DEFAULT NULL`);
+    }
+  }
+}
+
+/**
  * Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
  */
 async function ensureOrderTimingSchema(db: any) {
@@ -1408,6 +1451,7 @@ export async function ensureSchema(dbPath: string) {
         } catch (_) { }
 
         await ensureOrderTimingSchema(db);
+        await ensureRefillCartLinkSchema(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
         return;
@@ -4308,6 +4352,9 @@ export async function ensureSchema(dbPath: string) {
 
     // Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
     await ensureOrderTimingSchema(db);
+
+    // Refill → Live Cart saved distributor links + per-refill cart line (2026-09-30)
+    await ensureRefillCartLinkSchema(db);
 
     // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
     await ensureMultiPharmacyAndSnapshotSchema(db);

@@ -2499,7 +2499,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                   )}
                   
                   {showSuggestions && suggestions.length > 0 && (
-                    <ul ref={suggestionsListRef} className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[520px] md:max-h-[calc(80vh-210px)] overflow-y-auto bg-bg2 border-2 border-primary/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] divide-y divide-border/30 py-1 scrollbar-thin">
+                    <ul ref={suggestionsListRef} className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[520px] md:max-h-[calc(80vh-210px)] overflow-y-auto dropdown-scroll bg-bg2 border-2 border-primary/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] divide-y divide-border/30 py-1 scrollbar-thin">
                       {!suggestions[0]?.isErrorMessage && (
                         <li className="px-3.5 py-1.5 bg-bg3/90 sticky top-0 z-10 border-b border-border/40 text-[10.5px] text-muted flex items-center justify-between select-none">
                           <span className="flex items-center gap-1.5 font-medium">

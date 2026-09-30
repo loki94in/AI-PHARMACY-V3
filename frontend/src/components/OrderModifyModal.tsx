@@ -335,7 +335,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
 
                 {/* Dropdown Results */}
                 {showSearchDropdown && (
-                  <div className="absolute z-dropdown left-0 right-0 top-full mt-1 bg-bg border border-border rounded-xl shadow-xl max-h-48 overflow-y-auto divide-y divide-border/60">
+                  <div className="absolute z-dropdown left-0 right-0 top-full mt-1 bg-bg border border-border rounded-xl shadow-xl max-h-48 overflow-y-auto dropdown-scroll divide-y divide-border/60">
                     {searching ? (
                       <div className="p-3 text-center text-xs text-muted animate-pulse">Searching catalog...</div>
                     ) : searchResults.length > 0 ? (

@@ -23,6 +23,7 @@ import { MedicineVisualReferenceModal } from '../../components/MedicineVisualRef
 import { CallTaskBoard, CallTaskBadge } from '../../components/CallTaskBoard';
 import { OrderModifyModal } from '../../components/OrderModifyModal';
 import { IncompleteOrders24hCard } from '../../components/IncompleteOrders24hCard';
+import { RefillCartModal, type RefillCartItemInput } from '../../components/RefillCartModal';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -82,6 +83,8 @@ interface RefillPatient {
     reminder_sent_at?: string | null;
     patient_confirmed?: number;
     confirmed_at?: string | null;
+    cart_store_name?: string | null;
+    cart_qty?: number | null;
   }[];
 }
 
@@ -375,6 +378,7 @@ const RefillsSection: React.FC = () => {
 
   // Frequency slider modal
   const [editingRefill, setEditingRefill] = useState<{ id: number; currentInterval: number; name: string } | null>(null);
+  const [refillCartPopup, setRefillCartPopup] = useState<{ patientName: string; items: RefillCartItemInput[] } | null>(null);
   const [editIntervalVal, setEditIntervalVal] = useState<number>(30);
   const [updatingFreq, setUpdatingFreq] = useState(false);
 
@@ -917,23 +921,19 @@ const RefillsSection: React.FC = () => {
     toastEvent.trigger(`Transferring ${sellableMeds.length} prescribed medicine(s) for ${patient.patient_name} to POS...${skipNote}`, 'info', '/pos');
   };
 
-  const handleAddRefillShortageToCart = async (medicineName: string, orderQty: number) => {
-    try {
-      const res = await api.addPharmarackCart([{
-        productId: 0,
-        storeId: 0,
-        qty: orderQty,
-        productName: medicineName
-      }]);
-      if (res && res.success) {
-        toastEvent.trigger(`Added ${orderQty} unit(s) of "${medicineName}" to Pharmarack Live Cart!`, 'success', '/crm');
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
-      } else {
-        toastEvent.trigger(res?.error || 'Failed to add item to live cart', 'error', '/crm');
-      }
-    } catch (err) {
-      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to add to live cart', 'error', '/crm');
+  // Refill → Live Cart popup: the server adds one medicine at a time to the saved
+  // distributor and confirms it in the cart. (Replaced a name-only add that let the
+  // server guess the first search hit, and toasted "Added" on offline no-ops.)
+  const handleOrderRefillShortages = (patient: RefillPatient) => {
+    const items: RefillCartItemInput[] = patient.medicines
+      .filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused')
+      .map(m => ({ refillId: m.id, medicineName: m.medicine_name, qty: Math.max(0, Number(m.quantity_needed ?? 3) - Number(m.in_stock_qty || 0)) }))
+      .filter(i => i.qty > 0);
+    if (items.length === 0) {
+      toastEvent.trigger(`All active medicines for ${patient.patient_name} are in shop stock. Nothing to order.`, 'info', '/crm');
+      return;
     }
+    setRefillCartPopup({ patientName: patient.patient_name, items });
   };
 
   // ── Medicine row search & inventory dropdown ──────────────────────────────
@@ -1593,6 +1593,16 @@ const RefillsSection: React.FC = () => {
                     <span>⚡ Sell Now</span>
                   </button>
 
+                  {/* Shortages → Pharmarack Live Cart (one-at-a-time popup) */}
+                  <button
+                    onClick={() => handleOrderRefillShortages(selectedPatient)}
+                    title="Add every short medicine to the Pharmarack live cart using the saved distributors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                  >
+                    <ShoppingCart size={13} />
+                    <span>Order to Cart</span>
+                  </button>
+
                   {/* WhatsApp Reminder Button */}
                   <button
                     onClick={() => handleRemindNow(selectedPatient.patient_phone)}
@@ -1821,13 +1831,21 @@ const RefillsSection: React.FC = () => {
                                 {/* Direct Live Cart Addition */}
                                 <button
                                   type="button"
-                                  onClick={() => handleAddRefillShortageToCart(med.medicine_name, cartOrderQty)}
+                                  onClick={() => setRefillCartPopup({
+                                    patientName: selectedPatient.patient_name,
+                                    items: [{ refillId: med.id, medicineName: med.medicine_name, qty: cartOrderQty }]
+                                  })}
                                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-[11px] font-bold transition-all cursor-pointer shadow-xs"
-                                  title={`Add ${cartOrderQty} unit(s) of "${med.medicine_name}" directly to Pharmarack Live Cart`}
+                                  title={`Add ${cartOrderQty} unit(s) of "${med.medicine_name}" to the Pharmarack Live Cart using its saved distributor`}
                                 >
                                   <ShoppingCart size={12} />
                                   <span>+ Live Cart ({cartOrderQty})</span>
                                 </button>
+                                {med.cart_store_name && (
+                                  <span className="px-2 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400 text-[10px] font-bold" title="Added to the live cart for this refill cycle">
+                                    🛒 {med.cart_store_name} ×{med.cart_qty}
+                                  </span>
+                                )}
 
                                 {/* Stock Override Toggle */}
                                 <button
@@ -2405,7 +2423,7 @@ const RefillsSection: React.FC = () => {
 
                           {/* Dropdown Suggestions List */}
                           {row.isOpen && (
-                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto backdrop-blur-xl ${
+                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll backdrop-blur-xl ${
                               dropUpIndex === idx
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -2558,6 +2576,15 @@ const RefillsSection: React.FC = () => {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* ── Refill → Live Cart popup (one medicine at a time) ── */}
+      {refillCartPopup && (
+        <RefillCartModal
+          patientName={refillCartPopup.patientName}
+          items={refillCartPopup.items}
+          onClose={() => setRefillCartPopup(null)}
+        />
       )}
 
       {/* ── Inline Edit Refill Frequency Modal ── */}
@@ -5867,7 +5894,7 @@ const SpecialOrdersSection: React.FC = () => {
 
                 {/* Dropdown Live Results from Pharmarack */}
                 {showPrDropdown && prSearchResults.length > 0 && (
-                  <div ref={prDropdownRef} className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto">
+                  <div ref={prDropdownRef} className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto dropdown-scroll">
                     <div className="p-2 border-b border-border/40 bg-bg3/50 text-[9px] font-bold text-muted uppercase tracking-wider flex justify-between items-center">
                       <span>Pharmarack Live Matches</span>
                       <button
@@ -5883,7 +5910,8 @@ const SpecialOrdersSection: React.FC = () => {
                         key={idx}
                         data-highlighted={idx === activePrIndex ? "true" : "false"}
                         onClick={() => handleSelectPharmarackItem(item)}
-                        onMouseEnter={() => setActivePrIndex(idx)}
+                        // mousemove, not mouseenter: rows scrolling under a still cursor fire mouseenter and re-rendered the whole page per row
+                        onMouseMove={() => { if (activePrIndex !== idx) setActivePrIndex(idx); }}
                         className={`p-3 border-b border-border/30 transition-colors cursor-pointer flex flex-col gap-1 text-xs ${
                           idx === activePrIndex ? 'bg-primary/20 border-l-4 border-primary ring-1 ring-primary/40 font-bold text-text' : 'hover:bg-bg3/80'
                         }`}
