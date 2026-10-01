@@ -4378,6 +4378,379 @@ var init_tokenRefreshScheduler = __esm({
   }
 });
 
+// src/database/messageDAO.ts
+var messageDAO_exports = {};
+__export(messageDAO_exports, {
+  closeMessageDAO: () => closeMessageDAO,
+  deleteTemplate: () => deleteTemplate,
+  getTemplate: () => getTemplate,
+  listTemplates: () => listTemplates,
+  setTemplate: () => setTemplate
+});
+function getDb() {
+  if (!db) {
+    db = new import_better_sqlite3.default("./data/app.db", { readonly: false });
+  }
+  return db;
+}
+function closeMessageDAO() {
+  if (db) {
+    try {
+      db.close();
+    } catch (_) {
+    }
+    db = null;
+  }
+}
+function getTemplate(locale, key) {
+  const row = getDb().prepare("SELECT value FROM message_templates WHERE locale = ? AND key = ?").get(locale, key);
+  return row ? row.value : null;
+}
+function setTemplate(locale, key, value) {
+  const stmt = getDb().prepare(`
+    INSERT INTO message_templates (locale, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(locale, key) DO UPDATE SET value = excluded.value
+  `);
+  stmt.run(locale, key, value);
+}
+function deleteTemplate(locale, key) {
+  getDb().prepare("DELETE FROM message_templates WHERE locale = ? AND key = ?").run(locale, key);
+}
+function listTemplates(locale) {
+  const rows = getDb().prepare("SELECT key, value FROM message_templates WHERE locale = ?").all(locale);
+  return rows;
+}
+var import_better_sqlite3, db;
+var init_messageDAO = __esm({
+  "src/database/messageDAO.ts"() {
+    "use strict";
+    import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
+    db = null;
+  }
+});
+
+// src/i18n/getMessage.ts
+function getMessage(lang, path59, values = {}) {
+  const dbValue = getTemplate(lang, path59);
+  let template = "";
+  if (dbValue !== null) {
+    template = dbValue;
+  } else {
+    const keys = path59.split(".");
+    let segment = ALL_MESSAGES[lang];
+    for (const k of keys) {
+      if (segment == null) return `[Missing: ${path59}]`;
+      segment = segment[k];
+    }
+    if (typeof segment !== "string") return `[Not a string: ${path59}]`;
+    template = segment;
+  }
+  return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
+    return values[placeholder] ?? `{{${placeholder}}}`;
+  });
+}
+var import_fs7, import_path7, import_url3, import_module3, require2, ALL_MESSAGES;
+var init_getMessage = __esm({
+  "src/i18n/getMessage.ts"() {
+    "use strict";
+    import_fs7 = require("fs");
+    import_path7 = require("path");
+    import_url3 = require("url");
+    import_module3 = require("module");
+    init_messageDAO();
+    require2 = (0, import_module3.createRequire)(import_meta_url);
+    ALL_MESSAGES = {};
+    try {
+      ALL_MESSAGES = require2("./messages.json");
+    } catch (_) {
+      try {
+        const __filename7 = (0, import_url3.fileURLToPath)(import_meta_url);
+        const __dirname6 = (0, import_path7.dirname)(__filename7);
+        const messagesPath = (0, import_path7.join)(__dirname6, "messages.json");
+        if ((0, import_fs7.existsSync)(messagesPath)) {
+          ALL_MESSAGES = JSON.parse((0, import_fs7.readFileSync)(messagesPath, "utf8"));
+        }
+      } catch (err) {
+        console.error("[i18n] Failed to load messages.json:", err);
+      }
+    }
+  }
+});
+
+// src/services/languageDetector.ts
+function detectExplicitLanguageSwitch(text) {
+  const clean2 = text.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, "");
+  if (/^(मराठी|marathi|marathit|मराठीत बोला|marathi madhe bola|marathi madhe sanga|marathi bhasha|change to marathi|speak in marathi)$/i.test(clean2)) {
+    return "mr";
+  }
+  if (/^(हिंदी|हिन्दी|hindi|hindi me|हिंदी में|hindi me bolo|hindi me baat karo|hindi me batao|change to hindi|speak in hindi)$/i.test(clean2)) {
+    return "hi";
+  }
+  if (/^(english|ingraji|angrezi|इंग्रजी|अंग्रेजी|change to english|speak in english|talk in english|in english)$/i.test(clean2)) {
+    return "en";
+  }
+  return null;
+}
+function detectLanguage(text, currentLang = "en") {
+  if (!text || typeof text !== "string") return currentLang;
+  const trimmed = text.trim();
+  if (!trimmed) return currentLang;
+  const explicit = detectExplicitLanguageSwitch(trimmed);
+  if (explicit) return explicit;
+  const devanagariMatches = trimmed.match(/[\u0900-\u097F]/g);
+  const totalDevChars = devanagariMatches ? devanagariMatches.length : 0;
+  if (totalDevChars >= 2) {
+    if (trimmed.includes("\u0933") || trimmed.includes("\u0933")) {
+      return "mr";
+    }
+    const tokens = trimmed.split(/[\s,।!?.]+/).map((t) => t.trim()).filter(Boolean);
+    let mrScore = 0;
+    let hiScore = 0;
+    for (const token of tokens) {
+      if (MR_DEV_WORDS.has(token)) mrScore += 3;
+      if (HI_DEV_WORDS.has(token)) hiScore += 3;
+      if (/(ची|चे|च्या|ला|ना|मध्ये|वरून|कडून|साठी)$/.test(token)) mrScore += 1;
+      if (/(का|की|के|को|में|पर|से|था|थी|थे|रहा|रही|रहे)$/.test(token)) hiScore += 1;
+    }
+    if (mrScore > hiScore) return "mr";
+    if (hiScore > mrScore) return "hi";
+    if (currentLang === "hi" || currentLang === "mr") return currentLang;
+    return "mr";
+  }
+  const romanTokens = trimmed.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  let mrRomanScore = 0;
+  let hiRomanScore = 0;
+  for (const token of romanTokens) {
+    if (MR_ROMAN_WORDS.has(token)) mrRomanScore += 2;
+    if (HI_ROMAN_WORDS.has(token)) hiRomanScore += 2;
+  }
+  if (mrRomanScore >= 2 && mrRomanScore > hiRomanScore) return "mr";
+  if (hiRomanScore >= 2 && hiRomanScore > mrRomanScore) return "hi";
+  return currentLang;
+}
+var MR_DEV_WORDS, HI_DEV_WORDS, MR_ROMAN_WORDS, HI_ROMAN_WORDS;
+var init_languageDetector = __esm({
+  "src/services/languageDetector.ts"() {
+    "use strict";
+    MR_DEV_WORDS = /* @__PURE__ */ new Set([
+      "\u0928\u092E\u0938\u094D\u0915\u093E\u0930",
+      "\u0938\u0938\u094D\u0928\u0947\u0939",
+      "\u0914\u0937\u0927",
+      "\u0914\u0937\u0927\u0947",
+      "\u0914\u0937\u0927\u093E\u0902\u091A\u0940",
+      "\u0914\u0937\u0927\u093E\u0902\u091A\u0947",
+      "\u0914\u0937\u0927\u093E\u0902\u091A\u093E",
+      "\u0917\u094B\u0933\u094D\u092F\u093E",
+      "\u0917\u094B\u0933\u0940",
+      "\u092A\u093E\u0939\u093F\u091C\u0947",
+      "\u092A\u093E\u0939\u093F\u091C\u0947\u0932",
+      "\u0939\u0935\u0947",
+      "\u0939\u0935\u0902",
+      "\u0939\u0935\u094D\u092F\u093E",
+      "\u0906\u0939\u0947",
+      "\u0906\u0939\u0947\u0924",
+      "\u0928\u093E\u0939\u0940",
+      "\u0928\u093E\u0939\u0940\u0924",
+      "\u0926\u094D\u092F\u093E",
+      "\u0926\u094D\u092F\u093E\u0935\u0947",
+      "\u092A\u093E\u0920\u0935\u093E",
+      "\u092A\u093E\u0920\u0935\u0942\u0928",
+      "\u092A\u093E\u0920\u0935\u0923\u0947",
+      "\u0915\u093F\u0924\u0940",
+      "\u0915\u0927\u0940",
+      "\u092E\u093F\u0933\u0947\u0932",
+      "\u092E\u093F\u0933\u0924\u0940\u0932",
+      "\u092D\u0947\u091F\u0947\u0932",
+      "\u0915\u0938\u0947",
+      "\u0915\u0930\u093E",
+      "\u0915\u0930\u093E\u0935\u0947",
+      "\u0927\u0928\u094D\u092F\u0935\u093E\u0926",
+      "\u092A\u0924\u094D\u0924\u093E",
+      "\u0911\u0930\u094D\u0921\u0930",
+      "\u0939\u094B\u092F",
+      "\u0928\u0915\u094B",
+      "\u0938\u093E\u0902\u0917\u093E",
+      "\u092C\u094B\u0932\u093E",
+      "\u0915\u0943\u092A\u092F\u093E",
+      "\u0924\u093E\u0938",
+      "\u0926\u0941\u0915\u093E\u0928",
+      "\u0906\u092E\u091A\u094D\u092F\u093E",
+      "\u0924\u0941\u092E\u091A\u094D\u092F\u093E",
+      "\u092E\u093E\u091D\u0947",
+      "\u092E\u093E\u091D\u094D\u092F\u093E",
+      "\u0906\u092A\u0932\u0947",
+      "\u0906\u092A\u0932\u094D\u092F\u093E",
+      "\u0909\u0926\u094D\u092F\u093E",
+      "\u092A\u0930\u0935\u093E",
+      "\u0938\u0915\u093E\u0933\u0940",
+      "\u0938\u0902\u0927\u094D\u092F\u093E\u0915\u093E\u0933\u0940",
+      "\u0926\u0941\u092A\u093E\u0930\u0940",
+      "\u0930\u093E\u0924\u094D\u0930\u0940",
+      "\u0928\u093F\u092F\u092E\u093F\u0924",
+      "\u092A\u0941\u0928\u094D\u0939\u093E",
+      "\u0930\u093F\u092B\u093F\u0932",
+      "\u0924\u093E\u0924\u094D\u0915\u093E\u0933",
+      "\u0932\u0935\u0915\u0930",
+      "\u0918\u094D\u092F\u093E"
+    ]);
+    HI_DEV_WORDS = /* @__PURE__ */ new Set([
+      "\u0928\u092E\u0938\u094D\u0924\u0947",
+      "\u092A\u094D\u0930\u0923\u093E\u092E",
+      "\u0926\u0935\u093E",
+      "\u0926\u0935\u093E\u0908",
+      "\u0926\u0935\u093E\u090F\u0902",
+      "\u0926\u0935\u093E\u0907\u092F\u094B\u0902",
+      "\u0917\u094B\u0932\u093F\u092F\u093E\u0902",
+      "\u0917\u094B\u0932\u0940",
+      "\u091A\u093E\u0939\u093F\u090F",
+      "\u0939\u0948",
+      "\u0939\u0948\u0902",
+      "\u0928\u0939\u0940\u0902",
+      "\u0926\u0940\u091C\u093F\u090F",
+      "\u0926\u0940\u091C\u093F\u092F\u0947",
+      "\u0926\u094B",
+      "\u092D\u0947\u091C\u094B",
+      "\u092D\u0947\u091C\u093F\u090F",
+      "\u0915\u093F\u0924\u0928\u093E",
+      "\u0915\u093F\u0924\u0928\u0947",
+      "\u0915\u093F\u0924\u0928\u0940",
+      "\u0915\u092C",
+      "\u092E\u093F\u0932\u0947\u0917\u093E",
+      "\u092E\u093F\u0932\u0947\u0902\u0917\u0947",
+      "\u0915\u0948\u0938\u0947",
+      "\u0915\u0930\u094B",
+      "\u0927\u0928\u094D\u092F\u0935\u093E\u0926",
+      "\u0936\u0941\u0915\u094D\u0930\u093F\u092F\u093E",
+      "\u0906\u0930\u094D\u0921\u0930",
+      "\u0939\u093E\u0901",
+      "\u0939\u093E\u0902",
+      "\u092C\u0924\u093E\u0913",
+      "\u092C\u0924\u093E\u0907\u090F",
+      "\u0915\u0943\u092A\u092F\u093E",
+      "\u0926\u0941\u0915\u093E\u0928",
+      "\u0939\u092E\u093E\u0930\u0947",
+      "\u0906\u092A\u0915\u0947",
+      "\u092E\u0947\u0930\u093E",
+      "\u092E\u0947\u0930\u0940",
+      "\u092E\u0947\u0930\u0947",
+      "\u0905\u092A\u0928\u093E",
+      "\u0905\u092A\u0928\u0940",
+      "\u0915\u0932",
+      "\u092A\u0930\u0938\u094B\u0902",
+      "\u0938\u0941\u092C\u0939",
+      "\u0936\u093E\u092E",
+      "\u0926\u094B\u092A\u0939\u0930",
+      "\u0930\u093E\u0924",
+      "\u0928\u093F\u092F\u092E\u093F\u0924",
+      "\u0926\u094B\u092C\u093E\u0930\u093E",
+      "\u0930\u093F\u092B\u093F\u0932",
+      "\u0924\u0941\u0930\u0902\u0924",
+      "\u091C\u0932\u094D\u0926\u0940",
+      "\u0932\u094B",
+      "\u0932\u0940\u091C\u093F\u090F",
+      "\u0932\u0947\u0928\u093E"
+    ]);
+    MR_ROMAN_WORDS = /* @__PURE__ */ new Set([
+      "namaskar",
+      "namaskara",
+      "aushadh",
+      "aushadhi",
+      "aushadhe",
+      "pahije",
+      "pahijey",
+      "kiti",
+      "pathva",
+      "pathav",
+      "pathava",
+      "dya",
+      "kasa",
+      "kashi",
+      "kase",
+      "aahe",
+      "ahe",
+      "ahet",
+      "aahet",
+      "nahi",
+      "nahit",
+      "goli",
+      "golya",
+      "havay",
+      "have",
+      "havat",
+      "kadhi",
+      "milel",
+      "bhetel",
+      "sanga",
+      "bola",
+      "dhanyawad",
+      "dhanyavad",
+      "chya",
+      "sathi",
+      "mala",
+      "tula",
+      "amhi",
+      "majhe",
+      "mazi",
+      "mazya",
+      "kaka",
+      "dada",
+      "tai",
+      "bhau",
+      "khup",
+      "parva",
+      "udya",
+      "chalel",
+      "thike",
+      "barobar",
+      "hoy"
+    ]);
+    HI_ROMAN_WORDS = /* @__PURE__ */ new Set([
+      "namaste",
+      "pranam",
+      "dawa",
+      "dawai",
+      "dawain",
+      "chahiye",
+      "chahie",
+      "kitna",
+      "kitne",
+      "kitni",
+      "bhej",
+      "bhejo",
+      "bhejiye",
+      "dena",
+      "dedo",
+      "dijiye",
+      "kya",
+      "kab",
+      "kaise",
+      "hai",
+      "hain",
+      "nahi",
+      "shukriya",
+      "batao",
+      "bataiye",
+      "mangwao",
+      "lao",
+      "mujhe",
+      "humko",
+      "mera",
+      "meri",
+      "mere",
+      "apka",
+      "aapka",
+      "kal",
+      "parson",
+      "jaldi",
+      "turant",
+      "theek",
+      "acha",
+      "accha",
+      "haan"
+    ]);
+  }
+});
+
 // src/utils/drugSchedules.ts
 function levenshtein(a, b) {
   if (a === b) return 0;
@@ -6313,24 +6686,24 @@ var init_intentKeywords = __esm({
 });
 
 // src/services/onnxOcrService.ts
-var import_paddleocr, ort, import_fs7, import_path7, import_jimp, MODELS_DIR, OnnxOcrService, onnxOcrService;
+var import_paddleocr, ort, import_fs8, import_path8, import_jimp, MODELS_DIR, OnnxOcrService, onnxOcrService;
 var init_onnxOcrService = __esm({
   "src/services/onnxOcrService.ts"() {
     "use strict";
     import_paddleocr = require("paddleocr");
     ort = __toESM(require("onnxruntime-node"), 1);
-    import_fs7 = __toESM(require("fs"), 1);
-    import_path7 = __toESM(require("path"), 1);
+    import_fs8 = __toESM(require("fs"), 1);
+    import_path8 = __toESM(require("path"), 1);
     import_jimp = require("jimp");
     init_config();
-    MODELS_DIR = import_path7.default.resolve(getAppDataDir(), "data", "models");
+    MODELS_DIR = import_path8.default.resolve(getAppDataDir(), "data", "models");
     OnnxOcrService = class {
       ocrService = null;
       isLoaded = false;
-      detPath = import_path7.default.join(MODELS_DIR, "det_model.onnx");
-      recPath = import_path7.default.join(MODELS_DIR, "rec_model.onnx");
-      clsPath = import_path7.default.join(MODELS_DIR, "cls_model.onnx");
-      dictPath = import_path7.default.join(MODELS_DIR, "en_dict.txt");
+      detPath = import_path8.default.join(MODELS_DIR, "det_model.onnx");
+      recPath = import_path8.default.join(MODELS_DIR, "rec_model.onnx");
+      clsPath = import_path8.default.join(MODELS_DIR, "cls_model.onnx");
+      dictPath = import_path8.default.join(MODELS_DIR, "en_dict.txt");
       idleTimeout = null;
       IDLE_TIME_MS = 105 * 60 * 1e3;
       // 1 hour 45 minutes (105 minutes) as per pharmacy requirements
@@ -6343,13 +6716,13 @@ var init_onnxOcrService = __esm({
           return;
         }
         try {
-          if (!import_fs7.default.existsSync(this.detPath) || !import_fs7.default.existsSync(this.recPath) || !import_fs7.default.existsSync(this.dictPath)) {
+          if (!import_fs8.default.existsSync(this.detPath) || !import_fs8.default.existsSync(this.recPath) || !import_fs8.default.existsSync(this.dictPath)) {
             throw new Error("Required ONNX models or dictionary file are missing in data/models/");
           }
           console.log("[ONNX OCR] Reading model buffers from disk...");
-          const detBuffer = import_fs7.default.readFileSync(this.detPath).buffer;
-          const recBuffer = import_fs7.default.readFileSync(this.recPath).buffer;
-          const dict = import_fs7.default.readFileSync(this.dictPath, "utf8").split(/\r?\n/).map((line) => line.replace("\r", ""));
+          const detBuffer = import_fs8.default.readFileSync(this.detPath).buffer;
+          const recBuffer = import_fs8.default.readFileSync(this.recPath).buffer;
+          const dict = import_fs8.default.readFileSync(this.dictPath, "utf8").split(/\r?\n/).map((line) => line.replace("\r", ""));
           const config2 = {
             ort,
             detection: {
@@ -6362,10 +6735,10 @@ var init_onnxOcrService = __esm({
               charactersDictionary: dict[0] === "" ? dict : ["", ...dict]
             }
           };
-          if (import_fs7.default.existsSync(this.clsPath)) {
+          if (import_fs8.default.existsSync(this.clsPath)) {
             console.log("[ONNX OCR] Found optional direction classifier model.");
             config2.classifier = {
-              modelBuffer: import_fs7.default.readFileSync(this.clsPath).buffer
+              modelBuffer: import_fs8.default.readFileSync(this.clsPath).buffer
             };
           }
           console.log("[ONNX OCR] Creating InferenceSession instance...");
@@ -6416,7 +6789,7 @@ var init_onnxOcrService = __esm({
        * Checks if models are available on disk
        */
       async checkAvailability() {
-        return import_fs7.default.existsSync(this.detPath) && import_fs7.default.existsSync(this.recPath) && import_fs7.default.existsSync(this.dictPath);
+        return import_fs8.default.existsSync(this.detPath) && import_fs8.default.existsSync(this.recPath) && import_fs8.default.existsSync(this.dictPath);
       }
       /**
        * Scan image and extract text regions
@@ -6434,8 +6807,8 @@ var init_onnxOcrService = __esm({
             if (imageData.startsWith("data:")) {
               const base64Data = imageData.split(",")[1];
               buffer = Buffer.from(base64Data, "base64");
-            } else if (import_fs7.default.existsSync(imageData)) {
-              buffer = import_fs7.default.readFileSync(imageData);
+            } else if (import_fs8.default.existsSync(imageData)) {
+              buffer = import_fs8.default.readFileSync(imageData);
             } else {
               buffer = Buffer.from(imageData, "base64");
             }
@@ -6834,17 +7207,17 @@ __export(googleSearchService_exports, {
   default: () => googleSearchService_default,
   googleSearchService: () => googleSearchService
 });
-var import_fs8, import_path8, SCREENSHOTS_DIR, GoogleSearchService, googleSearchService, googleSearchService_default;
+var import_fs9, import_path9, SCREENSHOTS_DIR, GoogleSearchService, googleSearchService, googleSearchService_default;
 var init_googleSearchService = __esm({
   "src/services/googleSearchService.ts"() {
     "use strict";
-    import_fs8 = __toESM(require("fs"), 1);
-    import_path8 = __toESM(require("path"), 1);
+    import_fs9 = __toESM(require("fs"), 1);
+    import_path9 = __toESM(require("path"), 1);
     init_connection();
     init_config();
-    SCREENSHOTS_DIR = import_path8.default.resolve(getAppDataDir(), "data", "search_screenshots");
-    if (!import_fs8.default.existsSync(SCREENSHOTS_DIR)) {
-      import_fs8.default.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+    SCREENSHOTS_DIR = import_path9.default.resolve(getAppDataDir(), "data", "search_screenshots");
+    if (!import_fs9.default.existsSync(SCREENSHOTS_DIR)) {
+      import_fs9.default.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
     }
     GoogleSearchService = class {
       //   private _activePage: any = null;
@@ -7142,12 +7515,12 @@ __export(catalogImageService_exports, {
   CatalogImageService: () => CatalogImageService,
   catalogImageService: () => catalogImageService
 });
-var import_fs9, import_path9, import_crypto, import_jimp2, DOSAGE_FORMS, PACKAGING_CONTAINERS, GENERIC_CATEGORY_WORDS, UMBRELLA_PHARMA_BRANDS2, CatalogImageService, catalogImageService;
+var import_fs10, import_path10, import_crypto, import_jimp2, DOSAGE_FORMS, PACKAGING_CONTAINERS, GENERIC_CATEGORY_WORDS, UMBRELLA_PHARMA_BRANDS2, CatalogImageService, catalogImageService;
 var init_catalogImageService = __esm({
   "src/services/catalogImageService.ts"() {
     "use strict";
-    import_fs9 = __toESM(require("fs"), 1);
-    import_path9 = __toESM(require("path"), 1);
+    import_fs10 = __toESM(require("fs"), 1);
+    import_path10 = __toESM(require("path"), 1);
     import_crypto = __toESM(require("crypto"), 1);
     init_connection();
     init_eventService();
@@ -7316,8 +7689,8 @@ var init_catalogImageService = __esm({
        */
       computeFileHash(filePath) {
         try {
-          if (!import_fs9.default.existsSync(filePath)) return null;
-          const buffer = import_fs9.default.readFileSync(filePath);
+          if (!import_fs10.default.existsSync(filePath)) return null;
+          const buffer = import_fs10.default.readFileSync(filePath);
           return import_crypto.default.createHash("sha256").update(buffer).digest("hex");
         } catch (e) {
           return null;
@@ -8411,12 +8784,12 @@ var init_catalogImageService = __esm({
         }
         const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
         const filename = `${slug}-candidate-${Date.now()}.jpg`;
-        const frontendDir = import_path9.default.resolve(process.cwd(), "frontend/public/products");
-        const uploadsDir = import_path9.default.resolve(process.cwd(), "uploads/products");
-        import_fs9.default.mkdirSync(frontendDir, { recursive: true });
-        import_fs9.default.mkdirSync(uploadsDir, { recursive: true });
-        const frontendPath = import_path9.default.join(frontendDir, filename);
-        const uploadsPath = import_path9.default.join(uploadsDir, filename);
+        const frontendDir = import_path10.default.resolve(process.cwd(), "frontend/public/products");
+        const uploadsDir = import_path10.default.resolve(process.cwd(), "uploads/products");
+        import_fs10.default.mkdirSync(frontendDir, { recursive: true });
+        import_fs10.default.mkdirSync(uploadsDir, { recursive: true });
+        const frontendPath = import_path10.default.join(frontendDir, filename);
+        const uploadsPath = import_path10.default.join(uploadsDir, filename);
         try {
           let buffer;
           const fetchHeaders = {
@@ -8466,8 +8839,8 @@ var init_catalogImageService = __esm({
             console.warn(`[CatalogImageService] Downloaded image content hash matches previously rejected image for medicine ${med.name}.`);
             return null;
           }
-          import_fs9.default.writeFileSync(frontendPath, buffer);
-          import_fs9.default.writeFileSync(uploadsPath, buffer);
+          import_fs10.default.writeFileSync(frontendPath, buffer);
+          import_fs10.default.writeFileSync(uploadsPath, buffer);
           const matchResult = this.computeConfidence(med, {
             name: selectedCandidate.name,
             manufacturer: selectedCandidate.manufacturer
@@ -8524,11 +8897,11 @@ var init_catalogImageService = __esm({
        */
       async syncExistingDownloadedImages() {
         const db2 = await dbManager.getConnection();
-        const stateFile = import_path9.default.resolve(process.cwd(), "data/image_download_state.json");
-        if (!import_fs9.default.existsSync(stateFile)) {
+        const stateFile = import_path10.default.resolve(process.cwd(), "data/image_download_state.json");
+        if (!import_fs10.default.existsSync(stateFile)) {
           return { synced: 0, skipped: 0, totalInState: 0 };
         }
-        const stateData = JSON.parse(import_fs9.default.readFileSync(stateFile, "utf-8"));
+        const stateData = JSON.parse(import_fs10.default.readFileSync(stateFile, "utf-8"));
         const products = stateData.products || {};
         const entries = Object.entries(products);
         const medRows = await db2.all("SELECT id, name, manufacturer, strength, packaging, mrp FROM medicines");
@@ -8610,10 +8983,10 @@ var init_catalogImageService = __esm({
       verifyImageFileExists(imagePath) {
         if (!imagePath) return false;
         const cleanPath = imagePath.split("?")[0].replace(/^\/+/, "");
-        const p1 = import_path9.default.resolve(process.cwd(), "frontend/public", cleanPath);
-        const p2 = import_path9.default.resolve(process.cwd(), cleanPath);
-        const p3 = import_path9.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
-        return import_fs9.default.existsSync(p1) || import_fs9.default.existsSync(p2) || import_fs9.default.existsSync(p3);
+        const p1 = import_path10.default.resolve(process.cwd(), "frontend/public", cleanPath);
+        const p2 = import_path10.default.resolve(process.cwd(), cleanPath);
+        const p3 = import_path10.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
+        return import_fs10.default.existsSync(p1) || import_fs10.default.existsSync(p2) || import_fs10.default.existsSync(p3);
       }
       /**
        * Resolve physical disk path for a relative image path
@@ -8621,12 +8994,12 @@ var init_catalogImageService = __esm({
       getDiskPath(imagePath) {
         if (!imagePath) return null;
         const cleanPath = imagePath.split("?")[0].replace(/^\/+/, "");
-        const p1 = import_path9.default.resolve(process.cwd(), "frontend/public", cleanPath);
-        if (import_fs9.default.existsSync(p1)) return p1;
-        const p2 = import_path9.default.resolve(process.cwd(), cleanPath);
-        if (import_fs9.default.existsSync(p2)) return p2;
-        const p3 = import_path9.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
-        if (import_fs9.default.existsSync(p3)) return p3;
+        const p1 = import_path10.default.resolve(process.cwd(), "frontend/public", cleanPath);
+        if (import_fs10.default.existsSync(p1)) return p1;
+        const p2 = import_path10.default.resolve(process.cwd(), cleanPath);
+        if (import_fs10.default.existsSync(p2)) return p2;
+        const p3 = import_path10.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
+        if (import_fs10.default.existsSync(p3)) return p3;
         return null;
       }
       /**
@@ -8656,8 +9029,8 @@ var init_catalogImageService = __esm({
               const cleanSlug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
               const candidates = [`${cleanSlug}-combo.jpg`, `${cleanSlug}-front.jpg`, `${cleanSlug}.jpg`, `${cleanSlug}.webp`];
               for (const cand of candidates) {
-                const diskPath = import_path9.default.join(process.cwd(), "frontend", "public", "products", cand);
-                if (import_fs9.default.existsSync(diskPath) && import_fs9.default.statSync(diskPath).size > 1e3) {
+                const diskPath = import_path10.default.join(process.cwd(), "frontend", "public", "products", cand);
+                if (import_fs10.default.existsSync(diskPath) && import_fs10.default.statSync(diskPath).size > 1e3) {
                   row = {
                     id: 0,
                     image_path: `/products/${cand}`,
@@ -8778,8 +9151,8 @@ var init_catalogImageService = __esm({
           const cleanSlug = medicineName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
           const candidates = [`${cleanSlug}-combo.jpg`, `${cleanSlug}-front.jpg`, `${cleanSlug}.jpg`, `${cleanSlug}.webp`];
           for (const cand of candidates) {
-            const diskPath2 = import_path9.default.join(process.cwd(), "frontend", "public", "products", cand);
-            if (import_fs9.default.existsSync(diskPath2) && import_fs9.default.statSync(diskPath2).size > 1e3) {
+            const diskPath2 = import_path10.default.join(process.cwd(), "frontend", "public", "products", cand);
+            if (import_fs10.default.existsSync(diskPath2) && import_fs10.default.statSync(diskPath2).size > 1e3) {
               row = {
                 id: 0,
                 image_path: `/products/${cand}`,
@@ -8795,17 +9168,17 @@ var init_catalogImageService = __esm({
           return null;
         }
         const diskPath = this.getDiskPath(row.image_path);
-        if (!diskPath || !import_fs9.default.existsSync(diskPath)) {
+        if (!diskPath || !import_fs10.default.existsSync(diskPath)) {
           return null;
         }
         try {
-          const buf = import_fs9.default.readFileSync(diskPath);
-          const ext = import_path9.default.extname(diskPath).toLowerCase();
+          const buf = import_fs10.default.readFileSync(diskPath);
+          const ext = import_path10.default.extname(diskPath).toLowerCase();
           const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
           return {
             mimetype: mime,
             data: buf.toString("base64"),
-            filename: import_path9.default.basename(diskPath)
+            filename: import_path10.default.basename(diskPath)
           };
         } catch (_) {
           return null;
@@ -8856,8 +9229,8 @@ var init_catalogImageService = __esm({
                 { file: `${cleanSlug}.webp`, type: "front" }
               ];
               for (const cand of candidates) {
-                const diskPath = import_path9.default.join(process.cwd(), "frontend", "public", "products", cand.file);
-                if (import_fs9.default.existsSync(diskPath) && import_fs9.default.statSync(diskPath).size > 1e3) {
+                const diskPath = import_path10.default.join(process.cwd(), "frontend", "public", "products", cand.file);
+                if (import_fs10.default.existsSync(diskPath) && import_fs10.default.statSync(diskPath).size > 1e3) {
                   rows.push({
                     id: 0,
                     image_path: `/products/${cand.file}`,
@@ -8970,11 +9343,11 @@ var init_catalogImageService = __esm({
        */
       async syncMultiAngleImages() {
         const db2 = await dbManager.getConnection();
-        const stateFile = import_path9.default.resolve(process.cwd(), "data/image_download_state.json");
-        if (!import_fs9.default.existsSync(stateFile)) {
+        const stateFile = import_path10.default.resolve(process.cwd(), "data/image_download_state.json");
+        if (!import_fs10.default.existsSync(stateFile)) {
           return { added: 0, total: 0 };
         }
-        const stateData = JSON.parse(import_fs9.default.readFileSync(stateFile, "utf-8"));
+        const stateData = JSON.parse(import_fs10.default.readFileSync(stateFile, "utf-8"));
         const products = stateData.products || {};
         const entries = Object.entries(products);
         const meds = await db2.all("SELECT id, name, manufacturer FROM medicines");
@@ -9191,9 +9564,9 @@ var init_catalogImageService = __esm({
         const refillMissingItems = [];
         let refillCatalogMedicines = 0;
         try {
-          const csvPath = import_path9.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-          if (import_fs9.default.existsSync(csvPath)) {
-            const content = import_fs9.default.readFileSync(csvPath, "utf-8");
+          const csvPath = import_path10.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+          if (import_fs10.default.existsSync(csvPath)) {
+            const content = import_fs10.default.readFileSync(csvPath, "utf-8");
             const lines = content.split(/\r?\n/).slice(1);
             for (const line of lines) {
               if (!line.trim()) continue;
@@ -9250,9 +9623,9 @@ var init_catalogImageService = __esm({
         const targetMeds = [];
         const seenIds = /* @__PURE__ */ new Set();
         try {
-          const csvPath = import_path9.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-          if (import_fs9.default.existsSync(csvPath)) {
-            const content = import_fs9.default.readFileSync(csvPath, "utf-8");
+          const csvPath = import_path10.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+          if (import_fs10.default.existsSync(csvPath)) {
+            const content = import_fs10.default.readFileSync(csvPath, "utf-8");
             const lines = content.split(/\r?\n/).slice(1);
             for (const line of lines) {
               if (!line.trim()) continue;
@@ -9899,12 +10272,12 @@ var init_catalogImageService = __esm({
         }
         const slug = (med.name || "product").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
         const filename = `${slug}-${targetType}-${Date.now()}.jpg`;
-        const frontendDir = import_path9.default.resolve(process.cwd(), "frontend/public/products");
-        const uploadsDir = import_path9.default.resolve(process.cwd(), "uploads/products");
-        import_fs9.default.mkdirSync(frontendDir, { recursive: true });
-        import_fs9.default.mkdirSync(uploadsDir, { recursive: true });
-        const frontendPath = import_path9.default.join(frontendDir, filename);
-        const uploadsPath = import_path9.default.join(uploadsDir, filename);
+        const frontendDir = import_path10.default.resolve(process.cwd(), "frontend/public/products");
+        const uploadsDir = import_path10.default.resolve(process.cwd(), "uploads/products");
+        import_fs10.default.mkdirSync(frontendDir, { recursive: true });
+        import_fs10.default.mkdirSync(uploadsDir, { recursive: true });
+        const frontendPath = import_path10.default.join(frontendDir, filename);
+        const uploadsPath = import_path10.default.join(uploadsDir, filename);
         const cleanCandidateUrl = this.cleanseCdnImageUrl(candidateUrl);
         const downloadHeaders = {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -9925,8 +10298,8 @@ var init_catalogImageService = __esm({
         if (rejection) {
           throw new Error("This image was previously rejected for this medicine.");
         }
-        import_fs9.default.writeFileSync(frontendPath, buffer);
-        import_fs9.default.writeFileSync(uploadsPath, buffer);
+        import_fs10.default.writeFileSync(frontendPath, buffer);
+        import_fs10.default.writeFileSync(uploadsPath, buffer);
         const relPath = `/products/${filename}`;
         const nextVersion = (current.verification_version || 1) + 1;
         await db2.run("BEGIN TRANSACTION");
@@ -10094,17 +10467,17 @@ var init_catalogImageService = __esm({
        */
       async scanAndAutoMatchLocalImages() {
         const db2 = await dbManager.getConnection();
-        const publicDir = import_path9.default.join(process.cwd(), "frontend", "public", "products");
-        const uploadsDir = import_path9.default.join(process.cwd(), "uploads", "products");
+        const publicDir = import_path10.default.join(process.cwd(), "frontend", "public", "products");
+        const uploadsDir = import_path10.default.join(process.cwd(), "uploads", "products");
         const fileEntries = [];
-        if (import_fs9.default.existsSync(publicDir)) {
-          const publicFiles = import_fs9.default.readdirSync(publicDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
+        if (import_fs10.default.existsSync(publicDir)) {
+          const publicFiles = import_fs10.default.readdirSync(publicDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
           for (const f of publicFiles) {
             fileEntries.push({ filename: f, relPath: `/products/${f}` });
           }
         }
-        if (import_fs9.default.existsSync(uploadsDir)) {
-          const uploadFiles = import_fs9.default.readdirSync(uploadsDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
+        if (import_fs10.default.existsSync(uploadsDir)) {
+          const uploadFiles = import_fs10.default.readdirSync(uploadsDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
           for (const f of uploadFiles) {
             fileEntries.push({ filename: f, relPath: `uploads/products/${f}` });
           }
@@ -10276,14 +10649,14 @@ var init_catalogImageService = __esm({
           );
           const toDeleteIds = [];
           const cwd = process.cwd();
-          const publicDir = import_path9.default.resolve(cwd, "frontend/public");
-          const uploadsDir = import_path9.default.resolve(cwd, "uploads");
+          const publicDir = import_path10.default.resolve(cwd, "frontend/public");
+          const uploadsDir = import_path10.default.resolve(cwd, "uploads");
           for (const img of images) {
             const cleanPath = img.image_path.replace(/^[\/\\]/, "");
-            const p1 = import_path9.default.join(publicDir, cleanPath);
-            const p2 = import_path9.default.join(cwd, cleanPath);
-            const p3 = import_path9.default.join(uploadsDir, cleanPath.replace(/^uploads[\/\\]/, ""));
-            if (!import_fs9.default.existsSync(p1) && !import_fs9.default.existsSync(p2) && !import_fs9.default.existsSync(p3)) {
+            const p1 = import_path10.default.join(publicDir, cleanPath);
+            const p2 = import_path10.default.join(cwd, cleanPath);
+            const p3 = import_path10.default.join(uploadsDir, cleanPath.replace(/^uploads[\/\\]/, ""));
+            if (!import_fs10.default.existsSync(p1) && !import_fs10.default.existsSync(p2) && !import_fs10.default.existsSync(p3)) {
               toDeleteIds.push(img.id);
             }
           }
@@ -10381,9 +10754,9 @@ var init_catalogImageService = __esm({
             throw err;
           }
           try {
-            const stateFile = import_path9.default.resolve(process.cwd(), "data/image_download_state.json");
-            if (import_fs9.default.existsSync(stateFile)) {
-              const state = JSON.parse(import_fs9.default.readFileSync(stateFile, "utf8"));
+            const stateFile = import_path10.default.resolve(process.cwd(), "data/image_download_state.json");
+            if (import_fs10.default.existsSync(stateFile)) {
+              const state = JSON.parse(import_fs10.default.readFileSync(stateFile, "utf8"));
               const medIds = new Set(toDeactivate.map((i) => i.id));
               let purged = 0;
               for (const [key, p] of Object.entries(state.products || {})) {
@@ -10403,7 +10776,7 @@ var init_catalogImageService = __esm({
               }
               if (purged > 0) {
                 state.last_updated = (/* @__PURE__ */ new Date()).toISOString();
-                import_fs9.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+                import_fs10.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
               }
             }
           } catch (_) {
@@ -10431,12 +10804,12 @@ var init_catalogImageService = __esm({
 });
 
 // src/services/visualIndexService.ts
-var import_fs10, import_path10, import_jimp3, VisualIndexService, visualIndexService;
+var import_fs11, import_path11, import_jimp3, VisualIndexService, visualIndexService;
 var init_visualIndexService = __esm({
   "src/services/visualIndexService.ts"() {
     "use strict";
-    import_fs10 = __toESM(require("fs"), 1);
-    import_path10 = __toESM(require("path"), 1);
+    import_fs11 = __toESM(require("fs"), 1);
+    import_path11 = __toESM(require("path"), 1);
     import_jimp3 = require("jimp");
     init_connection();
     init_catalogImageService();
@@ -10481,13 +10854,13 @@ var init_visualIndexService = __esm({
       async computePhashFromPath(filePath) {
         try {
           const clean2 = filePath.replace(/^\/+/, "");
-          const p1 = import_path10.default.resolve(process.cwd(), "frontend/public", clean2);
-          const p2 = import_path10.default.resolve(process.cwd(), clean2);
-          const p3 = import_path10.default.resolve(process.cwd(), "uploads", clean2.replace(/^uploads\//, ""));
+          const p1 = import_path11.default.resolve(process.cwd(), "frontend/public", clean2);
+          const p2 = import_path11.default.resolve(process.cwd(), clean2);
+          const p3 = import_path11.default.resolve(process.cwd(), "uploads", clean2.replace(/^uploads\//, ""));
           let buf = null;
-          if (import_fs10.default.existsSync(p1)) buf = import_fs10.default.readFileSync(p1);
-          else if (import_fs10.default.existsSync(p2)) buf = import_fs10.default.readFileSync(p2);
-          else if (import_fs10.default.existsSync(p3)) buf = import_fs10.default.readFileSync(p3);
+          if (import_fs11.default.existsSync(p1)) buf = import_fs11.default.readFileSync(p1);
+          else if (import_fs11.default.existsSync(p2)) buf = import_fs11.default.readFileSync(p2);
+          else if (import_fs11.default.existsSync(p3)) buf = import_fs11.default.readFileSync(p3);
           else return null;
           return this.computePhashFromBuffer(buf);
         } catch {
@@ -10613,16 +10986,16 @@ function startScispacySidecar(force = false) {
     return;
   }
   if (sidecarProcess) return;
-  const __filename7 = (0, import_url3.fileURLToPath)(import_meta_url);
-  const __dirname6 = import_path11.default.dirname(__filename7);
-  const pythonScript = import_path11.default.resolve(__dirname6, "..", "..", "python", "scan_nlp", "main.py");
-  const projectRoot = import_path11.default.resolve(__dirname6, "..", "..");
-  const venvPythonWin = import_path11.default.join(projectRoot, "python", "scan_nlp", ".venv", "Scripts", "python.exe");
-  const venvPythonPosix = import_path11.default.join(projectRoot, "python", "scan_nlp", ".venv", "bin", "python");
+  const __filename7 = (0, import_url4.fileURLToPath)(import_meta_url);
+  const __dirname6 = import_path12.default.dirname(__filename7);
+  const pythonScript = import_path12.default.resolve(__dirname6, "..", "..", "python", "scan_nlp", "main.py");
+  const projectRoot = import_path12.default.resolve(__dirname6, "..", "..");
+  const venvPythonWin = import_path12.default.join(projectRoot, "python", "scan_nlp", ".venv", "Scripts", "python.exe");
+  const venvPythonPosix = import_path12.default.join(projectRoot, "python", "scan_nlp", ".venv", "bin", "python");
   let pythonCmd = "python";
-  if (import_fs11.default.existsSync(venvPythonWin)) {
+  if (import_fs12.default.existsSync(venvPythonWin)) {
     pythonCmd = venvPythonWin;
-  } else if (import_fs11.default.existsSync(venvPythonPosix)) {
+  } else if (import_fs12.default.existsSync(venvPythonPosix)) {
     pythonCmd = venvPythonPosix;
   }
   console.log(`[scispaCy] Starting Python sidecar: ${pythonCmd} ${pythonScript}...`);
@@ -10692,14 +11065,14 @@ async function queryScispacy(text) {
     return null;
   }
 }
-var import_child_process3, import_path11, import_url3, import_fs11, sidecarProcess;
+var import_child_process3, import_path12, import_url4, import_fs12, sidecarProcess;
 var init_scispacyClient = __esm({
   "src/services/scispacyClient.ts"() {
     "use strict";
     import_child_process3 = require("child_process");
-    import_path11 = __toESM(require("path"), 1);
-    import_url3 = require("url");
-    import_fs11 = __toESM(require("fs"), 1);
+    import_path12 = __toESM(require("path"), 1);
+    import_url4 = require("url");
+    import_fs12 = __toESM(require("fs"), 1);
     sidecarProcess = null;
   }
 });
@@ -11442,23 +11815,23 @@ __export(imageArchiveService_exports, {
   ImageArchiveService: () => ImageArchiveService,
   imageArchiveService: () => imageArchiveService
 });
-var import_fs12, import_path12, import_tesseract, import_adm_zip, import_node_cron, import_jimp4, BASE_UPLOAD_DIR, TEMP_DIR, IMPORTANT_DIR, ImageArchiveService, imageArchiveService;
+var import_fs13, import_path13, import_tesseract, import_adm_zip, import_node_cron, import_jimp4, BASE_UPLOAD_DIR, TEMP_DIR, IMPORTANT_DIR, ImageArchiveService, imageArchiveService;
 var init_imageArchiveService = __esm({
   "src/services/imageArchiveService.ts"() {
     "use strict";
-    import_fs12 = __toESM(require("fs"), 1);
-    import_path12 = __toESM(require("path"), 1);
+    import_fs13 = __toESM(require("fs"), 1);
+    import_path13 = __toESM(require("path"), 1);
     import_tesseract = __toESM(require("tesseract.js"), 1);
     import_adm_zip = __toESM(require("adm-zip"), 1);
     import_node_cron = __toESM(require("node-cron"), 1);
     import_jimp4 = require("jimp");
     init_config();
     init_backgroundJobLane();
-    BASE_UPLOAD_DIR = import_path12.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR = import_path12.default.join(BASE_UPLOAD_DIR, "temp");
-    IMPORTANT_DIR = import_path12.default.join(BASE_UPLOAD_DIR, "important");
-    if (!import_fs12.default.existsSync(TEMP_DIR)) import_fs12.default.mkdirSync(TEMP_DIR, { recursive: true });
-    if (!import_fs12.default.existsSync(IMPORTANT_DIR)) import_fs12.default.mkdirSync(IMPORTANT_DIR, { recursive: true });
+    BASE_UPLOAD_DIR = import_path13.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR = import_path13.default.join(BASE_UPLOAD_DIR, "temp");
+    IMPORTANT_DIR = import_path13.default.join(BASE_UPLOAD_DIR, "important");
+    if (!import_fs13.default.existsSync(TEMP_DIR)) import_fs13.default.mkdirSync(TEMP_DIR, { recursive: true });
+    if (!import_fs13.default.existsSync(IMPORTANT_DIR)) import_fs13.default.mkdirSync(IMPORTANT_DIR, { recursive: true });
     ImageArchiveService = class {
       // Common Schedule H1, Narcotic, and Sleeping Pill keywords in India
       restrictedKeywords = [
@@ -11505,23 +11878,23 @@ var init_imageArchiveService = __esm({
        */
       async processAndRouteImage(filePath) {
         try {
-          if (!import_fs12.default.existsSync(filePath)) return null;
+          if (!import_fs13.default.existsSync(filePath)) return null;
           console.log(`Analyzing image with AI (OCR): ${filePath}`);
           const { data: { text } } = await import_tesseract.default.recognize(filePath, "eng");
           const lowerText = text.toLowerCase();
           const isRestricted = this.restrictedKeywords.some((kw) => lowerText.includes(kw));
-          const fileName = import_path12.default.basename(filePath);
+          const fileName = import_path13.default.basename(filePath);
           let targetPath;
           if (isRestricted) {
             const date = /* @__PURE__ */ new Date();
             const monthFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-            const targetDir = import_path12.default.join(IMPORTANT_DIR, monthFolder);
-            if (!import_fs12.default.existsSync(targetDir)) {
-              import_fs12.default.mkdirSync(targetDir, { recursive: true });
+            const targetDir = import_path13.default.join(IMPORTANT_DIR, monthFolder);
+            if (!import_fs13.default.existsSync(targetDir)) {
+              import_fs13.default.mkdirSync(targetDir, { recursive: true });
             }
-            targetPath = import_path12.default.join(targetDir, fileName);
+            targetPath = import_path13.default.join(targetDir, fileName);
           } else {
-            targetPath = import_path12.default.join(TEMP_DIR, fileName);
+            targetPath = import_path13.default.join(TEMP_DIR, fileName);
           }
           try {
             const image = await import_jimp4.Jimp.read(filePath);
@@ -11529,14 +11902,14 @@ var init_imageArchiveService = __esm({
               image.resize({ w: 800 });
             }
             const compressedBuffer = await image.getBuffer("image/jpeg");
-            await import_fs12.default.promises.writeFile(targetPath, compressedBuffer);
+            await import_fs13.default.promises.writeFile(targetPath, compressedBuffer);
             if (filePath !== targetPath) {
-              import_fs12.default.unlinkSync(filePath);
+              import_fs13.default.unlinkSync(filePath);
             }
           } catch (compressErr) {
             console.error("Failed to compress routed image with Jimp, renaming instead:", compressErr);
             if (filePath !== targetPath) {
-              import_fs12.default.renameSync(filePath, targetPath);
+              import_fs13.default.renameSync(filePath, targetPath);
             }
           }
           if (isRestricted) {
@@ -11547,20 +11920,20 @@ var init_imageArchiveService = __esm({
           return targetPath;
         } catch (err) {
           console.error("Error in processAndRouteImage:", err);
-          const targetPath = import_path12.default.join(TEMP_DIR, import_path12.default.basename(filePath));
+          const targetPath = import_path13.default.join(TEMP_DIR, import_path13.default.basename(filePath));
           try {
             const image = await import_jimp4.Jimp.read(filePath);
             if (image.width > 800) {
               image.resize({ w: 800 });
             }
             const compressedBuffer = await image.getBuffer("image/jpeg");
-            await import_fs12.default.promises.writeFile(targetPath, compressedBuffer);
+            await import_fs13.default.promises.writeFile(targetPath, compressedBuffer);
             if (filePath !== targetPath) {
-              import_fs12.default.unlinkSync(filePath);
+              import_fs13.default.unlinkSync(filePath);
             }
           } catch (compressErr) {
             if (filePath !== targetPath) {
-              import_fs12.default.renameSync(filePath, targetPath);
+              import_fs13.default.renameSync(filePath, targetPath);
             }
           }
           return targetPath;
@@ -11570,13 +11943,13 @@ var init_imageArchiveService = __esm({
        * Manually flag a file as important and move it to the correct folder
        */
       markAsImportant(fileName) {
-        const tempPath = import_path12.default.join(TEMP_DIR, fileName);
-        if (!import_fs12.default.existsSync(tempPath)) return false;
+        const tempPath = import_path13.default.join(TEMP_DIR, fileName);
+        if (!import_fs13.default.existsSync(tempPath)) return false;
         const date = /* @__PURE__ */ new Date();
         const monthFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        const targetDir = import_path12.default.join(IMPORTANT_DIR, monthFolder);
-        if (!import_fs12.default.existsSync(targetDir)) import_fs12.default.mkdirSync(targetDir, { recursive: true });
-        import_fs12.default.renameSync(tempPath, import_path12.default.join(targetDir, fileName));
+        const targetDir = import_path13.default.join(IMPORTANT_DIR, monthFolder);
+        if (!import_fs13.default.existsSync(targetDir)) import_fs13.default.mkdirSync(targetDir, { recursive: true });
+        import_fs13.default.renameSync(tempPath, import_path13.default.join(targetDir, fileName));
         return true;
       }
       /**
@@ -11586,13 +11959,13 @@ var init_imageArchiveService = __esm({
         try {
           const now = Date.now();
           const cutoff = now - daysOld * 24 * 60 * 60 * 1e3;
-          const files = import_fs12.default.readdirSync(TEMP_DIR);
+          const files = import_fs13.default.readdirSync(TEMP_DIR);
           let deletedCount = 0;
           for (const file of files) {
-            const filePath = import_path12.default.join(TEMP_DIR, file);
-            const stats = import_fs12.default.statSync(filePath);
+            const filePath = import_path13.default.join(TEMP_DIR, file);
+            const stats = import_fs13.default.statSync(filePath);
             if (stats.isFile() && stats.mtimeMs < cutoff) {
-              import_fs12.default.unlinkSync(filePath);
+              import_fs13.default.unlinkSync(filePath);
               deletedCount++;
             }
           }
@@ -11609,18 +11982,18 @@ var init_imageArchiveService = __esm({
           const date = /* @__PURE__ */ new Date();
           date.setMonth(date.getMonth() - 1);
           const prevMonthFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-          const targetDir = import_path12.default.join(IMPORTANT_DIR, prevMonthFolder);
-          if (!import_fs12.default.existsSync(targetDir)) {
+          const targetDir = import_path13.default.join(IMPORTANT_DIR, prevMonthFolder);
+          if (!import_fs13.default.existsSync(targetDir)) {
             console.log(`No important folder found for ${prevMonthFolder} to zip.`);
             return;
           }
           const zipName = `H1_Rx_Archive_${prevMonthFolder}.zip`;
-          const zipPath = import_path12.default.join(IMPORTANT_DIR, zipName);
+          const zipPath = import_path13.default.join(IMPORTANT_DIR, zipName);
           const zip = new import_adm_zip.default();
           zip.addLocalFolder(targetDir);
           zip.writeZip(zipPath);
           console.log(`Successfully created archive: ${zipPath}`);
-          import_fs12.default.rmSync(targetDir, { recursive: true, force: true });
+          import_fs13.default.rmSync(targetDir, { recursive: true, force: true });
           console.log(`Deleted raw folder to save space: ${targetDir}`);
         } catch (err) {
           console.error("Error during monthly zipping:", err);
@@ -11651,23 +12024,23 @@ var init_imageArchiveService = __esm({
           if (!candidates || candidates.length === 0) {
             return { purgedCount: 0, freedBytes: 0, candidateCount: 0 };
           }
-          const uploadsDir = import_path12.default.resolve(getAppDataDir(), "uploads");
-          const inboundDir = import_path12.default.resolve(getAppDataDir(), "data", "inbound_media");
+          const uploadsDir = import_path13.default.resolve(getAppDataDir(), "uploads");
+          const inboundDir = import_path13.default.resolve(getAppDataDir(), "data", "inbound_media");
           for (const row of candidates) {
             if (!row.payment_screenshot_path) continue;
             const normalized = row.payment_screenshot_path.replace(/\\/g, "/");
             const filename = normalized.split("/").pop();
             if (!filename) continue;
             const possiblePaths = [
-              import_path12.default.resolve(uploadsDir, filename),
-              import_path12.default.resolve(inboundDir, filename),
-              import_path12.default.resolve(row.payment_screenshot_path)
+              import_path13.default.resolve(uploadsDir, filename),
+              import_path13.default.resolve(inboundDir, filename),
+              import_path13.default.resolve(row.payment_screenshot_path)
             ];
             for (const p of possiblePaths) {
-              if (import_fs12.default.existsSync(p) && import_fs12.default.statSync(p).isFile()) {
+              if (import_fs13.default.existsSync(p) && import_fs13.default.statSync(p).isFile()) {
                 try {
-                  const sz = import_fs12.default.statSync(p).size;
-                  import_fs12.default.unlinkSync(p);
+                  const sz = import_fs13.default.statSync(p).size;
+                  import_fs13.default.unlinkSync(p);
                   freedBytes += sz;
                   break;
                 } catch (unlinkErr) {
@@ -11709,15 +12082,15 @@ var init_imageArchiveService = __esm({
         let eligibleCount = 0;
         let eligibleSizeBytes = 0;
         try {
-          const uploadsDir = import_path12.default.resolve(getAppDataDir(), "uploads");
-          if (import_fs12.default.existsSync(uploadsDir)) {
-            const files = import_fs12.default.readdirSync(uploadsDir);
+          const uploadsDir = import_path13.default.resolve(getAppDataDir(), "uploads");
+          if (import_fs13.default.existsSync(uploadsDir)) {
+            const files = import_fs13.default.readdirSync(uploadsDir);
             for (const file of files) {
               if (file.startsWith("payment_proof_")) {
-                const p = import_path12.default.join(uploadsDir, file);
-                if (import_fs12.default.statSync(p).isFile()) {
+                const p = import_path13.default.join(uploadsDir, file);
+                if (import_fs13.default.statSync(p).isFile()) {
                   totalFiles++;
-                  totalSizeBytes += import_fs12.default.statSync(p).size;
+                  totalSizeBytes += import_fs13.default.statSync(p).size;
                 }
               }
             }
@@ -11742,9 +12115,9 @@ var init_imageArchiveService = __esm({
               if (!row.payment_screenshot_path) continue;
               const filename = row.payment_screenshot_path.replace(/\\/g, "/").split("/").pop();
               if (!filename) continue;
-              const p = import_path12.default.resolve(uploadsDir, filename);
-              if (import_fs12.default.existsSync(p) && import_fs12.default.statSync(p).isFile()) {
-                eligibleSizeBytes += import_fs12.default.statSync(p).size;
+              const p = import_path13.default.resolve(uploadsDir, filename);
+              if (import_fs13.default.existsSync(p) && import_fs13.default.statSync(p).isFile()) {
+                eligibleSizeBytes += import_fs13.default.statSync(p).size;
               }
             }
           }
@@ -12106,12 +12479,12 @@ __export(telegramBot_exports, {
   default: () => telegramBot_default,
   telegramBotService: () => telegramBotService
 });
-var import_path13, import_fs13, TelegramBotService, telegramBotService, telegramBot_default;
+var import_path14, import_fs14, TelegramBotService, telegramBotService, telegramBot_default;
 var init_telegramBot = __esm({
   "src/telegramBot.ts"() {
     "use strict";
-    import_path13 = __toESM(require("path"), 1);
-    import_fs13 = __toESM(require("fs"), 1);
+    import_path14 = __toESM(require("path"), 1);
+    import_fs14 = __toESM(require("fs"), 1);
     init_migrationValidation();
     init_nameNormalizer();
     init_connection();
@@ -12412,8 +12785,8 @@ Welcome back!`,
                 const imageBuffer = await response.arrayBuffer();
                 const buffer = Buffer.from(imageBuffer);
                 const tempFileName = `telegram_${Date.now()}_${msg.from?.id}.jpg`;
-                const tempFilePath = import_path13.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
-                import_fs13.default.writeFileSync(tempFilePath, buffer);
+                const tempFilePath = import_path14.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
+                import_fs14.default.writeFileSync(tempFilePath, buffer);
                 const { imageArchiveService: imageArchiveService2 } = await Promise.resolve().then(() => (init_imageArchiveService(), imageArchiveService_exports));
                 await imageArchiveService2.processAndRouteImage(tempFilePath);
                 const { aiCameraService: aiCameraService2 } = await Promise.resolve().then(() => (init_aiCameraService(), aiCameraService_exports));
@@ -13953,6 +14326,9 @@ async function ensureSchema(dbPath) {
             }
             if (!chatNames.has("session_status")) {
               await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
+            }
+            if (!chatNames.has("language")) {
+              await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
             }
           }
         } catch (_) {
@@ -15957,7 +16333,8 @@ async function ensureSchema(dbPath) {
       manual_active_until INTEGER DEFAULT 0,
       last_patient_message_at INTEGER DEFAULT 0,
       last_pharmacist_message_at INTEGER DEFAULT 0,
-      session_status TEXT DEFAULT 'idle'
+      session_status TEXT DEFAULT 'idle',
+      language TEXT DEFAULT 'en'
     );
 
     -- WhatsApp local messages cache
@@ -16971,6 +17348,9 @@ async function ensureSchema(dbPath) {
         if (!chatNames.has("session_status")) {
           await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
         }
+        if (!chatNames.has("language")) {
+          await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
+        }
       }
     } catch (_) {
     }
@@ -17214,7 +17594,7 @@ async function loadReferenceData({ force } = {}) {
   } else {
     await db2.run("DELETE FROM medicine_reference");
   }
-  if (!import_fs14.default.existsSync(REFERENCE_CSV)) {
+  if (!import_fs15.default.existsSync(REFERENCE_CSV)) {
     await dbManager.close();
     console.warn("Reference CSV not found at:", REFERENCE_CSV);
     return { loaded: 0, skipped: 0 };
@@ -17222,7 +17602,7 @@ async function loadReferenceData({ force } = {}) {
   console.log("Loading medicine reference data from CSV...");
   const rows = [];
   await new Promise((resolve, reject) => {
-    import_fs14.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
+    import_fs15.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
       const name = (row["name"] || "").trim();
       const comp1 = (row["short_composition1"] || row["composition1"] || "").trim();
       const comp2 = (row["short_composition2"] || row["composition2"] || "").trim();
@@ -17275,7 +17655,7 @@ async function loadApiSubstances({ force } = {}) {
   } else {
     await db2.run("DELETE FROM api_substances");
   }
-  if (!import_fs14.default.existsSync(REFERENCE_CSV)) {
+  if (!import_fs15.default.existsSync(REFERENCE_CSV)) {
     await dbManager.close();
     console.warn("Reference CSV not found at:", REFERENCE_CSV);
     return { loaded: 0, skipped: 0 };
@@ -17283,7 +17663,7 @@ async function loadApiSubstances({ force } = {}) {
   console.log("Loading API substances from CSV...");
   const substanceSet = /* @__PURE__ */ new Set();
   await new Promise((resolve, reject) => {
-    import_fs14.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
+    import_fs15.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
       const comp1 = (row["short_composition1"] || row["composition1"] || "").trim();
       const comp2 = (row["short_composition2"] || row["composition2"] || "").trim();
       if (comp1) {
@@ -17334,9 +17714,9 @@ async function seedBundledReference(force = false) {
       if (count && count.c > 0) return { loaded: 0 };
     }
     let rows = [];
-    if (import_fs14.default.existsSync(BUNDLED_SEED)) {
+    if (import_fs15.default.existsSync(BUNDLED_SEED)) {
       try {
-        rows = JSON.parse(import_fs14.default.readFileSync(BUNDLED_SEED, "utf8"));
+        rows = JSON.parse(import_fs15.default.readFileSync(BUNDLED_SEED, "utf8"));
       } catch (err) {
         console.warn("[Seed] Failed to parse seed JSON file, using fallback array:", err);
         rows = DEFAULT_SEED_ROWS;
@@ -17694,18 +18074,18 @@ async function recordApiSubstance(apiReference) {
     await dbManager.close();
   }
 }
-var import_path14, import_fs14, import_csv_parser, DATA_DIR, REFERENCE_CSV, DOSAGE_FORMS2, DOSAGE_FORM_SET, NON_PHARMA_KEYWORDS, BUNDLED_SEED, DEFAULT_SEED_ROWS, isEnrichmentRunning, enrichmentStopRequested, autoEnrichedDate, autoEnrichedTodayCount;
+var import_path15, import_fs15, import_csv_parser, DATA_DIR, REFERENCE_CSV, DOSAGE_FORMS2, DOSAGE_FORM_SET, NON_PHARMA_KEYWORDS, BUNDLED_SEED, DEFAULT_SEED_ROWS, isEnrichmentRunning, enrichmentStopRequested, autoEnrichedDate, autoEnrichedTodayCount;
 var init_compositionEnricher = __esm({
   "src/worker/compositionEnricher.ts"() {
     "use strict";
-    import_path14 = __toESM(require("path"), 1);
-    import_fs14 = __toESM(require("fs"), 1);
+    import_path15 = __toESM(require("path"), 1);
+    import_fs15 = __toESM(require("fs"), 1);
     init_connection();
     import_csv_parser = __toESM(require("csv-parser"), 1);
     init_activityTracker();
     init_config();
-    DATA_DIR = import_path14.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV = import_path14.default.join(DATA_DIR, "reference_medicines.csv");
+    DATA_DIR = import_path15.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV = import_path15.default.join(DATA_DIR, "reference_medicines.csv");
     DOSAGE_FORMS2 = [
       "TABLET",
       "TAB",
@@ -17789,7 +18169,7 @@ var init_compositionEnricher = __esm({
       "VETERIN",
       "DENTAL PREPARATION"
     ];
-    BUNDLED_SEED = import_path14.default.join(DATA_DIR, "medicine_reference_seed.json");
+    BUNDLED_SEED = import_path15.default.join(DATA_DIR, "medicine_reference_seed.json");
     DEFAULT_SEED_ROWS = [
       { name: "PARACETAMOL 650 MG TABLET", composition1: "PARACETAMOL", manufacturer: "MICRO LABS" },
       { name: "DOLO 650 TABLET", composition1: "PARACETAMOL", manufacturer: "MICRO LABS" },
@@ -19022,7 +19402,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
     }
   }
   if (!distributor_name && filename) {
-    const base = import_path15.default.basename(filename).toLowerCase();
+    const base = import_path16.default.basename(filename).toLowerCase();
     if (base.includes("prakash_pharmaceuticals") || base.includes("prakashpharmaceuticals")) {
       distributor_name = "PRAKASH PHARMACEUTICALS";
     }
@@ -19625,14 +20005,14 @@ function isNonMedicineNoise(name) {
   }
   return false;
 }
-var import_nodemailer, import_path15, import_fs15, import_sync, getDbPath, getUploadsDir, loadImap, loadSimpleParser, loadXlsx, loadAiCamera, emailSchemaReady, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN, EmailService, emailService, emailService_default;
+var import_nodemailer, import_path16, import_fs16, import_sync, getDbPath, getUploadsDir, loadImap, loadSimpleParser, loadXlsx, loadAiCamera, emailSchemaReady, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN, EmailService, emailService, emailService_default;
 var init_emailService = __esm({
   "src/services/emailService.ts"() {
     "use strict";
     init_connection();
     import_nodemailer = require("nodemailer");
-    import_path15 = __toESM(require("path"), 1);
-    import_fs15 = __toESM(require("fs"), 1);
+    import_path16 = __toESM(require("path"), 1);
+    import_fs16 = __toESM(require("fs"), 1);
     init_database();
     init_whatsappQueueWorker();
     init_telegramBot();
@@ -19646,7 +20026,7 @@ var init_emailService = __esm({
     init_nameNormalizer();
     init_messageClassifier();
     getDbPath = () => config.dbPath;
-    getUploadsDir = () => process.env.UPLOADS_DIR || import_path15.default.resolve(getAppDataDir(), "uploads");
+    getUploadsDir = () => process.env.UPLOADS_DIR || import_path16.default.resolve(getAppDataDir(), "uploads");
     loadImap = () => import("imap-simple").then((m) => m.default ?? m);
     loadSimpleParser = () => import("mailparser").then((m) => (m.default ?? m).simpleParser);
     loadXlsx = () => import("xlsx").then((m) => m.default ?? m);
@@ -20325,14 +20705,14 @@ Arrival Time: ${arrivalTime}`;
               await this.processMedicineListAttachment(attachment);
               console.log("Medicine list attachment processed:", attachment.filename);
             }
-            const uploadsDir = process.env.UPLOADS_DIR || import_path15.default.join(getAppDataDir(), "uploads");
-            if (!import_fs15.default.existsSync(uploadsDir)) {
-              import_fs15.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
+            if (!import_fs16.default.existsSync(uploadsDir)) {
+              import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            const sanitizedFilename = import_path15.default.basename(attachment.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
+            const sanitizedFilename = import_path16.default.basename(attachment.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
             const prefix = uid ? `att-${uid}-` : `${Date.now()}-`;
-            const filePath = import_path15.default.join(uploadsDir, `${prefix}${sanitizedFilename}`);
-            import_fs15.default.writeFileSync(filePath, attachment.content);
+            const filePath = import_path16.default.join(uploadsDir, `${prefix}${sanitizedFilename}`);
+            import_fs16.default.writeFileSync(filePath, attachment.content);
           }
         } catch (error) {
           console.error("Error processing email attachments:", error);
@@ -20507,19 +20887,19 @@ AI Pharmacy Team`
             });
             if (validEntry) {
               const uploadsDir = getUploadsDir();
-              const tempExt = import_path15.default.extname(validEntry.entryName);
-              const tempChildPath = import_path15.default.join(uploadsDir, `zip-extracted-${Date.now()}${tempExt}`);
-              import_fs15.default.writeFileSync(tempChildPath, validEntry.getData());
+              const tempExt = import_path16.default.extname(validEntry.entryName);
+              const tempChildPath = import_path16.default.join(uploadsDir, `zip-extracted-${Date.now()}${tempExt}`);
+              import_fs16.default.writeFileSync(tempChildPath, validEntry.getData());
               try {
                 const result = await this.parseAndImportAttachment(tempChildPath, importData);
                 try {
-                  import_fs15.default.unlinkSync(tempChildPath);
+                  import_fs16.default.unlinkSync(tempChildPath);
                 } catch {
                 }
                 return result;
               } catch (err) {
                 try {
-                  import_fs15.default.unlinkSync(tempChildPath);
+                  import_fs16.default.unlinkSync(tempChildPath);
                 } catch {
                 }
                 throw err;
@@ -20544,7 +20924,7 @@ AI Pharmacy Team`
           let mappingConfig = {};
           let rawHeaders = [];
           let needsReview = false;
-          const safeBasename = import_path15.default.basename(filePath);
+          const safeBasename = import_path16.default.basename(filePath);
           const db2 = await dbManager.getConnection();
           let distributor = null;
           let emailAttachment = await db2.get(
@@ -20574,7 +20954,7 @@ AI Pharmacy Team`
             let isRecordType = false;
             let recordData = null;
             if (nameLower.endsWith(".csv")) {
-              const fileBuffer = import_fs15.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const textContent = fileBuffer.toString("utf8");
               const firstLine = textContent.split("\n")[0]?.trim() || "";
               let delimiter = ",";
@@ -20607,7 +20987,7 @@ AI Pharmacy Team`
                 records = (0, import_sync.parse)(fileBuffer, { delimiter, from_line: fromLine, columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
               }
             } else {
-              const fileBuffer = import_fs15.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const XLSX4 = await loadXlsx();
               const workbook = XLSX4.read(fileBuffer, { type: "buffer" });
               const sheetName = workbook.SheetNames[0];
@@ -20772,7 +21152,7 @@ AI Pharmacy Team`
               }).filter((item) => item.name !== "Unknown CSV Item" && item.name !== distributor_name);
             }
           } else if (nameLower.endsWith(".dav") || nameLower.endsWith(".dac")) {
-            const text = import_fs15.default.readFileSync(filePath, "utf8");
+            const text = import_fs16.default.readFileSync(filePath, "utf8");
             const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
             const headerLine = lines.find((l) => l.startsWith("H,"));
             if (headerLine) {
@@ -20851,19 +21231,19 @@ AI Pharmacy Team`
             const isImage = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(nameLower);
             if (isPdf) {
               const { default: pdfParse2 } = await import("pdf-parse");
-              const fileBuffer = import_fs15.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const pdfData = await pdfParse2(fileBuffer);
               content = pdfData.text || "";
             } else if (isImage) {
-              const fileBuffer = import_fs15.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const ocrResult = await (await loadAiCamera()).processImage(fileBuffer, true);
               content = ocrResult?.text || "";
             } else {
-              content = import_fs15.default.readFileSync(filePath, "utf-8");
+              content = import_fs16.default.readFileSync(filePath, "utf-8");
             }
             const runPdfOcrFallback = async () => {
               console.log("[emailService] PDF jumbled or scanned. Falling back to page-by-page OCR rendering.");
-              const fileBuffer = import_fs15.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               try {
                 const canvasPkg = await import("@napi-rs/canvas");
                 const { createCanvas: createCanvas3, Canvas, Image } = canvasPkg;
@@ -21009,7 +21389,7 @@ AI Pharmacy Team`
                 }
               }
               if (!invoice_no) {
-                const filename = import_path15.default.basename(filePath);
+                const filename = import_path16.default.basename(filePath);
                 const fileDigits = filename.replace(/\.[^/.]+$/, "").match(/\d+/);
                 if (fileDigits) {
                   invoice_no = fileDigits[0];
@@ -21218,7 +21598,7 @@ AI Pharmacy Team`
             };
           }
           if (importData) {
-            const filename = import_path15.default.basename(filePath);
+            const filename = import_path16.default.basename(filePath);
             const validDistName = distributor_name && isValidDistributorName(distributor_name) ? distributor_name.trim() : null;
             await db2.run(
               `INSERT INTO staged_purchases (distributor_name, invoice_no, date, total_amount, items_json, source_type) VALUES (?, ?, ?, ?, ?, 'email')`,
@@ -21263,17 +21643,17 @@ AI Pharmacy Team`
         try {
           await db2.run("BEGIN TRANSACTION");
           const uploadsDir = getUploadsDir();
-          const historicalDir = import_path15.default.join(uploadsDir, "historical");
-          if (!import_fs15.default.existsSync(historicalDir)) {
-            import_fs15.default.mkdirSync(historicalDir, { recursive: true });
+          const historicalDir = import_path16.default.join(uploadsDir, "historical");
+          if (!import_fs16.default.existsSync(historicalDir)) {
+            import_fs16.default.mkdirSync(historicalDir, { recursive: true });
           }
-          const srcPath = import_path15.default.isAbsolute(filename) ? filename : import_path15.default.join(uploadsDir, filename);
-          const safeBasename = import_path15.default.basename(filename);
-          const destPath = import_path15.default.join(historicalDir, safeBasename);
-          if (import_fs15.default.existsSync(srcPath) && srcPath !== destPath) {
-            import_fs15.default.copyFileSync(srcPath, destPath);
+          const srcPath = import_path16.default.isAbsolute(filename) ? filename : import_path16.default.join(uploadsDir, filename);
+          const safeBasename = import_path16.default.basename(filename);
+          const destPath = import_path16.default.join(historicalDir, safeBasename);
+          if (import_fs16.default.existsSync(srcPath) && srcPath !== destPath) {
+            import_fs16.default.copyFileSync(srcPath, destPath);
           }
-          const fileType = import_path15.default.extname(safeBasename).slice(1).toLowerCase();
+          const fileType = import_path16.default.extname(safeBasename).slice(1).toLowerCase();
           const headersJson = JSON.stringify(rawHeaders);
           const mappingJson = JSON.stringify(mappingConfig);
           const dataJson = JSON.stringify(extractedItems);
@@ -21288,9 +21668,9 @@ AI Pharmacy Team`
           if (historicalFiles.length > 5) {
             const toDelete = historicalFiles.slice(5);
             for (const fileToDelete of toDelete) {
-              if (fileToDelete.file_path && import_fs15.default.existsSync(fileToDelete.file_path)) {
+              if (fileToDelete.file_path && import_fs16.default.existsSync(fileToDelete.file_path)) {
                 try {
-                  import_fs15.default.unlinkSync(fileToDelete.file_path);
+                  import_fs16.default.unlinkSync(fileToDelete.file_path);
                 } catch (err) {
                   console.warn("Failed to delete old historical file:", fileToDelete.file_path, err);
                 }
@@ -21369,17 +21749,17 @@ AI Pharmacy Team`
             return { deletedCount: 0 };
           }
           let deletedCount = 0;
-          const uploadsDir = process.env.UPLOADS_DIR || import_path15.default.join(getAppDataDir(), "uploads");
+          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
           for (const uid of uidsToDelete) {
             const attachments = await db2.all(
               "SELECT local_path, filename FROM email_attachments WHERE uid = ?",
               [uid]
             );
             for (const att of attachments) {
-              const filePath = att.local_path || (att.filename ? import_path15.default.join(uploadsDir, att.filename) : null);
-              if (filePath && import_fs15.default.existsSync(filePath)) {
+              const filePath = att.local_path || (att.filename ? import_path16.default.join(uploadsDir, att.filename) : null);
+              if (filePath && import_fs16.default.existsSync(filePath)) {
                 try {
-                  import_fs15.default.unlinkSync(filePath);
+                  import_fs16.default.unlinkSync(filePath);
                   console.log(`[EmailPruner] Cleaned up attachment file: ${filePath}`);
                 } catch (fileErr) {
                   console.warn(`[EmailPruner] Failed to delete file ${filePath}:`, fileErr);
@@ -21522,9 +21902,9 @@ AI Pharmacy Team`
           }
           const attachments = await db2.all("SELECT local_path FROM email_attachments WHERE uid = ?", [uid]);
           for (const att of attachments || []) {
-            if (att.local_path && import_fs15.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs16.default.existsSync(att.local_path)) {
               try {
-                import_fs15.default.unlinkSync(att.local_path);
+                import_fs16.default.unlinkSync(att.local_path);
               } catch (_) {
               }
             }
@@ -21684,8 +22064,8 @@ AI Pharmacy Team`
           const limitedResults = newResults.slice(0, 50);
           limitedResults.sort((a, b) => a - b);
           console.log(`[Sync] Found ${newResults.length} new email(s) to download.`);
-          const uploadsDir = process.env.UPLOADS_DIR || import_path15.default.join(getAppDataDir(), "uploads");
-          if (!import_fs15.default.existsSync(uploadsDir)) import_fs15.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
+          if (!import_fs16.default.existsSync(uploadsDir)) import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
           for (const uid of limitedResults) {
             try {
               const fetchResult = await connection.search([["UID", uid]], { bodies: [""], struct: true });
@@ -21754,13 +22134,13 @@ AI Pharmacy Team`
                   ".ods": "application/vnd.oasis.opendocument.spreadsheet"
                 };
                 for (const att of processedEmail.attachments) {
-                  const sanitized = import_path15.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+                  const sanitized = import_path16.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
                   const finalFilename = `att-${uid}-${sanitized}`;
-                  const filePath = import_path15.default.join(uploadsDir, finalFilename);
-                  if (!import_fs15.default.existsSync(filePath)) {
-                    import_fs15.default.writeFileSync(filePath, att.content);
+                  const filePath = import_path16.default.join(uploadsDir, finalFilename);
+                  if (!import_fs16.default.existsSync(filePath)) {
+                    import_fs16.default.writeFileSync(filePath, att.content);
                   }
-                  const ext = import_path15.default.extname(sanitized).toLowerCase();
+                  const ext = import_path16.default.extname(sanitized).toLowerCase();
                   const contentType = contentTypes[ext] || att.contentType || "application/octet-stream";
                   const size = att.content ? att.content.length : 0;
                   await db2.run(
@@ -21927,17 +22307,17 @@ AI Pharmacy Team`
           if (!bodyPart) return this.getLocalAttachmentsForUid(uid);
           const parsed = await (await loadSimpleParser())(bodyPart.body);
           const attachments = parsed.attachments || [];
-          const uploadsDir = process.env.UPLOADS_DIR || import_path15.default.join(getAppDataDir(), "uploads");
-          if (!import_fs15.default.existsSync(uploadsDir)) {
-            import_fs15.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
+          if (!import_fs16.default.existsSync(uploadsDir)) {
+            import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const savedList = [];
           for (const att of attachments) {
-            const sanitizedFilename = import_path15.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+            const sanitizedFilename = import_path16.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
             const finalFilename = `att-${uid}-${sanitizedFilename}`;
-            const filePath = import_path15.default.join(uploadsDir, finalFilename);
-            import_fs15.default.writeFileSync(filePath, att.content);
-            const ext = import_path15.default.extname(sanitizedFilename).toLowerCase();
+            const filePath = import_path16.default.join(uploadsDir, finalFilename);
+            import_fs16.default.writeFileSync(filePath, att.content);
+            const ext = import_path16.default.extname(sanitizedFilename).toLowerCase();
             const contentTypes = {
               ".pdf": "application/pdf",
               ".csv": "text/csv",
@@ -21971,9 +22351,9 @@ AI Pharmacy Team`
        */
       getLocalAttachmentsForUid(uid) {
         try {
-          const uploadsDir = process.env.UPLOADS_DIR || import_path15.default.join(getAppDataDir(), "uploads");
-          if (!import_fs15.default.existsSync(uploadsDir)) return [];
-          const files = import_fs15.default.readdirSync(uploadsDir);
+          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
+          if (!import_fs16.default.existsSync(uploadsDir)) return [];
+          const files = import_fs16.default.readdirSync(uploadsDir);
           const prefix = `att-${uid}-`;
           const contentTypes = {
             ".pdf": "application/pdf",
@@ -21984,9 +22364,9 @@ AI Pharmacy Team`
             ".ods": "application/vnd.oasis.opendocument.spreadsheet"
           };
           return files.filter((file) => file.startsWith(prefix) && file.match(/\.(csv|txt|xlsx?|ods|pdf)$/i)).map((filename) => {
-            const filePath = import_path15.default.join(uploadsDir, filename);
-            const stats = import_fs15.default.statSync(filePath);
-            const ext = import_path15.default.extname(filename).toLowerCase();
+            const filePath = import_path16.default.join(uploadsDir, filename);
+            const stats = import_fs16.default.statSync(filePath);
+            const ext = import_path16.default.extname(filename).toLowerCase();
             return {
               filename,
               size: stats.size,
@@ -24085,14 +24465,14 @@ __export(searchCache_exports, {
   SearchCache: () => SearchCache,
   searchCache: () => searchCache
 });
-var import_fs16, import_path16, PERSIST_FILE, SAVE_DEBOUNCE_MS, STALE_MAX_AGE_MS, SearchCache, searchCache;
+var import_fs17, import_path17, PERSIST_FILE, SAVE_DEBOUNCE_MS, STALE_MAX_AGE_MS, SearchCache, searchCache;
 var init_searchCache = __esm({
   "src/services/searchCache.ts"() {
     "use strict";
-    import_fs16 = __toESM(require("fs"), 1);
-    import_path16 = __toESM(require("path"), 1);
+    import_fs17 = __toESM(require("fs"), 1);
+    import_path17 = __toESM(require("path"), 1);
     init_config();
-    PERSIST_FILE = import_path16.default.join(getAppDataDir(), "data", "search-cache.json");
+    PERSIST_FILE = import_path17.default.join(getAppDataDir(), "data", "search-cache.json");
     SAVE_DEBOUNCE_MS = 2e3;
     STALE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
     SearchCache = class {
@@ -24170,8 +24550,8 @@ var init_searchCache = __esm({
       }
       loadFromDisk() {
         try {
-          if (!import_fs16.default.existsSync(PERSIST_FILE)) return;
-          const raw = JSON.parse(import_fs16.default.readFileSync(PERSIST_FILE, "utf-8"));
+          if (!import_fs17.default.existsSync(PERSIST_FILE)) return;
+          const raw = JSON.parse(import_fs17.default.readFileSync(PERSIST_FILE, "utf-8"));
           if (!Array.isArray(raw)) return;
           const now = Date.now();
           for (const pair of raw) {
@@ -24198,8 +24578,8 @@ var init_searchCache = __esm({
       }
       flushToDisk() {
         try {
-          import_fs16.default.mkdirSync(import_path16.default.dirname(PERSIST_FILE), { recursive: true });
-          import_fs16.default.writeFileSync(PERSIST_FILE, JSON.stringify([...this.cache.entries()]));
+          import_fs17.default.mkdirSync(import_path17.default.dirname(PERSIST_FILE), { recursive: true });
+          import_fs17.default.writeFileSync(PERSIST_FILE, JSON.stringify([...this.cache.entries()]));
         } catch {
         }
       }
@@ -28649,13 +29029,13 @@ async function verifyOrderPlacedInPharmarack(storeId) {
   }
   return false;
 }
-var import_express, import_path17, import_fs17, router, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
+var import_express, import_path18, import_fs18, router, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
     import_express = __toESM(require("express"), 1);
-    import_path17 = __toESM(require("path"), 1);
-    import_fs17 = __toESM(require("fs"), 1);
+    import_path18 = __toESM(require("path"), 1);
+    import_fs18 = __toESM(require("fs"), 1);
     init_connection();
     init_eventService();
     init_notificationService();
@@ -28818,11 +29198,11 @@ var init_pharmarack = __esm({
       tokenRefreshScheduler.isLoginWindowActive = true;
       res.json({ success: true, message: "Opening login window..." });
       (async () => {
-        const mainProfilePath = import_path17.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = import_path18.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
         try {
           console.log("[LoginWindow] Killing any orphan Chrome processes holding locks on pharmarack_profile...");
           await killOrphanChromeProcesses("pharmarack_profile");
-          if (!import_fs17.default.existsSync(mainProfilePath)) import_fs17.default.mkdirSync(mainProfilePath, { recursive: true });
+          if (!import_fs18.default.existsSync(mainProfilePath)) import_fs18.default.mkdirSync(mainProfilePath, { recursive: true });
           cleanProfileLockFiles(mainProfilePath);
           console.log("[LoginWindow] Spawning Chrome natively from:", chromePath);
           const { spawn: spawnProc } = await import("child_process");
@@ -29391,9 +29771,9 @@ var init_pharmarack = __esm({
         Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.stopCatalogSyncCron()).catch(() => {
         });
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-        const pharmarackProfilePath = import_path17.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (import_fs17.default.existsSync(pharmarackProfilePath)) {
-          import_fs17.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
+        const pharmarackProfilePath = import_path18.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (import_fs18.default.existsSync(pharmarackProfilePath)) {
+          import_fs18.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
           console.log("Cleared Pharmarack Puppeteer profile directory.");
         }
         res.json({ success: true, message: "Logged out and cleared Pharmarack session successfully" });
@@ -30552,11 +30932,11 @@ __export(prescriptionScannerService_exports, {
   default: () => prescriptionScannerService_default,
   prescriptionScannerService: () => prescriptionScannerService
 });
-var import_fs18, import_jimp6, import_tesseract2, PrescriptionScannerService, prescriptionScannerService, prescriptionScannerService_default;
+var import_fs19, import_jimp6, import_tesseract2, PrescriptionScannerService, prescriptionScannerService, prescriptionScannerService_default;
 var init_prescriptionScannerService = __esm({
   "src/services/prescriptionScannerService.ts"() {
     "use strict";
-    import_fs18 = __toESM(require("fs"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
     import_jimp6 = require("jimp");
     import_tesseract2 = require("tesseract.js");
     init_connection();
@@ -30627,8 +31007,8 @@ var init_prescriptionScannerService = __esm({
             if (imageInput.startsWith("data:")) {
               const base64Data = imageInput.split(",")[1];
               rawBuffer = Buffer.from(base64Data, "base64");
-            } else if (import_fs18.default.existsSync(imageInput)) {
-              rawBuffer = await import_fs18.default.promises.readFile(imageInput);
+            } else if (import_fs19.default.existsSync(imageInput)) {
+              rawBuffer = await import_fs19.default.promises.readFile(imageInput);
             } else {
               rawBuffer = Buffer.from(imageInput, "base64");
             }
@@ -30684,8 +31064,8 @@ var init_prescriptionScannerService = __esm({
           if (imageInput.startsWith("data:")) {
             const base64Data = imageInput.split(",")[1];
             rawBuffer = Buffer.from(base64Data, "base64");
-          } else if (import_fs18.default.existsSync(imageInput)) {
-            rawBuffer = await import_fs18.default.promises.readFile(imageInput);
+          } else if (import_fs19.default.existsSync(imageInput)) {
+            rawBuffer = await import_fs19.default.promises.readFile(imageInput);
           } else {
             rawBuffer = Buffer.from(imageInput, "base64");
           }
@@ -30944,7 +31324,7 @@ __export(aiCameraService_exports, {
   aiCameraService: () => aiCameraService,
   default: () => aiCameraService_default
 });
-var import_tesseract3, import_jimp7, import_fs19, import_path18, AICameraService, aiCameraService, aiCameraService_default;
+var import_tesseract3, import_jimp7, import_fs20, import_path19, AICameraService, aiCameraService, aiCameraService_default;
 var init_aiCameraService = __esm({
   "src/services/aiCameraService.ts"() {
     "use strict";
@@ -30957,8 +31337,8 @@ var init_aiCameraService = __esm({
     init_onlineDataEnricher();
     init_visualIndexService();
     init_connection();
-    import_fs19 = __toESM(require("fs"), 1);
-    import_path18 = __toESM(require("path"), 1);
+    import_fs20 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
     AICameraService = class {
       worker = null;
       initialized = false;
@@ -32156,12 +32536,12 @@ var init_aiCameraService = __esm({
         const id = `audit_${timestamp}`;
         const filename = `${id}.jpg`;
         const rootDir = process.cwd();
-        const auditImagesDir = import_path18.default.resolve(rootDir, "data", "audit_images");
-        const auditQueuePath = import_path18.default.resolve(rootDir, "data", "audit_queue.json");
-        const imagePath = import_path18.default.join("data", "audit_images", filename);
-        const absoluteImagePath = import_path18.default.join(auditImagesDir, filename);
-        if (!import_fs19.default.existsSync(auditImagesDir)) {
-          import_fs19.default.mkdirSync(auditImagesDir, { recursive: true });
+        const auditImagesDir = import_path19.default.resolve(rootDir, "data", "audit_images");
+        const auditQueuePath = import_path19.default.resolve(rootDir, "data", "audit_queue.json");
+        const imagePath = import_path19.default.join("data", "audit_images", filename);
+        const absoluteImagePath = import_path19.default.join(auditImagesDir, filename);
+        if (!import_fs20.default.existsSync(auditImagesDir)) {
+          import_fs20.default.mkdirSync(auditImagesDir, { recursive: true });
         }
         let buffer;
         if (typeof imageData === "string") {
@@ -32189,15 +32569,15 @@ var init_aiCameraService = __esm({
             image.resize({ w: width, h: height });
           }
           const compressedBuffer = await image.getBuffer("image/jpeg");
-          await import_fs19.default.promises.writeFile(absoluteImagePath, compressedBuffer);
+          await import_fs20.default.promises.writeFile(absoluteImagePath, compressedBuffer);
         } catch (compressErr) {
           console.error("Failed to compress audit image with Jimp, saving original:", compressErr);
-          await import_fs19.default.promises.writeFile(absoluteImagePath, buffer);
+          await import_fs20.default.promises.writeFile(absoluteImagePath, buffer);
         }
         let queue2 = [];
-        if (import_fs19.default.existsSync(auditQueuePath)) {
+        if (import_fs20.default.existsSync(auditQueuePath)) {
           try {
-            const data = await import_fs19.default.promises.readFile(auditQueuePath, "utf8");
+            const data = await import_fs20.default.promises.readFile(auditQueuePath, "utf8");
             queue2 = JSON.parse(data || "[]");
           } catch (e) {
             console.error("Failed to read audit queue json:", e);
@@ -32216,11 +32596,11 @@ var init_aiCameraService = __esm({
         queue2.push(newEntry);
         try {
           const tempQueuePath = auditQueuePath + ".tmp";
-          await import_fs19.default.promises.writeFile(tempQueuePath, JSON.stringify(queue2, null, 2));
-          await import_fs19.default.promises.rename(tempQueuePath, auditQueuePath);
+          await import_fs20.default.promises.writeFile(tempQueuePath, JSON.stringify(queue2, null, 2));
+          await import_fs20.default.promises.rename(tempQueuePath, auditQueuePath);
         } catch (writeErr) {
           console.error("Failed to write audit queue atomically:", writeErr);
-          await import_fs19.default.promises.writeFile(auditQueuePath, JSON.stringify(queue2, null, 2));
+          await import_fs20.default.promises.writeFile(auditQueuePath, JSON.stringify(queue2, null, 2));
         }
         try {
           const db2 = await dbManager.getConnection();
@@ -33256,12 +33636,12 @@ __export(paymentQrService_exports, {
   DEFAULT_QR_CONFIGS: () => DEFAULT_QR_CONFIGS,
   paymentQrService: () => paymentQrService
 });
-var import_path19, import_fs20, import_qrcode, import_canvas, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
+var import_path20, import_fs21, import_qrcode, import_canvas, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
 var init_paymentQrService = __esm({
   "src/services/paymentQrService.ts"() {
     "use strict";
-    import_path19 = __toESM(require("path"), 1);
-    import_fs20 = __toESM(require("fs"), 1);
+    import_path20 = __toESM(require("path"), 1);
+    import_fs21 = __toESM(require("fs"), 1);
     init_connection();
     init_storeSettingsService();
     init_config();
@@ -33405,12 +33785,12 @@ var init_paymentQrService = __esm({
        * high-resolution Level-H QR code, UPI ID banner, and supported apps footer.
        */
       async generatePaymentCard(options) {
-        const uploadsDir = import_path19.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs20.default.existsSync(uploadsDir)) {
-          import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs21.default.existsSync(uploadsDir)) {
+          import_fs21.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const cleanFilename = options.filename ? options.filename.endsWith(".png") ? options.filename : `${options.filename}.png` : `payment_card_${options.orderNumber.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
-        const fullPath = import_path19.default.join(uploadsDir, cleanFilename);
+        const fullPath = import_path20.default.join(uploadsDir, cleanFilename);
         const storeName = (options.storeName || await this.getStoreName()).toUpperCase();
         const qrBuffer = await import_qrcode.default.toBuffer(options.upiUri, {
           width: 380,
@@ -33495,7 +33875,7 @@ var init_paymentQrService = __esm({
         ctx.font = "13px sans-serif";
         ctx.fillText("Accepted on GPay \u2022 PhonePe \u2022 Paytm \u2022 Any UPI App", width / 2, 650);
         const buffer = canvas.toBuffer("image/png");
-        import_fs20.default.writeFileSync(fullPath, buffer);
+        import_fs21.default.writeFileSync(fullPath, buffer);
         return fullPath;
       }
       /**
@@ -33522,14 +33902,14 @@ var init_paymentQrService = __esm({
             filename
           });
         }
-        const uploadsDir = import_path19.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs20.default.existsSync(uploadsDir)) {
-          import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs21.default.existsSync(uploadsDir)) {
+          import_fs21.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const cleanFilename = filename.endsWith(".png") ? filename : `${filename}.png`;
-        const fullPath = import_path19.default.join(uploadsDir, cleanFilename);
+        const fullPath = import_path20.default.join(uploadsDir, cleanFilename);
         const buffer = await this.generateQrBuffer(upiUri);
-        import_fs20.default.writeFileSync(fullPath, buffer);
+        import_fs21.default.writeFileSync(fullPath, buffer);
         return fullPath;
       }
       /**
@@ -34197,14 +34577,14 @@ async function downloadMediaWithRetry(downloadFn, options = {}) {
   throw lastErr;
 }
 async function saveInboundMedia(msgId, buffer) {
-  await import_fs21.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
+  await import_fs22.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
   const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filePath = import_path20.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
-  await import_fs21.default.promises.writeFile(filePath, buffer);
+  const filePath = import_path21.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
+  await import_fs22.default.promises.writeFile(filePath, buffer);
   try {
-    const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
-    await import_fs21.default.promises.mkdir(uploadsDir, { recursive: true });
-    await import_fs21.default.promises.writeFile(import_path20.default.join(uploadsDir, `${safeId}.jpg`), buffer);
+    const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
+    await import_fs22.default.promises.mkdir(uploadsDir, { recursive: true });
+    await import_fs22.default.promises.writeFile(import_path21.default.join(uploadsDir, `${safeId}.jpg`), buffer);
   } catch (_) {
   }
   return filePath;
@@ -34887,6 +35267,9 @@ async function ensureClarificationsTable(db2) {
     if (!colNames.has("last_bot_intent")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN last_bot_intent TEXT DEFAULT NULL");
     }
+    if (!colNames.has("language")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN language TEXT DEFAULT 'en'");
+    }
   } catch (_) {
   }
   try {
@@ -34894,6 +35277,9 @@ async function ensureClarificationsTable(db2) {
     const chatColNames = new Set(chatCols.map((c) => c.name));
     if (!chatColNames.has("human_takeover_until")) {
       await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN human_takeover_until DATETIME DEFAULT NULL");
+    }
+    if (!chatColNames.has("language")) {
+      await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
     }
   } catch (_) {
   }
@@ -35181,7 +35567,7 @@ async function executeConfirmedProcurementFlow(params) {
     console.error("[Intent Service] Error in executeConfirmedProcurementFlow:", procErr);
   }
 }
-async function checkMedicineClarificationResponse(phone, body, customer, chatId) {
+async function checkMedicineClarificationResponse(phone, body, customer, chatId, preferredLang) {
   let cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   try {
     const db2 = await dbManager.getConnection();
@@ -35194,7 +35580,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
     }
     if (!cleanDigits) return false;
     const pending2 = await db2.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp, language
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
@@ -35205,6 +35591,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
     );
     if (!pending2) return false;
+    const stepLang = preferredLang || (pending2.language === "mr" || pending2.language === "hi" || pending2.language === "en" ? pending2.language : "en");
     let activeCustomerName = customer?.name && isKnownCustomerName(customer.name) ? customer.name.trim() : pending2.customer_name && isKnownCustomerName(pending2.customer_name) ? pending2.customer_name.trim() : "";
     let normalizedInput = body.trim();
     const emojiDigits = {
@@ -35226,8 +35613,8 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
     }
     const lower = normalizedInput.toLowerCase().trim();
     const cleanedForAffirmative = lower.replace(/[.,!?;:()_~#*`"']/g, " ").replace(/\s+/g, " ").trim();
-    const isAffirmative = /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji)$/i.test(cleanedForAffirmative) || isRefillConfirmationResponse(body);
-    const isNegative = /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re)$/i.test(cleanedForAffirmative);
+    const isAffirmative = /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji|हो|होय|होय चालेल|चालेल|पाठवा|द्या|नक्की|बरोबर|कन्फर्म|हाँ|हां|हाँ जी|भेज दो|दीजिए|सही)$/iu.test(cleanedForAffirmative) || isRefillConfirmationResponse(body);
+    const isNegative = /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re|नाही|नको|रद्द|नाही नको|गलत|मत भेजो)$/iu.test(cleanedForAffirmative);
     {
       const isTimingQuery = /\b(time|timing|open|close|hours|kab|khula|band|baje|schedule|available)\b/i.test(lower);
       const isAddressQuery = /\b(address|location|where|kahan|shop|store|map|area|near|galli|road|street)\b/i.test(lower);
@@ -35790,7 +36177,7 @@ Would you like us to check availability & book this for you?
       );
       const isValidName = !isGreetingAgain && !isAffirmativeOrNegative && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
       if (!isValidName) {
-        const retryNameMsg = `Could you please share your name so we can assist you?`;
+        const retryNameMsg = getMessage(stepLang, "whatsapp.bot.retryName");
         const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker3.enqueue(phone, retryNameMsg, "customer_greeting", "Customer");
         return true;
@@ -35823,21 +36210,12 @@ Would you like us to check availability & book this for you?
       const { getPharmacyOperatingSchedule: getSchedForWelcome } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const schedForWelcome = await getSchedForWelcome(db2);
       const hoursLineForWelcome = `\u{1F550} Open: ${schedForWelcome.openTime} \u2013 ${schedForWelcome.closeTime}${schedForWelcome.weeklyOff ? ` | Off: ${schedForWelcome.weeklyOff}` : ""}`;
-      const welcomeMsg = `\u{1F64F} Namaste *${formattedName}* ji! Welcome to ${storeName}.${hoursNotice}
-
-*Place your order in simple steps:*
-
-*Step 1:* Choose your order type \u2014
-  1\uFE0F\u20E3 Single Medicine
-  2\uFE0F\u20E3 Multiple Medicines
-  3\uFE0F\u20E3 Refill \u2014 Repeat my regular prescription
-
-*Step 2:* We show you options & MRP \u{1F4B0}
-*Step 3:* You confirm & we book \u{1F680}
-
-${hoursLineForWelcome}
-
-*Reply 1, 2, or 3 to begin.*`;
+      const welcomeMsg = getMessage(stepLang, "whatsapp.bot.welcomeMenu", {
+        name: formattedName,
+        storeName,
+        hoursNotice,
+        hoursLine: hoursLineForWelcome
+      });
       await db2.run(
         `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
         [cleanDigits]
@@ -35899,9 +36277,7 @@ ${hoursLineForWelcome}
           `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
-        const askMsg = `\u270D\uFE0F Please type the *medicine name* (and quantity if known).
-
-Example: *Dolo 650 - 2 strips*`;
+        const askMsg = getMessage(stepLang, "whatsapp.bot.orderTypeSinglePrompt");
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, askMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         return true;
@@ -35911,14 +36287,7 @@ Example: *Dolo 650 - 2 strips*`;
           `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
-        const askMsg = `\u{1F4CB} Please send your *complete medicine list* with quantities.
-
-Example:
-\u2022 Dolo 650 - 2 strips
-\u2022 Pan D - 1 strip
-\u2022 Nicotex 4 - 1 pack
-
-_You can also send a prescription photo instead._`;
+        const askMsg = getMessage(stepLang, "whatsapp.bot.orderTypeMultiPrompt");
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, askMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         return true;
@@ -35940,7 +36309,7 @@ _You can also send a prescription photo instead._`;
             `UPDATE wa_pending_clarifications SET step = 'awaiting_refill_choice', items_json = ?, unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
             [JSON.stringify(refillRows.slice(0, 6)), pending2.phone]
           );
-          const refillMsg = `\u{1F501} *Your previous medicines on record:*
+          let refillMsg = `\u{1F501} *Your previous medicines on record:*
 ${itemListText}
 
 *How would you like to reorder?*
@@ -35950,6 +36319,29 @@ ${itemListText}
 2\uFE0F\u20E3 Change quantities
 3\uFE0F\u20E3 Completely new medicine list
 4\uFE0F\u20E3 Talk to pharmacist \u{1F4DE}`;
+          if (stepLang === "mr") {
+            refillMsg = `\u{1F501} *\u0928\u094B\u0902\u0926\u0940\u092E\u0927\u0940\u0932 \u0906\u092A\u0932\u0940 \u092A\u0942\u0930\u094D\u0935\u0940\u091A\u0940 \u0914\u0937\u0927\u0947:*
+${itemListText}
+
+*\u0906\u092A\u0923 \u092A\u0941\u0928\u094D\u0939\u093E \u0915\u0936\u0940 \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0942 \u0907\u091A\u094D\u091B\u093F\u0924\u093E?*
+1\uFE0F\u20E3 *\u0938\u0930\u094D\u0935 (ALL)* \u2014 \u0935\u0930\u0940\u0932 \u0938\u0930\u094D\u0935 \u0914\u0937\u0927\u0947 \u092A\u0941\u0928\u094D\u0939\u093E \u092E\u093E\u0917\u0935\u093E
+\u{1F522} *\u0928\u093F\u0935\u0921\u093E* \u2014 \u0914\u0937\u0927\u093E\u091A\u093E \u0928\u0902\u092C\u0930 \u092A\u093E\u0920\u0935\u093E (\u0909\u0926\u093E. *1* \u0915\u093F\u0902\u0935\u093E *1, 2*)
+\u2795 *\u090F\u0915\u0924\u094D\u0930\u093F\u0924* \u2014 \u0909\u0926\u093E. *1 \u0906\u0923\u093F 1 \u0938\u094D\u091F\u094D\u0930\u0940\u092A Dolo 650 \u092A\u0923 \u092A\u093E\u0920\u0935\u093E*
+2\uFE0F\u20E3 \u092A\u094D\u0930\u092E\u093E\u0923 \u092C\u0926\u0932\u093E
+3\uFE0F\u20E3 \u092A\u0942\u0930\u094D\u0923\u092A\u0923\u0947 \u0928\u0935\u0940\u0928 \u0914\u0937\u0927\u093E\u0902\u091A\u0940 \u092F\u093E\u0926\u0940
+4\uFE0F\u20E3 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F\u0936\u0940 \u092C\u094B\u0932\u093E \u{1F4DE}`;
+          } else if (stepLang === "hi") {
+            refillMsg = `\u{1F501} *\u0930\u093F\u0915\u0949\u0930\u094D\u0921 \u092E\u0947\u0902 \u0906\u092A\u0915\u0940 \u092A\u093F\u091B\u0932\u0940 \u0926\u0935\u093E\u090F\u0902:*
+${itemListText}
+
+*\u0906\u092A \u0926\u094B\u092C\u093E\u0930\u093E \u0915\u0948\u0938\u0947 \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0928\u093E \u091A\u093E\u0939\u0947\u0902\u0917\u0947?*
+1\uFE0F\u20E3 *\u0938\u092D\u0940 (ALL)* \u2014 \u090A\u092A\u0930 \u0926\u0940 \u0917\u0908 \u0938\u092D\u0940 \u0926\u0935\u093E\u090F\u0902 \u0926\u094B\u092C\u093E\u0930\u093E \u092E\u0902\u0917\u0935\u093E\u090F\u0902
+\u{1F522} *\u091A\u0941\u0928\u0947\u0902* \u2014 \u0928\u0902\u092C\u0930 \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902 (\u0909\u0926\u093E. *1* \u092F\u093E *1, 2*)
+\u2795 *\u091C\u094B\u0921\u093C\u0947\u0902* \u2014 \u0909\u0926\u093E. *1 \u0914\u0930 \u0938\u093E\u0925 \u092E\u0947\u0902 1 \u0938\u094D\u091F\u094D\u0930\u093F\u092A Dolo 650 \u092D\u0940 \u092D\u0947\u091C\u0947\u0902*
+2\uFE0F\u20E3 \u092E\u093E\u0924\u094D\u0930\u093E \u092C\u0926\u0932\u0947\u0902
+3\uFE0F\u20E3 \u092C\u093F\u0932\u094D\u0915\u0941\u0932 \u0928\u0908 \u0926\u0935\u093E\u0913\u0902 \u0915\u0940 \u0938\u0942\u091A\u0940
+4\uFE0F\u20E3 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F \u0938\u0947 \u092C\u093E\u0924 \u0915\u0930\u0947\u0902 \u{1F4DE}`;
+          }
           await whatsappQueueWorker2.enqueue(phone, refillMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         } else {
           const { getStorePhone: getStorePhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
@@ -35958,12 +36350,27 @@ ${itemListText}
             `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
             [pending2.phone]
           );
-          const noRefillMsg = `\u{1F50D} We couldn't find a previous prescription or special order for your number.
+          let noRefillMsg = `\u{1F50D} We couldn't find a previous prescription or special order for your number.
 
 Would you like to:
 1\uFE0F\u20E3 Order a new medicine
 2\uFE0F\u20E3 Multiple medicines
 ` + (storePhoneForRefill ? `3\uFE0F\u20E3 Talk to pharmacist: ${storePhoneForRefill} \u{1F4DE}` : `3\uFE0F\u20E3 Talk to pharmacist directly \u{1F4DE}`);
+          if (stepLang === "mr") {
+            noRefillMsg = `\u{1F50D} \u0906\u092A\u0932\u094D\u092F\u093E \u0928\u0902\u092C\u0930\u0935\u0930 \u092A\u0942\u0930\u094D\u0935\u0940\u091A\u0947 \u0915\u094B\u0923\u0924\u0947\u0939\u0940 \u092A\u094D\u0930\u093F\u0938\u094D\u0915\u094D\u0930\u093F\u092A\u094D\u0936\u0928 \u0915\u093F\u0902\u0935\u093E \u0938\u094D\u092A\u0947\u0936\u0932 \u0911\u0930\u094D\u0921\u0930 \u0938\u093E\u092A\u0921\u0932\u0947 \u0928\u093E\u0939\u0940.
+
+\u0906\u092A\u0923 \u0915\u093E\u092F \u0915\u0930\u0942 \u0907\u091A\u094D\u091B\u093F\u0924\u093E:
+1\uFE0F\u20E3 \u0928\u0935\u0940\u0928 \u0914\u0937\u0927 \u092E\u093E\u0917\u0935\u093E
+2\uFE0F\u20E3 \u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0914\u0937\u0927\u0947
+` + (storePhoneForRefill ? `3\uFE0F\u20E3 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F\u0936\u0940 \u092C\u094B\u0932\u093E: ${storePhoneForRefill} \u{1F4DE}` : `3\uFE0F\u20E3 \u0925\u0947\u091F \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F\u0936\u0940 \u092C\u094B\u0932\u093E \u{1F4DE}`);
+          } else if (stepLang === "hi") {
+            noRefillMsg = `\u{1F50D} \u0906\u092A\u0915\u0947 \u0928\u0902\u092C\u0930 \u092A\u0930 \u0915\u094B\u0908 \u092A\u093F\u091B\u0932\u093E \u092A\u0930\u094D\u091A\u093E \u092F\u093E \u0938\u094D\u092A\u0947\u0936\u0932 \u0911\u0930\u094D\u0921\u0930 \u0928\u0939\u0940\u0902 \u092E\u093F\u0932\u093E\u0964
+
+\u0906\u092A \u0915\u094D\u092F\u093E \u0915\u0930\u0928\u093E \u091A\u093E\u0939\u0947\u0902\u0917\u0947:
+1\uFE0F\u20E3 \u0928\u0908 \u0926\u0935\u093E \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0947\u0902
+2\uFE0F\u20E3 \u0915\u0908 \u0926\u0935\u093E\u090F\u0902 \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0947\u0902
+` + (storePhoneForRefill ? `3\uFE0F\u20E3 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F \u0938\u0947 \u092C\u093E\u0924 \u0915\u0930\u0947\u0902: ${storePhoneForRefill} \u{1F4DE}` : `3\uFE0F\u20E3 \u0938\u0940\u0927\u0947 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F \u0938\u0947 \u092C\u093E\u0924 \u0915\u0930\u0947\u0902 \u{1F4DE}`);
+          }
           await whatsappQueueWorker2.enqueue(phone, noRefillMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         }
         return true;
@@ -38006,6 +38413,37 @@ async function handleInbound(msg) {
     const isStale = msgTimestamp ? Math.floor(Date.now() / 1e3) - msgTimestamp > 300 : false;
     if (await isIgnored(chatId)) return;
     const db2 = await dbManager.getConnection();
+    let chatLang = "en";
+    const cleanDigitsForLang = (phone || "").replace(/\D/g, "").slice(-10);
+    try {
+      const langRow = await db2.get(
+        "SELECT language FROM whatsapp_chats WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?) LIMIT 1",
+        [chatId, `%${cleanDigitsForLang}%`]
+      );
+      if (langRow?.language && (langRow.language === "hi" || langRow.language === "mr" || langRow.language === "en")) {
+        chatLang = langRow.language;
+      }
+    } catch (_) {
+    }
+    const detectedLang = detectLanguage(body, chatLang);
+    const explicitSwitch = detectExplicitLanguageSwitch(body);
+    if (detectedLang !== chatLang || explicitSwitch) {
+      chatLang = explicitSwitch || detectedLang;
+      try {
+        await db2.run(
+          `UPDATE whatsapp_chats SET language = ? WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
+          [chatLang, chatId, `%${cleanDigitsForLang}%`]
+        );
+        eventService.broadcast("wa_chat_updated", { chatId, language: chatLang });
+      } catch (_) {
+      }
+      if (explicitSwitch) {
+        const switchAck = getMessage(chatLang, "whatsapp.bot.langSwitched");
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, switchAck, "language_switch", "Customer");
+        return;
+      }
+    }
     if (phone.endsWith("@lid")) {
       try {
         const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [phone]);
@@ -38170,8 +38608,8 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         }
       }
     }
-    const cleanGreeting = body.trim().toLowerCase().replace(/[^\w\s]/g, "").trim();
-    const isGreeting = /^(h+i+|h+e+y+|h+e+l+l*o+|hola+|namaste+|namaskar+|pranam+|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order)(\s+(sir|ji|mam|madam|team|there|bhai|bro|medical|pharmacy|tanamay))?$/i.test(cleanGreeting);
+    const cleanGreeting = body.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, "").trim();
+    const isGreeting = /^(h+i+|h+e+y+|h+e+l+l*o+|hola+|namaste+|namaskar+|pranam+|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order|नमस्ते|नमस्कार|सस्नेह नमस्कार|प्रणाम|राम राम|राधे राधे|जय श्री राम|सुप्रभात|हाय|हॅलो|हेलो|मदत|ऑर्डर)(\s+(sir|ji|mam|madam|team|there|bhai|bro|medical|pharmacy|tanamay|जी|साहेब|भाऊ|दादा|ताई))?$/iu.test(cleanGreeting);
     if (isGreeting && !hasMedia) {
       await ensureClarificationsTable(db2);
       let cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
@@ -38194,45 +38632,37 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
       const hoursNotice = await getStoreHoursNotice(db2);
       const hasKnownName = isKnownCustomerName(customer?.name);
       if (!hasKnownName) {
-        const askNameText = `\u{1F44B} Hello! Welcome to ${storeName}.${hoursNotice}
-
-Before we begin, *may I please know your name?*`;
+        const askNameText = getMessage(chatLang, "whatsapp.bot.askName", {
+          storeName,
+          hoursNotice
+        });
         await db2.run(
-          `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, created_at)
-           VALUES (?, '', ?, 'awaiting_customer_name', CURRENT_TIMESTAMP)`,
-          [cleanDigits, body]
+          `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, language, created_at)
+           VALUES (?, '', ?, 'awaiting_customer_name', ?, CURRENT_TIMESTAMP)`,
+          [cleanDigits, body, chatLang]
         );
         const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker3.enqueue(phone, askNameText, "customer_greeting", "Customer");
-        console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name.`);
+        console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name in ${chatLang}.`);
         return;
       }
       const { getPharmacyOperatingSchedule: getSchedForGreet } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const schedForGreet = await getSchedForGreet(db2);
       const hoursLineForGreet = `\u{1F550} Open: ${schedForGreet.openTime} \u2013 ${schedForGreet.closeTime}${schedForGreet.weeklyOff ? ` | Off: ${schedForGreet.weeklyOff}` : ""}`;
-      const greetingText = `\u{1F44B} Hello *${customer.name}*! Welcome back to ${storeName}.${hoursNotice}
-
-*Place your order in simple steps:*
-
-*Step 1:* Choose your order type \u2014
-  1\uFE0F\u20E3 Single Medicine
-  2\uFE0F\u20E3 Multiple Medicines
-  3\uFE0F\u20E3 Refill \u2014 Repeat my regular prescription
-
-*Step 2:* We show you options & MRP \u{1F4B0}
-*Step 3:* You confirm & we book \u{1F680}
-
-${hoursLineForGreet}
-
-*Reply 1, 2, or 3 to begin.*`;
+      const greetingText = getMessage(chatLang, "whatsapp.bot.welcomeMenu", {
+        name: customer.name,
+        storeName,
+        hoursNotice,
+        hoursLine: hoursLineForGreet
+      });
       await db2.run(
-        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
-         VALUES (?, '', ?, 'awaiting_order_type', ?, CURRENT_TIMESTAMP)`,
-        [cleanDigits, body, customer.name]
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, CURRENT_TIMESTAMP)`,
+        [cleanDigits, body, customer.name, chatLang]
       );
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
       await whatsappQueueWorker2.enqueue(phone, greetingText, "customer_greeting", customer.name);
-      console.log(`[Intent Service] Fresh greeting sent to known customer ${customer.name} (${cleanDigits}).`);
+      console.log(`[Intent Service] Fresh greeting sent to known customer ${customer.name} (${cleanDigits}) in ${chatLang}.`);
       return;
     }
     if (hasMedia) {
@@ -38269,12 +38699,12 @@ ${hoursLineForGreet}
         let proofImagePath;
         if (media?.data) {
           try {
-            const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
-            if (!import_fs21.default.existsSync(uploadsDir)) {
-              import_fs21.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
+            if (!import_fs22.default.existsSync(uploadsDir)) {
+              import_fs22.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            proofImagePath = import_path20.default.join(uploadsDir, `payment_proof_${soCode}.jpg`);
-            import_fs21.default.writeFileSync(proofImagePath, Buffer.from(media.data, "base64"));
+            proofImagePath = import_path21.default.join(uploadsDir, `payment_proof_${soCode}.jpg`);
+            import_fs22.default.writeFileSync(proofImagePath, Buffer.from(media.data, "base64"));
           } catch (saveErr) {
             console.error("[Intent Service] Failed to persist payment proof to disk:", saveErr);
           }
@@ -38341,7 +38771,7 @@ We will confirm your order shortly!`;
         return;
       }
     }
-    if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+    if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId, chatLang)) {
       return;
     }
     const medIdMatch = body.trim().match(/^(?:#|id\s*#?|med(?:icine)?\s*#?|order\s*#?)(\d{1,7})(?:\s*[-–x*]?\s*(\d+)\s*(strip|tablets?|capsules?|pack|bottles?|box)?)?$/i);
@@ -38478,7 +38908,7 @@ We will confirm your order shortly!`;
           if (pendingPayment && pendingPayment.special_order_id && imagePath) {
             const soId = pendingPayment.special_order_id;
             const soCode = pendingPayment.so_code || await generateStoreSpecialOrderCode(db2, 1, soId);
-            const webImagePath = imagePath ? `/uploads/${import_path20.default.basename(imagePath)}` : null;
+            const webImagePath = imagePath ? `/uploads/${import_path21.default.basename(imagePath)}` : null;
             await db2.run(
               `UPDATE special_orders
                SET payment_screenshot_path = ?, screenshot_amount = 50, payment_status = 'SCREENSHOT_RECEIVED', updated_at = datetime('now')
@@ -39257,7 +39687,7 @@ async function handleOcrComplete(data) {
             }
           }
         }
-        const safeWebPath = imagePath ? `/data/inbound_media/${import_path20.default.basename(imagePath)}` : null;
+        const safeWebPath = imagePath ? `/data/inbound_media/${import_path21.default.basename(imagePath)}` : null;
         await db2.run(
           `UPDATE special_orders
            SET payment_screenshot_path = ?,
@@ -39545,8 +39975,8 @@ Our registered pharmacist is reviewing it right now and will confirm available s
     }
     let visualBoostName = null;
     try {
-      if (imagePath && import_fs21.default.existsSync(imagePath)) {
-        const buf = import_fs21.default.readFileSync(imagePath);
+      if (imagePath && import_fs22.default.existsSync(imagePath)) {
+        const buf = import_fs22.default.readFileSync(imagePath);
         const ocrRawForVisual = [ocrResult?.text, messageBody].filter(Boolean).join(" ");
         const visualHits = await visualIndexService.fusedSearch(buf, ocrRawForVisual, { limit: 3, maxVisualDistance: 12 });
         if (visualHits.length > 0 && visualHits[0].fusedScore >= 75) {
@@ -39707,14 +40137,16 @@ We noticed we haven't received your \u20B950 booking advance payment for *${medN
     return 0;
   }
 }
-var import_fs21, import_path20, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, whatsappIntentService, whatsappIntentService_default;
+var import_fs22, import_path21, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, whatsappIntentService, whatsappIntentService_default;
 var init_whatsappIntentService = __esm({
   "src/services/whatsappIntentService.ts"() {
     "use strict";
-    import_fs21 = __toESM(require("fs"), 1);
-    import_path20 = __toESM(require("path"), 1);
+    import_fs22 = __toESM(require("fs"), 1);
+    import_path21 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
+    init_getMessage();
+    init_languageDetector();
     init_intentKeywords();
     init_ocrScanQueue();
     init_productNameFilterService();
@@ -39727,7 +40159,7 @@ var init_whatsappIntentService = __esm({
     init_config();
     GATE_WITH_INTENT = 0.6;
     GATE_IMPLICIT = 0.72;
-    INBOUND_MEDIA_DIR = import_path20.default.resolve(process.cwd(), "data", "inbound_media");
+    INBOUND_MEDIA_DIR = import_path21.default.resolve(process.cwd(), "data", "inbound_media");
     clarificationsTableEnsured = false;
     whatsappIntentService = { handleInbound, handleOcrComplete, searchAndBroadcast, checkAndSendAdvancePaymentReminders };
     whatsappIntentService_default = whatsappIntentService;
@@ -40148,12 +40580,12 @@ function loadWwebjs() {
   return wwebjsPromise;
 }
 function hasSavedSession() {
-  const sessionPath = import_path21.default.join(WWEBJS_AUTH_DIR, "session");
-  if (!import_fs22.default.existsSync(sessionPath)) return false;
+  const sessionPath = import_path22.default.join(WWEBJS_AUTH_DIR, "session");
+  if (!import_fs23.default.existsSync(sessionPath)) return false;
   try {
-    const defaultDir = import_path21.default.join(sessionPath, "Default");
-    const targetDir = import_fs22.default.existsSync(defaultDir) ? defaultDir : sessionPath;
-    const files = import_fs22.default.readdirSync(targetDir);
+    const defaultDir = import_path22.default.join(sessionPath, "Default");
+    const targetDir = import_fs23.default.existsSync(defaultDir) ? defaultDir : sessionPath;
+    const files = import_fs23.default.readdirSync(targetDir);
     const meaningfulFiles = files.filter(
       (f) => !/^(devtoolsactiveport|singleton|lock|\.lock|lockfile)$/i.test(f)
     );
@@ -40208,29 +40640,29 @@ async function isWhatsAppAutoConnectAllowed() {
   return false;
 }
 function safeRemoveDirectorySync(dirPath) {
-  if (!import_fs22.default.existsSync(dirPath)) return;
+  if (!import_fs23.default.existsSync(dirPath)) return;
   try {
-    import_fs22.default.rmSync(dirPath, { recursive: true, force: true });
+    import_fs23.default.rmSync(dirPath, { recursive: true, force: true });
   } catch (err) {
     try {
-      const entries = import_fs22.default.readdirSync(dirPath, { withFileTypes: true });
+      const entries = import_fs23.default.readdirSync(dirPath, { withFileTypes: true });
       for (const entry of entries) {
-        const fullPath = import_path21.default.join(dirPath, entry.name);
+        const fullPath = import_path22.default.join(dirPath, entry.name);
         try {
-          import_fs22.default.chmodSync(fullPath, 438);
+          import_fs23.default.chmodSync(fullPath, 438);
         } catch {
         }
         if (entry.isDirectory()) {
           safeRemoveDirectorySync(fullPath);
         } else {
           try {
-            import_fs22.default.unlinkSync(fullPath);
+            import_fs23.default.unlinkSync(fullPath);
           } catch {
           }
         }
       }
       try {
-        import_fs22.default.rmdirSync(dirPath);
+        import_fs23.default.rmdirSync(dirPath);
       } catch {
       }
     } catch {
@@ -40455,7 +40887,7 @@ async function shouldRouteToBusiness() {
   }
 }
 async function cleanupProfileLocks() {
-  const sessionPath = import_path21.default.join(WWEBJS_AUTH_DIR, "session");
+  const sessionPath = import_path22.default.join(WWEBJS_AUTH_DIR, "session");
   if (process.platform === "win32") {
     try {
       const filterPattern = sessionPath.replace(/\\/g, "*").replace(/\//g, "*");
@@ -40900,14 +41332,14 @@ function launchClientInstance(forceQr) {
     const paths = [
       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-      process.env.LOCALAPPDATA ? import_path21.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
-      process.env.PROGRAMFILES ? import_path21.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.LOCALAPPDATA ? import_path22.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.PROGRAMFILES ? import_path22.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
       "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
       "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      process.env.LOCALAPPDATA ? import_path21.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
+      process.env.LOCALAPPDATA ? import_path22.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
     ].filter(Boolean);
     for (const p of paths) {
-      if (import_fs22.default.existsSync(p)) {
+      if (import_fs23.default.existsSync(p)) {
         execPath = p;
         break;
       }
@@ -40924,9 +41356,9 @@ function launchClientInstance(forceQr) {
       "--renderer-process-limit=1",
       "--js-flags=--max-old-space-size=256"
     ];
-    const sessionDir = import_path21.default.join(WWEBJS_AUTH_DIR, "session");
+    const sessionDir = import_path22.default.join(WWEBJS_AUTH_DIR, "session");
     cleanProfileLockFiles(sessionDir);
-    cleanProfileLockFiles(import_path21.default.join(sessionDir, "Default"));
+    cleanProfileLockFiles(import_path22.default.join(sessionDir, "Default"));
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
       puppeteer: execPath ? { executablePath: execPath, headless: true, args: puppeteerArgs } : { headless: true, args: puppeteerArgs }
@@ -41447,9 +41879,9 @@ async function forceReconnect() {
   const authPath = WWEBJS_AUTH_DIR;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (import_fs22.default.existsSync(authPath)) {
+      if (import_fs23.default.existsSync(authPath)) {
         safeRemoveDirectorySync(authPath);
-        if (!import_fs22.default.existsSync(authPath) || !hasSavedSession()) {
+        if (!import_fs23.default.existsSync(authPath) || !hasSavedSession()) {
           console.log("[WhatsApp] Old session data cleared from", authPath);
           break;
         }
@@ -41661,9 +42093,9 @@ async function sendMessage(to, mediaPath, caption, file) {
             let tempSavedPath = null;
             const safeName = (file.filename || "media.png").replace(/[^a-zA-Z0-9._-]/g, "_");
             try {
-              if (!import_fs22.default.existsSync(UPLOADS_DIR)) import_fs22.default.mkdirSync(UPLOADS_DIR, { recursive: true });
-              tempSavedPath = import_path21.default.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
-              import_fs22.default.writeFileSync(tempSavedPath, Buffer.from(file.data, "base64"));
+              if (!import_fs23.default.existsSync(UPLOADS_DIR)) import_fs23.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+              tempSavedPath = import_path22.default.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
+              import_fs23.default.writeFileSync(tempSavedPath, Buffer.from(file.data, "base64"));
               const media = MessageMedia.fromFilePath(tempSavedPath);
               const isPdf = safeName.toLowerCase().endsWith(".pdf");
               sentMsg = await targetClient.sendMessage(targetChatId, media, {
@@ -41672,7 +42104,7 @@ async function sendMessage(to, mediaPath, caption, file) {
               });
             } catch (mediaErr) {
               console.warn(`[WhatsApp] Media attachment send failed to ${targetChatId}, trying direct phone route ${chatId}:`, mediaErr?.message || mediaErr);
-              if (tempSavedPath && import_fs22.default.existsSync(tempSavedPath) && targetChatId !== chatId) {
+              if (tempSavedPath && import_fs23.default.existsSync(tempSavedPath) && targetChatId !== chatId) {
                 try {
                   const mediaAlt = MessageMedia.fromFilePath(tempSavedPath);
                   sentMsg = await targetClient.sendMessage(chatId, mediaAlt, {
@@ -41682,7 +42114,7 @@ async function sendMessage(to, mediaPath, caption, file) {
                 } catch (_) {
                 }
               }
-              if (!sentMsg && tempSavedPath && import_fs22.default.existsSync(tempSavedPath)) {
+              if (!sentMsg && tempSavedPath && import_fs23.default.existsSync(tempSavedPath)) {
                 try {
                   const mediaDoc = MessageMedia.fromFilePath(tempSavedPath);
                   sentMsg = await targetClient.sendMessage(chatId, mediaDoc, {
@@ -41699,9 +42131,9 @@ async function sendMessage(to, mediaPath, caption, file) {
                 throw mediaErr;
               }
             } finally {
-              if (tempSavedPath && import_fs22.default.existsSync(tempSavedPath)) {
+              if (tempSavedPath && import_fs23.default.existsSync(tempSavedPath)) {
                 try {
-                  import_fs22.default.unlinkSync(tempSavedPath);
+                  import_fs23.default.unlinkSync(tempSavedPath);
                 } catch (_) {
                 }
               }
@@ -41717,7 +42149,7 @@ async function sendMessage(to, mediaPath, caption, file) {
             } catch (mediaErr) {
               const errMsg = mediaErr?.stack || mediaErr?.message || String(mediaErr);
               try {
-                import_fs22.default.writeFileSync("data/last_media_error.txt", `[${targetChatId}] ${errMsg}`);
+                import_fs23.default.writeFileSync("data/last_media_error.txt", `[${targetChatId}] ${errMsg}`);
               } catch (_) {
               }
               console.warn(`[WhatsApp] Media file send failed to ${targetChatId}:`, errMsg);
@@ -41866,7 +42298,7 @@ async function sendMessage(to, mediaPath, caption, file) {
           recentSendsCache.set(`${lidUser}:${msgHash}:${fullMsg.length}`, Date.now());
         }
         try {
-          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path21.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
+          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path22.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
           const provTimestamp = Math.floor(Date.now() / 1e3);
           const provHasMedia = file || mediaPath ? 1 : 0;
           await db2.run(
@@ -41922,18 +42354,18 @@ async function sendMessage(to, mediaPath, caption, file) {
         continue;
       } else {
         if (file && file.mimetype && file.data) {
-          if (!import_fs22.default.existsSync(config.tempDir)) {
-            import_fs22.default.mkdirSync(config.tempDir, { recursive: true });
+          if (!import_fs23.default.existsSync(config.tempDir)) {
+            import_fs23.default.mkdirSync(config.tempDir, { recursive: true });
           }
-          const tempFilePath = import_path21.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
-          import_fs22.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
+          const tempFilePath = import_path22.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
+          import_fs23.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
           try {
             const result = await whatsappBusinessService.sendDocument(cleanPhone, tempFilePath, caption, file.filename);
             success = result.success;
             if (result.messageId) messageId = result.messageId;
           } finally {
-            if (import_fs22.default.existsSync(tempFilePath)) {
-              import_fs22.default.unlinkSync(tempFilePath);
+            if (import_fs23.default.existsSync(tempFilePath)) {
+              import_fs23.default.unlinkSync(tempFilePath);
             }
           }
         } else if (mediaPath) {
@@ -41955,7 +42387,7 @@ async function sendMessage(to, mediaPath, caption, file) {
       console.error("[WhatsApp Client Wrapper] Send failed:", err?.message || err);
       throw err;
     }
-    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path21.default.basename(mediaPath)} ${caption || ""}` : caption || "";
+    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path22.default.basename(mediaPath)} ${caption || ""}` : caption || "";
     const timestamp = Math.floor(Date.now() / 1e3);
     const hasMedia = file || mediaPath ? 1 : 0;
     try {
@@ -42019,7 +42451,7 @@ async function getChats() {
       `SELECT id, name, unread_count as unreadCount, timestamp, is_group as isGroup, last_message as lastMessage, resolved_number as resolvedNumber,
               session_mode as sessionMode, manual_active_until as manualActiveUntil,
               last_patient_message_at as lastPatientMessageAt, last_pharmacist_message_at as lastPharmacistMessageAt,
-              session_status as sessionStatus
+              session_status as sessionStatus, language
        FROM whatsapp_chats
        ORDER BY timestamp DESC`
     );
@@ -42170,21 +42602,21 @@ async function getChatMessages(chatId, limit = 500) {
 }
 async function getMessageMedia(chatId, messageId) {
   const safeId = String(messageId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const inboundDir = import_path21.default.resolve(process.cwd(), "data", "inbound_media");
-  if (safeId && import_fs22.default.existsSync(inboundDir)) {
+  const inboundDir = import_path22.default.resolve(process.cwd(), "data", "inbound_media");
+  if (safeId && import_fs23.default.existsSync(inboundDir)) {
     for (const ext2 of [".jpg", ".jpeg", ".png", ".pdf"]) {
-      const p = import_path21.default.join(inboundDir, `${safeId}${ext2}`);
-      if (import_fs22.default.existsSync(p)) {
-        const data2 = import_fs22.default.readFileSync(p).toString("base64");
+      const p = import_path22.default.join(inboundDir, `${safeId}${ext2}`);
+      if (import_fs23.default.existsSync(p)) {
+        const data2 = import_fs23.default.readFileSync(p).toString("base64");
         const mimetype2 = ext2 === ".png" ? "image/png" : ext2 === ".pdf" ? "application/pdf" : "image/jpeg";
         return { mimetype: mimetype2, data: data2, filename: `${safeId}${ext2}` };
       }
     }
   }
-  if (!import_fs22.default.existsSync(UPLOADS_DIR)) {
-    import_fs22.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+  if (!import_fs23.default.existsSync(UPLOADS_DIR)) {
+    import_fs23.default.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
-  const files = import_fs22.default.readdirSync(UPLOADS_DIR);
+  const files = import_fs23.default.readdirSync(UPLOADS_DIR);
   const matchedFile = files.find((f) => f.startsWith(messageId));
   if (!matchedFile) {
     try {
@@ -42194,11 +42626,11 @@ async function getMessageMedia(chatId, messageId) {
       const downloaded = await downloadMessageMediaReliably(messageId, { chatId, maxWaitMs: 15e3 });
       if (downloaded?.data) {
         const buffer = Buffer.from(downloaded.data, "base64");
-        if (!import_fs22.default.existsSync(inboundDir)) import_fs22.default.mkdirSync(inboundDir, { recursive: true });
-        const filePath2 = import_path21.default.join(inboundDir, `${safeId}.jpg`);
-        import_fs22.default.writeFileSync(filePath2, buffer);
+        if (!import_fs23.default.existsSync(inboundDir)) import_fs23.default.mkdirSync(inboundDir, { recursive: true });
+        const filePath2 = import_path22.default.join(inboundDir, `${safeId}.jpg`);
+        import_fs23.default.writeFileSync(filePath2, buffer);
         try {
-          import_fs22.default.writeFileSync(import_path21.default.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
+          import_fs23.default.writeFileSync(import_path22.default.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
         } catch (_) {
         }
         return {
@@ -42212,14 +42644,14 @@ async function getMessageMedia(chatId, messageId) {
     }
     throw new Error(`Media not found locally for message ID: ${messageId}`);
   }
-  const filePath = import_path21.default.join(UPLOADS_DIR, matchedFile);
-  const ext = import_path21.default.extname(matchedFile).toLowerCase();
+  const filePath = import_path22.default.join(UPLOADS_DIR, matchedFile);
+  const ext = import_path22.default.extname(matchedFile).toLowerCase();
   let mimetype = "image/jpeg";
   if (ext === ".png") mimetype = "image/png";
   else if (ext === ".pdf") mimetype = "application/pdf";
   else if (ext === ".mp3") mimetype = "audio/mp3";
   else if (ext === ".mp4") mimetype = "video/mp4";
-  const data = import_fs22.default.readFileSync(filePath).toString("base64");
+  const data = import_fs23.default.readFileSync(filePath).toString("base64");
   return {
     mimetype,
     data,
@@ -42517,12 +42949,12 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_fs22, import_path21, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
+var import_fs23, import_path22, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
-    import_fs22 = __toESM(require("fs"), 1);
-    import_path21 = __toESM(require("path"), 1);
+    import_fs23 = __toESM(require("fs"), 1);
+    import_path22 = __toESM(require("path"), 1);
     import_child_process4 = require("child_process");
     import_util2 = require("util");
     init_eventService();
@@ -42532,8 +42964,8 @@ var init_whatsappClient = __esm({
     init_tokenRefreshScheduler();
     wwebjsPromise = null;
     execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
-    UPLOADS_DIR = import_path21.default.resolve(getAppDataDir(), "uploads");
-    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path21.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path21.default.resolve(getAppDataDir(), ".wwebjs_auth");
+    UPLOADS_DIR = import_path22.default.resolve(getAppDataDir(), "uploads");
+    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path22.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path22.default.resolve(getAppDataDir(), ".wwebjs_auth");
     process.on("unhandledRejection", (reason) => {
       const msg = reason?.message || String(reason);
       if (isPuppeteerDetachedError(msg)) {
@@ -44422,11 +44854,11 @@ async function rebuildAllExpiryCaches(force = false) {
   }
   activeRebuildPromise = (async () => {
     try {
-      const cacheDir = import_path22.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-      const manifestPath = import_path22.default.join(cacheDir, "manifest.json");
-      if (!force && import_fs23.default.existsSync(manifestPath)) {
+      const cacheDir = import_path23.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const manifestPath = import_path23.default.join(cacheDir, "manifest.json");
+      if (!force && import_fs24.default.existsSync(manifestPath)) {
         try {
-          const rawManifest = await import_fs23.default.promises.readFile(manifestPath, "utf-8");
+          const rawManifest = await import_fs24.default.promises.readFile(manifestPath, "utf-8");
           const manifest = JSON.parse(rawManifest);
           if (manifest && typeof manifest.totalMonthFiles === "number") {
             console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
@@ -44456,8 +44888,8 @@ async function rebuildAllExpiryCaches(force = false) {
         WHERE ${INVENTORY_ACTIVE_WHERE}
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
-      if (!import_fs23.default.existsSync(cacheDir)) {
-        await import_fs23.default.promises.mkdir(cacheDir, { recursive: true });
+      if (!import_fs24.default.existsSync(cacheDir)) {
+        await import_fs24.default.promises.mkdir(cacheDir, { recursive: true });
       }
       const groups = {};
       for (const r of rows) {
@@ -44472,20 +44904,20 @@ async function rebuildAllExpiryCaches(force = false) {
         items.sort((a, b) => (a.medicine_name || "").localeCompare(b.medicine_name || "", void 0, { sensitivity: "base", numeric: true }));
         const fileName = `expiry_${ym}.json`;
         validMonthFiles.add(fileName);
-        const filePath = import_path22.default.join(cacheDir, fileName);
-        await import_fs23.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
+        const filePath = import_path23.default.join(cacheDir, fileName);
+        await import_fs24.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
         written++;
       }
-      const existingFiles = await import_fs23.default.promises.readdir(cacheDir);
+      const existingFiles = await import_fs24.default.promises.readdir(cacheDir);
       for (const file of existingFiles) {
         if (file.startsWith("expiry_") && file.endsWith(".json") && !validMonthFiles.has(file)) {
           try {
-            await import_fs23.default.promises.unlink(import_path22.default.join(cacheDir, file));
+            await import_fs24.default.promises.unlink(import_path23.default.join(cacheDir, file));
           } catch (_) {
           }
         }
       }
-      await import_fs23.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
+      await import_fs24.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
       lastRebuildTime = Date.now();
       console.log(`[ExpiryCache] Rebuilt: ${written} month file(s) with stock. Empty months auto-removed.`);
     } catch (err) {
@@ -44498,8 +44930,8 @@ async function rebuildAllExpiryCaches(force = false) {
 }
 async function patchExpiryCacheForInventoryItem(inventoryId) {
   try {
-    const cacheDir = import_path22.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-    if (!import_fs23.default.existsSync(cacheDir)) return;
+    const cacheDir = import_path23.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+    if (!import_fs24.default.existsSync(cacheDir)) return;
     const db2 = await dbManager.getConnection();
     const item = await db2.get(`
       SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date,
@@ -44522,11 +44954,11 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
     if (!item) return;
     const ym = getExpiryYearMonth(item.expiry_date);
     if (ym === "unknown") return;
-    const filePath = import_path22.default.join(cacheDir, `expiry_${ym}.json`);
+    const filePath = import_path23.default.join(cacheDir, `expiry_${ym}.json`);
     let monthItems = [];
-    if (import_fs23.default.existsSync(filePath)) {
+    if (import_fs24.default.existsSync(filePath)) {
       try {
-        monthItems = JSON.parse(await import_fs23.default.promises.readFile(filePath, "utf-8"));
+        monthItems = JSON.parse(await import_fs24.default.promises.readFile(filePath, "utf-8"));
       } catch {
         monthItems = [];
       }
@@ -44539,12 +44971,12 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
       );
     }
     if (monthItems.length === 0) {
-      if (import_fs23.default.existsSync(filePath)) {
-        await import_fs23.default.promises.unlink(filePath);
+      if (import_fs24.default.existsSync(filePath)) {
+        await import_fs24.default.promises.unlink(filePath);
         console.log(`[ExpiryCache] Patch: ${ym} file deleted (all items sold/returned).`);
       }
     } else {
-      await import_fs23.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
+      await import_fs24.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
       console.log(`[ExpiryCache] Patch: ${ym} updated for inventory #${inventoryId} (qty=${item.quantity}).`);
     }
   } catch (err) {
@@ -44577,14 +45009,14 @@ function triggerExpiryCacheRebuildDebounced(inventoryIds) {
     }
   }, 800);
 }
-var import_path22, import_fs23, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
+var import_path23, import_fs24, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
 var init_expiryAlertService = __esm({
   "src/services/expiryAlertService.ts"() {
     "use strict";
     init_connection();
     init_inventoryActive();
-    import_path22 = __toESM(require("path"), 1);
-    import_fs23 = __toESM(require("fs"), 1);
+    import_path23 = __toESM(require("path"), 1);
+    import_fs24 = __toESM(require("fs"), 1);
     init_config();
     activeRebuildPromise = null;
     lastRebuildTime = 0;
@@ -49201,15 +49633,15 @@ __export(nonMovingReportService_exports, {
 function invalidateNonMovingReportCache() {
   nonMovingCache.clear();
 }
-var import_path23, import_fs24, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
+var import_path24, import_fs25, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
 var init_nonMovingReportService = __esm({
   "src/services/nonMovingReportService.ts"() {
     "use strict";
     init_inventoryActive();
     init_connection();
     init_telegramBot();
-    import_path23 = __toESM(require("path"), 1);
-    import_fs24 = __toESM(require("fs"), 1);
+    import_path24 = __toESM(require("path"), 1);
+    import_fs25 = __toESM(require("fs"), 1);
     NON_MOVING_CACHE_TTL_MS = 5 * 6e4;
     nonMovingCache = /* @__PURE__ */ new Map();
     NonMovingReportService = class {
@@ -49345,13 +49777,13 @@ var init_nonMovingReportService = __esm({
        */
       async saveReportToFile(report, filename) {
         try {
-          const reportDir = import_path23.default.join(process.cwd(), "data", "reports");
-          if (!import_fs24.default.existsSync(reportDir)) {
-            import_fs24.default.mkdirSync(reportDir, { recursive: true });
+          const reportDir = import_path24.default.join(process.cwd(), "data", "reports");
+          if (!import_fs25.default.existsSync(reportDir)) {
+            import_fs25.default.mkdirSync(reportDir, { recursive: true });
           }
           const fileName = filename || `non_moving_report_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-          const filePath = import_path23.default.join(reportDir, fileName);
-          await import_fs24.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
+          const filePath = import_path24.default.join(reportDir, fileName);
+          await import_fs25.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
           console.log(`Non-moving inventory report saved to: ${filePath}`);
           return filePath;
         } catch (error) {
@@ -49574,7 +50006,7 @@ __export(monthlyReportService_exports, {
   MonthlyReportService: () => MonthlyReportService,
   monthlyReportService: () => monthlyReportService
 });
-var import_fs25, import_path24, TEMP_DIR2, MonthlyReportService, monthlyReportService;
+var import_fs26, import_path25, TEMP_DIR2, MonthlyReportService, monthlyReportService;
 var init_monthlyReportService = __esm({
   "src/services/monthlyReportService.ts"() {
     "use strict";
@@ -49582,9 +50014,9 @@ var init_monthlyReportService = __esm({
     init_whatsappQueueWorker();
     init_whatsappClient();
     init_config();
-    import_fs25 = __toESM(require("fs"), 1);
-    import_path24 = __toESM(require("path"), 1);
-    TEMP_DIR2 = import_path24.default.resolve(getAppDataDir(), "uploads", "temp");
+    import_fs26 = __toESM(require("fs"), 1);
+    import_path25 = __toESM(require("path"), 1);
+    TEMP_DIR2 = import_path25.default.resolve(getAppDataDir(), "uploads", "temp");
     MonthlyReportService = class {
       /**
        * Helper to compute date range for monthly, midmonth, quarterly, yearly, or custom date ranges.
@@ -49862,14 +50294,14 @@ var init_monthlyReportService = __esm({
        * Generate a PDF report document using pdfkit with customizable template themes.
        */
       async generateReportPdf(data, chartStyle = "standard", templateTheme = "executive", outputPath) {
-        if (!import_fs25.default.existsSync(TEMP_DIR2)) {
-          import_fs25.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs26.default.existsSync(TEMP_DIR2)) {
+          import_fs26.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path24.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
+        const finalPath = outputPath || import_path25.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
         const PDFDocument6 = await import("pdfkit").then((m) => m.default ?? m);
         return new Promise((resolve, reject) => {
           const doc = new PDFDocument6({ margin: 40, size: "A4" });
-          const stream = import_fs25.default.createWriteStream(finalPath);
+          const stream = import_fs26.default.createWriteStream(finalPath);
           doc.pipe(stream);
           const fmt = (n) => `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           let headerBg = "#0f172a";
@@ -50048,10 +50480,10 @@ Review this sample PDF report layout on your phone to choose your preferred desi
        * Generate an Excel spreadsheet report document.
        */
       async generateReportExcel(data, outputPath) {
-        if (!import_fs25.default.existsSync(TEMP_DIR2)) {
-          import_fs25.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs26.default.existsSync(TEMP_DIR2)) {
+          import_fs26.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path24.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
+        const finalPath = outputPath || import_path25.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
         const wsData = [
           [`${data.pharmacyName} - ${data.periodLabel}`],
           [`Period: ${data.startDate} to ${data.endDate}`],
@@ -50964,7 +51396,7 @@ __export(connection_exports, {
   requestTxStorage: () => requestTxStorage,
   txPriorityStorage: () => txPriorityStorage
 });
-var import_sqlite, import_sqlite32, import_sqlite2, import_path25, import_fs26, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, requestTxStorage, DatabaseManager, dbManager;
+var import_sqlite, import_sqlite32, import_sqlite2, import_path26, import_fs27, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, requestTxStorage, DatabaseManager, dbManager;
 var init_connection = __esm({
   "src/database/connection.ts"() {
     "use strict";
@@ -50972,8 +51404,8 @@ var init_connection = __esm({
     import_sqlite = require("sqlite");
     import_sqlite32 = __toESM(require("sqlite3"), 1);
     import_sqlite2 = require("sqlite");
-    import_path25 = __toESM(require("path"), 1);
-    import_fs26 = __toESM(require("fs"), 1);
+    import_path26 = __toESM(require("path"), 1);
+    import_fs27 = __toESM(require("fs"), 1);
     import_zlib = __toESM(require("zlib"), 1);
     import_promises = require("stream/promises");
     import_node_async_hooks = require("node:async_hooks");
@@ -51403,37 +51835,37 @@ var init_connection = __esm({
           }
         }
         console.error("[DB] Database load failed. Starting silent self-healing database restoration...");
-        const logPath = import_path25.default.join(import_path25.default.dirname(dbPath), "self_healing.log");
+        const logPath = import_path26.default.join(import_path26.default.dirname(dbPath), "self_healing.log");
         const appendLog = (msg) => {
           const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-          import_fs26.default.appendFileSync(logPath, `[${timestamp}] ${msg}
+          import_fs27.default.appendFileSync(logPath, `[${timestamp}] ${msg}
 `);
         };
         appendLog(`[ERROR] DB_CORRUPT: ${initialErrorMsg}`);
         const backups = [];
-        const dataDir = import_path25.default.dirname(dbPath);
-        if (import_fs26.default.existsSync(dataDir)) {
-          import_fs26.default.readdirSync(dataDir).forEach((file) => {
+        const dataDir = import_path26.default.dirname(dbPath);
+        if (import_fs27.default.existsSync(dataDir)) {
+          import_fs27.default.readdirSync(dataDir).forEach((file) => {
             if (file.startsWith("app.db.bak_")) {
-              const fp = import_path25.default.join(dataDir, file);
+              const fp = import_path26.default.join(dataDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs26.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs27.default.statSync(fp).mtime.getTime(),
                 type: "bak"
               });
             }
           });
         }
-        const snapshotsDir = import_path25.default.join(getAppDataDir(), "backup", "snapshots");
-        if (import_fs26.default.existsSync(snapshotsDir)) {
-          import_fs26.default.readdirSync(snapshotsDir).forEach((file) => {
+        const snapshotsDir = import_path26.default.join(getAppDataDir(), "backup", "snapshots");
+        if (import_fs27.default.existsSync(snapshotsDir)) {
+          import_fs27.default.readdirSync(snapshotsDir).forEach((file) => {
             if (file.startsWith("snapshot_") && file.endsWith(".db.gz")) {
-              const fp = import_path25.default.join(snapshotsDir, file);
+              const fp = import_path26.default.join(snapshotsDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs26.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs27.default.statSync(fp).mtime.getTime(),
                 type: "gz"
               });
             }
@@ -51447,14 +51879,14 @@ var init_connection = __esm({
         const targetBackup = backups[0];
         appendLog(`[ACTION] RENAME: ${dbPath} -> ${dbPath}.corrupt`);
         try {
-          if (import_fs26.default.existsSync(dbPath)) {
-            if (import_fs26.default.existsSync(dbPath + ".corrupt")) {
-              import_fs26.default.unlinkSync(dbPath + ".corrupt");
+          if (import_fs27.default.existsSync(dbPath)) {
+            if (import_fs27.default.existsSync(dbPath + ".corrupt")) {
+              import_fs27.default.unlinkSync(dbPath + ".corrupt");
             }
-            import_fs26.default.renameSync(dbPath, dbPath + ".corrupt");
+            import_fs27.default.renameSync(dbPath, dbPath + ".corrupt");
           }
-          if (import_fs26.default.existsSync(dbPath + "-wal")) import_fs26.default.unlinkSync(dbPath + "-wal");
-          if (import_fs26.default.existsSync(dbPath + "-shm")) import_fs26.default.unlinkSync(dbPath + "-shm");
+          if (import_fs27.default.existsSync(dbPath + "-wal")) import_fs27.default.unlinkSync(dbPath + "-wal");
+          if (import_fs27.default.existsSync(dbPath + "-shm")) import_fs27.default.unlinkSync(dbPath + "-shm");
         } catch (err) {
           appendLog(`[ERROR] Failed to rename corrupt database or clean logs: ${err.message}`);
           throw new Error("DB_INTEGRITY_FAILURE");
@@ -51463,11 +51895,11 @@ var init_connection = __esm({
         try {
           if (targetBackup.type === "gz") {
             const gunzip = import_zlib.default.createGunzip();
-            const source = import_fs26.default.createReadStream(targetBackup.path);
-            const destination = import_fs26.default.createWriteStream(dbPath);
+            const source = import_fs27.default.createReadStream(targetBackup.path);
+            const destination = import_fs27.default.createWriteStream(dbPath);
             await (0, import_promises.pipeline)(source, gunzip, destination);
           } else {
-            import_fs26.default.copyFileSync(targetBackup.path, dbPath);
+            import_fs27.default.copyFileSync(targetBackup.path, dbPath);
           }
         } catch (err) {
           appendLog(`[ERROR] Failed to restore backup file: ${err.message}`);
@@ -51615,7 +52047,7 @@ function parseExtractedText(text, onProgress, progressStart = 10, progressEnd = 
   return extracted;
 }
 async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
-  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path26.default.basename(filePath)}. Falling back to OCR.`);
+  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path27.default.basename(filePath)}. Falling back to OCR.`);
   if (onProgress) onProgress(5);
   let getDocument;
   try {
@@ -51667,7 +52099,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
   return parseExtractedText(allText, onProgress, 80, 100);
 }
 async function extractFromPdf(filePath, onProgress) {
-  const data = await import_fs27.default.promises.readFile(filePath);
+  const data = await import_fs28.default.promises.readFile(filePath);
   const pdfData = await (0, import_pdf_parse.default)(data);
   const text = pdfData.text;
   const cleanedText = text.replace(/\s+/g, "").trim();
@@ -51677,7 +52109,7 @@ async function extractFromPdf(filePath, onProgress) {
   return parseExtractedText(text, onProgress);
 }
 async function extractFromCsv(filePath, onProgress) {
-  const content = await import_fs27.default.promises.readFile(filePath, "utf-8");
+  const content = await import_fs28.default.promises.readFile(filePath, "utf-8");
   const lines = content.split(/\r?\n/);
   let headerLineIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 30); i++) {
@@ -51752,12 +52184,12 @@ async function extractFromCsv(filePath, onProgress) {
 async function mergeIntoSuggestions(_newNames) {
   return [];
 }
-var import_fs27, import_path26, import_pdf_parse, import_sync2, MIN_TEXT_CHARS_THRESHOLD;
+var import_fs28, import_path27, import_pdf_parse, import_sync2, MIN_TEXT_CHARS_THRESHOLD;
 var init_extractor = __esm({
   "src/extractor.ts"() {
     "use strict";
-    import_fs27 = __toESM(require("fs"), 1);
-    import_path26 = __toESM(require("path"), 1);
+    import_fs28 = __toESM(require("fs"), 1);
+    import_path27 = __toESM(require("path"), 1);
     import_pdf_parse = __toESM(require("pdf-parse"), 1);
     import_sync2 = require("csv-parse/sync");
     init_aiCameraService();
@@ -51836,7 +52268,7 @@ async function preScanCsv(filePath, onProgress) {
   return new Promise((resolve, reject) => {
     let nameCol = "";
     let processedRows = 0;
-    const readStream = import_fs28.default.createReadStream(filePath);
+    const readStream = import_fs29.default.createReadStream(filePath);
     const parserStream = readStream.pipe((0, import_csv_parser2.default)());
     parserStream.on("headers", (headers) => {
       nameCol = headers.find((c) => /name|brand/i.test(c)) || headers.find((c) => /product|item|inn|title/i.test(c)) || headers[0] || "";
@@ -51903,9 +52335,9 @@ function parseCsvLine(line) {
 async function readCsvRawRows(filePath, maxRows = 20) {
   return new Promise((resolve) => {
     const rawRows = [];
-    if (!import_fs28.default.existsSync(filePath)) return resolve(rawRows);
+    if (!import_fs29.default.existsSync(filePath)) return resolve(rawRows);
     const rl = import_readline.default.createInterface({
-      input: import_fs28.default.createReadStream(filePath),
+      input: import_fs29.default.createReadStream(filePath),
       crlfDelay: Infinity
     });
     rl.on("line", (line) => {
@@ -51926,8 +52358,8 @@ async function readCsvPreview(filePath, maxRows = 10, skipRows = 0) {
   return new Promise((resolve, reject) => {
     const rows = [];
     let headers = [];
-    if (!import_fs28.default.existsSync(filePath)) return resolve({ headers, rows });
-    const stream = import_fs28.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
+    if (!import_fs29.default.existsSync(filePath)) return resolve({ headers, rows });
+    const stream = import_fs29.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
     stream.on("headers", (h) => {
       headers = h;
     });
@@ -52028,7 +52460,7 @@ async function runCatalogAnalysis(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path27.default.extname(job.file_path).toLowerCase();
+    const ext = import_path28.default.extname(job.file_path).toLowerCase();
     let headers = [];
     let previewData = [];
     let rawRows = [];
@@ -52320,7 +52752,7 @@ async function runCatalogImport(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path27.default.extname(job.file_path).toLowerCase();
+    const ext = import_path28.default.extname(job.file_path).toLowerCase();
     const mapping = JSON.parse(job.mapping_config || "{}");
     const filters = JSON.parse(job.data_filters || "{}");
     const skipRows = Math.max(0, parseInt(filters.skipRows || "0", 10));
@@ -52405,7 +52837,7 @@ async function runCatalogImport(jobId) {
     if (ext === ".csv") {
       totalToProcess = await new Promise((resolve) => {
         let count = 0;
-        const countStream = import_fs28.default.createReadStream(job.file_path);
+        const countStream = import_fs29.default.createReadStream(job.file_path);
         countStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows })).on("data", () => {
           count++;
         }).on("end", () => {
@@ -52628,7 +53060,7 @@ async function runCatalogImport(jobId) {
     };
     let lastProgressTime = Date.now();
     if (ext === ".csv") {
-      const readStream = import_fs28.default.createReadStream(job.file_path);
+      const readStream = import_fs29.default.createReadStream(job.file_path);
       const csvStream = readStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
       readStream.on("error", (err) => {
         csvStream.destroy(new Error(`Failed to read stream for import: ${err.message}`));
@@ -52805,12 +53237,12 @@ async function startWorker() {
   };
   jobPollTick();
 }
-var import_fs28, import_path27, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
+var import_fs29, import_path28, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
 var init_catalogWorker = __esm({
   "src/worker/catalogWorker.ts"() {
     "use strict";
-    import_fs28 = __toESM(require("fs"), 1);
-    import_path27 = __toESM(require("path"), 1);
+    import_fs29 = __toESM(require("fs"), 1);
+    import_path28 = __toESM(require("path"), 1);
     import_readline = __toESM(require("readline"), 1);
     init_config();
     init_connection();
@@ -53223,13 +53655,13 @@ async function reportCrashTelemetry(errorData) {
   } catch {
   }
 }
-var import_crypto4, import_fs29, import_path28, import_child_process5, import_os, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
+var import_crypto4, import_fs30, import_path29, import_child_process5, import_os, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
 var init_licenseService = __esm({
   "src/services/licenseService.ts"() {
     "use strict";
     import_crypto4 = __toESM(require("crypto"), 1);
-    import_fs29 = __toESM(require("fs"), 1);
-    import_path28 = __toESM(require("path"), 1);
+    import_fs30 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
     import_child_process5 = require("child_process");
     import_os = require("os");
     import_axios2 = __toESM(require("axios"), 1);
@@ -53237,14 +53669,14 @@ var init_licenseService = __esm({
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
     defaultAppVersion = "0.1.27";
     try {
-      const pkgJsonPath = import_path28.default.join(process.cwd(), "package.json");
-      if (import_fs29.default.existsSync(pkgJsonPath)) {
-        const pkgJson = JSON.parse(import_fs29.default.readFileSync(pkgJsonPath, "utf8"));
+      const pkgJsonPath = import_path29.default.join(process.cwd(), "package.json");
+      if (import_fs30.default.existsSync(pkgJsonPath)) {
+        const pkgJson = JSON.parse(import_fs30.default.readFileSync(pkgJsonPath, "utf8"));
         if (pkgJson?.version) defaultAppVersion = pkgJson.version;
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.34";
+    APP_VERSION = "0.1.35";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -53643,105 +54075,6 @@ var init_doctorReportingService = __esm({
     init_connection();
     init_whatsappQueueWorker();
     init_whatsappClient();
-  }
-});
-
-// src/database/messageDAO.ts
-var messageDAO_exports = {};
-__export(messageDAO_exports, {
-  closeMessageDAO: () => closeMessageDAO,
-  deleteTemplate: () => deleteTemplate,
-  getTemplate: () => getTemplate,
-  listTemplates: () => listTemplates,
-  setTemplate: () => setTemplate
-});
-function getDb() {
-  if (!db) {
-    db = new import_better_sqlite3.default("./data/app.db", { readonly: false });
-  }
-  return db;
-}
-function closeMessageDAO() {
-  if (db) {
-    try {
-      db.close();
-    } catch (_) {
-    }
-    db = null;
-  }
-}
-function getTemplate(locale, key) {
-  const row = getDb().prepare("SELECT value FROM message_templates WHERE locale = ? AND key = ?").get(locale, key);
-  return row ? row.value : null;
-}
-function setTemplate(locale, key, value) {
-  const stmt = getDb().prepare(`
-    INSERT INTO message_templates (locale, key, value) VALUES (?, ?, ?)
-    ON CONFLICT(locale, key) DO UPDATE SET value = excluded.value
-  `);
-  stmt.run(locale, key, value);
-}
-function deleteTemplate(locale, key) {
-  getDb().prepare("DELETE FROM message_templates WHERE locale = ? AND key = ?").run(locale, key);
-}
-function listTemplates(locale) {
-  const rows = getDb().prepare("SELECT key, value FROM message_templates WHERE locale = ?").all(locale);
-  return rows;
-}
-var import_better_sqlite3, db;
-var init_messageDAO = __esm({
-  "src/database/messageDAO.ts"() {
-    "use strict";
-    import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
-    db = null;
-  }
-});
-
-// src/i18n/getMessage.ts
-function getMessage(lang, path59, values = {}) {
-  const dbValue = getTemplate(lang, path59);
-  let template = "";
-  if (dbValue !== null) {
-    template = dbValue;
-  } else {
-    const keys = path59.split(".");
-    let segment = ALL_MESSAGES[lang];
-    for (const k of keys) {
-      if (segment == null) return `[Missing: ${path59}]`;
-      segment = segment[k];
-    }
-    if (typeof segment !== "string") return `[Not a string: ${path59}]`;
-    template = segment;
-  }
-  return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
-    return values[placeholder] ?? `{{${placeholder}}}`;
-  });
-}
-var import_fs30, import_path29, import_url4, import_module3, require2, ALL_MESSAGES;
-var init_getMessage = __esm({
-  "src/i18n/getMessage.ts"() {
-    "use strict";
-    import_fs30 = require("fs");
-    import_path29 = require("path");
-    import_url4 = require("url");
-    import_module3 = require("module");
-    init_messageDAO();
-    require2 = (0, import_module3.createRequire)(import_meta_url);
-    ALL_MESSAGES = {};
-    try {
-      ALL_MESSAGES = require2("./messages.json");
-    } catch (_) {
-      try {
-        const __filename7 = (0, import_url4.fileURLToPath)(import_meta_url);
-        const __dirname6 = (0, import_path29.dirname)(__filename7);
-        const messagesPath = (0, import_path29.join)(__dirname6, "messages.json");
-        if ((0, import_fs30.existsSync)(messagesPath)) {
-          ALL_MESSAGES = JSON.parse((0, import_fs30.readFileSync)(messagesPath, "utf8"));
-        }
-      } catch (err) {
-        console.error("[i18n] Failed to load messages.json:", err);
-      }
-    }
   }
 });
 
@@ -69780,7 +70113,8 @@ var init_messaging = __esm({
               lastPatientMessageAt: c.lastPatientMessageAt || 0,
               lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
               sessionStatus: c.sessionStatus || "idle",
-              isUnansweredOver5Min: !!c.isUnansweredOver5Min
+              isUnansweredOver5Min: !!c.isUnansweredOver5Min,
+              language: c.language || "en"
             };
           }
           return {
@@ -69796,7 +70130,8 @@ var init_messaging = __esm({
             lastPatientMessageAt: c.lastPatientMessageAt || 0,
             lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
             sessionStatus: c.sessionStatus || "idle",
-            isUnansweredOver5Min: !!c.isUnansweredOver5Min
+            isUnansweredOver5Min: !!c.isUnansweredOver5Min,
+            language: c.language || "en"
           };
         });
         res.json(sanitizedChats);
@@ -69974,6 +70309,30 @@ var init_messaging = __esm({
       } catch (err) {
         console.error("Error resolving chat session:", err);
         return res.status(500).json({ error: err.message || "Failed to resolve chat session" });
+      }
+    });
+    router16.patch("/chats/:id/language", async (req, res) => {
+      const { id } = req.params;
+      const { language } = req.body;
+      if (!language || !["en", "hi", "mr"].includes(language)) {
+        return res.status(400).json({ error: "Valid language (en, hi, mr) is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const cleanDigits = (id || "").replace(/\D/g, "").slice(-10);
+        await db2.run(
+          `UPDATE whatsapp_chats SET language = ? WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
+          [language, id, `%${cleanDigits}%`]
+        );
+        try {
+          const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+          eventService2.broadcast("wa_chat_updated", { chatId: id, language });
+        } catch (_) {
+        }
+        return res.json({ success: true, chatId: id, language });
+      } catch (err) {
+        console.error("Error updating chat language:", err);
+        return res.status(500).json({ error: err.message || "Failed to update chat language" });
       }
     });
     router16.post("/chats/:chatId/messages/:messageId/scan", async (req, res) => {
