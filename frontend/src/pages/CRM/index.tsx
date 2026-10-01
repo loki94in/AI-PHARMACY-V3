@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { apiClient, api } from '../../services/api';
+import { apiClient, api, getCompactInventoryCache, getCompactInventoryIndex } from '../../services/api';
 import {
   RefreshCw, Send, Users, MessageSquare, Phone, Calendar,
   CheckCircle2, AlertCircle, Clock, Search, Repeat2, Bell,
@@ -962,9 +962,100 @@ const RefillsSection: React.FC = () => {
     startRefillCartJob(patient.patient_name, items);
   };
 
+  // ── Fast In-Memory Local Search (0ms instant autocomplete) ────────────────
+  const searchLocalInventory = (term: string): MedicineSuggestion[] => {
+    const clean = term.trim().toLowerCase();
+    if (!clean) return [];
+    const compact = getCompactInventoryCache();
+    if (!compact || compact.length === 0) return [];
+    const index = getCompactInventoryIndex();
+    const useIndex = index.length === compact.length;
+    const compactTerm = clean.replace(/[^a-z0-9]/g, '');
+
+    const map = new Map<number, MedicineSuggestion>();
+
+    for (let i = 0; i < compact.length; i++) {
+      const item = compact[i];
+      const mId = Number(item.medicine_id || item.id || 0);
+      if (!mId) continue;
+
+      const name = useIndex ? index[i].nameLower : (item.medicine_name || item.name || '').toLowerCase();
+      const code = useIndex ? index[i].itemCodeLower : (item.item_code || '').toLowerCase();
+      const initials = useIndex ? index[i].initials : '';
+      const initialsNoNum = useIndex ? index[i].initialsNoNum : '';
+
+      const matched =
+        name.includes(clean) ||
+        code.includes(clean) ||
+        (compactTerm.length >= 2 && (
+          (initials && initials.startsWith(compactTerm)) ||
+          (initialsNoNum && initialsNoNum.startsWith(compactTerm))
+        ));
+
+      if (matched) {
+        const stock = (item.stock_qty || item.quantity || 0) + (item.loose_quantity || 0);
+        const existing = map.get(mId);
+        if (existing) {
+          existing.in_stock_qty = (existing.in_stock_qty || 0) + stock;
+          if (!existing.mrp && item.mrp) existing.mrp = item.mrp;
+          if (!existing.location && (item.location || item.rack || item.shelf)) {
+            existing.location = item.location || item.rack || item.shelf || '';
+          }
+        } else {
+          map.set(mId, {
+            id: mId,
+            name: item.medicine_name || item.name || '',
+            manufacturer: item.manufacturer || '',
+            mrp: item.mrp || item.sell_price || 0,
+            in_stock_qty: stock,
+            location: item.location || item.rack || item.shelf || ''
+          });
+        }
+        if (map.size >= 40) break;
+      }
+    }
+
+    return Array.from(map.values());
+  };
+
   // ── Medicine row search & inventory dropdown ──────────────────────────────
   const fetchSuggestions = async (idx: number, term: string) => {
     const clean = term.trim();
+    if (!clean) {
+      setMedicineRows(prev => {
+        const updated = [...prev];
+        if (updated[idx]) {
+          updated[idx] = { ...updated[idx], suggestions: [], loadingSuggestions: false, isOpen: false };
+        }
+        return updated;
+      });
+      return;
+    }
+
+    // 1. Fast in-memory cache lookup (0ms instant)
+    const localMatches = searchLocalInventory(clean);
+    if (localMatches.length > 0) {
+      setMedicineRows(prev => {
+        const updated = [...prev];
+        if (updated[idx]) {
+          updated[idx] = { ...updated[idx], suggestions: localMatches, loadingSuggestions: false, isOpen: true };
+        }
+        return updated;
+      });
+      return;
+    }
+
+    // 2. Fallback to server catalog if local stock has 0 matches and user typed 2+ chars
+    if (clean.length < 2) {
+      setMedicineRows(prev => {
+        const updated = [...prev];
+        if (updated[idx]) {
+          updated[idx] = { ...updated[idx], suggestions: [], loadingSuggestions: false, isOpen: true };
+        }
+        return updated;
+      });
+      return;
+    }
 
     setMedicineRows(prev => {
       const updated = [...prev];
@@ -975,41 +1066,19 @@ const RefillsSection: React.FC = () => {
     });
 
     try {
-      let suggestions: MedicineSuggestion[] = [];
-      const compactCache = await api.getCompactInventory().catch(() => []);
-      const stockMap = new Map<number, number>();
-      for (const item of compactCache) {
-        const mId = item.medicine_id || item.id;
-        const cur = stockMap.get(mId) || 0;
-        stockMap.set(mId, cur + (item.stock_qty || item.quantity || 0) + (item.loose_quantity || 0));
-      }
-
-      // Query medicines that the pharmacy has ever purchased/stocked (including 0 current stock items)
-      const res = await apiClient.get<{ data?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
-        params: { search: clean, limit: 30, purchasedOnly: true }
+      const catRes = await apiClient.get<{ data?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
+        params: { search: clean, limit: 20 }
       });
-      let resData = Array.isArray(res.data) ? res.data : res.data?.data;
-      let list = Array.isArray(resData) ? resData : [];
-
-      // Fallback: If no purchased medicines matched and user typed 2+ chars, search entire catalog
-      if (list.length === 0 && clean.length >= 2) {
-        const catRes = await apiClient.get<{ data?: MedicineSearchRow[] } | MedicineSearchRow[]>('/medicines', {
-          params: { search: clean, limit: 15 }
-        });
-        const catData = Array.isArray(catRes.data) ? catRes.data : catRes.data?.data;
-        list = Array.isArray(catData) ? catData : [];
-      }
-
-      if (list.length > 0) {
-        suggestions = list.map((m): MedicineSuggestion => ({
-          id: m.id,
-          name: m.name,
-          manufacturer: m.manufacturer,
-          mrp: m.mrp || m.sell_price || m.last_purchase_mrp,
-          in_stock_qty: stockMap.get(m.id) || 0,
-          location: (m as any).location || (m as any).rack || (m as any).shelf || ''
-        }));
-      }
+      const catData = Array.isArray(catRes.data) ? catRes.data : catRes.data?.data;
+      const list = Array.isArray(catData) ? catData : [];
+      const suggestions: MedicineSuggestion[] = list.map(m => ({
+        id: m.id,
+        name: m.name,
+        manufacturer: m.manufacturer,
+        mrp: m.mrp || m.sell_price || m.last_purchase_mrp,
+        in_stock_qty: 0,
+        location: (m as any).location || (m as any).rack || (m as any).shelf || ''
+      }));
 
       setMedicineRows(prev => {
         const updated = [...prev];
@@ -1094,36 +1163,25 @@ const RefillsSection: React.FC = () => {
     const intervalDays = getEffectiveIntervalDays();
     setSubmitting(true);
     try {
-      if (editingPatient) {
-        await apiClient.put('/refills/patient-medicines', {
-          customer_id: editingPatient.customer_id,
-          original_phone: editingPatient.patient_phone,
-          patient_name: fullPatientName,
-          patient_phone: addPatientPhone.trim(),
-          language: addLanguage,
-          refill_interval_days: intervalDays,
-          medicines: validRows.map(row => ({
-            medicine_id: row.medicineId,
-            medicine_name: row.medicineName,
-            quantity_needed: row.quantity_needed || 3
-          }))
-        });
-        toastEvent.trigger(`Refill updated for ${fullPatientName} (${validRows.length} medicine${validRows.length > 1 ? 's' : ''}, every ${intervalDays} days)`, 'success', '/crm');
-      } else {
-        await Promise.all(
-          validRows.map(row =>
-            apiClient.post('/refills', {
-              patient_name: fullPatientName,
-              patient_phone: addPatientPhone.trim(),
-              medicine_id: row.medicineId,
-              language: addLanguage,
-              refill_interval_days: intervalDays,
-              quantity_needed: row.quantity_needed || 3
-            })
-          )
-        );
-        toastEvent.trigger(`Refill registered for ${fullPatientName} (${validRows.length} medicine${validRows.length > 1 ? 's' : ''}, every ${intervalDays} days)`, 'success', '/crm');
-      }
+      await apiClient.put('/refills/patient-medicines', {
+        customer_id: editingPatient?.customer_id,
+        original_phone: editingPatient?.patient_phone || addPatientPhone.trim(),
+        patient_name: fullPatientName,
+        patient_phone: addPatientPhone.trim(),
+        language: addLanguage,
+        refill_interval_days: intervalDays,
+        is_edit: !!editingPatient,
+        medicines: validRows.map(row => ({
+          medicine_id: row.medicineId,
+          medicine_name: row.medicineName,
+          quantity_needed: row.quantity_needed || 3
+        }))
+      });
+      toastEvent.trigger(
+        `${editingPatient ? 'Refill updated' : 'Refill registered'} for ${fullPatientName} (${validRows.length} medicine${validRows.length > 1 ? 's' : ''}, every ${intervalDays} days)`,
+        'success',
+        '/crm'
+      );
 
       // Persist reminder mode preference for this patient
       await apiClient.put('/refills/patient-reminder-mode', {
@@ -2668,9 +2726,40 @@ const RefillsSection: React.FC = () => {
         <MedicineLinkModal
           medicineId={linkingMedicine.id}
           medicineName={linkingMedicine.name}
-          // Reload the refill cards right away (same as every other CRM refill action);
-          // don't rely only on the SSE refill_updated, which is dropped if it lands within 1.5 s of another.
-          onSaved={() => refillEvent.triggerRefresh()}
+          onSaved={(newLinks) => {
+            const links = newLinks || [];
+            // Optimistic update for active patient in state (instant 0ms feedback)
+            setSelectedPatient(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                medicines: prev.medicines.map(m =>
+                  m.medicine_id === linkingMedicine.id
+                    ? { ...m, linked_distributors: links }
+                    : m
+                )
+              };
+            });
+            // Optimistic update for patient list in state
+            setData(prev => prev.map(p => ({
+              ...p,
+              medicines: p.medicines.map(m =>
+                m.medicine_id === linkingMedicine.id
+                  ? { ...m, linked_distributors: links }
+                  : m
+              )
+            })));
+            // Optimistic update for module cache
+            cachedRefillsData = cachedRefillsData.map(p => ({
+              ...p,
+              medicines: p.medicines.map(m =>
+                m.medicine_id === linkingMedicine.id
+                  ? { ...m, linked_distributors: links }
+                  : m
+              )
+            }));
+            refillEvent.triggerRefresh();
+          }}
           onClose={() => setLinkingMedicine(null)}
         />
       )}

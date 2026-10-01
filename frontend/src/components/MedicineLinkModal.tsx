@@ -30,7 +30,7 @@ export const MedicineLinkModal: React.FC<{
   medicineName: string;
   /** Products already fetched by the caller (refill cart popup) — shown without a new search. */
   initialResults?: RefillCartCandidate[];
-  onSaved?: () => void;
+  onSaved?: (linkedDistributors?: string[]) => void;
   onClose: () => void;
 }> = ({ medicineId, medicineName, initialResults, onSaved, onClose }) => {
   useModalEscape(true, onClose);
@@ -107,11 +107,12 @@ export const MedicineLinkModal: React.FC<{
     setSaving(true);
     try {
       const res = await api.saveMedicineLinks(medicineId, selected);
+      const linkedNames = selected.map(p => p.storeName).filter(Boolean);
       toastEvent.trigger(
         res.saved > 0 ? `Saved ${res.saved} distributor(s) for "${medicineName}"` : `"${medicineName}" is no longer linked to any distributor`,
         'success'
       );
-      onSaved?.();
+      onSaved?.(linkedNames);
       onClose();
     } catch (err) {
       toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to save linked distributors', 'error');

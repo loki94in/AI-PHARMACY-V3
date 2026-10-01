@@ -520,13 +520,67 @@ export async function buildDailyOperationalBriefing(
   ).catch(() => ({ count: 0 }));
   const callCount = Number(pendingCallTasks?.count || 0);
 
-  // Active special, website, and online orders
+  // Active special, website, and online orders — grouped by customer
   const activeOrders = await db.all(
-    `SELECT requester, product, qty, status, customer_order_source
+    `SELECT id, requester, phone, product, qty, status, customer_order_source
      FROM special_orders
-     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched')
+     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
        AND DATE(date) >= DATE('now', 'localtime', '-7 days')
-     ORDER BY date DESC, id DESC LIMIT 15`
+     ORDER BY date DESC, id DESC LIMIT 50`
+  ).catch(() => []);
+
+  interface GroupedCustomerOrder {
+    customerKey: string;
+    requester: string;
+    phone: string;
+    orderSource: string;
+    items: Array<{
+      product: string;
+      qty: number;
+      status: string;
+    }>;
+  }
+
+  const customerOrderMap = new Map<string, GroupedCustomerOrder>();
+  for (const o of activeOrders) {
+    const custName = (o.requester || 'Customer').trim();
+    const phone = String(o.phone || '').trim();
+    const key = phone ? phone : custName.toLowerCase();
+
+    const rawSrc = (o.customer_order_source || '').toLowerCase();
+    let srcBadge = 'Special Order';
+    if (rawSrc === 'website') srcBadge = 'Website Order';
+    else if (rawSrc === 'whatsapp') srcBadge = 'WhatsApp Order';
+    else if (rawSrc === 'online' || rawSrc === 'portal') srcBadge = 'Online Order';
+    else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
+
+    if (!customerOrderMap.has(key)) {
+      customerOrderMap.set(key, {
+        customerKey: key,
+        requester: custName,
+        phone,
+        orderSource: srcBadge,
+        items: []
+      });
+    }
+
+    const group = customerOrderMap.get(key)!;
+    group.items.push({
+      product: o.product,
+      qty: Number(o.qty || 1),
+      status: o.status || 'Pending'
+    });
+  }
+
+  const groupedCustomerOrders = Array.from(customerOrderMap.values()).slice(0, 15);
+
+  // Pending Shortage/Unavailable Requests (>23 Hours)
+  const pendingShortages = await db.all(
+    `SELECT id, product, requester, phone, qty, pharmarack_distributor, date
+     FROM special_orders
+     WHERE status IN ('Pending', 'PENDING')
+       AND datetime(date) <= datetime('now', '-23 hours')
+     ORDER BY date ASC LIMIT 10`
   ).catch(() => []);
 
   // Staged reminders breakdown
@@ -551,16 +605,11 @@ export async function buildDailyOperationalBriefing(
   };
 
   let ordersBlock = '• No pending orders';
-  if (activeOrders.length > 0) {
-    ordersBlock = activeOrders.map((o: any, i: number) => {
-      const rawSrc = (o.customer_order_source || '').toLowerCase();
-      let srcBadge = 'Special Order';
-      if (rawSrc === 'website') srcBadge = 'Website Order';
-      else if (rawSrc === 'whatsapp') srcBadge = 'WhatsApp Order';
-      else if (rawSrc === 'online' || rawSrc === 'portal') srcBadge = 'Online Order';
-      else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
-
-      return `${i + 1}. *${o.requester || 'Customer'}* [${srcBadge}]: ${o.product} × ${o.qty} (${o.status})`;
+  if (groupedCustomerOrders.length > 0) {
+    ordersBlock = groupedCustomerOrders.map((cust, i) => {
+      const itemCountLabel = cust.items.length === 1 ? '1 item' : `${cust.items.length} items`;
+      const itemLines = cust.items.map(item => `   - ${item.product} × ${item.qty} (${item.status})`).join('\n');
+      return `${i + 1}. *${cust.requester}* (${itemCountLabel} • ${cust.orderSource}):\n${itemLines}`;
     }).join('\n');
   }
 
@@ -601,6 +650,11 @@ export async function buildDailyOperationalBriefing(
   const dailyTasks: string[] = [];
   if (incomplete24hAudit.overdue.length > 0) {
     dailyTasks.push(`🚨 *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA — push to Pharmarack or contact distributor`);
+  }
+  if (pendingShortages.length > 0) {
+    const shortMeds = pendingShortages.map((s: any) => `${s.product} × ${s.qty || 1} (${s.pharmarack_distributor || 'Distributor'})`).slice(0, 4);
+    const extra = pendingShortages.length > 4 ? ` +${pendingShortages.length - 4} more` : '';
+    dailyTasks.push(`📦 *Reorder Shortage Items (>23h Pending)*: ${shortMeds.join(', ')}${extra}`);
   }
   if (outOfStockRefills.length > 0) {
     const holdPatients = Array.from(new Set(outOfStockRefills.map((r: any) => r.patient_name)));
@@ -720,6 +774,15 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
       }).join('\n');
     }
 
+    let t1Orders = '• No pending orders';
+    if (groupedCustomerOrders.length > 0) {
+      t1Orders = groupedCustomerOrders.map((cust, i) => {
+        const itemCountLabel = cust.items.length === 1 ? '1 item' : `${cust.items.length} items`;
+        const statuses = Array.from(new Set(cust.items.map(it => it.status))).join(', ');
+        return `${i + 1}. *${cust.requester}* — ${itemCountLabel} [${cust.orderSource}] (${statuses})`;
+      }).join('\n');
+    }
+
     messageText = `☀️ *DAILY OPERATIONAL BRIEFING* — ${storeName}
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
@@ -728,7 +791,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 ${t1Refills}
 
 📦 *2. SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 
   } else if (templateKey === 'checklist') {
     // TEMPLATE 2: Action checklist [ ]
@@ -743,12 +806,16 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
     if (holdRefills.length > 0) {
       t2Items.push(`[ ] *URGENT REORDER*: ${holdRefills.map((r: any) => r.patient_name).join(', ')} (Stock Needed)`);
     }
+    if (pendingShortages.length > 0) {
+      t2Items.push(`[ ] *SHORTAGE REORDERS (>23H)*: Add ${pendingShortages.length} pending shortage item(s) to distributor cart`);
+    }
     const inStockRefills = refillRows.filter((r: any) => r.out_of_stock_count === 0);
     if (inStockRefills.length > 0) {
       t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r: any) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(', ')}`);
     }
-    if (activeOrders.length > 0) {
-      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${activeOrders.length} special/online order(s)`);
+    if (groupedCustomerOrders.length > 0) {
+      const totalOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
+      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${groupedCustomerOrders.length} customer order(s) (${totalOrderItems} total items)`);
     }
     if (callCount > 0) {
       t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
@@ -775,6 +842,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}`;
   } else {
     // TEMPLATE 3: Executive summary
     const totalRefillsDue = refillRows.reduce((acc: number, r: any) => acc + (r.med_count || 1), 0);
+    const totalSpecialOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
     let milestoneMetrics = '';
     if (isMilestoneDate) {
       milestoneMetrics = `\n• ⚠️ Expiring Batches: *${expCount}*\n• 💰 Overdue Credit: *₹${overdueCreditTotal.toFixed(0)}* (${overdueCreditCount} cust)`;
@@ -785,7 +853,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}`;
 
 📊 *Morning KPI Dashboard*:
 • 📋 Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
-• 📦 Active Orders: *${activeOrders.length}*
+• 📦 Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
 • ⏱️ 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
 • ⏸️ Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
 • 📞 Pending Calls: *${callCount}*

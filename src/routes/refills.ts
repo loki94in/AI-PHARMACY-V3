@@ -15,6 +15,7 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 
 import { resolveStoreId } from '../services/storeContextService.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 import {
   processRefillCartItem, removeRefillCartLines, REFILL_CART_COLUMNS, getMedicineLinks, saveMedicineLinks,
   getDistributorPurchaseRanks, sendRefillCartSummary
@@ -143,7 +144,7 @@ router.post('/', async (req, res) => {
     const intervalDays = parseIntervalDays(refill_interval_days);
     const nextRefillDate = new Date();
     nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
-    const nextRefillStr = nextRefillDate.toISOString().slice(0, 19).replace('T', ' ');
+    const nextRefillStr = toLocalSqlDateTime(nextRefillDate);
 
     // Resolve or auto-create customer profile in customers table
     const cleanPhone = (patient_phone || '').trim();
@@ -296,101 +297,114 @@ router.put('/patient-medicines', async (req, res) => {
     const cleanName = (patient_name || 'Customer').trim();
     const cleanLang = (language || 'en').trim();
 
-    // Resolve or auto-create/update customer profile in customers table
-    let customerId = req.body.customer_id || null;
-    if (!customerId && (cleanPhone || cleanName || origPhone)) {
-      let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
-      if (!cust && origPhone && origPhone !== cleanPhone) {
-        cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [origPhone]);
-      }
-      if (!cust && cleanName && cleanName.toLowerCase() !== 'customer') {
-        cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [cleanName]);
-      }
-      if (cust) {
-        customerId = cust.id;
-        await db.run('UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?', [cleanName, cleanPhone, cleanLang, customerId]);
-      } else if (cleanPhone || cleanName) {
-        const custRes = await db.run('INSERT INTO customers (name, phone, language) VALUES (?, ?, ?)', [cleanName, cleanPhone, cleanLang]);
-        customerId = custRes.lastID;
-      }
-    } else if (customerId) {
-      await db.run('UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?', [cleanName, cleanPhone, cleanLang, customerId]);
-    }
-
-    // Fetch existing refill records for this patient
-    const existingRows = await db.all(
-      `SELECT * FROM patient_refills 
-       WHERE patient_phone = ? OR patient_phone = ? OR (customer_id IS NOT NULL AND customer_id = ?)`,
-      [origPhone, cleanPhone, customerId]
-    );
-
-    const existingMap = new Map<number, any>();
-    for (const r of existingRows) {
-      existingMap.set(r.medicine_id, r);
-    }
-
-    const processedMedicineIds = new Set<number>();
-
-    // Calculate default next refill date
+    // Wrap all DB writes in an atomic transaction
+    await db.run('BEGIN');
     let defaultNextRefillStr: string;
-    if (next_refill_date) {
-      defaultNextRefillStr = next_refill_date;
-    } else {
-      const nextRefillDate = new Date();
-      nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
-      defaultNextRefillStr = nextRefillDate.toISOString().slice(0, 19).replace('T', ' ');
-    }
+    let removedRows: any[] = [];
+    try {
+      // Resolve or auto-create/update customer profile in customers table
+      let customerId = req.body.customer_id || null;
+      if (!customerId && (cleanPhone || cleanName || origPhone)) {
+        let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+        if (!cust && origPhone && origPhone !== cleanPhone) {
+          cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [origPhone]);
+        }
+        if (!cust && cleanName && cleanName.toLowerCase() !== 'customer') {
+          cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [cleanName]);
+        }
+        if (cust) {
+          customerId = cust.id;
+          await db.run('UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?', [cleanName, cleanPhone, cleanLang, customerId]);
+        } else if (cleanPhone || cleanName) {
+          const custRes = await db.run('INSERT INTO customers (name, phone, language) VALUES (?, ?, ?)', [cleanName, cleanPhone, cleanLang]);
+          customerId = custRes.lastID;
+        }
+      } else if (customerId) {
+        await db.run('UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?', [cleanName, cleanPhone, cleanLang, customerId]);
+      }
 
-    // Granular sync: Update existing records or insert genuinely new ones
-    for (const med of medicines) {
-      const medId = Number(med.medicine_id || med.medicineId);
-      if (!medId || isNaN(medId)) continue;
-      processedMedicineIds.add(medId);
+      // Fetch existing refill records for this patient
+      const existingRows = await db.all(
+        `SELECT * FROM patient_refills 
+         WHERE patient_phone = ? OR patient_phone = ? OR (customer_id IS NOT NULL AND customer_id = ?)`,
+        [origPhone, cleanPhone, customerId]
+      );
 
-      const qtyNeeded = parseInt(med.quantity_needed || med.quantity, 10) || 3;
-      const existing = existingMap.get(medId);
+      const existingMap = new Map<number, any>();
+      for (const r of existingRows) {
+        existingMap.set(r.medicine_id, r);
+      }
 
-      if (existing) {
-        // In-place update preserving ID and history
-        let targetNextDate = next_refill_date;
-        if (!targetNextDate) {
-          if (existing.refill_interval_days === intervalDays && existing.next_refill_date && new Date(existing.next_refill_date) > new Date()) {
-            targetNextDate = existing.next_refill_date;
-          } else {
-            targetNextDate = defaultNextRefillStr;
+      const processedMedicineIds = new Set<number>();
+
+      // Calculate default next refill date
+      if (next_refill_date) {
+        defaultNextRefillStr = next_refill_date;
+      } else {
+        const nextRefillDate = new Date();
+        nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
+        defaultNextRefillStr = toLocalSqlDateTime(nextRefillDate);
+      }
+
+      // Granular sync: Update existing records or insert genuinely new ones
+      for (const med of medicines) {
+        const medId = Number(med.medicine_id || med.medicineId);
+        if (!medId || isNaN(medId)) continue;
+        processedMedicineIds.add(medId);
+
+        const qtyNeeded = parseInt(med.quantity_needed || med.quantity, 10) || 3;
+        const existing = existingMap.get(medId);
+
+        if (existing) {
+          // In-place update preserving ID and history
+          let targetNextDate = next_refill_date;
+          if (!targetNextDate) {
+            if (existing.refill_interval_days === intervalDays && existing.next_refill_date && new Date(existing.next_refill_date) > new Date()) {
+              targetNextDate = existing.next_refill_date;
+            } else {
+              targetNextDate = defaultNextRefillStr;
+            }
+          }
+          await db.run(
+            `UPDATE patient_refills 
+             SET customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
+                 next_refill_date = ?, quantity_needed = ?, is_active = 1, language = ?
+             WHERE id = ?`,
+            [customerId, cleanName, cleanPhone, intervalDays, targetNextDate, qtyNeeded, cleanLang, existing.id]
+          );
+        } else {
+          // Insert only new medicine
+          await db.run(
+            `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, is_active, language)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?)`,
+            [customerId, cleanName, cleanPhone, medId, intervalDays, defaultNextRefillStr, qtyNeeded, cleanLang]
+          );
+        }
+      }
+
+      // Delete or deactivate only medicines explicitly removed from the prescription (only if editing existing)
+      if (req.body.customer_id || (existingRows.length > 0 && req.body.is_edit)) {
+        for (const [medId, r] of existingMap.entries()) {
+          if (!processedMedicineIds.has(medId)) {
+            removedRows.push(r);
+            await db.run('DELETE FROM patient_refills WHERE id = ?', [r.id]);
+            await db.run(
+              `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
+              [String(r.id), `${r.id},%`, `%,${r.id}%`]
+            ).catch(() => {});
           }
         }
-        await db.run(
-          `UPDATE patient_refills 
-           SET customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
-               next_refill_date = ?, quantity_needed = ?, is_active = 1, language = ?
-           WHERE id = ?`,
-          [customerId, cleanName, cleanPhone, intervalDays, targetNextDate, qtyNeeded, cleanLang, existing.id]
-        );
-      } else {
-        // Insert only new medicine
-        await db.run(
-          `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, is_active, language)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?)`,
-          [customerId, cleanName, cleanPhone, medId, intervalDays, defaultNextRefillStr, qtyNeeded, cleanLang]
-        );
       }
+
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK').catch(() => {});
+      throw txErr;
     }
 
-    // Delete or deactivate only medicines explicitly removed from the prescription
-    const removedRows: any[] = [];
-    for (const [medId, r] of existingMap.entries()) {
-      if (!processedMedicineIds.has(medId)) {
-        removedRows.push(r);
-        await db.run('DELETE FROM patient_refills WHERE id = ?', [r.id]);
-        await db.run(
-          `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
-          [String(r.id), `${r.id},%`, `%,${r.id}%`]
-        ).catch(() => {});
-      }
+    if (removedRows.length > 0) {
+      removeRefillCartLines(removedRows, false);
     }
-
-    removeRefillCartLines(removedRows, false);
 
     // Re-check inventory stock and trigger necessary alerts/schedules
     await checkAllRefills(db);

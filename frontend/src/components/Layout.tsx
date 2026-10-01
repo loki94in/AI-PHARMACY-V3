@@ -50,6 +50,7 @@ import {
   Image as ImageIcon,
   Power,
   Store as StoreIcon,
+  ShoppingCart,
 } from 'lucide-react';
 import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import {
@@ -69,6 +70,7 @@ import {
 import { toastEvent, quickOrderEvent, liveCartAddEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, automationHubEvent, whatsappReadinessEvent } from '../services/events';
 import type { ToastEventDetail } from '../services/events';
 import type { WhatsAppReadinessState } from '../types/api';
+import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, openRefillCartJob } from '../services/refillCartJobs';
 // Lazy-loaded modals & popovers — prevents bundling heavy components into the main shell
 const QuickOrderModal = lazy(() => import('./QuickOrderModal').then(m => ({ default: m.QuickOrderModal })));
 const LiveCartAddModal = lazy(() => import('./LiveCartAddModal').then(m => ({ default: m.LiveCartAddModal })));
@@ -1809,6 +1811,9 @@ const Topbar = memo(({
   const isWaActive = (waQueueDetail?.counts?.pending || 0) > 0 || (waQueueDetail?.counts?.sending || 0) > 0 || waQueueDetail?.isProcessing;
   const isWaRecentlyDone = !isWaActive && (waQueueDetail?.counts?.sent || 0) > 0 && lastQueueCompletedAt !== null;
 
+  const cartJobs = React.useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
+  const activeCartJob = cartJobs.find(j => isRefillJobRunning(j));
+
   const activeHeaderItems = useMemo(() => {
     const items: Array<{
       id: string;
@@ -1823,7 +1828,30 @@ const Topbar = memo(({
       icon: React.ReactNode;
     }> = [];
 
-    // 0. Active Manual/Automated Message Send (Highest Priority 10s Animation)
+    // 0. Active Refill Cart Order Progress (Highest Priority)
+    if (activeCartJob) {
+      const total = activeCartJob.rows.length;
+      const done = activeCartJob.rows.filter(r => r.state !== 'queued' && r.state !== 'working').length;
+      const added = activeCartJob.rows.filter(r => r.state === 'added' || r.state === 'in_cart').length;
+      const needsLink = activeCartJob.rows.filter(r => r.state === 'needs_link' || r.state === 'linked_oos').length;
+      const failed = activeCartJob.rows.filter(r => r.state === 'failed' || r.state === 'not_found').length;
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+      items.push({
+        id: `cart-job-${activeCartJob.id}`,
+        type: 'notification',
+        title: `🛒 Cart Order: ${activeCartJob.patientName} (${done}/${total})`,
+        subtitle: `${added} in cart${needsLink > 0 ? ` • ${needsLink} need link` : ''}${failed > 0 ? ` • ${failed} failed` : ''}`,
+        progress: pct,
+        badge: pct === 100 ? 'Done' : 'Adding...',
+        color: failed > 0 ? 'amber' : 'emerald',
+        action: () => openRefillCartJob(activeCartJob.id),
+        actionLabel: 'Inspect',
+        icon: <ShoppingCart size={12} className="text-primary animate-pulse shrink-0" />
+      });
+    }
+
+    // 0.1. Active Manual/Automated Message Send (10s Animation)
     if (activeSendMeta) {
       items.push({
         id: activeSendMeta.id,
@@ -1932,7 +1960,7 @@ const Topbar = memo(({
 
 
     return items;
-  }, [activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate]);
+  }, [activeCartJob, activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate]);
 
 
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -2254,6 +2282,86 @@ const Topbar = memo(({
             }
 
             // 2. CONTEXTUAL AUTO-FOCUS MODES (When NOT Hovered)
+
+            // (0) Active Live Refill Cart Order in Progress
+            if (activeCartJob) {
+              const total = activeCartJob.rows.length;
+              const added = activeCartJob.rows.filter(r => r.state === 'added' || r.state === 'in_cart').length;
+              const working = activeCartJob.rows.filter(r => r.state === 'queued' || r.state === 'working').length;
+              const needsLink = activeCartJob.rows.filter(r => r.state === 'needs_link' || r.state === 'linked_oos').length;
+              const failed = activeCartJob.rows.filter(r => r.state === 'failed' || r.state === 'not_found').length;
+              const done = total - working;
+              const addedPct = total > 0 ? (added / total) * 100 : 0;
+              const workingPct = total > 0 ? (working / total) * 100 : 0;
+              const needsLinkPct = total > 0 ? (needsLink / total) * 100 : 0;
+              const failedPct = total > 0 ? (failed / total) * 100 : 0;
+
+              return (
+                <div
+                  onClick={() => openRefillCartJob(activeCartJob.id)}
+                  className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress animate-hub-enter"
+                  title="Click to inspect Refill Cart background run"
+                >
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      <ShoppingCart size={12} className="text-primary animate-pulse shrink-0" />
+                      <span className="truncate text-text font-bold text-xs tracking-tight">
+                        Cart Order: {activeCartJob.patientName} ({done}/{total})
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
+                      {added > 0 && <span className="text-emerald-400">✓ {added}</span>}
+                      {working > 0 && <span className="text-sky-400 animate-pulse">▶ {working}</span>}
+                      {needsLink > 0 && <span className="text-amber-400">🔗 {needsLink}</span>}
+                      {failed > 0 && <span className="text-rose-400 animate-pulse">⚠️ {failed}</span>}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openRefillCartJob(activeCartJob.id);
+                        }}
+                        className="text-[9px] font-black text-primary hover:underline uppercase tracking-wider pl-1"
+                      >
+                        Inspect
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Multi-Segment Storage-Style Progress Bar */}
+                  <div className="w-full h-1.5 bg-bg border border-glass-border/60 rounded-full overflow-hidden flex relative shadow-inner">
+                    {addedPct > 0 && (
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-[width] duration-300 ease-out"
+                        style={{ width: `${addedPct}%` }}
+                        title={`${added} In Cart (${Math.round(addedPct)}%)`}
+                      />
+                    )}
+                    {workingPct > 0 && (
+                      <div
+                        className="h-full bg-gradient-to-r from-sky-500 to-blue-400 animate-pulse transition-[width] duration-300 ease-out"
+                        style={{ width: `${workingPct}%` }}
+                        title={`${working} Searching / Adding (${Math.round(workingPct)}%)`}
+                      />
+                    )}
+                    {needsLinkPct > 0 && (
+                      <div
+                        className="h-full bg-gradient-to-r from-amber-500 to-orange-400 transition-[width] duration-300 ease-out"
+                        style={{ width: `${needsLinkPct}%` }}
+                        title={`${needsLink} Needs Link / OOS (${Math.round(needsLinkPct)}%)`}
+                      />
+                    )}
+                    {failedPct > 0 && (
+                      <div
+                        className="h-full bg-gradient-to-r from-rose-500 to-red-500 animate-pulse transition-[width] duration-300 ease-out"
+                        style={{ width: `${failedPct}%` }}
+                        title={`${failed} Failed (${Math.round(failedPct)}%)`}
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            }
 
             // (A) Active Live Send in Progress
             if (activeSendMeta && !activeSendMeta.completed) {

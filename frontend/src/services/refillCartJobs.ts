@@ -1,4 +1,5 @@
 import { api, type RefillCartCandidate, type RefillCartResult } from './api';
+import { toastEvent } from './events';
 
 /**
  * Refill → Live Cart runs, kept OUTSIDE React so closing the popup never stops
@@ -80,6 +81,25 @@ async function sendSummaryIfDone(jobId: number): Promise<void> {
   } catch {
     patchJob(jobId, j => ({ ...j, whatsapp: { queued: false, reason: 'Could not queue the WhatsApp summary.' } }));
   }
+
+  // Emit ONE consolidated in-app summary message
+  const addedCount = job.rows.filter(r => r.state === 'added').length;
+  const inCartCount = job.rows.filter(r => r.state === 'in_cart').length;
+  const needsLinkCount = job.rows.filter(r => r.state === 'needs_link' || r.state === 'linked_oos').length;
+  const failedCount = job.rows.filter(r => r.state === 'failed' || r.state === 'not_found').length;
+
+  const parts: string[] = [];
+  if (addedCount > 0) parts.push(`${addedCount} added`);
+  if (inCartCount > 0) parts.push(`${inCartCount} already in cart`);
+  if (needsLinkCount > 0) parts.push(`${needsLinkCount} need link`);
+  if (failedCount > 0) parts.push(`${failedCount} failed`);
+
+  const summary = parts.length > 0
+    ? `Cart Order for ${job.patientName}: ${parts.join(', ')}.`
+    : `Cart Order completed for ${job.patientName}.`;
+
+  const toastType = failedCount > 0 ? 'error' : needsLinkCount > 0 ? 'info' : 'success';
+  toastEvent.trigger(summary, toastType, '/crm');
 }
 
 function runRow(jobId: number, row: RefillCartRow, mode: 'add' | 'plan'): void {

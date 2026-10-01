@@ -85,6 +85,7 @@ export async function checkShortageRequestsAndNotifyAdmin(db?: Database): Promis
   const shortageNoticeEnabled = shortageEnabledRow?.value !== 'false';
 
   let notifiedCount = 0;
+  const unavailableItems: any[] = [];
 
   for (const item of pendingRequests) {
     const medName = item.product || '';
@@ -161,19 +162,19 @@ export async function checkShortageRequestsAndNotifyAdmin(db?: Database): Promis
     }
 
     // 3. Medicine / similar medicine NOT shown in inventory for > 23 hours!
-    // Generate order alert message for Admin WhatsApp
-    const distName = item.pharmarack_distributor || 'Preferred Distributor';
-    const qtyNeeded = item.qty || 1;
+    unavailableItems.push(item);
 
-    const adminMessage = `🚨 *ADMIN ORDER REMINDER (>23 Hours Unavailable)*\n\n` +
-      `The requested medicine has not been added to inventory for over 23 hours.\n\n` +
-      `📦 *Medicine:* ${medName}\n` +
-      `🏭 *Distributor Name:* ${distName}\n` +
-      `🔢 *Suggested Qty:* ${qtyNeeded}\n` +
-      `📅 *Requested On:* ${new Date(item.date).toLocaleString('en-IN')}\n\n` +
-      `👉 *Action Required:* Please add this item to today's order for ${distName}.`;
+    // Mark as Ordered (notified) to avoid duplicate spamming
+    await connection.run(
+      `UPDATE special_orders
+       SET status = 'Ordered', notes = 'Processed in daily shortage check'
+       WHERE id = ?`,
+      [item.id]
+    );
+  }
 
-    // Send WhatsApp notification strictly to Pharmacy Admin / Store Owner number
+  // If there are unavailable items, send ONE single consolidated WhatsApp summary to admin
+  if (unavailableItems.length > 0) {
     const { getPharmacyOwnerPhone } = await import('./storeSettingsService.js');
     const storeOwnerPhone = await getPharmacyOwnerPhone(connection);
     const recipientName = 'Admin / Store Owner';
@@ -181,44 +182,50 @@ export async function checkShortageRequestsAndNotifyAdmin(db?: Database): Promis
 
     if (adminPhone && adminPhone.length >= 10 && shortageNoticeEnabled) {
       const formattedPhone = adminPhone.length === 10 ? `91${adminPhone}` : adminPhone;
+
+      const itemLines = unavailableItems.map((item: any, idx: number) => {
+        const distName = item.pharmarack_distributor || 'Preferred Distributor';
+        const qtyNeeded = item.qty || 1;
+        return `${idx + 1}. *${item.product}* × ${qtyNeeded} (Distributor: ${distName})`;
+      }).join('\n');
+
+      const consolidatedAdminMessage = `🚨 *ADMIN ORDER REMINDER (>23 Hours Unavailable)*\n\n` +
+        `The following ${unavailableItems.length} requested item(s) have not been added to inventory for over 23 hours:\n\n` +
+        `${itemLines}\n\n` +
+        `👉 *Action Required:* Please add these items to today's distributor purchase orders.`;
+
       try {
-        await notificationService.sendWhatsApp(formattedPhone, adminMessage, undefined, undefined, 'admin_shortage_reminder');
-        
+        await notificationService.sendWhatsApp(formattedPhone, consolidatedAdminMessage, undefined, undefined, 'admin_shortage_reminder');
+
         // Log in action_logs for Activity Alerts
         await connection.run(
           'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
-          ['SHORTAGE_REMINDER_SENT', `Sent admin shortage order reminder for ${medName} to ${formattedPhone}`]
+          ['SHORTAGE_REMINDER_SENT', `Sent consolidated admin shortage reminder for ${unavailableItems.length} item(s) to ${formattedPhone}`]
         );
 
         // Log in automation_notifications for Live WhatsApp Controller tracking
+        const refIds = unavailableItems.map((it: any) => `shortage_${it.id}`).join(',');
         await connection.run(
           `INSERT INTO automation_notifications 
            (type, recipient_name, recipient_phone, message, status, reference_id)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          ['admin_shortage_reminder', recipientName, formattedPhone, adminMessage, 'sent', `shortage_${item.id}`]
+          ['admin_shortage_reminder', recipientName, formattedPhone, consolidatedAdminMessage, 'sent', refIds]
         );
       } catch (err: any) {
-        console.error(`[ShortageReminder] Failed to send WhatsApp to admin at ${formattedPhone}:`, err);
+        console.error(`[ShortageReminder] Failed to send consolidated WhatsApp to admin at ${formattedPhone}:`, err);
+        const refIds = unavailableItems.map((it: any) => `shortage_${it.id}`).join(',');
         await connection.run(
           `INSERT INTO automation_notifications 
            (type, recipient_name, recipient_phone, message, status, error_message, reference_id)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          ['admin_shortage_reminder', recipientName, formattedPhone, adminMessage, 'failed', err?.message || 'Send failed', `shortage_${item.id}`]
+          ['admin_shortage_reminder', recipientName, formattedPhone, consolidatedAdminMessage, 'failed', err?.message || 'Send failed', refIds]
         );
       }
     } else {
-      console.warn('[ShortageReminder] Pharmacy Owner WhatsApp number not configured in Settings.');
+      console.warn('[ShortageReminder] Pharmacy Owner WhatsApp number not configured or alert disabled in Settings.');
     }
 
-    // Mark as Ordered (notified) to avoid duplicate spamming
-    await connection.run(
-      `UPDATE special_orders
-       SET status = 'Ordered', notes = 'Admin notified via WhatsApp reminder'
-       WHERE id = ?`,
-      [item.id]
-    );
-
-    notifiedCount++;
+    notifiedCount = unavailableItems.length;
   }
 
   return { scanned: pendingRequests.length, notified: notifiedCount };
