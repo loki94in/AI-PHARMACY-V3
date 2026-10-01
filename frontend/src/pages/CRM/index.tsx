@@ -25,6 +25,7 @@ import { OrderModifyModal } from '../../components/OrderModifyModal';
 import { IncompleteOrders24hCard } from '../../components/IncompleteOrders24hCard';
 import { startRefillCartJob, type RefillCartItemInput } from '../../services/refillCartJobs';
 import { MedicineLinkModal } from '../../components/MedicineLinkModal';
+import { RefillOrderModal } from '../../components/RefillOrderModal';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -86,6 +87,7 @@ interface RefillPatient {
     confirmed_at?: string | null;
     cart_store_name?: string | null;
     cart_qty?: number | null;
+    in_live_cart?: boolean;
     linked_distributors?: string[];
   }[];
 }
@@ -311,6 +313,7 @@ const RefillsSection: React.FC = () => {
   const [dropUpIndex, setDropUpIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showDelayModal, setShowDelayModal] = useState(false);
+  const [orderingPatient, setOrderingPatient] = useState<RefillPatient | null>(null);
 
   // Refill draft auto-save & restore (session resumption)
   const [hasRefillDraft, setHasRefillDraft] = useState(false);
@@ -946,20 +949,14 @@ const RefillsSection: React.FC = () => {
     toastEvent.trigger(`Transferring ${sellableMeds.length} prescribed medicine(s) for ${patient.patient_name} to POS...${skipNote}`, 'info', '/pos');
   };
 
-  // Refill → Live Cart run (services/refillCartJobs.ts, popup in Layout): the server
-  // adds one medicine at a time to the linked distributor and confirms it in the
-  // cart; closing the popup keeps it running. (Replaced a name-only add that let the
-  // server guess the first search hit, and toasted "Added" on offline no-ops.)
+  // Refill → Live Cart review & order workflow (RefillOrderModal + refillCartJobs.ts background runner)
   const handleOrderRefillShortages = (patient: RefillPatient) => {
-    const items: RefillCartItemInput[] = patient.medicines
-      .filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused')
-      .map(m => ({ refillId: m.id, medicineId: m.medicine_id, medicineName: m.medicine_name, qty: Math.max(0, Number(m.quantity_needed ?? 3) - Number(m.in_stock_qty || 0)) }))
-      .filter(i => i.qty > 0);
-    if (items.length === 0) {
-      toastEvent.trigger(`All active medicines for ${patient.patient_name} are in shop stock. Nothing to order.`, 'info', '/crm');
+    const activeMeds = (patient.medicines || []).filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused');
+    if (activeMeds.length === 0) {
+      toastEvent.trigger(`No active prescribed medicines for ${patient.patient_name}.`, 'info', '/crm');
       return;
     }
-    startRefillCartJob(patient.patient_name, items);
+    setOrderingPatient(patient);
   };
 
   // ── Fast In-Memory Local Search (0ms instant autocomplete) ────────────────
@@ -1968,8 +1965,8 @@ const RefillsSection: React.FC = () => {
                                   <span>+ Live Cart ({cartOrderQty})</span>
                                 </button>
                                 {med.cart_store_name && (
-                                  <span className="px-2 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400 text-[10px] font-bold" title="Added to the live cart for this refill cycle">
-                                    🛒 {med.cart_store_name} ×{med.cart_qty}
+                                  <span className="px-2 py-1 rounded-lg bg-sky-500/15 border border-sky-500/40 text-sky-400 text-[10px] font-bold flex items-center gap-1 shadow-xs" title="Currently in today's active Pharmarack live cart">
+                                    <ShoppingCart size={10} /> In Live Cart: {med.cart_store_name} ×{med.cart_qty}
                                   </span>
                                 )}
 
@@ -2761,6 +2758,43 @@ const RefillsSection: React.FC = () => {
             refillEvent.triggerRefresh();
           }}
           onClose={() => setLinkingMedicine(null)}
+        />
+      )}
+
+      {/* ── Refill All-in-One Pre-Order Review Modal (Human-in-the-Loop) ── */}
+      {orderingPatient && (
+        <RefillOrderModal
+          patientName={orderingPatient.patient_name}
+          medicines={orderingPatient.medicines}
+          onClose={() => setOrderingPatient(null)}
+          onConfirm={(selectedItems) => {
+            setOrderingPatient(null);
+            startRefillCartJob(orderingPatient.patient_name, selectedItems);
+          }}
+          onMedicineLinked={(medId, links) => {
+            setSelectedPatient(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                medicines: prev.medicines.map(m =>
+                  m.medicine_id === medId ? { ...m, linked_distributors: links } : m
+                )
+              };
+            });
+            setData(prev => prev.map(p => ({
+              ...p,
+              medicines: p.medicines.map(m =>
+                m.medicine_id === medId ? { ...m, linked_distributors: links } : m
+              )
+            })));
+            cachedRefillsData = cachedRefillsData.map(p => ({
+              ...p,
+              medicines: p.medicines.map(m =>
+                m.medicine_id === medId ? { ...m, linked_distributors: links } : m
+              )
+            }));
+            refillEvent.triggerRefresh();
+          }}
         />
       )}
 

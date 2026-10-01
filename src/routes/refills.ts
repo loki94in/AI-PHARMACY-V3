@@ -648,6 +648,10 @@ router.get('/panel', async (req, res) => {
       }
     }
 
+    // Check real-time live cart contents (warm cache)
+    const { getCachedCartLines } = await import('./pharmarack.js');
+    const cachedCartLines = getCachedCartLines();
+
     const patientGroups: Record<string, any> = {};
     for (const row of rows) {
       const phone = row.patient_phone;
@@ -673,6 +677,22 @@ router.get('/panel', async (req, res) => {
       // Deduplicate medicine rows within group to prevent duplicate cards
       if (!patientGroups[phone].medicines.some((m: any) => m.id === row.id)) {
         const stock = stockByMedicine.get(Number(row.medicine_id));
+        
+        // Resolve active live cart line
+        let liveCartHit: { storeName: string; qty: number } | undefined;
+        if (cachedCartLines.length > 0) {
+          const normName = String(row.medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (row.cart_product_code) {
+            liveCartHit = cachedCartLines.find(c => c.storeId === Number(row.cart_store_id) && c.productCode === String(row.cart_product_code));
+          }
+          if (!liveCartHit && normName) {
+            liveCartHit = cachedCartLines.find(c => String(c.productName || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normName);
+          }
+        }
+        const finalCartStoreName = liveCartHit ? liveCartHit.storeName : (row.cart_product_code ? row.cart_store_name : null);
+        const finalCartQty = liveCartHit ? liveCartHit.qty : (row.cart_product_code ? row.cart_qty : null);
+        const inLiveCart = !!liveCartHit || (!!row.cart_product_code && !!row.cart_store_name);
+
         patientGroups[phone].medicines.push({
           id: row.id,
           medicine_id: row.medicine_id,
@@ -705,8 +725,9 @@ router.get('/panel', async (req, res) => {
           patient_confirmed: row.patient_confirmed || 0,
           confirmed_at: row.confirmed_at || null,
           // Live-cart line this refill cycle added (refill cart popup); null when none
-          cart_store_name: row.cart_product_code ? row.cart_store_name : null,
-          cart_qty: row.cart_product_code ? row.cart_qty : null,
+          cart_store_name: finalCartStoreName,
+          cart_qty: finalCartQty,
+          in_live_cart: inLiveCart,
           linked_distributors: linksByMedicine.get(Number(row.medicine_id)) || []
         });
       }

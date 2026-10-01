@@ -16,6 +16,11 @@ export interface RefillCartItemInput {
   medicineId?: number;
   medicineName: string;
   qty: number;
+  neededQty?: number;
+  stockQty?: number;
+  cartStoreName?: string | null;
+  cartQty?: number | null;
+  inLiveCart?: boolean;
 }
 
 export type RefillRowState = 'queued' | 'working' | RefillCartResult['status'];

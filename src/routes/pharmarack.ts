@@ -790,6 +790,23 @@ export const invalidatePharmarackCartCache = () => {
   userCartProbeCache = null;
 };
 
+export function getCachedCartLines(): Array<{ storeId: number; storeName: string; productCode: string; productName: string; qty: number }> {
+  if (!serverCartCache || !Array.isArray(serverCartCache.distributors)) return [];
+  const lines: Array<{ storeId: number; storeName: string; productCode: string; productName: string; qty: number }> = [];
+  for (const d of serverCartCache.distributors) {
+    for (const it of d.items || []) {
+      lines.push({
+        storeId: Number(it.storeId || d.storeId || 0),
+        storeName: String(d.storeName || ''),
+        productCode: String(it.productCode || ''),
+        productName: String(it.productName || it.name || ''),
+        qty: Number(it.qty) || 0
+      });
+    }
+  }
+  return lines;
+}
+
 // Core live-cart loader shared by GET /cart and the boot warm-up (startup-sync fix) so
 // both paths parse the upstream payload identically. Errors carry .code
 // ('NEED_LOGIN' | 'SESSION_EXPIRED') or .httpStatus so routes can map them faithfully.
