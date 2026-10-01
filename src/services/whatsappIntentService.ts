@@ -4437,6 +4437,43 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
   return false;
 }
 
+const seenInboundMessageIds = new Map<string, number>();
+const seenInboundContentKeys = new Map<string, number>();
+const INBOUND_DEDUPE_WINDOW_MS = 60_000;
+
+function isDuplicateInbound(msgId: string, chatId: string, body: string, timestamp?: number | null): boolean {
+  const now = Date.now();
+
+  // Prune expired entries older than 60s
+  if (seenInboundMessageIds.size > 200) {
+    for (const [id, ts] of seenInboundMessageIds.entries()) {
+      if (now - ts > INBOUND_DEDUPE_WINDOW_MS) seenInboundMessageIds.delete(id);
+    }
+  }
+  if (seenInboundContentKeys.size > 200) {
+    for (const [k, ts] of seenInboundContentKeys.entries()) {
+      if (now - ts > INBOUND_DEDUPE_WINDOW_MS) seenInboundContentKeys.delete(k);
+    }
+  }
+
+  // 1. Check unique message ID
+  if (msgId) {
+    if (seenInboundMessageIds.has(msgId)) {
+      return true;
+    }
+    seenInboundMessageIds.set(msgId, now);
+  }
+
+  // 2. Check composite content key (chatId + body + timestamp) for dual events
+  const contentKey = `${chatId}:${body.trim().toLowerCase()}:${timestamp || Math.floor(now / 1000)}`;
+  if (seenInboundContentKeys.has(contentKey) && (now - seenInboundContentKeys.get(contentKey)! < INBOUND_DEDUPE_WINDOW_MS)) {
+    return true;
+  }
+  seenInboundContentKeys.set(contentKey, now);
+
+  return false;
+}
+
 /**
  * Main entry point: process an inbound WhatsApp message.
  * Called from whatsappClient.ts message_create handler.
@@ -4450,6 +4487,12 @@ export async function handleInbound(msg: any): Promise<void> {
     const hasMedia = !!msg.hasMedia;
     const msgTimestamp = msg.timestamp ? Number(msg.timestamp) : null;
     const isStale = msgTimestamp ? (Math.floor(Date.now() / 1000) - msgTimestamp > 300) : false;
+
+    // Inbound deduplication shield: stop duplicate message_create events from firing double replies
+    if (isDuplicateInbound(msgId, chatId, body, msgTimestamp)) {
+      console.log(`[Intent Service] Deduplicated inbound message ${msgId || 'unknown'} from ${chatId}. Skipping duplicate execution.`);
+      return;
+    }
 
     // 1. IGNORE CHECK
     if (await isIgnored(chatId)) return;

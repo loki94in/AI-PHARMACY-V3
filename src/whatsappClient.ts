@@ -1818,9 +1818,23 @@ export async function sendMessage(
     // Use a simple hash of the full message to avoid false collisions between different orders
     const fullMsg = (caption || '').trim();
     const msgHash = hashMessageBody(fullMsg);
-    const sendKey = `${cleanPhone}:${msgHash}:${fullMsg.length}`;
+    let dedupeTarget = cleanPhone;
+    if (isLidRecipient) {
+      try {
+        const db = await dbManager.getConnection();
+        const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [recipient]);
+        if (chatRow?.resolved_number) {
+          const digits = chatRow.resolved_number.replace(/\D/g, '').slice(-10);
+          if (digits.length >= 10) dedupeTarget = digits;
+        }
+      } catch (_) {}
+    }
+    const sendKey1 = `${dedupeTarget}:${msgHash}:${fullMsg.length}`;
+    const sendKey2 = `${cleanPhone}:${msgHash}:${fullMsg.length}`;
     const nowTs = Date.now();
-    if (recentSendsCache.has(sendKey) && nowTs - recentSendsCache.get(sendKey)! < 30000) {
+    const isDup = (recentSendsCache.has(sendKey1) && nowTs - recentSendsCache.get(sendKey1)! < 30000) ||
+                  (recentSendsCache.has(sendKey2) && nowTs - recentSendsCache.get(sendKey2)! < 30000);
+    if (isDup) {
       console.log(`[WhatsApp Safeguard] Suppressed duplicate send to ${cleanPhone} within 30s.`);
       aggregateResult = { sent: true, suppressed: true };
       continue;
@@ -1830,7 +1844,8 @@ export async function sendMessage(
     // two near-simultaneous calls for the same recipient+body both pass the check above
     // while the first was still awaiting delivery, double-delivering the message.
     // The catch below deletes the key on failure so legitimate retries stay unblocked.
-    recentSendsCache.set(sendKey, nowTs);
+    recentSendsCache.set(sendKey1, nowTs);
+    recentSendsCache.set(sendKey2, nowTs);
 
     let success = false;
     let messageId = `msg_out_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
@@ -2157,7 +2172,8 @@ export async function sendMessage(
         }
 
         // Send confirmed — register in recent sends cache
-        recentSendsCache.set(sendKey, Date.now());
+        recentSendsCache.set(sendKey1, Date.now());
+        recentSendsCache.set(sendKey2, Date.now());
         if (resolvedTargetChatId && resolvedTargetChatId !== chatId) {
           const lidUser = resolvedTargetChatId.split('@')[0];
           recentSendsCache.set(`${lidUser}:${msgHash}:${fullMsg.length}`, Date.now());
@@ -2258,11 +2274,13 @@ export async function sendMessage(
         }
 
         // Send confirmed — register in recent sends cache
-        recentSendsCache.set(sendKey, Date.now());
+        recentSendsCache.set(sendKey1, Date.now());
+        recentSendsCache.set(sendKey2, Date.now());
       }
     } catch (err: any) {
       // Clear cache on error so retries are never blocked
-      recentSendsCache.delete(sendKey);
+      recentSendsCache.delete(sendKey1);
+      recentSendsCache.delete(sendKey2);
       console.error('[WhatsApp Client Wrapper] Send failed:', err?.message || err);
       throw err;
     }

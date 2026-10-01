@@ -87,4 +87,15 @@ for (const lang of langs) {
 }
 
 console.log('✔ All Localized Chatbot Interactive Messages tests passed!');
+
+// Fallback & Resilience Tests
+const undefLangMsg = getMessage(undefined as any, 'whatsapp.bot.askName', { storeName: 'Apollo Medical', hoursNotice: '' });
+assert.ok(undefLangMsg.includes('Apollo Medical'), 'Undefined lang should fall back to English');
+assert.ok(!undefLangMsg.includes('[Missing:'), 'Undefined lang must never output [Missing: ...]');
+
+const fallbackDefault = getMessage('unknown_lang' as any, 'whatsapp.bot.askName', { storeName: 'Apollo Medical', hoursNotice: '' });
+assert.ok(fallbackDefault.includes('Apollo Medical'), 'Unknown lang should fall back cleanly');
+assert.ok(!fallbackDefault.includes('[Missing:'), 'Unknown lang must never output [Missing: ...]');
+
+console.log('✔ All i18n Fallback & Resilience tests passed!');
 console.log('ALL TESTS PASSED SUCCESSFULLY! 🚀');

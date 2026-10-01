@@ -1,38 +1,18 @@
-# Active Implementation Plan: Marathi & Hindi WhatsApp Chatbot
+# Active Implementation Plan: Dev Chatbot Double-Reply & i18n Resilience
 
-> **Master Specification**: [MARATHI_HINDI_WHATSAPP_CHATBOT_IMPLEMENTATION_PLAN.md](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/MARATHI_HINDI_WHATSAPP_CHATBOT_IMPLEMENTATION_PLAN.md)
+> **Master Plan**: [DEV_CHATBOT_DUPLICATE_AND_I18N_FIX_IMPLEMENTATION_PLAN.md](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/DEV_CHATBOT_DUPLICATE_AND_I18N_FIX_IMPLEMENTATION_PLAN.md)
 > **Goal**: 
-> 1. Add automatic Marathi & Hindi language detection for inbound WhatsApp customer messages.
-> 2. Persist customer language in `whatsapp_chats` (`language TEXT DEFAULT 'en'`) with human-in-the-loop override capability.
-> 3. Provide full Marathi & Hindi chatbot localization for all interactive conversation flows (greeting, name, order type, medicine options, confirmation, special order).
+> 1. Stop background duplicate/stale production process so DEV environment (`npm run dev:server`) has full ownership of port 5175 and the WhatsApp connection.
+> 2. Prevent duplicate responses (double-reply bug) by adding message ID and content-hash sliding-window deduplication in `handleInbound` (`src/services/whatsappIntentService.ts`) and `whatsappClient.ts`.
+> 3. Provide resilient, self-contained i18n bundling in `src/i18n/getMessage.ts` with static JSON loading, multi-tier fallback to English (`en`), and graceful default text instead of raw `[Missing: ...]` tokens.
+> 4. Ensure human-in-the-loop controls allow pharmacists to override language and take over chat sessions at any time.
 > **Status**: Completed
 
 ---
 
 ## Tasks Checklist
 
-- [x] `Task 1`: Database Schema Safety Update (`src/database.ts` & `src/services/whatsappIntentService.ts`)
-  - **Completed**: Added `language TEXT DEFAULT 'en'` to `whatsapp_chats` in `CREATE TABLE`, migration v66 block, and `ensureSchema` fast boot in `src/database.ts`. Added `language TEXT DEFAULT 'en'` to `wa_pending_clarifications` in `src/services/whatsappIntentService.ts`. Executed runtime migration on `app.db`.
-- [x] `Task 2`: Intelligent Language Detector Service (`src/services/languageDetector.ts`)
-  - **Completed**: Implemented `detectLanguage(text, currentLang)` and `detectExplicitLanguageSwitch(text)`. Detects Devanagari script, Marathi unique letters ('ळ' / `\u0933`) and vocabulary, Hindi vocabulary, Romanized Marathi/Hindi, and explicit language switch phrases ("मराठी", "हिंदी", "english"). Retains conversation language for neutral tokens (e.g., numbers, medicine names).
-- [x] `Task 3`: Interactive Chatbot Localization Strings (`src/i18n/messages.json`)
-  - **Completed**: Added comprehensive bot prompt templates for English, Hindi (`hi`), and Marathi (`mr`) under `whatsapp.bot.*` (`askName`, `retryName`, `welcomeMenu`, `orderTypeSinglePrompt`, `orderTypeMultiPrompt`, `askQuantity`, `orderConfirmed`, `outOfStockSpecialOrder`, `specialOrderPlaced`, `noRefillsFound`, `paymentQrPrompt`, `langSwitched`, `cancelled`).
-- [x] `Task 4`: Wire Language Detection & Localized Routing in `whatsappIntentService.ts`
-  - **Completed**:
-    - Fixed greeting punctuation stripping to preserve Unicode letters and nonspacing marks using `/[^\p{L}\p{M}\p{N}\s]/gu`.
-    - Added Devanagari greetings (`नमस्ते`, `नमस्कार`, `सस्नेह नमस्कार`, `प्रणाम`, `राम राम`, `राधे राधे`, `हाय`, `हॅलो`) to `isGreeting`.
-    - Integrated language detection upon inbound message, auto-updating `whatsapp_chats` and `wa_pending_clarifications`.
-    - Localized all interactive stages (`awaiting_customer_name`, `awaiting_order_type`, `awaiting_medicine`, `awaiting_refill_choice`, `awaiting_confirmation`, out-of-stock special orders).
-    - Added Devanagari affirmations (`हो`, `होय`, `चालेल`, `पाठवा`, `द्या`, `हाँ`, `हां`) and negations (`नाही`, `नको`, `रद्द`).
-- [x] `Task 5`: Human-in-the-Loop Language Management API & CRM UI (`src/routes/messaging.ts`, `frontend/src/pages/CRM/index.tsx`)
-  - **Completed**:
-    - Updated `src/whatsappClient.ts` `getChats()` to retrieve `language`.
-    - Added `PATCH /api/messaging/chats/:id/language` endpoint in `src/routes/messaging.ts`.
-    - Added `updateChatLanguage` method to `frontend/src/services/api.ts`.
-    - In `frontend/src/pages/CRM/index.tsx`, displayed customer's active language badge and added a language dropdown selector in the chat thread header for pharmacists to manually inspect or override the customer's language.
-- [x] `Task 6`: Verification, Performance Guardrails, and Auto-Knowledge Graph Update
-  - **Completed**:
-    - Automated unit tests in `tests/marathiHindiChatbot.test.ts` passed (100% assertions verified).
-    - `npx tsc --noEmit` passed with 0 errors.
-    - `npm run guardrails` passed (exit code 0, speed architecture intact).
-    - Ran `node scripts/quick-update.mjs` to synchronize project knowledge graph.
+- [x] `Task 1`: Kill Stale Background Production Process (`PharmacyBackend.exe` PID 14992)
+- [x] `Task 2`: Resilient Static i18n & Graceful Fallback (`src/i18n/getMessage.ts`)
+- [x] `Task 3`: Inbound Message Deduplication (`src/services/whatsappIntentService.ts` & `src/whatsappClient.ts`)
+- [x] `Task 4`: Verification, Performance Guardrails, and Auto-Knowledge Graph Update
