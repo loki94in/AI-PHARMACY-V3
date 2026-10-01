@@ -50,7 +50,6 @@ import {
   Image as ImageIcon,
   Power,
   Store as StoreIcon,
-  ShoppingCart,
 } from 'lucide-react';
 import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import {

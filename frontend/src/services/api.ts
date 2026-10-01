@@ -552,6 +552,9 @@ export interface CompactInventoryItem {
   medicine_name: string;
   loose_qty?: number;
   allow_loose_sale?: number | boolean;
+  location?: string;
+  rack?: string;
+  shelf?: string;
 }
 
 export interface WhatsAppDeliveryRecord {
