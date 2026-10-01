@@ -34005,6 +34005,7 @@ async function checkShortageRequestsAndNotifyAdmin(db2) {
   const shortageEnabledRow = await connection.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_shortage_notice_enabled'");
   const shortageNoticeEnabled = shortageEnabledRow?.value !== "false";
   let notifiedCount = 0;
+  const unavailableItems = [];
   for (const item of pendingRequests) {
     const medName = item.product || "";
     if (!medName) continue;
@@ -34065,55 +34066,60 @@ async function checkShortageRequestsAndNotifyAdmin(db2) {
         continue;
       }
     }
-    const distName = item.pharmarack_distributor || "Preferred Distributor";
-    const qtyNeeded = item.qty || 1;
-    const adminMessage = `\u{1F6A8} *ADMIN ORDER REMINDER (>23 Hours Unavailable)*
-
-The requested medicine has not been added to inventory for over 23 hours.
-
-\u{1F4E6} *Medicine:* ${medName}
-\u{1F3ED} *Distributor Name:* ${distName}
-\u{1F522} *Suggested Qty:* ${qtyNeeded}
-\u{1F4C5} *Requested On:* ${new Date(item.date).toLocaleString("en-IN")}
-
-\u{1F449} *Action Required:* Please add this item to today's order for ${distName}.`;
+    unavailableItems.push(item);
+    await connection.run(
+      `UPDATE special_orders
+       SET status = 'Ordered', notes = 'Processed in daily shortage check'
+       WHERE id = ?`,
+      [item.id]
+    );
+  }
+  if (unavailableItems.length > 0) {
     const { getPharmacyOwnerPhone: getPharmacyOwnerPhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
     const storeOwnerPhone = await getPharmacyOwnerPhone2(connection);
     const recipientName = "Admin / Store Owner";
     const adminPhone = storeOwnerPhone ? storeOwnerPhone.replace(/\D/g, "") : "";
     if (adminPhone && adminPhone.length >= 10 && shortageNoticeEnabled) {
       const formattedPhone = adminPhone.length === 10 ? `91${adminPhone}` : adminPhone;
+      const itemLines = unavailableItems.map((item, idx) => {
+        const distName = item.pharmarack_distributor || "Preferred Distributor";
+        const qtyNeeded = item.qty || 1;
+        return `${idx + 1}. *${item.product}* \xD7 ${qtyNeeded} (Distributor: ${distName})`;
+      }).join("\n");
+      const consolidatedAdminMessage = `\u{1F6A8} *ADMIN ORDER REMINDER (>23 Hours Unavailable)*
+
+The following ${unavailableItems.length} requested item(s) have not been added to inventory for over 23 hours:
+
+${itemLines}
+
+\u{1F449} *Action Required:* Please add these items to today's distributor purchase orders.`;
       try {
-        await notificationService.sendWhatsApp(formattedPhone, adminMessage, void 0, void 0, "admin_shortage_reminder");
+        await notificationService.sendWhatsApp(formattedPhone, consolidatedAdminMessage, void 0, void 0, "admin_shortage_reminder");
         await connection.run(
           "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-          ["SHORTAGE_REMINDER_SENT", `Sent admin shortage order reminder for ${medName} to ${formattedPhone}`]
+          ["SHORTAGE_REMINDER_SENT", `Sent consolidated admin shortage reminder for ${unavailableItems.length} item(s) to ${formattedPhone}`]
         );
+        const refIds = unavailableItems.map((it) => `shortage_${it.id}`).join(",");
         await connection.run(
           `INSERT INTO automation_notifications 
            (type, recipient_name, recipient_phone, message, status, reference_id)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          ["admin_shortage_reminder", recipientName, formattedPhone, adminMessage, "sent", `shortage_${item.id}`]
+          ["admin_shortage_reminder", recipientName, formattedPhone, consolidatedAdminMessage, "sent", refIds]
         );
       } catch (err) {
-        console.error(`[ShortageReminder] Failed to send WhatsApp to admin at ${formattedPhone}:`, err);
+        console.error(`[ShortageReminder] Failed to send consolidated WhatsApp to admin at ${formattedPhone}:`, err);
+        const refIds = unavailableItems.map((it) => `shortage_${it.id}`).join(",");
         await connection.run(
           `INSERT INTO automation_notifications 
            (type, recipient_name, recipient_phone, message, status, error_message, reference_id)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          ["admin_shortage_reminder", recipientName, formattedPhone, adminMessage, "failed", err?.message || "Send failed", `shortage_${item.id}`]
+          ["admin_shortage_reminder", recipientName, formattedPhone, consolidatedAdminMessage, "failed", err?.message || "Send failed", refIds]
         );
       }
     } else {
-      console.warn("[ShortageReminder] Pharmacy Owner WhatsApp number not configured in Settings.");
+      console.warn("[ShortageReminder] Pharmacy Owner WhatsApp number not configured or alert disabled in Settings.");
     }
-    await connection.run(
-      `UPDATE special_orders
-       SET status = 'Ordered', notes = 'Admin notified via WhatsApp reminder'
-       WHERE id = ?`,
-      [item.id]
-    );
-    notifiedCount++;
+    notifiedCount = unavailableItems.length;
   }
   return { scanned: pendingRequests.length, notified: notifiedCount };
 }
@@ -45174,11 +45180,46 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
   ).catch(() => ({ count: 0 }));
   const callCount = Number(pendingCallTasks?.count || 0);
   const activeOrders = await db2.all(
-    `SELECT requester, product, qty, status, customer_order_source
+    `SELECT id, requester, phone, product, qty, status, customer_order_source
      FROM special_orders
-     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched')
+     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
        AND DATE(date) >= DATE('now', 'localtime', '-7 days')
-     ORDER BY date DESC, id DESC LIMIT 15`
+     ORDER BY date DESC, id DESC LIMIT 50`
+  ).catch(() => []);
+  const customerOrderMap = /* @__PURE__ */ new Map();
+  for (const o of activeOrders) {
+    const custName = (o.requester || "Customer").trim();
+    const phone = String(o.phone || "").trim();
+    const key = phone ? phone : custName.toLowerCase();
+    const rawSrc = (o.customer_order_source || "").toLowerCase();
+    let srcBadge = "Special Order";
+    if (rawSrc === "website") srcBadge = "Website Order";
+    else if (rawSrc === "whatsapp") srcBadge = "WhatsApp Order";
+    else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online Order";
+    else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
+    if (!customerOrderMap.has(key)) {
+      customerOrderMap.set(key, {
+        customerKey: key,
+        requester: custName,
+        phone,
+        orderSource: srcBadge,
+        items: []
+      });
+    }
+    const group = customerOrderMap.get(key);
+    group.items.push({
+      product: o.product,
+      qty: Number(o.qty || 1),
+      status: o.status || "Pending"
+    });
+  }
+  const groupedCustomerOrders = Array.from(customerOrderMap.values()).slice(0, 15);
+  const pendingShortages = await db2.all(
+    `SELECT id, product, requester, phone, qty, pharmarack_distributor, date
+     FROM special_orders
+     WHERE status IN ('Pending', 'PENDING')
+       AND datetime(date) <= datetime('now', '-23 hours')
+     ORDER BY date ASC LIMIT 10`
   ).catch(() => []);
   const stagedRows = await db2.all(`
     SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
@@ -45199,15 +45240,12 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     return ymd;
   };
   let ordersBlock = "\u2022 No pending orders";
-  if (activeOrders.length > 0) {
-    ordersBlock = activeOrders.map((o, i) => {
-      const rawSrc = (o.customer_order_source || "").toLowerCase();
-      let srcBadge = "Special Order";
-      if (rawSrc === "website") srcBadge = "Website Order";
-      else if (rawSrc === "whatsapp") srcBadge = "WhatsApp Order";
-      else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online Order";
-      else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
-      return `${i + 1}. *${o.requester || "Customer"}* [${srcBadge}]: ${o.product} \xD7 ${o.qty} (${o.status})`;
+  if (groupedCustomerOrders.length > 0) {
+    ordersBlock = groupedCustomerOrders.map((cust, i) => {
+      const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
+      const itemLines = cust.items.map((item) => `   - ${item.product} \xD7 ${item.qty} (${item.status})`).join("\n");
+      return `${i + 1}. *${cust.requester}* (${itemCountLabel} \u2022 ${cust.orderSource}):
+${itemLines}`;
     }).join("\n");
   }
   let incomplete24hAudit = { overdue: [], marketPaused: [], stats: { totalOverdueCount: 0, totalPausedCount: 0, totalOverdueMedicines: 0, totalPausedMedicines: 0 } };
@@ -45250,6 +45288,11 @@ ${pausedDetails}${extraPaused}`);
   const dailyTasks = [];
   if (incomplete24hAudit.overdue.length > 0) {
     dailyTasks.push(`\u{1F6A8} *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA \u2014 push to Pharmarack or contact distributor`);
+  }
+  if (pendingShortages.length > 0) {
+    const shortMeds = pendingShortages.map((s) => `${s.product} \xD7 ${s.qty || 1} (${s.pharmarack_distributor || "Distributor"})`).slice(0, 4);
+    const extra = pendingShortages.length > 4 ? ` +${pendingShortages.length - 4} more` : "";
+    dailyTasks.push(`\u{1F4E6} *Reorder Shortage Items (>23h Pending)*: ${shortMeds.join(", ")}${extra}`);
   }
   if (outOfStockRefills.length > 0) {
     const holdPatients = Array.from(new Set(outOfStockRefills.map((r) => r.patient_name)));
@@ -45346,6 +45389,14 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
         return `${i + 1}. *${r.patient_name}* (Due ${formatDate(r.earliest_due)}) \u2014 ${medUnit} (${stockStatus})`;
       }).join("\n");
     }
+    let t1Orders = "\u2022 No pending orders";
+    if (groupedCustomerOrders.length > 0) {
+      t1Orders = groupedCustomerOrders.map((cust, i) => {
+        const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
+        const statuses = Array.from(new Set(cust.items.map((it) => it.status))).join(", ");
+        return `${i + 1}. *${cust.requester}* \u2014 ${itemCountLabel} [${cust.orderSource}] (${statuses})`;
+      }).join("\n");
+    }
     messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
@@ -45354,7 +45405,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 ${t1Refills}
 
 \u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
   } else if (templateKey === "checklist") {
     const t2Items = [];
     if (incomplete24hAudit.overdue.length > 0) {
@@ -45367,12 +45418,16 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
     if (holdRefills.length > 0) {
       t2Items.push(`[ ] *URGENT REORDER*: ${holdRefills.map((r) => r.patient_name).join(", ")} (Stock Needed)`);
     }
+    if (pendingShortages.length > 0) {
+      t2Items.push(`[ ] *SHORTAGE REORDERS (>23H)*: Add ${pendingShortages.length} pending shortage item(s) to distributor cart`);
+    }
     const inStockRefills = refillRows.filter((r) => r.out_of_stock_count === 0);
     if (inStockRefills.length > 0) {
       t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(", ")}`);
     }
-    if (activeOrders.length > 0) {
-      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${activeOrders.length} special/online order(s)`);
+    if (groupedCustomerOrders.length > 0) {
+      const totalOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
+      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${groupedCustomerOrders.length} customer order(s) (${totalOrderItems} total items)`);
     }
     if (callCount > 0) {
       t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
@@ -45396,6 +45451,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
   } else {
     const totalRefillsDue = refillRows.reduce((acc, r) => acc + (r.med_count || 1), 0);
+    const totalSpecialOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
     let milestoneMetrics = "";
     if (isMilestoneDate) {
       milestoneMetrics = `
@@ -45407,7 +45463,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
 
 \u{1F4CA} *Morning KPI Dashboard*:
 \u2022 \u{1F4CB} Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
-\u2022 \u{1F4E6} Active Orders: *${activeOrders.length}*
+\u2022 \u{1F4E6} Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
 \u2022 \u23F1\uFE0F 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
 \u2022 \u23F8\uFE0F Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
 \u2022 \u{1F4DE} Pending Calls: *${callCount}*
@@ -53150,7 +53206,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.29";
+    APP_VERSION = "0.1.31";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -70599,6 +70655,26 @@ var init_telegramPrescription = __esm({
   }
 });
 
+// src/utils/localTime.ts
+function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function normalizeToLocalSqlDateTime(value) {
+  if (value === void 0 || value === null || value === "") return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
+}
+var pad;
+var init_localTime = __esm({
+  "src/utils/localTime.ts"() {
+    "use strict";
+    pad = (n) => String(n).padStart(2, "0");
+  }
+});
+
 // src/services/refillCartService.ts
 function flattenCart(cart) {
   const lines = [];
@@ -71063,6 +71139,7 @@ var init_refills = __esm({
     init_nameFormatter();
     init_storeContextService();
     init_pharmacyCalendar();
+    init_localTime();
     init_refillCartService();
     router19 = import_express19.default.Router();
     refillsTableInitialized = false;
@@ -71101,7 +71178,7 @@ var init_refills = __esm({
         const intervalDays = parseIntervalDays(refill_interval_days);
         const nextRefillDate = /* @__PURE__ */ new Date();
         nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
-        const nextRefillStr = nextRefillDate.toISOString().slice(0, 19).replace("T", " ");
+        const nextRefillStr = toLocalSqlDateTime(nextRefillDate);
         const cleanPhone = (patient_phone || "").trim();
         const cleanName = formatCustomerName(patient_name);
         const cleanLang = (language || "en").trim();
@@ -71228,86 +71305,98 @@ var init_refills = __esm({
         const origPhone = (original_phone || cleanPhone).trim();
         const cleanName = (patient_name || "Customer").trim();
         const cleanLang = (language || "en").trim();
-        let customerId = req.body.customer_id || null;
-        if (!customerId && (cleanPhone || cleanName || origPhone)) {
-          let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-          if (!cust && origPhone && origPhone !== cleanPhone) {
-            cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [origPhone]);
-          }
-          if (!cust && cleanName && cleanName.toLowerCase() !== "customer") {
-            cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [cleanName]);
-          }
-          if (cust) {
-            customerId = cust.id;
-            await db2.run("UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?", [cleanName, cleanPhone, cleanLang, customerId]);
-          } else if (cleanPhone || cleanName) {
-            const custRes = await db2.run("INSERT INTO customers (name, phone, language) VALUES (?, ?, ?)", [cleanName, cleanPhone, cleanLang]);
-            customerId = custRes.lastID;
-          }
-        } else if (customerId) {
-          await db2.run("UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?", [cleanName, cleanPhone, cleanLang, customerId]);
-        }
-        const existingRows = await db2.all(
-          `SELECT * FROM patient_refills 
-       WHERE patient_phone = ? OR patient_phone = ? OR (customer_id IS NOT NULL AND customer_id = ?)`,
-          [origPhone, cleanPhone, customerId]
-        );
-        const existingMap = /* @__PURE__ */ new Map();
-        for (const r of existingRows) {
-          existingMap.set(r.medicine_id, r);
-        }
-        const processedMedicineIds = /* @__PURE__ */ new Set();
+        await db2.run("BEGIN");
         let defaultNextRefillStr;
-        if (next_refill_date) {
-          defaultNextRefillStr = next_refill_date;
-        } else {
-          const nextRefillDate = /* @__PURE__ */ new Date();
-          nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
-          defaultNextRefillStr = nextRefillDate.toISOString().slice(0, 19).replace("T", " ");
-        }
-        for (const med of medicines) {
-          const medId = Number(med.medicine_id || med.medicineId);
-          if (!medId || isNaN(medId)) continue;
-          processedMedicineIds.add(medId);
-          const qtyNeeded = parseInt(med.quantity_needed || med.quantity, 10) || 3;
-          const existing = existingMap.get(medId);
-          if (existing) {
-            let targetNextDate = next_refill_date;
-            if (!targetNextDate) {
-              if (existing.refill_interval_days === intervalDays && existing.next_refill_date && new Date(existing.next_refill_date) > /* @__PURE__ */ new Date()) {
-                targetNextDate = existing.next_refill_date;
-              } else {
-                targetNextDate = defaultNextRefillStr;
+        let removedRows = [];
+        try {
+          let customerId = req.body.customer_id || null;
+          if (!customerId && (cleanPhone || cleanName || origPhone)) {
+            let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+            if (!cust && origPhone && origPhone !== cleanPhone) {
+              cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [origPhone]);
+            }
+            if (!cust && cleanName && cleanName.toLowerCase() !== "customer") {
+              cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [cleanName]);
+            }
+            if (cust) {
+              customerId = cust.id;
+              await db2.run("UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?", [cleanName, cleanPhone, cleanLang, customerId]);
+            } else if (cleanPhone || cleanName) {
+              const custRes = await db2.run("INSERT INTO customers (name, phone, language) VALUES (?, ?, ?)", [cleanName, cleanPhone, cleanLang]);
+              customerId = custRes.lastID;
+            }
+          } else if (customerId) {
+            await db2.run("UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?", [cleanName, cleanPhone, cleanLang, customerId]);
+          }
+          const existingRows = await db2.all(
+            `SELECT * FROM patient_refills 
+         WHERE patient_phone = ? OR patient_phone = ? OR (customer_id IS NOT NULL AND customer_id = ?)`,
+            [origPhone, cleanPhone, customerId]
+          );
+          const existingMap = /* @__PURE__ */ new Map();
+          for (const r of existingRows) {
+            existingMap.set(r.medicine_id, r);
+          }
+          const processedMedicineIds = /* @__PURE__ */ new Set();
+          if (next_refill_date) {
+            defaultNextRefillStr = next_refill_date;
+          } else {
+            const nextRefillDate = /* @__PURE__ */ new Date();
+            nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
+            defaultNextRefillStr = toLocalSqlDateTime(nextRefillDate);
+          }
+          for (const med of medicines) {
+            const medId = Number(med.medicine_id || med.medicineId);
+            if (!medId || isNaN(medId)) continue;
+            processedMedicineIds.add(medId);
+            const qtyNeeded = parseInt(med.quantity_needed || med.quantity, 10) || 3;
+            const existing = existingMap.get(medId);
+            if (existing) {
+              let targetNextDate = next_refill_date;
+              if (!targetNextDate) {
+                if (existing.refill_interval_days === intervalDays && existing.next_refill_date && new Date(existing.next_refill_date) > /* @__PURE__ */ new Date()) {
+                  targetNextDate = existing.next_refill_date;
+                } else {
+                  targetNextDate = defaultNextRefillStr;
+                }
+              }
+              await db2.run(
+                `UPDATE patient_refills 
+             SET customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
+                 next_refill_date = ?, quantity_needed = ?, is_active = 1, language = ?
+             WHERE id = ?`,
+                [customerId, cleanName, cleanPhone, intervalDays, targetNextDate, qtyNeeded, cleanLang, existing.id]
+              );
+            } else {
+              await db2.run(
+                `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, is_active, language)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?)`,
+                [customerId, cleanName, cleanPhone, medId, intervalDays, defaultNextRefillStr, qtyNeeded, cleanLang]
+              );
+            }
+          }
+          if (req.body.customer_id || existingRows.length > 0 && req.body.is_edit) {
+            for (const [medId, r] of existingMap.entries()) {
+              if (!processedMedicineIds.has(medId)) {
+                removedRows.push(r);
+                await db2.run("DELETE FROM patient_refills WHERE id = ?", [r.id]);
+                await db2.run(
+                  `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
+                  [String(r.id), `${r.id},%`, `%,${r.id}%`]
+                ).catch(() => {
+                });
               }
             }
-            await db2.run(
-              `UPDATE patient_refills 
-           SET customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
-               next_refill_date = ?, quantity_needed = ?, is_active = 1, language = ?
-           WHERE id = ?`,
-              [customerId, cleanName, cleanPhone, intervalDays, targetNextDate, qtyNeeded, cleanLang, existing.id]
-            );
-          } else {
-            await db2.run(
-              `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, is_active, language)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?)`,
-              [customerId, cleanName, cleanPhone, medId, intervalDays, defaultNextRefillStr, qtyNeeded, cleanLang]
-            );
           }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK").catch(() => {
+          });
+          throw txErr;
         }
-        const removedRows = [];
-        for (const [medId, r] of existingMap.entries()) {
-          if (!processedMedicineIds.has(medId)) {
-            removedRows.push(r);
-            await db2.run("DELETE FROM patient_refills WHERE id = ?", [r.id]);
-            await db2.run(
-              `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
-              [String(r.id), `${r.id},%`, `%,${r.id}%`]
-            ).catch(() => {
-            });
-          }
+        if (removedRows.length > 0) {
+          removeRefillCartLines(removedRows, false);
         }
-        removeRefillCartLines(removedRows, false);
         await checkAllRefills(db2);
         res.json({ success: true, message: "Patient refill schedule synchronized successfully", interval_days: intervalDays, next_refill_date: defaultNextRefillStr });
       } catch (err) {
@@ -82219,26 +82308,6 @@ var init_license = __esm({
       }
     });
     license_default = router33;
-  }
-});
-
-// src/utils/localTime.ts
-function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-function normalizeToLocalSqlDateTime(value) {
-  if (value === void 0 || value === null || value === "") return null;
-  const s = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
-}
-var pad;
-var init_localTime = __esm({
-  "src/utils/localTime.ts"() {
-    "use strict";
-    pad = (n) => String(n).padStart(2, "0");
   }
 });
 
