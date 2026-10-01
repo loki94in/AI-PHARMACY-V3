@@ -44983,13 +44983,12 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   const storePhone = await getStorePhone(db2);
   const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
   const readyRefills = await db2.all(
-    `SELECT pr.id, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, pr.quantity, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
        AND pr.is_active = 1
        AND pr.status NOT IN ('completed', 'canceled', 'notified')
-       AND (pr.is_ready = 1 OR pr.hold_for_stock = 0)
        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
      ORDER BY pr.id ASC`,
     [patientPhone, patientName]
@@ -45002,19 +45001,41 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
     );
     return;
   }
-  const medNames = Array.from(new Set(readyRefills.map((r) => r.medicine_name).filter(Boolean)));
-  const refillIds = readyRefills.map((r) => r.id);
-  let formattedMeds = "";
-  if (medNames.length === 1) {
-    formattedMeds = medNames[0];
-  } else if (medNames.length === 2) {
-    formattedMeds = `${medNames[0]} and ${medNames[1]}`;
-  } else {
-    formattedMeds = `${medNames.slice(0, -1).join(", ")}, and ${medNames[medNames.length - 1]}`;
+  const seenMeds = /* @__PURE__ */ new Map();
+  for (const r of readyRefills) {
+    const name = (r.medicine_name || "").trim();
+    if (!name) continue;
+    if (!seenMeds.has(name)) {
+      seenMeds.set(name, {
+        id: r.id,
+        medicine_name: name,
+        quantity: Number(r.quantity_needed || r.quantity || 1)
+      });
+    }
   }
-  const noun = medNames.length > 1 ? "refills" : "refill";
-  const medNoun = medNames.length > 1 ? "medicines" : "medicine";
-  const msg = `Hi ${patientName}, your ${noun} for ${formattedMeds} ${medNames.length > 1 ? "are" : "is"} in stock and ready. You may collect your ${medNoun} anytime from ${storeLabel}.`;
+  const items = Array.from(seenMeds.values());
+  const refillIds = readyRefills.map((r) => r.id);
+  let msg;
+  if (items.length === 1) {
+    msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.
+
+You may collect from ${storeLabel}.
+\u{1F449} *Reply "REFILL" or "YES" to confirm.*`;
+  } else {
+    const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
+    msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your regular prescription is due for refill:
+
+${medList}
+
+You may collect from ${storeLabel}.
+\u{1F449} *Reply "REFILL" or "YES" to confirm.*`;
+  }
   const referenceIdStr = refillIds.join(",");
   const existing = await db2.get(
     `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
@@ -53223,7 +53244,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.32";
+    APP_VERSION = "0.1.33";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
