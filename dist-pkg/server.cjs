@@ -27005,6 +27005,7 @@ __export(pharmarack_exports, {
   addItemsToPharmarackCart: () => addItemsToPharmarackCart,
   adjustSpecialOrderInLiveCart: () => adjustSpecialOrderInLiveCart,
   default: () => pharmarack_default,
+  getCachedCartLines: () => getCachedCartLines,
   invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
   isItemInStock: () => isItemInStock,
   loadLiveCartCore: () => loadLiveCartCore,
@@ -27446,6 +27447,22 @@ async function probeUserCartDetails(timeoutMs) {
     userCartProbeCache = entry;
   }
   return entry;
+}
+function getCachedCartLines() {
+  if (!serverCartCache || !Array.isArray(serverCartCache.distributors)) return [];
+  const lines = [];
+  for (const d of serverCartCache.distributors) {
+    for (const it of d.items || []) {
+      lines.push({
+        storeId: Number(it.storeId || d.storeId || 0),
+        storeName: String(d.storeName || ""),
+        productCode: String(it.productCode || ""),
+        productName: String(it.productName || it.name || ""),
+        qty: Number(it.qty) || 0
+      });
+    }
+  }
+  return lines;
 }
 async function loadLiveCartCore() {
   const settings = await getPharmarackSettings();
@@ -53206,7 +53223,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.31";
+    APP_VERSION = "0.1.32";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -71592,6 +71609,8 @@ var init_refills = __esm({
             linksByMedicine.set(key, [...linksByMedicine.get(key) || [], String(lr.store_name)]);
           }
         }
+        const { getCachedCartLines: getCachedCartLines2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+        const cachedCartLines = getCachedCartLines2();
         const patientGroups = {};
         for (const row of rows) {
           const phone = row.patient_phone;
@@ -71614,6 +71633,19 @@ var init_refills = __esm({
           const medReminderStatus = row.reminder_status || (row.status === "notified" ? "SENT" : "NOT_SENT");
           if (!patientGroups[phone].medicines.some((m) => m.id === row.id)) {
             const stock = stockByMedicine.get(Number(row.medicine_id));
+            let liveCartHit;
+            if (cachedCartLines.length > 0) {
+              const normName = String(row.medicine_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              if (row.cart_product_code) {
+                liveCartHit = cachedCartLines.find((c) => c.storeId === Number(row.cart_store_id) && c.productCode === String(row.cart_product_code));
+              }
+              if (!liveCartHit && normName) {
+                liveCartHit = cachedCartLines.find((c) => String(c.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "") === normName);
+              }
+            }
+            const finalCartStoreName = liveCartHit ? liveCartHit.storeName : row.cart_product_code ? row.cart_store_name : null;
+            const finalCartQty = liveCartHit ? liveCartHit.qty : row.cart_product_code ? row.cart_qty : null;
+            const inLiveCart = !!liveCartHit || !!row.cart_product_code && !!row.cart_store_name;
             patientGroups[phone].medicines.push({
               id: row.id,
               medicine_id: row.medicine_id,
@@ -71647,8 +71679,9 @@ var init_refills = __esm({
               patient_confirmed: row.patient_confirmed || 0,
               confirmed_at: row.confirmed_at || null,
               // Live-cart line this refill cycle added (refill cart popup); null when none
-              cart_store_name: row.cart_product_code ? row.cart_store_name : null,
-              cart_qty: row.cart_product_code ? row.cart_qty : null,
+              cart_store_name: finalCartStoreName,
+              cart_qty: finalCartQty,
+              in_live_cart: inLiveCart,
               linked_distributors: linksByMedicine.get(Number(row.medicine_id)) || []
             });
           }

@@ -2996,7 +2996,23 @@ const QuickAssistSidebar = memo(({
     setSendingNotifKeys(prev => new Set(prev).add(group.key));
 
     try {
-      if (group.recipient_phone) {
+      const normalizeP = (p?: string | null) => (p || '').replace(/\D/g, '').slice(-10);
+      const normGroupPhone = normalizeP(group.recipient_phone);
+      const refillGroup = groupedActionableRefills.find(r => 
+        (normGroupPhone && normalizeP(r.patient_phone) === normGroupPhone) ||
+        (r.patient_name && r.patient_name.trim().toLowerCase() === group.recipient_name.trim().toLowerCase())
+      );
+
+      if (refillGroup && refillGroup.medicines.length > 0 && group.recipient_phone) {
+        messageSendEvent.triggerSendProgress(group.recipient_name || 'Patient', 'Dispatching WhatsApp refill reminder...', 10);
+        await api.sendGroupedRefill({
+          patient_name: group.recipient_name,
+          patient_phone: group.recipient_phone,
+          medicines: refillGroup.medicines
+        });
+        whatsappQueueEvent.triggerUpdated();
+      } else if (group.recipient_phone) {
+        messageSendEvent.triggerSendProgress(group.recipient_name || 'Patient', 'Dispatching WhatsApp message...', 10);
         await api.enqueueSingleWhatsApp({
           number: group.recipient_phone,
           message: group.consolidatedMessage,
@@ -3457,6 +3473,22 @@ const QuickAssistSidebar = memo(({
       });
       if (notif.message && notif.message.length >= existing.consolidatedMessage.length) {
         existing.consolidatedMessage = notif.message;
+      }
+    }
+
+    // Merge full multi-medicine lists for any refill patients whose stored message is only partial
+    for (const group of map.values()) {
+      const normP = normalizePhone(group.recipient_phone);
+      const refillGroup = groupedActionableRefills.find(r => 
+        (normP && normalizePhone(r.patient_phone) === normP) ||
+        (r.patient_name && r.patient_name.trim().toLowerCase() === group.recipient_name.trim().toLowerCase())
+      );
+      if (refillGroup && refillGroup.medicines.length > 0) {
+        const missingSomeMeds = refillGroup.medicines.some(m => !group.consolidatedMessage.toLowerCase().includes(m.medicine_name.toLowerCase()));
+        if (missingSomeMeds || refillGroup.medicines.length > 1) {
+          const medList = refillGroup.medicines.map(m => `• ${m.medicine_name} (Qty: ${m.quantity_needed})`).join('\n');
+          group.consolidatedMessage = `🔔 *MEDICINE REFILL REMINDER*\n\nDear ${group.recipient_name},\nYour regular prescription is due for refill:\n\n${medList}\n\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+        }
       }
     }
 
@@ -4252,15 +4284,24 @@ const QuickAssistSidebar = memo(({
                           <span className="font-bold text-xs text-text truncate" title={group.recipient_name}>
                             {group.recipient_name}
                           </span>
-                          {group.messages.length > 1 ? (
-                            <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
-                              {group.messages.length} meds
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
-                              Refill
-                            </span>
-                          )}
+                          {(() => {
+                            const normalizeP = (p?: string | null) => (p || '').replace(/\D/g, '').slice(-10);
+                            const normGP = normalizeP(group.recipient_phone);
+                            const matchedRefillGroup = groupedActionableRefills.find(r => 
+                              (normGP && normalizeP(r.patient_phone) === normGP) ||
+                              (r.patient_name && r.patient_name.trim().toLowerCase() === group.recipient_name.trim().toLowerCase())
+                            );
+                            const totalMedsCount = matchedRefillGroup ? matchedRefillGroup.medicines.length : group.messages.length;
+                            return totalMedsCount > 1 ? (
+                              <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
+                                {totalMedsCount} meds
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[9px] font-bold shrink-0 border border-purple-500/20">
+                                Refill
+                              </span>
+                            );
+                          })()}
                           {alreadySent && (
                             <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 text-[9px] font-bold shrink-0 border border-amber-500/25">
                               ⚠️ Sent Today

@@ -241,15 +241,14 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   const storePhone = await getStorePhone(db);
   const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
 
-  // Find all active, ready patient refills for this patient that have not been notified/completed and due within upcoming 7 calendar days
+  // Find all active patient refills for this patient that have not been notified/completed and due within upcoming 7 calendar days
   const readyRefills = await db.all(
-    `SELECT pr.id, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, pr.quantity, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
        AND pr.is_active = 1
        AND pr.status NOT IN ('completed', 'canceled', 'notified')
-       AND (pr.is_ready = 1 OR pr.hold_for_stock = 0)
        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
      ORDER BY pr.id ASC`,
     [patientPhone, patientName]
@@ -265,22 +264,30 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     return;
   }
 
-  // Deduplicate medicine names
-  const medNames = Array.from(new Set(readyRefills.map((r: any) => r.medicine_name).filter(Boolean))) as string[];
-  const refillIds = readyRefills.map((r: any) => r.id);
-
-  let formattedMeds = '';
-  if (medNames.length === 1) {
-    formattedMeds = medNames[0];
-  } else if (medNames.length === 2) {
-    formattedMeds = `${medNames[0]} and ${medNames[1]}`;
-  } else {
-    formattedMeds = `${medNames.slice(0, -1).join(', ')}, and ${medNames[medNames.length - 1]}`;
+  // Deduplicate by medicine name while preserving complete prescription list
+  const seenMeds = new Map<string, { id: number; medicine_name: string; quantity: number }>();
+  for (const r of readyRefills) {
+    const name = (r.medicine_name || '').trim();
+    if (!name) continue;
+    if (!seenMeds.has(name)) {
+      seenMeds.set(name, {
+        id: r.id,
+        medicine_name: name,
+        quantity: Number(r.quantity_needed || r.quantity || 1)
+      });
+    }
   }
 
-  const noun = medNames.length > 1 ? 'refills' : 'refill';
-  const medNoun = medNames.length > 1 ? 'medicines' : 'medicine';
-  const msg = `Hi ${patientName}, your ${noun} for ${formattedMeds} ${medNames.length > 1 ? 'are' : 'is'} in stock and ready. You may collect your ${medNoun} anytime from ${storeLabel}.`;
+  const items = Array.from(seenMeds.values());
+  const refillIds = readyRefills.map((r: any) => r.id);
+
+  let msg: string;
+  if (items.length === 1) {
+    msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+  } else {
+    const medList = items.map(it => `• ${it.medicine_name} (Qty: ${it.quantity})`).join('\n');
+    msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+  }
   const referenceIdStr = refillIds.join(',');
 
   // Check if a staged or active snoozed notification already exists for this patient
