@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect, useCallback } from 'react';
-import { Smartphone, QrCode, Wifi, WifiOff, Edit2, Save, X } from 'lucide-react';
+import { Smartphone, QrCode, Wifi, WifiOff, Edit2, Save, X, Bot, BotOff, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
 
 export interface RegisteredDevice {
@@ -22,7 +22,8 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   const [devices, setDevices] = useState<RegisteredDevice[]>([]);
   const [editingToken, setEditingToken] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [, setWaReady] = useState<boolean | null>(null);
+  const [waStatus, setWaStatus] = useState<{ isReady: boolean; sleeping: boolean; status: string } | null>(null);
+  const [waking, setWaking] = useState(false);
 
   const fetchDevicesStatus = useCallback(async () => {
     try {
@@ -40,13 +41,36 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   const fetchWhatsAppStatus = useCallback(async () => {
     try {
       if (typeof api.getWhatsAppStatus === 'function') {
-        const waRes = await api.getWhatsAppStatus();
-        setWaReady(!!waRes?.isReady);
+        const waRes = await api.getWhatsAppStatus() as any;
+        setWaStatus({
+          isReady: !!waRes?.isReady,
+          sleeping: waRes?.status === 'SLEEPING' || waRes?.sleeping === true,
+          status: waRes?.status || (waRes?.isReady ? 'READY' : 'DISCONNECTED'),
+        });
       }
     } catch {
       // Ignore background fetch errors
     }
   }, []);
+
+  const handleWake = useCallback(async () => {
+    if (waking) return;
+    setWaking(true);
+    try {
+      await (api as any).wakeWhatsapp?.();
+      // Poll for ready state after wake (max 20s)
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        await fetchWhatsAppStatus();
+        if (attempts >= 10) clearInterval(poll);
+      }, 2000);
+    } catch {
+      // ignore
+    } finally {
+      setTimeout(() => setWaking(false), 3000);
+    }
+  }, [waking, fetchWhatsAppStatus]);
 
   useEffect(() => {
     fetchDevicesStatus();
@@ -88,7 +112,7 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   const getPlatformIcon = (osStr: string) => {
     const lower = (osStr || '').toLowerCase();
     if (lower.includes('ios') || lower.includes('iphone') || lower.includes('ipad') || lower.includes('apple')) {
-      return <span className="font-bold text-xs mr-1 text-white"></span>;
+      return <span className="font-bold text-xs mr-1 text-text"></span>;
     }
     if (lower.includes('android')) {
       return <span className="font-bold text-xs mr-1 text-emerald-400">🤖</span>;
@@ -97,6 +121,48 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   };
 
   const onlineCount = devices.filter(d => d.is_online === 1).length;
+
+  // WhatsApp Bot status pill
+  const BotStatusPill = () => {
+    if (waStatus === null) return null;
+
+    if (waStatus.isReady) {
+      return (
+        <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px] shrink-0">
+          <Bot size={11} />
+          <span className="font-semibold">AI Bot: Active</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        </div>
+      );
+    }
+
+    if (waStatus.sleeping) {
+      return (
+        <button
+          onClick={handleWake}
+          disabled={waking}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] shrink-0 hover:bg-amber-500/20 transition-colors cursor-pointer"
+          title="WhatsApp bot is sleeping. Click to wake it up so it can reply to customer messages instantly."
+        >
+          {waking ? <Loader2 size={11} className="animate-spin" /> : <Bot size={11} />}
+          <span className="font-semibold">{waking ? 'Waking...' : 'AI Bot: Sleeping — Wake'}</span>
+        </button>
+      );
+    }
+
+    // Disconnected
+    return (
+      <button
+        onClick={handleWake}
+        disabled={waking}
+        className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-400 text-[11px] shrink-0 hover:bg-rose-500/20 transition-colors cursor-pointer"
+        title="WhatsApp bot is offline. Click to reconnect."
+      >
+        {waking ? <Loader2 size={11} className="animate-spin" /> : <BotOff size={11} />}
+        <span className="font-semibold">{waking ? 'Connecting...' : 'AI Bot: Offline — Connect'}</span>
+      </button>
+    );
+  };
 
   return (
     <footer className="h-9 bg-bg2/90 border-t border-glass-border px-3 flex items-center justify-between text-xs shrink-0 select-none z-20 backdrop-blur-md">
@@ -189,8 +255,10 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
         )}
       </div>
 
-      {/* Right: Connectivity indicator */}
+      {/* Right: AI Bot status + sync indicator */}
       <div className="flex items-center gap-2.5 shrink-0">
+        <BotStatusPill />
+        <div className="h-3 w-[1px] bg-glass-border" />
         <button
           onClick={onOpenConnectModal}
           className="flex items-center gap-1 text-[11px] text-muted hover:text-white transition-colors"
@@ -202,3 +270,4 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
     </footer>
   );
 });
+

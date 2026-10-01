@@ -280,7 +280,32 @@ router.post('/reconnect', async (_req, res) => {
   }
 });
 
-// Send a WhatsApp message via the centralized queue
+// Wake a sleeping WhatsApp bot and disable idle-sleep so it stays on permanently.
+// Safe to call even when already connected — is a no-op in that case.
+router.post('/wake', async (_req, res) => {
+  try {
+    // 1. Permanently disable idle sleep in DB
+    const db = await dbManager.getConnection();
+    await db.run(
+      `INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')
+       ON CONFLICT(key) DO UPDATE SET value = '0'`
+    );
+
+    // 2. Import and kick initClient if not already ready
+    const { initClient, isReady, isSleeping: _sl, markWhatsAppActivity } = await import('../whatsappClient.js') as any;
+    markWhatsAppActivity?.();
+    if (!isReady) {
+      initClient({ manual: true }).catch((err: any) => console.error('[Wake] initClient error:', err));
+    }
+
+    console.log('[WhatsApp Wake] Bot woken up. idle-sleep disabled permanently.');
+    res.json({ success: true, message: 'WhatsApp bot woken up. Idle-sleep disabled. Reconnecting...' });
+  } catch (err: any) {
+    console.error('[WhatsApp Wake] Error:', err);
+    res.status(500).json({ error: err?.message || 'Failed to wake WhatsApp bot' });
+  }
+});
+
 router.post('/send', async (req, res) => {
   const { number, message, mediaUrl, file, target_name, type } = req.body;
   if (!number || (!message && !file)) {
