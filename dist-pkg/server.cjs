@@ -13354,7 +13354,7 @@ async function ensureSchema(dbPath) {
     const db2 = await dbManager.getConnection();
     await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
     await db2.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
-    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
+    await db2.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('daily_briefing_template', 'detailed')");
     try {
@@ -16362,7 +16362,7 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
-    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
+    await db2.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
@@ -53244,7 +53244,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.33";
+    APP_VERSION = "0.1.34";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -69717,6 +69717,25 @@ var init_messaging = __esm({
       } catch (err) {
         console.error("Reconnect error:", err);
         res.status(500).json({ error: "Failed to reconnect" });
+      }
+    });
+    router16.post("/wake", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')
+       ON CONFLICT(key) DO UPDATE SET value = '0'`
+        );
+        const { initClient: initClient2, isReady: isReady2, isSleeping: _sl, markWhatsAppActivity: markWhatsAppActivity2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+        markWhatsAppActivity2?.();
+        if (!isReady2) {
+          initClient2({ manual: true }).catch((err) => console.error("[Wake] initClient error:", err));
+        }
+        console.log("[WhatsApp Wake] Bot woken up. idle-sleep disabled permanently.");
+        res.json({ success: true, message: "WhatsApp bot woken up. Idle-sleep disabled. Reconnecting..." });
+      } catch (err) {
+        console.error("[WhatsApp Wake] Error:", err);
+        res.status(500).json({ error: err?.message || "Failed to wake WhatsApp bot" });
       }
     });
     router16.post("/send", async (req, res) => {

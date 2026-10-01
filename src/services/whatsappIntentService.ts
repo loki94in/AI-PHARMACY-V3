@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
+import { getMessage } from '../i18n/getMessage.js';
+import { detectLanguage, detectExplicitLanguageSwitch, type SupportedLanguage } from './languageDetector.js';
 import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery, fuzzySearchLocalMedicines } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
@@ -930,14 +932,20 @@ async function ensureClarificationsTable(db: any): Promise<void> {
     if (!colNames.has('last_bot_intent')) {
       await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN last_bot_intent TEXT DEFAULT NULL');
     }
+    if (!colNames.has('language')) {
+      await db.run("ALTER TABLE wa_pending_clarifications ADD COLUMN language TEXT DEFAULT 'en'");
+    }
   } catch (_) {}
 
-  // Also ensure whatsapp_chats has human_takeover_until so pharmacist can silence bot
+  // Also ensure whatsapp_chats has human_takeover_until and language so pharmacist can silence bot or manage language
   try {
     const chatCols = await db.all('PRAGMA table_info(whatsapp_chats)');
     const chatColNames = new Set(chatCols.map((c: any) => c.name));
     if (!chatColNames.has('human_takeover_until')) {
       await db.run('ALTER TABLE whatsapp_chats ADD COLUMN human_takeover_until DATETIME DEFAULT NULL');
+    }
+    if (!chatColNames.has('language')) {
+      await db.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
     }
   } catch (_) {}
 
@@ -1302,7 +1310,7 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
  * Handle customer clarification responses: options selection (1, 2, 3), quantity adjustment,
  * or affirmative/negative final confirmation.
  */
-async function checkMedicineClarificationResponse(phone: string, body: string, customer: any, chatId?: string): Promise<boolean> {
+async function checkMedicineClarificationResponse(phone: string, body: string, customer: any, chatId?: string, preferredLang?: SupportedLanguage): Promise<boolean> {
   let cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
   try {
     const db = await dbManager.getConnection();
@@ -1317,7 +1325,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     if (!cleanDigits) return false;
 
     const pending = await db.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp, language
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
@@ -1328,6 +1336,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
     );
     if (!pending) return false;
+
+    const stepLang: SupportedLanguage = preferredLang || (pending.language === 'mr' || pending.language === 'hi' || pending.language === 'en' ? pending.language : 'en');
 
     let activeCustomerName = (customer?.name && isKnownCustomerName(customer.name))
       ? customer.name.trim()
@@ -1347,10 +1357,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     const lower = normalizedInput.toLowerCase().trim();
     const cleanedForAffirmative = lower.replace(/[.,!?;:()_~#*`"']/g, ' ').replace(/\s+/g, ' ').trim();
     const isAffirmative =
-      /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji)$/i.test(cleanedForAffirmative) ||
+      /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji|हो|होय|होय चालेल|चालेल|पाठवा|द्या|नक्की|बरोबर|कन्फर्म|हाँ|हां|हाँ जी|भेज दो|दीजिए|सही)$/iu.test(cleanedForAffirmative) ||
       isRefillConfirmationResponse(body);
     const isNegative =
-      /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re)$/i.test(cleanedForAffirmative);
+      /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re|नाही|नको|रद्द|नाही नको|गलत|मत भेजो)$/iu.test(cleanedForAffirmative);
 
     // ── TASK 2: Context-Aware General Q&A Handler ─────────────────────────────
     // Detect & answer common general questions regardless of current step.
@@ -1948,7 +1958,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isValidName = !isGreetingAgain && !isAffirmativeOrNegative && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
 
       if (!isValidName) {
-        const retryNameMsg = `Could you please share your name so we can assist you?`;
+        const retryNameMsg = getMessage(stepLang, 'whatsapp.bot.retryName');
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, retryNameMsg, 'customer_greeting', 'Customer');
         return true;
@@ -1992,17 +2002,12 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const schedForWelcome = await getSchedForWelcome(db);
       const hoursLineForWelcome = `🕐 Open: ${schedForWelcome.openTime} – ${schedForWelcome.closeTime}${schedForWelcome.weeklyOff ? ` | Off: ${schedForWelcome.weeklyOff}` : ''}`;
 
-      const welcomeMsg =
-        `🙏 Namaste *${formattedName}* ji! Welcome to ${storeName}.${hoursNotice}\n\n` +
-        `*Place your order in simple steps:*\n\n` +
-        `*Step 1:* Choose your order type —\n` +
-        `  1️⃣ Single Medicine\n` +
-        `  2️⃣ Multiple Medicines\n` +
-        `  3️⃣ Refill — Repeat my regular prescription\n\n` +
-        `*Step 2:* We show you options & MRP 💰\n` +
-        `*Step 3:* You confirm & we book 🚀\n\n` +
-        `${hoursLineForWelcome}\n\n` +
-        `*Reply 1, 2, or 3 to begin.*`;
+      const welcomeMsg = getMessage(stepLang, 'whatsapp.bot.welcomeMenu', {
+        name: formattedName,
+        storeName,
+        hoursNotice,
+        hoursLine: hoursLineForWelcome
+      });
 
       await db.run(
         `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
@@ -2083,7 +2088,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending.phone]
         );
-        const askMsg = `✍️ Please type the *medicine name* (and quantity if known).\n\nExample: *Dolo 650 - 2 strips*`;
+        const askMsg = getMessage(stepLang, 'whatsapp.bot.orderTypeSinglePrompt');
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, askMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         return true;
@@ -2095,13 +2100,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending.phone]
         );
-        const askMsg =
-          `📋 Please send your *complete medicine list* with quantities.\n\n` +
-          `Example:\n` +
-          `• Dolo 650 - 2 strips\n` +
-          `• Pan D - 1 strip\n` +
-          `• Nicotex 4 - 1 pack\n\n` +
-          `_You can also send a prescription photo instead._`;
+        const askMsg = getMessage(stepLang, 'whatsapp.bot.orderTypeMultiPrompt');
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, askMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         return true;
@@ -2128,7 +2127,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             [JSON.stringify(refillRows.slice(0, 6)), pending.phone]
           );
 
-          const refillMsg =
+          let refillMsg =
             `🔁 *Your previous medicines on record:*\n${itemListText}\n\n` +
             `*How would you like to reorder?*\n` +
             `1️⃣ *ALL* — Reorder all above items\n` +
@@ -2137,6 +2136,28 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             `2️⃣ Change quantities\n` +
             `3️⃣ Completely new medicine list\n` +
             `4️⃣ Talk to pharmacist 📞`;
+          if (stepLang === 'mr') {
+            refillMsg =
+              `🔁 *नोंदीमधील आपली पूर्वीची औषधे:*\n${itemListText}\n\n` +
+              `*आपण पुन्हा कशी ऑर्डर करू इच्छिता?*\n` +
+              `1️⃣ *सर्व (ALL)* — वरील सर्व औषधे पुन्हा मागवा\n` +
+              `🔢 *निवडा* — औषधाचा नंबर पाठवा (उदा. *1* किंवा *1, 2*)\n` +
+              `➕ *एकत्रित* — उदा. *1 आणि 1 स्ट्रीप Dolo 650 पण पाठवा*\n` +
+              `2️⃣ प्रमाण बदला\n` +
+              `3️⃣ पूर्णपणे नवीन औषधांची यादी\n` +
+              `4️⃣ फार्मासिस्टशी बोला 📞`;
+          } else if (stepLang === 'hi') {
+            refillMsg =
+              `🔁 *रिकॉर्ड में आपकी पिछली दवाएं:*\n${itemListText}\n\n` +
+              `*आप दोबारा कैसे ऑर्डर करना चाहेंगे?*\n` +
+              `1️⃣ *सभी (ALL)* — ऊपर दी गई सभी दवाएं दोबारा मंगवाएं\n` +
+              `🔢 *चुनें* — नंबर लिखकर भेजें (उदा. *1* या *1, 2*)\n` +
+              `➕ *जोड़ें* — उदा. *1 और साथ में 1 स्ट्रिप Dolo 650 भी भेजें*\n` +
+              `2️⃣ मात्रा बदलें\n` +
+              `3️⃣ बिल्कुल नई दवाओं की सूची\n` +
+              `4️⃣ फार्मासिस्ट से बात करें 📞`;
+          }
+
           await whatsappQueueWorker.enqueue(phone, refillMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         } else {
           const { getStorePhone } = await import('./storeSettingsService.js');
@@ -2147,7 +2168,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             [pending.phone]
           );
 
-          const noRefillMsg =
+          let noRefillMsg =
             `🔍 We couldn\'t find a previous prescription or special order for your number.\n\n` +
             `Would you like to:\n` +
             `1️⃣ Order a new medicine\n` +
@@ -2155,6 +2176,25 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             (storePhoneForRefill
               ? `3️⃣ Talk to pharmacist: ${storePhoneForRefill} 📞`
               : `3️⃣ Talk to pharmacist directly 📞`);
+          if (stepLang === 'mr') {
+            noRefillMsg =
+              `🔍 आपल्या नंबरवर पूर्वीचे कोणतेही प्रिस्क्रिप्शन किंवा स्पेशल ऑर्डर सापडले नाही.\n\n` +
+              `आपण काय करू इच्छिता:\n` +
+              `1️⃣ नवीन औषध मागवा\n` +
+              `2️⃣ एकापेक्षा जास्त औषधे\n` +
+              (storePhoneForRefill
+                ? `3️⃣ फार्मासिस्टशी बोला: ${storePhoneForRefill} 📞`
+                : `3️⃣ थेट फार्मासिस्टशी बोला 📞`);
+          } else if (stepLang === 'hi') {
+            noRefillMsg =
+              `🔍 आपके नंबर पर कोई पिछला पर्चा या स्पेशल ऑर्डर नहीं मिला।\n\n` +
+              `आप क्या करना चाहेंगे:\n` +
+              `1️⃣ नई दवा ऑर्डर करें\n` +
+              `2️⃣ कई दवाएं ऑर्डर करें\n` +
+              (storePhoneForRefill
+                ? `3️⃣ फार्मासिस्ट से बात करें: ${storePhoneForRefill} 📞`
+                : `3️⃣ सीधे फार्मासिस्ट से बात करें 📞`);
+          }
           await whatsappQueueWorker.enqueue(phone, noRefillMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         }
         return true;
@@ -4416,6 +4456,41 @@ export async function handleInbound(msg: any): Promise<void> {
 
     const db = await dbManager.getConnection();
 
+    // 1-lang. Resolve existing chat language & detect new language
+    let chatLang: SupportedLanguage = 'en';
+    const cleanDigitsForLang = (phone || '').replace(/\D/g, '').slice(-10);
+    try {
+      const langRow = await db.get(
+        'SELECT language FROM whatsapp_chats WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?) LIMIT 1',
+        [chatId, `%${cleanDigitsForLang}%`]
+      );
+      if (langRow?.language && (langRow.language === 'hi' || langRow.language === 'mr' || langRow.language === 'en')) {
+        chatLang = langRow.language;
+      }
+    } catch (_) {}
+
+    const detectedLang = detectLanguage(body, chatLang);
+    const explicitSwitch = detectExplicitLanguageSwitch(body);
+
+    if (detectedLang !== chatLang || explicitSwitch) {
+      chatLang = explicitSwitch || detectedLang;
+      try {
+        await db.run(
+          `UPDATE whatsapp_chats SET language = ? WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
+          [chatLang, chatId, `%${cleanDigitsForLang}%`]
+        );
+        eventService.broadcast('wa_chat_updated', { chatId, language: chatLang });
+      } catch (_) {}
+
+      // If user explicitly asked to change language, send confirmation and return
+      if (explicitSwitch) {
+        const switchAck = getMessage(chatLang, 'whatsapp.bot.langSwitched');
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, switchAck, 'language_switch', 'Customer');
+        return;
+      }
+    }
+
     // Resolve standard phone number if sender is an LID
     if (phone.endsWith('@lid')) {
       try {
@@ -4608,9 +4683,9 @@ export async function handleInbound(msg: any): Promise<void> {
 
     // 2c. INITIAL CUSTOMER GREETING & AUTOMATION TRIGGER
     // Treats ANY greeting as a fresh new session: resets old states and starts clean
-    const cleanGreeting = body.trim().toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const cleanGreeting = body.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, '').trim();
     const isGreeting =
-      /^(h+i+|h+e+y+|h+e+l+l*o+|hola+|namaste+|namaskar+|pranam+|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order)(\s+(sir|ji|mam|madam|team|there|bhai|bro|medical|pharmacy|tanamay))?$/i.test(cleanGreeting);
+      /^(h+i+|h+e+y+|h+e+l+l*o+|hola+|namaste+|namaskar+|pranam+|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order|नमस्ते|नमस्कार|सस्नेह नमस्कार|प्रणाम|राम राम|राधे राधे|जय श्री राम|सुप्रभात|हाय|हॅलो|हेलो|मदत|ऑर्डर)(\s+(sir|ji|mam|madam|team|there|bhai|bro|medical|pharmacy|tanamay|जी|साहेब|भाऊ|दादा|ताई))?$/iu.test(cleanGreeting);
     if (isGreeting && !hasMedia) {
       await ensureClarificationsTable(db);
       let cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
@@ -4640,19 +4715,20 @@ export async function handleInbound(msg: any): Promise<void> {
       const hasKnownName = isKnownCustomerName(customer?.name);
 
       if (!hasKnownName) {
-        const askNameText =
-          `👋 Hello! Welcome to ${storeName}.${hoursNotice}\n\n` +
-          `Before we begin, *may I please know your name?*`;
+        const askNameText = getMessage(chatLang, 'whatsapp.bot.askName', {
+          storeName,
+          hoursNotice
+        });
 
         await db.run(
-          `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, created_at)
-           VALUES (?, '', ?, 'awaiting_customer_name', CURRENT_TIMESTAMP)`,
-          [cleanDigits, body]
+          `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, language, created_at)
+           VALUES (?, '', ?, 'awaiting_customer_name', ?, CURRENT_TIMESTAMP)`,
+          [cleanDigits, body, chatLang]
         );
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, askNameText, 'customer_greeting', 'Customer');
-        console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name.`);
+        console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name in ${chatLang}.`);
         return;
       }
 
@@ -4660,27 +4736,22 @@ export async function handleInbound(msg: any): Promise<void> {
       const schedForGreet = await getSchedForGreet(db);
       const hoursLineForGreet = `🕐 Open: ${schedForGreet.openTime} – ${schedForGreet.closeTime}${schedForGreet.weeklyOff ? ` | Off: ${schedForGreet.weeklyOff}` : ''}`;
 
-      const greetingText =
-        `👋 Hello *${customer!.name}*! Welcome back to ${storeName}.${hoursNotice}\n\n` +
-        `*Place your order in simple steps:*\n\n` +
-        `*Step 1:* Choose your order type —\n` +
-        `  1️⃣ Single Medicine\n` +
-        `  2️⃣ Multiple Medicines\n` +
-        `  3️⃣ Refill — Repeat my regular prescription\n\n` +
-        `*Step 2:* We show you options & MRP 💰\n` +
-        `*Step 3:* You confirm & we book 🚀\n\n` +
-        `${hoursLineForGreet}\n\n` +
-        `*Reply 1, 2, or 3 to begin.*`;
+      const greetingText = getMessage(chatLang, 'whatsapp.bot.welcomeMenu', {
+        name: customer!.name,
+        storeName,
+        hoursNotice,
+        hoursLine: hoursLineForGreet
+      });
 
       await db.run(
-        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
-         VALUES (?, '', ?, 'awaiting_order_type', ?, CURRENT_TIMESTAMP)`,
-        [cleanDigits, body, customer!.name]
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, CURRENT_TIMESTAMP)`,
+        [cleanDigits, body, customer!.name, chatLang]
       );
 
       const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
       await whatsappQueueWorker.enqueue(phone, greetingText, 'customer_greeting', customer!.name);
-      console.log(`[Intent Service] Fresh greeting sent to known customer ${customer!.name} (${cleanDigits}).`);
+      console.log(`[Intent Service] Fresh greeting sent to known customer ${customer!.name} (${cleanDigits}) in ${chatLang}.`);
       return;
     }
 
@@ -4805,7 +4876,7 @@ export async function handleInbound(msg: any): Promise<void> {
     }
 
     // 2d. MEDICINE CLARIFICATION CHECK ("yes", "haan", option numbers, quantities, etc.)
-    if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+    if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId, chatLang)) {
       return;
     }
 

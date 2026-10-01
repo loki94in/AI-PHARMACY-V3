@@ -1386,6 +1386,9 @@ export async function ensureSchema(dbPath: string) {
             if (!chatNames.has('session_status')) {
               await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
             }
+            if (!chatNames.has('language')) {
+              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
+            }
           }
         } catch (_) { }
 
@@ -3426,7 +3429,8 @@ export async function ensureSchema(dbPath: string) {
       manual_active_until INTEGER DEFAULT 0,
       last_patient_message_at INTEGER DEFAULT 0,
       last_pharmacist_message_at INTEGER DEFAULT 0,
-      session_status TEXT DEFAULT 'idle'
+      session_status TEXT DEFAULT 'idle',
+      language TEXT DEFAULT 'en'
     );
 
     -- WhatsApp local messages cache
@@ -4528,6 +4532,9 @@ export async function ensureSchema(dbPath: string) {
         }
         if (!chatNames.has('session_status')) {
           await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
+        }
+        if (!chatNames.has('language')) {
+          await db.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
         }
       }
     } catch (_) { }

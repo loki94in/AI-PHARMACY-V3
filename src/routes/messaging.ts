@@ -354,7 +354,8 @@ router.get('/chats', async (_req, res) => {
           lastPatientMessageAt: c.lastPatientMessageAt || 0,
           lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
           sessionStatus: c.sessionStatus || 'idle',
-          isUnansweredOver5Min: !!c.isUnansweredOver5Min
+          isUnansweredOver5Min: !!c.isUnansweredOver5Min,
+          language: c.language || 'en'
         };
       }
       // Raw nested format from whatsapp-web.js client
@@ -371,7 +372,8 @@ router.get('/chats', async (_req, res) => {
         lastPatientMessageAt: c.lastPatientMessageAt || 0,
         lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
         sessionStatus: c.sessionStatus || 'idle',
-        isUnansweredOver5Min: !!c.isUnansweredOver5Min
+        isUnansweredOver5Min: !!c.isUnansweredOver5Min,
+        language: c.language || 'en'
       };
     });
     res.json(sanitizedChats);
@@ -567,6 +569,31 @@ router.post('/chats/:id/resolve', async (req, res) => {
   } catch (err: any) {
     console.error('Error resolving chat session:', err);
     return res.status(500).json({ error: err.message || 'Failed to resolve chat session' });
+  }
+});
+
+// PATCH chat language (Human-in-the-loop: pharmacist manually overrides customer language)
+router.patch('/chats/:id/language', async (req, res) => {
+  const { id } = req.params;
+  const { language } = req.body;
+  if (!language || !['en', 'hi', 'mr'].includes(language)) {
+    return res.status(400).json({ error: 'Valid language (en, hi, mr) is required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    const cleanDigits = (id || '').replace(/\D/g, '').slice(-10);
+    await db.run(
+      `UPDATE whatsapp_chats SET language = ? WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
+      [language, id, `%${cleanDigits}%`]
+    );
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('wa_chat_updated', { chatId: id, language });
+    } catch (_) {}
+    return res.json({ success: true, chatId: id, language });
+  } catch (err: any) {
+    console.error('Error updating chat language:', err);
+    return res.status(500).json({ error: err.message || 'Failed to update chat language' });
   }
 });
 

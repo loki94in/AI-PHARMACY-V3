@@ -2344,7 +2344,7 @@ export async function getChats(): Promise<any[]> {
       `SELECT id, name, unread_count as unreadCount, timestamp, is_group as isGroup, last_message as lastMessage, resolved_number as resolvedNumber,
               session_mode as sessionMode, manual_active_until as manualActiveUntil,
               last_patient_message_at as lastPatientMessageAt, last_pharmacist_message_at as lastPharmacistMessageAt,
-              session_status as sessionStatus
+              session_status as sessionStatus, language
        FROM whatsapp_chats
        ORDER BY timestamp DESC`
     );

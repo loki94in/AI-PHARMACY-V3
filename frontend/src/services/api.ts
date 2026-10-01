@@ -1470,6 +1470,7 @@ export const api = {
   triggerManualScan: (chatId: string, messageId: string) => apiClient.post(`/messaging/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/scan`).then(res => res.data),
   deleteWhatsappMessage: (chatId: string, messageId: string) => apiClient.delete<{ success: boolean; message: string }>(`/messaging/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`).then(res => res.data),
   resolveWhatsappSession: (chatId: string) => apiClient.post<{ success: boolean; message: string }>(`/messaging/chats/${encodeURIComponent(chatId)}/resolve`).then(res => res.data),
+  updateChatLanguage: (chatId: string, language: 'en' | 'hi' | 'mr') => apiClient.patch<{ success: boolean; chatId: string; language: string }>(`/messaging/chats/${encodeURIComponent(chatId)}/language`, { language }).then(res => res.data),
   getSettings: () => apiClient.get('/settings').then(res => res.data),
   saveSettings: (settings: AppSettings) => apiClient.post('/settings/save', settings).then(res => res.data),
   

@@ -3241,6 +3241,7 @@ interface WaChatItem {
   sessionStatus?: 'idle' | 'active' | 'waiting' | 'unanswered' | 'ended';
   isUnansweredOver5Min?: boolean;
   manualActiveUntil?: number;
+  language?: 'en' | 'hi' | 'mr';
 }
 
 interface WaMessageItem {
@@ -3938,6 +3939,11 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
                             </span>
                           )
                         )}
+                        {c.language && c.language !== 'en' && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
+                            {c.language === 'mr' ? 'मराठी' : 'हिंदी'}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {c.unreadCount > 0 && (
@@ -3987,6 +3993,30 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {/* Human-in-the-loop: Language selector */}
+                      <div className="flex items-center gap-1 bg-bg2 px-2 py-0.5 rounded border border-border text-[11px]">
+                        <span className="text-muted text-[10px]">Lang:</span>
+                        <select
+                          value={activeChat.language || 'en'}
+                          onChange={async (e) => {
+                            const newLang = e.target.value as 'en' | 'hi' | 'mr';
+                            try {
+                              await api.updateChatLanguage(activeChat.id, newLang);
+                              setActiveChat(prev => prev ? { ...prev, language: newLang } : null);
+                              setChats(prev => prev.map(c => c.id === activeChat.id ? { ...c, language: newLang } : c));
+                              toastEvent.trigger(`Chat language updated to ${newLang === 'mr' ? 'मराठी (Marathi)' : newLang === 'hi' ? 'हिंदी (Hindi)' : 'English'}`, 'success', '/crm');
+                            } catch (_) {
+                              toastEvent.trigger('Failed to update language', 'error', '/crm');
+                            }
+                          }}
+                          className="bg-transparent text-text text-[11px] font-semibold focus:outline-none cursor-pointer"
+                          title="Customer WhatsApp Language (AI Bot will reply in this language)"
+                        >
+                          <option value="en" className="bg-bg text-text">EN (English)</option>
+                          <option value="hi" className="bg-bg text-text">HI (हिंदी)</option>
+                          <option value="mr" className="bg-bg text-text">MR (मराठी)</option>
+                        </select>
+                      </div>
                       {activeChat.sessionMode === 'manual' && (
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border ${
