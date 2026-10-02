@@ -261,6 +261,24 @@ class DatabaseManager {
       const maxAttempts = 10;
       let lastError: any = null;
 
+      // Auto-sandbox: On first launch in dev, clone a snapshot from app.db so development has realistic data without ever touching production
+      if (path.basename(dbPath) === 'app.dev.db' && !fs.existsSync(dbPath)) {
+        const prodPath = path.join(path.dirname(dbPath), 'app.db');
+        if (fs.existsSync(prodPath)) {
+          try {
+            fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+            fs.copyFileSync(prodPath, dbPath);
+            const prodWal = prodPath + '-wal';
+            const prodShm = prodPath + '-shm';
+            if (fs.existsSync(prodWal)) fs.copyFileSync(prodWal, dbPath + '-wal');
+            if (fs.existsSync(prodShm)) fs.copyFileSync(prodShm, dbPath + '-shm');
+            console.log(`[Database] Auto-provisioned isolated dev sandbox: ${dbPath} (cloned from ${prodPath})`);
+          } catch (cloneErr) {
+            console.warn('[Database] Could not clone production database for dev sandbox; starting fresh:', cloneErr);
+          }
+        }
+      }
+
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         let db = new Database({ filename: dbPath, driver: sqlite3.Database });
         let needsHeal = false;

@@ -136,7 +136,12 @@ const resolvedPort = parseInt(process.env.PORT || String(defaultPort), 10);
 
 export const config: AppConfig = {
   port: resolvedPort,
-  get dbPath() { return process.env.DB_PATH || path.join(appDataDir, 'data', 'app.db'); },
+  get dbPath() {
+    if (process.env.DB_PATH) return process.env.DB_PATH;
+    const isDev = !isPackagedApp() && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV);
+    const dbName = isDev ? 'app.dev.db' : 'app.db';
+    return path.join(appDataDir, 'data', dbName);
+  },
   uploadDir: process.env.UPLOAD_DIR || path.join(appDataDir, 'uploads'),
   tempDir: process.env.TEMP_DIR || path.join(appDataDir, 'uploads', 'temp'),
   backupDir: process.env.BACKUP_DIR || path.join(appDataDir, 'backup'),

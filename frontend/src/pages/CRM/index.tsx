@@ -386,8 +386,62 @@ const RefillsSection: React.FC = () => {
   // Frequency slider modal
   const [editingRefill, setEditingRefill] = useState<{ id: number; currentInterval: number; name: string } | null>(null);
   const [linkingMedicine, setLinkingMedicine] = useState<{ id: number; name: string } | null>(null);
+  const [priorityDropdownMedId, setPriorityDropdownMedId] = useState<number | null>(null);
   const [editIntervalVal, setEditIntervalVal] = useState<number>(30);
   const [updatingFreq, setUpdatingFreq] = useState(false);
+
+  const handleSetPriorityDistributor = useCallback(async (medicineId: number, medName: string, targetDistributor: string) => {
+    setPriorityDropdownMedId(null);
+    const updateList = (list: string[] | undefined) => {
+      if (!list || list.length <= 1) return list;
+      const idx = list.indexOf(targetDistributor);
+      if (idx <= 0) return list;
+      return [targetDistributor, ...list.filter((_, i) => i !== idx)];
+    };
+
+    setSelectedPatient(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        medicines: prev.medicines.map(m =>
+          m.medicine_id === medicineId
+            ? { ...m, linked_distributors: updateList(m.linked_distributors) }
+            : m
+        )
+      };
+    });
+
+    setData(prev => prev.map(p => ({
+      ...p,
+      medicines: p.medicines.map(m =>
+        m.medicine_id === medicineId
+          ? { ...m, linked_distributors: updateList(m.linked_distributors) }
+          : m
+      )
+    })));
+
+    cachedRefillsData = cachedRefillsData.map(p => ({
+      ...p,
+      medicines: p.medicines.map(m =>
+        m.medicine_id === medicineId
+          ? { ...m, linked_distributors: updateList(m.linked_distributors) }
+          : m
+      )
+    }));
+
+    try {
+      const res = await api.getMedicineLinks(medicineId);
+      const picks = res.links || [];
+      const idx = picks.findIndex(p => p.storeName === targetDistributor);
+      if (idx > 0) {
+        const reordered = [picks[idx], ...picks.filter((_, i) => i !== idx)];
+        await api.saveMedicineLinks(medicineId, reordered);
+        toastEvent.trigger(`⭐ "${targetDistributor}" is now #1 priority for ${medName}`, 'success');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.message || 'Could not update distributor priority', 'error');
+    }
+  }, []);
 
   // Resizable panel width state (persisted in localStorage, matching WhatsApp layout)
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -1970,21 +2024,89 @@ const RefillsSection: React.FC = () => {
                                   </span>
                                 )}
 
-                                {/* Link this medicine to Pharmarack distributor product(s) */}
+                                {/* Link / Priority Distributor Selector */}
                                 {med.medicine_id ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setLinkingMedicine({ id: med.medicine_id as number, name: med.medicine_name })}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-bg2 border border-border hover:border-primary/50 text-muted hover:text-text text-[11px] font-semibold transition-all cursor-pointer max-w-[220px]"
-                                    title={med.linked_distributors?.length ? `Linked: ${med.linked_distributors.join(', ')} (click to change)` : 'Link this medicine to a Pharmarack distributor'}
-                                  >
-                                    <span>🔗</span>
-                                    <span className="truncate">
-                                      {med.linked_distributors?.length
-                                        ? `${med.linked_distributors[0]}${med.linked_distributors.length > 1 ? ` +${med.linked_distributors.length - 1}` : ''}`
-                                        : 'Link distributor'}
-                                    </span>
-                                  </button>
+                                  <div className="relative">
+                                    <div className="flex items-center rounded-xl bg-bg2 border border-border hover:border-primary/50 text-[11px] font-semibold transition-all shadow-2xs">
+                                      <button
+                                        type="button"
+                                        onClick={() => setLinkingMedicine({ id: med.medicine_id as number, name: med.medicine_name })}
+                                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-muted hover:text-text cursor-pointer max-w-[190px] truncate"
+                                        title={med.linked_distributors?.length ? `Priority #1: ${med.linked_distributors[0]} (Click to open full Link window)` : 'Link this medicine to a Pharmarack distributor'}
+                                      >
+                                        <span className="shrink-0">{med.linked_distributors?.length ? '⭐' : '🔗'}</span>
+                                        <span className="truncate">
+                                          {med.linked_distributors?.length
+                                            ? med.linked_distributors[0]
+                                            : 'Link distributor'}
+                                        </span>
+                                      </button>
+                                      {med.linked_distributors && med.linked_distributors.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setPriorityDropdownMedId(prev => prev === med.medicine_id ? null : (med.medicine_id as number));
+                                          }}
+                                          className={`px-1.5 py-1.5 border-l border-border hover:bg-bg3 text-muted hover:text-text cursor-pointer transition-colors ${
+                                            priorityDropdownMedId === med.medicine_id ? 'bg-bg3 text-text' : ''
+                                          }`}
+                                          title={`Change priority among ${med.linked_distributors.length} linked distributors`}
+                                        >
+                                          <span className="text-[10px] font-bold">+{med.linked_distributors.length - 1}</span>
+                                          <ChevronDown size={11} className={`inline-block ml-0.5 transition-transform ${priorityDropdownMedId === med.medicine_id ? 'rotate-180 text-primary' : ''}`} />
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Inline Priority Selector Popover */}
+                                    {priorityDropdownMedId === med.medicine_id && med.linked_distributors && (
+                                      <>
+                                        <div
+                                          className="fixed inset-0 z-30"
+                                          onClick={() => setPriorityDropdownMedId(null)}
+                                        />
+                                        <div className="absolute left-0 top-full mt-1.5 z-40 w-64 rounded-xl bg-bg2 border border-border shadow-xl p-1.5 flex flex-col gap-1 text-xs select-none">
+                                          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted flex items-center justify-between border-b border-border/50">
+                                            <span>Priority Distributor</span>
+                                            <span className="font-mono text-primary">{med.linked_distributors.length} Linked</span>
+                                          </div>
+                                          <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto dropdown-scroll py-0.5">
+                                            {med.linked_distributors.map((dist, idx) => (
+                                              <button
+                                                key={dist}
+                                                type="button"
+                                                onClick={() => handleSetPriorityDistributor(med.medicine_id as number, med.medicine_name, dist)}
+                                                className={`flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                                                  idx === 0
+                                                    ? 'bg-primary/15 text-primary font-bold border border-primary/20'
+                                                    : 'hover:bg-bg3 text-text font-medium'
+                                                }`}
+                                              >
+                                                <div className="flex items-center gap-1.5 truncate">
+                                                  <span className="text-[10px] font-mono text-muted shrink-0">#{idx + 1}</span>
+                                                  <span className="truncate">{dist}</span>
+                                                </div>
+                                                {idx === 0 && <span className="text-[10px] text-primary shrink-0">⭐ Priority #1</span>}
+                                              </button>
+                                            ))}
+                                          </div>
+                                          <div className="pt-1 border-t border-border/50">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setPriorityDropdownMedId(null);
+                                                setLinkingMedicine({ id: med.medicine_id as number, name: med.medicine_name });
+                                              }}
+                                              className="w-full py-1 px-2 rounded-lg text-[10.5px] font-semibold text-muted hover:text-text hover:bg-bg3 text-center transition-colors cursor-pointer"
+                                            >
+                                              + Link / Manage More Distributors…
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
                                 ) : null}
 
                                 {/* Stock Override Toggle */}

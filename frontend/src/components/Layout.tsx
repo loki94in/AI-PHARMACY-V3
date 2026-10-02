@@ -4267,11 +4267,85 @@ const QuickAssistSidebar = memo(({
                       </div>
                     )}
 
-                    {/* Action Buttons Footer */}
-                    <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-border min-w-0">
-                      {group.overallStatus === 'Ready' ? (
-                        <>
-                          {(() => {
+                    {/* Action Buttons Footer — 2-Tier Clean Layout */}
+                    <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border min-w-0">
+                      {/* Tier 1: Primary Action Buttons */}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {group.overallStatus === 'Ready' ? (
+                          <>
+                            {(() => {
+                              const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
+                              return (
+                                <button
+                                  disabled={isProcessing}
+                                  onClick={() => handleUpdateGroupStatus(group, 'Ready', { resend: true })}
+                                  className="flex-1 h-7 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate"
+                                  title="Re-send arrival reminder WhatsApp notification to customer"
+                                >
+                                  {isProcessing ? <Loader2 size={11} className="animate-spin shrink-0" /> : <MessageCircle size={11} className="shrink-0" />}
+                                  <span className="truncate">Resend Ready{maxCount > 0 ? ` (${maxCount}x)` : ''}</span>
+                                </button>
+                              );
+                            })()}
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                              className="flex-1 h-7 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate"
+                              title="Mark all requests as Completed, remove from Quick Assist and open POS pre-filled for this customer"
+                            >
+                              {isProcessing ? <Loader2 size={11} className="animate-spin shrink-0" /> : <Check size={11} className="shrink-0" />}
+                              <span className="truncate">Complete</span>
+                            </button>
+                          </>
+                        ) : group.overallStatus === 'Ordered' ? (
+                          <>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Ready')}
+                              className="flex-1 h-7 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate"
+                              title="Mark all requests as Ready and queue the arrival WhatsApp to each customer"
+                            >
+                              {isProcessing ? <Loader2 size={11} className="animate-spin shrink-0" /> : <Check size={11} className="shrink-0" />}
+                              <span className="truncate">Mark Ready</span>
+                            </button>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                              className="flex-1 h-7 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate"
+                              title="Mark all requests as Completed and open POS pre-filled for this customer"
+                            >
+                              {isProcessing ? <Loader2 size={11} className="animate-spin shrink-0" /> : <Check size={11} className="shrink-0" />}
+                              <span className="truncate">Complete</span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Ordered')}
+                              className="flex-1 h-7 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate"
+                              title="Mark all requests as Ordered"
+                            >
+                              {isProcessing ? <Loader2 size={11} className="animate-spin shrink-0" /> : <Check size={11} className="shrink-0" />}
+                              <span className="truncate">Mark Ordered</span>
+                            </button>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                              className="flex-1 h-7 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate"
+                              title="Mark all requests as Completed and open POS pre-filled for this customer"
+                            >
+                              {isProcessing ? <Loader2 size={11} className="animate-spin shrink-0" /> : <Check size={11} className="shrink-0" />}
+                              <span className="truncate">Complete</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Tier 2: Secondary Controls (Auto/Manual toggle + Edit + Cancel) */}
+                      <div className="flex items-center justify-between gap-1.5 min-w-0">
+                        {group.overallStatus === 'Ready' ? (
+                          (() => {
                             const isOrderAutoArmed = optimisticAutoRemindOrders.has(group.items[0]?.id)
                               ? optimisticAutoRemindOrders.get(group.items[0]?.id)
                               : (group as any).auto_remind === 1;
@@ -4284,7 +4358,7 @@ const QuickAssistSidebar = memo(({
                                   e.stopPropagation();
                                   handleToggleOrderAutoRemind(group.items, !isOrderAutoArmed);
                                 }}
-                                className={`py-1 px-2 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border shrink-0 ${
+                                className={`h-6 px-2 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border shrink-0 ${
                                   isOrderAutoArmed
                                     ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
                                     : 'bg-bg3 text-muted hover:text-text border-border'
@@ -4295,112 +4369,54 @@ const QuickAssistSidebar = memo(({
                                     : 'Manual mode: automatic follow-ups disabled. Click to arm Auto Remind.'
                                 }
                               >
-                                <Zap size={9} className={isOrderAutoArmed ? 'text-purple-400 fill-purple-400' : 'text-muted'} />
-                                <span>{isOrderAutoArmed ? `Auto ON${collCount > 0 ? ` (${collCount}x)` : ''}` : 'Manual'}</span>
+                                <Zap size={9} className={isOrderAutoArmed ? 'text-purple-400 fill-purple-400 shrink-0' : 'text-muted shrink-0'} />
+                                <span className="truncate">{isOrderAutoArmed ? `Auto ON${collCount > 0 ? ` (${collCount}x)` : ''}` : 'Manual'}</span>
                               </button>
                             );
-                          })()}
-                          {(() => {
-                            const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
-                            return (
-                              <button
-                                disabled={isProcessing}
-                                onClick={() => handleUpdateGroupStatus(group, 'Ready', { resend: true })}
-                                className="flex-1 py-1 px-2 rounded bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
-                                title="Re-send arrival reminder WhatsApp notification to customer"
-                              >
-                                {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <MessageCircle size={11} />}
-                                Resend Ready {maxCount > 0 ? `• ${maxCount}` : ''}
-                              </button>
-                            );
-                          })()}
+                          })()
+                        ) : (
+                          <span className="text-[10px] text-muted/60 uppercase font-mono px-1">
+                            {group.overallStatus}
+                          </span>
+                        )}
+
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
+                            type="button"
                             disabled={isProcessing}
-                            onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                            className="flex-1 py-1 px-2 rounded bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
-                            title="Mark all requests as Completed, remove from Quick Assist and open POS pre-filled for this customer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingGroup({
+                                type: 'special_request',
+                                title: 'Edit Special Request',
+                                customerName: group.requester,
+                                customerPhone: group.phone || '',
+                                items: group.items.map(i => ({
+                                  id: i.id,
+                                  product: i.product,
+                                  qty: i.qty,
+                                  status: i.status,
+                                  priority: i.priority,
+                                  notes: (i as any).notes || ''
+                                }))
+                              });
+                            }}
+                            className="h-6 px-2 rounded bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                            title="Edit special request details, quantities, or arrival/delay status"
                           >
-                            {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            Complete
-                          </button>
-                        </>
-                      ) : group.overallStatus === 'Ordered' ? (
-                        <>
-                          <button
-                            disabled={isProcessing}
-                            onClick={() => handleUpdateGroupStatus(group, 'Ready')}
-                            className="flex-1 py-1 px-2 rounded bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
-                            title="Mark all requests as Ready and queue the arrival WhatsApp to each customer"
-                          >
-                            {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            Mark Ready
+                            <Edit3 size={11} className="shrink-0" />
+                            <span>Edit</span>
                           </button>
                           <button
                             disabled={isProcessing}
-                            onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                            className="flex-1 py-1 px-2 rounded bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
-                            title="Mark all requests as Completed and open POS pre-filled for this customer"
+                            onClick={() => handleUpdateGroupStatus(group, 'Cancelled')}
+                            className="h-6 px-2 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 text-[10px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                            title="Cancel all requests for this customer"
                           >
-                            {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            Complete
+                            Cancel
                           </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            disabled={isProcessing}
-                            onClick={() => handleUpdateGroupStatus(group, 'Ordered')}
-                            className="flex-1 py-1 px-2 rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
-                            title="Mark all requests as Ordered"
-                          >
-                            {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            Mark Ordered
-                          </button>
-                          <button
-                            disabled={isProcessing}
-                            onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                            className="flex-1 py-1 px-2 rounded bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
-                            title="Mark all requests as Completed and open POS pre-filled for this customer"
-                          >
-                            {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            Complete
-                          </button>
-                        </>
-                      )}
-                      <button
-                        type="button"
-                        disabled={isProcessing}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingGroup({
-                            type: 'special_request',
-                            title: 'Edit Special Request',
-                            customerName: group.requester,
-                            customerPhone: group.phone || '',
-                            items: group.items.map(i => ({
-                              id: i.id,
-                              product: i.product,
-                              qty: i.qty,
-                              status: i.status,
-                              priority: i.priority,
-                              notes: (i as any).notes || ''
-                            }))
-                          });
-                        }}
-                        className="py-1 px-2 rounded bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0"
-                        title="Edit special request details, quantities, or arrival/delay status"
-                      >
-                        <Edit3 size={11} />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        disabled={isProcessing}
-                        onClick={() => handleUpdateGroupStatus(group, 'Cancelled')}
-                        className="py-1 px-2 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 text-[10px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
-                        title="Cancel all requests for this customer"
-                      >
-                        Cancel
-                      </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );

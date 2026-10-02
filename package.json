@@ -1,6 +1,6 @@
 {
   "name": "ai-pharmacy",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "type": "module",
   "bin": "dist-pkg/server.cjs",
   "scripts": {
@@ -23,6 +23,7 @@
     "analyze:bundle": "node scripts/analyze-frontend-bundle.mjs",
     "drill": "node scripts/backup-restore-drill.mjs",
     "watchdog": "node scripts/watchdog.mjs",
+    "db:clone-prod": "node scripts/clone-prod-to-dev-db.mjs",
     "harvest:top100": "tsx scripts/harvest_top100_company_images.ts --top=100",
     "harvest:overnight": "tsx scripts/harvest_top100_company_images.ts --top=100 --auto-shutdown --gemini",
     "harvest:company": "tsx scripts/harvest_top100_company_images.ts",

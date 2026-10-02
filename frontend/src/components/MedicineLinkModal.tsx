@@ -44,6 +44,22 @@ export const MedicineLinkModal: React.FC<{
   const [searching, setSearching] = useState(false);
   const [searchNote, setSearchNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [distributorFilter, setDistributorFilter] = useState<string | null>(null);
+
+  const topDistributors = React.useMemo(() => {
+    return ranks.filter(r => r.purchases > 0).slice(0, 7);
+  }, [ranks]);
+
+  const norm = (s: unknown) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const displayedResults = React.useMemo(() => {
+    if (!distributorFilter) return results;
+    const target = norm(distributorFilter);
+    return results.filter(c => {
+      const store = norm(c.storeName);
+      return store.includes(target) || target.includes(store);
+    });
+  }, [results, distributorFilter]);
 
   useEffect(() => {
     let alive = true;
@@ -165,12 +181,19 @@ export const MedicineLinkModal: React.FC<{
               ) : (
                 <ul className="space-y-1.5">
                   {selected.map((p, i) => (
-                    <li key={linkKeyOf(p)} className="flex items-start gap-2 rounded-lg border border-border bg-bg px-2 py-1.5">
+                    <li key={linkKeyOf(p)} className="flex items-start gap-2 rounded-lg border border-border bg-bg px-2.5 py-1.5">
                       <span className="text-[10px] font-bold text-primary mt-0.5">#{i + 1}</span>
                       <div className="min-w-0 flex-1">
-                        <div className="font-bold text-text truncate">{p.storeName}</div>
-                        <div className="text-[10px] text-muted truncate">
-                          {p.productName}{p.packaging ? ` (${p.packaging})` : ''} · bought {bought(p.storeName)}×
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-bold text-text truncate">{p.storeName}</span>
+                          {p.company && (
+                            <span className="px-1.5 py-0.2 rounded bg-bg3 text-[8.5px] font-medium text-muted border border-border shrink-0 truncate max-w-[110px]" title={p.company}>
+                              {p.company}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted truncate mt-0.5">
+                          <span className="font-medium text-text">{p.productName}</span>{p.packaging ? ` (${p.packaging})` : ''} · bought {bought(p.storeName)}×
                         </div>
                       </div>
                       <div className="flex flex-col">
@@ -210,6 +233,51 @@ export const MedicineLinkModal: React.FC<{
               />
               {searching && <Loader2 size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-primary animate-spin" />}
             </div>
+
+            {/* Top Distributors Quick Filter Chips */}
+            {topDistributors.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto dropdown-scroll py-1 shrink-0 select-none">
+                <span className="text-[9.5px] font-bold text-muted uppercase tracking-wider shrink-0">Frequent:</span>
+                <button
+                  type="button"
+                  onClick={() => setDistributorFilter(null)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer shrink-0 ${
+                    distributorFilter === null
+                      ? 'bg-primary text-white border-primary shadow-xs'
+                      : 'bg-bg border-border text-muted hover:text-text'
+                  }`}
+                >
+                  All ({results.length})
+                </button>
+                {topDistributors.map(d => {
+                  const isSelected = distributorFilter === d.name;
+                  const countForDist = results.filter(c => {
+                    const store = norm(c.storeName);
+                    const target = norm(d.name);
+                    return store.includes(target) || target.includes(store);
+                  }).length;
+                  return (
+                    <button
+                      key={d.name}
+                      type="button"
+                      onClick={() => setDistributorFilter(isSelected ? null : d.name)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                        isSelected
+                          ? 'bg-primary text-white border-primary shadow-xs'
+                          : 'bg-bg border-border text-muted hover:text-text hover:border-primary/40'
+                      }`}
+                      title={`Filter candidates from ${d.name} (Bought ${d.purchases}×)`}
+                    >
+                      <span className="truncate max-w-[120px]">{d.name}</span>
+                      <span className={`text-[9px] font-mono px-1 rounded-full ${isSelected ? 'font-bold opacity-85' : 'bg-bg3 text-muted'}`}>
+                        {d.purchases}×{results.length > 0 ? ` (${countForDist})` : ''}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {query.trim().length < 3 && (
               <button type="button" onClick={() => setQuery(medicineName)} className="self-start px-2.5 py-1 rounded-lg bg-bg3 border border-border text-text hover:border-primary/40 text-[11px] font-bold cursor-pointer">
                 Search “{medicineName}”
@@ -220,22 +288,56 @@ export const MedicineLinkModal: React.FC<{
             {results.length > 0 && (
               <div className="flex flex-col max-h-[50vh] rounded-lg border border-border bg-bg2 overflow-hidden">
                 <div className="px-3 py-1.5 bg-bg3 shrink-0 border-b border-border/40 text-[10.5px] text-muted flex items-center justify-between select-none">
-                  <span className="font-semibold text-text">Matching Live Candidates ({results.length})</span>
+                  <span className="font-semibold text-text">
+                    Matching Live Candidates ({displayedResults.length}{distributorFilter ? ` of ${results.length}` : ''})
+                  </span>
                   <span className="text-[9.5px] text-muted font-mono uppercase">Distributor Links</span>
                 </div>
                 <ul className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/40">
-                  {results.map(c => {
+                  {displayedResults.map(c => {
                     const k = linkKeyOf(c);
                     return (
                       <li key={k}>
-                        <label className="flex items-center gap-2 px-2.5 py-2 cursor-pointer hover:bg-bg3/60">
-                          <input type="checkbox" checked={selectedKeys.has(k)} onChange={() => toggle(c)} className="accent-primary" />
+                        <label className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-bg3/60 transition-colors">
+                          <input type="checkbox" checked={selectedKeys.has(k)} onChange={() => toggle(c)} className="accent-primary shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-semibold text-text truncate">
-                              {c.productName} {c.packaging && <span className="text-muted font-normal">({c.packaging})</span>}
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[11.5px] font-bold text-text truncate">
+                                {c.productName}
+                              </span>
+                              {c.packaging && (
+                                <span className="text-muted text-[10px] shrink-0 font-normal">
+                                  ({c.packaging})
+                                </span>
+                              )}
+                              {c.company && (
+                                <span className="px-1.5 py-0.2 rounded bg-bg3 text-[9px] font-semibold text-text border border-border shrink-0 truncate max-w-[130px]" title={c.company}>
+                                  {c.company}
+                                </span>
+                              )}
                             </div>
-                            <div className="text-[10px] text-muted truncate">
-                              {c.storeName} · bought {bought(c.storeName)}×{c.rate != null ? ` · PTR ₹${c.rate}` : ''}{c.mrp != null ? ` · MRP ₹${c.mrp}` : ''}{c.scheme ? ` · ${c.scheme}` : ''}
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted truncate mt-0.5">
+                              <span className="font-semibold text-text truncate">{c.storeName}</span>
+                              <span>·</span>
+                              <span className="shrink-0">bought {bought(c.storeName)}×</span>
+                              {c.rate != null && (
+                                <>
+                                  <span>·</span>
+                                  <span className="font-mono font-medium text-emerald-400 shrink-0">PTR ₹{c.rate}</span>
+                                </>
+                              )}
+                              {c.mrp != null && (
+                                <>
+                                  <span>·</span>
+                                  <span className="font-mono text-muted shrink-0">MRP ₹{c.mrp}</span>
+                                </>
+                              )}
+                              {c.scheme && (
+                                <>
+                                  <span>·</span>
+                                  <span className="text-amber-400 font-medium shrink-0">{c.scheme}</span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${c.inStock ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
