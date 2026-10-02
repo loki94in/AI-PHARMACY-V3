@@ -113,7 +113,10 @@ var init_config = __esm({
     config = {
       port: resolvedPort,
       get dbPath() {
-        return process.env.DB_PATH || import_path.default.join(appDataDir, "data", "app.db");
+        if (process.env.DB_PATH) return process.env.DB_PATH;
+        const isDev = !isPackagedApp() && (process.env.NODE_ENV === "development" || !process.env.NODE_ENV);
+        const dbName = isDev ? "app.dev.db" : "app.db";
+        return import_path.default.join(appDataDir, "data", dbName);
       },
       uploadDir: process.env.UPLOAD_DIR || import_path.default.join(appDataDir, "uploads"),
       tempDir: process.env.TEMP_DIR || import_path.default.join(appDataDir, "uploads", "temp"),
@@ -52462,6 +52465,22 @@ var init_connection = __esm({
           const busyTimeout = isTest ? 5e3 : 3e4;
           const maxAttempts = 10;
           let lastError = null;
+          if (import_path26.default.basename(dbPath) === "app.dev.db" && !import_fs27.default.existsSync(dbPath)) {
+            const prodPath = import_path26.default.join(import_path26.default.dirname(dbPath), "app.db");
+            if (import_fs27.default.existsSync(prodPath)) {
+              try {
+                import_fs27.default.mkdirSync(import_path26.default.dirname(dbPath), { recursive: true });
+                import_fs27.default.copyFileSync(prodPath, dbPath);
+                const prodWal = prodPath + "-wal";
+                const prodShm = prodPath + "-shm";
+                if (import_fs27.default.existsSync(prodWal)) import_fs27.default.copyFileSync(prodWal, dbPath + "-wal");
+                if (import_fs27.default.existsSync(prodShm)) import_fs27.default.copyFileSync(prodShm, dbPath + "-shm");
+                console.log(`[Database] Auto-provisioned isolated dev sandbox: ${dbPath} (cloned from ${prodPath})`);
+              } catch (cloneErr) {
+                console.warn("[Database] Could not clone production database for dev sandbox; starting fresh:", cloneErr);
+              }
+            }
+          }
           for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             let db2 = new import_sqlite.Database({ filename: dbPath, driver: import_sqlite32.default.Database });
             let needsHeal = false;
@@ -54518,7 +54537,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.42";
+    APP_VERSION = "0.1.43";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
