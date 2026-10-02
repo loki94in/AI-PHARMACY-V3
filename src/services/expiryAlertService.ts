@@ -376,15 +376,21 @@ export async function patchExpiryCacheForInventoryItem(inventoryId: number): Pro
  * patches only those specific items. Falls back to full rebuild
  * when IDs are not available (e.g. bulk purchase import).
  */
-export function triggerExpiryCacheRebuildDebounced(inventoryIds?: number[]): void {
+export function triggerExpiryCacheRebuildDebounced(
+  inventoryIds?: number[],
+  options?: { forceFull?: boolean }
+): void {
   if (inventoryIds && inventoryIds.length > 0) {
     for (const id of inventoryIds) {
       if (typeof id === 'number' && id > 0) {
         pendingInventoryIds.add(id);
       }
     }
-  } else {
+  } else if (options?.forceFull) {
     fullExpiryRebuildRequested = true;
+  } else {
+    // Untargeted rebuild without forceFull is skipped to prevent disk I/O storm
+    return;
   }
 
   if (rebuildTimeout) clearTimeout(rebuildTimeout);

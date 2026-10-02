@@ -7,6 +7,8 @@ import { parsePackSizeFromPackaging } from '../utils/packaging.js';
 import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { logMutationAudit } from '../services/auditLoggerService.js';
+import { triggerPreCalculatedStockRebuildDebounced } from '../worker/stockCalculatorWorker.js';
+import { triggerExpiryCacheRebuildDebounced } from '../services/expiryAlertService.js';
 
 // import path from 'path';
 // import { fileURLToPath } from 'url';
@@ -385,6 +387,10 @@ router.put('/:id', async (req, res) => {
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
+    if (oldInv.medicine_id) {
+      triggerPreCalculatedStockRebuildDebounced([oldInv.medicine_id]);
+    }
+    triggerExpiryCacheRebuildDebounced([Number(id)]);
 
     res.json({ success: true, message: 'Inventory updated and synced across unified storage' });
   } catch (error: any) {
@@ -1018,6 +1024,12 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
+    if (id) {
+      triggerPreCalculatedStockRebuildDebounced([Number(id)]);
+    }
+    if (inventory_id) {
+      triggerExpiryCacheRebuildDebounced([Number(inventory_id)]);
+    }
     
     res.json({ success: true, message: 'Medicine universally updated across 26 fields' });
   } catch (error: any) {
@@ -1042,6 +1054,8 @@ router.post('/sync', async (req, res) => {
     await db.run('BEGIN TRANSACTION');
 
     let count = 0;
+    const touchedMedicineIds = new Set<number>();
+    const touchedInventoryIds = new Set<number>();
     for (const item of updates) {
       const { inventory_id, quantity, reason = 'Remote Admin Stock Update' } = item;
       if (!inventory_id || typeof quantity !== 'number' || quantity < 0) {
@@ -1049,6 +1063,7 @@ router.post('/sync', async (req, res) => {
       }
 
       await db.run('UPDATE inventory_master SET quantity = ? WHERE id = ?', [quantity, inventory_id]);
+      touchedInventoryIds.add(inventory_id);
       
       await db.run(
         `INSERT INTO action_logs (action_type, description) VALUES ('STOCK_OVERRIDE', ?)`,
@@ -1058,12 +1073,19 @@ router.post('/sync', async (req, res) => {
       // Check if new stock triggers pending patient refills
       const invItem = await db.get('SELECT medicine_id FROM inventory_master WHERE id = ?', [inventory_id]);
       if (invItem && invItem.medicine_id) {
+        touchedMedicineIds.add(invItem.medicine_id);
         await inventoryService.checkAndTriggerRefillsForMedicine(invItem.medicine_id);
       }
       count++;
     }
 
     await db.run('COMMIT');
+    if (touchedMedicineIds.size > 0) {
+      triggerPreCalculatedStockRebuildDebounced(Array.from(touchedMedicineIds));
+    }
+    if (touchedInventoryIds.size > 0) {
+      triggerExpiryCacheRebuildDebounced(Array.from(touchedInventoryIds));
+    }
     res.json({ success: true, message: `Successfully synced ${count} stock override(s).`, count });
   } catch (error: any) {
     // Without this ROLLBACK a failed override left the shared connection inside the

@@ -29,6 +29,8 @@ import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { applyPurchaseStockChange, PurchaseEditError } from '../services/purchaseBillEditService.js';
 import { getIndianFinancialYear } from '../utils/financialYear.js';
+import { triggerPreCalculatedStockRebuildDebounced } from '../worker/stockCalculatorWorker.js';
+import { triggerExpiryCacheRebuildDebounced } from '../services/expiryAlertService.js';
 
 
 
@@ -1178,6 +1180,7 @@ router.post('/manual', async (req, res) => {
 
     // 3. Process items
     const uniqueMedicineIds = new Set<number>();
+    const touchedInvIds = new Set<number>();
     const savedItems: any[] = [];
     const masterMedItems: any[] = []; // ponytail: collected for background upsert after COMMIT
     const reconcileNames: string[] = []; // ponytail: collected for background reconcile after COMMIT
@@ -1294,12 +1297,16 @@ router.post('/manual', async (req, res) => {
       if (invRow) {
         await db.run('UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = COALESCE(NULLIF(?, 0), mrp), expiry_date = COALESCE(?, expiry_date) WHERE id = ?',
           [totalQty, rawRate, rawMrp || 0, rawExpiry || null, invRow.id]);
+        touchedInvIds.add(invRow.id);
         await refreshInventoryActiveStatus(db, invRow.id);
       } else {
-        await db.run(`
+        const insInv = await db.run(`
           INSERT INTO inventory_master (store_id, medicine_id, quantity, batch_no, expiry_date, cost_price, mrp, is_active)
           VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         `, [targetStoreId, medId, totalQty, rawBatch, rawExpiry || null, rawRate, rawMrp || 0]);
+        if (insInv?.lastID) {
+          touchedInvIds.add(insInv.lastID);
+        }
         await refreshInventoryActiveByBatch(db, medId, rawBatch);
       }
       await recordStockLedger(db, {
@@ -1356,6 +1363,12 @@ router.post('/manual', async (req, res) => {
     await db.run('COMMIT');
     const commitMs = Date.now() - commitT0;
     inventoryCache.invalidate();
+    if (uniqueMedicineIds.size > 0) {
+      triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));
+    }
+    if (touchedInvIds.size > 0) {
+      triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+    }
     console.log(`[Purchases] Bill ${appInvoiceNo} saved: ${items.length} lines in ${Date.now() - saveT0}ms (begin ${beginMs}ms, commit ${commitMs}ms)`);
 
     // P1 push events (API_OPTIMIZATION plan): invoice saved → inventory created/updated
@@ -1680,7 +1693,7 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     }
 
     // 3. Shelf stock moves by the NET change per medicine + batch (services/purchaseBillEditService.ts).
-    await applyPurchaseStockChange(
+    const stockChangeResult = await applyPurchaseStockChange(
       db,
       String(id),
       oldItems.map((o: any) => ({ medicine_id: o.medicine_id, batch_no: o.batch_no, quantity: o.quantity, free_qty: o.free_qty })),
@@ -1766,6 +1779,12 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
+    if (stockChangeResult?.touchedMedicineIds?.length) {
+      triggerPreCalculatedStockRebuildDebounced(stockChangeResult.touchedMedicineIds);
+    }
+    if (stockChangeResult?.touchedInventoryIds?.length) {
+      triggerExpiryCacheRebuildDebounced(stockChangeResult.touchedInventoryIds);
+    }
 
     // P1 push events: purchase edit alters stock/expiry
     try {
@@ -1848,7 +1867,7 @@ router.delete('/:id', async (req, res) => {
     // already sold or returned, the delete is refused with what is left on the shelf:
     // flooring at 0 would leave those sales with no purchase behind them.
     const items = await db.all('SELECT medicine_id, batch_no, quantity, free_qty FROM purchase_items WHERE purchase_id = ?', [id]);
-    await applyPurchaseStockChange(db, id, items, [], 'purchase_delete');
+    const stockChangeResult = await applyPurchaseStockChange(db, id, items, [], 'purchase_delete');
 
     // Delete items then purchase
     await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [id]);
@@ -1856,6 +1875,12 @@ router.delete('/:id', async (req, res) => {
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
+    if (stockChangeResult?.touchedMedicineIds?.length) {
+      triggerPreCalculatedStockRebuildDebounced(stockChangeResult.touchedMedicineIds);
+    }
+    if (stockChangeResult?.touchedInventoryIds?.length) {
+      triggerExpiryCacheRebuildDebounced(stockChangeResult.touchedInventoryIds);
+    }
 
     try {
       const { eventService } = await import('../services/eventService.js');
@@ -3452,6 +3477,7 @@ router.post('/reconciliation/reissue', async (req, res) => {
 
     let subtotal = 0;
     const uniqueMedicineIds = new Set<number>();
+    const touchedInvIds = new Set<number>();
 
     // Process items & update inventory
     for (const item of parsedItems) {
@@ -3513,11 +3539,13 @@ router.post('/reconciliation/reissue', async (req, res) => {
       if (invRow) {
         await db.run('UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = ?, expiry_date = ? WHERE id = ?', 
           [totalQty, rate, mrp, rawExpiry, invRow.id]);
+        touchedInvIds.add(invRow.id);
       } else {
-        await db.run(`
+        const insInv = await db.run(`
           INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, cost_price, mrp)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [medId, totalQty, rawBatch, rawExpiry, rate, mrp]);
+        if (insInv?.lastID) touchedInvIds.add(insInv.lastID);
       }
     }
 
@@ -3535,6 +3563,12 @@ router.post('/reconciliation/reissue', async (req, res) => {
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
+    if (uniqueMedicineIds.size > 0) {
+      triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));
+    }
+    if (touchedInvIds.size > 0) {
+      triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+    }
 
     // P1 push events: reissue created/updated stock
     try {
@@ -3910,6 +3944,8 @@ router.post('/staged/:id/approve', async (req, res) => {
       [distId, finalInvoiceNo, finalDate, finalTotalAmt]
     );
     const purchaseId = purchRes.lastID;
+    const uniqueMedicineIds = new Set<number>();
+    const touchedInvIds = new Set<number>();
 
     // Save items and increment stock
     for (const item of itemsToProcess) {
@@ -3945,6 +3981,8 @@ router.post('/staged/:id/approve', async (req, res) => {
           unresolved_items: [{ name: inputName }]
         });
       }
+
+      uniqueMedicineIds.add(medId);
 
       // OCR Auto-Learning Feedback Loop: save raw alias/ocr correction rule if raw text was supplied
       const rawText = item.raw_name || item.original_name || item.raw_text;
@@ -3985,11 +4023,13 @@ router.post('/staged/:id/approve', async (req, res) => {
       if (invRow) {
         await db.run('UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = ?, expiry_date = ? WHERE id = ?', 
           [totalQty, rate, mrp, rawExpiry, invRow.id]);
+        touchedInvIds.add(invRow.id);
       } else {
-        await db.run(`
+        const insInv = await db.run(`
           INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, cost_price, mrp)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [medId, totalQty, rawBatch, rawExpiry, rate, mrp]);
+        if (insInv?.lastID) touchedInvIds.add(insInv.lastID);
       }
     }
 
@@ -3998,6 +4038,12 @@ router.post('/staged/:id/approve', async (req, res) => {
 
     await db.run('COMMIT');
     inventoryCache.invalidate();
+    if (uniqueMedicineIds.size > 0) {
+      triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));
+    }
+    if (touchedInvIds.size > 0) {
+      triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+    }
 
     // P1 push events: staged approval created/updated stock
     try {

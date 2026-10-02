@@ -6,6 +6,8 @@ import { applyStockDelta } from '../utils/stockRebuild.js';
 import { applySaleBillEdit, SaleEditError } from '../services/saleBillEditService.js';
 import { applyPurchaseStockChange, PurchaseEditError } from '../services/purchaseBillEditService.js';
 import { refreshInventoryActiveStatus } from '../utils/inventoryActive.js';
+import { triggerPreCalculatedStockRebuildDebounced } from '../worker/stockCalculatorWorker.js';
+import { triggerExpiryCacheRebuildDebounced } from '../services/expiryAlertService.js';
 
 const router = express.Router();
 
@@ -1098,7 +1100,7 @@ router.put('/purchases/:purchaseId', async (req, res) => {
       'SELECT medicine_id, batch_no, quantity, free_qty FROM purchase_items WHERE purchase_id = ?',
       [purchaseId]
     );
-    await applyPurchaseStockChange(
+    const stockChangeResult = await applyPurchaseStockChange(
       db,
       purchaseId,
       oldItems,
@@ -1161,6 +1163,12 @@ router.put('/purchases/:purchaseId', async (req, res) => {
     await db.run('COMMIT');
     inventoryCache.invalidate();
     invalidateInvestigationTimelineCache();
+    if (stockChangeResult?.touchedMedicineIds?.length) {
+      triggerPreCalculatedStockRebuildDebounced(stockChangeResult.touchedMedicineIds);
+    }
+    if (stockChangeResult?.touchedInventoryIds?.length) {
+      triggerExpiryCacheRebuildDebounced(stockChangeResult.touchedInventoryIds);
+    }
     await rebuildPurchaseSummaryCache();
     triggerBackgroundSummaryRebuild();
 

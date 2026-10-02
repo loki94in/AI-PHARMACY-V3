@@ -613,6 +613,22 @@ router.post('/', async (req, res) => {
     await db.run('COMMIT');
     inventoryCache.invalidate();
 
+    // Surgical delta updates: recalculate stock metrics & expiry cache only for sold items
+    try {
+      const soldMedIds = Array.from(new Set(items.map((it: any) => Number(it.medicine_id || it.id)).filter((mid: number) => !isNaN(mid) && mid > 0)));
+      const soldInvIds = Array.from(new Set(items.map((it: any) => Number(it.inventory_id)).filter((iid: number) => !isNaN(iid) && iid > 0)));
+      if (soldMedIds.length > 0) {
+        import('../worker/stockCalculatorWorker.js')
+          .then(m => m.triggerPreCalculatedStockRebuildDebounced(soldMedIds))
+          .catch(() => {});
+      }
+      if (soldInvIds.length > 0) {
+        import('../services/expiryAlertService.js')
+          .then(m => m.triggerExpiryCacheRebuildDebounced(soldInvIds))
+          .catch(() => {});
+      }
+    } catch (_) {}
+
     // Log Activity Alert
     activityLogger.logSale(invoice_no, Number(total || 0), patient_name || 'Walk-in', paymentStatus || 'paid');
 
@@ -2394,6 +2410,22 @@ router.put('/:id', async (req, res) => {
     await db.run('COMMIT');
     inventoryCache.invalidate();
 
+    // Surgical delta updates: recalculate stock metrics & expiry cache only for edited items
+    try {
+      const editedMedIds = Array.from(new Set((items as any[]).map((it: any) => Number(it.medicine_id || it.id)).filter((mid: number) => !isNaN(mid) && mid > 0)));
+      const editedInvIds = Array.from(new Set((items as any[]).map((it: any) => Number(it.inventory_id)).filter((iid: number) => !isNaN(iid) && iid > 0)));
+      if (editedMedIds.length > 0) {
+        import('../worker/stockCalculatorWorker.js')
+          .then(m => m.triggerPreCalculatedStockRebuildDebounced(editedMedIds))
+          .catch(() => {});
+      }
+      if (editedInvIds.length > 0) {
+        import('../services/expiryAlertService.js')
+          .then(m => m.triggerExpiryCacheRebuildDebounced(editedInvIds))
+          .catch(() => {});
+      }
+    } catch (_) {}
+
     try {
       const { eventService } = await import('../services/eventService.js');
       eventService.broadcast('sales_sync', { success: true, action: 'update', id: Number(id) });
@@ -2433,6 +2465,8 @@ router.delete('/:id', async (req, res) => {
     const reason = String(rawReason).trim().slice(0, 255);
     let notFound = false;
     let deletedInvoiceNo = '';
+    let deletedMedIds: number[] = [];
+    let deletedInvIds: number[] = [];
 
     await dbManager.transaction(async (db) => {
       const existing = await db.get('SELECT * FROM sales_invoices WHERE id = ?', [id]);
@@ -2481,6 +2515,9 @@ router.delete('/:id', async (req, res) => {
         await refreshInventoryActiveStatus(db, invId);
       }
 
+      deletedMedIds = Array.from(new Set(Array.from(stockMap.values()).map((s: any) => Number(s.medicine_id)).filter((m: number) => !isNaN(m) && m > 0)));
+      deletedInvIds = Array.from(stockMap.keys());
+
       // Record audit entry in action_logs
       await db.run(
         'INSERT INTO action_logs (action_type, description, metadata) VALUES (?, ?, ?)',
@@ -2524,6 +2561,20 @@ router.delete('/:id', async (req, res) => {
 
     inventoryCache.invalidate();
     invalidateInvestigationTimelineCache();
+
+    // Surgical delta updates: recalculate stock metrics & expiry cache only for restored items
+    try {
+      if (deletedMedIds.length > 0) {
+        import('../worker/stockCalculatorWorker.js')
+          .then(m => m.triggerPreCalculatedStockRebuildDebounced(deletedMedIds))
+          .catch(() => {});
+      }
+      if (deletedInvIds.length > 0) {
+        import('../services/expiryAlertService.js')
+          .then(m => m.triggerExpiryCacheRebuildDebounced(deletedInvIds))
+          .catch(() => {});
+      }
+    } catch (_) {}
 
     try {
       const { eventService } = await import('../services/eventService.js');

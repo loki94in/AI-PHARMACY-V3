@@ -13,15 +13,22 @@ let fullStockRebuildRequested = false;
 let activeStockRecalcPromise: Promise<void> | null = null;
 let activeStockLimitsPromise: Promise<void> | null = null;
 
-export function triggerPreCalculatedStockRebuildDebounced(medicineIds?: number[], delayMs: number = 500): void {
+export function triggerPreCalculatedStockRebuildDebounced(
+  medicineIds?: number[],
+  delayMs: number = 500,
+  options?: { forceFull?: boolean }
+): void {
   if (medicineIds && medicineIds.length > 0) {
     for (const id of medicineIds) {
       if (typeof id === 'number' && id > 0) {
         pendingMedicineIds.add(id);
       }
     }
-  } else {
+  } else if (options?.forceFull) {
     fullStockRebuildRequested = true;
+  } else {
+    // Untargeted rebuild without forceFull is skipped to protect single-threaded event loop
+    return;
   }
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {

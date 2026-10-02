@@ -57,7 +57,7 @@ export async function applyPurchaseStockChange(
   oldLines: PurchaseStockLine[],
   newLines: PurchaseStockLine[],
   ledgerType: string
-): Promise<void> {
+): Promise<{ touchedMedicineIds: number[]; touchedInventoryIds: number[] }> {
   const changes = new Map<string, BatchChange>();
   const keyOf = (l: PurchaseStockLine) => `${l.medicine_id}|${String(l.batch_no ?? '').trim()}`;
   const entry = (l: PurchaseStockLine) => {
@@ -105,7 +105,11 @@ export async function applyPurchaseStockChange(
     );
   }
 
+  const touchedMedicineIds = new Set<number>();
+  const touchedInventoryIds = new Set<number>();
+
   for (const [k, c] of changes) {
+    touchedMedicineIds.add(c.medicine_id);
     const net = c.newStrips - c.oldStrips;
     let row = rows.get(k);
     const line = c.line;
@@ -148,6 +152,14 @@ export async function applyPurchaseStockChange(
       });
       if (net > 0) await applyPurchaseDelta(db, c.medicine_id, net, Number(line?.cost_price) || null, null, null);
     }
-    if (row?.id) await refreshInventoryActiveStatus(db, row.id);
+    if (row?.id) {
+      touchedInventoryIds.add(row.id);
+      await refreshInventoryActiveStatus(db, row.id);
+    }
   }
+
+  return {
+    touchedMedicineIds: Array.from(touchedMedicineIds),
+    touchedInventoryIds: Array.from(touchedInventoryIds)
+  };
 }

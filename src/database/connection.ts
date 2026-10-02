@@ -461,12 +461,11 @@ class DatabaseManager {
             const lastNum = [...flatParams].reverse().find(v => typeof v === 'number' && Number.isInteger(v) && v > 0);
             if (lastNum !== undefined) inventoryIds = [lastNum as number];
           }
-          import('../services/expiryAlertService.js')
-            .then(m => m.triggerExpiryCacheRebuildDebounced(inventoryIds))
-            .catch(err => console.error('Failed to trigger expiry cache rebuild:', err));
-          import('../worker/stockCalculatorWorker.js')
-            .then(m => m.triggerPreCalculatedStockRebuildDebounced(inventoryIds))
-            .catch(err => console.error('Failed to trigger precalculated stock rebuild:', err));
+          if (inventoryIds && inventoryIds.length > 0) {
+            import('../services/expiryAlertService.js')
+              .then(m => m.triggerExpiryCacheRebuildDebounced(inventoryIds))
+              .catch(err => console.error('Failed to trigger expiry cache rebuild:', err));
+          }
           import('../routes/inventory.js')
             .then(m => m.invalidateInventoryCountCache())
             .catch(() => {});

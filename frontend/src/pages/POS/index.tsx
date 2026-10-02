@@ -730,9 +730,9 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
   }
 
   const sortAlpha = (a: PosBatchItem, b: PosBatchItem) => {
-    const nameA = String(a.medicine_name || a.name || '');
-    const nameB = String(b.medicine_name || b.name || '');
-    return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    const nameA = String(a.medicine_name || a.name || '').toLowerCase();
+    const nameB = String(b.medicine_name || b.name || '').toLowerCase();
+    return nameA < nameB ? -1 : (nameA > nameB ? 1 : 0);
   };
 
   const t1 = Array.from(tier1Map.values()).sort(sortAlpha);
@@ -744,6 +744,19 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
   const combined = [...t1, ...t2, ...t3, ...t4, ...t5];
   return combined.slice(0, 30);
 };
+
+const medicineUpdateDebounceTimers = new Map<string, any>();
+function debouncedUpdateMedicine(id: number, data: Parameters<typeof api.updateMedicine>[1], delayMs = 400) {
+  const key = `${id}_${Object.keys(data).sort().join(',')}`;
+  if (medicineUpdateDebounceTimers.has(key)) {
+    clearTimeout(medicineUpdateDebounceTimers.get(key));
+  }
+  const timer = setTimeout(() => {
+    medicineUpdateDebounceTimers.delete(key);
+    api.updateMedicine(id, data).catch(err => console.error('Error updating medicine in DB:', err));
+  }, delayMs);
+  medicineUpdateDebounceTimers.set(key, timer);
+}
 
 const mapEditSaleItemsToCart = (itemsList: EditSaleLine[]): CartRow[] => {
   if (!Array.isArray(itemsList) || itemsList.length === 0) return [];
@@ -3252,8 +3265,7 @@ const POS = () => {
             updatedItem.looseQty = looseVal % pSize;
           }
           if (typeof id === 'number' && id < 1000000) {
-            api.updateMedicine(id, { pack_size: pSize })
-              .catch(err => console.error('Error updating pack size in DB:', err));
+            debouncedUpdateMedicine(id, { pack_size: pSize });
           }
         }
 
@@ -3263,14 +3275,12 @@ const POS = () => {
           updatedItem.unitPrice = numMrp;
           updatedItem.sell_price = numMrp;
           if (typeof id === 'number' && id < 1000000) {
-            api.updateMedicine(id, { mrp: numMrp })
-              .catch(err => console.error('Error updating MRP in DB:', err));
+            debouncedUpdateMedicine(id, { mrp: numMrp });
           }
         }
 
         if (field === 'costPrice' && typeof id === 'number' && id < 1000000) {
-          api.updateMedicine(id, { purchase_price: Number(value) })
-            .catch(err => console.error('Error updating Cost Price in DB:', err));
+          debouncedUpdateMedicine(id, { purchase_price: Number(value) });
         }
 
         return updatedItem;
