@@ -11956,7 +11956,7 @@ var init_telegramPrescriptionService = __esm({
         try {
           const db2 = await dbManager.getConnection();
           const inventory = await db2.get(
-            `SELECT im.id, im.quantity, im.mrp, im.batch_number, im.expiry_date
+            `SELECT im.id, im.quantity, im.mrp, im.batch_no as batch_number, im.batch_no, im.expiry_date
          FROM inventory_master im
          WHERE im.medicine_id = ? AND im.quantity > 0
          ORDER BY im.quantity DESC LIMIT 1`,
@@ -13929,6 +13929,18 @@ async function ensureOrderTimingSchema(db2) {
     }
   } catch (_) {
   }
+  try {
+    const waMsgCols = await db2.all("PRAGMA table_info(whatsapp_messages)");
+    const waMsgNames = new Set(waMsgCols.map((c) => c.name.toLowerCase()));
+    if (waMsgCols.length > 0 && !waMsgNames.has("ack_status")) {
+      await db2.run("ALTER TABLE whatsapp_messages ADD COLUMN ack_status INTEGER DEFAULT 0");
+    }
+    if (waMsgCols.length > 0 && !waMsgNames.has("pharmacist_opened_at")) {
+      await db2.run("ALTER TABLE whatsapp_messages ADD COLUMN pharmacist_opened_at INTEGER DEFAULT NULL");
+    }
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status)");
+  } catch (_) {
+  }
 }
 async function ensureMultiPharmacyAndSnapshotSchema(db2) {
   await db2.run(`
@@ -14192,6 +14204,12 @@ async function ensureSchema(dbPath) {
           if (spCols.length > 0 && !spNames.has("medicine_id")) {
             await db2.run("ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)");
           }
+          if (spCols.length > 0 && !spNames.has("payment_method")) {
+            await db2.run("ALTER TABLE special_orders ADD COLUMN payment_method TEXT DEFAULT 'cash'");
+          }
+          if (spCols.length > 0 && !spNames.has("delivery_mode")) {
+            await db2.run("ALTER TABLE special_orders ADD COLUMN delivery_mode TEXT DEFAULT 'pickup'");
+          }
           if (spCols.length > 0) {
             await db2.run(`
               UPDATE special_orders
@@ -14207,6 +14225,14 @@ async function ensureSchema(dbPath) {
                 AND payment_screenshot_path LIKE '%uploads%'
                 AND payment_screenshot_path NOT LIKE '/uploads/%'
             `);
+          }
+        } catch (_) {
+        }
+        try {
+          const revCols = await db2.all("PRAGMA table_info(staged_medicine_reviews)");
+          const revNames = new Set(revCols.map((c) => c.name));
+          if (revCols.length > 0 && !revNames.has("possible_duplicate_of")) {
+            await db2.run("ALTER TABLE staged_medicine_reviews ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL");
           }
         } catch (_) {
         }
@@ -15443,7 +15469,9 @@ async function ensureSchema(dbPath) {
       last_synced_at DATETIME DEFAULT NULL,
       pos_sale_invoice_id INTEGER DEFAULT NULL,
       payment_screenshot_path TEXT DEFAULT NULL,
-      screenshot_amount REAL DEFAULT NULL
+      screenshot_amount REAL DEFAULT NULL,
+      payment_method TEXT DEFAULT 'cash',
+      delivery_mode TEXT DEFAULT 'pickup'
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -15955,6 +15983,9 @@ async function ensureSchema(dbPath) {
       ["special_orders", "pharmacy_verified_by", "ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT"],
       ["special_orders", "pharmacy_verified_at", "ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME"],
       ["special_orders", "medicine_id", "ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)"],
+      ["special_orders", "payment_method", "ALTER TABLE special_orders ADD COLUMN payment_method TEXT DEFAULT 'cash'"],
+      ["special_orders", "delivery_mode", "ALTER TABLE special_orders ADD COLUMN delivery_mode TEXT DEFAULT 'pickup'"],
+      ["staged_medicine_reviews", "possible_duplicate_of", "ALTER TABLE staged_medicine_reviews ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL"],
       ["sales_invoices", "online_order_id", "ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER"],
       // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
       ["catalog_images", "previous_image_url", "ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT"],
@@ -16150,6 +16181,7 @@ async function ensureSchema(dbPath) {
       raw_ocr_text TEXT,
       extracted_json TEXT,
       approved_json TEXT,
+      possible_duplicate_of INTEGER DEFAULT NULL,
       source TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -16697,9 +16729,12 @@ async function ensureSchema(dbPath) {
       timestamp INTEGER,
       type TEXT,
       has_media INTEGER DEFAULT 0,
+      ack_status INTEGER DEFAULT 0,
+      pharmacist_opened_at INTEGER DEFAULT NULL,
       FOREIGN KEY(chat_id) REFERENCES whatsapp_chats(id)
     );
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_chat_id ON whatsapp_messages (chat_id);
+    CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status);
 
     -- Crash telemetry: written by processGuardian on uncaught exceptions
     CREATE TABLE IF NOT EXISTS crash_log (
@@ -17879,7 +17914,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 71;
+    CURRENT_SCHEMA_VERSION = 72;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -26156,8 +26191,8 @@ Reply *YES* to confirm your refill.
           if (!it.qty || it.qty <= 0) continue;
           await db2.run(
             `INSERT INTO special_orders 
-          (product, qty, requester, created_at, status, notes, is_synced_to_pharmarack)
-         VALUES (?, ?, ?, ?, 'pending', ?, 0)`,
+          (product, qty, requester, created_at, status, notes, pharmarack_mapped)
+         VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
             [it.medicine_name, it.qty, "Pharmacist", now, reason]
           );
           addedCount++;
@@ -27615,7 +27650,7 @@ var init_orderScheduleService = __esm({
     `).catch(() => []);
         const refillRows = await db2.all(`
       SELECT pr.id, pr.patient_name, pr.quantity_needed, pr.next_refill_date, pr.status,
-             COALESCE(pr.created_at, pr.next_refill_date) as order_time,
+             COALESCE(pr.last_refill_date, pr.next_refill_date) as order_time,
              m.name as medicine_name,
              COALESCE(c.phone, '') as customer_phone
       FROM patient_refills pr
@@ -40625,6 +40660,220 @@ var init_whatsappIntentService = __esm({
   }
 });
 
+// src/services/waSmartReplyScheduler.ts
+var waSmartReplyScheduler_exports = {};
+__export(waSmartReplyScheduler_exports, {
+  default: () => waSmartReplyScheduler_default,
+  waSmartReplyScheduler: () => waSmartReplyScheduler
+});
+var WaSmartReplyScheduler, waSmartReplyScheduler, waSmartReplyScheduler_default;
+var init_waSmartReplyScheduler = __esm({
+  "src/services/waSmartReplyScheduler.ts"() {
+    "use strict";
+    init_connection();
+    WaSmartReplyScheduler = class _WaSmartReplyScheduler {
+      pending = /* @__PURE__ */ new Map();
+      static DEFAULT_COLD_MIN = 35;
+      static DEFAULT_COLD_MAX = 60;
+      static DEFAULT_WARM_MIN = 10;
+      static DEFAULT_WARM_MAX = 17;
+      static DEFAULT_WARM_WINDOW_MIN = 20;
+      static phoneKey(chatId) {
+        const raw = chatId.split("@")[0] || chatId;
+        const digits = raw.replace(/\D/g, "");
+        return digits.slice(-10) || chatId;
+      }
+      async loadSettings() {
+        try {
+          const db2 = await dbManager.getConnection();
+          const keys = [
+            "wa_bot_cold_delay_min_sec",
+            "wa_bot_cold_delay_max_sec",
+            "wa_bot_warm_delay_min_sec",
+            "wa_bot_warm_delay_max_sec",
+            "wa_bot_warm_window_minutes"
+          ];
+          const rows = await db2.all(
+            `SELECT key, value FROM app_settings WHERE key IN (${keys.map(() => "?").join(",")})`,
+            keys
+          );
+          const map = new Map(rows.map((r) => [r.key, Number(r.value)]));
+          const coldMin = map.get("wa_bot_cold_delay_min_sec") || _WaSmartReplyScheduler.DEFAULT_COLD_MIN;
+          const coldMax = map.get("wa_bot_cold_delay_max_sec") || _WaSmartReplyScheduler.DEFAULT_COLD_MAX;
+          const warmMin = map.get("wa_bot_warm_delay_min_sec") || _WaSmartReplyScheduler.DEFAULT_WARM_MIN;
+          const warmMax = map.get("wa_bot_warm_delay_max_sec") || _WaSmartReplyScheduler.DEFAULT_WARM_MAX;
+          const warmWindowMin = map.get("wa_bot_warm_window_minutes") || _WaSmartReplyScheduler.DEFAULT_WARM_WINDOW_MIN;
+          return { coldMin, coldMax, warmMin, warmMax, warmWindowMs: warmWindowMin * 60 * 1e3 };
+        } catch {
+          return {
+            coldMin: _WaSmartReplyScheduler.DEFAULT_COLD_MIN,
+            coldMax: _WaSmartReplyScheduler.DEFAULT_COLD_MAX,
+            warmMin: _WaSmartReplyScheduler.DEFAULT_WARM_MIN,
+            warmMax: _WaSmartReplyScheduler.DEFAULT_WARM_MAX,
+            warmWindowMs: _WaSmartReplyScheduler.DEFAULT_WARM_WINDOW_MIN * 60 * 1e3
+          };
+        }
+      }
+      async isWarmConvo(chatId, warmWindowMs) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const key = `%${_WaSmartReplyScheduler.phoneKey(chatId)}%`;
+          const row = await db2.get(
+            `SELECT last_pharmacist_message_at FROM whatsapp_chats
+         WHERE id = ? OR resolved_number LIKE ?
+         ORDER BY last_pharmacist_message_at DESC LIMIT 1`,
+            [chatId, key]
+          );
+          const lastPharmacistAt = Number(row?.last_pharmacist_message_at || 0);
+          return lastPharmacistAt > 0 && Date.now() - lastPharmacistAt < warmWindowMs;
+        } catch {
+          return false;
+        }
+      }
+      async isAlreadyReadByPharmacist(chatId) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const row = await db2.get(
+            `SELECT id FROM whatsapp_messages
+         WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NOT NULL
+         ORDER BY pharmacist_opened_at DESC LIMIT 1`,
+            [chatId]
+          );
+          return !!row;
+        } catch {
+          return false;
+        }
+      }
+      static randMs(minSec, maxSec) {
+        const span = Math.max(1, maxSec - minSec);
+        return Math.round((minSec + Math.random() * span) * 1e3);
+      }
+      scheduleReply(msg, opts) {
+        const chatId = msg?.from || msg?.chat?.id?._serialized || "";
+        if (!chatId) return;
+        const phoneKey2 = _WaSmartReplyScheduler.phoneKey(chatId);
+        const existing = this.pending.get(phoneKey2);
+        if (existing) {
+          clearTimeout(existing.timer);
+          this.pending.delete(phoneKey2);
+          console.log(`[SmartReplyScheduler] Collapsed pending reply for ${phoneKey2} - replaced with latest message.`);
+        }
+        (async () => {
+          try {
+            if (await this.isAlreadyReadByPharmacist(chatId)) {
+              console.log(`[SmartReplyScheduler] Suppressed reply for ${phoneKey2} - already read by pharmacist.`);
+              return;
+            }
+            const { coldMin, coldMax, warmMin, warmMax, warmWindowMs } = await this.loadSettings();
+            let delayMs;
+            if (opts?.forceCold) {
+              delayMs = _WaSmartReplyScheduler.randMs(coldMin, coldMax);
+            } else {
+              const warm = await this.isWarmConvo(chatId, warmWindowMs);
+              delayMs = warm ? _WaSmartReplyScheduler.randMs(warmMin, warmMax) : _WaSmartReplyScheduler.randMs(coldMin, coldMax);
+              console.log(`[SmartReplyScheduler] Scheduling reply for ${phoneKey2} in ${Math.round(delayMs / 1e3)}s (${warm ? "warm" : "cold"} window).`);
+            }
+            const timer = setTimeout(async () => {
+              this.pending.delete(phoneKey2);
+              try {
+                if (await this.isAlreadyReadByPharmacist(chatId)) {
+                  console.log(`[SmartReplyScheduler] Reply suppressed on fire for ${phoneKey2} - pharmacist read while waiting.`);
+                  return;
+                }
+                const { whatsappIntentService: whatsappIntentService2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+                await whatsappIntentService2.handleInbound(msg);
+              } catch (err) {
+                console.error(`[SmartReplyScheduler] Error firing reply for ${phoneKey2}:`, err?.message || err);
+              }
+            }, delayMs);
+            if (typeof timer.unref === "function") timer.unref();
+            this.pending.set(phoneKey2, { timer, msg, scheduledAt: Date.now() + delayMs, phone: phoneKey2 });
+          } catch (err) {
+            console.error(`[SmartReplyScheduler] Setup error for ${phoneKey2}:`, err?.message || err);
+          }
+        })();
+      }
+      cancelReplyFor(chatId) {
+        const phoneKey2 = _WaSmartReplyScheduler.phoneKey(chatId);
+        const existing = this.pending.get(phoneKey2);
+        if (existing) {
+          clearTimeout(existing.timer);
+          this.pending.delete(phoneKey2);
+          console.log(`[SmartReplyScheduler] Cancelled pending reply for ${phoneKey2} - pharmacist opened chat.`);
+        }
+      }
+      isReplyPending(chatId) {
+        return this.pending.has(_WaSmartReplyScheduler.phoneKey(chatId));
+      }
+      async processOfflineBatch(confirm, outageInterval) {
+        let processed = 0;
+        let skipped_read = 0;
+        let skipped_replied = 0;
+        try {
+          const db2 = await dbManager.getConnection();
+          const windowEnd = outageInterval?.end ?? Date.now();
+          const windowStart = outageInterval?.start ?? windowEnd - 24 * 60 * 60 * 1e3;
+          const startSec = Math.floor(windowStart / 1e3);
+          const endSec = Math.floor(windowEnd / 1e3);
+          const rows = await db2.all(
+            `SELECT chat_id,
+                MAX(timestamp) as latest_ts,
+                id             as latest_id,
+                body
+         FROM whatsapp_messages
+         WHERE from_me = 0
+           AND timestamp >= ? AND timestamp <= ?
+         GROUP BY chat_id`,
+            [startSec, endSec]
+          );
+          for (const row of rows) {
+            const readRow = await db2.get(
+              `SELECT pharmacist_opened_at FROM whatsapp_messages WHERE id = ?`,
+              [row.latest_id]
+            ).catch(() => null);
+            if (readRow?.pharmacist_opened_at) {
+              skipped_read++;
+              continue;
+            }
+            const repliedRow = await db2.get(
+              `SELECT id FROM whatsapp_messages
+           WHERE chat_id = ? AND from_me = 1 AND timestamp > ?
+           LIMIT 1`,
+              [row.chat_id, row.latest_ts]
+            ).catch(() => null);
+            if (repliedRow) {
+              skipped_replied++;
+              continue;
+            }
+            processed++;
+            if (confirm) {
+              const phoneKey2 = _WaSmartReplyScheduler.phoneKey(row.chat_id);
+              const syntheticMsg = {
+                from: row.chat_id,
+                body: row.body || "",
+                fromMe: false,
+                timestamp: row.latest_ts,
+                id: { _serialized: row.latest_id, id: row.latest_id },
+                type: "chat",
+                hasMedia: false,
+                getChat: async () => ({ id: { _serialized: row.chat_id }, name: "" }),
+                getContact: async () => ({ number: phoneKey2, name: "" }),
+                downloadMedia: async () => void 0
+              };
+              this.scheduleReply(syntheticMsg, { forceCold: true });
+            }
+          }
+        } catch (err) {
+          console.error("[SmartReplyScheduler] processOfflineBatch error:", err?.message || err);
+        }
+        return { processed, skipped_read, skipped_replied };
+      }
+    };
+    waSmartReplyScheduler = new WaSmartReplyScheduler();
+    waSmartReplyScheduler_default = waSmartReplyScheduler;
+  }
+});
+
 // src/services/whatsappDeliveryRegister.ts
 var whatsappDeliveryRegister_exports = {};
 __export(whatsappDeliveryRegister_exports, {
@@ -42176,14 +42425,9 @@ function launchClientInstance(forceQr) {
           });
         }
         if (!msg.fromMe) {
-          Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports)).then((mod) => {
-            const handler = mod.handleInbound || mod.whatsappIntentService?.handleInbound || mod.default?.handleInbound;
-            if (handler) {
-              handler(msg).catch((err) => console.error("[WhatsApp] Intent service execution error:", err));
-            } else {
-              console.error("[WhatsApp] Could not resolve handleInbound from whatsappIntentService module.");
-            }
-          }).catch((err) => console.error("[WhatsApp] Intent service import error:", err));
+          Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports)).then((mod) => {
+            mod.waSmartReplyScheduler.scheduleReply(msg);
+          }).catch((err) => console.error("[WhatsApp] Smart reply scheduler error:", err));
         }
       } catch (err) {
         console.error("[WhatsApp] Error in message_create event handler:", err);
@@ -42195,6 +42439,19 @@ function launchClientInstance(forceQr) {
           msg_id: msg.id._serialized,
           ack
         });
+        if (ack >= 2) {
+          const msgId = msg.id?._serialized;
+          if (msgId) {
+            dbManager.getConnection().then((db2) => {
+              db2.run(
+                `UPDATE whatsapp_messages SET ack_status = ? WHERE id = ?`,
+                [ack, msgId]
+              ).catch(() => {
+              });
+            }).catch(() => {
+            });
+          }
+        }
       } catch (err) {
         console.error("[WhatsApp] Error in message_ack event handler:", err);
       }
@@ -44232,6 +44489,22 @@ var init_whatsappQueueWorker = __esm({
         if (this.isLoopRunning) return;
         this.isLoopRunning = true;
         await this.cleanupOldSentItems();
+        if (this.detectedOutageInterval) {
+          const outageInterval = this.detectedOutageInterval;
+          setTimeout(async () => {
+            try {
+              const { waSmartReplyScheduler: waSmartReplyScheduler2 } = await Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports));
+              const dryRun = await waSmartReplyScheduler2.processOfflineBatch(false, outageInterval);
+              console.log(`[WhatsAppQueueWorker] Offline batch: ${dryRun.processed} to reply, ${dryRun.skipped_read} already read, ${dryRun.skipped_replied} already replied.`);
+              if (dryRun.processed > 0) {
+                await waSmartReplyScheduler2.processOfflineBatch(true, outageInterval);
+                console.log(`[WhatsAppQueueWorker] Offline batch: scheduled ${dryRun.processed} reply timer(s).`);
+              }
+            } catch (err) {
+              console.warn("[WhatsAppQueueWorker] Offline batch processing error:", err?.message || err);
+            }
+          }, 5e3);
+        }
         const IDLE_TICK_MS = 15 * 60 * 1e3;
         const scheduleNextRun = async () => {
           let delay = this.lastWasOffline ? 3e4 : 1e4;
@@ -45894,7 +46167,7 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   const storePhone = await getStorePhone(db2);
   const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
   const readyRefills = await db2.all(
-    `SELECT pr.id, pr.quantity_needed, pr.quantity, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
@@ -45920,7 +46193,7 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
       seenMeds.set(name, {
         id: r.id,
         medicine_name: name,
-        quantity: Number(r.quantity_needed || r.quantity || 1)
+        quantity: Number(r.quantity_needed || 1)
       });
     }
   }
@@ -48495,7 +48768,7 @@ var init_inventory = __esm({
       try {
         const db2 = await dbManager.getConnection();
         const results = await db2.all(
-          `SELECT m.*, i.id as inventory_id, i.quantity, i.batch_no, i.expiry_date, i.mrp, i.rate, i.rack_location
+          `SELECT m.*, i.id as inventory_id, i.quantity, i.batch_no, i.expiry_date, i.mrp, COALESCE(m.rate, i.unit_price, 0) as rate, i.rack_location
        FROM medicines m
        LEFT JOIN inventory_master i ON i.medicine_id = m.id AND i.is_active = 1
        WHERE m.therapeutic LIKE ? OR m.sub_therapeutic LIKE ?
@@ -54202,7 +54475,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.37";
+    APP_VERSION = "0.1.38";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -67205,6 +67478,194 @@ var init_creditNoteService = __esm({
   }
 });
 
+// src/utils/reconciliationMatcher.ts
+function normalizeInvoiceNo(invoiceNo) {
+  if (!invoiceNo) return "";
+  let cleaned = invoiceNo.trim().toUpperCase();
+  cleaned = cleaned.replace(/^(INVOICE|INV|BILL|TAX|NO|NUM|#|SL|\/|-|\s)+/gi, "");
+  cleaned = cleaned.replace(/[^A-Z0-9]/gi, "");
+  cleaned = cleaned.replace(/^0+/, "");
+  return cleaned;
+}
+function stripPharmaNoise(str) {
+  if (!str) return "";
+  let s = str.toLowerCase();
+  s = s.replace(/\(.*?\)/g, " ");
+  s = s.replace(/(\d+)\s*['’]?\s*s\b/gi, " ");
+  s = s.replace(/(\d+)\s*(ml|ltr|gm|g)\b/gi, " ");
+  s = s.replace(/(\d+)(mg|mcg|iu|duo|sr|er|cr|ir|dsr|ls|am|h)\b/gi, "$1 $2");
+  s = s.replace(/\b(duo|sr|er|cr|ir|dsr|ls|am|h)(\d+)/gi, "$1 $2");
+  s = s.replace(/(?<!\d)\.|\.(?!\d)/g, " ");
+  s = s.replace(/[^a-z0-9\s.]/g, " ");
+  const words = s.split(/\s+/).filter((w) => w.length > 0);
+  const filtered = words.filter((w) => !PHARMA_PACKAGING_STOP_WORDS.has(w));
+  return filtered.join(" ");
+}
+function extractNumbers(str) {
+  return str.match(/\b\d+(?:\.\d+)?\b/g) || [];
+}
+function extractSuffixModifiers(tokens) {
+  const found = /* @__PURE__ */ new Set();
+  for (const t of tokens) {
+    if (COMBINATION_SUFFIX_MODIFIERS.has(t)) {
+      found.add(t);
+    }
+  }
+  return found;
+}
+function tokensMatchFuzzy(term1, term2, aliasMap) {
+  if (!term1 || !term2) return false;
+  const rawNorm1 = term1.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const rawNorm2 = term2.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (rawNorm1 === rawNorm2) return true;
+  if (rawNorm1.length >= 5 && rawNorm2.length >= 5 && (rawNorm1 === rawNorm2 || rawNorm1.includes(rawNorm2) || rawNorm2.includes(rawNorm1))) {
+    const rNum1 = extractNumbers(rawNorm1);
+    const rNum2 = extractNumbers(rawNorm2);
+    if (rNum1.length === 0 && rNum2.length === 0) return true;
+    if (rNum1.some((n) => rNum2.includes(n))) return true;
+  }
+  const clean1 = stripPharmaNoise(term1);
+  const clean2 = stripPharmaNoise(term2);
+  if (clean1 && clean2 && clean1 === clean2) return true;
+  const nums1 = extractNumbers(clean1 || rawNorm1);
+  const nums2 = extractNumbers(clean2 || rawNorm2);
+  if (nums1.length > 0 && nums2.length > 0) {
+    const hasCommonNumber = nums1.some((n) => nums2.includes(n));
+    if (!hasCommonNumber) {
+      return false;
+    }
+  }
+  const tokens1 = new Set((clean1 || rawNorm1).split(/\s+/).filter((t) => t.length > 0));
+  const tokens2 = new Set((clean2 || rawNorm2).split(/\s+/).filter((t) => t.length > 0));
+  if (tokens1.size === 0 || tokens2.size === 0) return false;
+  const mod1 = extractSuffixModifiers(tokens1);
+  const mod2 = extractSuffixModifiers(tokens2);
+  if (mod1.size > 0 || mod2.size > 0) {
+    let modsMatch = true;
+    for (const m of mod1) {
+      if (!mod2.has(m)) {
+        modsMatch = false;
+        break;
+      }
+    }
+    for (const m of mod2) {
+      if (!mod1.has(m)) {
+        modsMatch = false;
+        break;
+      }
+    }
+    if (!modsMatch) return false;
+  }
+  let commonCount = 0;
+  for (const t1 of tokens1) {
+    if (tokens2.has(t1)) {
+      commonCount++;
+    } else if (aliasMap && aliasMap.has(t1) && tokens2.has(aliasMap.get(t1))) {
+      commonCount++;
+    }
+  }
+  const minSize = Math.min(tokens1.size, tokens2.size);
+  if (commonCount === minSize) return true;
+  const overlap = commonCount / minSize;
+  return overlap >= 0.5 || commonCount >= 2;
+}
+var PHARMA_PACKAGING_STOP_WORDS, COMBINATION_SUFFIX_MODIFIERS;
+var init_reconciliationMatcher = __esm({
+  "src/utils/reconciliationMatcher.ts"() {
+    "use strict";
+    PHARMA_PACKAGING_STOP_WORDS = /* @__PURE__ */ new Set([
+      "strip",
+      "strips",
+      "tab",
+      "tabs",
+      "tablet",
+      "tablets",
+      "cap",
+      "caps",
+      "capsule",
+      "capsules",
+      "inj",
+      "injection",
+      "injections",
+      "syp",
+      "syrup",
+      "susp",
+      "suspension",
+      "drops",
+      "drop",
+      "cream",
+      "crm",
+      "ointment",
+      "oint",
+      "gel",
+      "lotion",
+      "solution",
+      "sol",
+      "respules",
+      "respule",
+      "rotacaps",
+      "inhaler",
+      "spray",
+      "wash",
+      "soap",
+      "powder",
+      "sachet",
+      "sachets",
+      "bottle",
+      "btl",
+      "vial",
+      "ampoule",
+      "amp",
+      "box",
+      "pc",
+      "pcs",
+      "pack",
+      "pck",
+      "mg",
+      "mcg",
+      "gm",
+      "g",
+      "ml",
+      "iu",
+      "kg",
+      "ltr",
+      "10s",
+      "15s",
+      "20s",
+      "30s",
+      "5s",
+      "6s",
+      "1s",
+      "100s",
+      "1x10",
+      "1x15",
+      "1x14",
+      "1x30",
+      "1x20"
+    ]);
+    COMBINATION_SUFFIX_MODIFIERS = /* @__PURE__ */ new Set([
+      "d",
+      "dsr",
+      "ls",
+      "am",
+      "h",
+      "plus",
+      "forte",
+      "mcl",
+      "mf",
+      "ap",
+      "sp",
+      "cv",
+      "cl",
+      "oz",
+      "tz",
+      "tc",
+      "dx",
+      "ex"
+    ]);
+  }
+});
+
 // src/services/bouncedAlertService.ts
 var bouncedAlertService_exports = {};
 __export(bouncedAlertService_exports, {
@@ -67218,15 +67679,17 @@ var init_bouncedAlertService = __esm({
     init_connection();
     init_emailService();
     init_whatsappQueueWorker();
+    init_reconciliationMatcher();
     import_fs41 = __toESM(require("fs"), 1);
     BouncedAlertService = class {
       /**
        * Run the bounced products check for order emails received in the last 30 hours,
-       * compare them with actual check-ins, and send a summary to Dinesh.
+       * compare them with actual check-ins, and send a summary to the Admin / Store Owner.
        */
       async checkAndSendBouncedProductsAlert() {
         let db2;
         let recipientPhone = "";
+        const recipientName = "Admin / Store Owner";
         try {
           db2 = await dbManager.getConnection();
           const autoRow = await db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'");
@@ -67249,14 +67712,38 @@ var init_bouncedAlertService = __esm({
         SELECT uid, from_addr, subject, body, date, distributor_name, medicine_names
         FROM emails
         WHERE is_order = 1 
+          AND (is_saved IS NULL OR is_saved = 0)
           AND date >= datetime('now', '-30 hours')
         ORDER BY date DESC
       `);
           if (!orderEmails || orderEmails.length === 0) {
-            console.log("[BouncedAlert] No order emails found in the last 30 hours.");
+            console.log("[BouncedAlert] No unreconciled order emails found in the last 30 hours.");
             return false;
           }
+          const aliasRows = await db2.all(
+            `SELECT LOWER(ma.alias_name) as alias_name, LOWER(m.name) as real_name 
+         FROM medicine_aliases ma 
+         JOIN medicines m ON ma.medicine_id = m.id`
+          ).catch(() => []);
+          const aliasMap = /* @__PURE__ */ new Map();
+          for (const a of aliasRows) {
+            if (a.alias_name && a.real_name) aliasMap.set(a.alias_name, a.real_name);
+          }
+          const ocrRows = await db2.all(`SELECT LOWER(ocr) as raw_text, LOWER(correct) as corrected_text FROM ocr_corrections`).catch(() => []);
+          for (const o of ocrRows) {
+            if (o.raw_text && o.corrected_text) aliasMap.set(o.raw_text, o.corrected_text);
+          }
+          const piwRows = await db2.all(`SELECT word FROM permanently_ignored_words`).catch(() => []);
+          const ignoredSet = new Set(piwRows.map((r) => String(r.word || "").trim().toLowerCase()));
+          const candidatePurchases = await db2.all(
+            `SELECT p.id, p.invoice_no, p.app_invoice_no, p.distributor_id, d.name as dist_name
+         FROM purchases p
+         LEFT JOIN distributors d ON p.distributor_id = d.id
+         WHERE p.date >= datetime('now', '-4 days')
+         ORDER BY p.id DESC LIMIT 200`
+          );
           const distributorBounces = {};
+          const pendingDeliveries = [];
           for (const email of orderEmails) {
             const orderInfo = await emailService.extractOrderInfo(email);
             const invoiceNo = orderInfo.invoiceNumber;
@@ -67277,7 +67764,7 @@ var init_bouncedAlertService = __esm({
                   if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
                     for (const item of resParse.items) {
                       const cleaned = cleanMedicineName2(item.name);
-                      if (cleaned && !isNonMedicineNoise(cleaned)) {
+                      if (cleaned && !isNonMedicineNoise(cleaned) && !ignoredSet.has(cleaned.toLowerCase())) {
                         expectedItems.push({
                           name: cleaned,
                           quantity: Number(item.quantity) || 0
@@ -67293,30 +67780,30 @@ var init_bouncedAlertService = __esm({
             }
             if (!attachmentParsed && orderInfo.medicines && orderInfo.medicines.length > 0) {
               for (const med of orderInfo.medicines) {
-                expectedItems.push({
-                  name: med.name,
-                  quantity: parseInt(med.quantity, 10) || 1
-                });
+                const cleaned = cleanMedicineName2(med.name);
+                if (cleaned && !isNonMedicineNoise(cleaned) && !ignoredSet.has(cleaned.toLowerCase())) {
+                  expectedItems.push({
+                    name: cleaned,
+                    quantity: parseInt(med.quantity, 10) || 1
+                  });
+                }
               }
             }
             if (expectedItems.length === 0) {
               continue;
             }
-            const matchedPurchase = await db2.get(
-              `SELECT id FROM purchases WHERE invoice_no = ? OR app_invoice_no = ? LIMIT 1`,
-              [invoiceNo, invoiceNo]
-            );
+            const canonInvoice = normalizeInvoiceNo(invoiceNo);
+            const matchedPurchase = candidatePurchases.find((p) => {
+              const pCanon1 = normalizeInvoiceNo(p.invoice_no);
+              const pCanon2 = normalizeInvoiceNo(p.app_invoice_no);
+              return canonInvoice && (canonInvoice === pCanon1 || canonInvoice === pCanon2);
+            });
             if (!matchedPurchase) {
-              if (!distributorBounces[distName]) {
-                distributorBounces[distName] = [];
-              }
-              for (const item of expectedItems) {
-                distributorBounces[distName].push({
-                  name: item.name,
-                  ordered: item.quantity,
-                  received: 0
-                });
-              }
+              pendingDeliveries.push({
+                distributor: distName,
+                invoiceNo,
+                itemCount: expectedItems.length
+              });
               continue;
             }
             const receivedItems = await db2.all(`
@@ -67325,78 +67812,78 @@ var init_bouncedAlertService = __esm({
           JOIN medicines m ON pi.medicine_id = m.id
           WHERE pi.purchase_id = ?
         `, [matchedPurchase.id]);
-            const normalizeName = (name) => {
-              return name.toLowerCase().replace(/[^a-z0-9]/g, "");
-            };
-            const receivedMap = /* @__PURE__ */ new Map();
-            for (const item of receivedItems) {
-              const norm2 = normalizeName(item.medicine_name);
-              const totalQty = (Number(item.quantity) || 0) + (Number(item.free_qty) || 0) + (Number(item.loose_quantity) || 0);
-              receivedMap.set(norm2, (receivedMap.get(norm2) || 0) + totalQty);
-            }
+            const receivedList = receivedItems.map((item) => ({
+              name: item.medicine_name,
+              quantity: (Number(item.quantity) || 0) + (Number(item.free_qty) || 0)
+            }));
             for (const expected of expectedItems) {
-              const normExp = normalizeName(expected.name);
-              let actualQty = 0;
-              let matchedKey = "";
-              if (receivedMap.has(normExp)) {
-                actualQty = receivedMap.get(normExp);
-                matchedKey = normExp;
-              } else {
-                for (const key of receivedMap.keys()) {
-                  if (key.includes(normExp) || normExp.includes(key)) {
-                    actualQty = receivedMap.get(key);
-                    matchedKey = key;
-                    break;
-                  }
+              let matchedReceivedQty = 0;
+              let matchedAny = false;
+              for (const rec of receivedList) {
+                if (tokensMatchFuzzy(expected.name, rec.name, aliasMap)) {
+                  matchedReceivedQty += rec.quantity;
+                  matchedAny = true;
                 }
               }
-              if (!matchedKey || actualQty < expected.quantity) {
+              if (!matchedAny || matchedReceivedQty < expected.quantity) {
                 if (!distributorBounces[distName]) {
                   distributorBounces[distName] = [];
                 }
                 distributorBounces[distName].push({
                   name: expected.name,
                   ordered: expected.quantity,
-                  received: actualQty
+                  received: matchedReceivedQty
                 });
               }
             }
           }
           const distEntries = Object.entries(distributorBounces);
-          if (distEntries.length === 0) {
-            console.log("[BouncedAlert] No bounced products detected.");
+          if (distEntries.length === 0 && pendingDeliveries.length === 0) {
+            console.log("[BouncedAlert] All items reconciled or pending deliveries within schedule. No alert needed.");
             return false;
           }
-          let message = `\u26A0\uFE0F *Bounced Products Alert* (Yesterday's Orders)
+          let message = `\u26A0\uFE0F *Bounced / Short Supply Alert* (Yesterday's Orders)
 
 `;
-          for (const [distName, bounces] of distEntries) {
-            message += `*Distributor: ${distName}*
+          if (distEntries.length > 0) {
+            for (const [distName, bounces] of distEntries) {
+              message += `*Distributor: ${distName}*
 `;
-            for (const b of bounces) {
-              const diff = b.ordered - b.received;
-              if (b.received === 0) {
-                message += `\u2022 ${b.name}: Ordered ${b.ordered}, Received 0 (BOUNCED) \u274C
+              for (const b of bounces) {
+                const diff = b.ordered - b.received;
+                if (b.received === 0) {
+                  message += `\u2022 ${b.name}: Ordered ${b.ordered}, Received 0 (BOUNCED) \u274C
 `;
-              } else {
-                message += `\u2022 ${b.name}: Ordered ${b.ordered}, Received ${b.received} (Short by ${diff}) \u26A0\uFE0F
+                } else {
+                  message += `\u2022 ${b.name}: Ordered ${b.ordered}, Received ${b.received} (Short by ${diff}) \u26A0\uFE0F
 `;
+                }
               }
+              message += `
+`;
+            }
+          }
+          if (pendingDeliveries.length > 0) {
+            message += `\u{1F4E6} *Pending Deliveries (Awaiting Check-in):*
+`;
+            for (const pd of pendingDeliveries) {
+              message += `\u2022 ${pd.distributor} \u2014 Inv #${pd.invoiceNo} (${pd.itemCount} items)
+`;
             }
             message += `
 `;
           }
           message += `\u2014 AI Pharmacy OS`;
-          await whatsappQueueWorker.enqueue(recipientPhone, message, "bounced_products_alert", "Dinesh");
+          await whatsappQueueWorker.enqueue(recipientPhone, message, "bounced_products_alert", recipientName);
           console.log(`[BouncedAlert] Successfully enqueued morning notification for ${recipientPhone}`);
           await db2.run(
             "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-            ["BOUNCED_PRODUCTS_NOTIFICATION_SENT", `Sent morning bounced products report to Dinesh (${recipientPhone})`]
+            ["BOUNCED_PRODUCTS_NOTIFICATION_SENT", `Sent morning bounced products report to ${recipientName} (${recipientPhone})`]
           );
           await db2.run(
             `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status)
          VALUES (?, ?, ?, ?, ?)`,
-            ["whatsapp", "Dinesh", recipientPhone, message, "sent"]
+            ["whatsapp", recipientName, recipientPhone, message, "sent"]
           );
           return true;
         } catch (err) {
@@ -67406,7 +67893,7 @@ var init_bouncedAlertService = __esm({
               await db2.run(
                 `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, error_message)
              VALUES (?, ?, ?, ?, ?, ?)`,
-                ["whatsapp", "Dinesh", recipientPhone || "Unknown", "Bounced check failed", "failed", err.message]
+                ["whatsapp", recipientName, recipientPhone || "Unknown", "Bounced check failed", "failed", err.message]
               );
             }
           } catch (logErr) {
@@ -70693,6 +71180,25 @@ var init_messaging = __esm({
           };
         });
         res.json(sanitizedMessages);
+        const chatId = req.params.id;
+        setImmediate(async () => {
+          try {
+            const db2 = await dbManager.getConnection();
+            const now = Date.now();
+            await db2.run(
+              `UPDATE whatsapp_messages
+           SET pharmacist_opened_at = ?
+           WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NULL`,
+              [now, chatId]
+            );
+          } catch (_) {
+          }
+          try {
+            const { waSmartReplyScheduler: waSmartReplyScheduler2 } = await Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports));
+            waSmartReplyScheduler2.cancelReplyFor(chatId);
+          } catch (_) {
+          }
+        });
       } catch (err) {
         console.error("Error fetching messages:", err);
         res.status(500).json({ error: err.message || "Failed to fetch messages" });
@@ -71074,6 +71580,22 @@ var init_messaging = __esm({
           status: "UNABLE_TO_VERIFY",
           cached: false
         });
+      }
+    });
+    router16.post("/process-offline-batch", async (req, res) => {
+      try {
+        const confirm = req.query.confirm === "true";
+        const { waSmartReplyScheduler: waSmartReplyScheduler2 } = await Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports));
+        const result = await waSmartReplyScheduler2.processOfflineBatch(confirm);
+        res.json({
+          success: true,
+          confirm,
+          ...result,
+          message: confirm ? `Scheduled ${result.processed} replies. Skipped ${result.skipped_read} (read) and ${result.skipped_replied} (already replied).` : `Found ${result.processed} pending replies. POST with ?confirm=true to send them.`
+        });
+      } catch (err) {
+        console.error("[OfflineBatch] Error:", err);
+        res.status(500).json({ error: err.message || "Failed to process offline batch" });
       }
     });
     messaging_default = router16;
@@ -72015,7 +72537,7 @@ async function runCollectionReminderCycle(force = false) {
     let ordersQueued = 0;
     const readyRefills = await db2.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
-             pr.quantity_needed, pr.quantity, pr.last_collection_reminder_at, pr.collection_reminder_count
+             pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
       WHERE pr.auto_remind = 1
@@ -72042,7 +72564,7 @@ async function runCollectionReminderCycle(force = false) {
       group.items.push({
         id: r.id,
         medicine_name: r.medicine_name || "Prescribed Medicine",
-        quantity: Number(r.quantity_needed || r.quantity || 1)
+        quantity: Number(r.quantity_needed || 1)
       });
     }
     for (const group of refillGroups.values()) {
@@ -75564,15 +76086,15 @@ Reply 1 to book order, or 2 to cancel.`;
         const calculatedDate = nextRefillDate || new Date(Date.now() + Number(daysInterval) * 864e5).toISOString().split("T")[0];
         const refillResult = await db2.run(
           `INSERT INTO patient_refills (
-        patient_name, patient_phone, medicine_id, medicine_name,
-        dosage, quantity, next_refill_date, refill_interval_days, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        store_id, customer_id, patient_name, patient_phone, medicine_id,
+        quantity_needed, next_refill_date, refill_interval_days, is_active, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending')`,
           [
+            enquiry.store_id || 1,
+            enquiry.customer_id || null,
             enquiry.patient_name,
             enquiry.patient_phone || "",
             enquiry.medicine_id,
-            enquiry.medicine_name,
-            enquiry.dosage_group || "TAB",
             enquiry.qty || 1,
             calculatedDate,
             Number(daysInterval) || 30
@@ -76894,7 +77416,7 @@ var init_websiteOwner = __esm({
         const searchParams = search ? [`%${search}%`, `%${search}%`] : [];
         const medicines = await db2.all(
           `SELECT m.id as medicine_id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.status,
-              MAX(im.mrp) as mrp, MAX(im.sell_price) as sell_price,
+              MAX(im.mrp) as mrp, COALESCE(m.sell_price, MAX(im.unit_price), MAX(im.mrp), 0) as sell_price,
               SUM(CASE WHEN im.quantity > 0 AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now')) THEN im.quantity ELSE 0 END) as available_stock,
               ci.image_path as image_url
        FROM medicines m
@@ -78445,7 +78967,7 @@ Thank you!
           return res.status(409).json({ error: "Order already finalized" });
         }
         const items = await db2.all(
-          `SELECT oi.*, im.mrp as batch_mrp, im.sell_price as batch_sell, im.batch_no,
+          `SELECT oi.*, im.mrp as batch_mrp, COALESCE(am.sell_price, m.sell_price, oi.sell_price, im.mrp, 0) as batch_sell, im.batch_no,
               COALESCE(am.name, m.name) as resolved_name, m.id as orig_med_id
        FROM online_order_items oi
        LEFT JOIN medicines m ON m.id = oi.medicine_id
@@ -78511,9 +79033,9 @@ Thank you!
             notes: `Online Order #${orderId} \u2014 Payment Confirmed`
           };
           await db2.run(
-            `INSERT INTO staged_sales (store_id, customer_id, customer_name, cart_json, created_at, status)
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'held')`,
-            [order.store_id, order.customer_id, order.requester, JSON.stringify(heldBillMeta)]
+            `INSERT INTO staged_sales (patient_name, patient_phone, discount, sale_date, items_json, status)
+         VALUES (?, ?, 0, CURRENT_TIMESTAMP, ?, 'pending')`,
+            [order.requester || "Online Customer", order.phone || "", JSON.stringify(heldBillMeta)]
           );
           await db2.run(
             `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
@@ -79195,8 +79717,9 @@ Please check counter availability and send me the price estimate and UPI payment
         const validItems = [];
         for (const item of originalItems) {
           const batchRow = await db2.get(
-            `SELECT im.id as inventory_id, im.mrp, im.sell_price, im.batch_no, SUM(im.quantity) as total_qty
+            `SELECT im.id as inventory_id, im.mrp, COALESCE(m.sell_price, im.unit_price, im.mrp, 0) as sell_price, im.batch_no, SUM(im.quantity) as total_qty
          FROM inventory_master im
+         JOIN medicines m ON m.id = im.medicine_id
          WHERE im.medicine_id = ? AND im.store_id = ? AND im.is_active = 1
            AND im.quantity > 0
            AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now'))
@@ -84533,14 +85056,6 @@ var init_sales = __esm({
         } catch (e) {
           return res.status(400).json({ error: "Invalid cart payload JSON" });
         }
-        const serializedData = data || JSON.stringify({
-          items: finalCartData,
-          patient: patient || { name: finalPatientName, phone: finalPatientPhone },
-          doctor: finalDoctor,
-          discount: finalDiscount,
-          date: (/* @__PURE__ */ new Date()).toLocaleString(),
-          remarks: remarks || ""
-        });
         await db2.run("BEGIN IMMEDIATE TRANSACTION");
         const holdInvoiceNo = await generateInvoiceNo(db2);
         for (const item of parsedItems) {
@@ -84595,8 +85110,8 @@ var init_sales = __esm({
         await db2.run(
           `INSERT INTO held_bills (
         customer_id, invoice_no, temp_label, patient_name, patient_phone, doctor_name, 
-        discount, remarks, cart_data, data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        discount, remarks, cart_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             customerId,
             holdInvoiceNo,
@@ -84606,8 +85121,7 @@ var init_sales = __esm({
             finalDoctor,
             finalDiscount,
             remarks || "",
-            typeof finalCartData === "string" ? finalCartData : JSON.stringify(finalCartData),
-            serializedData
+            typeof finalCartData === "string" ? finalCartData : JSON.stringify(finalCartData)
           ]
         );
         await db2.run("COMMIT");
@@ -87300,7 +87814,10 @@ Rules:
 // src/routes/purchases.ts
 var purchases_exports = {};
 __export(purchases_exports, {
-  default: () => purchases_default
+  default: () => purchases_default,
+  normalizeInvoiceNo: () => normalizeInvoiceNo,
+  stripPharmaNoise: () => stripPharmaNoise,
+  tokensMatchFuzzy: () => tokensMatchFuzzy
 });
 function formatExpiryToMMYY(val) {
   if (!val) return "";
@@ -87593,33 +88110,6 @@ async function handleUpdatePurchaseFull(req, res, targetId) {
     res.status(error instanceof PurchaseEditError ? 400 : 500).json({ error: error.message || "Internal server error" });
   }
 }
-function normalizeInvoiceNo(invStr) {
-  if (!invStr) return "";
-  let cleaned = invStr.trim().toUpperCase();
-  cleaned = cleaned.replace(/^(INVOICE|INV|BILL|TAX|NO|NUM|#|SL|\/|-|\s)+/gi, "");
-  cleaned = cleaned.replace(/[^A-Z0-9]/gi, "");
-  cleaned = cleaned.replace(/^0+/, "");
-  return cleaned;
-}
-function tokensMatchFuzzy(term1, term2, aliasMap) {
-  if (!term1 || !term2) return false;
-  const norm1 = term1.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
-  const norm2 = term2.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
-  if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-  const tokens1 = new Set(norm1.split(/\s+/).filter((t) => t.length > 1));
-  const tokens2 = new Set(norm2.split(/\s+/).filter((t) => t.length > 1));
-  if (tokens1.size === 0 || tokens2.size === 0) return false;
-  let commonCount = 0;
-  for (const t1 of tokens1) {
-    if (tokens2.has(t1)) {
-      commonCount++;
-    } else if (aliasMap && aliasMap.has(t1) && tokens2.has(aliasMap.get(t1))) {
-      commonCount++;
-    }
-  }
-  const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
-  return overlap >= 0.5 || commonCount >= 2;
-}
 var import_express38, import_path51, import_multer2, import_fs56, router36, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
@@ -87647,6 +88137,7 @@ var init_purchases = __esm({
     init_financialYear();
     init_stockCalculatorWorker();
     init_expiryAlertService();
+    init_reconciliationMatcher();
     router36 = import_express38.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
     router36.get("/summary", async (_req, res) => {
@@ -89181,22 +89672,6 @@ var init_purchases = __esm({
             medNames = Array.from(new Set(parsedItems.map((i) => cleanMedicineName2(i.name)).filter((n) => Boolean(n) && !isNonMedicineNoise(n))));
             needsDbUpdate = true;
           }
-          try {
-            const normDist = (distributorName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-            if (normDist) {
-              const specialOrderItems = await db2.all(
-                `SELECT medicine_name, product FROM special_orders WHERE LOWER(distributor) LIKE ? OR LOWER(distributor) LIKE ? LIMIT 20`,
-                [`%${normDist}%`, `%${normDist.substring(0, 5)}%`]
-              );
-              for (const so of specialOrderItems) {
-                const nameToAdd = cleanMedicineName2(so.medicine_name || so.product);
-                if (nameToAdd && !isNonMedicineNoise(nameToAdd) && !medNames.includes(nameToAdd)) {
-                  medNames.push(nameToAdd);
-                }
-              }
-            }
-          } catch (errSo) {
-          }
           if (needsDbUpdate) {
             await db2.run("UPDATE emails SET medicine_names = ? WHERE uid = ?", [JSON.stringify(medNames), email.uid]);
           }
@@ -89296,6 +89771,9 @@ var init_purchases = __esm({
           const matchedPurchase = group.matchedPurchase;
           let status = "Missing";
           let displayMedicines = Array.from(group.expected_medicines);
+          if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
+            displayMedicines = displayMedicines.filter((m) => !ignoredSet.has(m.trim().toLowerCase()));
+          }
           if (matchedPurchase) {
             const receivedMeds = receivedItemsMap.get(matchedPurchase.id) || [];
             const missingMedicines = displayMedicines.filter((expMed) => {
@@ -89313,9 +89791,15 @@ var init_purchases = __esm({
               status = "Matched";
               displayMedicines = [];
             }
+          } else {
+            if (displayMedicines.length === 0) {
+              status = "Matched";
+            } else {
+              status = "Missing";
+            }
           }
-          if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
-            displayMedicines = displayMedicines.filter((m) => !ignoredSet.has(m.trim().toLowerCase()));
+          if (displayMedicines.length === 0 && status === "Bounced") {
+            status = "Matched";
           }
           result.push({
             email_uid: group.email_uid,
@@ -90805,7 +91289,7 @@ var init_returns = __esm({
             if (med) {
               item.medicine_id = med.id;
             } else {
-              const newMed = await db2.run("INSERT INTO medicines (name, mrp, is_active) VALUES (?, ?, 1)", [item.medicine_name.trim(), item.mrp || 0]);
+              const newMed = await db2.run("INSERT INTO medicines (name, mrp, status) VALUES (?, ?, 'active')", [item.medicine_name.trim(), item.mrp || 0]);
               item.medicine_id = newMed.lastID;
             }
           }
@@ -97979,14 +98463,15 @@ var init_distributorRecommendationService = __esm({
         const purchaseDistributorStats = await db2.all(
           `SELECT d.id as distributor_id, d.name as distributor_name, d.phone,
               COUNT(p.id) as purchase_frequency,
-              AVG(pi.rate) as avg_ptr,
-              MAX(pi.rate) as max_ptr,
-              MIN(pi.rate) as min_ptr,
+              AVG(pi.cost_price) as avg_ptr,
+              MAX(pi.cost_price) as max_ptr,
+              MIN(pi.cost_price) as min_ptr,
               MAX(p.date) as last_purchased_date
        FROM purchase_items pi
        JOIN purchases p ON p.id = pi.purchase_id
        JOIN distributors d ON d.id = p.distributor_id
-       WHERE (pi.medicine_id = ? OR LOWER(TRIM(pi.item_name)) = LOWER(TRIM(?)))
+       LEFT JOIN medicines med ON med.id = pi.medicine_id
+       WHERE (pi.medicine_id = ? OR LOWER(TRIM(med.name)) = LOWER(TRIM(?)))
          AND (p.store_id = ? OR (p.store_id IS NULL AND ? = 1))
        GROUP BY d.id, d.name, d.phone
        ORDER BY purchase_frequency DESC LIMIT 10`,
