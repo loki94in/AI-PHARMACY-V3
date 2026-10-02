@@ -46,6 +46,12 @@
   - Ran `npm run guardrails` -> PASS (0 violations, clean TypeScript compilation).
   - Ran `node scripts/quick-update.mjs` -> Updated 1186 nodes, 574 edges in 3.0s.
 
+- [x] **Task 6: Build Production Release (v0.1.39)**
+  - Ran `npm run release` -> Executed full Vite frontend build, SEA blob generation, Inno Setup 7 compilation, and update ZIP creation.
+  - Successfully generated installer: `dist\installer\AI-Pharmacy-OS-Portable-Setup-v0.1.39.exe`.
+  - Successfully generated update package: `dist\installer\AI-Pharmacy-OS-Update-v0.1.39.zip` (SHA-256: `4200931d276bb36b582214ae323e41e36c14a221e9018ad39179d982763cec78`).
+  - Stored `data\app.db` into the installer bundle with `onlyifdoesntexist` flag to ensure fresh installs start with all 286,501 medicines and updates preserve user data.
+
 ---
 
 ## 3. Execution Log
@@ -56,3 +62,6 @@
 - **2026-10-02 18:35**: Ran integrity check on `data/app.db` (passed with 286,501 medicines and active CRM orders).
 - **2026-10-02 18:35**: Ran `npm run guardrails` (passed, 0 violations).
 - **2026-10-02 18:35**: Synced knowledge graph with `quick-update.mjs`.
+- **2026-10-02 18:47**: Completed `npm run release` for `v0.1.39`.
+- **2026-10-02 18:47**: Pushed version bump to `main` branch.
+

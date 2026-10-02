@@ -545,6 +545,18 @@ function main() {
         process.exit(1);
       }
     }
+    const hasDbChanges = jobs.some(j => norm(j.file).includes('database.ts'));
+    if (hasDbChanges || MODE === 'all') {
+      try {
+        process.stdout.write('Checking Database Schema & Integrity... ');
+        execSync('node -e "const db = require(\'better-sqlite3\')(\'data/app.db\', { readonly: true }); const res = db.prepare(\'PRAGMA integrity_check\').get(); if (res.integrity_check !== \'ok\') throw new Error(res.integrity_check);"', { stdio: 'pipe' });
+        console.log('OK');
+      } catch (err) {
+        console.log('FAILED\n');
+        console.error('FAIL — Database integrity check failed:', err.message);
+        process.exit(1);
+      }
+    }
     console.log('PASS — no guardrail violations. Speed architecture intact.');
     return;
   }

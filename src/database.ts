@@ -1552,6 +1552,15 @@ export async function ensureSchema(dbPath: string) {
 
     console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
 
+    // Ensure prerequisite columns across all tables exist BEFORE DDL / index operations
+    try {
+      await ensureOrderTimingSchema(db);
+      await ensureRefillCartLinkSchema(db);
+      await ensureMultiPharmacyAndSnapshotSchema(db);
+    } catch (preErr: any) {
+      console.warn('[Boot] Pre-DDL column migration note:', preErr.message);
+    }
+
     // We have removed the strict CHECK constraint on catalog_jobs and distributor_dispatch_reminders tables.
     // We'll rely on TypeScript for enum enforcement to prevent future SQLite crashes when new statuses are introduced.
     try {
@@ -4770,6 +4779,17 @@ export async function ensureSchema(dbPath: string) {
         if (!sessNames.has('is_active')) await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
       }
     } catch (_) { }
+
+    try {
+      await ensureOrderTimingSchema(db);
+      await ensureRefillCartLinkSchema(db);
+      await ensureMultiPharmacyAndSnapshotSchema(db);
+      await normalizeBillDatesToLocalTime(db);
+      await ensureMedicinesFts(db);
+      await ensureMedicineSearchSummaryTriggers(db);
+    } catch (postErr: any) {
+      console.warn('[Boot] Post-DDL migration note:', postErr.message);
+    }
 
     // Stamp schema version so subsequent boots skip all DDL
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
