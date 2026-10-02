@@ -1577,7 +1577,10 @@ router.post('/:id/send', async (req, res) => {
        SET status = 'notified',
            reminder_status = 'QUEUED',
            reminder_job_id = ?,
-           reminder_occurrence_date = ?
+           reminder_occurrence_date = ?,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
        WHERE id = ?`,
       [queueId, refill.next_refill_date, id]
     );
@@ -1708,7 +1711,10 @@ router.post('/send-grouped', async (req, res) => {
        SET status = 'notified', 
            reminder_status = 'QUEUED', 
            reminder_job_id = ?, 
-           reminder_occurrence_date = next_refill_date 
+           reminder_occurrence_date = next_refill_date,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
        WHERE id IN (${placeholders})`,
       [queueId, ...idsToUpdate]
     );
@@ -1939,7 +1945,10 @@ router.post('/send-reminder-now', async (req, res) => {
        SET status = 'notified', 
            reminder_status = 'QUEUED', 
            reminder_job_id = ?, 
-           reminder_occurrence_date = next_refill_date 
+           reminder_occurrence_date = next_refill_date,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
        WHERE id IN (${placeholders})`,
       [queueId, ...ids]
     );
@@ -2200,4 +2209,93 @@ router.post('/send-staged-briefing', async (_req, res) => {
   }
 });
 
+// Toggle auto-remind mode for a single refill item
+router.post('/:id/auto-remind', async (req, res) => {
+  const { id } = req.params;
+  const { auto_remind } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+    await db.run(
+      'UPDATE patient_refills SET auto_remind = ? WHERE id = ?',
+      [val, id]
+    );
+    eventService.broadcast('refill_updated', { at: Date.now(), refillId: Number(id), auto_remind: val });
+    res.json({ success: true, id: Number(id), auto_remind: val });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Toggle auto-remind mode for all active refills of a patient by phone
+router.post('/patient/:phone/auto-remind', async (req, res) => {
+  const { phone } = req.params;
+  const { auto_remind } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+    const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
+    if (!cleanPhone) {
+      return res.status(400).json({ error: 'Valid phone required' });
+    }
+    await db.run(
+      `UPDATE patient_refills 
+       SET auto_remind = ? 
+       WHERE is_active = 1 AND (patient_phone LIKE ? OR patient_phone LIKE ?)`,
+      [val, `%${cleanPhone}`, `%${cleanPhone}%`]
+    );
+    eventService.broadcast('refill_updated', { at: Date.now(), phone: cleanPhone, auto_remind: val });
+    res.json({ success: true, phone: cleanPhone, auto_remind: val });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Master Quick Assist auto-remind toggle (app_settings)
+router.post('/auto-remind/master-toggle', async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    const val = enabled === true || enabled === 'true' || enabled === 1 ? 'true' : 'false';
+    await db.run(
+      `INSERT INTO app_settings (key, value) VALUES ('quick_assist_auto_remind_master', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [val]
+    );
+    eventService.broadcast('refill_updated', { at: Date.now(), auto_remind_master: val === 'true' });
+    res.json({ success: true, enabled: val === 'true' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get Quick Assist auto-remind master settings
+router.get('/auto-remind/settings', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'quick_assist_auto_remind_master'");
+    const startRow = await db.get("SELECT value FROM app_settings WHERE key = 'collection_reminder_window_start'");
+    const endRow = await db.get("SELECT value FROM app_settings WHERE key = 'collection_reminder_window_end'");
+    res.json({
+      enabled: row?.value !== 'false',
+      windowStart: startRow?.value || '10:00',
+      windowEnd: endRow?.value || '18:00'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Trigger an immediate collection reminder cycle (on-demand)
+router.post('/auto-remind/run-now', async (_req, res) => {
+  try {
+    const { runCollectionReminderCycle } = await import('../services/collectionReminderWorker.js');
+    const result = await runCollectionReminderCycle(true);
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+

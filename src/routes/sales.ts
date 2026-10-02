@@ -291,6 +291,8 @@ router.post('/', async (req, res) => {
                delivered_at = ?,
                return_window_until = ?,
                pos_sale_invoice_id = ?,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`,
           [deliveredAt, returnWindowUntil, invoiceId, resolvedOnlineOrderId]
@@ -595,7 +597,10 @@ router.post('/', async (req, res) => {
                reminder_status = 'NOT_SENT',
                reminder_sent_at = NULL,
                reminder_job_id = NULL,
-               reminder_occurrence_date = NULL
+               reminder_occurrence_date = NULL,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
+               collection_reminder_count = 0
            WHERE id = ?`,
           [nextDateStr, refill.id]
         );
@@ -854,7 +859,7 @@ router.post('/', async (req, res) => {
           if (best) {
             consumedOrderIds.add(best.order.order_id);
             try {
-              await db!.run(`UPDATE special_orders SET status = 'Fulfilled' WHERE id = ?`, [best.order.order_id]);
+              await db!.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [best.order.order_id]);
             } catch (specErr) {
               console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
             }

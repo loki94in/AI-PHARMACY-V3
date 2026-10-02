@@ -1729,8 +1729,19 @@ export const api = {
   skipRefill: (id: number) => apiClient.post(`/refills/${id}/skip`).then(res => res.data),
   getRefillsPanel: () => apiClient.get('/refills/panel').then(res => res.data),
   toggleRefillOverride: (id: number) => apiClient.post(`/refills/${id}/toggle-override`).then(res => res.data),
-  fulfillRefill: (id: number) => apiClient.post(`/refills/${id}/fulfill`).then(res => res.data),
   sendTomorrowReminder: (patientPhone: string) => apiClient.post<{ success: boolean; queueId?: number; message: string }>('/refills/send-tomorrow-reminder', { patient_phone: patientPhone }).then(res => res.data),
+  toggleRefillAutoRemind: (id: number, auto_remind: boolean | number) =>
+    apiClient.post<{ success: boolean; id: number; auto_remind: number }>(`/refills/${id}/auto-remind`, { auto_remind: auto_remind ? 1 : 0 }).then(res => res.data),
+  togglePatientRefillAutoRemind: (phone: string, auto_remind: boolean | number) =>
+    apiClient.post<{ success: boolean; phone: string; auto_remind: number }>(`/refills/patient/${encodeURIComponent(phone)}/auto-remind`, { auto_remind: auto_remind ? 1 : 0 }).then(res => res.data),
+  toggleOrderAutoRemind: (id: number, auto_remind: boolean | number) =>
+    apiClient.post<{ success: boolean; id: number; auto_remind: number }>(`/orders/${id}/auto-remind`, { auto_remind: auto_remind ? 1 : 0 }).then(res => res.data),
+  toggleQuickAssistAutoRemindMaster: (enabled: boolean) =>
+    apiClient.post<{ success: boolean; enabled: boolean }>('/refills/auto-remind/master-toggle', { enabled }).then(res => res.data),
+  getQuickAssistAutoRemindSettings: () =>
+    apiClient.get<{ enabled: boolean; windowStart: string; windowEnd: string }>('/refills/auto-remind/settings').then(res => res.data),
+  triggerCollectionReminderCycleNow: () =>
+    apiClient.post<{ success: boolean; result: any }>('/refills/auto-remind/run-now').then(res => res.data),
 
   // Automation / Communication logs
   getAutomationNotifications: (params?: { type?: string; status?: string; search?: string; limit?: number }) =>

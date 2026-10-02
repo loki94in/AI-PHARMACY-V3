@@ -1566,7 +1566,12 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
 
     const newNotified = (status === 'Fulfilled' || whatsappQueued) ? 1 : existing.notified;
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
-    await db.run('UPDATE special_orders SET status = ?, notified = ?, notification_count = ? WHERE id = ?', [status, newNotified, newCount, id]);
+    const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (whatsappQueued ? 1 : (existing.auto_remind ?? 0));
+    const lastRemindAt = whatsappQueued ? new Date().toISOString() : existing.last_collection_reminder_at;
+    await db.run(
+      'UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?',
+      [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
+    );
 
     if (status === 'Cancelled') {
       await cancelPendingWhatsAppForOrder(db, existing);
@@ -1599,8 +1604,8 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
       }
     }
 
-    broadcastOrdersChanged({ action: 'update_status', orderId: Number(id), patch: { status } });
-    res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
+    broadcastOrdersChanged({ action: 'update_status', orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
+    res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, auto_remind: newAutoRemind });
   } catch (err: any) {
     console.error('Update order status error:', err);
     res.status(500).json({ error: 'Internal server error: ' + (err?.message || '') });
@@ -1609,6 +1614,21 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
 
 router.post('/:id/status', handleStatusUpdate);
 router.put('/:id/status', handleStatusUpdate);
+
+// Toggle auto-remind mode for a special order
+router.post('/:id/auto-remind', async (req, res) => {
+  const { id } = req.params;
+  const { auto_remind } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+    await db.run('UPDATE special_orders SET auto_remind = ? WHERE id = ?', [val, id]);
+    broadcastOrdersChanged({ action: 'auto_remind', orderId: Number(id), patch: { auto_remind: val } });
+    res.json({ success: true, id: Number(id), auto_remind: val });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Restore a cancelled order
 router.post('/:id/restore', async (req, res) => {

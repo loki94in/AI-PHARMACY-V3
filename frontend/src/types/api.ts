@@ -111,6 +111,9 @@ export interface SpecialOrder {
   payment_qr_id?: number | string;
   order_type?: string;
   total_amount?: number;
+  auto_remind?: number;
+  last_collection_reminder_at?: string | null;
+  collection_reminder_count?: number;
 }
 
 export interface Refill {
@@ -134,6 +137,9 @@ export interface Refill {
   reminder_occurrence_date?: string | null;
   patient_confirmed?: number;
   confirmed_at?: string | null;
+  auto_remind?: number;
+  last_collection_reminder_at?: string | null;
+  collection_reminder_count?: number;
 }
 
 export interface AutomationNotification {

@@ -534,7 +534,11 @@ async function ensureOrderTimingSchema(db: any) {
     ['non_wa_fallback_enabled', 'true'],
     // Staged refill reminder & mode settings (v70)
     ['default_refill_reminder_mode', 'manual'],
-    ['reminder_admin_preview_enabled', 'true']
+    ['reminder_admin_preview_enabled', 'true'],
+    // Quick Assist Auto Collection Reminder settings (v71)
+    ['quick_assist_auto_remind_master', 'true'],
+    ['collection_reminder_window_start', '10:00'],
+    ['collection_reminder_window_end', '18:00']
   ];
   for (const [k, v] of defaultTimingSettings) {
     await db.run('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)', [k, v]);
@@ -573,6 +577,30 @@ async function ensureOrderTimingSchema(db: any) {
     const custCols = await db.all('PRAGMA table_info(customers)');
     if (custCols.length > 0 && !custCols.some((c: any) => c.name.toLowerCase() === 'reminder_mode')) {
       await db.run("ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'");
+    }
+  } catch (_) { }
+
+  // Schema v71: Quick Assist Auto Collection Reminders for ready medicines
+  try {
+    const prCols = await db.all('PRAGMA table_info(patient_refills)');
+    const prColNames = new Set(prCols.map((c: any) => c.name.toLowerCase()));
+    if (prCols.length > 0 && !prColNames.has('auto_remind')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN auto_remind INTEGER DEFAULT 0');
+    }
+    if (prCols.length > 0 && !prColNames.has('last_collection_reminder_at')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN last_collection_reminder_at DATETIME DEFAULT NULL');
+    }
+    if (prCols.length > 0 && !prColNames.has('collection_reminder_count')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN collection_reminder_count INTEGER DEFAULT 0');
+    }
+
+    const soCols = await db.all('PRAGMA table_info(special_orders)');
+    const soColNames = new Set(soCols.map((c: any) => c.name.toLowerCase()));
+    if (soCols.length > 0 && !soColNames.has('auto_remind')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN auto_remind INTEGER DEFAULT 0');
+    }
+    if (soCols.length > 0 && !soColNames.has('last_collection_reminder_at')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN last_collection_reminder_at DATETIME DEFAULT NULL');
     }
   } catch (_) { }
 }

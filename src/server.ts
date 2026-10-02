@@ -888,8 +888,21 @@ server.on('error', (err: any) => {
           console.error('[Boot:Phase3] Distributor reminder worker start failed:', err);
         }
 
+        // Quick Assist auto-collection reminder worker for ready medicines
+        try {
+          const autoRemindMaster = await db.get("SELECT value FROM app_settings WHERE key = 'quick_assist_auto_remind_master'");
+          if (autoRemindMaster?.value !== 'false') {
+            const { startCollectionReminderWorker } = await import('./services/collectionReminderWorker.js');
+            startCollectionReminderWorker();
+            console.log('[Boot:Phase3] Quick Assist auto-collection reminder worker started.');
+          }
+        } catch (err) {
+          bootWorkerFailures++;
+          console.error('[Boot:Phase3] Auto-collection reminder worker start failed:', err);
+        }
+
         // WhatsApp queue: boot-time crash recovery ONLY (lazy loop — owner rule
-        // 2026-08). The poll loop itself starts on first enqueue / explicit enable.
+        // 2026-08). The poll loop starts on first enqueue / explicit enable.
         import('./services/whatsappQueueWorker.js').then(m => m.whatsappQueueWorker.cleanupOldSentItems()).catch(err => { bootWorkerFailures++; console.error('[Boot:Phase3] WhatsApp queue recovery failed:', err); });
 
         // ── Phase 4: Headless browser subsystems & asynchronous workers (staggered) ──

@@ -2756,6 +2756,77 @@ const QuickAssistSidebar = memo(({
   const [expandedStagedKeys, setExpandedStagedKeys] = useState<Set<string>>(new Set());
   const [snoozingKeys, setSnoozingKeys] = useState<Set<string>>(new Set());
 
+  // Master auto-remind toggle state & optimistic overrides for patients & orders
+  const [autoRemindMaster, setAutoRemindMaster] = useState<boolean>(true);
+  const [optimisticAutoRemindPhones, setOptimisticAutoRemindPhones] = useState<Map<string, boolean>>(new Map());
+  const [optimisticAutoRemindOrders, setOptimisticAutoRemindOrders] = useState<Map<number, boolean>>(new Map());
+
+  // Load auto-remind settings on expand
+  useEffect(() => {
+    if (expanded) {
+      api.getQuickAssistAutoRemindSettings()
+        .then(res => {
+          if (res && typeof res.enabled === 'boolean') {
+            setAutoRemindMaster(res.enabled);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [expanded]);
+
+  const handleToggleMasterAutoRemind = async () => {
+    const nextVal = !autoRemindMaster;
+    setAutoRemindMaster(nextVal);
+    try {
+      await api.toggleQuickAssistAutoRemindMaster(nextVal);
+      toastEvent.trigger(`Auto-Reminders ${nextVal ? 'ENABLED' : 'PAUSED'} for Quick Assist`, nextVal ? 'success' : 'info');
+    } catch (e) {
+      setAutoRemindMaster(!nextVal);
+      toastEvent.trigger('Failed to update Auto-Remind master setting', 'error');
+    }
+  };
+
+  const handleTogglePatientAutoRemind = async (phone: string, currentVal: boolean) => {
+    if (!phone) return;
+    const nextVal = !currentVal;
+    setOptimisticAutoRemindPhones(prev => new Map(prev).set(phone, nextVal));
+    try {
+      await api.togglePatientRefillAutoRemind(phone, nextVal);
+      toastEvent.trigger(`Auto reminder ${nextVal ? 'Armed' : 'Disarmed'} for this patient`, 'info');
+      refillEvent.triggerRefresh();
+    } catch (e) {
+      setOptimisticAutoRemindPhones(prev => {
+        const next = new Map(prev);
+        next.delete(phone);
+        return next;
+      });
+      toastEvent.trigger('Failed to update auto-remind setting', 'error');
+    }
+  };
+
+  const handleToggleOrderAutoRemind = async (items: Array<{ id: number }>, currentVal: boolean) => {
+    if (!items || items.length === 0) return;
+    const nextVal = !currentVal;
+    setOptimisticAutoRemindOrders(prev => {
+      const next = new Map(prev);
+      items.forEach(i => next.set(i.id, nextVal));
+      return next;
+    });
+    try {
+      await Promise.all(items.map(i => api.toggleOrderAutoRemind(i.id, nextVal)));
+      toastEvent.trigger(`Auto reminder ${nextVal ? 'Armed' : 'Disarmed'} for this order`, 'info');
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      specialOrdersEvent.triggerUpdated();
+    } catch (e) {
+      setOptimisticAutoRemindOrders(prev => {
+        const next = new Map(prev);
+        items.forEach(i => next.delete(i.id));
+        return next;
+      });
+      toastEvent.trigger('Failed to update auto-remind setting', 'error');
+    }
+  };
+
   useEffect(() => {
     if (expanded) {
       onRefreshDailyLog();
@@ -3178,6 +3249,9 @@ const QuickAssistSidebar = memo(({
       isPatientConfirmed: boolean;
       reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
       reminder_sent_at?: string | null;
+      auto_remind?: number;
+      collection_reminder_count?: number;
+      last_collection_reminder_at?: string | null;
       medicines: Array<{
         id: number;
         medicine_name: string;
@@ -3190,6 +3264,9 @@ const QuickAssistSidebar = memo(({
         reminder_sent_at?: string | null;
         patient_confirmed?: number;
         confirmed_at?: string | null;
+        auto_remind?: number;
+        collection_reminder_count?: number;
+        last_collection_reminder_at?: string | null;
       }>;
     }> = [];
 
@@ -3214,6 +3291,9 @@ const QuickAssistSidebar = memo(({
           isPatientConfirmed: false,
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
+          auto_remind: 0,
+          collection_reminder_count: 0,
+          last_collection_reminder_at: null,
           medicines: [],
         };
         map.set(key, existing);
@@ -3239,6 +3319,9 @@ const QuickAssistSidebar = memo(({
         reminder_sent_at: r.reminder_sent_at || null,
         patient_confirmed: (r as any).patient_confirmed || 0,
         confirmed_at: (r as any).confirmed_at || null,
+        auto_remind: (r as any).auto_remind ?? 0,
+        collection_reminder_count: (r as any).collection_reminder_count ?? 0,
+        last_collection_reminder_at: (r as any).last_collection_reminder_at || null,
       });
     }
 
@@ -3258,6 +3341,11 @@ const QuickAssistSidebar = memo(({
         } else {
           group.reminder_status = 'NOT_SENT';
         }
+
+        group.auto_remind = group.medicines.some(m => m.auto_remind === 1) ? 1 : 0;
+        group.collection_reminder_count = Math.max(0, ...group.medicines.map(m => m.collection_reminder_count || 0));
+        const collDates = group.medicines.map(m => m.last_collection_reminder_at).filter(Boolean) as string[];
+        group.last_collection_reminder_at = collDates.length > 0 ? collDates.sort().reverse()[0] : null;
       }
     }
 
@@ -3368,6 +3456,9 @@ const QuickAssistSidebar = memo(({
       requester: string;
       phone: string;
       overallStatus: string;
+      auto_remind?: number;
+      collection_reminder_count?: number;
+      last_collection_reminder_at?: string | null;
       items: Array<{
         id: number;
         product: string;
@@ -3375,6 +3466,9 @@ const QuickAssistSidebar = memo(({
         status: string;
         priority: string;
         notification_count?: number;
+        auto_remind?: number;
+        collection_reminder_count?: number;
+        last_collection_reminder_at?: string | null;
       }>;
     }> = [];
 
@@ -3389,6 +3483,9 @@ const QuickAssistSidebar = memo(({
           requester: order.requester || 'Customer',
           phone: order.phone || '',
           overallStatus: order.status || 'Pending',
+          auto_remind: 0,
+          collection_reminder_count: 0,
+          last_collection_reminder_at: null,
           items: [],
         };
         map.set(key, existing);
@@ -3401,6 +3498,9 @@ const QuickAssistSidebar = memo(({
         status: order.status || 'Pending',
         priority: order.priority || 'Normal',
         notification_count: Number((order as any).notification_count || 0),
+        auto_remind: Number(order.auto_remind || 0),
+        collection_reminder_count: Number(order.collection_reminder_count || 0),
+        last_collection_reminder_at: order.last_collection_reminder_at || null,
       });
     }
 
@@ -3409,6 +3509,11 @@ const QuickAssistSidebar = memo(({
       else if (g.items.some(i => i.status === 'Ordered')) g.overallStatus = 'Ordered';
       else if (g.items.some(i => i.status === 'Ready')) g.overallStatus = 'Ready';
       else g.overallStatus = 'Other';
+
+      g.auto_remind = g.items.some(i => i.auto_remind === 1) ? 1 : 0;
+      g.collection_reminder_count = Math.max(0, ...g.items.map(i => i.collection_reminder_count || 0));
+      const collDates = g.items.map(i => i.last_collection_reminder_at).filter(Boolean) as string[];
+      g.last_collection_reminder_at = collDates.length > 0 ? collDates.sort().reverse()[0] : null;
     }
 
     return list;
@@ -3585,15 +3690,34 @@ const QuickAssistSidebar = memo(({
           <ActivityIcon size={16} className="text-purple-500 shrink-0" />
           <span className="text-sm font-bold text-text uppercase tracking-wider truncate">Quick Assist</span>
         </div>
-        <button
-          onClick={() => {
-            setExpanded(false);
-          }}
-          className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer shrink-0"
-          title="Collapse"
-        >
-          <ChevronRightIcon size={16} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleToggleMasterAutoRemind}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 cursor-pointer shadow-xs ${
+              autoRemindMaster
+                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 hover:bg-purple-500/30'
+                : 'bg-bg3 text-muted border-border hover:text-text'
+            }`}
+            title={
+              autoRemindMaster
+                ? 'Auto Remind Master: ON (Sending daily 10 AM - 6 PM). Click to pause globally.'
+                : 'Auto Remind Master: PAUSED. Click to enable globally.'
+            }
+          >
+            <Zap size={10} className={autoRemindMaster ? 'text-purple-400 fill-purple-400' : 'text-muted'} />
+            <span>{autoRemindMaster ? 'Auto ON' : 'Auto OFF'}</span>
+          </button>
+          <button
+            onClick={() => {
+              setExpanded(false);
+            }}
+            className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer shrink-0"
+            title="Collapse"
+          >
+            <ChevronRightIcon size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Main content scroll */}
@@ -3705,6 +3829,35 @@ const QuickAssistSidebar = memo(({
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                        {/* 1-Click Manual ↔ Auto Collection Reminder Chip */}
+                        {(() => {
+                          const isAutoArmed = optimisticAutoRemindPhones.has(group.patient_phone)
+                            ? optimisticAutoRemindPhones.get(group.patient_phone)
+                            : (group as any).auto_remind === 1;
+                          const collCount = (group as any).collection_reminder_count || 0;
+                          return (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTogglePatientAutoRemind(group.patient_phone, !isAutoArmed);
+                              }}
+                              className={`py-0.5 px-2 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border shrink-0 ${
+                                isAutoArmed
+                                  ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
+                                  : 'bg-bg3 text-muted hover:text-text border-border'
+                              }`}
+                              title={
+                                isAutoArmed
+                                  ? `Auto collection reminder is ACTIVE (${collCount} sent). Daily follow-up 10 AM - 6 PM until sold in POS. Click to switch to Manual.`
+                                  : 'Manual mode: automatic follow-ups disabled. Click to arm Auto Remind.'
+                              }
+                            >
+                              <Zap size={9} className={isAutoArmed ? 'text-purple-400 fill-purple-400' : 'text-muted'} />
+                              <span>{isAutoArmed ? `Auto ON${collCount > 0 ? ` (${collCount}x)` : ''}` : 'Manual'}</span>
+                            </button>
+                          );
+                        })()}
                         {group.hasHoldStock && (
                           <button
                             onClick={(e) => {
@@ -4118,6 +4271,35 @@ const QuickAssistSidebar = memo(({
                     <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-border min-w-0">
                       {group.overallStatus === 'Ready' ? (
                         <>
+                          {(() => {
+                            const isOrderAutoArmed = optimisticAutoRemindOrders.has(group.items[0]?.id)
+                              ? optimisticAutoRemindOrders.get(group.items[0]?.id)
+                              : (group as any).auto_remind === 1;
+                            const collCount = (group as any).collection_reminder_count || 0;
+                            return (
+                              <button
+                                type="button"
+                                disabled={isProcessing}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleOrderAutoRemind(group.items, !isOrderAutoArmed);
+                                }}
+                                className={`py-1 px-2 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border shrink-0 ${
+                                  isOrderAutoArmed
+                                    ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
+                                    : 'bg-bg3 text-muted hover:text-text border-border'
+                                }`}
+                                title={
+                                  isOrderAutoArmed
+                                    ? `Auto collection reminder is ACTIVE (${collCount} sent). Daily follow-up 10 AM - 6 PM until sold in POS. Click to switch to Manual.`
+                                    : 'Manual mode: automatic follow-ups disabled. Click to arm Auto Remind.'
+                                }
+                              >
+                                <Zap size={9} className={isOrderAutoArmed ? 'text-purple-400 fill-purple-400' : 'text-muted'} />
+                                <span>{isOrderAutoArmed ? `Auto ON${collCount > 0 ? ` (${collCount}x)` : ''}` : 'Manual'}</span>
+                              </button>
+                            );
+                          })()}
                           {(() => {
                             const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
                             return (

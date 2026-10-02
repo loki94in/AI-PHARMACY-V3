@@ -4449,6 +4449,7 @@ export default function PharmarackCart() {
                                 onClick={async () => {
                                   try {
                                     await api.addPharmarackCart([{
+                                      productId: (rec as any).productId || rec.productCode || 0,
                                       productName: rec.productName,
                                       productCode: rec.productCode,
                                       storeId: rec.storeId,
