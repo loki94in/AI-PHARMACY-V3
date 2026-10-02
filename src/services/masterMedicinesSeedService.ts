@@ -528,7 +528,7 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
           ?, ?, ?, ?, ?,
           'master_reference', 'ACTIVE'
         )
-        ON CONFLICT(legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+        ON CONFLICT(legacy_id) DO UPDATE SET
           packaging      = CASE WHEN COALESCE(medicines.packaging,   '') = '' THEN excluded.packaging      ELSE medicines.packaging      END,
           manufacturer   = CASE WHEN COALESCE(medicines.manufacturer,'') = '' THEN excluded.manufacturer   ELSE medicines.manufacturer   END,
           marketed_by    = CASE WHEN COALESCE(medicines.marketed_by, '') = '' THEN excluded.marketed_by    ELSE medicines.marketed_by    END,

@@ -115,6 +115,9 @@ Source: "packaging\portable.env"; DestDir: "{app}"; DestName: ".env"; Flags: onl
 ; Bundled reference medicine seed JSON
 Source: "data\medicine_reference_seed.json"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
 
+; Pre-seeded master database with 286k+ medicines (installed on clean setup; existing customer CRM/orders/sales strictly preserved on upgrade)
+Source: "data\app.db"; DestDir: "{app}\data"; DestName: "app.db"; Flags: onlyifdoesntexist nocompression skipifsourcedoesntexist
+
 ; Master medicine catalog CSV (packaged into {app}\data\reference_medicines.csv)
 Source: "medicines.csv"; DestDir: "{app}\data"; DestName: "reference_medicines.csv"; Flags: ignoreversion nocompression skipifsourcedoesntexist
 Source: "data\reference_medicines.csv"; DestDir: "{app}\data"; Flags: ignoreversion nocompression skipifsourcedoesntexist

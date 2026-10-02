@@ -702,15 +702,21 @@ server.on('error', (err: any) => {
         })
         .catch(seedErr => console.warn('[Boot:Phase2] Bundled reference seed failed:', seedErr));
 
-      // Fire-and-forget: enrich master medicines from medicines.csv on every boot.
-      // Fills empty packaging/manufacturer/therapeutic/etc. fields on existing
-      // master_reference rows via INSERT ... ON CONFLICT(legacy_id) DO UPDATE.
-      // User-edited records and already-populated fields are never overwritten.
-      // Safe if CSV is absent (logs a warning and returns 0).
+      // Fire-and-forget: ensure master medicines are populated and enriched on boot.
+      // If medicines table is empty on clean installation, seedMasterMedicines auto-loads
+      // the catalog from CSV or template DB. Then enrichMasterMedicinesFromCsv keeps records current.
+      // User-edited records and existing customer data are never overwritten.
       import('./services/masterMedicinesSeedService.js')
-        .then(m => m.enrichMasterMedicinesFromCsv())
+        .then(async m => {
+          const medCountRow = await db.get("SELECT COUNT(*) as c FROM medicines").catch(() => null);
+          if (!medCountRow || Number(medCountRow.c) < 50) {
+            console.log('[Boot:Phase2] Medicines table has low/zero records. Auto-seeding master catalog in background...');
+            await m.seedMasterMedicines(false).catch(e => console.warn('[Boot:Phase2] Master catalog auto-seed error (non-fatal):', e?.message));
+          }
+          return m.enrichMasterMedicinesFromCsv();
+        })
         .then(res => {
-          if (res.enriched > 0) {
+          if (res && res.enriched > 0) {
             console.log(`[Boot:Phase2] Master medicines enriched: ${res.enriched} rows updated from CSV.`);
           } else {
             console.log('[Boot:Phase2] Master medicines enrichment: no rows needed update (already enriched or CSV absent).');
