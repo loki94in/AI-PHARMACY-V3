@@ -1,20 +1,37 @@
-# Active Implementation Plan: Refill Cycle Filtering & 1-Click Ready Order Reminder
+# Implementation Plan: Root Directory Markdown Cleanup
 
-> **Master Plan**: [REFILL_CYCLE_AND_READY_ORDER_REMINDER_PLAN.md](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/REFILL_CYCLE_AND_READY_ORDER_REMINDER_PLAN.md)  
-> **Goal**: 
-> 1. Filter refill reminders by medicine due date/cycle (e.g. 15d due now; exclude 30d/180d future medicines).
-> 2. Update refill reminder copy to polite pickup reminder ("packed and ready for collection at our pharmacy").
-> 3. Implement 1-Click "Mark Ready" for Special Orders in CRM and Quick Assist with auto-dispatch.
-> 4. Add human-in-the-loop 8s interactive Undo safeguard to cancel queued WhatsApp and revert status.
-> 5. Guardrail and knowledge graph synchronization.
-> **Status**: Ready to Execute  
+## Objective
+Remove 139 obsolete, completed task implementation plans, scratch notes, and stale prompt dumps from the repository root directory while strictly preserving:
+1. Core system and governance architecture contracts (8 files): `AGENTS.md`, `AGENT_BUG_FIX_RULEBOOK.md`, `AGENT_DATA_FLOW_TREE.md`, `BACKEND SCHEMA SAFETY.md`, `SMALL_BUG_FIX_PLAN.md`, `BUG_FIX_RULE_GUIDE.md`, `README.md`, `implementation.md`.
+2. Codebase and guardrail referenced specifications (6 files): `API_OPTIMIZATION_IMPLEMENTATION_PLAN.md`, `FRONTEND PERFORMANCE FIX.md`, `GLOBAL_CODE_CLEANUP_IMPLEMENTATION_PLAN.md`, `MULTI-PHARMACY.md`, `ONE UNIVERSAL MEDICINE CATALOG USING THE EXISTING CATALOG + BOTH CSV DATASETS.md`, `PRODUCT IMAGE MISSING.MD`.
 
 ---
 
-## Tasks Checklist
+## Tasks Breakdown
 
-- [ ] `Task 1`: Backend Refill Due Date & Cycle Filtering (`src/routes/refills.ts`).
-- [ ] `Task 2`: Frontend Quick Assist & CRM Refill Display Alignment (`Layout.tsx` & `CRM/index.tsx`).
-- [ ] `Task 3`: Special Orders 1-Click "Mark Ready" Auto-Send (`CRM/index.tsx` & `Layout.tsx`).
-- [ ] `Task 4`: Human-in-the-Loop Interactive Undo Action (`frontend` + `src/routes/orders.ts`).
-- [ ] `Task 5`: Quality Guardrails, Knowledge Graph Update & Verification.
+- [x] `Task 1`: Audit and verify the exact 139 obsolete root markdown files to delete and confirm no active code references are broken.
+- [x] `Task 2`: Perform surgical deletion of the 139 obsolete root markdown files.
+- [x] `Task 3`: Run `node scripts/quick-update.mjs` to synchronize the project knowledge graph and update audit records.
+- [x] `Task 4`: Run `npm run guardrails` to ensure all speed and architecture guardrails pass cleanly.
+- [x] `Task 5`: Update implementation plan with completion records.
+
+---
+
+## Progress & Completed Tasks
+
+### Task 1: Audit and Categorization
+- Scanned all 153 `.md` files in the root repository.
+- Cross-referenced all files against codebase imports, guardrail scripts, and project governance rules.
+- Confirmed 14 essential files to keep and 139 obsolete past task/draft plans to remove.
+
+### Task 2: Surgical Deletion
+- Safely unlinked the 139 obsolete `.md` files.
+- Verified that exactly 14 files remain in the root directory.
+
+### Task 3: Knowledge Graph Synchronization
+- Executed `node scripts/quick-update.mjs`.
+- Successfully updated `.understand-anything/knowledge-graph.json`, `meta.json`, and `3d-knowledge-graph.html` in 3.4s.
+
+### Task 4: Performance Guardrails Check
+- Executed `npm run guardrails`.
+- Verified 0 violations; speed architecture and TS safety intact.
