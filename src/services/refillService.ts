@@ -243,7 +243,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
 
   // Find all active patient refills for this patient that have not been notified/completed and due within upcoming 7 calendar days
   const readyRefills = await db.all(
-    `SELECT pr.id, pr.quantity_needed, pr.quantity, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
@@ -273,7 +273,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
       seenMeds.set(name, {
         id: r.id,
         medicine_name: name,
-        quantity: Number(r.quantity_needed || r.quantity || 1)
+        quantity: Number(r.quantity_needed || 1)
       });
     }
   }

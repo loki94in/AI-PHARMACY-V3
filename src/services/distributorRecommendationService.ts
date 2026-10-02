@@ -129,14 +129,15 @@ export class DistributorRecommendationService {
     const purchaseDistributorStats = await db.all(
       `SELECT d.id as distributor_id, d.name as distributor_name, d.phone,
               COUNT(p.id) as purchase_frequency,
-              AVG(pi.rate) as avg_ptr,
-              MAX(pi.rate) as max_ptr,
-              MIN(pi.rate) as min_ptr,
+              AVG(pi.cost_price) as avg_ptr,
+              MAX(pi.cost_price) as max_ptr,
+              MIN(pi.cost_price) as min_ptr,
               MAX(p.date) as last_purchased_date
        FROM purchase_items pi
        JOIN purchases p ON p.id = pi.purchase_id
        JOIN distributors d ON d.id = p.distributor_id
-       WHERE (pi.medicine_id = ? OR LOWER(TRIM(pi.item_name)) = LOWER(TRIM(?)))
+       LEFT JOIN medicines med ON med.id = pi.medicine_id
+       WHERE (pi.medicine_id = ? OR LOWER(TRIM(med.name)) = LOWER(TRIM(?)))
          AND (p.store_id = ? OR (p.store_id IS NULL AND ? = 1))
        GROUP BY d.id, d.name, d.phone
        ORDER BY purchase_frequency DESC LIMIT 10`,

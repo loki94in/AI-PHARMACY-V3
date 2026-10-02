@@ -412,6 +412,28 @@ router.get('/chats/:id/messages', async (req, res) => {
       };
     });
     res.json(sanitizedMessages);
+
+    // T2: Mark all unread inbound messages as read by pharmacist (cross-device dedup flag).
+    // T6: Cancel any pending bot reply for this chat — pharmacist is handling it.
+    // Fire-and-forget: must not block or slow the response.
+    const chatId = req.params.id;
+    setImmediate(async () => {
+      try {
+        const db = await dbManager.getConnection();
+        const now = Date.now();
+        await db.run(
+          `UPDATE whatsapp_messages
+           SET pharmacist_opened_at = ?
+           WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NULL`,
+          [now, chatId]
+        );
+      } catch (_) {}
+      try {
+        // T6: cancel pending smart reply for this contact
+        const { waSmartReplyScheduler } = await import('../services/waSmartReplyScheduler.js');
+        waSmartReplyScheduler.cancelReplyFor(chatId);
+      } catch (_) {}
+    });
   } catch (err: any) {
     console.error('Error fetching messages:', err);
     res.status(500).json({ error: err.message || 'Failed to fetch messages' });
@@ -847,6 +869,28 @@ router.get('/check-phone', async (req, res) => {
       status: 'UNABLE_TO_VERIFY',
       cached: false
     });
+  }
+});
+
+// T9: POST /api/messaging/process-offline-batch
+// Human-loop gate: returns counts of pending offline replies.
+// Pass ?confirm=true to actually schedule and send them.
+router.post('/process-offline-batch', async (req, res) => {
+  try {
+    const confirm = req.query.confirm === 'true';
+    const { waSmartReplyScheduler } = await import('../services/waSmartReplyScheduler.js');
+    const result = await waSmartReplyScheduler.processOfflineBatch(confirm);
+    res.json({
+      success: true,
+      confirm,
+      ...result,
+      message: confirm
+        ? `Scheduled ${result.processed} replies. Skipped ${result.skipped_read} (read) and ${result.skipped_replied} (already replied).`
+        : `Found ${result.processed} pending replies. POST with ?confirm=true to send them.`
+    });
+  } catch (err: any) {
+    console.error('[OfflineBatch] Error:', err);
+    res.status(500).json({ error: err.message || 'Failed to process offline batch' });
   }
 });
 

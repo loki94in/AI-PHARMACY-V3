@@ -928,15 +928,6 @@ router.post('/hold', async (req, res) => {
       return res.status(400).json({ error: 'Invalid cart payload JSON' });
     }
     
-    // Create serialized data blob for compatibility with legacy HTML restoration
-    const serializedData = data || JSON.stringify({
-      items: finalCartData,
-      patient: patient || { name: finalPatientName, phone: finalPatientPhone },
-      doctor: finalDoctor,
-      discount: finalDiscount,
-      date: new Date().toLocaleString(),
-      remarks: remarks || ''
-    });
 
     await db.run('BEGIN IMMEDIATE TRANSACTION');
     const holdInvoiceNo = await generateInvoiceNo(db);
@@ -994,8 +985,8 @@ router.post('/hold', async (req, res) => {
     await db.run(
       `INSERT INTO held_bills (
         customer_id, invoice_no, temp_label, patient_name, patient_phone, doctor_name, 
-        discount, remarks, cart_data, data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        discount, remarks, cart_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         customerId,
         holdInvoiceNo,
@@ -1005,8 +996,7 @@ router.post('/hold', async (req, res) => {
         finalDoctor,
         finalDiscount,
         remarks || '',
-        typeof finalCartData === 'string' ? finalCartData : JSON.stringify(finalCartData),
-        serializedData
+        typeof finalCartData === 'string' ? finalCartData : JSON.stringify(finalCartData)
       ]
     );
 

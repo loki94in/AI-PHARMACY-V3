@@ -640,7 +640,7 @@ export class OrderScheduleService {
     // 2. Fetch pending patient refills that were due yesterday or earlier
     const refillRows = await db.all(`
       SELECT pr.id, pr.patient_name, pr.quantity_needed, pr.next_refill_date, pr.status,
-             COALESCE(pr.created_at, pr.next_refill_date) as order_time,
+             COALESCE(pr.last_refill_date, pr.next_refill_date) as order_time,
              m.name as medicine_name,
              COALESCE(c.phone, '') as customer_phone
       FROM patient_refills pr

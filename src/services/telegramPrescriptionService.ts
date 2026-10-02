@@ -321,7 +321,7 @@ class TelegramPrescriptionService {
       const db = await dbManager.getConnection();
 
       const inventory = await db.get(
-        `SELECT im.id, im.quantity, im.mrp, im.batch_number, im.expiry_date
+        `SELECT im.id, im.quantity, im.mrp, im.batch_no as batch_number, im.batch_no, im.expiry_date
          FROM inventory_master im
          WHERE im.medicine_id = ? AND im.quantity > 0
          ORDER BY im.quantity DESC LIMIT 1`,

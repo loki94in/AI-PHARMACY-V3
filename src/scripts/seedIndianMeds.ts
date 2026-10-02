@@ -63,8 +63,8 @@ async function seed() {
   
   const stmt = await db.prepare(`
     INSERT INTO medicines 
-    (name, api_reference, strength, item_type, manufacturer, marketed_by, manufactured_by, schedule_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (name, api_reference, strength, item_type, manufacturer, marketed_by, schedule_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   
   let count = 0;
@@ -75,7 +75,6 @@ async function seed() {
         med.api,
         med.strength,
         med.type,
-        med.manufacturer,
         med.manufacturer,
         med.manufacturer,
         med.schedule

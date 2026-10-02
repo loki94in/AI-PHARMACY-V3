@@ -969,7 +969,7 @@ router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
     }
 
     const items = await db.all(
-      `SELECT oi.*, im.mrp as batch_mrp, im.sell_price as batch_sell, im.batch_no,
+      `SELECT oi.*, im.mrp as batch_mrp, COALESCE(am.sell_price, m.sell_price, oi.sell_price, im.mrp, 0) as batch_sell, im.batch_no,
               COALESCE(am.name, m.name) as resolved_name, m.id as orig_med_id
        FROM online_order_items oi
        LEFT JOIN medicines m ON m.id = oi.medicine_id
@@ -1047,9 +1047,9 @@ router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
       };
 
       await db.run(
-        `INSERT INTO staged_sales (store_id, customer_id, customer_name, cart_json, created_at, status)
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'held')`,
-        [order.store_id, order.customer_id, order.requester, JSON.stringify(heldBillMeta)]
+        `INSERT INTO staged_sales (patient_name, patient_phone, discount, sale_date, items_json, status)
+         VALUES (?, ?, 0, CURRENT_TIMESTAMP, ?, 'pending')`,
+        [order.requester || 'Online Customer', order.phone || '', JSON.stringify(heldBillMeta)]
       );
 
       // Audit log
@@ -1880,8 +1880,9 @@ router.post('/orders/:orderId/refill', async (req, res) => {
     const validItems: any[] = [];
     for (const item of originalItems) {
       const batchRow = await db.get(
-        `SELECT im.id as inventory_id, im.mrp, im.sell_price, im.batch_no, SUM(im.quantity) as total_qty
+        `SELECT im.id as inventory_id, im.mrp, COALESCE(m.sell_price, im.unit_price, im.mrp, 0) as sell_price, im.batch_no, SUM(im.quantity) as total_qty
          FROM inventory_master im
+         JOIN medicines m ON m.id = im.medicine_id
          WHERE im.medicine_id = ? AND im.store_id = ? AND im.is_active = 1
            AND im.quantity > 0
            AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now'))

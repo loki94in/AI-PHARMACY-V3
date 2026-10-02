@@ -1463,18 +1463,16 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           });
         }
 
-        // Route inbound customer messages through the existing WhatsApp intent service
+        // Route inbound customer messages through the smart reply scheduler.
+        // The scheduler applies human-like delays (35-60s cold / 10-17s warm),
+        // collapses multiple messages per contact into one reply, and checks
+        // the pharmacist_opened_at gate before firing handleInbound.
         if (!msg.fromMe) {
-          import('./services/whatsappIntentService.js')
+          import('./services/waSmartReplyScheduler.js')
             .then(mod => {
-              const handler = mod.handleInbound || mod.whatsappIntentService?.handleInbound || mod.default?.handleInbound;
-              if (handler) {
-                handler(msg).catch(err => console.error('[WhatsApp] Intent service execution error:', err));
-              } else {
-                console.error('[WhatsApp] Could not resolve handleInbound from whatsappIntentService module.');
-              }
+              mod.waSmartReplyScheduler.scheduleReply(msg);
             })
-            .catch(err => console.error('[WhatsApp] Intent service import error:', err));
+            .catch(err => console.error('[WhatsApp] Smart reply scheduler error:', err));
         }
       } catch (err) {
         console.error('[WhatsApp] Error in message_create event handler:', err);
@@ -1487,6 +1485,18 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           msg_id: msg.id._serialized,
           ack
         });
+        // T3: Persist ACK level to DB for outbound messages (used by smart reply scheduler)
+        if (ack >= 2) {
+          const msgId = msg.id?._serialized;
+          if (msgId) {
+            dbManager.getConnection().then(db => {
+              db.run(
+                `UPDATE whatsapp_messages SET ack_status = ? WHERE id = ?`,
+                [ack, msgId]
+              ).catch(() => {});
+            }).catch(() => {});
+          }
+        }
       } catch (err) {
         console.error('[WhatsApp] Error in message_ack event handler:', err);
       }

@@ -379,15 +379,15 @@ enquiriesRouter.post('/:id/convert-to-refill', async (req: Request, res: Respons
 
     const refillResult = await db.run(
       `INSERT INTO patient_refills (
-        patient_name, patient_phone, medicine_id, medicine_name,
-        dosage, quantity, next_refill_date, refill_interval_days, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        store_id, customer_id, patient_name, patient_phone, medicine_id,
+        quantity_needed, next_refill_date, refill_interval_days, is_active, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending')`,
       [
+        enquiry.store_id || 1,
+        enquiry.customer_id || null,
         enquiry.patient_name,
         enquiry.patient_phone || '',
         enquiry.medicine_id,
-        enquiry.medicine_name,
-        enquiry.dosage_group || 'TAB',
         enquiry.qty || 1,
         calculatedDate,
         Number(daysInterval) || 30

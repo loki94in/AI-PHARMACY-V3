@@ -13864,7 +13864,11 @@ async function ensureOrderTimingSchema(db2) {
     ["non_wa_fallback_enabled", "true"],
     // Staged refill reminder & mode settings (v70)
     ["default_refill_reminder_mode", "manual"],
-    ["reminder_admin_preview_enabled", "true"]
+    ["reminder_admin_preview_enabled", "true"],
+    // Quick Assist Auto Collection Reminder settings (v71)
+    ["quick_assist_auto_remind_master", "true"],
+    ["collection_reminder_window_start", "10:00"],
+    ["collection_reminder_window_end", "18:00"]
   ];
   for (const [k, v] of defaultTimingSettings) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", [k, v]);
@@ -13900,6 +13904,28 @@ async function ensureOrderTimingSchema(db2) {
     const custCols = await db2.all("PRAGMA table_info(customers)");
     if (custCols.length > 0 && !custCols.some((c) => c.name.toLowerCase() === "reminder_mode")) {
       await db2.run("ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'");
+    }
+  } catch (_) {
+  }
+  try {
+    const prCols = await db2.all("PRAGMA table_info(patient_refills)");
+    const prColNames = new Set(prCols.map((c) => c.name.toLowerCase()));
+    if (prCols.length > 0 && !prColNames.has("auto_remind")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN auto_remind INTEGER DEFAULT 0");
+    }
+    if (prCols.length > 0 && !prColNames.has("last_collection_reminder_at")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN last_collection_reminder_at DATETIME DEFAULT NULL");
+    }
+    if (prCols.length > 0 && !prColNames.has("collection_reminder_count")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN collection_reminder_count INTEGER DEFAULT 0");
+    }
+    const soCols = await db2.all("PRAGMA table_info(special_orders)");
+    const soColNames = new Set(soCols.map((c) => c.name.toLowerCase()));
+    if (soCols.length > 0 && !soColNames.has("auto_remind")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN auto_remind INTEGER DEFAULT 0");
+    }
+    if (soCols.length > 0 && !soColNames.has("last_collection_reminder_at")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN last_collection_reminder_at DATETIME DEFAULT NULL");
     }
   } catch (_) {
   }
@@ -14067,6 +14093,7 @@ async function ensureSchema(dbPath) {
           CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
           CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
           CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
+          CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
           CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
           CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer);
           CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
@@ -15285,6 +15312,7 @@ async function ensureSchema(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_customer_status ON sales_invoices (customer_id, payment_status, payment_medium);
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_date_status ON sales_invoices (date DESC, payment_status);
     CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases (date DESC, distributor_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
     CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines (name, manufacturer);
     CREATE TABLE IF NOT EXISTS distributor_dispatch_reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16366,6 +16394,7 @@ async function ensureSchema(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
     CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
     CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
     CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
     CREATE INDEX IF NOT EXISTS idx_automation_notifications_type_status ON automation_notifications(type, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
@@ -26531,15 +26560,17 @@ __export(stockCalculatorWorker_exports, {
   stopStockCalculatorWorker: () => stopStockCalculatorWorker,
   triggerPreCalculatedStockRebuildDebounced: () => triggerPreCalculatedStockRebuildDebounced
 });
-function triggerPreCalculatedStockRebuildDebounced(medicineIds, delayMs = 500) {
+function triggerPreCalculatedStockRebuildDebounced(medicineIds, delayMs = 500, options) {
   if (medicineIds && medicineIds.length > 0) {
     for (const id of medicineIds) {
       if (typeof id === "number" && id > 0) {
         pendingMedicineIds.add(id);
       }
     }
-  } else {
+  } else if (options?.forceFull) {
     fullStockRebuildRequested = true;
+  } else {
+    return;
   }
   if (debounceTimer2) clearTimeout(debounceTimer2);
   debounceTimer2 = setTimeout(() => {
@@ -27713,6 +27744,7 @@ __export(pharmarack_exports, {
   loadLiveCartCore: () => loadLiveCartCore,
   performPharmarackSearch: () => performPharmarackSearch,
   rankSpecialOrderDistributorCandidates: () => rankSpecialOrderDistributorCandidates,
+  reconcilePaidAndFulfilledCartItems: () => reconcilePaidAndFulfilledCartItems,
   resolveCommonOrFrequentDistributor: () => resolveCommonOrFrequentDistributor,
   warmupStartupCart: () => warmupStartupCart
 });
@@ -29351,6 +29383,75 @@ async function verifyOrderPlacedInPharmarack(storeId) {
   }
   return false;
 }
+async function reconcilePaidAndFulfilledCartItems(distributors) {
+  const reconciledItems = [];
+  if (!Array.isArray(distributors) || distributors.length === 0) return reconciledItems;
+  try {
+    const db2 = await dbManager.getConnection();
+    const paidCompletedOrders = await db2.all(`
+      SELECT id, product, medicine_name, qty, pharmarack_store_id, pharmarack_product_code,
+             pharmarack_product_id, pharmarack_distributor, status, payment_status
+      FROM special_orders
+      WHERE payment_status IN ('PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED')
+        AND (status IN ('Fulfilled', 'Delivered', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Cancelled')
+             OR created_at < datetime('now', '-30 days'))
+    `);
+    if (!paidCompletedOrders || paidCompletedOrders.length === 0) return reconciledItems;
+    const normalize = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    for (const dist of distributors) {
+      const distStoreId = Number(dist.storeId);
+      const remainingItems = [];
+      for (const item of dist.items || []) {
+        const itemCode = String(item.productCode || item.ProductCode || "").trim();
+        const itemProdId = Number(item.productId || item.ProductId || 0);
+        const itemNorm = normalize(item.productName || item.ProductName || "");
+        const match = paidCompletedOrders.find((ord) => {
+          const ordStoreId = ord.pharmarack_store_id ? Number(ord.pharmarack_store_id) : null;
+          const isStoreMatch = !ordStoreId || ordStoreId === distStoreId || ord.status === "Cancelled";
+          if (!isStoreMatch) return false;
+          if (itemCode && ord.pharmarack_product_code && String(ord.pharmarack_product_code).trim() === itemCode) {
+            return true;
+          }
+          if (itemProdId > 0 && ord.pharmarack_product_id && Number(ord.pharmarack_product_id) === itemProdId) {
+            return true;
+          }
+          const ordNorm = normalize(ord.pharmarack_product_name || ord.medicine_name || ord.product || "");
+          return ordNorm.length >= 4 && ordNorm === itemNorm;
+        });
+        if (match) {
+          console.log(`[CartReconcile] Auto-clearing paid & completed item "${item.productName}" (Order #${match.id}, Store: ${dist.storeName})`);
+          reconciledItems.push({
+            orderId: match.id,
+            storeId: distStoreId,
+            storeName: dist.storeName,
+            productName: item.productName,
+            productCode: itemCode,
+            qty: item.qty,
+            reason: `Order #${match.id} is already paid (${match.payment_status}) and ${match.status}`
+          });
+          pharmarackDeleteChain = pharmarackDeleteChain.catch(() => {
+          }).then(() => executeSingleItemDelete({
+            storeId: distStoreId,
+            productId: itemProdId || null,
+            productCode: itemCode,
+            productName: item.productName,
+            company: item.company,
+            packaging: item.packaging,
+            ptr: item.ptr,
+            mrp: item.mrp,
+            storeName: dist.storeName
+          }));
+        } else {
+          remainingItems.push(item);
+        }
+      }
+      dist.items = remainingItems;
+    }
+  } catch (err) {
+    console.warn("[CartReconcile] Error reconciling paid cart items:", err);
+  }
+  return reconciledItems;
+}
 var import_express, import_path18, import_fs18, router, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
@@ -29767,6 +29868,10 @@ var init_pharmarack = __esm({
         } catch (dbErr) {
           console.error("[AutoNotif] Error running automatic cart transition checks:", dbErr);
         }
+        const reconciledItems = await reconcilePaidAndFulfilledCartItems(distributors);
+        if (reconciledItems.length > 0) {
+          totalItems = distributors.reduce((sum, d) => sum + (Array.isArray(d.items) ? d.items.length : 0), 0);
+        }
         startupSyncCoordinator.markCartLoaded();
         Promise.resolve().then(() => (init_pharmarackDailyDispatchService(), pharmarackDailyDispatchService_exports)).then((m) => m.handleCartPageVisit()).catch((err) => console.warn("[PharmarackBatch] handleCartPageVisit error:", err));
         serverCartCache = {
@@ -29774,7 +29879,7 @@ var init_pharmarack = __esm({
           totalItems,
           ts: Date.now()
         };
-        return res.json({ success: true, mode: "Live", distributors, totalItems });
+        return res.json({ success: true, mode: "Live", distributors, totalItems, reconciledItems });
       } catch (err) {
         console.error("Pharmarack cart fetch error:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -45355,15 +45460,17 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
     console.error("[ExpiryCache] Error patching expiry cache for item:", inventoryId, err);
   }
 }
-function triggerExpiryCacheRebuildDebounced(inventoryIds) {
+function triggerExpiryCacheRebuildDebounced(inventoryIds, options) {
   if (inventoryIds && inventoryIds.length > 0) {
     for (const id of inventoryIds) {
       if (typeof id === "number" && id > 0) {
         pendingInventoryIds.add(id);
       }
     }
-  } else {
+  } else if (options?.forceFull) {
     fullExpiryRebuildRequested = true;
+  } else {
+    return;
   }
   if (rebuildTimeout) clearTimeout(rebuildTimeout);
   rebuildTimeout = setTimeout(async () => {
@@ -46022,7 +46129,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
   ).catch(() => ({ count: 0 }));
   const callCount = Number(pendingCallTasks?.count || 0);
   const activeOrders = await db2.all(
-    `SELECT id, requester, phone, product, qty, status, customer_order_source
+    `SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source
      FROM special_orders
      WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
        AND DATE(date) >= DATE('now', 'localtime', '-7 days')
@@ -46033,12 +46140,12 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     const custName = (o.requester || "Customer").trim();
     const phone = String(o.phone || "").trim();
     const key = phone ? phone : custName.toLowerCase();
-    const rawSrc = (o.customer_order_source || "").toLowerCase();
-    let srcBadge = "Special Order";
-    if (rawSrc === "website") srcBadge = "Website Order";
-    else if (rawSrc === "whatsapp") srcBadge = "WhatsApp Order";
-    else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online Order";
-    else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
+    const rawSrc = (o.customer_order_source || "").toLowerCase().trim();
+    let srcBadge = "";
+    if (rawSrc === "website") srcBadge = "Website";
+    else if (rawSrc === "whatsapp") srcBadge = "WhatsApp";
+    else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online";
+    else if (rawSrc && rawSrc !== "in_store") srcBadge = o.customer_order_source;
     if (!customerOrderMap.has(key)) {
       customerOrderMap.set(key, {
         customerKey: key,
@@ -46049,15 +46156,16 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
       });
     }
     const group = customerOrderMap.get(key);
+    const resolvedProduct = (o.product || o.medicine_name || "").trim() || "Unspecified Item";
     group.items.push({
-      product: o.product,
+      product: resolvedProduct,
       qty: Number(o.qty || 1),
       status: o.status || "Pending"
     });
   }
   const groupedCustomerOrders = Array.from(customerOrderMap.values()).slice(0, 15);
   const pendingShortages = await db2.all(
-    `SELECT id, product, requester, phone, qty, pharmarack_distributor, date
+    `SELECT id, product, medicine_name, requester, phone, qty, pharmarack_distributor, date
      FROM special_orders
      WHERE status IN ('Pending', 'PENDING')
        AND datetime(date) <= datetime('now', '-23 hours')
@@ -46085,8 +46193,9 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
   if (groupedCustomerOrders.length > 0) {
     ordersBlock = groupedCustomerOrders.map((cust, i) => {
       const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
+      const sourceSuffix = cust.orderSource ? ` \u2022 ${cust.orderSource}` : "";
       const itemLines = cust.items.map((item) => `   - ${item.product} \xD7 ${item.qty} (${item.status})`).join("\n");
-      return `${i + 1}. *${cust.requester}* (${itemCountLabel} \u2022 ${cust.orderSource}):
+      return `${i + 1}. *${cust.requester}* (${itemCountLabel}${sourceSuffix}):
 ${itemLines}`;
     }).join("\n");
   }
@@ -46132,7 +46241,10 @@ ${pausedDetails}${extraPaused}`);
     dailyTasks.push(`\u{1F6A8} *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA \u2014 push to Pharmarack or contact distributor`);
   }
   if (pendingShortages.length > 0) {
-    const shortMeds = pendingShortages.map((s) => `${s.product} \xD7 ${s.qty || 1} (${s.pharmarack_distributor || "Distributor"})`).slice(0, 4);
+    const shortMeds = pendingShortages.map((s) => {
+      const pName = (s.product || s.medicine_name || "").trim() || "Unspecified Item";
+      return `${pName} \xD7 ${s.qty || 1} (${s.pharmarack_distributor || "Distributor"})`;
+    }).slice(0, 4);
     const extra = pendingShortages.length > 4 ? ` +${pendingShortages.length - 4} more` : "";
     dailyTasks.push(`\u{1F4E6} *Reorder Shortage Items (>23h Pending)*: ${shortMeds.join(", ")}${extra}`);
   }
@@ -46236,7 +46348,8 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
       t1Orders = groupedCustomerOrders.map((cust, i) => {
         const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
         const statuses = Array.from(new Set(cust.items.map((it) => it.status))).join(", ");
-        return `${i + 1}. *${cust.requester}* \u2014 ${itemCountLabel} [${cust.orderSource}] (${statuses})`;
+        const srcTag = cust.orderSource ? ` [${cust.orderSource}]` : "";
+        return `${i + 1}. *${cust.requester}* \u2014 ${itemCountLabel}${srcTag} (${statuses})`;
       }).join("\n");
     }
     messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
@@ -47311,6 +47424,8 @@ var init_inventory = __esm({
     init_eventService();
     init_storeContextService();
     init_auditLoggerService();
+    init_stockCalculatorWorker();
+    init_expiryAlertService();
     import_qrcode2 = __toESM(require("qrcode"), 1);
     router2 = import_express2.default.Router();
     router2.use((req, res, next) => {
@@ -47665,6 +47780,10 @@ var init_inventory = __esm({
         }
         await db2.run("COMMIT");
         inventoryCache.invalidate();
+        if (oldInv.medicine_id) {
+          triggerPreCalculatedStockRebuildDebounced([oldInv.medicine_id]);
+        }
+        triggerExpiryCacheRebuildDebounced([Number(id)]);
         res.json({ success: true, message: "Inventory updated and synced across unified storage" });
       } catch (error) {
         if (db2) {
@@ -48301,6 +48420,12 @@ var init_inventory = __esm({
         }
         await db2.run("COMMIT");
         inventoryCache.invalidate();
+        if (id) {
+          triggerPreCalculatedStockRebuildDebounced([Number(id)]);
+        }
+        if (inventory_id) {
+          triggerExpiryCacheRebuildDebounced([Number(inventory_id)]);
+        }
         res.json({ success: true, message: "Medicine universally updated across 26 fields" });
       } catch (error) {
         if (db2) {
@@ -48323,23 +48448,33 @@ var init_inventory = __esm({
         db2 = await dbManager.getConnection();
         await db2.run("BEGIN TRANSACTION");
         let count = 0;
+        const touchedMedicineIds = /* @__PURE__ */ new Set();
+        const touchedInventoryIds = /* @__PURE__ */ new Set();
         for (const item of updates) {
           const { inventory_id, quantity, reason = "Remote Admin Stock Update" } = item;
           if (!inventory_id || typeof quantity !== "number" || quantity < 0) {
             continue;
           }
           await db2.run("UPDATE inventory_master SET quantity = ? WHERE id = ?", [quantity, inventory_id]);
+          touchedInventoryIds.add(inventory_id);
           await db2.run(
             `INSERT INTO action_logs (action_type, description) VALUES ('STOCK_OVERRIDE', ?)`,
             [`Override stock for inventory_id ${inventory_id} to ${quantity}. Reason: ${reason}`]
           );
           const invItem = await db2.get("SELECT medicine_id FROM inventory_master WHERE id = ?", [inventory_id]);
           if (invItem && invItem.medicine_id) {
+            touchedMedicineIds.add(invItem.medicine_id);
             await inventoryService.checkAndTriggerRefillsForMedicine(invItem.medicine_id);
           }
           count++;
         }
         await db2.run("COMMIT");
+        if (touchedMedicineIds.size > 0) {
+          triggerPreCalculatedStockRebuildDebounced(Array.from(touchedMedicineIds));
+        }
+        if (touchedInventoryIds.size > 0) {
+          triggerExpiryCacheRebuildDebounced(Array.from(touchedInventoryIds));
+        }
         res.json({ success: true, message: `Successfully synced ${count} stock override(s).`, count });
       } catch (error) {
         if (db2) {
@@ -48891,7 +49026,10 @@ async function applyPurchaseStockChange(db2, purchaseId, oldLines, newLines, led
       `Stock from this bill was already sold or returned, so it can't be taken back: ${shortages.join("; ")}. Edit or delete those sales/returns first, or correct the shelf count on Investigation.`
     );
   }
+  const touchedMedicineIds = /* @__PURE__ */ new Set();
+  const touchedInventoryIds = /* @__PURE__ */ new Set();
   for (const [k, c] of changes) {
+    touchedMedicineIds.add(c.medicine_id);
     const net = c.newStrips - c.oldStrips;
     let row = rows.get(k);
     const line = c.line;
@@ -48931,8 +49069,15 @@ async function applyPurchaseStockChange(db2, purchaseId, oldLines, newLines, led
       });
       if (net > 0) await applyPurchaseDelta(db2, c.medicine_id, net, Number(line?.cost_price) || null, null, null);
     }
-    if (row?.id) await refreshInventoryActiveStatus(db2, row.id);
+    if (row?.id) {
+      touchedInventoryIds.add(row.id);
+      await refreshInventoryActiveStatus(db2, row.id);
+    }
   }
+  return {
+    touchedMedicineIds: Array.from(touchedMedicineIds),
+    touchedInventoryIds: Array.from(touchedInventoryIds)
+  };
 }
 var PurchaseEditError, describeUnits2, stripsOf;
 var init_purchaseBillEditService = __esm({
@@ -48980,6 +49125,8 @@ var init_investigation = __esm({
     init_saleBillEditService();
     init_purchaseBillEditService();
     init_inventoryActive();
+    init_stockCalculatorWorker();
+    init_expiryAlertService();
     router3 = import_express3.default.Router();
     TIMELINE_CACHE_TTL_MS = 6e4;
     TIMELINE_CACHE_MAX_ENTRIES = 40;
@@ -49884,7 +50031,7 @@ var init_investigation = __esm({
           "SELECT medicine_id, batch_no, quantity, free_qty FROM purchase_items WHERE purchase_id = ?",
           [purchaseId]
         );
-        await applyPurchaseStockChange(
+        const stockChangeResult = await applyPurchaseStockChange(
           db2,
           purchaseId,
           oldItems,
@@ -49939,6 +50086,12 @@ var init_investigation = __esm({
         await db2.run("COMMIT");
         inventoryCache.invalidate();
         invalidateInvestigationTimelineCache();
+        if (stockChangeResult?.touchedMedicineIds?.length) {
+          triggerPreCalculatedStockRebuildDebounced(stockChangeResult.touchedMedicineIds);
+        }
+        if (stockChangeResult?.touchedInventoryIds?.length) {
+          triggerExpiryCacheRebuildDebounced(stockChangeResult.touchedInventoryIds);
+        }
         await rebuildPurchaseSummaryCache();
         triggerBackgroundSummaryRebuild();
         try {
@@ -52162,8 +52315,9 @@ var init_connection = __esm({
                 const lastNum = [...flatParams].reverse().find((v) => typeof v === "number" && Number.isInteger(v) && v > 0);
                 if (lastNum !== void 0) inventoryIds = [lastNum];
               }
-              Promise.resolve().then(() => (init_expiryAlertService(), expiryAlertService_exports)).then((m) => m.triggerExpiryCacheRebuildDebounced(inventoryIds)).catch((err) => console.error("Failed to trigger expiry cache rebuild:", err));
-              Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports)).then((m) => m.triggerPreCalculatedStockRebuildDebounced(inventoryIds)).catch((err) => console.error("Failed to trigger precalculated stock rebuild:", err));
+              if (inventoryIds && inventoryIds.length > 0) {
+                Promise.resolve().then(() => (init_expiryAlertService(), expiryAlertService_exports)).then((m) => m.triggerExpiryCacheRebuildDebounced(inventoryIds)).catch((err) => console.error("Failed to trigger expiry cache rebuild:", err));
+              }
               Promise.resolve().then(() => (init_inventory(), inventory_exports)).then((m) => m.invalidateInventoryCountCache()).catch(() => {
               });
               Promise.resolve().then(() => (init_investigation(), investigation_exports)).then((m) => m.invalidateInvestigationTimelineCache()).catch(() => {
@@ -54048,7 +54202,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.36";
+    APP_VERSION = "0.1.37";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -71813,6 +71967,254 @@ var init_refillCartService = __esm({
   }
 });
 
+// src/services/collectionReminderWorker.ts
+var collectionReminderWorker_exports = {};
+__export(collectionReminderWorker_exports, {
+  runCollectionReminderCycle: () => runCollectionReminderCycle,
+  startCollectionReminderWorker: () => startCollectionReminderWorker,
+  stopCollectionReminderWorker: () => stopCollectionReminderWorker
+});
+async function runCollectionReminderCycle(force = false) {
+  if (isCycleRunning) {
+    return { status: "skipped", reason: "already_running" };
+  }
+  isCycleRunning = true;
+  try {
+    const db2 = await dbManager.getConnection();
+    const masterRow = await db2.get("SELECT value FROM app_settings WHERE key = 'quick_assist_auto_remind_master'");
+    if (masterRow?.value === "false" && !force) {
+      return { status: "skipped", reason: "master_disabled" };
+    }
+    const waStatus = await getWhatsAppStatus();
+    if (!waStatus?.isReady && !force) {
+      return { status: "skipped", reason: "wa_not_ready" };
+    }
+    const sched = await getPharmacyOperatingSchedule(db2);
+    const now = /* @__PURE__ */ new Date();
+    const startRow = await db2.get("SELECT value FROM app_settings WHERE key = 'collection_reminder_window_start'");
+    const endRow = await db2.get("SELECT value FROM app_settings WHERE key = 'collection_reminder_window_end'");
+    const startHourMin = startRow?.value || "10:00";
+    const endHourMin = endRow?.value || "18:00";
+    const currentHourMin = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    if ((currentHourMin < startHourMin || currentHourMin > endHourMin) && !force) {
+      return { status: "skipped", reason: `outside_window (${startHourMin}-${endHourMin})` };
+    }
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayDayName = dayNames[now.getDay()];
+    if ((sched.weeklyOff || "").toLowerCase() === todayDayName.toLowerCase() && !force) {
+      return { status: "skipped", reason: `weekly_off (${todayDayName})` };
+    }
+    const todayDateStr = toLocalSqlDateTime(now).slice(0, 10);
+    if ((sched.closedDates || []).includes(todayDateStr) && !force) {
+      return { status: "skipped", reason: "holiday_closed" };
+    }
+    const storeName = await getConfiguredPharmacyName(db2) || "Pharmacy";
+    const storePhone = await getStorePhone(db2);
+    const storeLabel = storePhone ? `${storeName} (Ph: ${storePhone})` : storeName;
+    let refillsQueued = 0;
+    let ordersQueued = 0;
+    const readyRefills = await db2.all(`
+      SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
+             pr.quantity_needed, pr.quantity, pr.last_collection_reminder_at, pr.collection_reminder_count
+      FROM patient_refills pr
+      JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.auto_remind = 1
+        AND pr.is_ready = 1
+        AND pr.is_active = 1
+        AND pr.status NOT IN ('completed', 'canceled')
+        AND (pr.last_collection_reminder_at IS NULL OR DATE(pr.last_collection_reminder_at) < DATE('now', 'localtime'))
+      ORDER BY pr.id ASC
+    `);
+    const refillGroups = /* @__PURE__ */ new Map();
+    for (const r of readyRefills) {
+      const cleanPhone = (r.patient_phone || "").replace(/\D/g, "");
+      const key = cleanPhone.slice(-10) || (r.patient_name || "").trim().toLowerCase();
+      if (!key) continue;
+      let group = refillGroups.get(key);
+      if (!group) {
+        group = {
+          patient_name: r.patient_name || "Customer",
+          patient_phone: r.patient_phone || "",
+          items: []
+        };
+        refillGroups.set(key, group);
+      }
+      group.items.push({
+        id: r.id,
+        medicine_name: r.medicine_name || "Prescribed Medicine",
+        quantity: Number(r.quantity_needed || r.quantity || 1)
+      });
+    }
+    for (const group of refillGroups.values()) {
+      if (!group.patient_phone || group.patient_phone.replace(/\D/g, "").length < 10) continue;
+      const medList = group.items.length === 1 ? `\u2022 *${group.items[0].medicine_name}* (Qty: ${group.items[0].quantity})` : group.items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
+      const msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${storeName}*
+
+Dear ${group.patient_name},
+Your packed prescription is waiting and ready for collection at our pharmacy:
+
+${medList}
+
+\u{1F4CD} *Pickup Location:* ${storeLabel}
+\u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}
+
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+      try {
+        await whatsappQueueWorker.enqueue(
+          group.patient_phone,
+          msg,
+          "refill_collection",
+          group.patient_name,
+          void 0,
+          void 0,
+          void 0,
+          { skipDedupe: true }
+          // skip dedupe for recurring collection reminders
+        );
+        const ids = group.items.map((i) => i.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db2.run(
+          `UPDATE patient_refills
+           SET last_collection_reminder_at = datetime('now'),
+               collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
+           WHERE id IN (${placeholders})`,
+          ids
+        );
+        refillsQueued += ids.length;
+      } catch (enqueueErr) {
+        console.warn(`[CollectionReminderWorker] Failed to enqueue refill reminder for ${group.patient_name}:`, enqueueErr);
+      }
+    }
+    const readySpecialOrders = await db2.all(`
+      SELECT so.id, so.requester, so.phone, so.product, so.qty,
+             so.last_collection_reminder_at, so.notification_count
+      FROM special_orders so
+      WHERE so.auto_remind = 1
+        AND so.status = 'Ready'
+        AND (so.last_collection_reminder_at IS NULL OR DATE(so.last_collection_reminder_at) < DATE('now', 'localtime'))
+      ORDER BY so.id ASC
+    `);
+    const orderGroups = /* @__PURE__ */ new Map();
+    for (const so of readySpecialOrders) {
+      const cleanPhone = (so.phone || "").replace(/\D/g, "");
+      const key = cleanPhone.slice(-10) || (so.requester || "").trim().toLowerCase();
+      if (!key) continue;
+      let group = orderGroups.get(key);
+      if (!group) {
+        group = {
+          requester: so.requester || "Customer",
+          phone: so.phone || "",
+          items: []
+        };
+        orderGroups.set(key, group);
+      }
+      group.items.push({
+        id: so.id,
+        product: so.product || "Medicine",
+        qty: Number(so.qty || 1)
+      });
+    }
+    for (const group of orderGroups.values()) {
+      if (!group.phone || group.phone.replace(/\D/g, "").length < 10) continue;
+      const medList = group.items.length === 1 ? `\u2022 *${group.items[0].product}* (Qty: ${group.items[0].qty})` : group.items.map((it) => `\u2022 *${it.product}* (Qty: ${it.qty})`).join("\n");
+      const msg = `\u{1F514} *SPECIAL ORDER READY FOR PICKUP \u2014 ${storeName}*
+
+Dear ${group.requester},
+Your requested medicine has arrived and is ready for collection:
+
+${medList}
+
+\u{1F4CD} *Pickup Location:* ${storeLabel}
+\u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}
+
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+      try {
+        await whatsappQueueWorker.enqueue(
+          group.phone,
+          msg,
+          "order_ready",
+          group.requester,
+          void 0,
+          void 0,
+          void 0,
+          { skipDedupe: true }
+          // skip dedupe
+        );
+        const ids = group.items.map((i) => i.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db2.run(
+          `UPDATE special_orders
+           SET last_collection_reminder_at = datetime('now'),
+               notification_count = COALESCE(notification_count, 0) + 1
+           WHERE id IN (${placeholders})`,
+          ids
+        );
+        ordersQueued += ids.length;
+      } catch (enqueueErr) {
+        console.warn(`[CollectionReminderWorker] Failed to enqueue special order reminder for ${group.requester}:`, enqueueErr);
+      }
+    }
+    if (refillsQueued > 0 || ordersQueued > 0) {
+      eventService.broadcast("refill_updated", { at: Date.now(), autoRemindersSent: refillsQueued });
+      eventService.broadcast("special_orders_updated", { at: Date.now(), autoRemindersSent: ordersQueued });
+      console.log(`[CollectionReminderWorker] Auto-collection reminder cycle complete: ${refillsQueued} refill item(s) and ${ordersQueued} special order(s) queued.`);
+    }
+    return {
+      status: "completed",
+      refillsQueued,
+      ordersQueued
+    };
+  } catch (err) {
+    console.error("[CollectionReminderWorker] Error in runCollectionReminderCycle:", err);
+    return {
+      status: "error",
+      error: err?.message || String(err)
+    };
+  } finally {
+    isCycleRunning = false;
+  }
+}
+function startCollectionReminderWorker() {
+  if (intervalTimer) return;
+  setTimeout(() => {
+    runCollectionReminderCycle().catch((err) => {
+      console.error("[CollectionReminderWorker] Initial boot cycle error:", err);
+    });
+  }, 15e3);
+  intervalTimer = setInterval(async () => {
+    try {
+      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
+      if (activityTracker2.isIdle()) return;
+    } catch (_) {
+    }
+    runCollectionReminderCycle().catch((err) => {
+      console.error("[CollectionReminderWorker] Periodic cycle error:", err);
+    });
+  }, 30 * 60 * 1e3);
+  console.log("[CollectionReminderWorker] Started auto-collection reminder scheduler (30m interval).");
+}
+function stopCollectionReminderWorker() {
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    intervalTimer = null;
+    console.log("[CollectionReminderWorker] Stopped auto-collection reminder scheduler.");
+  }
+}
+var intervalTimer, isCycleRunning;
+var init_collectionReminderWorker = __esm({
+  "src/services/collectionReminderWorker.ts"() {
+    "use strict";
+    init_connection();
+    init_whatsappQueueWorker();
+    init_whatsappClient();
+    init_eventService();
+    init_storeSettingsService();
+    init_localTime();
+    intervalTimer = null;
+    isCycleRunning = false;
+  }
+});
+
 // src/routes/refills.ts
 var refills_exports = {};
 __export(refills_exports, {
@@ -73176,7 +73578,10 @@ var init_refills = __esm({
        SET status = 'notified',
            reminder_status = 'QUEUED',
            reminder_job_id = ?,
-           reminder_occurrence_date = ?
+           reminder_occurrence_date = ?,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
        WHERE id = ?`,
           [queueId, refill.next_refill_date, id]
         );
@@ -73288,7 +73693,10 @@ var init_refills = __esm({
        SET status = 'notified', 
            reminder_status = 'QUEUED', 
            reminder_job_id = ?, 
-           reminder_occurrence_date = next_refill_date 
+           reminder_occurrence_date = next_refill_date,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
        WHERE id IN (${placeholders})`,
           [queueId, ...idsToUpdate]
         );
@@ -73478,7 +73886,10 @@ var init_refills = __esm({
        SET status = 'notified', 
            reminder_status = 'QUEUED', 
            reminder_job_id = ?, 
-           reminder_occurrence_date = next_refill_date 
+           reminder_occurrence_date = next_refill_date,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
        WHERE id IN (${placeholders})`,
           [queueId, ...ids]
         );
@@ -73700,6 +74111,84 @@ ${summaryLines}
       } catch (err) {
         console.error("Failed to send staged briefing to admin:", err);
         res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router19.post("/:id/auto-remind", async (req, res) => {
+      const { id } = req.params;
+      const { auto_remind } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+        await db2.run(
+          "UPDATE patient_refills SET auto_remind = ? WHERE id = ?",
+          [val, id]
+        );
+        eventService.broadcast("refill_updated", { at: Date.now(), refillId: Number(id), auto_remind: val });
+        res.json({ success: true, id: Number(id), auto_remind: val });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router19.post("/patient/:phone/auto-remind", async (req, res) => {
+      const { phone } = req.params;
+      const { auto_remind } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+        const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
+        if (!cleanPhone) {
+          return res.status(400).json({ error: "Valid phone required" });
+        }
+        await db2.run(
+          `UPDATE patient_refills 
+       SET auto_remind = ? 
+       WHERE is_active = 1 AND (patient_phone LIKE ? OR patient_phone LIKE ?)`,
+          [val, `%${cleanPhone}`, `%${cleanPhone}%`]
+        );
+        eventService.broadcast("refill_updated", { at: Date.now(), phone: cleanPhone, auto_remind: val });
+        res.json({ success: true, phone: cleanPhone, auto_remind: val });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router19.post("/auto-remind/master-toggle", async (req, res) => {
+      const { enabled } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const val = enabled === true || enabled === "true" || enabled === 1 ? "true" : "false";
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('quick_assist_auto_remind_master', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [val]
+        );
+        eventService.broadcast("refill_updated", { at: Date.now(), auto_remind_master: val === "true" });
+        res.json({ success: true, enabled: val === "true" });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router19.get("/auto-remind/settings", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const row = await db2.get("SELECT value FROM app_settings WHERE key = 'quick_assist_auto_remind_master'");
+        const startRow = await db2.get("SELECT value FROM app_settings WHERE key = 'collection_reminder_window_start'");
+        const endRow = await db2.get("SELECT value FROM app_settings WHERE key = 'collection_reminder_window_end'");
+        res.json({
+          enabled: row?.value !== "false",
+          windowStart: startRow?.value || "10:00",
+          windowEnd: endRow?.value || "18:00"
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router19.post("/auto-remind/run-now", async (_req, res) => {
+      try {
+        const { runCollectionReminderCycle: runCollectionReminderCycle2 } = await Promise.resolve().then(() => (init_collectionReminderWorker(), collectionReminderWorker_exports));
+        const result = await runCollectionReminderCycle2(true);
+        res.json({ success: true, result });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
       }
     });
     refills_default = router19;
@@ -83465,6 +83954,8 @@ var init_sales = __esm({
                delivered_at = ?,
                return_window_until = ?,
                pos_sale_invoice_id = ?,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`,
               [deliveredAt, returnWindowUntil, invoiceId, resolvedOnlineOrderId]
@@ -83736,7 +84227,10 @@ var init_sales = __esm({
                reminder_status = 'NOT_SENT',
                reminder_sent_at = NULL,
                reminder_job_id = NULL,
-               reminder_occurrence_date = NULL
+               reminder_occurrence_date = NULL,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
+               collection_reminder_count = 0
            WHERE id = ?`,
               [nextDateStr, refill.id]
             );
@@ -83748,6 +84242,19 @@ var init_sales = __esm({
         }
         await db2.run("COMMIT");
         inventoryCache.invalidate();
+        try {
+          const soldMedIds = Array.from(new Set(items.map((it) => Number(it.medicine_id || it.id)).filter((mid) => !isNaN(mid) && mid > 0)));
+          const soldInvIds = Array.from(new Set(items.map((it) => Number(it.inventory_id)).filter((iid) => !isNaN(iid) && iid > 0)));
+          if (soldMedIds.length > 0) {
+            Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports)).then((m) => m.triggerPreCalculatedStockRebuildDebounced(soldMedIds)).catch(() => {
+            });
+          }
+          if (soldInvIds.length > 0) {
+            Promise.resolve().then(() => (init_expiryAlertService(), expiryAlertService_exports)).then((m) => m.triggerExpiryCacheRebuildDebounced(soldInvIds)).catch(() => {
+            });
+          }
+        } catch (_) {
+        }
         activityLogger.logSale(invoice_no, Number(total || 0), patient_name || "Walk-in", paymentStatus || "paid");
         eventService.broadcast("sale_created", { invoice_no, total: Number(total || 0) });
         eventService.broadcast("inventory_changed", { reason: "sale", invoice_no });
@@ -83964,7 +84471,7 @@ var init_sales = __esm({
               if (best) {
                 consumedOrderIds.add(best.order.order_id);
                 try {
-                  await db2.run(`UPDATE special_orders SET status = 'Fulfilled' WHERE id = ?`, [best.order.order_id]);
+                  await db2.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [best.order.order_id]);
                 } catch (specErr) {
                   console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
                 }
@@ -85223,6 +85730,19 @@ var init_sales = __esm({
         await db2.run("COMMIT");
         inventoryCache.invalidate();
         try {
+          const editedMedIds = Array.from(new Set(items.map((it) => Number(it.medicine_id || it.id)).filter((mid) => !isNaN(mid) && mid > 0)));
+          const editedInvIds = Array.from(new Set(items.map((it) => Number(it.inventory_id)).filter((iid) => !isNaN(iid) && iid > 0)));
+          if (editedMedIds.length > 0) {
+            Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports)).then((m) => m.triggerPreCalculatedStockRebuildDebounced(editedMedIds)).catch(() => {
+            });
+          }
+          if (editedInvIds.length > 0) {
+            Promise.resolve().then(() => (init_expiryAlertService(), expiryAlertService_exports)).then((m) => m.triggerExpiryCacheRebuildDebounced(editedInvIds)).catch(() => {
+            });
+          }
+        } catch (_) {
+        }
+        try {
           const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
           eventService2.broadcast("sales_sync", { success: true, action: "update", id: Number(id) });
           eventService2.broadcast("inventory_sync", { success: true });
@@ -85260,6 +85780,8 @@ var init_sales = __esm({
         const reason = String(rawReason).trim().slice(0, 255);
         let notFound = false;
         let deletedInvoiceNo = "";
+        let deletedMedIds = [];
+        let deletedInvIds = [];
         await dbManager.transaction(async (db2) => {
           const existing = await db2.get("SELECT * FROM sales_invoices WHERE id = ?", [id]);
           if (!existing) {
@@ -85302,6 +85824,8 @@ var init_sales = __esm({
           for (const invId of stockMap.keys()) {
             await refreshInventoryActiveStatus(db2, invId);
           }
+          deletedMedIds = Array.from(new Set(Array.from(stockMap.values()).map((s) => Number(s.medicine_id)).filter((m) => !isNaN(m) && m > 0)));
+          deletedInvIds = Array.from(stockMap.keys());
           await db2.run(
             "INSERT INTO action_logs (action_type, description, metadata) VALUES (?, ?, ?)",
             [
@@ -85339,6 +85863,17 @@ var init_sales = __esm({
         }
         inventoryCache.invalidate();
         invalidateInvestigationTimelineCache();
+        try {
+          if (deletedMedIds.length > 0) {
+            Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports)).then((m) => m.triggerPreCalculatedStockRebuildDebounced(deletedMedIds)).catch(() => {
+            });
+          }
+          if (deletedInvIds.length > 0) {
+            Promise.resolve().then(() => (init_expiryAlertService(), expiryAlertService_exports)).then((m) => m.triggerExpiryCacheRebuildDebounced(deletedInvIds)).catch(() => {
+            });
+          }
+        } catch (_) {
+        }
         try {
           const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
           eventService2.broadcast("sales_sync", { success: true, action: "delete", id: Number(id), invoice_no: deletedInvoiceNo });
@@ -86216,6 +86751,43 @@ var init_dashboard = __esm({
   }
 });
 
+// src/utils/financialYear.ts
+function getIndianFinancialYear(dateInput) {
+  let d;
+  if (!dateInput) {
+    d = /* @__PURE__ */ new Date();
+  } else if (dateInput instanceof Date) {
+    d = isNaN(dateInput.getTime()) ? /* @__PURE__ */ new Date() : dateInput;
+  } else {
+    const s = String(dateInput).trim();
+    const m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    if (m) {
+      d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    } else {
+      const parsed = new Date(s);
+      d = isNaN(parsed.getTime()) ? /* @__PURE__ */ new Date() : parsed;
+    }
+  }
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  const startYear = month >= 4 ? year : year - 1;
+  const endYear = startYear + 1;
+  const startYearStr = String(startYear);
+  const endYearShort = String(endYear).slice(-2);
+  return {
+    startDate: `${startYear}-04-01`,
+    endDate: `${endYear}-03-31`,
+    fyLabel: `${startYearStr}-${endYearShort}`,
+    startYear,
+    endYear
+  };
+}
+var init_financialYear = __esm({
+  "src/utils/financialYear.ts"() {
+    "use strict";
+  }
+});
+
 // src/services/orderTrackingService.ts
 var OrderTrackingService, orderTrackingService;
 var init_orderTrackingService = __esm({
@@ -86831,13 +87403,23 @@ async function handleUpdatePurchaseFull(req, res, targetId) {
     }
     const distRow = { id: distId, name: distName };
     if (distRow && invoice_no) {
+      const { startDate: fyStart, endDate: fyEnd, fyLabel } = getIndianFinancialYear(cleanDate);
       const existing = await db2.get(
-        "SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND substr(date, 1, 10) = ? AND id != ?",
-        [distRow.id, invoice_no, cleanDate.slice(0, 10), id]
+        `SELECT id, invoice_no, date, total_amount FROM purchases 
+         WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) 
+           AND substr(COALESCE(date, business_date, ''), 1, 10) >= ?
+           AND substr(COALESCE(date, business_date, ''), 1, 10) <= ?
+           AND id != ? LIMIT 1`,
+        [distRow.id, String(invoice_no).trim(), fyStart, fyEnd, id]
       );
       if (existing) {
         await db2.run("ROLLBACK");
-        return res.status(400).json({ error: "Another purchase bill from this distributor already has this invoice number and date." });
+        return res.status(409).json({
+          error: `Another purchase bill (#${existing.invoice_no}) from this distributor already exists in Financial Year ${fyLabel}.`,
+          isDuplicate: true,
+          fy: fyLabel,
+          existing_bill: existing
+        });
       }
     }
     const lines = [];
@@ -86905,7 +87487,7 @@ async function handleUpdatePurchaseFull(req, res, targetId) {
         unresolved_items: unresolvedMedicines
       });
     }
-    await applyPurchaseStockChange(
+    const stockChangeResult = await applyPurchaseStockChange(
       db2,
       String(id),
       oldItems.map((o) => ({ medicine_id: o.medicine_id, batch_no: o.batch_no, quantity: o.quantity, free_qty: o.free_qty })),
@@ -86976,6 +87558,12 @@ async function handleUpdatePurchaseFull(req, res, targetId) {
     }
     await db2.run("COMMIT");
     inventoryCache.invalidate();
+    if (stockChangeResult?.touchedMedicineIds?.length) {
+      triggerPreCalculatedStockRebuildDebounced(stockChangeResult.touchedMedicineIds);
+    }
+    if (stockChangeResult?.touchedInventoryIds?.length) {
+      triggerExpiryCacheRebuildDebounced(stockChangeResult.touchedInventoryIds);
+    }
     try {
       const { eventService: es } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
       es.broadcast("invoice_saved", { app_invoice_no: invoice_no, purchase_id: Number(id), action: "update" });
@@ -87056,6 +87644,9 @@ var init_purchases = __esm({
     init_barcodeService();
     init_storeContextService();
     init_purchaseBillEditService();
+    init_financialYear();
+    init_stockCalculatorWorker();
+    init_expiryAlertService();
     router36 = import_express38.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
     router36.get("/summary", async (_req, res) => {
@@ -87228,6 +87819,72 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    router36.get("/check-duplicate", async (req, res) => {
+      try {
+        const invoiceNo = String(req.query.invoice_no || "").trim();
+        const distributorId = req.query.distributor_id ? parseInt(String(req.query.distributor_id), 10) : null;
+        const distributorName = String(req.query.distributor || req.query.distributor_name || "").trim();
+        const dateStr = String(req.query.date || "").trim();
+        const excludeId = req.query.exclude_id ? parseInt(String(req.query.exclude_id), 10) : null;
+        if (!invoiceNo || !distributorId && !distributorName) {
+          return res.json({ isDuplicate: false });
+        }
+        const { startDate, endDate, fyLabel } = getIndianFinancialYear(dateStr);
+        const db2 = await dbManager.getConnection();
+        let distId = distributorId && !isNaN(distributorId) ? distributorId : null;
+        let distName = distributorName;
+        if (distId && !distName) {
+          const dbDist = await db2.get("SELECT name FROM distributors WHERE id = ?", [distId]);
+          if (dbDist) distName = dbDist.name;
+        } else if (!distId && distName) {
+          const dbDist = await db2.get("SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))", [distName]);
+          if (dbDist) distId = dbDist.id;
+        }
+        const query = `
+      SELECT p.id, p.invoice_no, p.app_invoice_no, p.date, p.total_amount, d.name as distributor_name,
+             (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) as item_count
+      FROM purchases p
+      LEFT JOIN distributors d ON p.distributor_id = d.id
+      WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(TRIM(d.name)) = LOWER(TRIM(?))))
+        AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+        AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) >= ?
+        AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) <= ?
+        ${excludeId ? "AND p.id != ?" : ""}
+      ORDER BY p.id DESC LIMIT 1
+    `;
+        const params = [
+          distId || 0,
+          distName,
+          invoiceNo,
+          startDate,
+          endDate,
+          ...excludeId ? [excludeId] : []
+        ];
+        const existing = await db2.get(query, params);
+        if (existing) {
+          return res.json({
+            isDuplicate: true,
+            fy: fyLabel,
+            existing: {
+              id: existing.id,
+              invoice_no: existing.invoice_no,
+              app_invoice_no: existing.app_invoice_no,
+              date: existing.date,
+              total_amount: existing.total_amount,
+              distributor_name: existing.distributor_name || distName,
+              item_count: existing.item_count || 0
+            }
+          });
+        }
+        return res.json({
+          isDuplicate: false,
+          fy: fyLabel
+        });
+      } catch (err) {
+        console.error("[Purchases] Duplicate check error:", err);
+        res.status(500).json({ error: "Failed to verify invoice uniqueness" });
+      }
+    });
     router36.post("/manual", async (req, res) => {
       const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items, source_filename, source_file_headers, mapping_config, email_uid } = req.body;
       let db2;
@@ -87274,22 +87931,39 @@ var init_purchases = __esm({
             return res.status(400).json({ error: `Valid purchase rate is required for "${itemName}".` });
           }
         }
-        const invoiceDay = typeof date === "string" ? date.trim().slice(0, 10) : "";
-        if (invoice_no && invoice_no.trim() && invoiceDay) {
+        const cleanInvoiceNo = typeof invoice_no === "string" ? invoice_no.trim() : "";
+        const cleanDate = typeof date === "string" ? date.trim() : "";
+        if (cleanInvoiceNo && (distId || distName)) {
+          const { startDate: fyStart, endDate: fyEnd, fyLabel } = getIndianFinancialYear(cleanDate);
           const existing = await db2.get(
-            `SELECT p.id FROM purchases p
+            `SELECT p.id, p.invoice_no, p.app_invoice_no, p.date, p.total_amount, d.name as distributor_name,
+                (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) as item_count
+         FROM purchases p
          LEFT JOIN distributors d ON p.distributor_id = d.id
-         WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(d.name) = LOWER(?)))
-         AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
-         AND substr(p.date, 1, 10) = ?
+         WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(TRIM(d.name)) = LOWER(TRIM(?))))
+           AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) >= ?
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) <= ?
          ORDER BY p.id DESC LIMIT 1`,
-            [distId || 0, distName, invoice_no.trim(), invoiceDay]
+            [distId || 0, distName, cleanInvoiceNo, fyStart, fyEnd]
           );
           if (existing) {
-            return handleUpdatePurchaseFull(req, res, existing.id);
+            return res.status(409).json({
+              error: `Duplicate bill: Invoice #${cleanInvoiceNo} from "${existing.distributor_name || distName}" is already saved in Financial Year ${fyLabel} (Saved on ${existing.date ? existing.date.slice(0, 10) : "N/A"}, Amount: \u20B9${Number(existing.total_amount || 0).toFixed(2)}).`,
+              isDuplicate: true,
+              fy: fyLabel,
+              existing_bill: {
+                id: existing.id,
+                invoice_no: existing.invoice_no,
+                app_invoice_no: existing.app_invoice_no,
+                date: existing.date,
+                total_amount: existing.total_amount,
+                distributor_name: existing.distributor_name || distName,
+                item_count: existing.item_count || 0
+              }
+            });
           }
         }
-        const cleanDate = typeof date === "string" ? date.trim() : "";
         if (!cleanDate) {
           return res.status(400).json({ error: "Invoice date is required. Please verify and enter the actual invoice date before saving." });
         }
@@ -87371,6 +88045,7 @@ var init_purchases = __esm({
           );
         }
         const uniqueMedicineIds = /* @__PURE__ */ new Set();
+        const touchedInvIds = /* @__PURE__ */ new Set();
         const savedItems = [];
         const masterMedItems = [];
         const reconcileNames = [];
@@ -87464,12 +88139,16 @@ var init_purchases = __esm({
               "UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = COALESCE(NULLIF(?, 0), mrp), expiry_date = COALESCE(?, expiry_date) WHERE id = ?",
               [totalQty, rawRate, rawMrp || 0, rawExpiry || null, invRow.id]
             );
+            touchedInvIds.add(invRow.id);
             await refreshInventoryActiveStatus(db2, invRow.id);
           } else {
-            await db2.run(`
+            const insInv = await db2.run(`
           INSERT INTO inventory_master (store_id, medicine_id, quantity, batch_no, expiry_date, cost_price, mrp, is_active)
           VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         `, [targetStoreId, medId, totalQty, rawBatch, rawExpiry || null, rawRate, rawMrp || 0]);
+            if (insInv?.lastID) {
+              touchedInvIds.add(insInv.lastID);
+            }
             await refreshInventoryActiveByBatch(db2, medId, rawBatch);
           }
           await recordStockLedger(db2, {
@@ -87518,6 +88197,12 @@ var init_purchases = __esm({
         await db2.run("COMMIT");
         const commitMs = Date.now() - commitT0;
         inventoryCache.invalidate();
+        if (uniqueMedicineIds.size > 0) {
+          triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));
+        }
+        if (touchedInvIds.size > 0) {
+          triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+        }
         console.log(`[Purchases] Bill ${appInvoiceNo} saved: ${items.length} lines in ${Date.now() - saveT0}ms (begin ${beginMs}ms, commit ${commitMs}ms)`);
         try {
           const { eventService: es } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
@@ -87689,11 +88374,17 @@ var init_purchases = __esm({
           return res.status(404).json({ error: "Purchase not found" });
         }
         const items = await db2.all("SELECT medicine_id, batch_no, quantity, free_qty FROM purchase_items WHERE purchase_id = ?", [id]);
-        await applyPurchaseStockChange(db2, id, items, [], "purchase_delete");
+        const stockChangeResult = await applyPurchaseStockChange(db2, id, items, [], "purchase_delete");
         await db2.run("DELETE FROM purchase_items WHERE purchase_id = ?", [id]);
         await db2.run("DELETE FROM purchases WHERE id = ?", [id]);
         await db2.run("COMMIT");
         inventoryCache.invalidate();
+        if (stockChangeResult?.touchedMedicineIds?.length) {
+          triggerPreCalculatedStockRebuildDebounced(stockChangeResult.touchedMedicineIds);
+        }
+        if (stockChangeResult?.touchedInventoryIds?.length) {
+          triggerExpiryCacheRebuildDebounced(stockChangeResult.touchedInventoryIds);
+        }
         try {
           const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
           eventService2.broadcast("purchases_sync", { success: true, action: "delete", id: Number(id) });
@@ -87870,22 +88561,28 @@ var init_purchases = __esm({
         }
         const placeholders = medicineIds.map(() => "?").join(",");
         const purchaseRows = await db2.all(`
-      SELECT 
-        pi.batch_no,
-        pi.expiry_date,
-        pi.cost_price as rate,
-        pi.mrp,
-        pi.cgst_per,
-        pi.sgst_per,
-        pi.quantity,
-        d.name as distributor_name,
-        p.date as purchase_date
-      FROM purchase_items pi
-      JOIN purchases p ON pi.purchase_id = p.id
-      LEFT JOIN distributors d ON p.distributor_id = d.id
-      WHERE pi.medicine_id IN (${placeholders}) AND pi.batch_no IS NOT NULL AND TRIM(pi.batch_no) != ''
-      ORDER BY p.date DESC, pi.id DESC
-      LIMIT 50
+      WITH ranked_purchases AS (
+        SELECT 
+          pi.batch_no,
+          pi.expiry_date,
+          pi.cost_price as rate,
+          pi.mrp,
+          pi.cgst_per,
+          pi.sgst_per,
+          pi.quantity,
+          d.name as distributor_name,
+          p.date as purchase_date,
+          ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY p.date DESC, pi.id DESC) as dist_rn,
+          ROW_NUMBER() OVER (ORDER BY p.date DESC, pi.id DESC) as overall_rn
+        FROM purchase_items pi
+        JOIN purchases p ON pi.purchase_id = p.id
+        LEFT JOIN distributors d ON p.distributor_id = d.id
+        WHERE pi.medicine_id IN (${placeholders}) AND pi.batch_no IS NOT NULL AND TRIM(pi.batch_no) != ''
+      )
+      SELECT batch_no, expiry_date, rate, mrp, cgst_per, sgst_per, quantity, distributor_name, purchase_date
+      FROM ranked_purchases
+      WHERE overall_rn <= 60 OR dist_rn <= 3
+      ORDER BY purchase_date DESC
     `, medicineIds);
         const inventoryRows = await db2.all(`
       SELECT 
@@ -87896,14 +88593,24 @@ var init_purchases = __esm({
         m.cgst_per,
         m.sgst_per,
         im.quantity,
-        NULL as distributor_name,
-        NULL as purchase_date,
+        d.name as distributor_name,
+        p.date as purchase_date,
         im.id as inventory_id
       FROM inventory_master im
       JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN purchase_items pi ON pi.id = (
+        SELECT pi2.id 
+        FROM purchase_items pi2 
+        WHERE pi2.medicine_id = im.medicine_id 
+          AND UPPER(TRIM(pi2.batch_no)) = UPPER(TRIM(im.batch_no))
+        ORDER BY pi2.id DESC 
+        LIMIT 1
+      )
+      LEFT JOIN purchases p ON pi.purchase_id = p.id
+      LEFT JOIN distributors d ON p.distributor_id = d.id
       WHERE im.medicine_id IN (${placeholders}) AND im.batch_no IS NOT NULL AND TRIM(im.batch_no) != ''
       ORDER BY im.id DESC
-      LIMIT 50
+      LIMIT 100
     `, medicineIds);
         const batchMap2 = /* @__PURE__ */ new Map();
         for (const row of purchaseRows) {
@@ -87935,8 +88642,8 @@ var init_purchases = __esm({
               cgst_per: row.cgst_per !== void 0 && row.cgst_per !== null ? Number(row.cgst_per) : null,
               sgst_per: row.sgst_per !== void 0 && row.sgst_per !== null ? Number(row.sgst_per) : null,
               quantity: Number(row.quantity || 0),
-              distributor_name: null,
-              purchase_date: null
+              distributor_name: row.distributor_name || null,
+              purchase_date: row.purchase_date || null
             });
           } else {
             const existing = batchMap2.get(bKey);
@@ -87951,6 +88658,12 @@ var init_purchases = __esm({
             }
             if (!existing.mrp && row.mrp) {
               existing.mrp = Number(row.mrp);
+            }
+            if (!existing.distributor_name && row.distributor_name) {
+              existing.distributor_name = row.distributor_name;
+            }
+            if (!existing.purchase_date && row.purchase_date) {
+              existing.purchase_date = row.purchase_date;
             }
           }
         }
@@ -88965,6 +89678,7 @@ var init_purchases = __esm({
         const purchaseId = purchRes.lastID;
         let subtotal = 0;
         const uniqueMedicineIds = /* @__PURE__ */ new Set();
+        const touchedInvIds = /* @__PURE__ */ new Set();
         for (const item of parsedItems) {
           const inputName = String(item.name || "").trim();
           let medId = null;
@@ -89014,11 +89728,13 @@ var init_purchases = __esm({
               "UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = ?, expiry_date = ? WHERE id = ?",
               [totalQty, rate, mrp, rawExpiry, invRow.id]
             );
+            touchedInvIds.add(invRow.id);
           } else {
-            await db2.run(`
+            const insInv = await db2.run(`
           INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, cost_price, mrp)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [medId, totalQty, rawBatch, rawExpiry, rate, mrp]);
+            if (insInv?.lastID) touchedInvIds.add(insInv.lastID);
           }
         }
         await db2.run("UPDATE purchases SET total_amount = ? WHERE id = ?", [subtotal, purchaseId]);
@@ -89029,6 +89745,12 @@ var init_purchases = __esm({
         );
         await db2.run("COMMIT");
         inventoryCache.invalidate();
+        if (uniqueMedicineIds.size > 0) {
+          triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));
+        }
+        if (touchedInvIds.size > 0) {
+          triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+        }
         try {
           const { eventService: es } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
           es.broadcast("invoice_saved", { app_invoice_no: appInvoiceNo, purchase_id: purchaseId, action: "reissue" });
@@ -89326,14 +90048,23 @@ var init_purchases = __esm({
           return res.status(400).json({ error: "Failed to resolve distributor." });
         }
         if (distId && finalInvoiceNo) {
-          const billDay = String(finalDate || "").slice(0, 10);
+          const { startDate: fyStart, endDate: fyEnd, fyLabel } = getIndianFinancialYear(finalDate);
           const existing = await db2.get(
-            "SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND (? = '' OR substr(date, 1, 10) = ?)",
-            [distId, finalInvoiceNo, billDay, billDay]
+            `SELECT p.id, p.invoice_no, p.date, p.total_amount FROM purchases p
+         WHERE p.distributor_id = ? AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) >= ?
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) <= ?
+         LIMIT 1`,
+            [distId, String(finalInvoiceNo).trim(), fyStart, fyEnd]
           );
           if (existing) {
             await db2.run("ROLLBACK");
-            return res.status(400).json({ error: "This bill (same invoice number and date) is already saved for this distributor." });
+            return res.status(409).json({
+              error: `This bill (#${finalInvoiceNo}) is already saved for this distributor in Financial Year ${fyLabel}.`,
+              isDuplicate: true,
+              fy: fyLabel,
+              existing_bill: existing
+            });
           }
         }
         const purchRes = await db2.run(
@@ -89341,6 +90072,8 @@ var init_purchases = __esm({
           [distId, finalInvoiceNo, finalDate, finalTotalAmt]
         );
         const purchaseId = purchRes.lastID;
+        const uniqueMedicineIds = /* @__PURE__ */ new Set();
+        const touchedInvIds = /* @__PURE__ */ new Set();
         for (const item of itemsToProcess) {
           const inputName = String(item.name || item.medicine_name || "").trim();
           let medId = null;
@@ -89368,6 +90101,7 @@ var init_purchases = __esm({
               unresolved_items: [{ name: inputName }]
             });
           }
+          uniqueMedicineIds.add(medId);
           const rawText = item.raw_name || item.original_name || item.raw_text;
           if (rawText && rawText.trim() !== "" && inputName && rawText.trim().toLowerCase() !== inputName.toLowerCase()) {
             try {
@@ -89404,16 +90138,24 @@ var init_purchases = __esm({
               "UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = ?, expiry_date = ? WHERE id = ?",
               [totalQty, rate, mrp, rawExpiry, invRow.id]
             );
+            touchedInvIds.add(invRow.id);
           } else {
-            await db2.run(`
+            const insInv = await db2.run(`
           INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, cost_price, mrp)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [medId, totalQty, rawBatch, rawExpiry, rate, mrp]);
+            if (insInv?.lastID) touchedInvIds.add(insInv.lastID);
           }
         }
         await db2.run(`UPDATE staged_purchases SET status = 'approved' WHERE id = ?`, [id]);
         await db2.run("COMMIT");
         inventoryCache.invalidate();
+        if (uniqueMedicineIds.size > 0) {
+          triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));
+        }
+        if (touchedInvIds.size > 0) {
+          triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+        }
         try {
           const { eventService: es } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
           es.broadcast("invoice_saved", { purchase_id: purchaseId, action: "staged_approve" });
@@ -92044,9 +92786,56 @@ ${upiUri}
           [soCode, `%${id}`]
         ).catch(() => {
         });
+        const isPaymentConfirmed = ["PAYMENT_CONFIRMED", "VERIFIED", "CONFIRMED"].includes(String(order.payment_status || "").toUpperCase());
+        const oldDistName = String(order.pharmarack_distributor || order.distributor_name || "").trim();
+        const oldStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : null;
+        const oldProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : null;
+        const oldProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+        const distChanged = oldDistName && oldDistName.toLowerCase() !== distName.toLowerCase() || oldStoreId && stId && oldStoreId !== stId;
+        if (distChanged || isPaymentConfirmed) {
+          try {
+            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2, addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+            if (oldDistName && distChanged) {
+              await Promise.race([
+                adjustSpecialOrderInLiveCart2({
+                  product: oldProdName,
+                  qty: order.qty || 1,
+                  distributor: oldDistName,
+                  productCode: oldProdCode,
+                  storeId: oldStoreId,
+                  exactOnly: true
+                }),
+                new Promise((r) => setTimeout(r, 1500))
+              ]);
+            }
+            if (stId && distName) {
+              await addItemsToPharmarackCart2([{
+                productName: prodName,
+                product: prodName,
+                productId: prodId,
+                productCode: prodCode || "",
+                storeId: stId,
+                storeName: distName,
+                qty: order.qty || 1,
+                rate: distRate,
+                mrp: distMrp,
+                packaging: "1 strip",
+                mapped: true
+              }]).catch((err) => console.warn("[Orders] Error migrating item to new distributor cart:", err));
+            }
+          } catch (cartMigrateErr) {
+            console.warn("[Orders] Could not auto-migrate cart on distributor change:", cartMigrateErr);
+          }
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'distributor_switched', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+            [id, `Distributor updated from "${oldDistName || "None"}" to "${distName}". Live cart synced.`]
+          ).catch(() => {
+          });
+        }
         let qrSent = false;
         let queueId = null;
-        if (sendPaymentQr) {
+        if (sendPaymentQr && !isPaymentConfirmed) {
           const cleanPhone = String(order.phone || "").replace(/\D/g, "");
           const custPhoneLast10 = cleanPhone.slice(-10);
           const activeQr = await paymentQrService.allocateNextQr();
@@ -92143,7 +92932,7 @@ ${upiUri}`,
           mrp: distMrp,
           qrSent,
           queueId,
-          message: qrSent ? `Distributor ${distName} confirmed and \u20B950 payment QR dispatched to customer on WhatsApp!` : `Distributor ${distName} assigned to order #${id}.`
+          message: qrSent ? `Distributor ${distName} confirmed and \u20B950 payment QR dispatched to customer on WhatsApp!` : isPaymentConfirmed ? `Distributor ${distName} updated for paid order #${id} (Cart migrated to ${distName}).` : `Distributor ${distName} assigned to order #${id}.`
         });
       } catch (err) {
         console.error("[Orders] Confirm distributor error:", err);
@@ -92509,7 +93298,12 @@ ${upiUri}
         }
         const newNotified = status === "Fulfilled" || whatsappQueued ? 1 : existing.notified;
         const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
-        await db2.run("UPDATE special_orders SET status = ?, notified = ?, notification_count = ? WHERE id = ?", [status, newNotified, newCount, id]);
+        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : whatsappQueued ? 1 : existing.auto_remind ?? 0;
+        const lastRemindAt = whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : existing.last_collection_reminder_at;
+        await db2.run(
+          "UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?",
+          [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
+        );
         if (status === "Cancelled") {
           await cancelPendingWhatsAppForOrder(db2, existing);
         } else if (status === "Fulfilled") {
@@ -92540,8 +93334,8 @@ ${upiUri}
             console.warn("[Orders] Could not auto-adjust live cart on order status Cancelled:", cartErr);
           }
         }
-        broadcastOrdersChanged2({ action: "update_status", orderId: Number(id), patch: { status } });
-        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
+        broadcastOrdersChanged2({ action: "update_status", orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
+        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, auto_remind: newAutoRemind });
       } catch (err) {
         console.error("Update order status error:", err);
         res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
@@ -92549,6 +93343,19 @@ ${upiUri}
     };
     router40.post("/:id/status", handleStatusUpdate);
     router40.put("/:id/status", handleStatusUpdate);
+    router40.post("/:id/auto-remind", async (req, res) => {
+      const { id } = req.params;
+      const { auto_remind } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+        await db2.run("UPDATE special_orders SET auto_remind = ? WHERE id = ?", [val, id]);
+        broadcastOrdersChanged2({ action: "auto_remind", orderId: Number(id), patch: { auto_remind: val } });
+        res.json({ success: true, id: Number(id), auto_remind: val });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
     router40.post("/:id/restore", async (req, res) => {
       const { id } = req.params;
       const { restored_by = "Staff Pharmacist", notes = "" } = req.body;
@@ -100578,6 +101385,17 @@ var init_server = __esm({
           } catch (err) {
             bootWorkerFailures++;
             console.error("[Boot:Phase3] Distributor reminder worker start failed:", err);
+          }
+          try {
+            const autoRemindMaster = await db2.get("SELECT value FROM app_settings WHERE key = 'quick_assist_auto_remind_master'");
+            if (autoRemindMaster?.value !== "false") {
+              const { startCollectionReminderWorker: startCollectionReminderWorker2 } = await Promise.resolve().then(() => (init_collectionReminderWorker(), collectionReminderWorker_exports));
+              startCollectionReminderWorker2();
+              console.log("[Boot:Phase3] Quick Assist auto-collection reminder worker started.");
+            }
+          } catch (err) {
+            bootWorkerFailures++;
+            console.error("[Boot:Phase3] Auto-collection reminder worker start failed:", err);
           }
           Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports)).then((m) => m.whatsappQueueWorker.cleanupOldSentItems()).catch((err) => {
             bootWorkerFailures++;

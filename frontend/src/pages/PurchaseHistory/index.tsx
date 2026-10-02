@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api, apiClient } from '../../services/api';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { Download, Eye, CheckCircle, AlertCircle, RefreshCw, Trash2, Edit, Calendar, Loader2, QrCode, Printer } from 'lucide-react';
+import { Download, Eye, CheckCircle, AlertCircle, RefreshCw, Trash2, Edit, Calendar, Loader2, QrCode, Printer, Clock } from 'lucide-react';
 import { usePersistedDateRange } from '../../hooks/usePersistedDateRange';
 import { getTodayString, getNDaysAgoString, formatDisplayDate, toDateInputValue } from '../../utils/date';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
@@ -852,17 +852,17 @@ const PurchaseHistory = () => {
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border text-green bg-green/10 border-green/20">
                               <CheckCircle size={10} className="mr-1" /> Reconciled
                             </span>
-                          ) : recon.status === 'Matched' ? (
+                          ) : recon.status === 'Matched' || !recon.medicine_names || recon.medicine_names.length === 0 ? (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border text-green bg-green/10 border-green/20">
                               <CheckCircle size={10} className="mr-1" /> Matched
                             </span>
-                          ) : recon.status === 'Bounced' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border text-yellow-500 bg-yellow-500/10 border-yellow-500/20" title={recon.medicine_names?.join(', ')}>
-                              <AlertCircle size={10} className="mr-1" /> Bounced ({recon.medicine_names?.length || 0})
+                          ) : recon.status === 'Bounced' && recon.medicine_names && recon.medicine_names.length > 0 ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border text-yellow-500 bg-yellow-500/10 border-yellow-500/20" title={recon.medicine_names.join(', ')}>
+                              <AlertCircle size={10} className="mr-1" /> Bounced ({recon.medicine_names.length})
                             </span>
                           ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border text-red bg-red/10 border-red/20">
-                              <AlertCircle size={10} className="mr-1" /> Missing Bill
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border text-amber-500 bg-amber-500/10 border-amber-500/20" title="Invoice awaiting check-in">
+                              <Clock size={10} className="mr-1" /> Pending Check-in
                             </span>
                           )}
                         </td>
@@ -876,14 +876,31 @@ const PurchaseHistory = () => {
                               <Eye size={14} />
                             </button>
                             {!recon.is_saved && (
-                              <button
-                                onClick={() => handleReissue(recon.email_uid)}
-                                disabled={reissuingUid !== null}
-                                className="text-green hover:text-green-600 transition-colors p-1.5 rounded bg-green/10 hover:bg-green/20 border border-green/20"
-                                title="Reprocess & Open in Purchases page"
-                              >
-                                <RefreshCw size={14} className={reissuingUid === recon.email_uid ? 'animate-spin' : ''} />
-                              </button>
+                              <>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await api.resolveOrderManually(recon.email_uid);
+                                      toastEvent.trigger('Marked as reconciled', 'success');
+                                      fetchReconciliation();
+                                    } catch (_e) {
+                                      toastEvent.trigger('Failed to update status', 'error');
+                                    }
+                                  }}
+                                  className="text-green hover:text-green-600 transition-colors p-1.5 rounded bg-green/10 hover:bg-green/20 border border-green/20"
+                                  title="Mark as Reconciled"
+                                >
+                                  <CheckCircle size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleReissue(recon.email_uid)}
+                                  disabled={reissuingUid !== null}
+                                  className="text-primary hover:text-primary/80 transition-colors p-1.5 rounded bg-primary/10 hover:bg-primary/20 border border-primary/20"
+                                  title="Reprocess & Open in Purchases page"
+                                >
+                                  <RefreshCw size={14} className={reissuingUid === recon.email_uid ? 'animate-spin' : ''} />
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -975,10 +992,21 @@ const PurchaseHistory = () => {
               <div className="bg-bg3 p-4 rounded-xl border border-glass-border">
                 <h4 className="text-[10px] font-bold text-muted uppercase tracking-wide mb-1">Reconciliation Status</h4>
                 <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${selectedOrder.is_saved ? 'bg-green/10 text-green border border-green/20' : selectedOrder.status === 'Matched' ? 'bg-green/10 text-green border border-green/20' : selectedOrder.status === 'Bounced' ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red/10 text-red border border-red/20'
-                    }`}>
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                    selectedOrder.is_saved || selectedOrder.status === 'Matched' || !selectedOrder.medicine_names || selectedOrder.medicine_names.length === 0
+                      ? 'bg-green/10 text-green border border-green/20'
+                      : selectedOrder.status === 'Bounced'
+                      ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'
+                      : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                  }`}>
                     <CheckCircle size={12} />
-                    {selectedOrder.is_saved ? 'Reconciled & Saved' : selectedOrder.status === 'Matched' ? 'Matched Purchase' : selectedOrder.status === 'Bounced' ? 'Bounced Items Detected' : 'Missing Invoice Bill'}
+                    {selectedOrder.is_saved
+                      ? 'Reconciled & Saved'
+                      : selectedOrder.status === 'Matched' || !selectedOrder.medicine_names || selectedOrder.medicine_names.length === 0
+                      ? 'Matched Purchase'
+                      : selectedOrder.status === 'Bounced'
+                      ? 'Bounced Items Detected'
+                      : 'Pending Check-in / Missing Bill'}
                   </span>
                 </div>
               </div>

@@ -1105,7 +1105,7 @@ router.get('/therapeutic-search', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const results = await db.all(
-      `SELECT m.*, i.id as inventory_id, i.quantity, i.batch_no, i.expiry_date, i.mrp, i.rate, i.rack_location
+      `SELECT m.*, i.id as inventory_id, i.quantity, i.batch_no, i.expiry_date, i.mrp, COALESCE(m.rate, i.unit_price, 0) as rate, i.rack_location
        FROM medicines m
        LEFT JOIN inventory_master i ON i.medicine_id = m.id AND i.is_active = 1
        WHERE m.therapeutic LIKE ? OR m.sub_therapeutic LIKE ?

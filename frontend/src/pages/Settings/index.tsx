@@ -3874,6 +3874,13 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
     triggerWhatsappQueueEnabled: rawSettings.trigger_whatsapp_queue_enabled !== 'false',
     triggerWhatsappQueueIntervalSec: rawSettings.trigger_whatsapp_queue_interval_sec || '30',
 
+    // 7b. WhatsApp Smart Auto-Reply Timing
+    waBotColdDelayMin: rawSettings.wa_bot_cold_delay_min_sec || '35',
+    waBotColdDelayMax: rawSettings.wa_bot_cold_delay_max_sec || '60',
+    waBotWarmDelayMin: rawSettings.wa_bot_warm_delay_min_sec || '10',
+    waBotWarmDelayMax: rawSettings.wa_bot_warm_delay_max_sec || '17',
+    waBotWarmWindowMin: rawSettings.wa_bot_warm_window_minutes || '20',
+
     // 8. Email PDF Invoice Poller
     triggerEmailPollerEnabled: rawSettings.trigger_email_poller_enabled !== 'false',
     triggerEmailPollerIntervalMin: rawSettings.trigger_email_poller_interval_min || '15',
@@ -3959,6 +3966,12 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
         trigger_pharmarack_refresh_interval_min: formData.triggerPharmarackRefreshIntervalMin,
         trigger_whatsapp_queue_enabled: formData.triggerWhatsappQueueEnabled ? 'true' : 'false',
         trigger_whatsapp_queue_interval_sec: formData.triggerWhatsappQueueIntervalSec,
+        // Smart auto-reply timing
+        wa_bot_cold_delay_min_sec: formData.waBotColdDelayMin,
+        wa_bot_cold_delay_max_sec: formData.waBotColdDelayMax,
+        wa_bot_warm_delay_min_sec: formData.waBotWarmDelayMin,
+        wa_bot_warm_delay_max_sec: formData.waBotWarmDelayMax,
+        wa_bot_warm_window_minutes: formData.waBotWarmWindowMin,
         trigger_email_poller_enabled: formData.triggerEmailPollerEnabled ? 'true' : 'false',
         trigger_email_poller_interval_min: formData.triggerEmailPollerIntervalMin,
         trigger_doctor_report_enabled: formData.triggerDoctorReportEnabled ? 'true' : 'false',
@@ -4333,6 +4346,62 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
               onChange={(e) => setFormData({ ...formData, triggerWhatsappQueueIntervalSec: e.target.value })}
               className="w-24 px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
             />
+          </div>
+        </div>
+
+        {/* Auto-Reply Timing Card */}
+        <div className="p-4 rounded-2xl bg-bg3/30 border border-border space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <MessageCircle size={16} className="text-emerald-400" />
+            <span className="text-xs font-bold text-text">🤖 Auto-Reply Timing</span>
+          </div>
+          <p className="text-[11px] text-muted">Controls how long the bot waits before replying. Cold = new/inactive customer. Warm = active chat within the warm window.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-text">Cold Min (sec)</label>
+              <input
+                type="number" min="5" max="300"
+                value={formData.waBotColdDelayMin}
+                onChange={(e) => setFormData({ ...formData, waBotColdDelayMin: e.target.value })}
+                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-text">Cold Max (sec)</label>
+              <input
+                type="number" min="5" max="300"
+                value={formData.waBotColdDelayMax}
+                onChange={(e) => setFormData({ ...formData, waBotColdDelayMax: e.target.value })}
+                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-text">Warm Min (sec)</label>
+              <input
+                type="number" min="1" max="120"
+                value={formData.waBotWarmDelayMin}
+                onChange={(e) => setFormData({ ...formData, waBotWarmDelayMin: e.target.value })}
+                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-text">Warm Max (sec)</label>
+              <input
+                type="number" min="1" max="120"
+                value={formData.waBotWarmDelayMax}
+                onChange={(e) => setFormData({ ...formData, waBotWarmDelayMax: e.target.value })}
+                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1 col-span-2">
+              <label className="text-[11px] font-semibold text-text">Warm Window (minutes) — active convo threshold</label>
+              <input
+                type="number" min="5" max="120"
+                value={formData.waBotWarmWindowMin}
+                onChange={(e) => setFormData({ ...formData, waBotWarmWindowMin: e.target.value })}
+                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+              />
+            </div>
           </div>
         </div>
 

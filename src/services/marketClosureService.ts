@@ -328,8 +328,8 @@ export class MarketClosureService {
       if (!it.qty || it.qty <= 0) continue;
       await db.run(
         `INSERT INTO special_orders 
-          (product, qty, requester, created_at, status, notes, is_synced_to_pharmarack)
-         VALUES (?, ?, ?, ?, 'pending', ?, 0)`,
+          (product, qty, requester, created_at, status, notes, pharmarack_mapped)
+         VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
         [it.medicine_name, it.qty, 'Pharmacist', now, reason]
       );
       addedCount++;

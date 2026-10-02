@@ -77,7 +77,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     // 4. Scan ready patient refills with auto_remind = 1 that have not been reminded today
     const readyRefills = await db.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
-             pr.quantity_needed, pr.quantity, pr.last_collection_reminder_at, pr.collection_reminder_count
+             pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
       WHERE pr.auto_remind = 1
@@ -112,7 +112,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
       group.items.push({
         id: r.id,
         medicine_name: r.medicine_name || 'Prescribed Medicine',
-        quantity: Number(r.quantity_needed || r.quantity || 1)
+        quantity: Number(r.quantity_needed || 1)
       });
     }
 

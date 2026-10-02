@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 71;
+const CURRENT_SCHEMA_VERSION = 72;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -603,6 +603,20 @@ async function ensureOrderTimingSchema(db: any) {
       await db.run('ALTER TABLE special_orders ADD COLUMN last_collection_reminder_at DATETIME DEFAULT NULL');
     }
   } catch (_) { }
+
+  // Schema v72: WhatsApp Smart Reply — ACK tracking & cross-device pharmacist read flag
+  try {
+    const waMsgCols = await db.all('PRAGMA table_info(whatsapp_messages)');
+    const waMsgNames = new Set(waMsgCols.map((c: any) => c.name.toLowerCase()));
+    if (waMsgCols.length > 0 && !waMsgNames.has('ack_status')) {
+      await db.run('ALTER TABLE whatsapp_messages ADD COLUMN ack_status INTEGER DEFAULT 0');
+    }
+    if (waMsgCols.length > 0 && !waMsgNames.has('pharmacist_opened_at')) {
+      await db.run('ALTER TABLE whatsapp_messages ADD COLUMN pharmacist_opened_at INTEGER DEFAULT NULL');
+    }
+    // Composite index: used by smart reply scheduler to check read state and ACK per chat
+    await db.run('CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status)');
+  } catch (_) { }
 }
 
 /**
@@ -909,6 +923,12 @@ export async function ensureSchema(dbPath: string) {
           if (spCols.length > 0 && !spNames.has('medicine_id')) {
             await db.run('ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)');
           }
+          if (spCols.length > 0 && !spNames.has('payment_method')) {
+            await db.run("ALTER TABLE special_orders ADD COLUMN payment_method TEXT DEFAULT 'cash'");
+          }
+          if (spCols.length > 0 && !spNames.has('delivery_mode')) {
+            await db.run("ALTER TABLE special_orders ADD COLUMN delivery_mode TEXT DEFAULT 'pickup'");
+          }
           if (spCols.length > 0) {
             await db.run(`
               UPDATE special_orders
@@ -924,6 +944,14 @@ export async function ensureSchema(dbPath: string) {
                 AND payment_screenshot_path LIKE '%uploads%'
                 AND payment_screenshot_path NOT LIKE '/uploads/%'
             `);
+          }
+        } catch (_) { }
+
+        try {
+          const revCols = await db.all('PRAGMA table_info(staged_medicine_reviews)');
+          const revNames = new Set(revCols.map((c: any) => c.name));
+          if (revCols.length > 0 && !revNames.has('possible_duplicate_of')) {
+            await db.run('ALTER TABLE staged_medicine_reviews ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL');
           }
         } catch (_) { }
 
@@ -2191,7 +2219,9 @@ export async function ensureSchema(dbPath: string) {
       last_synced_at DATETIME DEFAULT NULL,
       pos_sale_invoice_id INTEGER DEFAULT NULL,
       payment_screenshot_path TEXT DEFAULT NULL,
-      screenshot_amount REAL DEFAULT NULL
+      screenshot_amount REAL DEFAULT NULL,
+      payment_method TEXT DEFAULT 'cash',
+      delivery_mode TEXT DEFAULT 'pickup'
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -2701,6 +2731,9 @@ export async function ensureSchema(dbPath: string) {
       ['special_orders', 'pharmacy_verified_by', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT'],
       ['special_orders', 'pharmacy_verified_at', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME'],
       ['special_orders', 'medicine_id', 'ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)'],
+      ['special_orders', 'payment_method', "ALTER TABLE special_orders ADD COLUMN payment_method TEXT DEFAULT 'cash'"],
+      ['special_orders', 'delivery_mode', "ALTER TABLE special_orders ADD COLUMN delivery_mode TEXT DEFAULT 'pickup'"],
+      ['staged_medicine_reviews', 'possible_duplicate_of', 'ALTER TABLE staged_medicine_reviews ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL'],
       ['sales_invoices', 'online_order_id', 'ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER'],
       // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
       ['catalog_images', 'previous_image_url', 'ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT'],
@@ -2925,6 +2958,7 @@ export async function ensureSchema(dbPath: string) {
       raw_ocr_text TEXT,
       extracted_json TEXT,
       approved_json TEXT,
+      possible_duplicate_of INTEGER DEFAULT NULL,
       source TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -3473,9 +3507,12 @@ export async function ensureSchema(dbPath: string) {
       timestamp INTEGER,
       type TEXT,
       has_media INTEGER DEFAULT 0,
+      ack_status INTEGER DEFAULT 0,
+      pharmacist_opened_at INTEGER DEFAULT NULL,
       FOREIGN KEY(chat_id) REFERENCES whatsapp_chats(id)
     );
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_chat_id ON whatsapp_messages (chat_id);
+    CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status);
 
     -- Crash telemetry: written by processGuardian on uncaught exceptions
     CREATE TABLE IF NOT EXISTS crash_log (

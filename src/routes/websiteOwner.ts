@@ -434,7 +434,7 @@ router.get('/catalogue', async (req: Request, res: Response) => {
 
     const medicines = await db.all(
       `SELECT m.id as medicine_id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.status,
-              MAX(im.mrp) as mrp, MAX(im.sell_price) as sell_price,
+              MAX(im.mrp) as mrp, COALESCE(m.sell_price, MAX(im.unit_price), MAX(im.mrp), 0) as sell_price,
               SUM(CASE WHEN im.quantity > 0 AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now')) THEN im.quantity ELSE 0 END) as available_stock,
               ci.image_path as image_url
        FROM medicines m

@@ -502,7 +502,7 @@ router.post('/process-returns', async (req, res) => {
         if (med) {
           item.medicine_id = med.id;
         } else {
-          const newMed = await db.run('INSERT INTO medicines (name, mrp, is_active) VALUES (?, ?, 1)', [item.medicine_name.trim(), item.mrp || 0]);
+          const newMed = await db.run("INSERT INTO medicines (name, mrp, status) VALUES (?, ?, 'active')", [item.medicine_name.trim(), item.mrp || 0]);
           item.medicine_id = newMed.lastID;
         }
       }

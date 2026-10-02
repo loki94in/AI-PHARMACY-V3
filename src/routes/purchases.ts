@@ -2693,39 +2693,8 @@ router.get('/:id/pdf', async (req, res) => {
   }
 });
 
-function normalizeInvoiceNo(invStr: string | null | undefined): string {
-  if (!invStr) return '';
-  let cleaned = invStr.trim().toUpperCase();
-  cleaned = cleaned.replace(/^(INVOICE|INV|BILL|TAX|NO|NUM|#|SL|\/|-|\s)+/gi, '');
-  cleaned = cleaned.replace(/[^A-Z0-9]/gi, '');
-  cleaned = cleaned.replace(/^0+/, '');
-  return cleaned;
-}
-
-function tokensMatchFuzzy(term1: string, term2: string, aliasMap?: Map<string, string>): boolean {
-  if (!term1 || !term2) return false;
-  const norm1 = term1.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
-  const norm2 = term2.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
-
-  if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-
-  const tokens1 = new Set(norm1.split(/\s+/).filter(t => t.length > 1));
-  const tokens2 = new Set(norm2.split(/\s+/).filter(t => t.length > 1));
-
-  if (tokens1.size === 0 || tokens2.size === 0) return false;
-
-  let commonCount = 0;
-  for (const t1 of tokens1) {
-    if (tokens2.has(t1)) {
-      commonCount++;
-    } else if (aliasMap && aliasMap.has(t1) && tokens2.has(aliasMap.get(t1)!)) {
-      commonCount++;
-    }
-  }
-
-  const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
-  return overlap >= 0.5 || commonCount >= 2;
-}
+import { normalizeInvoiceNo, tokensMatchFuzzy, stripPharmaNoise } from '../utils/reconciliationMatcher.js';
+export { normalizeInvoiceNo, tokensMatchFuzzy, stripPharmaNoise };
 
 // GET /reconciliation - Detect missing/unreconciled orders from distributor emails with canonical normalization & alias matching
 router.get('/reconciliation', async (_req, res) => {
@@ -2875,24 +2844,7 @@ router.get('/reconciliation', async (_req, res) => {
         needsDbUpdate = true;
       }
 
-      // Cross-reference with special_orders / order history for this distributor if available
-      try {
-        const normDist = (distributorName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (normDist) {
-          const specialOrderItems = await db.all(
-            `SELECT medicine_name, product FROM special_orders WHERE LOWER(distributor) LIKE ? OR LOWER(distributor) LIKE ? LIMIT 20`,
-            [`%${normDist}%`, `%${normDist.substring(0, 5)}%`]
-          );
-          for (const so of specialOrderItems) {
-            const nameToAdd = cleanMedicineName(so.medicine_name || so.product);
-            if (nameToAdd && !isNonMedicineNoise(nameToAdd) && !medNames.includes(nameToAdd)) {
-              medNames.push(nameToAdd);
-            }
-          }
-        }
-      } catch (errSo) {
-        // non-blocking
-      }
+
 
       if (needsDbUpdate) {
         await db.run('UPDATE emails SET medicine_names = ? WHERE uid = ?', [JSON.stringify(medNames), email.uid]);
@@ -3021,6 +2973,11 @@ router.get('/reconciliation', async (_req, res) => {
       let status = 'Missing';
       let displayMedicines = Array.from(group.expected_medicines);
 
+      // Pre-filter with permanently ignored noise words
+      if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
+        displayMedicines = displayMedicines.filter((m: string) => !ignoredSet.has(m.trim().toLowerCase()));
+      }
+
       if (matchedPurchase) {
         // Get received items from the pre-fetched map
         const receivedMeds = receivedItemsMap.get(matchedPurchase.id) || [];
@@ -3042,10 +2999,17 @@ router.get('/reconciliation', async (_req, res) => {
           status = 'Matched';
           displayMedicines = [];
         }
+      } else {
+        if (displayMedicines.length === 0) {
+          status = 'Matched';
+        } else {
+          status = 'Missing';
+        }
       }
 
-      if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
-        displayMedicines = displayMedicines.filter((m: string) => !ignoredSet.has(m.trim().toLowerCase()));
+      // Hard invariant: If displayMedicines is empty, status can NEVER be 'Bounced'
+      if (displayMedicines.length === 0 && status === 'Bounced') {
+        status = 'Matched';
       }
 
       result.push({
