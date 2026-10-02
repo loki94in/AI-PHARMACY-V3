@@ -1413,6 +1413,12 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
   let insertCount = 0;
   let inTxn = false;
 
+  // Smart Upsert: Track entities whose line-items have been cleared during this import run
+  // to cleanly replace previous migration items without creating duplicates on re-runs.
+  const clearedSalesInvoices = new Set<number>();
+  const clearedPurchases = new Set<number>();
+  const clearedReturns = new Set<number>();
+
   migrationStatus.message = 'Streaming CSV rows into staging database...';
   resetDistributorLookupCache();
 
@@ -1623,27 +1629,33 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
             ) : null;
 
             if (existingBatch) {
-              const qtyKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'quantity' || mapping?.[k] === 'quantity_sold' || mapping?.[k] === 'return_quantity');
-              const looseQtyKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'loose_qty' || mapping?.[k] === 'loose_quantity');
-              const rackKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'rack_location');
-              const expKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'expiry_date');
-              const costKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'cost_price' || mapping?.[k] === 'rate' || mapping?.[k] === 'unit_price');
-              const mrpKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'mrp');
-
-              const rawImportedData = {
-                medicine_id: med.id,
-                quantity: qtyKey ? parseInt(cleanRow[qtyKey]) || 0 : 0,
-                loose_quantity: looseQtyKey ? parseInt(cleanRow[looseQtyKey]) || 0 : 0,
-                rack_location: rackKey ? String(cleanRow[rackKey] || '').trim() : '',
-                batch_no: batchVal,
-                expiry_date: expKey ? (normalizeDate(String(cleanRow[expKey])) || String(cleanRow[expKey])) : '',
-                cost_price: costKey ? parseFloat(cleanRow[costKey]) || 0 : 0,
-                mrp: mrpKey ? parseFloat(cleanRow[mrpKey]) || 0 : 0,
-              };
-              await db.run(
-                'INSERT INTO migration_conflicts (module_type, raw_imported_data, matching_record_id, conflict_reason) VALUES (?, ?, ?, ?)',
-                ['inventory', JSON.stringify(rawImportedData), existingBatch.id, 'Duplicate Batch Number']
-              );
+              // Smart Upsert: Update existing batch with latest attributes from edited CSV
+              const updateBatchCols: string[] = [];
+              const updateBatchVals: any[] = [];
+              for (const [key, val] of Object.entries(cleanRow)) {
+                const rawColName = key.trim();
+                let colName = rawColName.replace(/\s+/g, '_').toLowerCase();
+                if (mapping && mapping[rawColName] === 'IGNORE') continue;
+                if (mapping && mapping[rawColName]) colName = mapping[rawColName];
+                if (colName === 'loose_qty' || colName === 'loose_quantity') colName = 'loose_quantity';
+                if (colName === 'rate') colName = 'cost_price';
+                if (!colName || colName === 'medicine' || colName === 'name' || val === '' || colName.startsWith('custom_col_')) continue;
+                if (existingCols.includes(colName) && colName !== 'id' && colName !== 'medicine_id' && colName !== 'batch_no') {
+                  updateBatchCols.push(`"${colName}" = ?`);
+                  if (colName === 'expiry_date') {
+                    updateBatchVals.push(normalizeDate(String(val)) || val);
+                  } else {
+                    updateBatchVals.push(val);
+                  }
+                }
+              }
+              if (updateBatchCols.length > 0) {
+                updateBatchVals.push(existingBatch.id);
+                await db.run(
+                  `UPDATE inventory_master SET ${updateBatchCols.join(', ')} WHERE id = ?`,
+                  updateBatchVals
+                );
+              }
             } else {
               const insertQuery = `INSERT INTO inventory_master (${colsToInsert.join(', ')}) VALUES (${placeholders.join(', ')})`;
               await db.run(insertQuery, valuesToInsert);
@@ -1743,8 +1755,8 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                 }
               }
               const subtotal = totalAmount + discount;
-              const baseCols = ['invoice_no', 'customer_id', 'doctor_id', 'date', 'total_amount', 'discount', 'subtotal', 'cgst_value', 'sgst_value'];
-              const baseVals = [invoiceNo, customerId, doctorId, dateStr, totalAmount, discount, subtotal, cgstVal, sgstVal];
+              const baseCols = ['invoice_no', 'customer_id', 'doctor_id', 'date', 'total_amount', 'discount', 'subtotal', 'cgst_value', 'sgst_value', 'source', 'is_migrated'];
+              const baseVals = [invoiceNo, customerId, doctorId, dateStr, totalAmount, discount, subtotal, cgstVal, sgstVal, 'migration', 1];
               const colsStr = [...baseCols, ...saleCols].join(', ');
               const placeholdersStr = [...baseCols, ...saleCols].map(() => '?').join(', ');
               const result = await db.run(
@@ -1752,6 +1764,52 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                 [...baseVals, ...saleVals]
               );
               invoice = { id: result.lastID };
+              clearedSalesInvoices.add(invoice.id);
+            } else {
+              // Smart Upsert: On re-running an edited file, update header and clear previous items once
+              if (!clearedSalesInvoices.has(invoice.id)) {
+                const subtotal = totalAmount + discount;
+                const updateCols = [
+                  'customer_id = ?',
+                  'doctor_id = ?',
+                  'date = ?',
+                  'total_amount = ?',
+                  'discount = ?',
+                  'subtotal = ?',
+                  'cgst_value = ?',
+                  'sgst_value = ?',
+                  'source = ?',
+                  'is_migrated = ?'
+                ];
+                const updateVals: any[] = [
+                  customerId,
+                  doctorId,
+                  dateStr,
+                  totalAmount,
+                  discount,
+                  subtotal,
+                  cgstVal,
+                  sgstVal,
+                  'migration',
+                  1
+                ];
+                for (const [key, val] of Object.entries(cleanRow)) {
+                  const mappedTarget = mapping?.[key];
+                  if (mappedTarget && mappedTarget.startsWith('custom_col_')) {
+                    const dbColName = mappedTarget.substring(11).trim().replace(/\s+/g, '_').toLowerCase();
+                    updateCols.push(`"${dbColName}" = ?`);
+                    updateVals.push(val);
+                  }
+                }
+                updateVals.push(invoice.id);
+                await db.run(
+                  `UPDATE sales_invoices SET ${updateCols.join(', ')} WHERE id = ?`,
+                  updateVals
+                );
+                // Cleanly remove previous items for this invoice so edited items replace them without duplication
+                await db.run('DELETE FROM sale_items WHERE invoice_id = ?', [invoice.id]);
+                clearedSalesInvoices.add(invoice.id);
+              }
             }
 
             let nameKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'name');
@@ -1879,8 +1937,8 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                   purVals.push(val);
                 }
               }
-              const baseCols = ['invoice_no', 'distributor_id', 'date', 'total_amount'];
-              const baseVals = [invoiceNo, distributorId, dateStr, totalAmount];
+              const baseCols = ['invoice_no', 'distributor_id', 'date', 'total_amount', 'source', 'is_migrated'];
+              const baseVals = [invoiceNo, distributorId, dateStr, totalAmount, 'migration', 1];
               const colsStr = [...baseCols, ...purCols].join(', ');
               const placeholdersStr = [...baseCols, ...purCols].map(() => '?').join(', ');
               const result = await db.run(
@@ -1888,6 +1946,29 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                 [...baseVals, ...purVals]
               );
               purchase = { id: result.lastID };
+              clearedPurchases.add(purchase.id);
+            } else {
+              // Smart Upsert: On re-running an edited file, update header and clear previous purchase items once
+              if (!clearedPurchases.has(purchase.id)) {
+                const updateCols = ['distributor_id = ?', 'date = ?', 'total_amount = ?', 'source = ?', 'is_migrated = ?'];
+                const updateVals: any[] = [distributorId, dateStr, totalAmount, 'migration', 1];
+                for (const [key, val] of Object.entries(cleanRow)) {
+                  const mappedTarget = mapping?.[key];
+                  if (mappedTarget && mappedTarget.startsWith('custom_col_')) {
+                    const dbColName = mappedTarget.substring(11).trim().replace(/\s+/g, '_').toLowerCase();
+                    updateCols.push(`"${dbColName}" = ?`);
+                    updateVals.push(val);
+                  }
+                }
+                updateVals.push(purchase.id);
+                await db.run(
+                  `UPDATE purchases SET ${updateCols.join(', ')} WHERE id = ?`,
+                  updateVals
+                );
+                // Cleanly remove previous items for this purchase so edited items replace them without duplicating stock
+                await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [purchase.id]);
+                clearedPurchases.add(purchase.id);
+              }
             }
 
             let nameKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'name');
@@ -2001,8 +2082,8 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                    retVals.push(val);
                 }
               }
-              const baseCols = ['return_no', 'distributor_id', 'type', 'date', 'total_amount', 'return_invoice_id', 'return_sub_type', 'raw_return_type', 'return_date_time'];
-              const baseVals = [returnNo, distributorId, 'purchase', dateStr, totalAmount, returnInvoiceId, resolvedReturnSubType, rawReturnSubType || null, returnDateTime];
+              const baseCols = ['return_no', 'distributor_id', 'type', 'date', 'total_amount', 'return_invoice_id', 'return_sub_type', 'raw_return_type', 'return_date_time', 'source', 'is_migrated'];
+              const baseVals = [returnNo, distributorId, 'purchase', dateStr, totalAmount, returnInvoiceId, resolvedReturnSubType, rawReturnSubType || null, returnDateTime, 'migration', 1];
               const colsStr = [...baseCols, ...retCols].join(', ');
               const placeholdersStr = [...baseCols, ...retCols].map(() => '?').join(', ');
               const result = await db.run(
@@ -2010,6 +2091,29 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                 [...baseVals, ...retVals]
               );
               retRecord = { id: result.lastID };
+              clearedReturns.add(retRecord.id);
+            } else {
+              // Smart Upsert: On re-running an edited file, update header and clear previous return items once
+              if (!clearedReturns.has(retRecord.id)) {
+                const updateCols = ['distributor_id = ?', 'date = ?', 'total_amount = ?', 'return_invoice_id = ?', 'return_sub_type = ?', 'raw_return_type = ?', 'return_date_time = ?', 'source = ?', 'is_migrated = ?'];
+                const updateVals: any[] = [distributorId, dateStr, totalAmount, returnInvoiceId, resolvedReturnSubType, rawReturnSubType || null, returnDateTime, 'migration', 1];
+                for (const [key, val] of Object.entries(cleanRow)) {
+                  const mappedTarget = mapping?.[key];
+                  if (mappedTarget && mappedTarget.startsWith('custom_col_')) {
+                    const dbColName = mappedTarget.substring(11).trim().replace(/\s+/g, '_').toLowerCase();
+                    updateCols.push(`"${dbColName}" = ?`);
+                    updateVals.push(val);
+                  }
+                }
+                updateVals.push(retRecord.id);
+                await db.run(
+                  `UPDATE returns SET ${updateCols.join(', ')} WHERE id = ?`,
+                  updateVals
+                );
+                // Cleanly remove previous items for this return so edited items replace them without duplication
+                await db.run('DELETE FROM return_items WHERE return_id = ?', [retRecord.id]);
+                clearedReturns.add(retRecord.id);
+              }
             }
 
             let nameKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'name');
@@ -2325,11 +2429,22 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                 if (!invoice) {
                   const subtotal = totalAmount + discount;
                   const result = await db.run(
-                    `INSERT INTO sales_invoices (invoice_no, customer_id, doctor_id, date, total_amount, discount, subtotal, cgst_value, sgst_value)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    `INSERT INTO sales_invoices (invoice_no, customer_id, doctor_id, date, total_amount, discount, subtotal, cgst_value, sgst_value, source, is_migrated)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'migration', 1)`,
                     [invoiceNo, customerId, doctorId, dateStr, totalAmount, discount, subtotal, cgstVal, sgstVal]
                   );
                   invoice = { id: result.lastID };
+                  clearedSalesInvoices.add(invoice.id);
+                } else {
+                  if (!clearedSalesInvoices.has(invoice.id)) {
+                    const subtotal = totalAmount + discount;
+                    await db.run(
+                      `UPDATE sales_invoices SET customer_id = ?, doctor_id = ?, date = ?, total_amount = ?, discount = ?, subtotal = ?, cgst_value = ?, sgst_value = ?, source = 'migration', is_migrated = 1 WHERE id = ?`,
+                      [customerId, doctorId, dateStr, totalAmount, discount, subtotal, cgstVal, sgstVal, invoice.id]
+                    );
+                    await db.run('DELETE FROM sale_items WHERE invoice_id = ?', [invoice.id]);
+                    clearedSalesInvoices.add(invoice.id);
+                  }
                 }
 
                 if (medicineId && inventoryId) {
@@ -2358,11 +2473,21 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
                 );
                 if (!purchase) {
                   const result = await db.run(
-                    `INSERT INTO purchases (invoice_no, distributor_id, date, total_amount)
-                     VALUES (?, ?, ?, ?)`,
+                    `INSERT INTO purchases (invoice_no, distributor_id, date, total_amount, source, is_migrated)
+                     VALUES (?, ?, ?, ?, 'migration', 1)`,
                     [invoiceNo, distributorId, dateStr, totalAmount]
                   );
                   purchase = { id: result.lastID };
+                  clearedPurchases.add(purchase.id);
+                } else {
+                  if (!clearedPurchases.has(purchase.id)) {
+                    await db.run(
+                      `UPDATE purchases SET distributor_id = ?, date = ?, total_amount = ?, source = 'migration', is_migrated = 1 WHERE id = ?`,
+                      [distributorId, dateStr, totalAmount, purchase.id]
+                    );
+                    await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [purchase.id]);
+                    clearedPurchases.add(purchase.id);
+                  }
                 }
 
                 if (medicineId) {

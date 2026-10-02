@@ -708,6 +708,33 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
     if (invCols.length > 0 && !invNames.has('store_id')) {
       await db.run('ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1');
     }
+    if (invCols.length > 0 && !invNames.has('source')) {
+      await db.run("ALTER TABLE sales_invoices ADD COLUMN source TEXT DEFAULT 'pos'");
+    }
+    if (invCols.length > 0 && !invNames.has('is_migrated')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN is_migrated INTEGER DEFAULT 0');
+    }
+
+    // 5b. Transaction source and migration indicators on purchases & returns
+    try {
+      const purCols = await db.all('PRAGMA table_info(purchases)');
+      const purNames = new Set(purCols.map((c: any) => c.name));
+      if (purCols.length > 0 && !purNames.has('source')) {
+        await db.run("ALTER TABLE purchases ADD COLUMN source TEXT DEFAULT 'manual'");
+      }
+      if (purCols.length > 0 && !purNames.has('is_migrated')) {
+        await db.run('ALTER TABLE purchases ADD COLUMN is_migrated INTEGER DEFAULT 0');
+      }
+
+      const retCols = await db.all('PRAGMA table_info(returns)');
+      const retNames = new Set(retCols.map((c: any) => c.name));
+      if (retCols.length > 0 && !retNames.has('source')) {
+        await db.run("ALTER TABLE returns ADD COLUMN source TEXT DEFAULT 'manual'");
+      }
+      if (retCols.length > 0 && !retNames.has('is_migrated')) {
+        await db.run('ALTER TABLE returns ADD COLUMN is_migrated INTEGER DEFAULT 0');
+      }
+    } catch (_) { }
 
     // Backfill existing legacy invoices once so past bills freeze immediately
     await db.run(`
@@ -1541,6 +1568,7 @@ export async function ensureSchema(dbPath: string) {
 
         await ensureOrderTimingSchema(db);
         await ensureRefillCartLinkSchema(db);
+        await ensureMultiPharmacyAndSnapshotSchema(db);
         await normalizeBillDatesToLocalTime(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
