@@ -14807,6 +14807,13 @@ async function ensureSchema(dbPath) {
     }
     console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
     try {
+      await ensureOrderTimingSchema(db2);
+      await ensureRefillCartLinkSchema(db2);
+      await ensureMultiPharmacyAndSnapshotSchema(db2);
+    } catch (preErr) {
+      console.warn("[Boot] Pre-DDL column migration note:", preErr.message);
+    }
+    try {
       const tableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='catalog_jobs'");
       if (tableSql && /CHECK\s*\(\s*status\s+IN/i.test(tableSql.sql)) {
         console.log("Removing strict CHECK constraint from catalog_jobs...");
@@ -17899,6 +17906,16 @@ async function ensureSchema(dbPath) {
         if (!sessNames.has("is_active")) await db2.run("ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1");
       }
     } catch (_) {
+    }
+    try {
+      await ensureOrderTimingSchema(db2);
+      await ensureRefillCartLinkSchema(db2);
+      await ensureMultiPharmacyAndSnapshotSchema(db2);
+      await normalizeBillDatesToLocalTime(db2);
+      await ensureMedicinesFts(db2);
+      await ensureMedicineSearchSummaryTriggers(db2);
+    } catch (postErr) {
+      console.warn("[Boot] Post-DDL migration note:", postErr.message);
     }
     await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
     await db2.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
@@ -54475,7 +54492,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.38";
+    APP_VERSION = "0.1.40";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -58508,7 +58525,7 @@ async function enrichMasterMedicinesFromCsv() {
           ?, ?, ?, ?, ?,
           'master_reference', 'ACTIVE'
         )
-        ON CONFLICT(legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
+        ON CONFLICT(legacy_id) DO UPDATE SET
           packaging      = CASE WHEN COALESCE(medicines.packaging,   '') = '' THEN excluded.packaging      ELSE medicines.packaging      END,
           manufacturer   = CASE WHEN COALESCE(medicines.manufacturer,'') = '' THEN excluded.manufacturer   ELSE medicines.manufacturer   END,
           marketed_by    = CASE WHEN COALESCE(medicines.marketed_by, '') = '' THEN excluded.marketed_by    ELSE medicines.marketed_by    END,
@@ -101730,8 +101747,15 @@ var init_server = __esm({
         Promise.resolve().then(() => (init_compositionEnricher(), compositionEnricher_exports)).then((m) => m.seedBundledReference()).then((res) => {
           if (res.loaded > 0) console.log(`[Boot:Phase2] Seeded ${res.loaded} reference APIs into dictionary.`);
         }).catch((seedErr) => console.warn("[Boot:Phase2] Bundled reference seed failed:", seedErr));
-        Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports)).then((m) => m.enrichMasterMedicinesFromCsv()).then((res) => {
-          if (res.enriched > 0) {
+        Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports)).then(async (m) => {
+          const medCountRow = await db2.get("SELECT COUNT(*) as c FROM medicines").catch(() => null);
+          if (!medCountRow || Number(medCountRow.c) < 50) {
+            console.log("[Boot:Phase2] Medicines table has low/zero records. Auto-seeding master catalog in background...");
+            await m.seedMasterMedicines(false).catch((e) => console.warn("[Boot:Phase2] Master catalog auto-seed error (non-fatal):", e?.message));
+          }
+          return m.enrichMasterMedicinesFromCsv();
+        }).then((res) => {
+          if (res && res.enriched > 0) {
             console.log(`[Boot:Phase2] Master medicines enriched: ${res.enriched} rows updated from CSV.`);
           } else {
             console.log("[Boot:Phase2] Master medicines enrichment: no rows needed update (already enriched or CSV absent).");
