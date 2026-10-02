@@ -323,6 +323,11 @@ export default function WebsiteOrders() {
   };
 
   const handleOpenInPOS = (order: any) => {
+    const rawMrp = Number(order.pharmarack_mrp || order.mrp || 0);
+    const isPaid = ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase());
+    const advancePaid = Number(order.advance_payment || order.screenshot_amount || (isPaid ? (order.total_amount || 50) : 0));
+    const advanceNote = advancePaid > 0 ? ` (Advance Paid: ₹${advancePaid.toFixed(2)})` : '';
+
     navigate('/pos', {
       state: {
         prefill: {
@@ -333,22 +338,23 @@ export default function WebsiteOrders() {
           customerName: order.requester || '',
           customerPhone: order.phone || '',
           customerId: order.customer_id || undefined,
-          notes: `Website Order #${order.id}`,
+          advancePayment: advancePaid,
+          notes: `Website Order #${order.id}${advanceNote}`,
           medicines: [
             {
               medicine_name: order.medicine_name || order.product,
               name: order.medicine_name || order.product,
               quantity: order.qty || 1,
               qty: order.qty || 1,
-              sell_price: order.pharmarack_rate || order.advance_payment || 0,
-              mrp: order.pharmarack_rate || order.advance_payment || 0
+              sell_price: rawMrp > 0 ? rawMrp : undefined,
+              mrp: rawMrp > 0 ? rawMrp : undefined
             }
           ],
           items: [
             {
               medicine_name: order.medicine_name || order.product,
               quantity: order.qty || 1,
-              rate: order.pharmarack_rate || order.advance_payment || 0
+              rate: rawMrp > 0 ? rawMrp : undefined
             }
           ]
         }
@@ -921,19 +927,26 @@ export default function WebsiteOrders() {
                                     <button
                                       type="button"
                                       disabled={isSubmitting}
-                                      onClick={() => handleConfirmDistributor(order.id, {
-                                        distributor: distName,
-                                        rate,
-                                        mrp,
-                                        productId: opt.productId || opt.product_id,
-                                        productCode: opt.productCode || opt.product_code,
-                                        storeId: opt.storeId || opt.store_id,
-                                        productName: opt.name || opt.productName || order.medicine_name || order.product,
-                                        sendPaymentQr: true
-                                      })}
+                                      onClick={() => {
+                                        const isPaidOrder = ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase());
+                                        handleConfirmDistributor(order.id, {
+                                          distributor: distName,
+                                          rate,
+                                          mrp,
+                                          productId: opt.productId || opt.product_id,
+                                          productCode: opt.productCode || opt.product_code,
+                                          storeId: opt.storeId || opt.store_id,
+                                          productName: opt.name || opt.productName || order.medicine_name || order.product,
+                                          sendPaymentQr: !isPaidOrder
+                                        });
+                                      }}
                                       className="shrink-0 py-1 px-2.5 rounded-lg bg-primary hover:bg-primary/90 text-white font-bold text-[10px] transition-all cursor-pointer disabled:opacity-50"
                                     >
-                                      {isSubmitting ? 'Sending...' : isCurrent ? 'Re-send QR' : 'Approve & Send QR'}
+                                      {isSubmitting
+                                        ? 'Saving...'
+                                        : ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase())
+                                          ? (isCurrent ? 'Current Distributor' : 'Switch Distributor (Migrate Cart)')
+                                          : (isCurrent ? 'Re-send QR' : 'Approve & Send QR')}
                                     </button>
                                   </div>
                                 </div>
@@ -1014,19 +1027,26 @@ export default function WebsiteOrders() {
                                   <button
                                     type="button"
                                     disabled={isSubmitting}
-                                    onClick={() => handleConfirmDistributor(order.id, {
-                                      distributor: distName,
-                                      rate,
-                                      mrp,
-                                      productId: item.productId || item.product_id,
-                                      productCode: item.productCode || item.product_code,
-                                      storeId: item.storeId || item.store_id,
-                                      productName: item.name || item.productName || order.medicine_name || order.product,
-                                      sendPaymentQr: true
-                                    })}
+                                    onClick={() => {
+                                      const isPaidOrder = ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase());
+                                      handleConfirmDistributor(order.id, {
+                                        distributor: distName,
+                                        rate,
+                                        mrp,
+                                        productId: item.productId || item.product_id,
+                                        productCode: item.productCode || item.product_code,
+                                        storeId: item.storeId || item.store_id,
+                                        productName: item.name || item.productName || order.medicine_name || order.product,
+                                        sendPaymentQr: !isPaidOrder
+                                      });
+                                    }}
                                     className="shrink-0 py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition-all cursor-pointer disabled:opacity-50"
                                   >
-                                    {isSubmitting ? 'Sending...' : 'Select & Send QR'}
+                                    {isSubmitting
+                                      ? 'Saving...'
+                                      : ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase())
+                                        ? 'Switch to this Distributor'
+                                        : 'Select & Send QR'}
                                   </button>
                                 </div>
                               );

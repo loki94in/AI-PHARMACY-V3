@@ -12,6 +12,7 @@ import { HoverPriceIntelTable } from '../../components/HoverPriceIntelTable';
 import { createPortal } from 'react-dom';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
 import { PurchaseSaveVerificationModal, type SaveVerificationData } from '../../components/PurchaseSaveVerificationModal';
+import { PurchaseDuplicateBillModal, type ExistingDuplicateBill } from '../../components/PurchaseDuplicateBillModal';
 import { calculateSimilarity } from '../../utils/fuzzy';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { getTodayString, toDateInputValue } from '../../utils/date';
@@ -389,7 +390,7 @@ const historyRowsAsPriceRecords = (rows: MedicineBatchHistoryRow[] | null): Pric
   if (!rows) return null;
   return rows.map(r => ({
     date: r.purchase_date || '',
-    distributor_name: r.distributor_name || 'Unknown',
+    distributor_name: (r.distributor_name && r.distributor_name.trim().toLowerCase() !== 'unknown') ? r.distributor_name.trim() : 'Opening Stock',
     batch_no: r.batch_no,
     expiry_date: r.expiry_date || '',
     rate: Number(r.rate) || 0,
@@ -1099,6 +1100,12 @@ const Purchases: React.FC = () => {
   const [isUniversalModalOpen, setIsUniversalModalOpen] = useState(false);
   const [showSaveVerify, setShowSaveVerify] = useState(false);
   const [saveVerifyData, setSaveVerifyData] = useState<SaveVerificationData | null>(null);
+  const [duplicateBillInfo, setDuplicateBillInfo] = useState<{
+    isDuplicate: boolean;
+    fy?: string;
+    existing?: ExistingDuplicateBill;
+  } | null>(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const sessionNewMedicinesRef = useRef<{ id: number; name: string }[]>([]);
 
   const handleGlobalCdChange = (newVal: number) => {
@@ -1109,6 +1116,37 @@ const Purchases: React.FC = () => {
       return updated;
     }));
   };
+
+  // Proactive real-time check for duplicate purchase invoice in same Financial Year
+  useEffect(() => {
+    const cleanInv = (invoiceNo || '').trim();
+    const cleanDist = (distributorSearch || '').trim();
+    if (!cleanInv || (!selectedDistributor && !cleanDist)) {
+      setDuplicateBillInfo(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.checkDuplicatePurchaseBill({
+          invoice_no: cleanInv,
+          distributor_id: selectedDistributor,
+          distributor: cleanDist,
+          date: invoiceDate || getTodayString(),
+          exclude_id: editPurchaseId || null,
+        });
+        if (res?.isDuplicate && res.existing) {
+          setDuplicateBillInfo(res);
+        } else {
+          setDuplicateBillInfo(null);
+        }
+      } catch (err) {
+        console.warn('[Purchases] Duplicate check background check error:', err);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [invoiceNo, selectedDistributor, distributorSearch, invoiceDate, editPurchaseId]);
 
   // E6: refs for tab-sync fields that are NOT in the effect's dependency
   // array below. Updated unconditionally on every render so they always hold
@@ -2564,6 +2602,58 @@ const Purchases: React.FC = () => {
   // server call; then PurchaseSaveVerificationModal requires an explicit Confirm.
   const WEAK_MATCH_TYPES = new Set(['distributor_history_fuzzy', 'prefix_fuzzy', 'catalog_fuzzy']);
 
+  const handleOpenExistingBill = async (existingId: number) => {
+    try {
+      setShowDuplicateModal(false);
+      setDuplicateBillInfo(null);
+      toastEvent.trigger('Loading existing purchase bill...', 'info');
+      const data = await api.getPurchase(existingId);
+      if (data?.purchase) {
+        setEditPurchaseId(data.purchase.id);
+        if (data.purchase.distributor_id) {
+          setSelectedDistributor(data.purchase.distributor_id);
+        }
+        setDistributorSearch(data.purchase.distributor_name || '');
+        setInvoiceNo(data.purchase.invoice_no || '');
+        setInvoiceDate(data.purchase.date ? data.purchase.date.slice(0, 10) : getTodayString());
+        if (data.purchase.cn_amount) setCnAmount(data.purchase.cn_amount);
+        if (data.purchase.cn_number) setCnNumber(data.purchase.cn_number);
+        if (data.purchase.reconcile_expiry_return_id) setReconcileExpiryReturnId(data.purchase.reconcile_expiry_return_id);
+
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          setItems(data.items.map((item: any) => ({
+            id: generateUUID(),
+            medicine_id: item.medicine_id,
+            medicine_name: item.medicine_name,
+            name: item.medicine_name,
+            batch_no: item.batch_no || '',
+            batch: item.batch_no || '',
+            expiry_date: item.expiry_date || '',
+            expiry: item.expiry_date || '',
+            qty: item.quantity !== undefined ? item.quantity : item.qty,
+            quantity: item.quantity !== undefined ? item.quantity : item.qty,
+            free_qty: item.free_qty || 0,
+            rate: item.cost_price !== undefined ? item.cost_price : item.rate,
+            price: item.cost_price !== undefined ? item.cost_price : item.rate,
+            mrp: item.mrp || 0,
+            cgst_per: item.cgst_per || 0,
+            sgst_per: item.sgst_per || 0,
+            cd_per: item.cd_per || 0,
+            cd_value: item.cd_value || 0,
+            hsn_code: item.hsn_code || '',
+            manufacturer: item.manufacturer || '',
+            scheme_paid: 0,
+            scheme_free: 0,
+          })));
+        }
+        toastEvent.trigger(`Loaded bill #${data.purchase.invoice_no} for editing.`, 'success');
+      }
+    } catch (err) {
+      console.error('[Purchases] Failed to load existing purchase bill:', err);
+      toastEvent.trigger('Failed to load existing purchase bill', 'error');
+    }
+  };
+
   const savePurchase = async () => {
     // If already saving but stuck >5s, force-reset and allow retry
     if (saving) {
@@ -2577,6 +2667,40 @@ const Purchases: React.FC = () => {
 
     const bill = collectBillForSave();
     if (!bill) return;
+
+    // Strict duplicate shield: If duplicate exists in this FY, block save and trigger modal
+    if (duplicateBillInfo?.isDuplicate && duplicateBillInfo.existing) {
+      setShowDuplicateModal(true);
+      toastEvent.trigger(
+        `Cannot save: Invoice #${duplicateBillInfo.existing.invoice_no} already exists for this distributor in Financial Year ${duplicateBillInfo.fy || ''}.`,
+        'error',
+        '/purchases'
+      );
+      return;
+    }
+
+    // Direct synchronous check with backend before proceeding
+    try {
+      const dupCheck = await api.checkDuplicatePurchaseBill({
+        invoice_no: bill.finalInvoiceNo,
+        distributor_id: bill.distIdToSave,
+        distributor: bill.distNameToSave,
+        date: bill.cleanInvoiceDate,
+        exclude_id: editPurchaseId || null,
+      });
+      if (dupCheck?.isDuplicate && dupCheck.existing) {
+        setDuplicateBillInfo(dupCheck);
+        setShowDuplicateModal(true);
+        toastEvent.trigger(
+          `Cannot save: Invoice #${dupCheck.existing.invoice_no} already exists for this distributor in Financial Year ${dupCheck.fy || ''}.`,
+          'error',
+          '/purchases'
+        );
+        return;
+      }
+    } catch (e) {
+      console.warn('[Purchases] Quick duplicate pre-check error (proceeding to verification):', e);
+    }
 
     const { validItems } = bill;
     const unmatched = validItems.filter(it => !it.medicine_id);
@@ -2770,6 +2894,17 @@ const Purchases: React.FC = () => {
       api.getCompactInventory().catch(() => {});
     } catch (error) {
       console.error('Error saving purchase:', error);
+      const apiErr = error as any;
+      if (apiErr?.response?.status === 409 && apiErr?.response?.data?.existing_bill) {
+        setDuplicateBillInfo({
+          isDuplicate: true,
+          fy: apiErr.response.data.fy,
+          existing: apiErr.response.data.existing_bill,
+        });
+        setShowDuplicateModal(true);
+        toastEvent.trigger(apiErr.response.data.error || 'Duplicate purchase bill detected in this Financial Year', 'error', '/purchases');
+        return;
+      }
       const unres = (error as LocalApiError).response?.data?.unresolved_items as Array<{ name?: string }> | undefined;
       if (Array.isArray(unres) && unres.length > 0) {
         const names = unres.map((u: { name?: string }) => `"${u?.name || 'Item'}"`).join(', ');
@@ -3353,6 +3488,15 @@ const Purchases: React.FC = () => {
           <div className="w-44">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-sm font-medium text-gray-300">Invoice No *</label>
+              {duplicateBillInfo?.isDuplicate && (
+                <span
+                  onClick={() => setShowDuplicateModal(true)}
+                  className="text-[10px] text-red-400 font-extrabold cursor-pointer hover:underline animate-pulse flex items-center gap-0.5"
+                  title="Duplicate bill detected in this Financial Year. Click to view conflict."
+                >
+                  <AlertTriangle size={11} className="inline" /> DUPLICATE
+                </span>
+              )}
             </div>
             <input
               id="purchase-invoice-no-input"
@@ -3372,10 +3516,23 @@ const Purchases: React.FC = () => {
                   }
                 }
               }}
-              className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+              className={`w-full bg-bg2 border rounded-lg px-3 py-2 text-text font-mono text-sm focus:outline-none font-bold transition-colors ${
+                duplicateBillInfo?.isDuplicate
+                  ? 'border-red-500 bg-red-500/10 focus:ring-2 focus:ring-red-500 text-red-200'
+                  : 'border-border focus:ring-2 focus:ring-primary'
+              }`}
               placeholder="e.g. INV-1002"
               title="Distributor / Purchase Invoice Number"
             />
+            {duplicateBillInfo?.isDuplicate && (
+              <p
+                onClick={() => setShowDuplicateModal(true)}
+                className="text-[10px] text-red-400 font-semibold mt-1 cursor-pointer hover:underline truncate"
+                title="Click to view conflict details"
+              >
+                ⚠️ Already in FY {duplicateBillInfo.fy}
+              </p>
+            )}
           </div>
 
           {/* GRN No */}
@@ -3572,6 +3729,38 @@ const Purchases: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {duplicateBillInfo?.isDuplicate && duplicateBillInfo.existing && (
+        <div className="mx-4 mt-2 p-3 bg-red-500/15 border border-red-500/40 rounded-xl flex items-center justify-between text-xs text-red-200 shadow-md">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 shrink-0">
+              <AlertTriangle size={16} />
+            </div>
+            <div>
+              <span className="font-bold text-text">Duplicate Bill Detected in FY {duplicateBillInfo.fy}: </span>
+              <span>
+                Invoice #{duplicateBillInfo.existing.invoice_no} from &quot;{duplicateBillInfo.existing.distributor_name}&quot; is already saved (Saved: {duplicateBillInfo.existing.date ? duplicateBillInfo.existing.date.slice(0, 10) : 'N/A'}, Total: ₹{Number(duplicateBillInfo.existing.total_amount).toFixed(2)}, {duplicateBillInfo.existing.item_count} items).
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowDuplicateModal(true)}
+              className="px-3 py-1 bg-red-500 text-white font-bold rounded-lg text-xs hover:bg-red-600 transition-colors shadow-sm"
+            >
+              View Conflict Details
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenExistingBill(duplicateBillInfo.existing!.id)}
+              className="px-3 py-1 bg-bg3 text-text border border-border font-semibold rounded-lg text-xs hover:bg-bg2 transition-colors"
+            >
+              Open Existing Bill
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Items Table */}
       <div className="p-4 pt-3 flex-1 flex flex-col min-h-0">
@@ -4724,6 +4913,22 @@ const Purchases: React.FC = () => {
           saving={saving}
           onConfirm={confirmVerifiedSave}
           onClose={() => setShowSaveVerify(false)}
+        />
+      )}
+
+      {showDuplicateModal && duplicateBillInfo?.existing && (
+        <PurchaseDuplicateBillModal
+          fy={duplicateBillInfo.fy || ''}
+          existing={duplicateBillInfo.existing}
+          onOpenExisting={handleOpenExistingBill}
+          onClose={() => {
+            setShowDuplicateModal(false);
+            const invEl = document.getElementById('purchase-invoice-no-input') as HTMLInputElement | null;
+            if (invEl) {
+              invEl.focus();
+              invEl.select?.();
+            }
+          }}
         />
       )}
 

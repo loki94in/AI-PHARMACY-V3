@@ -1150,7 +1150,14 @@ export const api = {
   createCustomerReturn: (data: CustomerReturnPayload) => apiClient.post('/customer-returns', data).then(res => res.data),
   getCustomerReturnsHistory: (params?: { page?: number; limit?: number; start?: string; end?: string; search?: string }) => apiClient.get('/customer-returns/history', { params }).then(res => res.data),
   
-  // Returns (Supplier)
+  // Purchases & Duplication Shield
+  checkDuplicatePurchaseBill: (params: {
+    invoice_no: string;
+    distributor_id?: number | null;
+    distributor?: string;
+    date?: string;
+    exclude_id?: number | null;
+  }) => apiClient.get('/purchases/check-duplicate', { params }).then(res => res.data),
   createManualPurchase: (data: PurchasePayload) => apiClient.post('/purchases/manual', data, { timeout: 30000 }).then(res => res.data),
   getDistributors: () => apiClient.get('/distributors').then(res => res.data),
   getPendingReturns: (distributorId: number) => apiClient.get(`/distributors/${distributorId}/pending-returns`).then(res => res.data),

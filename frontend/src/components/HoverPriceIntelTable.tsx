@@ -72,14 +72,16 @@ export const HoverPriceIntelTable: React.FC<HoverPriceIntelTableProps> = ({ medi
   // Deduplicate distributors and pick the latest/best record for each
   const distributorMap = new Map<string, PriceRecord>();
   sourceRecords.forEach(r => {
-    const key = r.distributor_name || 'Unknown';
+    const rawName = (r.distributor_name || '').trim();
+    const key = rawName && rawName.toLowerCase() !== 'unknown' ? rawName : 'Opening Stock';
+    const recordWithCleanName: PriceRecord = { ...r, distributor_name: key };
     if (!distributorMap.has(key)) {
-      distributorMap.set(key, r);
+      distributorMap.set(key, recordWithCleanName);
     } else {
       const existing = distributorMap.get(key)!;
-      // We could prefer the lowest rate or the latest date. Let's prefer the lowest rate for best comparison.
+      // We prefer the lowest rate for best comparison
       if (r.rate < existing.rate) {
-        distributorMap.set(key, r);
+        distributorMap.set(key, recordWithCleanName);
       }
     }
   });
@@ -87,29 +89,29 @@ export const HoverPriceIntelTable: React.FC<HoverPriceIntelTableProps> = ({ medi
   const uniqueRecords = Array.from(distributorMap.values());
 
   return (
-    <div className="p-2 w-full">
+    <div className="p-2 w-full max-h-[320px] overflow-y-auto dropdown-scroll">
       <table className="w-full text-[11px] text-left border-collapse">
         <thead>
-          <tr className="border-b border-white/20 text-gray-400">
+          <tr className="border-b border-border/40 text-muted">
             <th className="pb-1 font-semibold">Distributor</th>
             <th className="pb-1 text-right font-semibold">Rate</th>
             <th className="pb-1 text-right font-semibold">MRP</th>
             <th className="pb-1 text-right font-semibold">Margin</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-white/10">
-          {uniqueRecords.slice(0, 10).map((r, i) => {
+        <tbody className="divide-y divide-border/20">
+          {uniqueRecords.slice(0, 15).map((r, i) => {
             const marginAmount = r.mrp - r.rate;
             const marginPercent = r.mrp > 0 ? ((marginAmount / r.mrp) * 100) : 0;
             
             return (
-              <tr key={i} className="hover:bg-white/5 transition-colors">
-                <td className="py-1.5 text-white pr-2 truncate max-w-[120px]" title={r.distributor_name}>
+              <tr key={i} className="hover:bg-bg2/40 transition-colors">
+                <td className="py-1.5 text-text pr-2 truncate max-w-[140px]" title={r.distributor_name}>
                   {r.distributor_name}
                 </td>
-                <td className="py-1.5 text-right text-white pl-2">₹{r.rate.toFixed(2)}</td>
-                <td className="py-1.5 text-right text-purple-400 pl-2 font-semibold">₹{r.mrp.toFixed(2)}</td>
-                <td className="py-1.5 text-right text-yellow-400 pl-2">{marginPercent.toFixed(1)}%</td>
+                <td className="py-1.5 text-right text-text pl-2">₹{r.rate.toFixed(2)}</td>
+                <td className="py-1.5 text-right text-muted pl-2 font-semibold">₹{r.mrp.toFixed(2)}</td>
+                <td className="py-1.5 text-right text-primary pl-2 font-medium">{marginPercent.toFixed(1)}%</td>
               </tr>
             );
           })}

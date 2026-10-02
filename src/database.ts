@@ -779,6 +779,7 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
           CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
           CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
+          CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
           CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
           CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer);
           CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
@@ -2031,6 +2032,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_customer_status ON sales_invoices (customer_id, payment_status, payment_medium);
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_date_status ON sales_invoices (date DESC, payment_status);
     CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases (date DESC, distributor_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
     CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines (name, manufacturer);
     CREATE TABLE IF NOT EXISTS distributor_dispatch_reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3139,6 +3141,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
     CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
     CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
     CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
     CREATE INDEX IF NOT EXISTS idx_automation_notifications_type_status ON automation_notifications(type, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);

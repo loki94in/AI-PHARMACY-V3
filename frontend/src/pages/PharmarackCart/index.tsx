@@ -497,6 +497,7 @@ export default function PharmarackCart() {
   const [sendingNotifId, setSendingNotifId] = useState<number | null>(null);
   const [pendingOrders, setPendingOrders] = useState<SpecialOrder[]>(() => cachedPendingOrders);
   const [pendingRefills, setPendingRefills] = useState<Refill[]>(() => cachedPendingRefills);
+  const [autoReconciledItems, setAutoReconciledItems] = useState<any[]>([]);
   const [showAddedItems] = useState<boolean>(false);
   const [reorderBannerCollapsed, setReorderBannerCollapsed] = useState<boolean>(false);
 
@@ -2764,6 +2765,9 @@ export default function PharmarackCart() {
     try {
       const data = await api.getPharmarackCart();
       if (data && data.success) {
+        if (data.reconciledItems && Array.isArray(data.reconciledItems) && data.reconciledItems.length > 0) {
+          setAutoReconciledItems(data.reconciledItems);
+        }
         const rawList = data.distributors || [];
         setDistributors(prev => {
           const list = applyCartDiff(prev, rawList, userCheckOverridesRef.current);
@@ -4397,6 +4401,77 @@ export default function PharmarackCart() {
 
                   {/* ── Scrollable Distributor Cards Panel ── */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-5 min-h-0 custom-scrollbar">
+
+                    {/* ── Auto-Reconciled Paid Orders Review Tray (Human-in-the-Loop) ── */}
+                    {autoReconciledItems.length > 0 && (
+                      <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 backdrop-blur-md p-4 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-sky-500/20 border border-sky-500/40 text-sky-400 flex items-center justify-center shrink-0">
+                              <CheckCircle2 size={16} />
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-text flex items-center gap-2">
+                                Auto-Reconciled Paid Orders
+                                <span className="px-2 py-0.2 rounded-full text-[10px] font-extrabold bg-sky-500/20 text-sky-400 border border-sky-500/30 font-mono">
+                                  {autoReconciledItems.length} Cleared
+                                </span>
+                              </h4>
+                              <p className="text-[11px] text-muted">
+                                The following items were automatically cleared from active distributor carts because payments are confirmed and orders are fulfilled/received.
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAutoReconciledItems([])}
+                            className="text-muted hover:text-text p-1 rounded-lg hover:bg-bg3/60 transition-all text-xs font-bold"
+                            title="Dismiss alert"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                          {autoReconciledItems.map((rec, idx) => (
+                            <div key={idx} className="p-2.5 rounded-xl bg-bg border border-border/80 text-xs flex items-center justify-between gap-2 shadow-xs">
+                              <div className="min-w-0">
+                                <div className="font-bold text-text truncate">{rec.productName}</div>
+                                <div className="text-[10px] text-muted truncate">
+                                  {rec.storeName} • Qty: {rec.qty}
+                                </div>
+                                <div className="text-[9px] text-emerald-500 font-semibold truncate">
+                                  Order #{rec.orderId} Paid
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await api.addPharmarackCart([{
+                                      productName: rec.productName,
+                                      productCode: rec.productCode,
+                                      storeId: rec.storeId,
+                                      storeName: rec.storeName,
+                                      qty: rec.qty || 1,
+                                      packaging: '1 strip'
+                                    }]);
+                                    toastEvent.trigger(`Restored ${rec.productName} to cart`, 'success');
+                                    setAutoReconciledItems(prev => prev.filter((_, i) => i !== idx));
+                                    void fetchCart();
+                                  } catch {
+                                    toastEvent.trigger('Failed to restore item', 'error');
+                                  }
+                                }}
+                                className="shrink-0 px-2 py-1 rounded-lg bg-bg2 hover:bg-bg3 border border-border text-[10px] font-bold text-text hover:text-primary transition-all cursor-pointer"
+                              >
+                                Keep in Cart
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* ── Missing Distributor Phone Alert: Concept 2 Inline Fast-Fill Resolution Hub ── */}
                     {unmappedDistributors.length > 0 && (() => {

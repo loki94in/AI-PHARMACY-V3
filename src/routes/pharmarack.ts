@@ -2371,6 +2371,92 @@ router.post('/cart/notify-delivery-boys-batch', async (req, res) => {
   }
 });
 
+/**
+ * Auto-clears items from active distributor cart if the corresponding order:
+ * 1. Has payment already confirmed ('PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED')
+ * 2. AND is already fulfilled, delivered, ready for pickup, cancelled, or legacy completed.
+ */
+export async function reconcilePaidAndFulfilledCartItems(distributors: any[]): Promise<any[]> {
+  const reconciledItems: any[] = [];
+  if (!Array.isArray(distributors) || distributors.length === 0) return reconciledItems;
+
+  try {
+    const db = await dbManager.getConnection();
+    const paidCompletedOrders = await db.all(`
+      SELECT id, product, medicine_name, qty, pharmarack_store_id, pharmarack_product_code,
+             pharmarack_product_id, pharmarack_distributor, status, payment_status
+      FROM special_orders
+      WHERE payment_status IN ('PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED')
+        AND (status IN ('Fulfilled', 'Delivered', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Cancelled')
+             OR created_at < datetime('now', '-30 days'))
+    `);
+
+    if (!paidCompletedOrders || paidCompletedOrders.length === 0) return reconciledItems;
+
+    const normalize = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    for (const dist of distributors) {
+      const distStoreId = Number(dist.storeId);
+      const remainingItems: any[] = [];
+
+      for (const item of (dist.items || [])) {
+        const itemCode = String(item.productCode || item.ProductCode || '').trim();
+        const itemProdId = Number(item.productId || item.ProductId || 0);
+        const itemNorm = normalize(item.productName || item.ProductName || '');
+
+        const match = paidCompletedOrders.find((ord: any) => {
+          const ordStoreId = ord.pharmarack_store_id ? Number(ord.pharmarack_store_id) : null;
+          // Store match: matches this distributor storeId, or no storeId bound
+          const isStoreMatch = !ordStoreId || ordStoreId === distStoreId || ord.status === 'Cancelled';
+          if (!isStoreMatch) return false;
+
+          if (itemCode && ord.pharmarack_product_code && String(ord.pharmarack_product_code).trim() === itemCode) {
+            return true;
+          }
+          if (itemProdId > 0 && ord.pharmarack_product_id && Number(ord.pharmarack_product_id) === itemProdId) {
+            return true;
+          }
+          const ordNorm = normalize(ord.pharmarack_product_name || ord.medicine_name || ord.product || '');
+          return ordNorm.length >= 4 && (ordNorm === itemNorm);
+        });
+
+        if (match) {
+          console.log(`[CartReconcile] Auto-clearing paid & completed item "${item.productName}" (Order #${match.id}, Store: ${dist.storeName})`);
+          reconciledItems.push({
+            orderId: match.id,
+            storeId: distStoreId,
+            storeName: dist.storeName,
+            productName: item.productName,
+            productCode: itemCode,
+            qty: item.qty,
+            reason: `Order #${match.id} is already paid (${match.payment_status}) and ${match.status}`
+          });
+
+          // Queue background deletion
+          pharmarackDeleteChain = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete({
+            storeId: distStoreId,
+            productId: itemProdId || null,
+            productCode: itemCode,
+            productName: item.productName,
+            company: item.company,
+            packaging: item.packaging,
+            ptr: item.ptr,
+            mrp: item.mrp,
+            storeName: dist.storeName
+          }));
+        } else {
+          remainingItems.push(item);
+        }
+      }
+      dist.items = remainingItems;
+    }
+  } catch (err) {
+    console.warn('[CartReconcile] Error reconciling paid cart items:', err);
+  }
+
+  return reconciledItems;
+}
+
 // Fetch current Pharmarack cart
 router.get('/cart', async (req, res) => {
   try {
@@ -2447,6 +2533,12 @@ router.get('/cart', async (req, res) => {
       console.error('[AutoNotif] Error running automatic cart transition checks:', dbErr);
     }
 
+    // Auto-clear items already paid for and completed/fulfilled from active distributor cart
+    const reconciledItems = await reconcilePaidAndFulfilledCartItems(distributors);
+    if (reconciledItems.length > 0) {
+      totalItems = distributors.reduce((sum: number, d: any) => sum + (Array.isArray(d.items) ? d.items.length : 0), 0);
+    }
+
     // Mark startup cart synchronization complete
     startupSyncCoordinator.markCartLoaded();
 
@@ -2461,7 +2553,7 @@ router.get('/cart', async (req, res) => {
       ts: Date.now()
     };
 
-    return res.json({ success: true, mode: 'Live', distributors, totalItems });
+    return res.json({ success: true, mode: 'Live', distributors, totalItems, reconciledItems });
   } catch (err: any) {
     console.error('Pharmarack cart fetch error:', err);
     res.status(500).json({ error: 'Internal server error' });

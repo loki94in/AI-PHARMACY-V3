@@ -529,7 +529,7 @@ export async function buildDailyOperationalBriefing(
 
   // Active special, website, and online orders — grouped by customer
   const activeOrders = await db.all(
-    `SELECT id, requester, phone, product, qty, status, customer_order_source
+    `SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source
      FROM special_orders
      WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
        AND DATE(date) >= DATE('now', 'localtime', '-7 days')
@@ -554,12 +554,12 @@ export async function buildDailyOperationalBriefing(
     const phone = String(o.phone || '').trim();
     const key = phone ? phone : custName.toLowerCase();
 
-    const rawSrc = (o.customer_order_source || '').toLowerCase();
-    let srcBadge = 'Special Order';
-    if (rawSrc === 'website') srcBadge = 'Website Order';
-    else if (rawSrc === 'whatsapp') srcBadge = 'WhatsApp Order';
-    else if (rawSrc === 'online' || rawSrc === 'portal') srcBadge = 'Online Order';
-    else if (rawSrc) srcBadge = `${o.customer_order_source} Order`;
+    const rawSrc = (o.customer_order_source || '').toLowerCase().trim();
+    let srcBadge = '';
+    if (rawSrc === 'website') srcBadge = 'Website';
+    else if (rawSrc === 'whatsapp') srcBadge = 'WhatsApp';
+    else if (rawSrc === 'online' || rawSrc === 'portal') srcBadge = 'Online';
+    else if (rawSrc && rawSrc !== 'in_store') srcBadge = o.customer_order_source;
 
     if (!customerOrderMap.has(key)) {
       customerOrderMap.set(key, {
@@ -572,8 +572,9 @@ export async function buildDailyOperationalBriefing(
     }
 
     const group = customerOrderMap.get(key)!;
+    const resolvedProduct = (o.product || o.medicine_name || '').trim() || 'Unspecified Item';
     group.items.push({
-      product: o.product,
+      product: resolvedProduct,
       qty: Number(o.qty || 1),
       status: o.status || 'Pending'
     });
@@ -583,7 +584,7 @@ export async function buildDailyOperationalBriefing(
 
   // Pending Shortage/Unavailable Requests (>23 Hours)
   const pendingShortages = await db.all(
-    `SELECT id, product, requester, phone, qty, pharmarack_distributor, date
+    `SELECT id, product, medicine_name, requester, phone, qty, pharmarack_distributor, date
      FROM special_orders
      WHERE status IN ('Pending', 'PENDING')
        AND datetime(date) <= datetime('now', '-23 hours')
@@ -615,8 +616,9 @@ export async function buildDailyOperationalBriefing(
   if (groupedCustomerOrders.length > 0) {
     ordersBlock = groupedCustomerOrders.map((cust, i) => {
       const itemCountLabel = cust.items.length === 1 ? '1 item' : `${cust.items.length} items`;
+      const sourceSuffix = cust.orderSource ? ` • ${cust.orderSource}` : '';
       const itemLines = cust.items.map(item => `   - ${item.product} × ${item.qty} (${item.status})`).join('\n');
-      return `${i + 1}. *${cust.requester}* (${itemCountLabel} • ${cust.orderSource}):\n${itemLines}`;
+      return `${i + 1}. *${cust.requester}* (${itemCountLabel}${sourceSuffix}):\n${itemLines}`;
     }).join('\n');
   }
 
@@ -659,7 +661,10 @@ export async function buildDailyOperationalBriefing(
     dailyTasks.push(`🚨 *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA — push to Pharmarack or contact distributor`);
   }
   if (pendingShortages.length > 0) {
-    const shortMeds = pendingShortages.map((s: any) => `${s.product} × ${s.qty || 1} (${s.pharmarack_distributor || 'Distributor'})`).slice(0, 4);
+    const shortMeds = pendingShortages.map((s: any) => {
+      const pName = (s.product || s.medicine_name || '').trim() || 'Unspecified Item';
+      return `${pName} × ${s.qty || 1} (${s.pharmarack_distributor || 'Distributor'})`;
+    }).slice(0, 4);
     const extra = pendingShortages.length > 4 ? ` +${pendingShortages.length - 4} more` : '';
     dailyTasks.push(`📦 *Reorder Shortage Items (>23h Pending)*: ${shortMeds.join(', ')}${extra}`);
   }
@@ -786,7 +791,8 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
       t1Orders = groupedCustomerOrders.map((cust, i) => {
         const itemCountLabel = cust.items.length === 1 ? '1 item' : `${cust.items.length} items`;
         const statuses = Array.from(new Set(cust.items.map(it => it.status))).join(', ');
-        return `${i + 1}. *${cust.requester}* — ${itemCountLabel} [${cust.orderSource}] (${statuses})`;
+        const srcTag = cust.orderSource ? ` [${cust.orderSource}]` : '';
+        return `${i + 1}. *${cust.requester}* — ${itemCountLabel}${srcTag} (${statuses})`;
       }).join('\n');
     }
 

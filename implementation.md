@@ -1,18 +1,20 @@
-# Active Implementation Plan: Dev Chatbot Double-Reply & i18n Resilience
+# Active Implementation Plan: Post-Payment Distributor Switching, Cart Reconciliation & Pricing Invoicing
 
-> **Master Plan**: [DEV_CHATBOT_DUPLICATE_AND_I18N_FIX_IMPLEMENTATION_PLAN.md](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/DEV_CHATBOT_DUPLICATE_AND_I18N_FIX_IMPLEMENTATION_PLAN.md)
+> **Master Plan**: [DISTRIBUTOR_CART_RECONCILIATION_AND_PRICING_IMPLEMENTATION_PLAN.md](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/DISTRIBUTOR_CART_RECONCILIATION_AND_PRICING_IMPLEMENTATION_PLAN.md)
 > **Goal**: 
-> 1. Stop background duplicate/stale production process so DEV environment (`npm run dev:server`) has full ownership of port 5175 and the WhatsApp connection.
-> 2. Prevent duplicate responses (double-reply bug) by adding message ID and content-hash sliding-window deduplication in `handleInbound` (`src/services/whatsappIntentService.ts`) and `whatsappClient.ts`.
-> 3. Provide resilient, self-contained i18n bundling in `src/i18n/getMessage.ts` with static JSON loading, multi-tier fallback to English (`en`), and graceful default text instead of raw `[Missing: ...]` tokens.
-> 4. Ensure human-in-the-loop controls allow pharmacists to override language and take over chat sessions at any time.
+> 1. Enable pharmacy users to switch distributors on orders even after payment is confirmed without resetting status or sending duplicate QR codes.
+> 2. Automatically transfer items between distributor carts (evict from old distributor, add to new distributor).
+> 3. Reconcile active cart on distributor page visit, auto-clearing already-paid and fulfilled/received items with human-in-the-loop review tray.
+> 4. Ensure customer billing strictly uses actual Batch MRP (handling batch price fluctuations) and deducts collected advance payments.
 > **Status**: Completed
 
 ---
 
 ## Tasks Checklist
 
-- [x] `Task 1`: Kill Stale Background Production Process (`PharmacyBackend.exe` PID 14992)
-- [x] `Task 2`: Resilient Static i18n & Graceful Fallback (`src/i18n/getMessage.ts`)
-- [x] `Task 3`: Inbound Message Deduplication (`src/services/whatsappIntentService.ts` & `src/whatsappClient.ts`)
-- [x] `Task 4`: Verification, Performance Guardrails, and Auto-Knowledge Graph Update
+- [x] `Task 1`: Backend - Safe Post-Payment Distributor Switching in `orders.ts`
+- [x] `Task 2`: Backend - Automated Cart Reconciliation on Distributor Page Visit in `pharmarack.ts`
+- [x] `Task 3`: Frontend - Website Orders Distributor Switching & POS Prefill Fix in `WebsiteOrders/index.tsx`
+- [x] `Task 4`: Frontend - Human-in-the-Loop Reconciled Cart Tray in `PharmarackCart/index.tsx`
+- [x] `Task 5`: Comprehensive Automated Tests, Performance Guardrails, and Knowledge Graph Update
+

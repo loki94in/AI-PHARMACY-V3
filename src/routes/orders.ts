@@ -967,10 +967,62 @@ router.post('/:id/confirm-distributor', async (req, res) => {
       [soCode, `%${id}`]
     ).catch(() => {});
 
+    const isPaymentConfirmed = ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase());
+    const oldDistName = String(order.pharmarack_distributor || order.distributor_name || '').trim();
+    const oldStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : null;
+    const oldProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : null;
+    const oldProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+    const distChanged = (oldDistName && oldDistName.toLowerCase() !== distName.toLowerCase()) ||
+                        (oldStoreId && stId && oldStoreId !== stId);
+
+    // If distributor changed, automatically evict item from old distributor's cart and add to new distributor's cart
+    if (distChanged || isPaymentConfirmed) {
+      try {
+        const { adjustSpecialOrderInLiveCart, addItemsToPharmarackCart } = await import('./pharmarack.js');
+        if (oldDistName && distChanged) {
+          await Promise.race([
+            adjustSpecialOrderInLiveCart({
+              product: oldProdName,
+              qty: order.qty || 1,
+              distributor: oldDistName,
+              productCode: oldProdCode,
+              storeId: oldStoreId,
+              exactOnly: true
+            }),
+            new Promise(r => setTimeout(r, 1500))
+          ]);
+        }
+        if (stId && distName) {
+          await addItemsToPharmarackCart([{
+            productName: prodName,
+            product: prodName,
+            productId: prodId,
+            productCode: prodCode || '',
+            storeId: stId,
+            storeName: distName,
+            qty: order.qty || 1,
+            rate: distRate,
+            mrp: distMrp,
+            packaging: '1 strip',
+            mapped: true
+          }]).catch(err => console.warn('[Orders] Error migrating item to new distributor cart:', err));
+        }
+      } catch (cartMigrateErr) {
+        console.warn('[Orders] Could not auto-migrate cart on distributor change:', cartMigrateErr);
+      }
+
+      await db.run(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'distributor_switched', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+        [id, `Distributor updated from "${oldDistName || 'None'}" to "${distName}". Live cart synced.`]
+      ).catch(() => {});
+    }
+
     let qrSent = false;
     let queueId: number | string | null = null;
 
-    if (sendPaymentQr) {
+    // Only dispatch QR and set AWAITING_PAYMENT if payment is NOT already confirmed
+    if (sendPaymentQr && !isPaymentConfirmed) {
       const cleanPhone = String(order.phone || '').replace(/\D/g, '');
       const custPhoneLast10 = cleanPhone.slice(-10);
 
@@ -1069,7 +1121,9 @@ router.post('/:id/confirm-distributor', async (req, res) => {
       queueId,
       message: qrSent
         ? `Distributor ${distName} confirmed and ₹50 payment QR dispatched to customer on WhatsApp!`
-        : `Distributor ${distName} assigned to order #${id}.`
+        : (isPaymentConfirmed
+            ? `Distributor ${distName} updated for paid order #${id} (Cart migrated to ${distName}).`
+            : `Distributor ${distName} assigned to order #${id}.`)
     });
   } catch (err: any) {
     console.error('[Orders] Confirm distributor error:', err);

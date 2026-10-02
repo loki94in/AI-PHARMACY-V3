@@ -28,6 +28,7 @@ import { applyPurchaseDelta } from '../services/medicineSalesMetricsService.js';
 import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { applyPurchaseStockChange, PurchaseEditError } from '../services/purchaseBillEditService.js';
+import { getIndianFinancialYear } from '../utils/financialYear.js';
 
 
 
@@ -904,6 +905,83 @@ router.get('/earliest-date', async (_req, res) => {
   }
 });
 
+// Check if an invoice number already exists for a distributor in the same Indian Financial Year
+router.get('/check-duplicate', async (req, res) => {
+  try {
+    const invoiceNo = String(req.query.invoice_no || '').trim();
+    const distributorId = req.query.distributor_id ? parseInt(String(req.query.distributor_id), 10) : null;
+    const distributorName = String(req.query.distributor || req.query.distributor_name || '').trim();
+    const dateStr = String(req.query.date || '').trim();
+    const excludeId = req.query.exclude_id ? parseInt(String(req.query.exclude_id), 10) : null;
+
+    if (!invoiceNo || (!distributorId && !distributorName)) {
+      return res.json({ isDuplicate: false });
+    }
+
+    const { startDate, endDate, fyLabel } = getIndianFinancialYear(dateStr);
+    const db = await dbManager.getConnection();
+
+    let distId = distributorId && !isNaN(distributorId) ? distributorId : null;
+    let distName = distributorName;
+
+    if (distId && !distName) {
+      const dbDist = await db.get('SELECT name FROM distributors WHERE id = ?', [distId]);
+      if (dbDist) distName = dbDist.name;
+    } else if (!distId && distName) {
+      const dbDist = await db.get('SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [distName]);
+      if (dbDist) distId = dbDist.id;
+    }
+
+    const query = `
+      SELECT p.id, p.invoice_no, p.app_invoice_no, p.date, p.total_amount, d.name as distributor_name,
+             (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) as item_count
+      FROM purchases p
+      LEFT JOIN distributors d ON p.distributor_id = d.id
+      WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(TRIM(d.name)) = LOWER(TRIM(?))))
+        AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+        AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) >= ?
+        AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) <= ?
+        ${excludeId ? 'AND p.id != ?' : ''}
+      ORDER BY p.id DESC LIMIT 1
+    `;
+
+    const params = [
+      distId || 0,
+      distName,
+      invoiceNo,
+      startDate,
+      endDate,
+      ...(excludeId ? [excludeId] : [])
+    ];
+
+    const existing = await db.get(query, params);
+
+    if (existing) {
+      return res.json({
+        isDuplicate: true,
+        fy: fyLabel,
+        existing: {
+          id: existing.id,
+          invoice_no: existing.invoice_no,
+          app_invoice_no: existing.app_invoice_no,
+          date: existing.date,
+          total_amount: existing.total_amount,
+          distributor_name: existing.distributor_name || distName,
+          item_count: existing.item_count || 0
+        }
+      });
+    }
+
+    return res.json({
+      isDuplicate: false,
+      fy: fyLabel
+    });
+  } catch (err) {
+    console.error('[Purchases] Duplicate check error:', err);
+    res.status(500).json({ error: 'Failed to verify invoice uniqueness' });
+  }
+});
+
 router.post('/manual', async (req, res) => {
   const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items, source_filename, source_file_headers, mapping_config, email_uid } = req.body;
   let db;
@@ -962,30 +1040,45 @@ router.post('/manual', async (req, res) => {
       }
     }
 
-    // Check for duplicate invoice BEFORE starting transaction (eliminates Risk 1: rollback-redirect).
-    // The SAME bill is the same distributor + invoice number + invoice date: re-saving it
-    // (double click, Mail "Proceed" again) updates it instead of storing a copy. Distributors
-    // reuse invoice numbers across years (66 such pairs in the migrated shop data), so a
-    // matching number on a DIFFERENT date is a different bill and is saved as a new one;
-    // it must never overwrite the old bill's date, lines and stock.
-    const invoiceDay = typeof date === 'string' ? date.trim().slice(0, 10) : '';
-    if (invoice_no && invoice_no.trim() && invoiceDay) {
+    // STRICT VALIDATION: Prevent duplicate bills for the same distributor within the same Indian Financial Year (1st April - 31st March).
+    // Under GST rules, a distributor can issue invoice numbers that repeat across financial years, but within the SAME financial year
+    // and SAME distributor, duplicate invoices are strictly prohibited.
+    const cleanInvoiceNo = typeof invoice_no === 'string' ? invoice_no.trim() : '';
+    const cleanDate = typeof date === 'string' ? date.trim() : '';
+
+    if (cleanInvoiceNo && (distId || distName)) {
+      const { startDate: fyStart, endDate: fyEnd, fyLabel } = getIndianFinancialYear(cleanDate);
       const existing = await db.get(
-        `SELECT p.id FROM purchases p
+        `SELECT p.id, p.invoice_no, p.app_invoice_no, p.date, p.total_amount, d.name as distributor_name,
+                (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) as item_count
+         FROM purchases p
          LEFT JOIN distributors d ON p.distributor_id = d.id
-         WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(d.name) = LOWER(?)))
-         AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
-         AND substr(p.date, 1, 10) = ?
+         WHERE (p.distributor_id = ? OR (d.name IS NOT NULL AND LOWER(TRIM(d.name)) = LOWER(TRIM(?))))
+           AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) >= ?
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) <= ?
          ORDER BY p.id DESC LIMIT 1`,
-        [distId || 0, distName, invoice_no.trim(), invoiceDay]
+        [distId || 0, distName, cleanInvoiceNo, fyStart, fyEnd]
       );
       if (existing) {
-        return handleUpdatePurchaseFull(req, res, existing.id);
+        return res.status(409).json({
+          error: `Duplicate bill: Invoice #${cleanInvoiceNo} from "${existing.distributor_name || distName}" is already saved in Financial Year ${fyLabel} (Saved on ${existing.date ? existing.date.slice(0, 10) : 'N/A'}, Amount: ₹${Number(existing.total_amount || 0).toFixed(2)}).`,
+          isDuplicate: true,
+          fy: fyLabel,
+          existing_bill: {
+            id: existing.id,
+            invoice_no: existing.invoice_no,
+            app_invoice_no: existing.app_invoice_no,
+            date: existing.date,
+            total_amount: existing.total_amount,
+            distributor_name: existing.distributor_name || distName,
+            item_count: existing.item_count || 0
+          }
+        });
       }
     }
 
     // STRICT VALIDATION: Invoice date is required. Never fall back to current date silently.
-    const cleanDate = typeof date === 'string' ? date.trim() : '';
     if (!cleanDate) {
       return res.status(400).json({ error: 'Invoice date is required. Please verify and enter the actual invoice date before saving.' });
     }
@@ -1492,16 +1585,25 @@ async function handleUpdatePurchaseFull(req: express.Request, res: express.Respo
     }
     const distRow = { id: distId, name: distName };
 
-    // Same bill = same distributor + invoice number + invoice date (see POST /manual): a
-    // distributor may reuse a number on another date, and that older bill stays editable.
+    // In edit mode: Ensure no OTHER bill from this distributor has this invoice number in the same FY
     if (distRow && invoice_no) {
+      const { startDate: fyStart, endDate: fyEnd, fyLabel } = getIndianFinancialYear(cleanDate);
       const existing = await db.get(
-        'SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND substr(date, 1, 10) = ? AND id != ?',
-        [distRow.id, invoice_no, cleanDate.slice(0, 10), id]
+        `SELECT id, invoice_no, date, total_amount FROM purchases 
+         WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) 
+           AND substr(COALESCE(date, business_date, ''), 1, 10) >= ?
+           AND substr(COALESCE(date, business_date, ''), 1, 10) <= ?
+           AND id != ? LIMIT 1`,
+        [distRow.id, String(invoice_no).trim(), fyStart, fyEnd, id]
       );
       if (existing) {
         await db.run('ROLLBACK');
-        return res.status(400).json({ error: 'Another purchase bill from this distributor already has this invoice number and date.' });
+        return res.status(409).json({
+          error: `Another purchase bill (#${existing.invoice_no}) from this distributor already exists in Financial Year ${fyLabel}.`,
+          isDuplicate: true,
+          fy: fyLabel,
+          existing_bill: existing
+        });
       }
     }
 
@@ -1972,27 +2074,34 @@ router.get('/medicine-batches', async (req, res) => {
 
     const placeholders = medicineIds.map(() => '?').join(',');
 
-    // 1. Fetch from purchase_items (includes distributor & date)
+    // 1. Fetch from purchase_items (guarantees EVERY distributor's latest purchases are included, even if 100+ days or years old)
     const purchaseRows = await db.all(`
-      SELECT 
-        pi.batch_no,
-        pi.expiry_date,
-        pi.cost_price as rate,
-        pi.mrp,
-        pi.cgst_per,
-        pi.sgst_per,
-        pi.quantity,
-        d.name as distributor_name,
-        p.date as purchase_date
-      FROM purchase_items pi
-      JOIN purchases p ON pi.purchase_id = p.id
-      LEFT JOIN distributors d ON p.distributor_id = d.id
-      WHERE pi.medicine_id IN (${placeholders}) AND pi.batch_no IS NOT NULL AND TRIM(pi.batch_no) != ''
-      ORDER BY p.date DESC, pi.id DESC
-      LIMIT 50
+      WITH ranked_purchases AS (
+        SELECT 
+          pi.batch_no,
+          pi.expiry_date,
+          pi.cost_price as rate,
+          pi.mrp,
+          pi.cgst_per,
+          pi.sgst_per,
+          pi.quantity,
+          d.name as distributor_name,
+          p.date as purchase_date,
+          ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY p.date DESC, pi.id DESC) as dist_rn,
+          ROW_NUMBER() OVER (ORDER BY p.date DESC, pi.id DESC) as overall_rn
+        FROM purchase_items pi
+        JOIN purchases p ON pi.purchase_id = p.id
+        LEFT JOIN distributors d ON p.distributor_id = d.id
+        WHERE pi.medicine_id IN (${placeholders}) AND pi.batch_no IS NOT NULL AND TRIM(pi.batch_no) != ''
+      )
+      SELECT batch_no, expiry_date, rate, mrp, cgst_per, sgst_per, quantity, distributor_name, purchase_date
+      FROM ranked_purchases
+      WHERE overall_rn <= 60 OR dist_rn <= 3
+      ORDER BY purchase_date DESC
     `, medicineIds);
 
     // 2. Fetch from inventory_master (current active/inactive stock batches)
+    // Resolve true distributor_name from purchase_items history rather than hardcoding NULL
     const inventoryRows = await db.all(`
       SELECT 
         im.batch_no,
@@ -2002,14 +2111,24 @@ router.get('/medicine-batches', async (req, res) => {
         m.cgst_per,
         m.sgst_per,
         im.quantity,
-        NULL as distributor_name,
-        NULL as purchase_date,
+        d.name as distributor_name,
+        p.date as purchase_date,
         im.id as inventory_id
       FROM inventory_master im
       JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN purchase_items pi ON pi.id = (
+        SELECT pi2.id 
+        FROM purchase_items pi2 
+        WHERE pi2.medicine_id = im.medicine_id 
+          AND UPPER(TRIM(pi2.batch_no)) = UPPER(TRIM(im.batch_no))
+        ORDER BY pi2.id DESC 
+        LIMIT 1
+      )
+      LEFT JOIN purchases p ON pi.purchase_id = p.id
+      LEFT JOIN distributors d ON p.distributor_id = d.id
       WHERE im.medicine_id IN (${placeholders}) AND im.batch_no IS NOT NULL AND TRIM(im.batch_no) != ''
       ORDER BY im.id DESC
-      LIMIT 50
+      LIMIT 100
     `, medicineIds);
 
     // 3. Deduplicate by batch_no (normalized uppercase/trimmed)
@@ -2045,8 +2164,8 @@ router.get('/medicine-batches', async (req, res) => {
           cgst_per: row.cgst_per !== undefined && row.cgst_per !== null ? Number(row.cgst_per) : null,
           sgst_per: row.sgst_per !== undefined && row.sgst_per !== null ? Number(row.sgst_per) : null,
           quantity: Number(row.quantity || 0),
-          distributor_name: null,
-          purchase_date: null
+          distributor_name: row.distributor_name || null,
+          purchase_date: row.purchase_date || null
         });
       } else {
         const existing = batchMap.get(bKey);
@@ -2061,6 +2180,12 @@ router.get('/medicine-batches', async (req, res) => {
         }
         if (!existing.mrp && row.mrp) {
           existing.mrp = Number(row.mrp);
+        }
+        if (!existing.distributor_name && row.distributor_name) {
+          existing.distributor_name = row.distributor_name;
+        }
+        if (!existing.purchase_date && row.purchase_date) {
+          existing.purchase_date = row.purchase_date;
         }
       }
     }
@@ -3757,17 +3882,25 @@ router.post('/staged/:id/approve', async (req, res) => {
       return res.status(400).json({ error: 'Failed to resolve distributor.' });
     }
 
-    // Same bill = same distributor + invoice number + invoice date (see POST /manual). With
-    // no date the number alone decides, so an undated bill can never be saved twice.
+    // Strict validation: Prevent duplicate bills for the same distributor within the same Indian Financial Year
     if (distId && finalInvoiceNo) {
-      const billDay = String(finalDate || '').slice(0, 10);
+      const { startDate: fyStart, endDate: fyEnd, fyLabel } = getIndianFinancialYear(finalDate);
       const existing = await db.get(
-        "SELECT id FROM purchases WHERE distributor_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?)) AND (? = '' OR substr(date, 1, 10) = ?)",
-        [distId, finalInvoiceNo, billDay, billDay]
+        `SELECT p.id, p.invoice_no, p.date, p.total_amount FROM purchases p
+         WHERE p.distributor_id = ? AND LOWER(TRIM(p.invoice_no)) = LOWER(TRIM(?))
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) >= ?
+           AND substr(COALESCE(p.date, p.business_date, ''), 1, 10) <= ?
+         LIMIT 1`,
+        [distId, String(finalInvoiceNo).trim(), fyStart, fyEnd]
       );
       if (existing) {
         await db.run('ROLLBACK');
-        return res.status(400).json({ error: 'This bill (same invoice number and date) is already saved for this distributor.' });
+        return res.status(409).json({
+          error: `This bill (#${finalInvoiceNo}) is already saved for this distributor in Financial Year ${fyLabel}.`,
+          isDuplicate: true,
+          fy: fyLabel,
+          existing_bill: existing
+        });
       }
     }
 
