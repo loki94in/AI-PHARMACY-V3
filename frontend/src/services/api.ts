@@ -1738,8 +1738,6 @@ export const api = {
   // Saved Pharmarack distributor products per medicine (PUT replaces the set; [] unlinks; no cart write)
   linkBillMedicines: (purchaseId: number) =>
     apiClient.post<{ success: boolean; rows: BillLinkRow[] }>('/refills/bill-links', { purchaseId }, { timeout: 60000 }).then(res => res.data),
-  linkBillMedicines: (purchaseId: number) =>
-    apiClient.post<{ success: boolean; rows: BillLinkRow[] }>('/refills/bill-links', { purchaseId }, { timeout: 60000 }).then(res => res.data),
   getMedicineLinks: (medicineId: number) =>
     apiClient.get<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`).then(res => res.data),
   saveMedicineLinks: (medicineId: number, links: RefillCartPick[]) =>
