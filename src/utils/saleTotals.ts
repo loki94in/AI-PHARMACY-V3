@@ -41,16 +41,23 @@ export const calculateSalesGstAndTotals = async (
     }
   }
 
-  for (const item of items) {
-    const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0, inventory_id } = item;
-    const q = Number(quantity);
-    const l = Number(loose_qty);
+  const lines = items.map(item => {
+    const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0 } = item;
     const pSize = Math.max(1, Number(pack_size || 1));
     const d = Number(discount_per || item.discountPer || 0);
-    const uPrice = Number(unit_price);
-    const dPrice = uPrice * (1 - d / 100);
-    const lineGross = (q * dPrice) + (l * (dPrice / pSize));
+    const dPrice = Number(unit_price) * (1 - d / 100);
+    const lineGross = (Number(quantity) * dPrice) + (Number(loose_qty) * (dPrice / pSize));
     subtotal += lineGross;
+    return { item, lineGross };
+  });
+
+  // The bill discount lowers the taxable value of every line pro rata (checked against 15,203
+  // migrated retailer bills: GST matches only when it is scaled this way).
+  const discountFactor = subtotal > 0 ? Math.max(0, subtotal - Number(discount)) / subtotal : 1;
+
+  for (const { item, lineGross: gross } of lines) {
+    const inventory_id = item.inventory_id;
+    const lineGross = gross * discountFactor;
 
     let cgstPer = Number(item.cgst_per !== undefined ? item.cgst_per : (item.cgst !== undefined ? item.cgst : NaN));
     let sgstPer = Number(item.sgst_per !== undefined ? item.sgst_per : (item.sgst !== undefined ? item.sgst : NaN));
@@ -63,8 +70,9 @@ export const calculateSalesGstAndTotals = async (
       }
     }
 
-    if (isNaN(cgstPer) || cgstPer === 0) cgstPer = 2.5;
-    if (isNaN(sgstPer) || sgstPer === 0) sgstPer = 2.5;
+    // No invented rate: unknown GST stays 0, and a real 0% (exempt) line stays 0%.
+    if (isNaN(cgstPer)) cgstPer = 0;
+    if (isNaN(sgstPer)) sgstPer = 0;
 
     const gstRate = cgstPer + sgstPer;
     const taxable = gstRate > 0 ? (lineGross / (1 + (gstRate / 100))) : lineGross;

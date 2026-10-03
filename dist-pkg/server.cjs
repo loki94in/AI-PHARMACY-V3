@@ -1606,10 +1606,10 @@ function deduplicateBlisterPocketLines(lines) {
   const seen = /* @__PURE__ */ new Set();
   const uniqueLines = [];
   for (const line of lines) {
-    const norm2 = line.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (!norm2) continue;
-    if (!seen.has(norm2)) {
-      seen.add(norm2);
+    const norm3 = line.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!norm3) continue;
+    if (!seen.has(norm3)) {
+      seen.add(norm3);
       uniqueLines.push(line);
     }
   }
@@ -2684,9 +2684,9 @@ function ngramSimilarity(s1, s2, n = 2) {
 }
 function enhancedSimilarity(s1, s2) {
   const norm1 = s1.toLowerCase().trim();
-  const norm2 = s2.toLowerCase().trim();
+  const norm22 = s2.toLowerCase().trim();
   const pStripped1 = stripPharmacopoeiaMarkers(norm1);
-  const pStripped2 = stripPharmacopoeiaMarkers(norm2);
+  const pStripped2 = stripPharmacopoeiaMarkers(norm22);
   const clean1 = pStripped1.replace(/[^a-z0-9]/g, "");
   const clean2 = pStripped2.replace(/[^a-z0-9]/g, "");
   if (clean1 === clean2) return 1;
@@ -2724,7 +2724,7 @@ function enhancedSimilarity(s1, s2) {
     }
   }
   const words1 = norm1.split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !FILLER_WORDS.has(w));
-  const words2 = norm2.split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !FILLER_WORDS.has(w));
+  const words2 = norm22.split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !FILLER_WORDS.has(w));
   if (words1.length > 0 && words2.length > 0) {
     const containedCount = words1.filter((w) => words2.some((w2) => w2.startsWith(w) || w.startsWith(w2))).length;
     if (containedCount === words1.length) {
@@ -17873,8 +17873,8 @@ async function loadApiSubstances({ force } = {}) {
         if (norm1 && norm1.length >= 3) substanceSet.add(norm1);
       }
       if (comp2) {
-        const norm2 = cleanSubstanceName(comp2);
-        if (norm2 && norm2.length >= 3) substanceSet.add(norm2);
+        const norm22 = cleanSubstanceName(comp2);
+        if (norm22 && norm22.length >= 3) substanceSet.add(norm22);
       }
     }).on("end", resolve).on("error", reject);
   });
@@ -19228,45 +19228,45 @@ async function getSuggestedMappingFromHeaders(headers, db2) {
     }
   ];
   const mappedHeaders = /* @__PURE__ */ new Set();
-  const isExcluded = (field, norm2) => {
+  const isExcluded = (field, norm3) => {
     if (field === "invoice_date") {
-      return /exp|expiry|due|lr|deliv/i.test(norm2);
+      return /exp|expiry|due|lr|deliv/i.test(norm3);
     }
     if (field === "invoice_no") {
-      return /date/i.test(norm2);
+      return /date/i.test(norm3);
     }
     if (field === "total_amount") {
-      return /tax|disc|discount|qty|free|rate|per|prcode|barcode/i.test(norm2);
+      return /tax|disc|discount|qty|free|rate|per|prcode|barcode/i.test(norm3);
     }
     if (field === "quantity") {
-      return /free|sch|adj|amt/i.test(norm2);
+      return /free|sch|adj|amt/i.test(norm3);
     }
     if (field === "rate") {
-      return /mrp|free|sch|cgst|sgst|disc|discount|tax|qty|quantity|amount|total|value|hsn|batch|exp/i.test(norm2);
+      return /mrp|free|sch|cgst|sgst|disc|discount|tax|qty|quantity|amount|total|value|hsn|batch|exp/i.test(norm3);
     }
     if (field === "cgst" || field === "sgst") {
-      return /amt|val|tax/i.test(norm2);
+      return /amt|val|tax/i.test(norm3);
     }
     if (field === "expiry_date") {
-      return /export|expense/i.test(norm2);
+      return /export|expense/i.test(norm3);
     }
     if (field === "cd_per") {
-      return /amt|val|rs|net/i.test(norm2);
+      return /amt|val|rs|net/i.test(norm3);
     }
     if (field === "cn_amount") {
-      return /rate|mrp|tax|qty|free|disc|discount/i.test(norm2);
+      return /rate|mrp|tax|qty|free|disc|discount/i.test(norm3);
     }
     if (field === "cn_number") {
-      return /date|amt|amount|val|value/i.test(norm2);
+      return /date|amt|amount|val|value/i.test(norm3);
     }
     return false;
   };
   for (const rule of rules) {
     for (const h of headers) {
       if (mappedHeaders.has(h)) continue;
-      const norm2 = normalize(h);
-      if (isExcluded(rule.field, norm2)) continue;
-      if (rule.priority1.test(norm2)) {
+      const norm3 = normalize(h);
+      if (isExcluded(rule.field, norm3)) continue;
+      if (rule.priority1.test(norm3)) {
         suggested[h] = rule.field;
         mappedHeaders.add(h);
         break;
@@ -19279,9 +19279,9 @@ async function getSuggestedMappingFromHeaders(headers, db2) {
     if (rule.priority2) {
       for (const h of headers) {
         if (mappedHeaders.has(h)) continue;
-        const norm2 = normalize(h);
-        if (isExcluded(rule.field, norm2)) continue;
-        if (rule.priority2.test(norm2)) {
+        const norm3 = normalize(h);
+        if (isExcluded(rule.field, norm3)) continue;
+        if (rule.priority2.test(norm3)) {
           suggested[h] = rule.field;
           mappedHeaders.add(h);
           break;
@@ -21294,9 +21294,9 @@ AI Pharmacy Team`
                 }
                 const keys = Object.keys(r);
                 for (const k of keys) {
-                  const norm2 = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+                  const norm3 = k.toLowerCase().replace(/[^a-z0-9]/g, "");
                   for (const syn of synonyms) {
-                    if (syn.test(norm2)) {
+                    if (syn.test(norm3)) {
                       const val = r[k];
                       if (val !== void 0 && val !== null && String(val).trim() !== "") {
                         return val;
@@ -28059,6 +28059,17 @@ function getCachedCartLines() {
   }
   return lines;
 }
+function extractStoreOrderLimits(rawItems) {
+  const pick = (key) => {
+    let found = null;
+    for (const it of rawItems || []) {
+      const n = Number(it?.[key]);
+      if (it?.[key] != null && Number.isFinite(n)) found = found === null ? n : Math.max(found, n);
+    }
+    return found;
+  };
+  return { minAmountLimit: pick("MinAmountLimit"), minItemLimit: pick("MinItemLimit"), maxItemLimit: pick("MaxItemLimit"), maxAmountLimit: pick("MaxAmountLimit") };
+}
 async function loadLiveCartCore() {
   const settings = await getPharmarackSettings();
   const token = settings["pharmarack_session_token"] || "";
@@ -28140,6 +28151,7 @@ async function loadLiveCartCore() {
             name: d.SalesmanName || d.name || d.Salesman || "",
             code: d.SalesmanCode || d.code || ""
           })),
+          ...extractStoreOrderLimits(rawItems),
           items: rawItems.map((item) => ({
             productId: item.ProductId || item.productId || item.Id || item.id,
             storeId: item.StoreId || item.storeId || store.StoreId || store.storeId,
@@ -28174,6 +28186,7 @@ async function loadLiveCartCore() {
               name: d.SalesmanName || d.name || "",
               code: d.SalesmanCode || d.code || ""
             })),
+            _rawItems: [],
             items: []
           });
         }
@@ -28182,6 +28195,7 @@ async function loadLiveCartCore() {
         const itemPtr = item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0;
         const itemAmt = item.ProductWiseAmount || item.amount || item.LineTotal || itemPtr * itemQty;
         storeObj.lineTotal += itemAmt;
+        storeObj._rawItems.push(item);
         storeObj.items.push({
           productId: item.ProductId || item.productId || item.Id || item.id,
           storeId,
@@ -28200,7 +28214,7 @@ async function loadLiveCartCore() {
           createdDate: item.CreatedDate || item.createdDate || ""
         });
       }
-      distributors = Array.from(storeMap.values());
+      distributors = Array.from(storeMap.values()).map(({ _rawItems, ...d }) => ({ ...d, ...extractStoreOrderLimits(_rawItems) }));
     }
   }
   distributors.forEach((dist) => {
@@ -28590,16 +28604,16 @@ async function addItemsToPharmarackCart(items) {
       try {
         let cleanKeyword = (item.productName || item.product || item.name || "").trim();
         cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
-        const norm2 = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
-        const wantName = norm2(cleanKeyword);
+        const norm3 = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
+        const wantName = norm3(cleanKeyword);
         const wantStore = String(item.storeName || "").toLowerCase().trim();
         if (wantName) {
           let best = null;
           let bestIsStoreMatch = false;
           for (const [_, cacheEntry] of searchCache.entries()) {
             for (const p of cacheEntry.data || []) {
-              const nShort = norm2(p.shortName || p.name);
-              const nFull = norm2(p.fullName || p.name);
+              const nShort = norm3(p.shortName || p.name);
+              const nFull = norm3(p.fullName || p.name);
               if (nShort !== wantName && nFull !== wantName) continue;
               const storeMatch = !wantStore || String(p.distributor || "").toLowerCase().includes(wantStore);
               if (!best || storeMatch && !bestIsStoreMatch) {
@@ -30913,8 +30927,8 @@ var init_prescriptionOrchestratorService = __esm({
         if (candidateLines.length === 0) {
           const numberedItems = parseDoctorRxNumberedItems(text);
           for (const item of numberedItems) {
-            const norm2 = this.normalizeHandwritingGlyphs(item.text);
-            candidateLines.push({ raw: item.text, normalized: norm2, qty: item.qty });
+            const norm3 = this.normalizeHandwritingGlyphs(item.text);
+            candidateLines.push({ raw: item.text, normalized: norm3, qty: item.qty });
           }
         }
         return { doctorName, clinicName, patientName, patientAge, candidateLines };
@@ -31501,13 +31515,13 @@ var init_prescriptionScannerService = __esm({
         const db2 = await dbManager.getConnection();
         const items = [];
         for (const cand of candidateMedLines) {
-          const norm2 = cand.normalized;
+          const norm3 = cand.normalized;
           let form = "TABLET";
-          if (/\b(cap|capsule)\b/i.test(norm2)) form = "CAPSULE";
-          else if (/\b(syp|syrup)\b/i.test(norm2)) form = "SYRUP";
-          else if (/\b(inj|injection)\b/i.test(norm2)) form = "INJECTION";
-          else if (/\b(drops?)\b/i.test(norm2)) form = "DROPS";
-          const strengthMatches = Array.from(norm2.matchAll(/(\d+(?:\.\d+)?\s*(?:mg|gm|g|ml|k|iu)?)/gi)).map((m) => m[1]);
+          if (/\b(cap|capsule)\b/i.test(norm3)) form = "CAPSULE";
+          else if (/\b(syp|syrup)\b/i.test(norm3)) form = "SYRUP";
+          else if (/\b(inj|injection)\b/i.test(norm3)) form = "INJECTION";
+          else if (/\b(drops?)\b/i.test(norm3)) form = "DROPS";
+          const strengthMatches = Array.from(norm3.matchAll(/(\d+(?:\.\d+)?\s*(?:mg|gm|g|ml|k|iu)?)/gi)).map((m) => m[1]);
           let targetStrength = "";
           for (const sm of strengthMatches) {
             if (/(?:mg|gm|k|iu)/i.test(sm)) targetStrength = sm;
@@ -31515,7 +31529,7 @@ var init_prescriptionScannerService = __esm({
           if (!targetStrength && strengthMatches.length > 0) {
             targetStrength = strengthMatches[strengthMatches.length - 1];
           }
-          const deGlued = norm2.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2");
+          const deGlued = norm3.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2");
           const cleanedText = deGlued.replace(/\b(th\.?|tb\.?|tab\.?|tablet|tablets|cap\.?|capsule|capsules|sus\.?|susp\.?|suspension|syp\.?|syr\.?|syrup|inj\.?|injection|inf\.?|drop|drops?|drp|drps|vati|bhasma|churna|kwath|taila|asav|arishta|ras|guggulu|oint\.?|ointment|gel|cream|lotion)\b/gi, " ").replace(/\b(1-0-1|1-1-1|0-1-0|1-0-0|0-0-1|od|bd|tds|qid|hs|sos|stat|po|prn|ac|pc|daily)\b/gi, " ").replace(/\(\d+\)|\bx\s*\d+\b/g, " ").replace(/[^a-zA-Z0-9]/g, " ").trim();
           const tokens = cleanedText.split(/\s+/).filter((t) => t.length >= 2 && !/^(mg|gm|ml|iu|tab|cap|sus|syp)$/i.test(t));
           const brandTokens = tokens.filter((t) => !/^\d+k?$/i.test(t));
@@ -39833,11 +39847,11 @@ async function searchAndBroadcast(opts) {
         const seenNorm = /* @__PURE__ */ new Set();
         const deduplicated = [];
         for (const m of rawMatches) {
-          const norm2 = String(m).toUpperCase().replace(/\s+/g, " ").trim();
-          const key = norm2.replace(/[^A-Z0-9]/g, "");
+          const norm3 = String(m).toUpperCase().replace(/\s+/g, " ").trim();
+          const key = norm3.replace(/[^A-Z0-9]/g, "");
           if (!seenNorm.has(key) && key.length > 2) {
             seenNorm.add(key);
-            deduplicated.push(norm2);
+            deduplicated.push(norm3);
             if (deduplicated.length >= 45) break;
           }
         }
@@ -41455,6 +41469,75 @@ async function isChatIgnored(db2, chatId) {
   }
   return isGroupOrBroadcast;
 }
+async function ingestUnreadAndReply(chats, isIgnored2) {
+  let ingested = 0;
+  try {
+    const db2 = await dbManager.getConnection();
+    const nowSec = Math.floor(Date.now() / 1e3);
+    for (const chat of chats) {
+      const chatId = chat.id._serialized;
+      if (chat.isGroup || await isIgnored2(chatId)) continue;
+      if (!chat.unreadCount || chat.unreadCount <= 0) continue;
+      if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
+      const msgs = await chat.fetchMessages({ limit: Math.min(chat.unreadCount, 20) }).catch(() => []);
+      for (const m of msgs) {
+        if (m.fromMe || m.timestamp && nowSec - m.timestamp > 24 * 3600) continue;
+        const mid = m.id?._serialized || m.id?.id;
+        if (!mid) continue;
+        const r = await db2.run(
+          `INSERT INTO whatsapp_messages (id, chat_id, body, from_me, timestamp, type, has_media)
+           VALUES (?, ?, ?, 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+          [mid, chatId, m.body || "", m.timestamp || nowSec, m.type || "text", m.hasMedia ? 1 : 0]
+        );
+        if (r?.changes) ingested++;
+      }
+    }
+    if (ingested > 0) {
+      const { waSmartReplyScheduler: waSmartReplyScheduler2 } = await Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports));
+      const res = await waSmartReplyScheduler2.processOfflineBatch(true);
+      console.log(`[WhatsApp Catch-up] ${ingested} message(s) pulled, ${res.processed} chat(s) scheduled, ${res.skipped_read} read, ${res.skipped_replied} replied.`);
+    }
+  } catch (err) {
+    console.warn("[WhatsApp Catch-up] failed:", err);
+  }
+  return ingested;
+}
+function armInboundWatch() {
+  if (inboundWatchTimer) clearTimeout(inboundWatchTimer);
+  inboundWatchTimer = setTimeout(() => {
+    runInboundWatch().catch(() => {
+    });
+  }, INBOUND_WATCH_MS);
+}
+async function runInboundWatch() {
+  inboundWatchTimer = null;
+  const client = clientInstance;
+  if (!isReady || !client) return;
+  try {
+    const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
+    const idle = activityTracker2.isIdle();
+    if (!idle || ++inboundWatchTick % 3 === 0) {
+      if (!isSyncing && !initializing) {
+        const state = await client.getState?.().catch(() => null);
+        if (state && state !== "CONNECTED" && client.pupPage && !client.pupPage.isClosed()) {
+          console.warn(`[WhatsApp Watch] State ${state} \u2014 reloading WhatsApp page.`);
+          await client.pupPage.reload({ waitUntil: "networkidle0", timeout: 3e4 }).catch(() => {
+          });
+        } else if (state === "CONNECTED") {
+          const chats = await client.getChats().catch(() => []);
+          const unread = chats.filter((c) => c.unreadCount > 0);
+          if (unread.length) {
+            const db2 = await dbManager.getConnection();
+            await ingestUnreadAndReply(unread, (id) => isChatIgnored(db2, id));
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[WhatsApp Watch] check note:", err?.message || err);
+  }
+  if (isReady && clientInstance) armInboundWatch();
+}
 async function syncWhatsappData(client) {
   if (isSyncing) {
     console.log("[WhatsApp] Synchronization already in progress, skipping duplicate request.");
@@ -41577,49 +41660,7 @@ async function syncWhatsappData(client) {
         ]
       );
     }
-    try {
-      const ownerRow = await db2.get("SELECT value FROM app_settings WHERE key = 'owner_whatsapp_number'");
-      const ownerPhone = (ownerRow?.value || "").replace(/\D/g, "");
-      const { getStoreMedicalName: getStoreMedicalName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-      const storeName = await getStoreMedicalName2(db2);
-      for (const chat of chats) {
-        const chatId = chat.id._serialized;
-        if (chat.isGroup || await isIgnoredCached(chatId)) continue;
-        if (!chat.unreadCount || chat.unreadCount <= 0) continue;
-        if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
-        let cleanNumber = chatId.split("@")[0].replace(/\D/g, "");
-        if (chatId.endsWith("@lid")) {
-          const mapping = await client.getContactLidAndPhone([chatId]).catch(() => null);
-          if (mapping?.[0]?.pn) cleanNumber = mapping[0].pn.replace(/\D/g, "");
-        }
-        if (!cleanNumber || cleanNumber.length < 10) continue;
-        if (ownerPhone && cleanNumber.endsWith(ownerPhone.slice(-10))) continue;
-        const recentGreeting = await db2.get(
-          `SELECT id FROM whatsapp_sent_register 
-           WHERE (phone = ? OR phone_last10 = ?) 
-             AND type = 'offline_reconnect_greeting' 
-             AND sent_at >= ? LIMIT 1`,
-          [cleanNumber, cleanNumber.slice(-10), Date.now() - 12 * 60 * 60 * 1e3]
-        );
-        if (!recentGreeting) {
-          const greetingMsg = `\u2600\uFE0F *Good Morning from ${storeName}!*
-
-We are now open. We noticed your message while our systems were offline.
-
-How can we help you with your medicines or healthcare needs today?`;
-          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-          await whatsappQueueWorker2.enqueue(
-            cleanNumber,
-            greetingMsg,
-            "offline_reconnect_greeting",
-            chat.name || "Customer"
-          );
-          console.log(`[WhatsApp Sync] Enqueued offline reopening greeting for ${cleanNumber} (${chat.name || "Customer"}).`);
-        }
-      }
-    } catch (greetErr) {
-      console.warn("[WhatsApp Sync] Failed to process offline reconnect greetings:", greetErr);
-    }
+    await ingestUnreadAndReply(chats, isIgnoredCached);
     console.log("[WhatsApp] Background synchronization completed successfully.");
     eventService.broadcast("wa_chats_updated", { success: true });
   } catch (err) {
@@ -41995,6 +42036,7 @@ function launchClientInstance(forceQr) {
       setLifecycleProgress("ready", 100, "WhatsApp Ready");
       resolve(client);
       markWhatsAppActivity();
+      armInboundWatch();
       try {
         eventService.broadcast("wa_status_changed", { status: "ready", service: "whatsapp" });
       } catch (_) {
@@ -43508,7 +43550,7 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_fs23, import_path23, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
+var import_fs23, import_path23, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
@@ -43562,6 +43604,9 @@ var init_whatsappClient = __esm({
     WA_SLEEP_EVALUATOR_MS = 6e4;
     currentQr = null;
     isReady = false;
+    inboundWatchTimer = null;
+    inboundWatchTick = 0;
+    INBOUND_WATCH_MS = 5 * 6e4;
     recentSendsCache = /* @__PURE__ */ new Map();
     waRegistrationCache = /* @__PURE__ */ new Map();
   }
@@ -44314,22 +44359,6 @@ var init_whatsappQueueWorker = __esm({
         if (this.isLoopRunning) return;
         this.isLoopRunning = true;
         await this.cleanupOldSentItems();
-        if (this.detectedOutageInterval) {
-          const outageInterval = this.detectedOutageInterval;
-          setTimeout(async () => {
-            try {
-              const { waSmartReplyScheduler: waSmartReplyScheduler2 } = await Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports));
-              const dryRun = await waSmartReplyScheduler2.processOfflineBatch(false, outageInterval);
-              console.log(`[WhatsAppQueueWorker] Offline batch: ${dryRun.processed} to reply, ${dryRun.skipped_read} already read, ${dryRun.skipped_replied} already replied.`);
-              if (dryRun.processed > 0) {
-                await waSmartReplyScheduler2.processOfflineBatch(true, outageInterval);
-                console.log(`[WhatsAppQueueWorker] Offline batch: scheduled ${dryRun.processed} reply timer(s).`);
-              }
-            } catch (err) {
-              console.warn("[WhatsAppQueueWorker] Offline batch processing error:", err?.message || err);
-            }
-          }, 5e3);
-        }
         const IDLE_TICK_MS = 15 * 60 * 1e3;
         const scheduleNextRun = async () => {
           let delay = this.lastWasOffline ? 3e4 : 1e4;
@@ -53046,36 +53075,36 @@ async function getSuggestedMapping(headers, db2) {
     console.warn("Smart learning mapping load failed:", err);
   }
   for (const h of headers) {
-    const norm2 = h.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (/name|brand|product|item|inn|title|description/i.test(norm2)) {
+    const norm3 = h.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (/name|brand|product|item|inn|title|description/i.test(norm3)) {
       suggested[h] = "name";
-    } else if (/api|composition|generic|salt|formula|active|molecule/i.test(norm2)) {
+    } else if (/api|composition|generic|salt|formula|active|molecule/i.test(norm3)) {
       suggested[h] = "api_reference";
-    } else if (/strength|dosage|potency|mg|ml/i.test(norm2)) {
+    } else if (/strength|dosage|potency|mg|ml/i.test(norm3)) {
       suggested[h] = "strength";
-    } else if (/pack|dosageform|packaging|type|unit/i.test(norm2)) {
+    } else if (/pack|dosageform|packaging|type|unit/i.test(norm3)) {
       suggested[h] = "packaging";
-    } else if (/mfg|manufactur|applicant|vendor|supplier|company|maker/i.test(norm2)) {
+    } else if (/mfg|manufactur|applicant|vendor|supplier|company|maker/i.test(norm3)) {
       suggested[h] = "manufacturer";
-    } else if (/mkt|market/i.test(norm2)) {
+    } else if (/mkt|market/i.test(norm3)) {
       suggested[h] = "marketed_by";
-    } else if (/hsn/i.test(norm2)) {
+    } else if (/hsn/i.test(norm3)) {
       suggested[h] = "hsn_code";
-    } else if (/schedule/i.test(norm2)) {
+    } else if (/schedule/i.test(norm3)) {
       suggested[h] = "schedule_type";
-    } else if (/mrp|price|selling|rate/i.test(norm2)) {
+    } else if (/mrp|price|selling|rate/i.test(norm3)) {
       suggested[h] = "mrp";
-    } else if (/cgst/i.test(norm2)) {
+    } else if (/cgst/i.test(norm3)) {
       suggested[h] = "cgst";
-    } else if (/sgst|gst/i.test(norm2)) {
+    } else if (/sgst|gst/i.test(norm3)) {
       suggested[h] = "sgst";
-    } else if (/rack|shelf|location/i.test(norm2)) {
+    } else if (/rack|shelf|location/i.test(norm3)) {
       suggested[h] = "rack";
-    } else if (/qty|quantity|stock|count|avail/i.test(norm2)) {
+    } else if (/qty|quantity|stock|count|avail/i.test(norm3)) {
       suggested[h] = "quantity";
-    } else if (/batch|lot/i.test(norm2)) {
+    } else if (/batch|lot/i.test(norm3)) {
       suggested[h] = "batch_no";
-    } else if (/exp/i.test(norm2)) {
+    } else if (/exp/i.test(norm3)) {
       suggested[h] = "expiry_date";
     } else {
       suggested[h] = "";
@@ -54329,7 +54358,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.45";
+    APP_VERSION = "0.1.46";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -59120,26 +59149,26 @@ async function findOrCreateDistributor(db2, name) {
     return null;
   }
   const trimmed = rawTrimmed;
-  const norm2 = normalizeDistributorName(trimmed);
-  if (norm2 && normalizedCache.has(norm2)) {
-    return { id: normalizedCache.get(norm2) };
+  const norm3 = normalizeDistributorName(trimmed);
+  if (norm3 && normalizedCache.has(norm3)) {
+    return { id: normalizedCache.get(norm3) };
   }
   const exact = await db2.get("SELECT id FROM distributors WHERE LOWER(name) = LOWER(?)", [trimmed]);
   if (exact?.id) {
-    if (norm2) normalizedCache.set(norm2, exact.id);
+    if (norm3) normalizedCache.set(norm3, exact.id);
     return { id: exact.id };
   }
-  if (norm2) {
+  if (norm3) {
     const rows = await db2.all("SELECT id, name FROM distributors");
-    const matched = rows.find((r) => normalizeDistributorName(r.name) === norm2);
+    const matched = rows.find((r) => normalizeDistributorName(r.name) === norm3);
     if (matched) {
-      normalizedCache.set(norm2, matched.id);
+      normalizedCache.set(norm3, matched.id);
       return { id: matched.id };
     }
   }
   const result = await db2.run("INSERT INTO distributors (name) VALUES (?)", [trimmed]);
   const id = result.lastID;
-  if (norm2) normalizedCache.set(norm2, id);
+  if (norm3) normalizedCache.set(norm3, id);
   return { id };
 }
 var normalizedCache;
@@ -59514,8 +59543,8 @@ function normalizeToken2(token) {
   return token.replace(/^(\d+)(mg|mcg|ml|gm|g|iu)$/, "$1");
 }
 function extractTokens(name) {
-  const norm2 = normalizeString(name);
-  const words = norm2.split(" ").filter((w) => w.length > 0);
+  const norm3 = normalizeString(name);
+  const words = norm3.split(" ").filter((w) => w.length > 0);
   const coreTokens = [];
   const strengths = [];
   for (const rawWord of words) {
@@ -72459,6 +72488,140 @@ var init_refillCartService = __esm({
   }
 });
 
+// src/services/billDistributorLinkService.ts
+var billDistributorLinkService_exports = {};
+__export(billDistributorLinkService_exports, {
+  linkBillMedicines: () => linkBillMedicines
+});
+async function appendMedicineLink(medicineId, p) {
+  const db2 = await dbManager.getConnection();
+  const next = await db2.get("SELECT COALESCE(MAX(pick_order), -1) + 1 AS n FROM medicine_distributor_links WHERE medicine_id = ?", [medicineId]);
+  await db2.run(
+    `INSERT OR IGNORE INTO medicine_distributor_links
+       (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [
+      medicineId,
+      Number(p.storeId),
+      String(p.storeName).trim(),
+      String(p.productCode).trim(),
+      p.productId != null ? String(p.productId) : null,
+      p.productName || null,
+      p.packaging || null,
+      p.company || null,
+      p.mapped === false ? 0 : 1,
+      next?.n ?? 0
+    ]
+  );
+}
+async function linkBillMedicines(purchaseId) {
+  const db2 = await dbManager.getConnection();
+  const bill = await db2.get(
+    `SELECT p.id, p.distributor_id, d.name AS distributor_name
+     FROM purchases p LEFT JOIN distributors d ON d.id = p.distributor_id WHERE p.id = ?`,
+    [purchaseId]
+  );
+  if (!bill) throw Object.assign(new Error("Purchase bill not found"), { httpStatus: 404 });
+  const meds = await db2.all(
+    `SELECT DISTINCT m.id, m.name FROM purchase_items pi
+     JOIN medicines m ON m.id = pi.medicine_id WHERE pi.purchase_id = ? ORDER BY m.name`,
+    [purchaseId]
+  );
+  const storeNames = [String(bill.distributor_name || "")];
+  if (bill.distributor_id) {
+    const maps = await db2.all("SELECT store_name FROM pharmarack_distributor_mappings WHERE distributor_id = ?", [bill.distributor_id]);
+    for (const m of maps) storeNames.push(String(m.store_name || ""));
+  }
+  const isBillStore = (name) => storeNames.some((s) => sameStore(s, name));
+  const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+  const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "" && i.mapped !== false;
+  const rows = [];
+  let searches = 0;
+  let searchBlocked = null;
+  for (const med of meds) {
+    const medicineId = Number(med.id);
+    const medicineName = String(med.name || "");
+    let links = await getMedicineLinks(medicineId);
+    const row = (status, message, candidates = []) => ({ medicineId, medicineName, status, message, links, candidates });
+    if (links.some((l) => isBillStore(l.storeName))) {
+      rows.push(row("linked", "Already linked to this distributor."));
+      continue;
+    }
+    if (searchBlocked) {
+      rows.push(row("failed", searchBlocked));
+      continue;
+    }
+    if (searches >= MAX_SEARCHES_PER_BILL) {
+      rows.push(row("failed", "Too many medicines on this bill to search at once. Use Link distributor."));
+      continue;
+    }
+    searches++;
+    const outcome = await pr.performPharmarackSearch(medicineName, null, false);
+    if (outcome.status === "need_login") {
+      searchBlocked = "Pharmarack is not logged in. Log in, then use Link distributor.";
+      rows.push(row("failed", searchBlocked));
+      continue;
+    }
+    if (outcome.status !== "ok") {
+      searchBlocked = "Pharmarack search did not answer. Use Link distributor to retry.";
+      rows.push(row("failed", searchBlocked));
+      continue;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const scored = outcome.items.filter(isLive).map((i) => {
+      const c = {
+        storeId: Number(i.storeId),
+        storeName: String(i.distributor || ""),
+        productCode: String(i.productCode),
+        productId: i.productId ?? null,
+        productName: String(i.name || ""),
+        packaging: String(i.packaging || ""),
+        company: String(i.company || ""),
+        mapped: true,
+        rate: i.rate != null ? Number(i.rate) : null,
+        mrp: i.mrp != null ? Number(i.mrp) : null,
+        scheme: String(i.scheme || ""),
+        stock: String(i.stock ?? ""),
+        inStock: pr.isItemInStock(i.stock),
+        inCart: false,
+        linked: false
+      };
+      return { c, score: scoreOrderNameMatch(medicineName, c.productName).score };
+    }).filter((x) => {
+      const key = `${x.c.storeId}|${x.c.productCode}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const own = scored.filter((x) => isBillStore(x.c.storeName));
+    const exactOwn = own.filter((x) => x.score >= ARRIVAL_MATCH_THRESHOLD);
+    if (exactOwn.length === 1) {
+      await appendMedicineLink(medicineId, exactOwn[0].c);
+      links = await getMedicineLinks(medicineId);
+      rows.push(row("auto_linked", `Linked to ${exactOwn[0].c.storeName}: ${exactOwn[0].c.productName}`));
+      continue;
+    }
+    const pool = (own.length > 0 ? own : scored).sort((a, b) => b.score - a.score).slice(0, 6).map((x) => x.c);
+    rows.push(pool.length > 0 ? row("review", own.length > 0 ? "Pick the right product from this distributor." : "This distributor has no match \u2014 pick another or search.", pool) : row("not_found", "No mapped Pharmarack product found. Use Link distributor to search another spelling."));
+  }
+  return rows;
+}
+var norm2, MAX_SEARCHES_PER_BILL, sameStore;
+var init_billDistributorLinkService = __esm({
+  "src/services/billDistributorLinkService.ts"() {
+    "use strict";
+    init_connection();
+    init_orderNameMatcher();
+    init_refillCartService();
+    norm2 = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    MAX_SEARCHES_PER_BILL = 15;
+    sameStore = (a, b) => {
+      const x = norm2(a), y = norm2(b);
+      return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+    };
+  }
+});
+
 // src/services/collectionReminderWorker.ts
 var collectionReminderWorker_exports = {};
 __export(collectionReminderWorker_exports, {
@@ -73504,6 +73667,26 @@ var init_refills = __esm({
         res.json({ success: true, saved, links: await getMedicineLinks(medicineId) });
       } catch (err) {
         res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to save linked distributors" });
+      }
+    });
+    router19.post("/bill-links", async (req, res) => {
+      const purchaseId = parseInt(String(req.body?.purchaseId), 10);
+      if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: "Valid purchaseId required" });
+      try {
+        const { linkBillMedicines: linkBillMedicines2 } = await Promise.resolve().then(() => (init_billDistributorLinkService(), billDistributorLinkService_exports));
+        res.json({ success: true, rows: await linkBillMedicines2(purchaseId) });
+      } catch (err) {
+        res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to link bill medicines" });
+      }
+    });
+    router19.post("/bill-links", async (req, res) => {
+      const purchaseId = parseInt(String(req.body?.purchaseId), 10);
+      if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: "Valid purchaseId required" });
+      try {
+        const { linkBillMedicines: linkBillMedicines2 } = await Promise.resolve().then(() => (init_billDistributorLinkService(), billDistributorLinkService_exports));
+        res.json({ success: true, rows: await linkBillMedicines2(purchaseId) });
+      } catch (err) {
+        res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to link bill medicines" });
       }
     });
     router19.post("/:id/cancel", async (req, res) => {
@@ -96741,10 +96924,10 @@ var init_medicines = __esm({
           params.push(`%${apiFilter}%`);
         }
         if (mrpFilter) {
-          const norm2 = normalizeNumericSearch2(mrpFilter);
-          if (norm2) {
+          const norm3 = normalizeNumericSearch2(mrpFilter);
+          if (norm3) {
             whereClauses.push("CAST(COALESCE(medicines.mrp, 0) AS TEXT) LIKE ?");
-            params.push(`%${norm2}%`);
+            params.push(`%${norm3}%`);
           }
         }
         if (packagingFilter) {
@@ -101920,9 +102103,19 @@ var init_server = __esm({
               const { isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2, initClient: initClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
               if (await isWhatsAppAutoConnectAllowed2()) {
                 console.log("[Boot:Phase4] Saved WhatsApp session found \u2014 performing 1-time boot session restore...");
-                initClient2({ isBoot: true }).catch((err) => {
-                  console.warn("[Boot:Phase4] 1-time boot WhatsApp restore note (will not retry):", err?.message || err);
-                });
+                (async () => {
+                  const wa = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+                  for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                      await wa.initClient({ isBoot: true });
+                      if ((await wa.getWhatsAppStatus()).isReady) return;
+                    } catch (err) {
+                      console.warn(`[Boot:Phase4] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
+                    }
+                    if (attempt < 3) await new Promise((r) => setTimeout(r, 6e4));
+                    if ((await wa.getWhatsAppStatus()).isReady) return;
+                  }
+                })();
               } else {
                 console.log("[Boot:Phase4] No saved WhatsApp session or disconnected \u2014 auto-stopping WhatsApp at boot. Connect manually in UI.");
               }
