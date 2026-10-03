@@ -61,6 +61,7 @@ import {
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
+import { AppearanceTab } from './AppearanceTab';
 
 // ==========================================
 // TYPES & INTERFACES
@@ -98,6 +99,7 @@ function normalizeSettingsTab(tabParam: string | null): string {
   if (lower === 'triggers' || lower === 'schedules' || lower === 'cron' || lower === 'automation') return 'triggers';
   if (lower === 'backups' || lower === 'data' || lower === 'maintenance') return 'backups';
   if (lower === 'license' || lower === 'updates' || lower === 'binding' || lower === 'system') return 'license';
+  if (lower === 'appearance' || lower === 'ui' || lower === 'theme' || lower === 'display') return 'appearance';
   return 'profile';
 }
 
@@ -114,6 +116,7 @@ export default function Settings() {
 
   const tabs = [
     { id: 'profile', label: 'Store Profile', icon: Building2, desc: 'Pharmacy details, invoice layout & tax' },
+    { id: 'appearance', label: 'Appearance & Display', icon: Palette, desc: 'Themes, UI font scaling, popup & modal sizing, table density' },
     { id: 'orderTiming', label: 'Orders & Fulfilment Timing', icon: Clock, desc: 'Cutoff times, Sunday/holiday calendar & delivery windows' },
     { id: 'stores', label: 'Multi-Store & Sync', icon: StoreIcon, desc: 'Branch stores, offline sync & central management' },
     { id: 'staff', label: 'Staff & Security', icon: Shield, desc: 'Cashier accounts, admin access & devices' },
@@ -176,6 +179,7 @@ export default function Settings() {
         ) : (
           <>
             {activeTab === 'profile' && <StoreProfileTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}
+            {activeTab === 'appearance' && <AppearanceTab />}
             {activeTab === 'orderTiming' && <OrderTimingTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}
             {activeTab === 'stores' && <MultiStoreTab />}
             {activeTab === 'staff' && <StaffSecurityTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}

@@ -364,18 +364,16 @@ const Sells = () => {
     refetch();
   }, [refetch]);
 
-  // Auto refetch when module cache cleared or date range changes
+  // Auto refetch when module cache cleared or stock write completes
   useEffect(() => {
     const handleClear = () => {
       refetch();
     };
     window.addEventListener('clear-module-cache', handleClear);
     window.addEventListener('stock-write-completed', handleClear);
-    window.addEventListener('app-show-toast', handleClear);
     return () => {
       window.removeEventListener('clear-module-cache', handleClear);
       window.removeEventListener('stock-write-completed', handleClear);
-      window.removeEventListener('app-show-toast', handleClear);
     };
   }, [refetch]);
 
@@ -938,9 +936,31 @@ const Sells = () => {
           }
           body={
             items.length === 0 ? (
-              <tr className="flex items-center justify-center p-8 text-muted text-base w-full absolute top-0 left-0">
-                <td>No invoices found.</td>
-              </tr>
+              isFetching ? (
+                Array.from({ length: 6 }).map((_, idx) => (
+                  <tr key={`sell-skel-${idx}`} className="flex items-center w-full px-4 py-3.5 border-b border-glass-border/30 animate-pulse">
+                    <td className="w-32 shrink-0"><div className="h-6 w-20 bg-bg3/80 rounded-md" /></td>
+                    <td className="flex-1 min-w-[240px] flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-bg3/80 shrink-0" />
+                      <div className="space-y-1.5 flex-1">
+                        <div className="h-4 w-36 bg-bg3/80 rounded" />
+                        <div className="h-3 w-24 bg-bg3/60 rounded" />
+                      </div>
+                    </td>
+                    <td className="w-36 shrink-0 flex justify-center"><div className="h-4 w-20 bg-bg3/70 rounded" /></td>
+                    <td className="w-36 shrink-0"><div className="h-4 w-24 bg-bg3/70 rounded" /></td>
+                    <td className="w-28 shrink-0 flex justify-end"><div className="h-4 w-16 bg-bg3/70 rounded" /></td>
+                    <td className="w-28 shrink-0 flex justify-end"><div className="h-4 w-16 bg-bg3/70 rounded" /></td>
+                    <td className="w-24 shrink-0 flex justify-end"><div className="h-4 w-12 bg-bg3/70 rounded" /></td>
+                    <td className="w-24 shrink-0 flex justify-center"><div className="h-5 w-14 bg-bg3/70 rounded-full" /></td>
+                    <td className="w-32 shrink-0 flex justify-center"><div className="h-7 w-24 bg-bg3/70 rounded-lg" /></td>
+                  </tr>
+                ))
+              ) : (
+                <tr className="flex items-center justify-center p-8 text-muted text-base w-full absolute top-0 left-0">
+                  <td>No invoices found.</td>
+                </tr>
+              )
             ) : (
               rowVirtualizer.getVirtualItems().map((virtualRow) => {
                 const inv = items[virtualRow.index];

@@ -42,6 +42,55 @@
 
   /* Notification / Toast borders — soft purple */
   --notif-border: rgba(167, 139, 250, 0.55);
+
+  /* UI Display Defaults & Sizing System */
+  --app-font-size-base: 14px;
+  --modal-max-width: 640px;
+  --table-density-py: 0.5rem;
+  --table-density-px: 0.75rem;
+  --app-border-radius: 0.75rem;
+}
+
+/* ═══════════════════════════════════════════
+   DARK THEME (OPTIONAL / USER PREFERENCE)
+   ═══════════════════════════════════════════ */
+:root.dark, html.dark, body.dark, .dark {
+  /* Backgrounds */
+  --bg:         #090d16;          /* deep obsidian slate */
+  --bg2:        #111827;          /* dark surface card */
+  --bg3:        #1f2937;          /* nested surface */
+
+  /* Borders & lines */
+  --border:     #374151;          /* dark border */
+
+  /* Typography */
+  --text:       #f3f4f6;          /* crisp light text */
+  --muted:      #9ca3af;          /* muted slate */
+
+  /* Glass panels */
+  --glass-bg:   #111827;
+  --glass-border: rgba(255, 255, 255, 0.1);
+
+  /* Notification / Toast borders */
+  --notif-border: rgba(167, 139, 250, 0.4);
+}
+
+/* Scalable Base Font Size Hook */
+html {
+  font-size: var(--app-font-size-base, 14px);
+}
+
+/* Global Modal & Popup Sizing Hook */
+.app-modal-scalable {
+  max-width: var(--modal-max-width, 640px) !important;
+  width: 100% !important;
+}
+
+/* Global Table Density Hooks */
+.app-scalable-table th,
+.app-scalable-table td {
+  padding-top: var(--table-density-py, 0.5rem) !important;
+  padding-bottom: var(--table-density-py, 0.5rem) !important;
 }
 
 /* ═══════════════════════════════════════════

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 
 // Shared server-filter contract across all pages that page through lists via
 // this hook (Inventory, Sells, PurchaseHistory, CustomerReturnHistory,
@@ -51,15 +51,17 @@ const globalModuleCache: Record<string, unknown[]> = {};
 const globalTotalItems: Record<string, number> = {};
 const globalMeta: Record<string, InfiniteScrollMeta> = {};
 
-export const clearInfiniteScrollCache = (cacheKey?: string) => {
-  if (cacheKey) {
-    globalModuleCache[cacheKey] = [];
-    globalTotalItems[cacheKey] = 0;
-  } else {
-    Object.keys(globalModuleCache).forEach(k => {
-      globalModuleCache[k] = [];
-      globalTotalItems[k] = 0;
-    });
+export const clearInfiniteScrollCache = (cacheKey?: string, forceEmpty = false) => {
+  if (forceEmpty) {
+    if (cacheKey) {
+      globalModuleCache[cacheKey] = [];
+      globalTotalItems[cacheKey] = 0;
+    } else {
+      Object.keys(globalModuleCache).forEach(k => {
+        globalModuleCache[k] = [];
+        globalTotalItems[k] = 0;
+      });
+    }
   }
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('clear-module-cache', { detail: { cacheKey } }));
@@ -73,8 +75,23 @@ export function useInfiniteScroll<T>({
   serverFilters = {},
   clientFilterFn,
 }: UseInfiniteScrollOptions<T>) {
+  const queryClient = useQueryClient();
+
   const [items, setItems] = useState<T[]>(() => {
-    return (globalModuleCache[cacheKey] as T[]) || [];
+    const cached = globalModuleCache[cacheKey] as T[] | undefined;
+    if (cached && cached.length > 0) return cached;
+    // Stale-while-revalidate fallback: read existing React Query cache if module cache is empty
+    try {
+      const existing = queryClient.getQueryData<{ pages: Array<{ data: T[] }> }>([queryKey, serverFilters]);
+      if (existing?.pages?.length) {
+        const flat = existing.pages.flatMap(p => p.data);
+        if (flat.length > 0) {
+          globalModuleCache[cacheKey] = flat.slice(0, 200);
+          return flat;
+        }
+      }
+    } catch { /* ignore */ }
+    return [];
   });
 
   const [totalItems, setTotalItems] = useState<number>(() => {

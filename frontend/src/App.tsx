@@ -10,6 +10,7 @@ import { getTodayString, getNDaysAgoString } from './utils/date';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { StoreProvider } from './context/StoreContext';
 import UpdateBanner from './components/UpdateBanner';
+import { useAppearanceSync } from './hooks/useAppearanceSync';
 
 // Minimal page-switch loading fallback — renders instantly, no layout shift
 const PageLoader = () => (
@@ -106,6 +107,7 @@ const pageRoutes: KeepAliveRoute[] = [
 // App Component
 // ──────────────────────────────────────────────
 function App() {
+  useAppearanceSync();
 
   useEffect(() => {
     // Idle warm-mount (root AGENTS.md SPA contract): progressively pre-mount
@@ -113,19 +115,31 @@ function App() {
     // mounts at boot as the landing page). Each step fires only while the user
     // is idle (>45s without input) and the tab is visible; page-level data
     // fetching still honors its own useFetchMode / data_fetch_control gates.
-    const WARMUP_PATHS = ['/dashboard', '/inventory', '/crm', '/mail', '/purchases', '/dispatch', '/pharmarack-cart', '/settings'];
-    let lastInteraction = Date.now();
+    // Staged 12-second deferred warm-up across all primary pages (10-14s boot grace period):
+    // Leaves 100% CPU and disk I/O exclusively to POS during the initial boot & hydration.
+    // Starting at 12s, gently staggers route pre-warming every 2.5s across all workhorse pages.
+    const WARMUP_PATHS = [
+      '/inventory',
+      '/sells',
+      '/dashboard',
+      '/purchases',
+      '/crm',
+      '/pharmarack-cart',
+      '/dispatch',
+      '/mail',
+      '/settings'
+    ];
     let idx = 0;
     let timer: ReturnType<typeof setTimeout>;
-    const markInteraction = () => { lastInteraction = Date.now(); };
+
     const step = () => {
       if (idx >= WARMUP_PATHS.length) return;
-      const idleFor = Date.now() - lastInteraction;
-      if (document.visibilityState === 'visible' && idleFor > 45_000) {
-        // One-time data prefetch rides the FIRST idle window: dashboard
-        // (landing query) + default Reports sales tab — both only after the
-        // user has actually been idle, never during the boot-critical phase.
-        if (idx === 0) {
+      if (document.visibilityState === 'visible') {
+        const path = WARMUP_PATHS[idx];
+        prewarmRoute(path);
+
+        // One-time data prefetch along with the dashboard/reports warmup
+        if (path === '/dashboard') {
           queryClient.prefetchQuery({
             queryKey: ['dashboard'],
             queryFn: () => api.getDashboard(),
@@ -143,27 +157,21 @@ function App() {
             staleTime: 5 * 60_000,
           }).catch(() => {});
 
-          // Preload WhatsApp Queue modal chunk into browser V8 memory during idle
           import('./components/WhatsAppQueuePopover').catch(() => {});
         }
-        prewarmRoute(WARMUP_PATHS[idx]);
+
         idx += 1;
-        timer = setTimeout(step, 8000);
+        timer = setTimeout(step, 2500); // 2.5s gentle spacing between pages
       } else {
         timer = setTimeout(step, 5000);
       }
     };
-    window.addEventListener('pointerdown', markInteraction, { passive: true });
-    window.addEventListener('pointermove', markInteraction, { passive: true });
-    window.addEventListener('keydown', markInteraction);
-    window.addEventListener('wheel', markInteraction, { passive: true });
-    timer = setTimeout(step, 20_000);
+
+    // Begin the staggered warm-up at 12 seconds (in the requested 10-14s window)
+    timer = setTimeout(step, 12_000);
+
     return () => {
       clearTimeout(timer);
-      window.removeEventListener('pointerdown', markInteraction);
-      window.removeEventListener('pointermove', markInteraction);
-      window.removeEventListener('keydown', markInteraction);
-      window.removeEventListener('wheel', markInteraction);
     };
   }, []);
 

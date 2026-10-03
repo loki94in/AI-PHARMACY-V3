@@ -345,22 +345,7 @@ router.put('/:id', async (req, res) => {
       await db.run(`UPDATE inventory_master SET ${updates.join(', ')} WHERE id = ?`, params);
     }
 
-    // 2. Keep purchase_items in sync if batch, expiry, or mrp was updated
-    if (batchNoVal !== undefined || expiry_date !== undefined || mrp !== undefined) {
-      const piUpdates = [];
-      const piParams = [];
-      if (batchNoVal !== undefined) { piUpdates.push('batch_no = ?'); piParams.push(batchNoVal); }
-      if (expiry_date !== undefined) { piUpdates.push('expiry_date = ?'); piParams.push(expiry_date); }
-      if (mrp !== undefined) { piUpdates.push('mrp = ?'); piParams.push(mrp); }
-
-      if (piUpdates.length > 0) {
-        piParams.push(oldInv.medicine_id, oldInv.batch_no);
-        await db.run(
-          `UPDATE purchase_items SET ${piUpdates.join(', ')} WHERE medicine_id = ? AND batch_no = ?`,
-          piParams
-        );
-      }
-    }
+    // 2. Inventory updates modify active shelf stock only; historical purchase invoices remain immutable (P0-74 contract)
 
     // 3. Update the medicines table if name, mrp, pack_size, or sell_price changes
     if (oldInv.medicine_id) {

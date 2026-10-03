@@ -825,26 +825,43 @@ const Inventory = () => {
           }
           body={
             items.length === 0 ? (
-              <tr className="flex items-center justify-center p-12 text-muted text-base w-full absolute top-0 left-0">
-                <td className="flex flex-col items-center gap-3 text-center">
-                  <PackageSearch size={38} className="text-muted/30" />
-                  <span className="font-semibold text-text">No medicines match your search.</span>
-                  {colFilters.medicine.trim().length >= 2 && (
-                    <div className="flex flex-col items-center gap-2 mt-1">
-                      <span className="text-[15px] text-amber-400 font-medium">
-                        🔍 No exact match for "{colFilters.medicine}". Please check spelling or search by general name.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setColFilters({ ...colFilters, medicine: '' })}
-                        className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-sm font-bold transition-all"
-                      >
-                        Clear Search Filter
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
+              isFetching ? (
+                Array.from({ length: 8 }).map((_, idx) => (
+                  <tr key={`inv-skel-${idx}`} className="flex items-center w-full px-3 py-3 border-b border-glass-border/30 animate-pulse">
+                    <td className="w-9 shrink-0 flex justify-center"><div className="w-4 h-4 bg-bg3/80 rounded" /></td>
+                    <td className="flex-1 min-w-[200px] px-3"><div className="h-4 w-48 bg-bg3/80 rounded" /></td>
+                    {col('online') && <td className="w-28 shrink-0 flex justify-center"><div className="h-5 w-16 bg-bg3/70 rounded-full" /></td>}
+                    {col('id') && <td className="w-16 shrink-0 px-3"><div className="h-4 w-10 bg-bg3/70 rounded" /></td>}
+                    {col('batch') && <td className="w-28 shrink-0 px-3"><div className="h-4 w-20 bg-bg3/70 rounded" /></td>}
+                    {col('expiry') && <td className="w-24 shrink-0 px-3"><div className="h-4 w-14 bg-bg3/70 rounded" /></td>}
+                    {col('packs') && <td className="w-28 shrink-0 px-3"><div className="h-5 w-12 bg-bg3/70 rounded" /></td>}
+                    {col('mrp') && <td className="w-24 shrink-0 px-3"><div className="h-4 w-12 bg-bg3/70 rounded" /></td>}
+                    {col('sell_price') && <td className="w-24 shrink-0 px-3"><div className="h-4 w-12 bg-bg3/70 rounded" /></td>}
+                    {col('rack') && <td className="w-24 shrink-0 px-3"><div className="h-4 w-12 bg-bg3/70 rounded" /></td>}
+                  </tr>
+                ))
+              ) : (
+                <tr className="flex items-center justify-center p-12 text-muted text-base w-full absolute top-0 left-0">
+                  <td className="flex flex-col items-center gap-3 text-center">
+                    <PackageSearch size={38} className="text-muted/30" />
+                    <span className="font-semibold text-text">No medicines match your search.</span>
+                    {colFilters.medicine.trim().length >= 2 && (
+                      <div className="flex flex-col items-center gap-2 mt-1">
+                        <span className="text-[15px] text-amber-400 font-medium">
+                          🔍 No exact match for "{colFilters.medicine}". Please check spelling or search by general name.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setColFilters({ ...colFilters, medicine: '' })}
+                          className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-sm font-bold transition-all"
+                        >
+                          Clear Search Filter
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )
             ) : (
               rowVirtualizer.getVirtualItems().map(virtualRow => {
                 const item = items[virtualRow.index];

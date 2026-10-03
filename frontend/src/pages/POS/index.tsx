@@ -745,19 +745,6 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
   return combined.slice(0, 30);
 };
 
-const medicineUpdateDebounceTimers = new Map<string, any>();
-function debouncedUpdateMedicine(id: number, data: Parameters<typeof api.updateMedicine>[1], delayMs = 400) {
-  const key = `${id}_${Object.keys(data).sort().join(',')}`;
-  if (medicineUpdateDebounceTimers.has(key)) {
-    clearTimeout(medicineUpdateDebounceTimers.get(key));
-  }
-  const timer = setTimeout(() => {
-    medicineUpdateDebounceTimers.delete(key);
-    api.updateMedicine(id, data).catch(err => console.error('Error updating medicine in DB:', err));
-  }, delayMs);
-  medicineUpdateDebounceTimers.set(key, timer);
-}
-
 const mapEditSaleItemsToCart = (itemsList: EditSaleLine[]): CartRow[] => {
   if (!Array.isArray(itemsList) || itemsList.length === 0) return [];
   const mapped: CartRow[] = itemsList.map((it, idx) => {
@@ -3264,9 +3251,6 @@ const POS = () => {
             updatedItem.qty = (updatedItem.qty || 0) + extraStrips;
             updatedItem.looseQty = looseVal % pSize;
           }
-          if (typeof id === 'number' && id < 1000000) {
-            debouncedUpdateMedicine(id, { pack_size: pSize });
-          }
         }
 
         if (field === 'mrp') {
@@ -3274,13 +3258,10 @@ const POS = () => {
           updatedItem.mrp = numMrp;
           updatedItem.unitPrice = numMrp;
           updatedItem.sell_price = numMrp;
-          if (typeof id === 'number' && id < 1000000) {
-            debouncedUpdateMedicine(id, { mrp: numMrp });
-          }
         }
 
-        if (field === 'costPrice' && typeof id === 'number' && id < 1000000) {
-          debouncedUpdateMedicine(id, { purchase_price: Number(value) });
+        if (field === 'costPrice') {
+          updatedItem.costPrice = Number(value);
         }
 
         return updatedItem;

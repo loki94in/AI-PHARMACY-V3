@@ -34,6 +34,18 @@ const HIGH_PRIORITY_PATHS = new Set([
   '/pharmarack-cart'
 ]);
 
+// Essential workhorse pages that should be pre-mounted in the DOM at boot for 0ms instant access
+export const BOOT_PREMOUNT_PATHS = ['/inventory', '/sells'] as const;
+
+export function isKeepAliveEssentialEnabled(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    return localStorage.getItem('keep_alive_essential_pages') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
 export function KeepAliveOutlet({ routes, notFoundElement, fallback }: Props) {
   const location = useLocation();
   const currentPath = location.pathname;
@@ -46,6 +58,26 @@ export function KeepAliveOutlet({ routes, notFoundElement, fallback }: Props) {
     }
     return initial;
   });
+
+  // Delayed 12-second warm-mount of essential pages so POS gets 100% CPU during initial boot
+  useEffect(() => {
+    if (!isKeepAliveEssentialEnabled()) return;
+    const timer = setTimeout(() => {
+      setMountedHighPriorityPaths(prev => {
+        let changed = false;
+        const next = new Set(prev);
+        BOOT_PREMOUNT_PATHS.forEach(p => {
+          if (!next.has(p)) {
+            next.add(p);
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }, 12_000); // 12 seconds (in 10-14s window)
+
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (HIGH_PRIORITY_PATHS.has(currentPath)) {

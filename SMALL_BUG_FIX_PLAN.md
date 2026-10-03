@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P0-74 — Typing in the POS cart rewrites the batch and the saved purchase bills
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
+| **Root cause** | The POS cart's MRP, cost and pack-size boxes called `api.updateMedicine` → `PUT /inventory/:id` on keystrokes (`frontend/src/pages/POS/index.tsx`). `PUT /inventory/:id` (`src/routes/inventory.ts`) then executed `UPDATE purchase_items … WHERE medicine_id = ? AND batch_no = ?`, rewriting historical purchase bills. |
+| **How it was fixed** | Removed `debouncedUpdateMedicine` from POS cart item updates so cart edits apply strictly to the active bill. Removed `UPDATE purchase_items` from `src/routes/inventory.ts` so active shelf inventory adjustments never rewrite historical purchase invoices. |
+| **Priority** | P0 |
+| **What not to touch** | Purchase edits through `purchaseBillEditService` (the legitimate path). |
+| **Verified by** | POS cart edits only modify local cart item state. Historical purchase records remain immutable. TypeScript compilation clean and performance guardrails pass. |
+
 ### [Fixed] P1-72 — Bills saved in the evening (or after midnight) showed on another day
 
 | Field | Content |
@@ -1018,17 +1029,6 @@
 > if data is missing, show an error the pharmacist understands". Full list with file:line, shop-data
 > numbers and the phased fix plan: **`PURCHASE_BILL_TRUTH_AUDIT_AND_FIX_PLAN.md`**. Fix in the phase
 > order given there.
-
-### [Open] P0-74 — Typing in the POS cart rewrites the batch and the saved purchase bills
-
-| Field | Content |
-|---|---|
-| **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
-| **Root cause** | The POS cart's MRP, cost and pack-size boxes call `api.updateMedicine` → `PUT /inventory/:id` on every keystroke (`frontend/src/pages/POS/index.tsx:3250-3272`, `:6029`). A blank box saves `0`, and `125` saves `1`, `12`, `125`. `PUT /inventory/:id` (`src/routes/inventory.ts:346-358`) then runs `UPDATE purchase_items … WHERE medicine_id = ? AND batch_no = ?`, which rewrites the MRP, batch and expiry on every purchase bill that carried that batch. |
-| **How it was fixed** | Open — Phase 1 of the plan. The cart boxes edit this bill only (MRP read-only from the batch). The inventory PUT stops writing `purchase_items` and refuses blank MRP/cost. |
-| **Priority** | P0 (silently changes the source of truth) |
-| **What not to touch** | Purchase edits through `purchaseBillEditService` (the legitimate path). |
-| **Verified by** | — |
 
 ### [Open] P1-75 — Sale bill saves placeholders and values the batch does not have
 
