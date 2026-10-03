@@ -974,9 +974,21 @@ server.on('error', (err: any) => {
             const { isWhatsAppAutoConnectAllowed, initClient } = await import('./whatsappClient.js');
             if (await isWhatsAppAutoConnectAllowed()) {
               console.log('[Boot:Phase4] Saved WhatsApp session found — performing 1-time boot session restore...');
-              initClient({ isBoot: true }).catch(err => {
-                console.warn('[Boot:Phase4] 1-time boot WhatsApp restore note (will not retry):', err?.message || err);
-              });
+              // Bounded retry (3 tries, 60 s apart): a failed boot restore otherwise left the
+              // inbound bot dead until a queue item or user click woke it.
+              (async () => {
+                const wa = await import('./whatsappClient.js');
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                  try {
+                    await wa.initClient({ isBoot: true });
+                    if ((await wa.getWhatsAppStatus()).isReady) return;
+                  } catch (err: any) {
+                    console.warn(`[Boot:Phase4] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
+                  }
+                  if (attempt < 3) await new Promise(r => setTimeout(r, 60_000));
+                  if ((await wa.getWhatsAppStatus()).isReady) return;
+                }
+              })();
             } else {
               console.log('[Boot:Phase4] No saved WhatsApp session or disconnected — auto-stopping WhatsApp at boot. Connect manually in UI.');
             }

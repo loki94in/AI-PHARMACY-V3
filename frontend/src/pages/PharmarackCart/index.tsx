@@ -47,6 +47,37 @@ interface Distributor {
   lineTotal: number;
   deliveryPersons: { name: string; code: string }[];
   items: CartLineItem[];
+  // Limits from Pharmarack; null/undefined = unknown (never assumed 0), 0 = no restriction
+  minAmountLimit?: number | null;
+  minItemLimit?: number | null;
+  maxItemLimit?: number | null;
+  maxAmountLimit?: number | null;
+}
+
+// Human-readable reasons Pharmarack would reject this store's cart; empty = eligible / nothing known to block.
+// Only limits Pharmarack actually sent are checked — unknown rules never block (Pharmarack's own error is shown instead).
+function getOrderLimitIssues(dist: Distributor): string[] {
+  const issues: string[] = [];
+  const fmt = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  const total = dist.lineTotal || 0;
+  const stockedCount = (dist.items || []).filter(i => i.stock == null || i.stock > 0).length;
+  const minAmt = dist.minAmountLimit ?? 0;
+  const minItems = dist.minItemLimit ?? 0;
+  const maxAmt = dist.maxAmountLimit ?? 0;
+  const maxItems = dist.maxItemLimit ?? 0;
+  if (minAmt > 0 && total < minAmt) {
+    issues.push(`Minimum Order amount is set Rs. ${fmt(minAmt)} for the ${dist.storeName} store (short by ₹${fmt(minAmt - total)})`);
+  }
+  if (minItems > 0 && stockedCount < minItems) {
+    issues.push(`${dist.storeName} - Minimum line items for above store with stock is ${minItems} (need ${minItems - stockedCount} more)`);
+  }
+  if (maxAmt > 0 && total > maxAmt) {
+    issues.push(`Maximum Order amount is Rs. ${fmt(maxAmt)} for the ${dist.storeName} store (over by ₹${fmt(total - maxAmt)})`);
+  }
+  if (maxItems > 0 && (dist.items || []).length > maxItems) {
+    issues.push(`${dist.storeName} - Maximum line items is ${maxItems} (remove ${(dist.items || []).length - maxItems})`);
+  }
+  return issues;
 }
 
 interface LocalPriceHistoryRow {
@@ -1235,6 +1266,11 @@ export default function PharmarackCart() {
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
+    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d).length > 0);
+    if (belowLimit.length > 0) {
+      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(getOrderLimitIssues).join(' | ')}`, 'error');
+      return;
+    }
     setIsValidatingBeforeSend(true);
     try {
       // 1. Force a live round-trip fresh fetch from upstream Pharmarack (?fresh=true)
@@ -1760,6 +1796,11 @@ export default function PharmarackCart() {
   };
 
   const handleSendManualNotification = async (dist: Distributor) => {
+    const limitIssues = getOrderLimitIssues(dist);
+    if (limitIssues.length > 0) {
+      toastEvent.trigger(limitIssues.join(' | '), 'error');
+      return;
+    }
     setSendingNotifId(dist.storeId);
     try {
       messageSendEvent.triggerSendProgress(dist.storeName, `Sending WhatsApp notification to ${dist.storeName}...`, 10);
@@ -1950,6 +1991,12 @@ export default function PharmarackCart() {
       return;
     }
 
+    const limitIssues = getOrderLimitIssues(dist);
+    if (limitIssues.length > 0) {
+      toastEvent.trigger(limitIssues.join(' | '), 'error');
+      return;
+    }
+
     const itemsToOrder = dist.items.filter(item => isItemIncludedInDispatch(item, dist));
 
     if (itemsToOrder.length === 0) {
@@ -2126,6 +2173,15 @@ export default function PharmarackCart() {
       isSendingBatchRef.current = false;
       setIsSendingBatchWhatsApp(false);
       toastEvent.trigger('Your cart is empty.', 'error');
+      return;
+    }
+
+    // Block the whole batch until every unsent store meets its Pharmarack ordering limits
+    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d).length > 0);
+    if (belowLimit.length > 0) {
+      isSendingBatchRef.current = false;
+      setIsSendingBatchWhatsApp(false);
+      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(getOrderLimitIssues).join(' | ')}`, 'error');
       return;
     }
 
@@ -5111,6 +5167,19 @@ export default function PharmarackCart() {
                               )}
                             </div>
                           </div>
+
+                          {/* Distributor ordering limits (from Pharmarack, per store) */}
+                          {(() => {
+                            const limitIssues = getOrderLimitIssues(dist);
+                            if (limitIssues.length === 0) return null;
+                            return (
+                              <div className="px-4 py-2 border-b border-rose-500/30 bg-rose-500/10 space-y-0.5">
+                                {limitIssues.map(msg => (
+                                  <p key={msg} className="text-[11px] font-bold text-rose-400">{msg}</p>
+                                ))}
+                              </div>
+                            );
+                          })()}
 
                           {/* Line items table */}
                           <div className="overflow-x-auto">

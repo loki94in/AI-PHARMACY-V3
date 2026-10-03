@@ -560,6 +560,90 @@ async function isChatIgnored(db: any, chatId: string): Promise<boolean> {
   return isGroupOrBroadcast;
 }
 
+
+/**
+ * Pulls every unread incoming message (≤20/chat, ≤24 h) that never fired message_create
+ * (app was off / session stalled) into whatsapp_messages, then lets the smart-reply scheduler
+ * answer them like live ones (one reply per customer; read / answered chats are skipped there).
+ * Only messages NEW to the table trigger anything, so repeat calls are idempotent.
+ */
+async function ingestUnreadAndReply(chats: any[], isIgnored: (chatId: string) => Promise<boolean>): Promise<number> {
+  let ingested = 0;
+  try {
+    const db = await dbManager.getConnection();
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const chat of chats) {
+      const chatId = chat.id._serialized;
+      if (chat.isGroup || (await isIgnored(chatId))) continue;
+      if (!chat.unreadCount || chat.unreadCount <= 0) continue;
+      if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
+      const msgs: any[] = await chat.fetchMessages({ limit: Math.min(chat.unreadCount, 20) }).catch(() => []);
+      for (const m of msgs) {
+        if (m.fromMe || (m.timestamp && nowSec - m.timestamp > 24 * 3600)) continue;
+        const mid = m.id?._serialized || m.id?.id;
+        if (!mid) continue;
+        const r = await db.run(
+          `INSERT INTO whatsapp_messages (id, chat_id, body, from_me, timestamp, type, has_media)
+           VALUES (?, ?, ?, 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+          [mid, chatId, m.body || '', m.timestamp || nowSec, m.type || 'text', m.hasMedia ? 1 : 0]
+        );
+        if (r?.changes) ingested++;
+      }
+    }
+    if (ingested > 0) {
+      const { waSmartReplyScheduler } = await import('./services/waSmartReplyScheduler.js');
+      const res = await waSmartReplyScheduler.processOfflineBatch(true);
+      console.log(`[WhatsApp Catch-up] ${ingested} message(s) pulled, ${res.processed} chat(s) scheduled, ${res.skipped_read} read, ${res.skipped_replied} replied.`);
+    }
+  } catch (err) {
+    console.warn('[WhatsApp Catch-up] failed:', err);
+  }
+  return ingested;
+}
+
+// ── Inbound watchdog ──────────────────────────────────────────────────────────
+// A session can look "ready" yet stop delivering events (long idle, network blip). Every
+// 5 min (15 min while the user is idle) while a browser is resident: probe getState(), reload
+// the page if not CONNECTED, then pull unread chats. In-browser calls only — no extra WhatsApp
+// network traffic beyond what the open page already does. Chained setTimeout, self-stopping.
+let inboundWatchTimer: NodeJS.Timeout | null = null;
+let inboundWatchTick = 0;
+const INBOUND_WATCH_MS = 5 * 60_000;
+
+function armInboundWatch(): void {
+  if (inboundWatchTimer) clearTimeout(inboundWatchTimer);
+  inboundWatchTimer = setTimeout(() => { runInboundWatch().catch(() => {}); }, INBOUND_WATCH_MS);
+}
+
+async function runInboundWatch(): Promise<void> {
+  inboundWatchTimer = null;
+  const client = clientInstance;
+  if (!isReady || !client) return; // stops itself; 'ready' re-arms
+  try {
+    const { activityTracker } = await import('./utils/activityTracker.js');
+    const idle = activityTracker.isIdle();
+    if (!idle || ++inboundWatchTick % 3 === 0) { // idle: only every ~3rd tick (~15 min)
+      if (!isSyncing && !initializing) {
+        const state = await (client as any).getState?.().catch(() => null);
+        if (state && state !== 'CONNECTED' && client.pupPage && !client.pupPage.isClosed()) {
+          console.warn(`[WhatsApp Watch] State ${state} — reloading WhatsApp page.`);
+          await client.pupPage.reload({ waitUntil: 'networkidle0', timeout: 30_000 }).catch(() => {});
+        } else if (state === 'CONNECTED') {
+          const chats: any[] = await client.getChats().catch(() => []);
+          const unread = chats.filter(c => c.unreadCount > 0);
+          if (unread.length) {
+            const db = await dbManager.getConnection();
+            await ingestUnreadAndReply(unread, (id) => isChatIgnored(db, id));
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[WhatsApp Watch] check note:', err?.message || err);
+  }
+  if (isReady && clientInstance) armInboundWatch();
+}
+
 /** Asynchronously sync chats and recent messages from WhatsApp to SQLite (fired on 'ready' and opportunistically). */
 async function syncWhatsappData(client: WAClient) {
   if (isSyncing) {
@@ -694,54 +778,8 @@ async function syncWhatsappData(client: WAClient) {
       );
     }
 
-    // Process offline unread customer messages: send a friendly reopening greeting
-    // so customers who messaged while the store was offline/closed know we are now open,
-    // without re-running heavy OCR or triggering auto-order pipeline.
-    try {
-      const ownerRow = await db.get("SELECT value FROM app_settings WHERE key = 'owner_whatsapp_number'");
-      const ownerPhone = (ownerRow?.value || '').replace(/\D/g, '');
-      const { getStoreMedicalName } = await import('./services/storeSettingsService.js');
-      const storeName = await getStoreMedicalName(db);
-
-      for (const chat of chats) {
-        const chatId = chat.id._serialized;
-        if (chat.isGroup || (await isIgnoredCached(chatId))) continue;
-        if (!chat.unreadCount || chat.unreadCount <= 0) continue;
-        if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
-
-        let cleanNumber = chatId.split('@')[0].replace(/\D/g, '');
-        if (chatId.endsWith('@lid')) {
-          const mapping = await client.getContactLidAndPhone([chatId]).catch(() => null);
-          if (mapping?.[0]?.pn) cleanNumber = mapping[0].pn.replace(/\D/g, '');
-        }
-
-        if (!cleanNumber || cleanNumber.length < 10) continue;
-        if (ownerPhone && cleanNumber.endsWith(ownerPhone.slice(-10))) continue;
-
-        // Avoid re-greeting the same customer within 12 hours
-        const recentGreeting = await db.get(
-          `SELECT id FROM whatsapp_sent_register 
-           WHERE (phone = ? OR phone_last10 = ?) 
-             AND type = 'offline_reconnect_greeting' 
-             AND sent_at >= ? LIMIT 1`,
-          [cleanNumber, cleanNumber.slice(-10), Date.now() - 12 * 60 * 60 * 1000]
-        );
-
-        if (!recentGreeting) {
-          const greetingMsg = `☀️ *Good Morning from ${storeName}!*\n\nWe are now open. We noticed your message while our systems were offline.\n\nHow can we help you with your medicines or healthcare needs today?`;
-          const { whatsappQueueWorker } = await import('./services/whatsappQueueWorker.js');
-          await whatsappQueueWorker.enqueue(
-            cleanNumber,
-            greetingMsg,
-            'offline_reconnect_greeting',
-            chat.name || 'Customer'
-          );
-          console.log(`[WhatsApp Sync] Enqueued offline reopening greeting for ${cleanNumber} (${chat.name || 'Customer'}).`);
-        }
-      }
-    } catch (greetErr) {
-      console.warn('[WhatsApp Sync] Failed to process offline reconnect greetings:', greetErr);
-    }
+    // Offline catch-up (see ingestUnreadAndReply): pull unread incoming messages, then reply.
+    await ingestUnreadAndReply(chats, isIgnoredCached);
 
     console.log('[WhatsApp] Background synchronization completed successfully.');
     eventService.broadcast('wa_chats_updated', { success: true });
@@ -1171,6 +1209,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       setLifecycleProgress('ready', 100, 'WhatsApp Ready');
       resolve(client);
       markWhatsAppActivity();
+      armInboundWatch();
 
       // P1 push event: WA UI updates without polling
       try {

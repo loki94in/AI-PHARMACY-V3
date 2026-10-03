@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Tag, X, Percent, TrendingUp, Sparkles, Check } from 'lucide-react';
-import { api } from '../services/api';
+import { Tag, X, Percent, TrendingUp, Sparkles, Check, Link2, Loader2 } from 'lucide-react';
+import { api, type BillLinkRow, type RefillCartCandidate } from '../services/api';
+import { MedicineLinkModal } from './MedicineLinkModal';
 import { invalidateAfterPriceWrite } from '../utils/cacheInvalidation';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -22,6 +23,8 @@ interface SaveBillSpecialPriceModalProps {
   onClose: () => void;
   invoiceNo: string;
   distributorName?: string;
+  /** Saved purchase bill id — enables the distributor-link column (auto-link + edit). */
+  purchaseId?: number | null;
   items: BillItemForPriceConfig[];
   onSaveComplete?: () => void;
 }
@@ -84,6 +87,7 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
   isOpen,
   onClose,
   invoiceNo,
+  purchaseId,
   items,
   onSaveComplete
 }) => {
@@ -92,6 +96,41 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
   const [rows, setRows] = useState<PriceRow[]>([]);
   const [batchDiscount, setBatchDiscount] = useState<string>('10');
   const [saving, setSaving] = useState(false);
+  const [linkRows, setLinkRows] = useState<Record<number, BillLinkRow>>({});
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linkTarget, setLinkTarget] = useState<{ id: number; name: string } | null>(null);
+
+  // One link pass per saved bill (opens with the popup): auto-links exact matches, lists the rest for review.
+  useEffect(() => {
+    if (!isOpen || !purchaseId) { setLinkRows({}); return; }
+    let alive = true;
+    setLinksLoading(true);
+    api.linkBillMedicines(purchaseId)
+      .then(r => { if (alive) setLinkRows(Object.fromEntries((r.rows || []).map(x => [x.medicineId, x]))); })
+      .catch((err: unknown) => {
+        if (alive) toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Could not link distributors for this bill', 'error');
+      })
+      .finally(() => { if (alive) setLinksLoading(false); });
+    return () => { alive = false; };
+  }, [isOpen, purchaseId]);
+
+  const refreshLinks = async (medicineId: number) => {
+    try {
+      const r = await api.getMedicineLinks(medicineId);
+      setLinkRows(prev => prev[medicineId]
+        ? { ...prev, [medicineId]: { ...prev[medicineId], links: r.links || [], status: (r.links || []).length > 0 ? 'linked' : 'not_found', message: '', candidates: [] } }
+        : prev);
+    } catch (_) { /* row keeps its previous state */ }
+  };
+
+  const pickCandidate = async (row: BillLinkRow, c: RefillCartCandidate) => {
+    try {
+      await api.saveMedicineLinks(row.medicineId, [...row.links, c]);
+      await refreshLinks(row.medicineId);
+    } catch (err) {
+      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Could not save the link', 'error');
+    }
+  };
 
   // Re-seed rows whenever the modal opens or a new items list arrives (render-time adjustment)
   const [prevOpen, setPrevOpen] = useState(isOpen);
@@ -287,6 +326,7 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
             <thead>
               <tr className="border-b border-glass-border text-muted uppercase font-semibold">
                 <th className="py-2.5 px-3">Medicine</th>
+                {purchaseId ? <th className="py-2.5 px-3">Distributor Link</th> : null}
                 <th className="py-2.5 px-3 text-right">Cost Rate</th>
                 <th className="py-2.5 px-3 text-right">Full MRP</th>
                 <th className="py-2.5 px-3 text-center">Special Offer Discount</th>
@@ -300,6 +340,44 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
                   <td className="py-3 px-3">
                     <span className="font-semibold text-text block">{row.medicine_name}</span>
                   </td>
+                  {purchaseId ? (
+                    <td className="py-3 px-3 align-top">
+                      {(() => {
+                        const lr = linkRows[row.medicine_id];
+                        if (!lr) return linksLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-muted" /> : <span className="text-muted">—</span>;
+                        const names = Array.from(new Set(lr.links.map(l => l.storeName)));
+                        return (
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1">
+                              {names.map(n => (
+                                <span key={n} className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">{n}</span>
+                              ))}
+                              {lr.status === 'auto_linked' && <span className="text-[10px] font-bold text-emerald-500">auto-linked</span>}
+                              {names.length === 0 && <span className="text-[10px] text-muted">{lr.message}</span>}
+                              <button
+                                type="button"
+                                onClick={() => setLinkTarget({ id: row.medicine_id, name: row.medicine_name })}
+                                className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold border border-glass-border text-muted hover:text-text hover:bg-glass-bg"
+                              >
+                                <Link2 className="w-3 h-3" /> {names.length > 0 ? 'Change' : 'Link'}
+                              </button>
+                            </div>
+                            {lr.status === 'review' && lr.candidates.map(c => (
+                              <button
+                                key={c.storeId + '|' + c.productCode}
+                                type="button"
+                                onClick={() => void pickCandidate(lr, c)}
+                                className="block text-left text-[10px] px-1.5 py-0.5 rounded-md border border-amber-500/40 text-amber-500 hover:bg-amber-500/10"
+                                title="Link this product"
+                              >
+                                {c.storeName}: {c.productName}
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                  ) : null}
                   <td className="py-3 px-3 text-right font-medium text-muted">
                     ₹{row.rate.toFixed(2)}
                   </td>
@@ -388,5 +466,17 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
   );
 
   const modalRoot = document.getElementById('modal-root') || document.body;
-  return createPortal(modalContent, modalRoot);
+  return (
+    <>
+      {createPortal(modalContent, modalRoot)}
+      {linkTarget && (
+        <MedicineLinkModal
+          medicineId={linkTarget.id}
+          medicineName={linkTarget.name}
+          onSaved={() => void refreshLinks(linkTarget.id)}
+          onClose={() => setLinkTarget(null)}
+        />
+      )}
+    </>
+  );
 };

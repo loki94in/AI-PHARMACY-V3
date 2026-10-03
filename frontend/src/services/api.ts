@@ -494,6 +494,24 @@ export interface RefillCartPick {
   mapped?: boolean;
 }
 
+export interface BillLinkRow {
+  medicineId: number;
+  medicineName: string;
+  status: 'linked' | 'auto_linked' | 'review' | 'not_found' | 'failed';
+  message: string;
+  links: RefillCartPick[];
+  candidates: RefillCartCandidate[];
+}
+
+export interface BillLinkRow {
+  medicineId: number;
+  medicineName: string;
+  status: 'linked' | 'auto_linked' | 'review' | 'not_found' | 'failed';
+  message: string;
+  links: RefillCartPick[];
+  candidates: RefillCartCandidate[];
+}
+
 export interface RefillCartCandidate extends RefillCartPick {
   rate: number | null;
   mrp: number | null;
@@ -1718,6 +1736,10 @@ export const api = {
   sendRefillCartSummary: (patientName: string, rows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; message?: string }>) =>
     apiClient.post<{ ok: boolean; queued: boolean; reason?: string }>('/refills/cart-summary', { patientName, rows }).then(res => res.data),
   // Saved Pharmarack distributor products per medicine (PUT replaces the set; [] unlinks; no cart write)
+  linkBillMedicines: (purchaseId: number) =>
+    apiClient.post<{ success: boolean; rows: BillLinkRow[] }>('/refills/bill-links', { purchaseId }, { timeout: 60000 }).then(res => res.data),
+  linkBillMedicines: (purchaseId: number) =>
+    apiClient.post<{ success: boolean; rows: BillLinkRow[] }>('/refills/bill-links', { purchaseId }, { timeout: 60000 }).then(res => res.data),
   getMedicineLinks: (medicineId: number) =>
     apiClient.get<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`).then(res => res.data),
   saveMedicineLinks: (medicineId: number, links: RefillCartPick[]) =>

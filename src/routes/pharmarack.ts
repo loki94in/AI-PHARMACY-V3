@@ -807,6 +807,23 @@ export function getCachedCartLines(): Array<{ storeId: number; storeName: string
   return lines;
 }
 
+/**
+ * Per-distributor ordering limits. Pharmarack ships them on every cart line (same value per store),
+ * so a new distributor is covered with no per-store config. A field absent from every line stays
+ * null = unknown (never assumed 0); a real 0 from Pharmarack means "no restriction".
+ */
+function extractStoreOrderLimits(rawItems: any[]): { minAmountLimit: number | null; minItemLimit: number | null; maxItemLimit: number | null; maxAmountLimit: number | null } {
+  const pick = (key: string): number | null => {
+    let found: number | null = null;
+    for (const it of rawItems || []) {
+      const n = Number(it?.[key]);
+      if (it?.[key] != null && Number.isFinite(n)) found = found === null ? n : Math.max(found, n);
+    }
+    return found;
+  };
+  return { minAmountLimit: pick('MinAmountLimit'), minItemLimit: pick('MinItemLimit'), maxItemLimit: pick('MaxItemLimit'), maxAmountLimit: pick('MaxAmountLimit') };
+}
+
 // Core live-cart loader shared by GET /cart and the boot warm-up (startup-sync fix) so
 // both paths parse the upstream payload identically. Errors carry .code
 // ('NEED_LOGIN' | 'SESSION_EXPIRED') or .httpStatus so routes can map them faithfully.
@@ -897,6 +914,7 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
           deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d: any) => ({
             name: d.SalesmanName || d.name || d.Salesman || '', code: d.SalesmanCode || d.code || ''
           })),
+          ...extractStoreOrderLimits(rawItems),
           items: rawItems.map((item: any) => ({
             productId: item.ProductId || item.productId || item.Id || item.id,
             storeId: item.StoreId || item.storeId || store.StoreId || store.storeId,
@@ -932,6 +950,7 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
             deliveryPersons: (item.DeliveryPersonList || item.deliveryPersons || []).map((d: any) => ({
               name: d.SalesmanName || d.name || '', code: d.SalesmanCode || d.code || ''
             })),
+            _rawItems: [],
             items: []
           });
         }
@@ -942,6 +961,7 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
         const itemAmt = item.ProductWiseAmount || item.amount || item.LineTotal || (itemPtr * itemQty);
 
         storeObj.lineTotal += itemAmt;
+        storeObj._rawItems.push(item);
         storeObj.items.push({
           productId: item.ProductId || item.productId || item.Id || item.id,
           storeId,
@@ -960,7 +980,7 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
           createdDate: item.CreatedDate || item.createdDate || '',
         });
       }
-      distributors = Array.from(storeMap.values());
+      distributors = Array.from(storeMap.values()).map(({ _rawItems, ...d }: any) => ({ ...d, ...extractStoreOrderLimits(_rawItems) }));
     }
   }
 

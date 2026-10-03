@@ -777,24 +777,8 @@ class WhatsAppQueueWorker {
     // Sends one reply per customer (latest message wins), skipping read/already-replied chats.
     // Runs automatically with confirm=true — the human-loop /process-offline-batch endpoint
     // can also be used for manual approval. A 5s delay gives WA client time to reconnect.
-    if (this.detectedOutageInterval) {
-      const outageInterval = this.detectedOutageInterval;
-      setTimeout(async () => {
-        try {
-          const { waSmartReplyScheduler } = await import('./waSmartReplyScheduler.js');
-          // Dry-run first to log counts
-          const dryRun = await waSmartReplyScheduler.processOfflineBatch(false, outageInterval);
-          console.log(`[WhatsAppQueueWorker] Offline batch: ${dryRun.processed} to reply, ${dryRun.skipped_read} already read, ${dryRun.skipped_replied} already replied.`);
-          // Auto-schedule replies (human can also call POST /api/messaging/process-offline-batch?confirm=true)
-          if (dryRun.processed > 0) {
-            await waSmartReplyScheduler.processOfflineBatch(true, outageInterval);
-            console.log(`[WhatsAppQueueWorker] Offline batch: scheduled ${dryRun.processed} reply timer(s).`);
-          }
-        } catch (err: any) {
-          console.warn('[WhatsAppQueueWorker] Offline batch processing error:', err?.message || err);
-        }
-      }, 5000);
-    }
+    // (Outage catch-up moved to whatsappClient.syncWhatsappData: it must run AFTER WhatsApp is
+    // ready and unread messages are pulled in; a fixed 5 s timer here always saw an empty table.)
 
     const IDLE_TICK_MS = 15 * 60 * 1000;
 

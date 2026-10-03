@@ -919,6 +919,34 @@ router.put('/medicine-links/:medicineId', async (req, res) => {
   }
 });
 
+// After a purchase bill save (special-price popup): link the bill's medicines to the bill's
+// Pharmarack distributor. ONE search per unlinked medicine; auto-links only a single exact
+// product, else returns candidates. Links only - never touches the cart, stock or messages.
+router.post('/bill-links', async (req, res) => {
+  const purchaseId = parseInt(String(req.body?.purchaseId), 10);
+  if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: 'Valid purchaseId required' });
+  try {
+    const { linkBillMedicines } = await import('../services/billDistributorLinkService.js');
+    res.json({ success: true, rows: await linkBillMedicines(purchaseId) });
+  } catch (err: any) {
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to link bill medicines' });
+  }
+});
+
+// After a purchase bill save (special-price popup): link the bill's medicines to the bill's
+// Pharmarack distributor. ONE search per unlinked medicine; auto-links only a single exact
+// product, else returns candidates. Links only - never touches the cart, stock or messages.
+router.post('/bill-links', async (req, res) => {
+  const purchaseId = parseInt(String(req.body?.purchaseId), 10);
+  if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: 'Valid purchaseId required' });
+  try {
+    const { linkBillMedicines } = await import('../services/billDistributorLinkService.js');
+    res.json({ success: true, rows: await linkBillMedicines(purchaseId) });
+  } catch (err: any) {
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to link bill medicines' });
+  }
+});
+
 // Soft-cancel a refill record
 router.post('/:id/cancel', async (req, res) => {
   const { id } = req.params;

@@ -999,6 +999,7 @@ const Purchases: React.FC = () => {
   const [showCreditNotesPanel, setShowCreditNotesPanel] = useState(false);
   const [showSpecialPriceModal, setShowSpecialPriceModal] = useState(false);
   const [specialPriceModalInvoiceNo, setSpecialPriceModalInvoiceNo] = useState('');
+  const [specialPriceModalPurchaseId, setSpecialPriceModalPurchaseId] = useState<number | null>(null);
   const [specialPriceModalItems, setSpecialPriceModalItems] = useState<SpecialPriceRow[]>([]);
   const [items, setItems] = useState<BillItem[]>(
     Array.isArray(initialActiveTab?.items) && initialActiveTab.items.length > 0 
@@ -2874,6 +2875,7 @@ const Purchases: React.FC = () => {
       setCnAmount('');
 
       setSpecialPriceModalInvoiceNo(savedInvoiceNo);
+      setSpecialPriceModalPurchaseId(Number(response?.purchase_id) > 0 ? Number(response.purchase_id) : null);
       setSpecialPriceModalItems(savedMeds);
       setShowSpecialPriceModal(true);
 
@@ -4758,6 +4760,7 @@ const Purchases: React.FC = () => {
         isOpen={showSpecialPriceModal}
         onClose={() => setShowSpecialPriceModal(false)}
         invoiceNo={specialPriceModalInvoiceNo}
+        purchaseId={specialPriceModalPurchaseId}
         items={specialPriceModalItems}
       />
     </div>
