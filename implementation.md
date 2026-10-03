@@ -22,6 +22,7 @@ Running page prewarming or mounting immediately at boot competes with the POS co
 - [x] `Task 1`: Update `KeepAliveOutlet.tsx` to delay the background pre-mounting of essential pages until 12 seconds after mount (while keeping immediate on-click mounting active).
 - [x] `Task 2`: Refactor `App.tsx` warm-up scheduler to begin at 12 seconds (in the 10–14s window) and smoothly stagger prewarming across all primary routes (Inventory, Sells, Dashboard, Purchases, CRM, Pharmarack Cart, Dispatch, Mail, Settings).
 - [x] `Task 3`: Run `npm run guardrails` and `node scripts/quick-update.mjs` to verify zero violations and synchronize the project knowledge graph.
+- [x] `Task 4`: Production release (`npm run release`) build installer and update archive.
 
 ---
 
@@ -40,3 +41,10 @@ Running page prewarming or mounting immediately at boot competes with the POS co
 ### Task 3: Verification & Guardrails
 - `npm run guardrails` passed with 0 violations (`tsc --noEmit` clean, speed architecture intact).
 - `node scripts/quick-update.mjs` synchronized knowledge graph.
+
+### Task 4: Production Release v0.1.44
+- Executed `npm run release` successfully.
+- Version bumped: `0.1.43` -> `0.1.44`.
+- Frontend bundled with Vite (47.99s), Node SEA binary compiled (`dist/PharmacyBackend.exe`), Electron main/preload packaged, Inno Setup compiled installer: `dist\installer\AI-Pharmacy-OS-Portable-Setup-v0.1.44.exe`.
+- Update package generated: `dist\installer\AI-Pharmacy-OS-Update-v0.1.44.zip` (SHA-256: `b9e23f8652823fb132792e67831bd7f2f65526f0ae9695b9489996679daf6fa6`).
+- Manifest written: `update-manifest.json`.
