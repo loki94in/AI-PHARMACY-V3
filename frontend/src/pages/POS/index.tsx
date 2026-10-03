@@ -24,6 +24,7 @@ import { combineSalutationAndName, parseSalutationAndName } from '../../componen
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
+import { POSPatientModal, POSDoctorModal, POSPostSaleModal, POSInteractionsModal, POSPhonePromptModal, POSCheckoutBar } from '../../components/POS';
 
 const getLocalDateString = (d: Date = new Date()) => {
   const yyyy = d.getFullYear();
@@ -31,6 +32,11 @@ const getLocalDateString = (d: Date = new Date()) => {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 };
+
+const fefoRank = (stripQty: number, exp?: string) =>
+  `${Number(stripQty) > 0 ? 0 : 1}|${exp || '9999-12'}`;
+
+const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
 /** Compact WA ON/OFF toggle for POS toolbar — disables when number confirmed NOT on WhatsApp */
 function POSWaToggleButton({
@@ -533,11 +539,6 @@ const groupBatchesInternal = (
   const grouped: PosBatchItem[] = [];
   const map = new Map<number, PosBatchItem>();
 
-  // FEFO rank for choosing which batch the sale will actually target:
-  // batches that still have strips beat loose-only batches; among those, earliest expiry wins.
-  const fefoRank = (stripQty: number, exp?: string) =>
-    `${Number(stripQty) > 0 ? 0 : 1}|${exp || '9999-12'}`;
-
   const groupAlternatives = (medId: number, altItems: PosBatchItem[]): PosBatchItem[] => {
     if (depth >= GROUP_BATCHES_MAX_DEPTH) return [];
     const cached = cache.get(medId);
@@ -615,11 +616,6 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
   const compactTerm = term.replace(/[^a-z0-9]/g, '');
   const index = getCompactInventoryIndex();
   const useIndex = index.length === inventory.length;
-
-  const fefoRank = (stripQty: number, exp?: string) =>
-    `${Number(stripQty) > 0 ? 0 : 1}|${exp || '9999-12'}`;
-
-  const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
   const tier1Map = new Map<string, PosBatchItem>(); // Exact prefix
   const tier2Map = new Map<string, PosBatchItem>(); // Acronym / Shorthand (e.g. CD 12 -> Crocin DS 12)
@@ -819,7 +815,6 @@ export function allocateMedicineBatches(params: {
   const pSize = Math.max(1, params.packSize || params.fallbackItem?.packSize || params.fallbackItem?.pack_size || 1);
   const totalRequestedTablets = (requestedQty * pSize) + (requestedLooseQty || 0);
 
-  const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const targetNormName = normKey(medicineName);
 
   // 1. Find all active unexpired batches for this medicine
@@ -2120,7 +2115,6 @@ const POS = () => {
         const catalogRows = await api.catalogSearch(term, controller.signal) as any[] | null;
         if (seq !== rowCatalogSearchSeqRef.current) return;
         if (Array.isArray(catalogRows) && catalogRows.length > 0) {
-          const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
           const localMap = new Map<string, PosBatchItem>();
           for (const item of filtered) {
             localMap.set(normKey(item.medicine_name || item.name), item);
@@ -2659,7 +2653,6 @@ const POS = () => {
   const rebalanceCartMedicine = (prevCart: CartRow[], medicineId: number | string, targetItemId: number | string, updatedFields: { qty?: number; looseQty?: number }) => {
     const targetItem = prevCart.find(i => i.id === targetItemId);
     const targetMedId = targetItem?.medicine_id || (typeof medicineId === 'number' && medicineId < 1000000 ? medicineId : 0);
-    const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
     const targetMedName = normKey(targetItem?.name || targetItem?.medicine_name);
 
     // 1. Find all cart items of this medicine
@@ -3020,7 +3013,6 @@ const POS = () => {
         const catalogRows = await api.catalogSearch(term, controller.signal) as any[] | null;
         if (seq !== headerCatalogSearchSeqRef.current) return;
         if (Array.isArray(catalogRows) && catalogRows.length > 0) {
-          const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
           const localMap = new Map<string, PosBatchItem>();
           for (const item of filtered) {
             localMap.set(normKey(item.medicine_name || item.name), item);
@@ -6118,97 +6110,21 @@ const POS = () => {
         )}
 
         {/* ── BOTTOM CHECKOUT BAR (full width horizontal strip) ── */}
-        <div className="shrink-0 w-full flex flex-row items-center gap-2 px-3 py-1.5 bg-bg2/95 border-t border-glass-border/50 shadow-[0_-4px_16px_rgba(0,0,0,0.14)] overflow-x-auto">
-
-          {/* Section 1: Customer (single line) */}
-          <div className="flex items-center gap-1.5 min-w-[140px] border-r border-glass-border/30 pr-2.5 shrink-0">
-            <UserCheck size={14} className="text-primary shrink-0" />
-            <div className="flex flex-col leading-tight">
-              <span className="text-xs font-bold text-text truncate max-w-[120px]">{patientName || 'Walk-in'}</span>
-              <span className="text-[11px] text-muted font-mono truncate">
-                {patientPhone || '—'}
-                {patientPhone && <span className="ml-1 text-green font-bold">· WA</span>}
-                {selectedCustomerId && <span className="ml-1 text-primary font-bold">· Reg</span>}
-              </span>
-            </div>
-          </div>
-
-          {/* Section 2: Bill Breakdown (single line) */}
-          <div className="flex items-center gap-2 min-w-[220px] border-r border-glass-border/30 pr-2.5 shrink-0">
-            <FileText size={13} className="text-muted shrink-0" />
-            <span className="text-[11px] text-muted">Sub:</span>
-            <span className="font-mono font-bold text-text text-xs">₹{Math.round(subtotal)}</span>
-            <span className="text-[11px] text-muted ml-1">Disc%</span>
-            <input
-              id="pos-bill-discount-input"
-              name="pos_bill_discount"
-              type="number"
-              autoComplete="off"
-              value={discount === 0 || discount === undefined || discount === null ? '' : discount}
-              onChange={e => setDiscount(e.target.value === '' ? 0 : Math.min(100, Math.max(0, Number(e.target.value))))}
-              placeholder="0"
-              className="w-12 bg-bg border border-glass-border rounded px-1.5 py-0.5 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-6"
-            />
-            {discountAmount > 0 && (
-              <span className="font-mono font-bold text-amber-500 text-xs">-₹{Math.round(discountAmount)}</span>
-            )}
-          </div>
-
-          {/* Section 3: Payment Method (single row) */}
-          <div className="flex items-center gap-1 border-r border-glass-border/30 pr-2.5 shrink-0">
-            {[
-              { id: 'CASH', label: '💵 Cash', activeClass: 'bg-green/15 text-green border-green/40' },
-              { id: 'UPI', label: '📱 UPI', activeClass: 'bg-primary/15 text-primary border-primary/40' },
-              { id: 'CREDIT', label: '📜 Credit', activeClass: 'bg-amber-500/15 text-amber-500 border-amber-500/40' }
-            ].map(pm => (
-              <button
-                key={pm.id}
-                type="button"
-                onClick={() => setPaymentMedium(pm.id)}
-                className={`py-1 px-2 rounded text-[11px] font-extrabold uppercase border text-center transition-all cursor-pointer ${
-                  paymentMedium === pm.id
-                    ? `${pm.activeClass} ring-1 ring-primary/20`
-                    : 'bg-bg3/40 border-glass-border/30 text-muted hover:text-text hover:bg-bg3'
-                }`}
-              >
-                {pm.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Section 4: Net Payable (compact) */}
-          <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded-lg bg-primary/5 border border-primary/20 shrink-0">
-            <span className="text-[11px] font-black text-primary uppercase tracking-widest">Total</span>
-            <span className="text-xl font-black font-mono text-primary leading-none">₹{grandTotal.toLocaleString()}</span>
-          </div>
-
-          {/* Section 5: Action Buttons */}
-          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-            <button
-              onClick={() => handleCompleteSale(undefined, true)}
-              disabled={cart.length === 0 || isSavingBill}
-              className={`py-1.5 px-3.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer border ${
-                cart.length === 0 || isSavingBill
-                  ? 'bg-bg3 border-glass-border text-muted cursor-not-allowed'
-                  : 'bg-sky/15 border-sky/30 text-sky hover:bg-sky/25'
-              }`}
-            >
-              <Zap size={13} /> {isSavingBill ? 'Saving...' : 'Direct Save'}
-            </button>
-            <button
-              onClick={() => handleCompleteSale(undefined, false)}
-              disabled={cart.length === 0 || isSavingBill}
-              className={`py-2 px-4.5 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-md ${
-                cart.length === 0 || isSavingBill
-                  ? 'bg-bg3 border border-glass-border text-muted cursor-not-allowed'
-                  : 'bg-green text-white hover:bg-emerald-600 shadow-[0_0_14px_rgba(16,185,129,0.3)] hover:-translate-y-px'
-              }`}
-            >
-              <CheckCircle size={15} />
-              {isSavingBill ? 'Saving...' : 'Save & Print (Ctrl+S)'}
-            </button>
-          </div>
-        </div>
+        <POSCheckoutBar
+          patientName={patientName}
+          patientPhone={patientPhone}
+          selectedCustomerId={selectedCustomerId}
+          subtotal={subtotal}
+          discount={discount}
+          setDiscount={setDiscount}
+          discountAmount={discountAmount}
+          paymentMedium={paymentMedium}
+          setPaymentMedium={setPaymentMedium}
+          grandTotal={grandTotal}
+          cartLength={cart.length}
+          isSavingBill={isSavingBill}
+          onCompleteSale={(directSave) => handleCompleteSale(undefined, directSave)}
+        />
       </div>
 
       {showCamera && (
@@ -6222,7 +6138,7 @@ const POS = () => {
 
       {zoomedImage && createPortal(
         <div 
-          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-global-modal flex items-center justify-center p-4 cursor-pointer animate-in fade-in duration-200"
+          className="fixed inset-0 bg-black/80 z-global-modal flex items-center justify-center p-4 cursor-pointer animate-in fade-in duration-200"
           onClick={() => setZoomedImage(null)}
         >
           <div className="relative max-w-3xl max-h-[85vh] bg-bg2 border border-border rounded-2xl overflow-hidden p-2 shadow-2xl animate-in zoom-in-95 duration-200">
@@ -6240,536 +6156,78 @@ const POS = () => {
       )}
 
       {/* Credit Phone Number Requirement Prompt Modal */}
-      {showPhonePromptModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-modal p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-md p-6 space-y-4 border-border bg-bg2/95 rounded-2xl relative shadow-2xl">
-            <div className="flex justify-between items-center border-b border-border pb-3">
-              <h3 className="font-bold flex items-center gap-2 text-base text-text">
-                <Send size={18} className="text-primary" />
-                WhatsApp Number Required for Credit Bill
-              </h3>
-              <button 
-                onClick={() => setShowPhonePromptModal(false)}
-                className="p-1.5 rounded-lg hover:bg-bg3 text-muted hover:text-text transition-all"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <p className="text-xs text-muted leading-relaxed">
-              To save this credit transaction and automatically send the instant WhatsApp credit PDF bill, please enter the mobile number for <strong className="text-text">{patientName || 'Customer'}</strong>:
-            </p>
-            <div className="space-y-1.5">
-              <PhoneInputWithBadge
-                label="WhatsApp Phone Number"
-                value={promptPhoneValue}
-                onChange={val => setPromptPhoneValue(val)}
-                placeholder="Enter 10-digit phone number (e.g. 9876543210)"
-                required={true}
-                allowEmpty={false}
-                shakeOnError={shakePromptPhone}
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setShowPhonePromptModal(false)}
-                className="px-4 py-2 bg-bg3 text-muted rounded-xl text-xs font-semibold hover:text-text cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const val = sanitizePhoneInput(promptPhoneValue);
-                  if (!isValid10DigitPhone(val)) {
-                    setShakePromptPhone(true);
-                    setTimeout(() => setShakePromptPhone(false), 400);
-                    toastEvent.trigger('Please enter a valid 10-digit phone number', 'error');
-                    return;
-                  }
-                  setPatientPhone(val);
-                  setShowPhonePromptModal(false);
-                  handleCompleteSale(val, pendingDirectSaveRef.current);
-                }}
-                className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
-              >
-                <Send size={14} />
-                Save &amp; Send Credit Bill
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <POSPhonePromptModal
+        isOpen={showPhonePromptModal}
+        onClose={() => setShowPhonePromptModal(false)}
+        patientName={patientName}
+        promptPhoneValue={promptPhoneValue}
+        setPromptPhoneValue={setPromptPhoneValue}
+        shakePromptPhone={shakePromptPhone}
+        setShakePromptPhone={setShakePromptPhone}
+        onConfirm={(val) => {
+          setPatientPhone(val);
+          setShowPhonePromptModal(false);
+          handleCompleteSale(val, pendingDirectSaveRef.current);
+        }}
+      />
 
       {/* Patient Profile & Auto-Refills Modal */}
-      {showPatientModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-modal p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-md p-6 space-y-5 border-border bg-bg2/95 rounded-2xl relative shadow-2xl">
-            {/* Modal Header */}
-            <div className="flex justify-between items-center border-b border-border pb-3">
-              <h3 className="font-bold flex items-center gap-2 text-lg text-text">
-                <UserCheck size={20} className="text-primary" />
-                Manage Patient & Refills
-              </h3>
-              <button 
-                onClick={() => setShowPatientModal(false)}
-                className="p-1.5 rounded-lg hover:bg-bg3 text-muted hover:text-text transition-all"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="space-y-4">
-              {/* Patient ID */}
-              <div className="space-y-1.5">
-                <span className="text-xs font-bold text-muted uppercase tracking-wider">Patient Card ID</span>
-                <input 
-                  id="modal-patient-id"
-                  name="modal_patient_card_id"
-                  type="text" 
-                  autoComplete="off"
-                  className="premium-input w-full text-xs font-mono py-2 px-3 bg-bg3/40 cursor-not-allowed rounded-xl" 
-                  value={patientId}
-                  disabled
-                  title="Auto-generated unique card ID"
-                />
-              </div>
-
-              {/* Patient Name */}
-              <div className="space-y-1.5">
-                <span className="text-xs font-bold text-muted uppercase tracking-wider">Full Name</span>
-                <input 
-                  id="modal-patient-name"
-                  name="modal_patient_name"
-                  type="text" 
-                  autoComplete="off"
-                  className="premium-input uppercase w-full text-sm py-2 px-3 bg-bg2/50 border-border/80 rounded-xl" 
-                  placeholder="ENTER FULL NAME" 
-                  value={patientName}
-                  onChange={e => updatePatientName(e.target.value)}
-                />
-              </div>
-
-              {/* WhatsApp / Phone */}
-              <div className="space-y-1.5">
-                <span className="text-xs font-bold text-muted uppercase tracking-wider flex items-center gap-1.5">
-                  <Phone size={12} className="text-green" /> WhatsApp / Contact Number
-                </span>
-                <input 
-                  id="modal-patient-phone"
-                  name="modal_patient_phone"
-                  type="text" 
-                  autoComplete="off"
-                  className="premium-input w-full text-sm font-mono py-2 px-3 bg-bg2/50 border-border/80 rounded-xl" 
-                  placeholder="e.g. 9876543210" 
-                  value={patientPhone}
-                  onChange={e => setPatientPhone(sanitizePhoneInput(e.target.value))}
-                  maxLength={10}
-                />
-              </div>
-
-              {/* Auto-Refill Manager Section */}
-              <div className="border border-border rounded-2xl p-4 bg-bg3/30 space-y-3">
-                <div className="flex justify-between items-center">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-text uppercase tracking-wider flex items-center gap-1.5">
-                      🔄 Auto-Refill Reminders
-                    </span>
-                    <p className="text-[10px] text-muted">Generate recurring WhatsApp stock notifications</p>
-                  </div>
-                  <label htmlFor="modal-refill-enabled" className="relative inline-flex items-center cursor-pointer" aria-label="Toggle Refill">
-                    <input 
-                      id="modal-refill-enabled"
-                      name="modal_refill_enabled"
-                      type="checkbox" 
-                      className="sr-only peer"
-                      checked={refillEnabled}
-                      onChange={e => setRefillEnabled(e.target.checked)}
-                    />
-                    <div className="w-9 h-5 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-text after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-muted after:border-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary peer-checked:after:bg-text"></div>
-                  </label>
-                </div>
-
-                {refillEnabled && (
-                  <div className="space-y-3 pt-2 border-t border-border/40 animate-fade-in">
-                    <div className="space-y-1.5">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider flex items-center gap-1">
-                        <Calendar size={12} /> Refill Interval (Days)
-                      </span>
-                      <div className="flex gap-2">
-                        <input 
-                          id="modal-refill-days"
-                          name="modal_refill_days"
-                          type="number" 
-                          autoComplete="off"
-                          className="premium-input text-sm font-mono py-1.5 px-3 w-20 text-center bg-bg border-border rounded-xl" 
-                          value={refillDays}
-                          onChange={e => setRefillDays(Math.min(100, Math.max(1, Number(e.target.value))))}
-                          min="1"
-                          max="100"
-                        />
-                        <div className="flex gap-1 flex-1">
-                          {[30, 60, 90].map(days => (
-                            <button
-                              key={days}
-                              type="button"
-                              onClick={() => setRefillDays(days)}
-                              className={`text-xs py-1 px-2.5 rounded-xl border font-mono transition-all flex-1 ${refillDays === days ? 'bg-primary/20 border-primary text-primary' : 'bg-bg2 border-border text-muted hover:text-text'}`}
-                            >
-                              {days}d
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Interactive 1-100 Days Slider */}
-                      <div className="space-y-1 pt-1">
-                        <div className="flex justify-between text-[10px] text-muted font-semibold">
-                          <span>1 day</span>
-                          <span className="text-primary font-bold">{refillDays} days</span>
-                          <span>100 days</span>
-                        </div>
-                        <input
-                          id="modal-refill-days-range"
-                          name="modal_refill_days_range"
-                          type="range"
-                          min="1"
-                          max="100"
-                          value={refillDays}
-                          onChange={e => setRefillDays(Number(e.target.value))}
-                          className="w-full h-1.5 bg-border rounded-lg appearance-none cursor-pointer accent-primary"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="pt-2 border-t border-border flex justify-end gap-3">
-              <button 
-                onClick={() => setShowPatientModal(false)}
-                className="premium-btn bg-bg2 border border-border text-muted hover:text-text hover:bg-bg3 py-2 px-4 text-xs font-bold uppercase tracking-wider rounded-xl"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleSavePatientProfile}
-                className="premium-btn bg-primary text-white hover:bg-teal-500 py-2 px-5 text-xs font-bold uppercase tracking-wider rounded-xl shadow-md"
-              >
-                Save Profile (Ctrl+S)
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <POSPatientModal
+        isOpen={showPatientModal}
+        onClose={() => setShowPatientModal(false)}
+        patientId={patientId}
+        patientName={patientName}
+        updatePatientName={updatePatientName}
+        patientPhone={patientPhone}
+        setPatientPhone={setPatientPhone}
+        sanitizePhoneInput={sanitizePhoneInput}
+        refillEnabled={refillEnabled}
+        setRefillEnabled={setRefillEnabled}
+        refillDays={refillDays}
+        setRefillDays={setRefillDays}
+        handleSavePatientProfile={handleSavePatientProfile}
+      />
 
       {/* Doctor Registration / Edit Modal */}
-      {showDoctorModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm fade-in">
-          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-sm shadow-2xl overflow-hidden flex flex-col">
-            <div className="px-5 py-4 border-b border-border bg-bg3/30 flex items-center justify-between">
-              <h3 className="font-bold flex items-center gap-2 text-sky text-sm">
-                {editingDoctorId ? <Edit size={18} className="text-amber-400" /> : <Plus size={18} />}
-                {editingDoctorId ? 'Edit Doctor Profile' : 'Register New Doctor'}
-              </h3>
-              <button onClick={() => setShowDoctorModal(false)} className="text-muted hover:text-text transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-            
-            <div className="p-5 space-y-4">
-              <div className="space-y-1.5">
-                <label htmlFor="modal-doctor-name" className="text-xs font-bold text-muted uppercase tracking-wider">Doctor Name *</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm font-semibold">Dr.</span>
-                  <input
-                    id="modal-doctor-name"
-                    name="modal_doctor_name"
-                    type="text"
-                    autoComplete="off"
-                    className="premium-input w-full pl-9 rounded-xl bg-bg2/40 border-border"
-                    placeholder="John Doe"
-                    value={newDoctorName}
-                    onChange={(e) => setNewDoctorName(e.target.value)}
-                  />
-                </div>
-              </div>
-              
-              <div className="space-y-1.5">
-                <label htmlFor="modal-doctor-specialty" className="text-xs font-bold text-muted uppercase tracking-wider">Specialization</label>
-                <input
-                  id="modal-doctor-specialty"
-                  name="modal_doctor_specialty"
-                  type="text"
-                  autoComplete="off"
-                  className="premium-input w-full rounded-xl bg-bg2/40 border-border"
-                  placeholder="e.g. Cardiologist"
-                  value={newDoctorSpecialty}
-                  onChange={(e) => setNewDoctorSpecialty(e.target.value)}
-                />
-              </div>
+      <POSDoctorModal
+        isOpen={showDoctorModal}
+        onClose={() => setShowDoctorModal(false)}
+        editingDoctorId={editingDoctorId}
+        newDoctorName={newDoctorName}
+        setNewDoctorName={setNewDoctorName}
+        newDoctorSpecialty={newDoctorSpecialty}
+        setNewDoctorSpecialty={setNewDoctorSpecialty}
+        newDoctorPhone={newDoctorPhone}
+        setNewDoctorPhone={setNewDoctorPhone}
+        newDoctorClinic={newDoctorClinic}
+        setNewDoctorClinic={setNewDoctorClinic}
+        newDoctorRegNo={newDoctorRegNo}
+        setNewDoctorRegNo={setNewDoctorRegNo}
+        sanitizePhoneInput={sanitizePhoneInput}
+        handleRegisterDoctor={handleRegisterDoctor}
+      />
 
-              <div className="space-y-1.5">
-                <label htmlFor="modal-doctor-phone" className="text-xs font-bold text-muted uppercase tracking-wider">Phone</label>
-                <input
-                  id="modal-doctor-phone"
-                  name="modal_doctor_phone"
-                  type="text"
-                  autoComplete="off"
-                  className="premium-input w-full rounded-xl bg-bg2/40 border-border font-mono"
-                  placeholder="10-digit Phone Number"
-                  value={newDoctorPhone}
-                  onChange={(e) => setNewDoctorPhone(sanitizePhoneInput(e.target.value))}
-                  maxLength={10}
-                />
-              </div>
+      {/* Hidden printable bill and post-sale confirmation dialog */}
+      <POSPostSaleModal
+        isOpen={showBarcodeModal}
+        onClose={() => setShowBarcodeModal(false)}
+        posShopDetails={posShopDetails}
+        lastSavedInvoiceNo={lastSavedInvoiceNo}
+        lastSavedPatientName={lastSavedPatientName}
+        lastSavedPatientPhone={lastSavedPatientPhone}
+        lastSavedDoctorName={lastSavedDoctorName}
+        lastSavedPaymentMedium={lastSavedPaymentMedium}
+        lastSavedItems={lastSavedItems}
+        lastSavedBillDiscount={lastSavedBillDiscount}
+        lastSavedGrandTotal={lastSavedGrandTotal}
+        lastSavedCreditDues={lastSavedCreditDues}
+        lastSavedCreditBalance={lastSavedCreditBalance}
+        lastSavedNextRefillDue={lastSavedNextRefillDue}
+        lastSavedWasWhatsAppSent={lastSavedWasWhatsAppSent}
+        setLastSavedWasWhatsAppSent={setLastSavedWasWhatsAppSent}
+        printCurrentBill={printCurrentBill}
+      />
 
-              <div className="space-y-1.5">
-                <label htmlFor="modal-doctor-clinic" className="text-xs font-bold text-muted uppercase tracking-wider">Clinic Name</label>
-                <input
-                  id="modal-doctor-clinic"
-                  name="modal_doctor_clinic"
-                  type="text"
-                  autoComplete="off"
-                  className="premium-input w-full rounded-xl bg-bg2/40 border-border"
-                  placeholder="Clinic / Hospital Name"
-                  value={newDoctorClinic}
-                  onChange={(e) => setNewDoctorClinic(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="modal-doctor-reg-no" className="text-xs font-bold text-muted uppercase tracking-wider">Registration No.</label>
-                <input
-                  id="modal-doctor-reg-no"
-                  name="modal_doctor_reg_no"
-                  type="text"
-                  autoComplete="off"
-                  className="premium-input w-full rounded-xl bg-bg2/40 border-border"
-                  placeholder="e.g. MMC-12345"
-                  value={newDoctorRegNo}
-                  onChange={(e) => setNewDoctorRegNo(e.target.value)}
-                />
-              </div>
-            </div>
-            
-            <div className="px-5 py-4 border-t border-border bg-bg3/30 flex justify-end gap-3">
-              <button 
-                onClick={() => setShowDoctorModal(false)}
-                className="px-4 py-2 rounded-xl text-sm font-bold text-muted hover:text-text hover:bg-bg2 transition-all border border-transparent"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleRegisterDoctor}
-                disabled={!newDoctorName}
-                className="px-4 py-2 rounded-xl text-sm font-bold bg-sky text-white hover:bg-sky/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-[0_0_15px_rgba(14,165,233,0.2)]"
-              >
-                <CheckCircle size={16} /> Save Doctor
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Hidden printable bill container for window.print() */}
-      {showBarcodeModal && createPortal(
-        <div id="printable-bill" data-print-root className="hidden">
-          <div style={{ textAlign: 'center', marginBottom: '12px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 2px 0', color: '#000' }}>
-              {posShopDetails.name || 'AI PHARMACY OS'}
-            </h2>
-            {posShopDetails.address && <p style={{ fontSize: '10px', color: '#555', margin: '0' }}>{posShopDetails.address}</p>}
-            <p style={{ fontSize: '11px', color: '#444', margin: '2px 0' }}>
-              {[
-                posShopDetails.phone ? `Ph: ${posShopDetails.phone}` : '',
-                posShopDetails.drugLicense ? `D.L. No: ${posShopDetails.drugLicense}` : '',
-                posShopDetails.gstin ? `GSTIN: ${posShopDetails.gstin}` : ''
-              ].filter(Boolean).join(' | ')}
-            </p>
-            <p style={{ fontSize: '12px', color: '#555', margin: '2px 0', fontWeight: 'bold' }}>Tax Invoice / Retail Counter Receipt</p>
-            <div style={{ borderBottom: '1px solid #ddd', margin: '8px 0' }}></div>
-          </div>
-          <div style={{ fontSize: '12px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', color: '#000' }}>
-            <div>
-              <p style={{ margin: '2px 0' }}><strong>Invoice No:</strong> #{lastSavedInvoiceNo}</p>
-              <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {lastSavedPatientName}</p>
-              {lastSavedPatientPhone && <p style={{ margin: '2px 0' }}><strong>Phone:</strong> {lastSavedPatientPhone}</p>}
-              {lastSavedDoctorName && <p style={{ margin: '2px 0' }}><strong>Doctor:</strong> {lastSavedDoctorName}</p>}
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <p style={{ margin: '2px 0' }}><strong>Date:</strong> {new Date().toLocaleDateString()}</p>
-              <p style={{ margin: '2px 0' }}><strong>Payment:</strong> {lastSavedPaymentMedium}</p>
-            </div>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', marginBottom: '15px', color: '#000' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #000', textTransform: 'uppercase' }}>
-                <th style={{ textAlign: 'left', padding: '6px 2px' }}>Item Name</th>
-                <th style={{ textAlign: 'left', padding: '6px 2px' }}>Batch</th>
-                <th style={{ textAlign: 'center', padding: '6px 2px' }}>Qty</th>
-                <th style={{ textAlign: 'center', padding: '6px 2px' }}>Loose</th>
-                {lastSavedItems.some(item => Number(item.discountPer || 0) > 0) && (
-                  <th style={{ textAlign: 'center', padding: '6px 2px' }}>Disc%</th>
-                )}
-                <th style={{ textAlign: 'right', padding: '6px 2px' }}>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lastSavedItems.map((item, idx) => (
-                <tr key={idx} style={{ borderBottom: '1px dotted #ccc' }}>
-                  <td style={{ padding: '6px 2px' }}>{item.name}</td>
-                  <td style={{ padding: '6px 2px' }}>{item.batch}</td>
-                  <td style={{ padding: '6px 2px', textAlign: 'center' }}>{item.qty}</td>
-                  <td style={{ padding: '6px 2px', textAlign: 'center' }}>{item.looseQty || 0}</td>
-                  {lastSavedItems.some(it => Number(it.discountPer || 0) > 0) && (
-                    <td style={{ padding: '6px 2px', textAlign: 'center' }}>{Number(item.discountPer || 0) > 0 ? `${item.discountPer}%` : '-'}</td>
-                  )}
-                  <td style={{ padding: '6px 2px', textAlign: 'right', fontWeight: 600 }}>₹{Number(item.amount || 0).toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{ borderTop: '2px solid #000', paddingTop: '8px', textAlign: 'right', fontSize: '12px', color: '#000' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: '260px', marginLeft: 'auto' }}>
-              <span>Subtotal:</span><span>₹{lastSavedItems.reduce((sum, item) => sum + Number(item.amount || 0), 0).toFixed(2)}</span>
-            </div>
-            {lastSavedBillDiscount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: '260px', marginLeft: 'auto' }}>
-                <span>Discount:</span><span>-₹{Number(lastSavedBillDiscount).toFixed(2)}</span>
-              </div>
-            )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: '260px', marginLeft: 'auto', fontWeight: 'bold', fontSize: '14px', marginTop: '4px', borderTop: '1px solid #000', paddingTop: '4px' }}>
-              <span>Grand Total:</span><span>₹{Number(lastSavedGrandTotal).toFixed(2)}</span>
-            </div>
-          </div>
-          {lastSavedPaymentMedium === 'CREDIT' && lastSavedCreditDues && lastSavedCreditDues.length > 0 && (
-            <div style={{ marginTop: '14px', border: '1px solid #000', padding: '8px 10px', fontSize: '11px', color: '#000' }}>
-              <div style={{ fontWeight: 'bold', textTransform: 'uppercase', borderBottom: '1px solid #999', paddingBottom: '3px', marginBottom: '5px' }}>Credit Invoices Due - {lastSavedPatientName}</div>
-              {lastSavedCreditDues.map((due, idx) => (
-                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 0' }}>
-                  <span>#{due.invoice_no}</span><span>₹{Number(due.total_amount).toFixed(2)}</span>
-                </div>
-              ))}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', borderTop: '1px solid #000', marginTop: '4px', paddingTop: '3px', fontSize: '13px' }}>
-                <span>Total Credit Balance:</span><span>₹{Number(lastSavedCreditBalance).toFixed(2)}</span>
-              </div>
-            </div>
-          )}
-          {lastSavedPaymentMedium === 'CREDIT' && lastSavedNextRefillDue && (
-            <div style={{ marginTop: '10px', fontSize: '11px', color: '#000', background: '#f3f4f6', border: '1px dashed #666', padding: '6px 10px' }}>
-              Next Refill Due: {new Date(lastSavedNextRefillDue).toLocaleDateString('en-IN')}
-            </div>
-          )}
-          <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '11px', color: '#777' }}>
-            Thank you for your visit! &middot; Get Well Soon
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Post-Sale Saved Bill Confirmation Modal */}
-      {showBarcodeModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md fade-in">
-          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-md shadow-2xl overflow-hidden flex flex-col p-6 space-y-5">
-            <div className="text-center space-y-2">
-              <div className="inline-flex p-3 rounded-full bg-green/10 border border-green/20 text-green mb-1">
-                <CheckCircle size={32} className="animate-bounce" />
-              </div>
-              <h3 className="text-lg font-bold text-text">Sale Saved Successfully!</h3>
-              <p className="text-xs text-muted">Invoice No: <span className="font-mono text-sky font-semibold">#{lastSavedInvoiceNo}</span></p>
-            </div>
-
-            <div className="bg-bg2/60 border border-border/40 p-4 rounded-xl space-y-2.5">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-muted font-medium">Customer:</span>
-                <span className="font-bold text-text">{lastSavedPatientName}</span>
-              </div>
-              {lastSavedPatientPhone && (
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-muted font-medium">Contact Phone:</span>
-                  <span className="font-mono text-text font-semibold">{lastSavedPatientPhone}</span>
-                </div>
-              )}
-              <div className="flex justify-between items-center text-xs pt-2 border-t border-border/40">
-                <span className="text-muted font-medium">Total Amount:</span>
-                <span className="font-mono font-black text-primary text-sm">₹{lastSavedGrandTotal}</span>
-              </div>
-            </div>
-
-            {/* SMS Status / Manual Dispatch option */}
-            <div className="p-3.5 rounded-xl border text-xs flex items-center gap-3 bg-bg3/50 border-border/50">
-              <MessageSquare size={18} className={lastSavedWasWhatsAppSent ? "text-green shrink-0" : "text-muted shrink-0"} />
-              <div className="flex-1 min-w-0">
-                {lastSavedPaymentMedium === 'CREDIT' ? (
-                  <p className="font-semibold text-amber-500 text-[11px] leading-tight">
-                    ⚡ Credit Sale: Instant SMS/WhatsApp message sent automatically
-                  </p>
-                ) : lastSavedWasWhatsAppSent ? (
-                  <p className="font-semibold text-green text-[11px] leading-tight">
-                    ✅ SMS/WhatsApp message sent to customer
-                  </p>
-                ) : lastSavedPatientPhone ? (
-                  <p className="text-muted text-[11px] leading-tight">
-                    SMS message not sent (WA toggle was OFF).
-                  </p>
-                ) : (
-                  <p className="text-muted text-[11px] italic leading-tight">
-                    No phone number saved for this sale.
-                  </p>
-                )}
-              </div>
-              {!lastSavedWasWhatsAppSent && lastSavedPatientPhone && lastSavedInvoiceNo && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await api.sendWhatsappMessage(
-                        lastSavedPatientPhone,
-                        `Dear ${lastSavedPatientName},\n\n📄 *Sale Invoice: #${lastSavedInvoiceNo}*\nAmount Paid: ₹${lastSavedGrandTotal}\nThank you for your purchase!\n— AI Pharmacy OS`
-                      );
-                      if (res && res.success !== false) {
-                        setLastSavedWasWhatsAppSent(true);
-                        toastEvent.trigger('WhatsApp message sent successfully!', 'success');
-                      } else {
-                        toastEvent.trigger('Failed to send message.', 'error');
-                      }
-                    } catch (err) {
-                      console.error(err);
-                      toastEvent.trigger('Error sending message', 'error');
-                    }
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold uppercase bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all shrink-0"
-                >
-                  Send SMS
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5 pt-1">
-              <button
-                onClick={() => printCurrentBill(`Invoice-${lastSavedInvoiceNo}-${lastSavedPatientName || 'Walk-in'}`)}
-                className="w-full py-2.5 px-4 rounded-xl text-xs font-bold uppercase tracking-wider bg-primary text-white hover:bg-primary/90 transition-all shadow-[0_4px_12px_rgba(59,130,246,0.2)] flex items-center justify-center gap-2"
-              >
-                <Printer size={14} /> Print Bill
-              </button>
-
-              <button
-                onClick={() => {
-                  setShowBarcodeModal(false);
-                }}
-                className="w-full py-2.5 px-4 rounded-xl text-xs font-bold uppercase tracking-wider bg-bg2 border border-border text-muted hover:text-text hover:bg-bg3 transition-all flex items-center justify-center gap-2"
-              >
-                <CheckCircle size={14} /> Done / Close
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
       
       {editMedicineId && (
         <Suspense fallback={<ModalSkeleton />}>
@@ -6840,59 +6298,11 @@ const POS = () => {
       <StagedQueueFloatingWidget onLoadIntoPOS={handleLoadStagedItemIntoPOS} />
 
       {/* Clinical Interactions Review Modal */}
-      {showInteractionsModal && (
-        <div 
-          className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-          onClick={() => setShowInteractionsModal(false)}
-        >
-          <div 
-            className="w-[95vw] max-w-lg bg-bg2 border border-glass-border rounded-2xl p-5 shadow-2xl space-y-4"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-glass-border">
-              <div className="flex items-center gap-2 text-rose-400">
-                <ShieldAlert size={20} />
-                <h3 className="text-sm font-bold text-text">Clinical Drug Interaction Analysis</h3>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowInteractionsModal(false)}
-                className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="max-h-[60vh] overflow-y-auto space-y-3">
-              {drugInteractions.map((item, idx) => (
-                <div key={idx} className="p-3.5 rounded-xl bg-bg border border-border/40 space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-text">{item.drugAName} ⚡ {item.drugBName}</span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                      {item.severity}
-                    </span>
-                  </div>
-                  <p className="text-muted leading-relaxed">
-                    Triggered by active substance: <strong className="text-text">{item.interactingEntity}</strong>.
-                    Dispensing these medications concurrently may cause adverse reactions. Please verify clinical intent with the prescribing physician.
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setShowInteractionsModal(false)}
-                className="px-4 py-1.5 rounded-lg bg-bg border border-glass-border text-text font-semibold text-xs hover:bg-bg3"
-              >
-                Acknowledge & Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      <POSInteractionsModal
+        isOpen={showInteractionsModal}
+        onClose={() => setShowInteractionsModal(false)}
+        drugInteractions={drugInteractions}
+      />
     </div>
   );
 };

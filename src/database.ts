@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 72;
+const CURRENT_SCHEMA_VERSION = 73;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -28,6 +28,29 @@ const FTS_TRIGGER_SQL = `
 async function tableExists(db: any, name: string): Promise<boolean> {
   const row = await db.get("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name = ?", [name]);
   return !!row;
+}
+
+/**
+ * Deduplicated, fail-safe column migrator for SQLite.
+ * Queries PRAGMA table_info once per table and safely adds any missing columns.
+ */
+export async function ensureColumns(
+  db: any,
+  table: string,
+  columns: Record<string, string>
+): Promise<void> {
+  try {
+    const tableInfo = await db.all(`PRAGMA table_info("${table}")`);
+    if (!tableInfo || tableInfo.length === 0) return;
+    const existing = new Set(tableInfo.map((c: any) => (c.name || '').toLowerCase()));
+    for (const [colName, colDef] of Object.entries(columns)) {
+      if (!existing.has(colName.toLowerCase())) {
+        try {
+          await db.run(`ALTER TABLE "${table}" ADD COLUMN ${colName} ${colDef}`);
+        } catch (_) { }
+      }
+    }
+  } catch (_) { }
 }
 
 export async function dropFtsTriggers(db: any) {
@@ -177,31 +200,15 @@ export async function ensureMedicinesFts(db: any): Promise<'ok' | 'repaired' | '
  */
 export async function ensureMedicineSearchSummaryTriggers(db: any): Promise<void> {
   try {
-    const medCols = await db.all('PRAGMA table_info(medicines)');
-    const medNames = new Set(medCols.map((c: any) => c.name));
-    if (medCols.length > 0) {
-      if (!medNames.has('total_stock')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN total_stock REAL DEFAULT 0');
-      }
-      if (!medNames.has('total_loose_stock')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN total_loose_stock REAL DEFAULT 0');
-      }
-      if (!medNames.has('last_purchase_ptr')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN last_purchase_ptr REAL DEFAULT 0');
-      }
-      if (!medNames.has('last_distributor_name')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN last_distributor_name TEXT');
-      }
-      if (!medNames.has('last_purchase_date')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN last_purchase_date TEXT');
-      }
-      if (!medNames.has('lowest_purchase_ptr')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN lowest_purchase_ptr REAL DEFAULT 0');
-      }
-      if (!medNames.has('lowest_distributor_name')) {
-        await db.run('ALTER TABLE medicines ADD COLUMN lowest_distributor_name TEXT');
-      }
-    }
+    await ensureColumns(db, 'medicines', {
+      total_stock: 'REAL DEFAULT 0',
+      total_loose_stock: 'REAL DEFAULT 0',
+      last_purchase_ptr: 'REAL DEFAULT 0',
+      last_distributor_name: 'TEXT',
+      last_purchase_date: 'TEXT',
+      lowest_purchase_ptr: 'REAL DEFAULT 0',
+      lowest_distributor_name: 'TEXT',
+    });
 
     // Real-time triggers on inventory_master to maintain total_stock and total_loose_stock
     await db.exec(`
@@ -353,20 +360,13 @@ async function ensureRefillCartLinkSchema(db: any) {
       UNIQUE(medicine_id, store_id, product_code)
     )
   `);
-  const cols = await db.all('PRAGMA table_info(patient_refills)');
-  const names = new Set(cols.map((c: any) => c.name));
-  const cartCols: Array<[string, string]> = [
-    ['cart_store_id', 'INTEGER'],
-    ['cart_store_name', 'TEXT'],
-    ['cart_product_code', 'TEXT'],
-    ['cart_product_name', 'TEXT'],
-    ['cart_qty', 'INTEGER'],
-  ];
-  for (const [col, type] of cartCols) {
-    if (cols.length > 0 && !names.has(col)) {
-      await db.run(`ALTER TABLE patient_refills ADD COLUMN ${col} ${type} DEFAULT NULL`);
-    }
-  }
+  await ensureColumns(db, 'patient_refills', {
+    cart_store_id: 'INTEGER DEFAULT NULL',
+    cart_store_name: 'TEXT DEFAULT NULL',
+    cart_product_code: 'TEXT DEFAULT NULL',
+    cart_product_name: 'TEXT DEFAULT NULL',
+    cart_qty: 'INTEGER DEFAULT NULL',
+  });
 }
 
 /**
@@ -392,120 +392,57 @@ async function ensureOrderTimingSchema(db: any) {
   `);
   await db.run('CREATE INDEX IF NOT EXISTS idx_pharmacy_holidays_date ON pharmacy_holidays(store_id, holiday_date)');
 
+  await ensureColumns(db, 'pharmacy_holidays', {
+    holiday_name: 'TEXT DEFAULT NULL',
+    custom_window_start: 'TEXT DEFAULT NULL',
+    custom_window_end: 'TEXT DEFAULT NULL',
+  });
   try {
-    const phCols = await db.all('PRAGMA table_info(pharmacy_holidays)');
-    const phNames = new Set(phCols.map((c: any) => c.name));
-    if (phCols.length > 0 && !phNames.has('holiday_name')) {
-      await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN holiday_name TEXT DEFAULT NULL');
-      await db.run('UPDATE pharmacy_holidays SET holiday_name = name WHERE holiday_name IS NULL');
-    }
-    if (phCols.length > 0 && !phNames.has('custom_window_start')) {
-      await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_start TEXT DEFAULT NULL');
-    }
-    if (phCols.length > 0 && !phNames.has('custom_window_end')) {
-      await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_end TEXT DEFAULT NULL');
-    }
+    await db.run('UPDATE pharmacy_holidays SET holiday_name = name WHERE holiday_name IS NULL');
   } catch (_) { }
 
-  try {
-    const spCols = await db.all('PRAGMA table_info(special_orders)');
-    const spNames = new Set(spCols.map((c: any) => c.name));
-    if (spCols.length > 0 && !spNames.has('scheduled_processing_at')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN scheduled_processing_at DATETIME DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('estimated_delivery_start')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN estimated_delivery_start DATETIME DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('estimated_delivery_end')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN estimated_delivery_end DATETIME DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('cutoff_at')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN cutoff_at DATETIME DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('pharmacy_timezone')) {
-      await db.run("ALTER TABLE special_orders ADD COLUMN pharmacy_timezone TEXT DEFAULT 'Asia/Kolkata'");
-    }
-    if (spCols.length > 0 && !spNames.has('schedule_status')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_status TEXT DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('schedule_reason')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_reason TEXT DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('schedule_version')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_version INTEGER DEFAULT 1');
-    }
-    if (spCols.length > 0 && !spNames.has('schedule_calculated_at')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_calculated_at DATETIME DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('schedule_overridden_by')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_overridden_by TEXT DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('schedule_overridden_at')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_overridden_at DATETIME DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('pos_sale_invoice_id')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN pos_sale_invoice_id INTEGER DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('payment_screenshot_path')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN payment_screenshot_path TEXT DEFAULT NULL');
-    }
-    if (spCols.length > 0 && !spNames.has('screenshot_amount')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN screenshot_amount REAL DEFAULT NULL');
-    }
-  } catch (_) { }
+  await ensureColumns(db, 'special_orders', {
+    scheduled_processing_at: 'DATETIME DEFAULT NULL',
+    estimated_delivery_start: 'DATETIME DEFAULT NULL',
+    estimated_delivery_end: 'DATETIME DEFAULT NULL',
+    cutoff_at: 'DATETIME DEFAULT NULL',
+    pharmacy_timezone: "TEXT DEFAULT 'Asia/Kolkata'",
+    schedule_status: 'TEXT DEFAULT NULL',
+    schedule_reason: 'TEXT DEFAULT NULL',
+    schedule_version: 'INTEGER DEFAULT 1',
+    schedule_calculated_at: 'DATETIME DEFAULT NULL',
+    schedule_overridden_by: 'TEXT DEFAULT NULL',
+    schedule_overridden_at: 'DATETIME DEFAULT NULL',
+    pos_sale_invoice_id: 'INTEGER DEFAULT NULL',
+    payment_screenshot_path: 'TEXT DEFAULT NULL',
+    screenshot_amount: 'REAL DEFAULT NULL',
+    pharmarack_product_id: 'INTEGER DEFAULT NULL',
+    pharmarack_product_code: 'TEXT DEFAULT NULL',
+    pharmarack_store_id: 'INTEGER DEFAULT NULL',
+    pharmarack_product_name: 'TEXT DEFAULT NULL',
+  });
 
-  try {
-    const refCols = await db.all('PRAGMA table_info(patient_refills)');
-    const refNames = new Set(refCols.map((c: any) => c.name));
-    if (refCols.length > 0 && !refNames.has('paused_at')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN paused_at DATETIME DEFAULT NULL');
-    }
-    if (refCols.length > 0 && !refNames.has('pause_reason')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN pause_reason TEXT DEFAULT NULL');
-    }
-    if (refCols.length > 0 && !refNames.has('resume_at')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN resume_at DATETIME DEFAULT NULL');
-    }
-    if (refCols.length > 0 && !refNames.has('pause_duration_seconds')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN pause_duration_seconds INTEGER DEFAULT 0');
-    }
-    if (refCols.length > 0 && !refNames.has('refill_schedule_version')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN refill_schedule_version INTEGER DEFAULT 1');
-    }
-    if (refCols.length > 0 && !refNames.has('patient_confirmed')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0');
-    }
-    if (refCols.length > 0 && !refNames.has('confirmed_at')) {
-      await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
-    }
-  } catch (_) { }
+  await ensureColumns(db, 'patient_refills', {
+    paused_at: 'DATETIME DEFAULT NULL',
+    pause_reason: 'TEXT DEFAULT NULL',
+    resume_at: 'DATETIME DEFAULT NULL',
+    pause_duration_seconds: 'INTEGER DEFAULT 0',
+    refill_schedule_version: 'INTEGER DEFAULT 1',
+    patient_confirmed: 'INTEGER DEFAULT 0',
+    confirmed_at: 'DATETIME DEFAULT NULL',
+  });
 
-  // emails.classification — promotional message filtering (added for messageClassifier.ts feature)
-  try {
-    const emailCols = await db.all('PRAGMA table_info(emails)');
-    const emailColNames = new Set(emailCols.map((c: any) => c.name));
-    if (emailCols.length > 0 && !emailColNames.has('classification')) {
-      await db.run("ALTER TABLE emails ADD COLUMN classification TEXT DEFAULT 'UNKNOWN'");
-    }
-  } catch (_) { }
+  await ensureColumns(db, 'emails', {
+    classification: "TEXT DEFAULT 'UNKNOWN'",
+  });
 
-  // special_orders exact product & store persistence (Schema v67)
-  try {
-    const soCols = await db.all('PRAGMA table_info(special_orders)');
-    const soColNames = new Set(soCols.map((c: any) => c.name));
-    if (soCols.length > 0 && !soColNames.has('pharmarack_product_id')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_product_id INTEGER DEFAULT NULL');
-    }
-    if (soCols.length > 0 && !soColNames.has('pharmarack_product_code')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_product_code TEXT DEFAULT NULL');
-    }
-    if (soCols.length > 0 && !soColNames.has('pharmarack_store_id')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_store_id INTEGER DEFAULT NULL');
-    }
-    if (soCols.length > 0 && !soColNames.has('pharmarack_product_name')) {
-      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_product_name TEXT DEFAULT NULL');
-    }
-  } catch (_) { }
+  await ensureColumns(db, 'automation_notifications', {
+    snoozed_until: 'TEXT DEFAULT NULL',
+    lifecycle_status: "TEXT DEFAULT 'sent'",
+    needs_confirmation: 'INTEGER DEFAULT 0',
+    acknowledged: 'INTEGER DEFAULT 0',
+    resolved_at: 'INTEGER DEFAULT NULL',
+  });
 
   const defaultTimingSettings: [string, string][] = [
     ['pharmacy_cutoff_time', '23:00'],
@@ -686,55 +623,28 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
     console.warn('[Schema v55] Staff user seed skipped:', err.message);
   }
 
-  // 5. Immutable snapshot columns on sales_invoices
+  // 5. Immutable snapshot columns on sales_invoices, purchases, and returns
   try {
-    const invCols = await db.all('PRAGMA table_info(sales_invoices)');
-    const invNames = new Set(invCols.map((c: any) => c.name));
-    if (invCols.length > 0 && !invNames.has('customer_name_snapshot')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN customer_name_snapshot TEXT DEFAULT NULL');
-    }
-    if (invCols.length > 0 && !invNames.has('customer_phone_snapshot')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN customer_phone_snapshot TEXT DEFAULT NULL');
-    }
-    if (invCols.length > 0 && !invNames.has('customer_address_snapshot')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN customer_address_snapshot TEXT DEFAULT NULL');
-    }
-    if (invCols.length > 0 && !invNames.has('doctor_name_snapshot')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN doctor_name_snapshot TEXT DEFAULT NULL');
-    }
-    if (invCols.length > 0 && !invNames.has('pharmacy_name_snapshot')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN pharmacy_name_snapshot TEXT DEFAULT NULL');
-    }
-    if (invCols.length > 0 && !invNames.has('store_id')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1');
-    }
-    if (invCols.length > 0 && !invNames.has('source')) {
-      await db.run("ALTER TABLE sales_invoices ADD COLUMN source TEXT DEFAULT 'pos'");
-    }
-    if (invCols.length > 0 && !invNames.has('is_migrated')) {
-      await db.run('ALTER TABLE sales_invoices ADD COLUMN is_migrated INTEGER DEFAULT 0');
-    }
+    await ensureColumns(db, 'sales_invoices', {
+      customer_name_snapshot: 'TEXT DEFAULT NULL',
+      customer_phone_snapshot: 'TEXT DEFAULT NULL',
+      customer_address_snapshot: 'TEXT DEFAULT NULL',
+      doctor_name_snapshot: 'TEXT DEFAULT NULL',
+      pharmacy_name_snapshot: 'TEXT DEFAULT NULL',
+      store_id: 'INTEGER DEFAULT 1',
+      source: "TEXT DEFAULT 'pos'",
+      is_migrated: 'INTEGER DEFAULT 0',
+    });
 
-    // 5b. Transaction source and migration indicators on purchases & returns
-    try {
-      const purCols = await db.all('PRAGMA table_info(purchases)');
-      const purNames = new Set(purCols.map((c: any) => c.name));
-      if (purCols.length > 0 && !purNames.has('source')) {
-        await db.run("ALTER TABLE purchases ADD COLUMN source TEXT DEFAULT 'manual'");
-      }
-      if (purCols.length > 0 && !purNames.has('is_migrated')) {
-        await db.run('ALTER TABLE purchases ADD COLUMN is_migrated INTEGER DEFAULT 0');
-      }
+    await ensureColumns(db, 'purchases', {
+      source: "TEXT DEFAULT 'manual'",
+      is_migrated: 'INTEGER DEFAULT 0',
+    });
 
-      const retCols = await db.all('PRAGMA table_info(returns)');
-      const retNames = new Set(retCols.map((c: any) => c.name));
-      if (retCols.length > 0 && !retNames.has('source')) {
-        await db.run("ALTER TABLE returns ADD COLUMN source TEXT DEFAULT 'manual'");
-      }
-      if (retCols.length > 0 && !retNames.has('is_migrated')) {
-        await db.run('ALTER TABLE returns ADD COLUMN is_migrated INTEGER DEFAULT 0');
-      }
-    } catch (_) { }
+    await ensureColumns(db, 'returns', {
+      source: "TEXT DEFAULT 'manual'",
+      is_migrated: 'INTEGER DEFAULT 0',
+    });
 
     // Backfill existing legacy invoices once so past bills freeze immediately
     await db.run(`
@@ -751,23 +661,13 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
 
   // 6. Immutable snapshot columns on sale_items
   try {
-    const itemCols = await db.all('PRAGMA table_info(sale_items)');
-    const itemNames = new Set(itemCols.map((c: any) => c.name));
-    if (itemCols.length > 0 && !itemNames.has('medicine_name_snapshot')) {
-      await db.run('ALTER TABLE sale_items ADD COLUMN medicine_name_snapshot TEXT DEFAULT NULL');
-    }
-    if (itemCols.length > 0 && !itemNames.has('batch_no_snapshot')) {
-      await db.run('ALTER TABLE sale_items ADD COLUMN batch_no_snapshot TEXT DEFAULT NULL');
-    }
-    if (itemCols.length > 0 && !itemNames.has('expiry_date_snapshot')) {
-      await db.run('ALTER TABLE sale_items ADD COLUMN expiry_date_snapshot TEXT DEFAULT NULL');
-    }
-    if (itemCols.length > 0 && !itemNames.has('mrp_snapshot')) {
-      await db.run('ALTER TABLE sale_items ADD COLUMN mrp_snapshot REAL DEFAULT NULL');
-    }
-    if (itemCols.length > 0 && !itemNames.has('tax_percent_snapshot')) {
-      await db.run('ALTER TABLE sale_items ADD COLUMN tax_percent_snapshot REAL DEFAULT NULL');
-    }
+    await ensureColumns(db, 'sale_items', {
+      medicine_name_snapshot: 'TEXT DEFAULT NULL',
+      batch_no_snapshot: 'TEXT DEFAULT NULL',
+      expiry_date_snapshot: 'TEXT DEFAULT NULL',
+      mrp_snapshot: 'REAL DEFAULT NULL',
+      tax_percent_snapshot: 'REAL DEFAULT NULL',
+    });
 
     // Backfill existing legacy sale_items
     await db.run(`
@@ -788,20 +688,12 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
 
   // 7. Audit log tenant & entity columns on action_logs (§29)
   try {
-    const actCols = await db.all('PRAGMA table_info(action_logs)');
-    const actNames = new Set(actCols.map((c: any) => c.name));
-    if (actCols.length > 0 && !actNames.has('store_id')) {
-      await db.run('ALTER TABLE action_logs ADD COLUMN store_id INTEGER DEFAULT 1');
-    }
-    if (actCols.length > 0 && !actNames.has('user_id')) {
-      await db.run('ALTER TABLE action_logs ADD COLUMN user_id INTEGER DEFAULT NULL');
-    }
-    if (actCols.length > 0 && !actNames.has('entity')) {
-      await db.run('ALTER TABLE action_logs ADD COLUMN entity TEXT DEFAULT NULL');
-    }
-    if (actCols.length > 0 && !actNames.has('entity_id')) {
-      await db.run('ALTER TABLE action_logs ADD COLUMN entity_id TEXT DEFAULT NULL');
-    }
+    await ensureColumns(db, 'action_logs', {
+      store_id: 'INTEGER DEFAULT 1',
+      user_id: 'INTEGER DEFAULT NULL',
+      entity: 'TEXT DEFAULT NULL',
+      entity_id: 'TEXT DEFAULT NULL',
+    });
     await db.run('CREATE INDEX IF NOT EXISTS idx_action_logs_store_type ON action_logs(store_id, action_type, created_at DESC)');
   } catch (err: any) {
     console.warn('[Schema v55] action_logs audit column migration note:', err.message);
@@ -911,76 +803,56 @@ export async function ensureSchema(dbPath: string) {
         } catch (_) { }
 
         // Ensure multi-device & velocity metrics tables exist on fast-boot
+        await ensureColumns(db, 'automation_notifications', {
+          snoozed_until: 'TEXT DEFAULT NULL',
+          lifecycle_status: "TEXT DEFAULT 'sent'",
+          needs_confirmation: 'INTEGER DEFAULT 0',
+          acknowledged: 'INTEGER DEFAULT 0',
+          resolved_at: 'INTEGER DEFAULT NULL',
+        });
+
+        await ensureColumns(db, 'push_tokens', {
+          device_uuid: 'TEXT',
+          is_blocked: 'INTEGER DEFAULT 0'
+        });
+
+        await ensureColumns(db, 'staged_sales', {
+          device_uuid: 'TEXT',
+          sold_from_device: 'TEXT'
+        });
+
+        await ensureColumns(db, 'return_items', {
+          invoice_no: 'TEXT',
+          loose: 'INTEGER DEFAULT 0',
+          ded_per: 'REAL DEFAULT 0',
+          cd_value: 'REAL DEFAULT 0'
+        });
+
+        await ensureColumns(db, 'special_orders', {
+          medicine_id: 'INTEGER DEFAULT NULL REFERENCES medicines(id)',
+          payment_method: "TEXT DEFAULT 'cash'",
+          delivery_mode: "TEXT DEFAULT 'pickup'"
+        });
         try {
-          const pushCols = await db.all('PRAGMA table_info(push_tokens)');
-          const pushNames = new Set(pushCols.map((c: any) => c.name));
-          if (pushCols.length > 0 && !pushNames.has('device_uuid')) {
-            await db.run('ALTER TABLE push_tokens ADD COLUMN device_uuid TEXT');
-          }
-          if (pushCols.length > 0 && !pushNames.has('is_blocked')) {
-            await db.run('ALTER TABLE push_tokens ADD COLUMN is_blocked INTEGER DEFAULT 0');
-          }
+          await db.run(`
+            UPDATE special_orders
+            SET product = medicine_name
+            WHERE (product IS NULL OR product = '' OR length(product) <= 6)
+              AND medicine_name IS NOT NULL
+              AND length(medicine_name) > length(COALESCE(product, ''))
+          `);
+          await db.run(`
+            UPDATE special_orders
+            SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
+            WHERE payment_screenshot_path IS NOT NULL
+              AND payment_screenshot_path LIKE '%uploads%'
+              AND payment_screenshot_path NOT LIKE '/uploads/%'
+          `);
         } catch (_) { }
 
-        try {
-          const stagedCols = await db.all('PRAGMA table_info(staged_sales)');
-          const stagedNames = new Set(stagedCols.map((c: any) => c.name));
-          if (stagedCols.length > 0 && !stagedNames.has('device_uuid')) {
-            await db.run('ALTER TABLE staged_sales ADD COLUMN device_uuid TEXT');
-          }
-          if (stagedCols.length > 0 && !stagedNames.has('sold_from_device')) {
-            await db.run('ALTER TABLE staged_sales ADD COLUMN sold_from_device TEXT');
-          }
-        } catch (_) { }
-
-        try {
-          const retItemCols = await db.all('PRAGMA table_info(return_items)');
-          const retItemNames = new Set(retItemCols.map((c: any) => c.name));
-          if (retItemCols.length > 0) {
-            if (!retItemNames.has('invoice_no')) await db.run('ALTER TABLE return_items ADD COLUMN invoice_no TEXT');
-            if (!retItemNames.has('loose')) await db.run('ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0');
-            if (!retItemNames.has('ded_per')) await db.run('ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0');
-            if (!retItemNames.has('cd_value')) await db.run('ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0');
-          }
-        } catch (_) { }
-
-        try {
-          const spCols = await db.all('PRAGMA table_info(special_orders)');
-          const spNames = new Set(spCols.map((c: any) => c.name));
-          if (spCols.length > 0 && !spNames.has('medicine_id')) {
-            await db.run('ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)');
-          }
-          if (spCols.length > 0 && !spNames.has('payment_method')) {
-            await db.run("ALTER TABLE special_orders ADD COLUMN payment_method TEXT DEFAULT 'cash'");
-          }
-          if (spCols.length > 0 && !spNames.has('delivery_mode')) {
-            await db.run("ALTER TABLE special_orders ADD COLUMN delivery_mode TEXT DEFAULT 'pickup'");
-          }
-          if (spCols.length > 0) {
-            await db.run(`
-              UPDATE special_orders
-              SET product = medicine_name
-              WHERE (product IS NULL OR product = '' OR length(product) <= 6)
-                AND medicine_name IS NOT NULL
-                AND length(medicine_name) > length(COALESCE(product, ''))
-            `);
-            await db.run(`
-              UPDATE special_orders
-              SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
-              WHERE payment_screenshot_path IS NOT NULL
-                AND payment_screenshot_path LIKE '%uploads%'
-                AND payment_screenshot_path NOT LIKE '/uploads/%'
-            `);
-          }
-        } catch (_) { }
-
-        try {
-          const revCols = await db.all('PRAGMA table_info(staged_medicine_reviews)');
-          const revNames = new Set(revCols.map((c: any) => c.name));
-          if (revCols.length > 0 && !revNames.has('possible_duplicate_of')) {
-            await db.run('ALTER TABLE staged_medicine_reviews ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'staged_medicine_reviews', {
+          possible_duplicate_of: 'INTEGER DEFAULT NULL'
+        });
 
         await db.run(`
         CREATE TABLE IF NOT EXISTS medicine_sales_metrics (
@@ -996,13 +868,9 @@ export async function ensureSchema(dbPath: string) {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-        try {
-          const msmCols = await db.all('PRAGMA table_info(medicine_sales_metrics)');
-          const msmNames = new Set(msmCols.map((c: any) => c.name));
-          if (msmCols.length > 0 && !msmNames.has('last_purchase_date')) {
-            await db.run('ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'medicine_sales_metrics', {
+          last_purchase_date: 'TEXT'
+        });
         await db.run('CREATE INDEX IF NOT EXISTS idx_msm_velocity ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)');
 
         // Ensure catalog_images and catalog_image_rejections tables exist on fast-boot
@@ -1044,23 +912,21 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
-        try {
-          const ciCols = await db.all('PRAGMA table_info(catalog_images)');
-          const hasCol = (name: string) => ciCols.some((c: any) => c.name.toLowerCase() === name.toLowerCase());
-          if (!hasCol('previous_image_url')) await db.run('ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT');
-          if (!hasCol('next_review_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME');
-          if (!hasCol('skip_reason')) await db.run('ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT');
-          if (!hasCol('locked_by')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_by TEXT');
-          if (!hasCol('locked_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME');
-          if (!hasCol('verification_version')) await db.run('ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1');
-          if (!hasCol('image_type')) await db.run("ALTER TABLE catalog_images ADD COLUMN image_type TEXT DEFAULT 'combined'");
-          if (!hasCol('is_primary')) await db.run('ALTER TABLE catalog_images ADD COLUMN is_primary INTEGER DEFAULT 0');
-          if (!hasCol('slot_number')) await db.run('ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1');
-          if (!hasCol('match_source')) await db.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
-          if (!hasCol('match_confidence')) await db.run('ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0');
-          if (!hasCol('phash')) await db.run('ALTER TABLE catalog_images ADD COLUMN phash TEXT');
-          if (!hasCol('visual_embedding')) await db.run('ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT');
-        } catch (_e) { }
+        await ensureColumns(db, 'catalog_images', {
+          previous_image_url: 'TEXT',
+          next_review_at: 'DATETIME',
+          skip_reason: 'TEXT',
+          locked_by: 'TEXT',
+          locked_at: 'DATETIME',
+          verification_version: 'INTEGER DEFAULT 1',
+          image_type: "TEXT DEFAULT 'combined'",
+          is_primary: 'INTEGER DEFAULT 0',
+          slot_number: 'INTEGER DEFAULT 1',
+          match_source: "TEXT DEFAULT 'manual'",
+          match_confidence: 'INTEGER DEFAULT 0',
+          phash: 'TEXT',
+          visual_embedding: 'TEXT'
+        });
 
         await db.run(`
         CREATE TABLE IF NOT EXISTS catalog_image_rejections (
@@ -1257,67 +1123,33 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
       `);
-        try {
-          const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
-          const sessNames = new Set(sessCols.map((c: any) => c.name));
-          if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
-            await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
-          }
-          if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
-            await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
-          }
-          if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
-            await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
-          }
-          if (sessCols.length > 0 && !sessNames.has('is_active')) {
-            await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'customer_sessions', {
+          logged_in_at: 'DATETIME DEFAULT CURRENT_TIMESTAMP',
+          logged_out_at: 'DATETIME',
+          duration_seconds: 'INTEGER DEFAULT 0',
+          is_active: 'INTEGER DEFAULT 1'
+        });
         await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
         await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
         await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
 
-        try {
-          const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
-          const accNames = new Set(accCols.map((c: any) => c.name));
-          if (accCols.length > 0 && !accNames.has('total_login_count')) {
-            await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
-          }
-          if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
-            await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
-          }
-          if (accCols.length > 0 && !accNames.has('last_logout_at')) {
-            await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'customer_portal_accounts', {
+          total_login_count: 'INTEGER DEFAULT 0',
+          total_time_spent_seconds: 'INTEGER DEFAULT 0',
+          last_logout_at: 'DATETIME'
+        });
 
         // Centralized Catalog & Booking/Pickup Schema (v52)
+        await ensureColumns(db, 'medicines', {
+          canonical_name: 'TEXT',
+          normalized_name: 'TEXT',
+          product_code: 'TEXT',
+          status: "TEXT DEFAULT 'ACTIVE'",
+          dosage_form: 'TEXT',
+          pack_size: 'TEXT',
+          barcode: 'TEXT'
+        });
         try {
-          const medCols = await db.all('PRAGMA table_info(medicines)');
-          const medNames = new Set(medCols.map((c: any) => c.name));
-          if (medCols.length > 0 && !medNames.has('canonical_name')) {
-            await db.run('ALTER TABLE medicines ADD COLUMN canonical_name TEXT');
-          }
-          if (medCols.length > 0 && !medNames.has('normalized_name')) {
-            await db.run('ALTER TABLE medicines ADD COLUMN normalized_name TEXT');
-          }
-          if (medCols.length > 0 && !medNames.has('product_code')) {
-            await db.run('ALTER TABLE medicines ADD COLUMN product_code TEXT');
-          }
-          if (medCols.length > 0 && !medNames.has('status')) {
-            await db.run("ALTER TABLE medicines ADD COLUMN status TEXT DEFAULT 'ACTIVE'");
-          }
-          if (medCols.length > 0 && !medNames.has('dosage_form')) {
-            await db.run('ALTER TABLE medicines ADD COLUMN dosage_form TEXT');
-          }
-          if (medCols.length > 0 && !medNames.has('pack_size')) {
-            await db.run('ALTER TABLE medicines ADD COLUMN pack_size TEXT');
-          }
-          if (medCols.length > 0 && !medNames.has('barcode')) {
-            await db.run('ALTER TABLE medicines ADD COLUMN barcode TEXT');
-          }
-
-          // Backfill product_code, canonical_name, normalized_name ONLY if any are missing
           const needsMedBackfill = await db.get("SELECT 1 FROM medicines WHERE product_code IS NULL OR canonical_name IS NULL OR normalized_name IS NULL LIMIT 1");
           if (needsMedBackfill) {
             await db.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
@@ -1326,56 +1158,28 @@ export async function ensureSchema(dbPath: string) {
           }
         } catch (_) { }
 
-        try {
-          const orderCols = await db.all('PRAGMA table_info(special_orders)');
-          const orderNames = new Set(orderCols.map((c: any) => c.name));
-          if (orderCols.length > 0 && !orderNames.has('payment_qr_id')) {
-            await db.run('ALTER TABLE special_orders ADD COLUMN payment_qr_id TEXT');
-          }
-          if (orderCols.length > 0 && !orderNames.has('order_type')) {
-            await db.run("ALTER TABLE special_orders ADD COLUMN order_type TEXT DEFAULT 'PICKUP'");
-          }
-          if (orderCols.length > 0 && !orderNames.has('total_amount')) {
-            await db.run('ALTER TABLE special_orders ADD COLUMN total_amount REAL DEFAULT 0');
-          }
-          if (orderCols.length > 0 && !orderNames.has('pharmarack_mrp')) {
-            await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_mrp REAL DEFAULT NULL');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'special_orders', {
+          payment_qr_id: 'TEXT',
+          order_type: "TEXT DEFAULT 'PICKUP'",
+          total_amount: 'REAL DEFAULT 0',
+          pharmarack_mrp: 'REAL DEFAULT NULL'
+        });
 
-        try {
-          const waClarCols = await db.all('PRAGMA table_info(wa_pending_clarifications)');
-          const waClarNames = new Set(waClarCols.map((c: any) => c.name));
-          if (waClarCols.length > 0 && !waClarNames.has('mrp')) {
-            await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN mrp REAL DEFAULT NULL');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'wa_pending_clarifications', { mrp: 'REAL DEFAULT NULL' });
 
+        await ensureColumns(db, 'online_order_items', {
+          product_name_snapshot: 'TEXT',
+          price_snapshot: 'REAL',
+          subtotal: 'REAL DEFAULT 0'
+        });
         try {
-          const ooiCols = await db.all('PRAGMA table_info(online_order_items)');
-          const ooiNames = new Set(ooiCols.map((c: any) => c.name));
-          if (ooiCols.length > 0 && !ooiNames.has('product_name_snapshot')) {
-            await db.run('ALTER TABLE online_order_items ADD COLUMN product_name_snapshot TEXT');
-            await db.run('UPDATE online_order_items SET product_name_snapshot = product_name WHERE product_name_snapshot IS NULL');
-          }
-          if (ooiCols.length > 0 && !ooiNames.has('price_snapshot')) {
-            await db.run('ALTER TABLE online_order_items ADD COLUMN price_snapshot REAL');
-            await db.run('UPDATE online_order_items SET price_snapshot = mrp WHERE price_snapshot IS NULL');
-          }
-          if (ooiCols.length > 0 && !ooiNames.has('subtotal')) {
-            await db.run('ALTER TABLE online_order_items ADD COLUMN subtotal REAL DEFAULT 0');
-            await db.run('UPDATE online_order_items SET subtotal = requested_qty * COALESCE(final_price, sell_price, mrp, 0) WHERE subtotal = 0 OR subtotal IS NULL');
-          }
+          await db.run('UPDATE online_order_items SET product_name_snapshot = product_name WHERE product_name_snapshot IS NULL');
+          await db.run('UPDATE online_order_items SET price_snapshot = mrp WHERE price_snapshot IS NULL');
+          await db.run('UPDATE online_order_items SET subtotal = requested_qty * COALESCE(final_price, sell_price, mrp, 0) WHERE subtotal = 0 OR subtotal IS NULL');
         } catch (_) { }
 
         // Distributor and pharmarack mappings delivery_boy_id safety check (v61 fast-boot)
-        try {
-          const distCols = await db.all('PRAGMA table_info(distributors)');
-          const distNames = new Set(distCols.map((c: any) => c.name));
-          if (distCols.length > 0 && !distNames.has('delivery_boy_id')) {
-            await db.run('ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'distributors', { delivery_boy_id: 'INTEGER DEFAULT NULL' });
 
         try {
           await db.run(`
@@ -1387,17 +1191,11 @@ export async function ensureSchema(dbPath: string) {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
         `);
-          const mapCols = await db.all('PRAGMA table_info(pharmarack_distributor_mappings)');
-          const mapNames = new Set(mapCols.map((c: any) => c.name));
-          if (mapCols.length > 0) {
-            if (!mapNames.has('delivery_boy_id')) {
-              await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
-            }
-            if (!mapNames.has('store_id')) {
-              await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1');
-            }
-          }
         } catch (_) { }
+        await ensureColumns(db, 'pharmarack_distributor_mappings', {
+          delivery_boy_id: 'INTEGER DEFAULT NULL',
+          store_id: 'INTEGER DEFAULT 1'
+        });
 
         await db.exec(`
           CREATE TABLE IF NOT EXISTS contacts (
@@ -1441,40 +1239,21 @@ export async function ensureSchema(dbPath: string) {
         await db.run('CREATE INDEX IF NOT EXISTS idx_clinical_subcategory ON medicine_clinical_info(sub_category)');
 
         // Schema v65: Universal Catalog linkage - special_orders.medicine_id
-        try {
-          const spCols = await db.all('PRAGMA table_info(special_orders)');
-          const spNames = new Set(spCols.map((c: any) => c.name));
-          if (spCols.length > 0 && !spNames.has('medicine_id')) {
-            await db.run('ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)');
-          }
-        } catch (_) { }
+        // Schema v65: Universal Catalog linkage - special_orders.medicine_id
+        await ensureColumns(db, 'special_orders', {
+          medicine_id: 'INTEGER DEFAULT NULL REFERENCES medicines(id)'
+        });
         await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_medicine_id ON special_orders(medicine_id)');
 
         // Schema v66: WhatsApp Chat Session & Human Takeover Columns
-        try {
-          const chatCols = await db.all('PRAGMA table_info(whatsapp_chats)');
-          const chatNames = new Set(chatCols.map((c: any) => c.name));
-          if (chatCols.length > 0) {
-            if (!chatNames.has('session_mode')) {
-              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_mode TEXT DEFAULT 'auto'");
-            }
-            if (!chatNames.has('manual_active_until')) {
-              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN manual_active_until INTEGER DEFAULT 0");
-            }
-            if (!chatNames.has('last_patient_message_at')) {
-              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN last_patient_message_at INTEGER DEFAULT 0");
-            }
-            if (!chatNames.has('last_pharmacist_message_at')) {
-              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN last_pharmacist_message_at INTEGER DEFAULT 0");
-            }
-            if (!chatNames.has('session_status')) {
-              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
-            }
-            if (!chatNames.has('language')) {
-              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN language TEXT DEFAULT 'en'");
-            }
-          }
-        } catch (_) { }
+        await ensureColumns(db, 'whatsapp_chats', {
+          session_mode: "TEXT DEFAULT 'auto'",
+          manual_active_until: 'INTEGER DEFAULT 0',
+          last_patient_message_at: 'INTEGER DEFAULT 0',
+          last_pharmacist_message_at: 'INTEGER DEFAULT 0',
+          session_status: "TEXT DEFAULT 'idle'",
+          language: "TEXT DEFAULT 'en'"
+        });
 
         // Schema v68: Prescription Scans & Medicine Enquiries Fast-Boot
         await db.exec(`

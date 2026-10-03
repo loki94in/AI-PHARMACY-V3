@@ -53,6 +53,10 @@ import { isOnlineOrder } from '../../utils/onlineOrders';
 import { toDateInputValue } from '../../utils/date';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { DispatchWhatsAppProgressCard } from '../../components/DispatchWhatsAppProgressCard';
+import { CreateDispatchModal } from './CreateDispatchModal';
+import { TemplateEditorModal } from './TemplateEditorModal';
+import { ManualOrderModal } from './ManualOrderModal';
+import { ManageStaffModal } from './ManageStaffModal';
 
 export interface DispatchOrder {
   id: number;
@@ -2162,410 +2166,65 @@ const Dispatch = () => {
       )}
 
       {/* ── MODAL: CREATE NEW DISPATCH ORDER ── */}
-      {showModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-modal flex items-center justify-center p-4">
-          <div className="glass-panel p-6 w-[95vw] max-w-lg space-y-4 rounded-2xl border border-glass-border shadow-2xl animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-glass-border pb-3">
-              <h3 className="font-bold flex items-center gap-2 text-sm text-text">
-                <Truck size={18} className="text-primary" /> Create Home Delivery Order
-              </h3>
-              <button onClick={() => { setShowModal(false); setForm(emptyForm); }} className="text-muted hover:text-text transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Patient Name *</label>
-                  <input
-                    className="premium-input w-full text-xs"
-                    placeholder="Full Name"
-                    value={form.patient_name}
-                    onChange={e => setForm(f => ({ ...f, patient_name: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Phone</label>
-                  <input
-                    className="premium-input w-full text-xs font-mono"
-                    placeholder="9876543210"
-                    value={form.patient_phone}
-                    onChange={e => setForm(f => ({ ...f, patient_phone: sanitizePhoneInput(e.target.value) }))}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Delivery Address</label>
-                <input
-                  className="premium-input w-full text-xs"
-                  placeholder="Full street address"
-                  value={form.address}
-                  onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Medicines / Items</label>
-                <input
-                  className="premium-input w-full text-xs"
-                  placeholder="e.g. Paracetamol x2, Amoxicillin x1"
-                  value={form.items}
-                  onChange={e => setForm(f => ({ ...f, items: e.target.value }))}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Invoice No</label>
-                  <input
-                    className="premium-input w-full text-xs font-mono"
-                    placeholder="INV-..."
-                    value={form.invoice_no}
-                    onChange={e => setForm(f => ({ ...f, invoice_no: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Assign Delivery Staff</label>
-                  <select
-                    className="premium-input w-full text-xs font-medium"
-                    value={form.delivery_boy_id}
-                    onChange={e => setForm(f => ({ ...f, delivery_boy_id: e.target.value }))}
-                  >
-                    <option value="">-- Unassigned --</option>
-                    {deliveryBoys.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-muted uppercase tracking-wider">Notes</label>
-                <input
-                  className="premium-input w-full text-xs"
-                  placeholder="Special instructions..."
-                  value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                />
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs py-2.5 rounded-xl flex-1 shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {saving ? 'Creating Order...' : 'Create Dispatch Order'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowModal(false); setForm(emptyForm); }}
-                  className="px-4 py-2.5 bg-bg3/60 border border-glass-border text-muted hover:text-text font-bold text-xs rounded-xl transition-all"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+      <CreateDispatchModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        form={form}
+        setForm={setForm}
+        deliveryBoys={deliveryBoys}
+        onSubmit={handleSubmit}
+        saving={saving}
+        emptyForm={emptyForm}
+      />
 
       {/* ── MODAL: MANAGE STAFF PERSONNEL ── */}
-      {showBoysModal && createPortal(
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-modal flex items-center justify-center p-4 overflow-y-auto">
-          <div className="glass-panel p-6 w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] space-y-4 flex flex-col rounded-2xl border border-sky-500/30 shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden">
-            <div className="flex items-center justify-between shrink-0 border-b border-glass-border pb-3">
-              <h3 className="font-bold flex items-center gap-2 text-sm text-text">
-                <User size={18} className="text-sky" /> Delivery Personnel Management
-              </h3>
-              <button onClick={() => setShowBoysModal(false)} className="text-muted hover:text-text transition-colors">
-                <X size={18} />
-              </button>
-            </div>
+      <ManageStaffModal
+        isOpen={showBoysModal}
+        onClose={() => setShowBoysModal(false)}
+        allBoys={allBoys}
+        newBoyName={newBoyName}
+        setNewBoyName={setNewBoyName}
+        newBoyPhone={newBoyPhone}
+        setNewBoyPhone={setNewBoyPhone}
+        handleAddDeliveryBoy={handleAddDeliveryBoy}
+        addingBoy={addingBoy}
+        editingBoyId={editingBoyId}
+        setEditingBoyId={setEditingBoyId}
+        editBoyName={editBoyName}
+        setEditBoyName={setEditBoyName}
+        editBoyPhone={editBoyPhone}
+        setEditBoyPhone={setEditBoyPhone}
+        handleSaveBoyEdit={handleSaveBoyEdit}
+        savingBoyEdit={savingBoyEdit}
+        handleToggleBoyActive={handleToggleBoyActive}
+        handleDeleteBoy={handleDeleteBoy}
+        sanitizePhoneInput={sanitizePhoneInput}
+      />
 
-            {/* Quick Add Form inside modal */}
-            <form onSubmit={handleAddDeliveryBoy} className="p-3.5 bg-bg2/80 rounded-xl border border-glass-border space-y-2 shrink-0">
-              <p className="text-xs font-bold text-sky uppercase tracking-wider">Add New Staff Member</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  placeholder="Staff Name *"
-                  className="premium-input w-full text-xs"
-                  value={newBoyName}
-                  onChange={e => setNewBoyName(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="WhatsApp Phone (10 digits)"
-                  maxLength={10}
-                  className="premium-input w-full text-xs font-mono"
-                  value={newBoyPhone}
-                  onChange={e => setNewBoyPhone(sanitizePhoneInput(e.target.value).slice(0, 10))}
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={addingBoy}
-                className="w-full bg-sky hover:bg-sky-400 text-black text-xs font-bold py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm disabled:opacity-50"
-              >
-                <Plus size={14} /> {addingBoy ? 'Saving...' : 'Add Delivery Staff'}
-              </button>
-            </form>
+      {/* ── MODAL: TEMPLATE EDITOR ── */}
+      <TemplateEditorModal
+        isOpen={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        globalTemplate={globalTemplate}
+        setGlobalTemplate={setGlobalTemplate}
+        onSave={handleSaveGlobalTemplate}
+        saving={savingTemplate}
+      />
 
-            {/* Personnel List */}
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
-              <p className="text-xs font-bold text-muted uppercase tracking-wider">All Personnel ({allBoys.length})</p>
-              {allBoys.length === 0 ? (
-                <div className="p-6 text-center text-muted text-xs border border-dashed border-glass-border rounded-xl">
-                  No personnel registered yet.
-                </div>
-              ) : (
-                allBoys.map(boy => (
-                  <div key={boy.id} className="p-3 rounded-xl bg-bg border border-glass-border hover:border-sky/40 transition-all">
-                    {editingBoyId === boy.id ? (
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <input
-                            type="text"
-                            value={editBoyName}
-                            onChange={e => setEditBoyName(e.target.value)}
-                            className="premium-input w-full text-xs font-bold"
-                          />
-                          <input
-                            type="text"
-                            placeholder="10-digit mobile"
-                            maxLength={10}
-                            value={editBoyPhone}
-                            onChange={e => setEditBoyPhone(sanitizePhoneInput(e.target.value).slice(0, 10))}
-                            className="premium-input w-full text-xs font-mono"
-                          />
-                        </div>
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleSaveBoyEdit(boy.id)}
-                            disabled={savingBoyEdit}
-                            className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 text-black font-bold text-xs rounded-lg transition-all"
-                          >
-                            Save Phone
-                          </button>
-                          <button
-                            onClick={() => setEditingBoyId(null)}
-                            className="px-3 py-1 bg-bg3 border border-glass-border text-muted hover:text-text text-xs rounded-lg transition-all"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-text">{boy.name}</span>
-                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                              boy.is_active ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                            }`}>
-                              {boy.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                          </div>
-                          <div className="text-[11px] font-mono text-muted flex items-center gap-2">
-                            <span>📞 {boy.whatsapp_number || 'No phone set'}</span>
-                            {boy.whatsapp_number && boy.whatsapp_number.replace(/\D/g, '').length !== 10 && (
-                              <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold">
-                                ⚠️ Needs 10 digits ({boy.whatsapp_number.replace(/\D/g, '').length}/10)
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => {
-                              setEditingBoyId(boy.id);
-                              setEditBoyName(boy.name);
-                              setEditBoyPhone(boy.whatsapp_number || '');
-                            }}
-                            className="p-1.5 rounded-lg hover:bg-sky/20 text-sky border border-transparent hover:border-sky/30 transition-all"
-                            title="Edit Phone / Details"
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleToggleBoyActive(boy)}
-                            className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
-                              boy.is_active
-                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
-                                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
-                            }`}
-                          >
-                            {boy.is_active ? 'Deactivate' : 'Activate'}
-                          </button>
-                          <button
-                            onClick={() => handleDeleteBoy(boy.id, boy.name)}
-                            className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 border border-transparent hover:border-rose-500/30 transition-all"
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="pt-2 shrink-0 border-t border-glass-border flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowBoysModal(false)}
-                className="px-4 py-2 bg-bg3/60 border border-glass-border text-xs text-muted hover:text-text font-bold rounded-xl transition-all"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {showTemplateModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-global-modal flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl w-[95vw] max-w-lg bg-bg2 border border-glass-border shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-glass-border pb-3">
-              <h3 className="text-base font-bold text-text flex items-center gap-2">
-                <MessageSquare className="text-amber-400" size={18} /> Edit Default Reminder Message Template
-              </h3>
-              <button type="button" onClick={() => setShowTemplateModal(false)} className="text-muted hover:text-text p-1 cursor-pointer">
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-xs text-muted">
-              Customize the default format used for auto-reminders and manual dispatches. Use placeholder tags to insert live data dynamically.
-            </p>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-text">Template Format:</label>
-              <textarea
-                rows={4}
-                value={globalTemplate}
-                onChange={e => setGlobalTemplate(e.target.value)}
-                className="w-full p-3 rounded-xl bg-bg text-text font-mono text-xs border border-glass-border focus:outline-none focus:border-amber-400/60 leading-relaxed"
-                placeholder="📦 Has today's order been dispatched or collected by {delivery_boy} ({phone})? - {store_name}"
-              />
-            </div>
-
-            <div className="p-3 rounded-xl bg-bg/50 border border-glass-border text-[11px] space-y-1 text-muted">
-              <p className="font-bold text-text">Available Dynamic Placeholders:</p>
-              <div className="flex flex-wrap gap-1.5 font-mono text-[10px]">
-                <span className="px-1.5 py-0.5 rounded bg-bg3 text-amber-300 font-bold">{'{distributor_name}'}</span>
-                <span className="px-1.5 py-0.5 rounded bg-bg3 text-sky font-bold">{'{delivery_boy}'}</span>
-                <span className="px-1.5 py-0.5 rounded bg-bg3 text-emerald-300 font-bold">{'{phone}'}</span>
-                <span className="px-1.5 py-0.5 rounded bg-bg3 text-purple-300 font-bold">{'{store_name}'}</span>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-glass-border">
-              <button
-                type="button"
-                onClick={() => setShowTemplateModal(false)}
-                className="px-4 py-2 rounded-xl bg-bg3 hover:bg-bg3/80 text-muted font-bold text-xs cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveGlobalTemplate}
-                disabled={savingTemplate}
-                className="px-4 py-2 rounded-xl bg-primary text-white font-bold text-xs hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-              >
-                {savingTemplate ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle size={13} />}
-                Save Template
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {showManualOrderModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-global-modal flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl w-[95vw] max-w-md bg-bg2 border border-glass-border shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-glass-border pb-3">
-              <h3 className="text-base font-bold text-text flex items-center gap-2">
-                <PhoneCall className="text-emerald-400" size={18} /> Record Phone Call Order Reminder
-              </h3>
-              <button type="button" onClick={() => setShowManualOrderModal(false)} className="text-muted hover:text-text p-1 cursor-pointer">
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-xs text-muted">
-              Add a distributor order placed via personal phone call. The system will track and trigger dispatch reminders automatically if no stock email or invoice is received.
-            </p>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-text block mb-1">Distributor Name *</label>
-                <input
-                  type="text"
-                  value={manualDistributorName}
-                  onChange={e => setManualDistributorName(e.target.value)}
-                  placeholder="e.g. Apex Pharma"
-                  className="w-full px-3 py-2 rounded-xl bg-bg text-text text-xs border border-glass-border focus:outline-none focus:border-emerald-400/60 font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-text block mb-1">Distributor Phone (WhatsApp)</label>
-                <input
-                  type="text"
-                  value={manualDistributorPhone}
-                  onChange={e => setManualDistributorPhone(e.target.value)}
-                  placeholder="e.g. 9876543210"
-                  className="w-full px-3 py-2 rounded-xl bg-bg text-text text-xs border border-glass-border focus:outline-none focus:border-emerald-400/60 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-text block mb-1">Assigned Delivery Staff</label>
-                <select
-                  value={manualDeliveryBoyId || ''}
-                  onChange={e => setManualDeliveryBoyId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full px-3 py-2 rounded-xl bg-bg text-text text-xs border border-glass-border focus:outline-none font-medium cursor-pointer"
-                >
-                  <option value="">👤 Unassigned / Store Admin</option>
-                  {deliveryBoys.map(b => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-glass-border">
-              <button
-                type="button"
-                onClick={() => setShowManualOrderModal(false)}
-                className="px-4 py-2 rounded-xl bg-bg3 hover:bg-bg3/80 text-muted font-bold text-xs cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleCreateManualOrder}
-                disabled={savingManualOrder}
-                className="px-4 py-2 rounded-xl bg-emerald-500 text-white font-bold text-xs hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-md"
-              >
-                {savingManualOrder ? <RefreshCw size={13} className="animate-spin" /> : <Plus size={13} />}
-                Add Phone Order
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {/* ── MODAL: MANUAL PHONE ORDER ── */}
+      <ManualOrderModal
+        isOpen={showManualOrderModal}
+        onClose={() => setShowManualOrderModal(false)}
+        distributorName={manualDistributorName}
+        setDistributorName={setManualDistributorName}
+        distributorPhone={manualDistributorPhone}
+        setDistributorPhone={setManualDistributorPhone}
+        deliveryBoyId={manualDeliveryBoyId}
+        setDeliveryBoyId={setManualDeliveryBoyId}
+        deliveryBoys={deliveryBoys}
+        onSave={handleCreateManualOrder}
+        saving={savingManualOrder}
+      />
     </div>
   );
 };

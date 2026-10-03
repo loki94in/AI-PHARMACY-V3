@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P1-83 — Refill creation failed with SQLite error: no such column: snoozed_until
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When adding a new patient refill from CRM, an error toast appeared: `Internal server error: SQLITE_ERROR: no such column: snoozed_until`. Reported 2026-10-03. |
+| **Root cause** | `src/services/refillService.ts` queried `COALESCE(snoozed_until, '')` on `automation_notifications`. The migration adding `snoozed_until` was only placed in the slow-boot DDL migration wall in `src/database.ts` (line 4329) and was omitted from the fast-boot path and common boot helpers (`ensureOrderTimingSchema`). Pre-existing installed shop databases operating on fast boot skipped line 4329 entirely, leaving the column missing. |
+| **How it was fixed** | (1) Added fail-safe column migration via `ensureColumns(db, 'automation_notifications', { snoozed_until: 'TEXT DEFAULT NULL', ... })` to both the fast-boot initialization block and `ensureOrderTimingSchema` in `src/database.ts`. (2) Bumped `CURRENT_SCHEMA_VERSION` from 72 to 73. (3) Added defensive runtime self-healing in `src/services/refillService.ts` to automatically create the missing column and retry if an older running instance queries it without a restart. |
+| **Priority** | P1 |
+| **What not to touch** | The snooze logic and notification deduplication workflow. |
+| **Verified by** | `npm run guardrails` clean exit 0 (`tsc --noEmit` clean, SQLite integrity check OK). Column migration registered on fast-boot and slow-boot paths. |
+
 ### [Fixed] P0-74 — Typing in the POS cart rewrites the batch and the saved purchase bills
 
 | Field | Content |

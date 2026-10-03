@@ -1727,6 +1727,8 @@ export const api = {
     apiClient.post<{ success: boolean; queueId?: number; updatedRefillCount?: number; message: string }>('/refills/send-grouped', data).then(res => res.data),
   acknowledgeRefill: (id: number) => apiClient.post(`/refills/${id}/acknowledge`).then(res => res.data),
   skipRefill: (id: number) => apiClient.post(`/refills/${id}/skip`).then(res => res.data),
+  markRefillOrdered: (id: number, options?: { note?: string; storeName?: string; qty?: number }) =>
+    apiClient.post<{ success: boolean; message: string; cart_store_name?: string }>(`/refills/${id}/status`, { status: 'ordered', ...options }).then(res => res.data),
   getRefillsPanel: () => apiClient.get('/refills/panel').then(res => res.data),
   toggleRefillOverride: (id: number) => apiClient.post(`/refills/${id}/toggle-override`).then(res => res.data),
   sendTomorrowReminder: (patientPhone: string) => apiClient.post<{ success: boolean; queueId?: number; message: string }>('/refills/send-tomorrow-reminder', { patient_phone: patientPhone }).then(res => res.data),

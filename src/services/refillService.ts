@@ -291,12 +291,34 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   const referenceIdStr = refillIds.join(',');
 
   // Check if a staged or active snoozed notification already exists for this patient
-  const existing = await db.get(
-    `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-     WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
-     ORDER BY id DESC LIMIT 1`,
-    [patientPhone, patientName]
-  );
+  let existing: any = null;
+  try {
+    existing = await db.get(
+      `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+       WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+       ORDER BY id DESC LIMIT 1`,
+      [patientPhone, patientName]
+    );
+  } catch (queryErr: any) {
+    if (queryErr?.message?.includes('snoozed_until')) {
+      await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => {});
+      existing = await db.get(
+        `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+         WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+         ORDER BY id DESC LIMIT 1`,
+        [patientPhone, patientName]
+      ).catch(async () => {
+        return await db.get(
+          `SELECT id, status FROM automation_notifications 
+           WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+           ORDER BY id DESC LIMIT 1`,
+          [patientPhone, patientName]
+        );
+      });
+    } else {
+      throw queryErr;
+    }
+  }
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -312,7 +334,19 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
          SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
          WHERE id = ?`,
         [msg, referenceIdStr, patientName, patientPhone, existing.id]
-      );
+      ).catch(async (updErr: any) => {
+        if (updErr?.message?.includes('snoozed_until')) {
+          await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => {});
+          await db.run(
+            `UPDATE automation_notifications 
+             SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
+             WHERE id = ?`,
+            [msg, referenceIdStr, patientName, patientPhone, existing.id]
+          );
+        } else {
+          throw updErr;
+        }
+      });
     } else {
       await db.run(
         `UPDATE automation_notifications 

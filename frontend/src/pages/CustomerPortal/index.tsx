@@ -13,6 +13,9 @@ import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
 import { PublicCatalogView } from './PublicCatalogView';
 import { PrescriptionUploadModal } from '../../components/PrescriptionUploadModal';
+import { PaymentQrModal } from './PaymentQrModal';
+import { ChangePinModal } from './ChangePinModal';
+import { CustomerPortalAuth } from './CustomerPortalAuth';
 
 interface CustomerSession {
   id: number;
@@ -1385,404 +1388,41 @@ export default function CustomerPortal() {
             </div>
 
             {/* Authentication Form Box */}
-            <div className="max-w-xl mx-auto bg-bg2 border border-border rounded-3xl shadow-xl p-6 sm:p-8 space-y-6">
-              {/* Header */}
-              <div className="text-center space-y-1.5">
-                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-primary/10 text-primary mb-1">
-                  <ShieldCheck className="w-6 h-6" />
-                </div>
-                <h3 className="text-xl sm:text-2xl font-black text-text">
-                  {authMode === 'register' ? 'Create Patient Account' : 'Patient Portal Access'}
-                </h3>
-                <p className="text-xs text-muted">
-                  {authMode === 'register'
-                    ? 'Register once to manage all prescriptions, bills & refills online'
-                    : 'Secure access to your medical bills, prescriptions & delivery history'}
-                </p>
-              </div>
-
-              {/* Segmented Auth Selector Tabs */}
-              <div className="grid grid-cols-3 gap-1 p-1 bg-bg border border-border rounded-2xl text-xs font-bold">
-                <button
-                  type="button"
-                  onClick={() => { setAuthMode('pin'); setIsOtpMode(false); setAuthError(''); setAuthSuccess(''); }}
-                  className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${authMode === 'pin' && !isOtpMode
-                      ? 'bg-primary text-white shadow-xs'
-                      : 'text-muted hover:text-text'
-                    }`}
-                >
-                  <Key className="w-3.5 h-3.5" />
-                  <span className="truncate">PIN Login</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setAuthError(''); setAuthSuccess(''); }}
-                  className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${authMode === 'otp' || isOtpMode
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-muted hover:text-text'
-                    }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span className="truncate">WhatsApp OTP</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setAuthMode('register'); setIsOtpMode(false); setAuthError(''); setAuthSuccess(''); }}
-                  className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${authMode === 'register'
-                      ? 'bg-primary text-white shadow-xs'
-                      : 'text-muted hover:text-text'
-                    }`}
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span className="truncate">Register</span>
-                </button>
-              </div>
-
-              {/* Alert feedback */}
-              {authError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-xs font-semibold text-red-600">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{authError}</span>
-                </div>
-              )}
-
-              {authSuccess && (
-                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center gap-2 text-xs font-semibold text-emerald-600">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{authSuccess}</span>
-                </div>
-              )}
-
-              {/* FORM 1: PIN Login */}
-              {authMode === 'pin' && !isOtpMode && (
-                <form onSubmit={handleLoginWithPin} className="space-y-4">
-                  <div>
-                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1.5">
-                      Registered Mobile Number
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">+91</span>
-                      <input
-                        type="tel"
-                        maxLength={10}
-                        placeholder="9876543210"
-                        value={phoneInput}
-                        onChange={e => setPhoneInput(e.target.value.replace(/\D/g, ''))}
-                        className="w-full pl-12 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-wider"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-[11px] font-bold text-text uppercase tracking-wider">
-                        4-Digit Security PIN
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); setAuthError(''); setAuthSuccess(''); }}
-                        className="text-xs text-primary hover:underline font-bold cursor-pointer flex items-center gap-1"
-                      >
-                        <span>Forgot PIN? Get WhatsApp OTP →</span>
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-                      <input
-                        type={showPinPassword ? 'text' : 'password'}
-                        maxLength={6}
-                        placeholder="Enter 4-digit PIN"
-                        value={pinInput}
-                        onChange={e => setPinInput(e.target.value)}
-                        className="w-full pl-10 pr-10 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-widest"
-                        required
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPinPassword(!showPinPassword)}
-                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer"
-                      >
-                        {showPinPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full py-3 bg-primary hover:opacity-95 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer"
-                  >
-                    {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                    <span>Login to My Patient Portal</span>
-                  </button>
-
-                  <div className="p-2.5 bg-bg border border-border rounded-xl text-[11px] text-muted text-center leading-relaxed">
-                    💡 Visited our pharmacy counter before? If you don't know your PIN, click{' '}
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); setAuthError(''); setAuthSuccess(''); }}
-                      className="text-primary font-bold hover:underline cursor-pointer inline"
-                    >
-                      Forgot PIN / WhatsApp OTP
-                    </button>{' '}
-                    to receive an instant code on WhatsApp.
-                  </div>
-
-                  <div className="pt-1 text-center text-xs text-muted">
-                    <span>New to our pharmacy? </span>
-                    <button
-                      type="button"
-                      onClick={() => setAuthMode('register')}
-                      className="text-primary font-bold hover:underline cursor-pointer"
-                    >
-                      Register your account in 10 seconds →
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* FORM 2: WhatsApp OTP Login */}
-              {(authMode === 'otp' || isOtpMode) && (
-                <form onSubmit={handleVerifyOtp} className="space-y-4">
-                  <div>
-                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1.5">
-                      WhatsApp Mobile Number
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">+91</span>
-                      <input
-                        type="tel"
-                        maxLength={10}
-                        placeholder="9876543210"
-                        value={phoneInput}
-                        onChange={e => setPhoneInput(e.target.value.replace(/\D/g, ''))}
-                        className="w-full pl-12 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-wider"
-                        required
-                      />
-                    </div>
-                    <p className="text-[11px] text-muted mt-1">
-                      We will send a 6-digit verification code directly to your WhatsApp.
-                    </p>
-                  </div>
-
-                  {otpSent ? (
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-bold text-text uppercase tracking-wider">
-                        6-Digit WhatsApp Verification Code
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={6}
-                        placeholder="123456"
-                        value={otpInput}
-                        onChange={e => setOtpInput(e.target.value)}
-                        className="w-full text-center tracking-widest py-3 bg-bg border-2 border-emerald-500/50 rounded-xl text-text text-xl font-bold focus:outline-none focus:border-emerald-500 font-mono"
-                        required
-                        autoFocus
-                      />
-                      <div className="flex items-center justify-between text-xs pt-1">
-                        <span className="text-emerald-600 font-semibold flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>OTP sent to WhatsApp!</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleRequestOtp}
-                          disabled={authLoading}
-                          className="text-primary hover:underline font-bold cursor-pointer"
-                        >
-                          Resend Code
-                        </button>
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={authLoading}
-                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer"
-                      >
-                        {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                        <span>Verify &amp; Enter Portal</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleRequestOtp}
-                      disabled={authLoading || phoneInput.length < 10}
-                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-                    >
-                      {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
-                      <span>Send 6-Digit OTP via WhatsApp</span>
-                    </button>
-                  )}
-
-                  <div className="pt-1 text-center text-xs text-muted">
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMode('pin'); setIsOtpMode(false); }}
-                      className="hover:text-text transition-colors cursor-pointer"
-                    >
-                      ← Back to PIN Login
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* FORM 3: Patient Registration */}
-              {authMode === 'register' && (
-                <form onSubmit={handleRegister} className="space-y-3.5">
-                  {/* Notice for existing counter bill patients */}
-                  <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-start gap-2.5 text-xs text-amber-700 dark:text-amber-400">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
-                    <div className="space-y-1">
-                      <p className="font-bold">Already purchased from our pharmacy counter?</p>
-                      <p className="text-[11px] leading-relaxed opacity-95">
-                        If you have a past bill from our store, your mobile number is <strong>already registered</strong>! You don't need to create a new account. Simply click{' '}
-                        <button
-                          type="button"
-                          onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); setAuthError(''); setAuthSuccess(''); }}
-                          className="font-bold underline text-amber-800 dark:text-amber-300 hover:opacity-80 cursor-pointer inline"
-                        >
-                          Forgot PIN / WhatsApp OTP
-                        </button>{' '}
-                        to receive an instant OTP code on WhatsApp and access all your past pharmacy bills immediately.
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
-                      Patient Full Name <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-                      <input
-                        type="text"
-                        placeholder="e.g. Rajesh Kumar"
-                        value={regName}
-                        onChange={e => setRegName(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
-                      WhatsApp Mobile Number <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">+91</span>
-                      <input
-                        type="tel"
-                        maxLength={10}
-                        placeholder="9876543210"
-                        value={regPhone}
-                        onChange={e => setRegPhone(e.target.value.replace(/\D/g, ''))}
-                        className="w-full pl-12 pr-4 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-wider"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
-                      Delivery Address / Landmark (Optional)
-                    </label>
-                    <div className="relative">
-                      <MapPin className="w-4 h-4 absolute left-3.5 top-3 text-muted" />
-                      <textarea
-                        rows={2}
-                        placeholder="House/Flat number, building, street, landmark, pincode"
-                        value={regAddress}
-                        onChange={e => setRegAddress(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-xs resize-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
-                        Set 4-Digit PIN <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <Lock className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                        <input
-                          type="password"
-                          maxLength={6}
-                          placeholder="e.g. 1234"
-                          value={regPin}
-                          onChange={e => setRegPin(e.target.value)}
-                          className="w-full pl-8 pr-3 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-widest text-center"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
-                        Confirm PIN <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <Lock className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                        <input
-                          type="password"
-                          maxLength={6}
-                          placeholder="Confirm PIN"
-                          value={regConfirmPin}
-                          onChange={e => setRegConfirmPin(e.target.value)}
-                          className="w-full pl-8 pr-3 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-widest text-center"
-                          required
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full py-3 bg-primary hover:opacity-95 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer mt-1"
-                  >
-                    {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-                    <span>Register Account &amp; Log In</span>
-                  </button>
-
-                  <div className="pt-1 text-center text-xs text-muted">
-                    <span>Already registered? </span>
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMode('pin'); setIsOtpMode(false); }}
-                      className="text-primary font-bold hover:underline cursor-pointer"
-                    >
-                      Login with your PIN here →
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Patient Trust Guarantees */}
-              <div className="pt-4 border-t border-border/70 grid grid-cols-2 gap-2 text-[11px] text-muted">
-                <div className="flex items-center gap-1.5">
-                  <BadgeCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>100% Genuine Pharmacy Supply</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Truck className="w-3.5 h-3.5 text-primary shrink-0" />
-                  <span>Free Pickup or Fast Delivery</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                  <span>Digital Prescription History</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <MessageSquare className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>WhatsApp Delivery Updates</span>
-                </div>
-              </div>
-            </div>
+            <CustomerPortalAuth
+              authMode={authMode}
+              setAuthMode={setAuthMode}
+              isOtpMode={isOtpMode}
+              setIsOtpMode={setIsOtpMode}
+              authError={authError}
+              setAuthError={setAuthError}
+              authSuccess={authSuccess}
+              setAuthSuccess={setAuthSuccess}
+              authLoading={authLoading}
+              phoneInput={phoneInput}
+              setPhoneInput={setPhoneInput}
+              pinInput={pinInput}
+              setPinInput={setPinInput}
+              showPinPassword={showPinPassword}
+              setShowPinPassword={setShowPinPassword}
+              handleLogin={handleLoginWithPin}
+              otpSent={otpSent}
+              setOtpSent={setOtpSent}
+              otpInput={otpInput}
+              setOtpInput={setOtpInput}
+              handleRequestOtp={handleRequestOtp}
+              handleVerifyOtp={handleVerifyOtp}
+              regName={regName}
+              setRegName={setRegName}
+              regPhone={regPhone}
+              setRegPhone={setRegPhone}
+              regAddress={regAddress}
+              setRegAddress={setRegAddress}
+              regPin={regPin}
+              setRegPin={setRegPin}
+              regConfirmPin={regConfirmPin}
+              setRegConfirmPin={setRegConfirmPin}
+              handleRegister={handleRegister}
+            />
           </div>
         )}
 
@@ -2713,254 +2353,37 @@ export default function CustomerPortal() {
       )}
 
       {/* Change PIN Modal */}
-      {isChangePinOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <h3 className="text-base font-bold text-text flex items-center gap-2">
-                <Key className="w-5 h-5 text-primary" />
-                <span>Change Your PIN</span>
-              </h3>
-              <button
-                onClick={() => setIsChangePinOpen(false)}
-                className="text-muted hover:text-text p-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {pinChangeError && (
-              <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-600 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{pinChangeError}</span>
-              </div>
-            )}
-
-            {pinChangeSuccess && (
-              <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-600 flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>{pinChangeSuccess}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleChangePin} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-semibold text-text uppercase tracking-wider mb-1">
-                  Current 4-Digit PIN
-                </label>
-                <input
-                  type="password"
-                  maxLength={6}
-                  placeholder="Enter current PIN"
-                  value={pinChangeForm.current_pin}
-                  onChange={e => setPinChangeForm({ ...pinChangeForm, current_pin: e.target.value })}
-                  className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text font-mono tracking-widest focus:outline-none focus:border-primary"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-text uppercase tracking-wider mb-1">
-                  New 4-Digit PIN
-                </label>
-                <input
-                  type="password"
-                  maxLength={6}
-                  placeholder="Enter new 4-digit PIN"
-                  value={pinChangeForm.new_pin}
-                  onChange={e => setPinChangeForm({ ...pinChangeForm, new_pin: e.target.value.replace(/\D/g, '') })}
-                  className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text font-mono tracking-widest focus:outline-none focus:border-primary"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-text uppercase tracking-wider mb-1">
-                  Confirm New PIN
-                </label>
-                <input
-                  type="password"
-                  maxLength={6}
-                  placeholder="Re-enter new 4-digit PIN"
-                  value={pinChangeForm.confirm_pin}
-                  onChange={e => setPinChangeForm({ ...pinChangeForm, confirm_pin: e.target.value.replace(/\D/g, '') })}
-                  className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text font-mono tracking-widest focus:outline-none focus:border-primary"
-                  required
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-                <button
-                  type="button"
-                  onClick={() => setIsChangePinOpen(false)}
-                  className="px-4 py-2 border border-border rounded-xl text-muted hover:text-text transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={pinChangeLoading}
-                  className="px-5 py-2 bg-primary text-white rounded-xl font-bold shadow-md hover:opacity-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {pinChangeLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  <span>Save New PIN</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ChangePinModal
+        isOpen={isChangePinOpen}
+        onClose={() => setIsChangePinOpen(false)}
+        pinChangeError={pinChangeError}
+        pinChangeSuccess={pinChangeSuccess}
+        pinChangeForm={pinChangeForm}
+        setPinChangeForm={setPinChangeForm}
+        pinChangeLoading={pinChangeLoading}
+        onSubmit={handleChangePin}
+      />
 
       {/* 3-UPI QR Payment Modal (§12, §13, §14) */}
-      {paymentQrModal && paymentQrModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl text-center">
-            <div className="flex items-center justify-between border-b border-border pb-3 text-left">
-              <div className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-primary" />
-                <div>
-                  <h3 className="text-sm font-bold text-text">Scan & Pay via UPI</h3>
-                  <span className="text-[11px] text-muted block">{paymentQrModal.label}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setPaymentQrModal(null);
-                  setScreenshotFile(null);
-                  setScreenshotPreview(null);
-                  setScreenshotBase64(null);
-                }}
-                className="text-muted hover:text-text p-1 rounded-lg text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Total Amount Badge */}
-            <div className="p-3 bg-primary/10 rounded-xl border border-primary/20">
-              <span className="text-[11px] text-muted block mb-0.5">Total Payable Amount</span>
-              <span className="text-xl font-extrabold text-primary">₹{paymentQrModal.amount.toFixed(2)}</span>
-            </div>
-
-            {/* QR Code Container */}
-            <div className="p-3 bg-bg3 rounded-xl border border-border inline-block shadow-sm mx-auto">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(paymentQrModal.upiUri)}`}
-                alt="UPI Payment QR"
-                className="w-44 h-44 mx-auto"
-              />
-            </div>
-
-            {/* UPI Account Details */}
-            <div className="space-y-1.5 text-left bg-bg p-3 rounded-xl border border-border text-[11px]">
-              <div className="flex items-center justify-between">
-                <span className="text-muted">Payee:</span>
-                <span className="font-semibold text-text">{paymentQrModal.payeeName}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted">UPI ID:</span>
-                <span className="font-mono font-bold text-primary">{paymentQrModal.upiId}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted">Order Ref:</span>
-                <span className="font-mono text-text">#{paymentQrModal.orderId}</span>
-              </div>
-            </div>
-
-            {/* Direct Pay Link for Mobile */}
-            <a
-              href={paymentQrModal.upiUri}
-              className="w-full py-2 bg-bg3 hover:bg-bg border border-border text-text rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Open in UPI App (GPay / PhonePe / Paytm)</span>
-            </a>
-
-            {/* Payment Screenshot Attachment (Proof) */}
-            {!paymentQrModal.isPaidMarked && (
-              <div className="text-left bg-bg p-3 rounded-xl border border-border space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold text-text flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5 text-primary" />
-                    <span>Attach Payment Screenshot</span>
-                  </label>
-                  <span className="text-[10px] text-muted">(Recommended)</span>
-                </div>
-
-                {screenshotPreview ? (
-                  <div className="relative rounded-lg overflow-hidden border border-border bg-bg2 p-1.5 flex items-center gap-2">
-                    <img
-                      src={screenshotPreview}
-                      alt="Payment proof preview"
-                      className="w-12 h-12 object-cover rounded-md border border-border"
-                    />
-                    <div className="flex-1 min-w-0 text-[11px]">
-                      <p className="font-medium text-text truncate">{screenshotFile?.name || 'Screenshot attached'}</p>
-                      <p className="text-[10px] text-emerald-500 font-semibold flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Ready to forward to pharmacy
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setScreenshotFile(null);
-                        setScreenshotPreview(null);
-                        setScreenshotBase64(null);
-                      }}
-                      className="p-1 text-muted hover:text-red-400 rounded-md transition-colors"
-                      title="Remove screenshot"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <label className="flex items-center justify-center gap-2 w-full p-2.5 rounded-lg border border-dashed border-border hover:border-primary/50 bg-bg2 hover:bg-bg3 cursor-pointer transition-colors text-xs text-muted hover:text-text">
-                    <Upload className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-[11px]">Upload GPay / PhonePe / Paytm receipt</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleScreenshotChange}
-                    />
-                  </label>
-                )}
-              </div>
-            )}
-
-            {/* Actions: "I HAVE PAID" (§12) */}
-            <div className="space-y-2 pt-1">
-              {!paymentQrModal.isPaidMarked ? (
-                <button
-                  onClick={handleMarkPaid}
-                  disabled={isMarkingPaid}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-50"
-                >
-                  {isMarkingPaid ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  <span>I HAVE PAID</span>
-                </button>
-              ) : (
-                <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-500 text-xs font-semibold flex items-center justify-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span>Payment Reported — Awaiting Pharmacy Verification</span>
-                </div>
-              )}
-
-              <button
-                onClick={() => {
-                  setPaymentQrModal(null);
-                  setScreenshotFile(null);
-                  setScreenshotPreview(null);
-                  setScreenshotBase64(null);
-                }}
-                className="w-full py-1.5 text-xs text-muted hover:text-text font-medium"
-              >
-                {paymentQrModal.isPaidMarked ? 'Close & View Orders' : 'Cancel & Close'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PaymentQrModal
+        modalData={paymentQrModal}
+        onClose={() => {
+          setPaymentQrModal(null);
+          setScreenshotFile(null);
+          setScreenshotPreview(null);
+          setScreenshotBase64(null);
+        }}
+        screenshotFile={screenshotFile}
+        screenshotPreview={screenshotPreview}
+        onScreenshotChange={handleScreenshotChange}
+        onRemoveScreenshot={() => {
+          setScreenshotFile(null);
+          setScreenshotPreview(null);
+          setScreenshotBase64(null);
+        }}
+        onMarkPaid={handleMarkPaid}
+        isMarkingPaid={isMarkingPaid}
+      />
 
       {/* Direct Prescription / Medicine Photo Upload Modal */}
       <PrescriptionUploadModal

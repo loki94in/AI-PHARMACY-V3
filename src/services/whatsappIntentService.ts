@@ -6,7 +6,7 @@ import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { getMessage } from '../i18n/getMessage.js';
 import { detectLanguage, detectExplicitLanguageSwitch, type SupportedLanguage } from './languageDetector.js';
-import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery, fuzzySearchLocalMedicines } from './intentKeywords.js';
+import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isAffirmativeResponse, isNegativeResponse, isPlausibleMedicineName, detectDosageForm, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery, fuzzySearchLocalMedicines } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
@@ -1355,12 +1355,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       }
     }
     const lower = normalizedInput.toLowerCase().trim();
-    const cleanedForAffirmative = lower.replace(/[.,!?;:()_~#*`"']/g, ' ').replace(/\s+/g, ' ').trim();
-    const isAffirmative =
-      /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji|हो|होय|होय चालेल|चालेल|पाठवा|द्या|नक्की|बरोबर|कन्फर्म|हाँ|हां|हाँ जी|भेज दो|दीजिए|सही)$/iu.test(cleanedForAffirmative) ||
-      isRefillConfirmationResponse(body);
-    const isNegative =
-      /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re|नाही|नको|रद्द|नाही नको|गलत|मत भेजो)$/iu.test(cleanedForAffirmative);
+    const isAffirmative = isAffirmativeResponse(body);
+    const isNegative = isNegativeResponse(body);
 
     // ── TASK 2: Context-Aware General Q&A Handler ─────────────────────────────
     // Detect & answer common general questions regardless of current step.

@@ -1,50 +1,53 @@
-# Implementation Plan: Staged 12-Second Deferred Warm-Up for All Pages
+# Frontend Startup TypeScript Errors & Module Resolution Fix Plan
 
-## Problem Statement
-The user requested increasing the warm-up delay from 1.5 seconds to 10–14 seconds (targeting 12 seconds) and applying it to **all** key pages across the application. 
-Running page prewarming or mounting immediately at boot competes with the POS counter landing, Electron window initialization, and initial SQLite database hydration. Deferring the warm-up to 12 seconds gives the POS screen 100% dedicated hardware resources during the critical boot phase, while still pre-loading all major application routes smoothly in the background shortly after.
-
-## Proposed Architecture
-1. **12-Second Boot Grace Period**:
-   - For the first 12 seconds after launch, POS has exclusive, uninterrupted CPU and RAM priority.
-   - If the user clicks any route during these first 12 seconds, that route mounts on-demand immediately.
-2. **Staggered Background Warm-Up Across All Pages**:
-   - In `App.tsx`, starting at 12 seconds, iterate sequentially through all high-traffic routes (`/inventory`, `/sells`, `/dashboard`, `/purchases`, `/crm`, `/pharmarack-cart`, `/dispatch`, `/mail`, `/settings`) with a gentle 2-second stagger between each page chunk.
-   - Pre-mount essential workhorse pages (`/inventory`, `/sells`) in `KeepAliveOutlet` after this 12-second grace period settles.
-3. **Smooth Non-Blocking Execution**:
-   - Each route's code chunk is pre-cached in Chromium's V8 module pool in the background.
-   - Zero layout shifts, zero main-thread freezing, zero POS typing stutter.
+## 1. Problem Statement & Baseline
+- **Observed Behavior**: Starting the app or running `npm run build:client` (`tsc -b && vite build`) fails with 28 compilation errors across 9 frontend files.
+- **Root Cause**: A previous decomposition refactor of 11 monolithic pages into subcomponents left broken relative import paths (`../../api` instead of `../../services/api`), missing Lucide icons, missing type annotations, and mismatched prop interfaces between parent pages and extracted modal components.
+- **Target**:
+  1. Fix all imports, relative paths, types, and interfaces in `frontend/src/pages/CRM/` (`CustomerCreditSection`, `DistributorMessagesSection`, `RefillsSection`, `SpecialOrdersSection`, `WhatsAppSection`).
+  2. Fix modal prop types in `frontend/src/pages/Dispatch/index.tsx` (`TemplateEditorModalProps`, `ManualOrderModalProps`).
+  3. Fix prop types and delivery boy types in `frontend/src/pages/PharmarackCart/index.tsx`.
+  4. Fix modal prop types in `frontend/src/pages/POS/index.tsx` (`POSPhonePromptModal`, `POSPostSaleModal`).
+  5. Fix missing identifiers and function signatures in `frontend/src/pages/Returns/index.tsx` and `SupplierReturnHistory.tsx`.
+  6. Fix toast severity type in `frontend/src/pages/Settings/StaffSecurityTab.tsx`.
+  7. Reach 100% clean exit on `npx tsc -b frontend/tsconfig.json` and `npm run guardrails`.
 
 ---
 
-## Tasks Breakdown
+## 2. Implementation Steps
 
-- [x] `Task 1`: Update `KeepAliveOutlet.tsx` to delay the background pre-mounting of essential pages until 12 seconds after mount (while keeping immediate on-click mounting active).
-- [x] `Task 2`: Refactor `App.tsx` warm-up scheduler to begin at 12 seconds (in the 10–14s window) and smoothly stagger prewarming across all primary routes (Inventory, Sells, Dashboard, Purchases, CRM, Pharmarack Cart, Dispatch, Mail, Settings).
-- [x] `Task 3`: Run `npm run guardrails` and `node scripts/quick-update.mjs` to verify zero violations and synchronize the project knowledge graph.
-- [x] `Task 4`: Production release (`npm run release`) build installer and update archive.
+1. **Phase 1: CRM Subsystem Fixes**
+   - `CustomerCreditSection.tsx`: Fix relative imports (`../../services/api`), import missing icons from `lucide-react`, type parameter `c`, import type-safe events.
+   - `DistributorMessagesSection.tsx`: Fix relative imports (`../../services/api`), type-only import for `AutomationLog`.
+   - `RefillsSection.tsx`: Import or define `MedicineSuggestion`.
+   - `SpecialOrdersSection.tsx`: Fix `useNavigate` import / hook usage.
+   - `WhatsAppSection.tsx`: Add missing `OcrParsedPayload` type and `MedicineVisualReferenceModal` import.
+   - Verify: `npx tsc -b frontend/tsconfig.json` for CRM files.
+
+2. **Phase 2: Dispatch, PharmarackCart & POS Fixes**
+   - `Dispatch/index.tsx`: Align `TemplateEditorModal` and `ManualOrderModal` props.
+   - `PharmarackCart/index.tsx`: Align `medicineId` and `DeliveryBoyItem` id types.
+   - `POS/index.tsx`: Align phone prompt, credit dues, and pdf export handler types.
+   - Verify: `npx tsc -b frontend/tsconfig.json` for Dispatch, PharmarackCart, and POS.
+
+3. **Phase 3: Returns & Settings Fixes**
+   - `Returns/index.tsx` & `SupplierReturnHistory.tsx`: Define `LocalReturnHistoryRow`, provide `queryClient`, fix argument count on handler.
+   - `Settings/StaffSecurityTab.tsx`: Fix toast severity from `'warning'` to `'info'`.
+   - Verify: Full `npm run build:client` clean exit 0.
+
+4. **Phase 4: Guardrails & Knowledge Graph**
+   - Run `npm run guardrails`.
+   - Run `node scripts/quick-update.mjs`.
 
 ---
 
-## Progress & Completed Tasks
+## 3. Tasks & Completed Log
 
-### Task 1: 12-Second Deferred Pre-Mount in KeepAliveOutlet
-- Updated `frontend/src/lib/keepAlive/KeepAliveOutlet.tsx` to defer adding `BOOT_PREMOUNT_PATHS` (`/inventory`, `/sells`) until a 12-second timer has settled.
-- Any manual navigation to a route during seconds 0–12 continues to mount instantly on click.
-
-### Task 2: Staggered 12-Second Warm-up for All Primary Pages in App.tsx
-- Updated `frontend/src/App.tsx` warm-up queue to begin at 12 seconds (`12_000ms`), right in the user's requested 10–14 second window.
-- Iterates sequentially through all key routes: `/inventory`, `/sells`, `/dashboard`, `/purchases`, `/crm`, `/pharmarack-cart`, `/dispatch`, `/mail`, `/settings`.
-- Spaced with a gentle 2.5-second gap between route chunks to guarantee zero CPU spikes or typing interference in POS.
-- Removed constant `pointermove` event overhead.
-
-### Task 3: Verification & Guardrails
-- `npm run guardrails` passed with 0 violations (`tsc --noEmit` clean, speed architecture intact).
-- `node scripts/quick-update.mjs` synchronized knowledge graph.
-
-### Task 4: Production Release v0.1.44
-- Executed `npm run release` successfully.
-- Version bumped: `0.1.43` -> `0.1.44`.
-- Frontend bundled with Vite (47.99s), Node SEA binary compiled (`dist/PharmacyBackend.exe`), Electron main/preload packaged, Inno Setup compiled installer: `dist\installer\AI-Pharmacy-OS-Portable-Setup-v0.1.44.exe`.
-- Update package generated: `dist\installer\AI-Pharmacy-OS-Update-v0.1.44.zip` (SHA-256: `b9e23f8652823fb132792e67831bd7f2f65526f0ae9695b9489996679daf6fa6`).
-- Manifest written: `update-manifest.json`.
+- [x] Task 1: Fix all TypeScript errors and missing imports in `frontend/src/pages/CRM/` files.
+  - *Completed*: Fixed imports (`services/api`, `services/events`, `utils/date`), added missing Lucide icons, imported `MedicineSuggestion`, `useNavigate`, `MedicineVisualReferenceModal`, and typed `OcrParsedPayload`.
+- [x] Task 2: Fix prop and type mismatches in `Dispatch/index.tsx`, `PharmarackCart/index.tsx`, and `POS/index.tsx`.
+  - *Completed*: Aligned `TemplateEditorModalProps` and `ManualOrderModalProps`, made `medicineId` and `DeliveryBoyItem.id` optional, updated `POSDoctorModalProps.editingDoctorId` and `POSPostSaleModalProps`.
+- [x] Task 3: Fix `Returns/index.tsx`, `SupplierReturnHistory.tsx`, and `Settings/StaffSecurityTab.tsx`.
+  - *Completed*: Exported and imported `LocalReturnHistoryRow`, instantiated `queryClient` and replaced legacy `refetchHistory` call, fixed `usePersistedDateRange` options parameter, and changed toast severity to `'info'`.
+- [x] Task 4: Full verification (`npm run build:client`, `npm run guardrails`, and `node scripts/quick-update.mjs`).
+  - *Completed*: Verified with `npx tsc -b frontend/tsconfig.json` (0 errors), `npm run build:client` (built in 55.97s), and `npm run guardrails` (PASS with 0 violations).

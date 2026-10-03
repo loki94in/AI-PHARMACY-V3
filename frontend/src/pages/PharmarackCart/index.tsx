@@ -13,6 +13,9 @@ import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { broadcastContactDataChanged } from '../../utils/settingsSync';
 import { formatPackagingAndUnit } from '../../utils/packagingMatcher';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { CartPurchaseHistoryModal } from './CartPurchaseHistoryModal';
+import { BatchDispatchModal } from './BatchDispatchModal';
+import { SingleDispatchModal } from './SingleDispatchModal';
 
 interface CartLineItem {
   productId: number | null;
@@ -5921,376 +5924,43 @@ export default function PharmarackCart() {
       )}
 
       {/* ── Purchase History Modal ── */}
-      {purchaseHistoryModalTarget && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
-            {/* Modal Header */}
-            <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                  <Clock size={16} />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-text text-sm">PURCHASE INVOICE HISTORY</h3>
-                  <p className="text-[11px] text-muted">{purchaseHistoryModalTarget.medicineName}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPurchaseHistoryModalTarget(null)}
-                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-              {purchaseHistoryModalTarget.loading ? (
-                <div className="flex items-center justify-center py-16 text-muted gap-2 text-xs">
-                  <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                  <span>Loading purchase history from database...</span>
-                </div>
-              ) : purchaseHistoryModalTarget.history.length === 0 ? (
-                <div className="text-center py-16 space-y-2">
-                  <Clock size={36} className="text-muted/40 mx-auto" />
-                  <p className="text-sm font-bold text-text">No Purchase Invoices Found</p>
-                  <p className="text-xs text-muted">No historical purchase bills exist for this medicine in the database.</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="text-xs text-muted flex items-center justify-between">
-                    <span>Found <strong className="text-text font-bold">{purchaseHistoryModalTarget.history.length}</strong> previous invoice records</span>
-                    <span className="text-[10px] text-muted font-bold">Sorted by most recent</span>
-                  </div>
-                  <div className="divide-y divide-glass-border/30 border border-glass-border rounded-xl overflow-hidden bg-bg/30">
-                    {purchaseHistoryModalTarget.history.map((h, i) => (
-                      <div key={i} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-bg/60 transition-colors">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <strong className="text-text font-bold">{h.distributor_name}</strong>
-                            {h.invoice_no && (
-                              <span className="text-[10px] font-mono text-muted bg-bg px-1.5 py-0.2 rounded border border-glass-border">
-                                Inv: {h.invoice_no}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-muted flex items-center gap-3 flex-wrap">
-                            <span>Date: <strong className="text-text font-mono">{h.invoice_date ? formatDisplayDate(h.invoice_date) : 'Past'}</strong></span>
-                            {h.batch_no && <span>Batch: <strong className="text-text font-mono">{h.batch_no}</strong></span>}
-                            {h.expiry_date && <span>Exp: <strong className="text-text font-mono">{h.expiry_date}</strong></span>}
-                            <span>Qty: <strong className="text-text font-mono">{h.quantity}</strong> {h.free_qty ? `(+${h.free_qty} Free)` : ''}</span>
-                          </div>
-                        </div>
-
-                        <div className="text-right sm:text-right shrink-0">
-                          <div className="text-[10px] text-muted">Net Rate / Unit</div>
-                          <div className="text-sm font-black font-mono text-text">
-                            ₹{h.net_rate?.toFixed(2) || h.rate?.toFixed(2)}
-                          </div>
-                          {h.mrp > 0 && <div className="text-[10px] text-muted font-mono">MRP: ₹{h.mrp.toFixed(2)}</div>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="bg-bg3/60 px-6 py-3 border-t border-glass-border flex items-center justify-end shrink-0">
-              <button
-                type="button"
-                onClick={() => setPurchaseHistoryModalTarget(null)}
-                className="px-4 py-1.5 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <CartPurchaseHistoryModal
+        target={purchaseHistoryModalTarget}
+        onClose={() => setPurchaseHistoryModalTarget(null)}
+      />
 
       {/* ── Confirm Batch WhatsApp Dispatch Modal ── */}
-      {showConfirmBatchModal && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                  <MessageSquare size={16} />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-text text-sm">Confirm WhatsApp Order Dispatch</h3>
-                  <p className="text-[11px] text-muted">Review today's orders & values before sending</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowConfirmBatchModal(false)}
-                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
+      <BatchDispatchModal
+        isOpen={showConfirmBatchModal}
+        onClose={() => setShowConfirmBatchModal(false)}
+        deliveryBoysList={deliveryBoysList}
+        bulkApplyDeliveryBoyId={bulkApplyDeliveryBoyId}
+        setBulkApplyDeliveryBoyId={setBulkApplyDeliveryBoyId}
+        selectedBatchDeliveryBoys={selectedBatchDeliveryBoys}
+        setSelectedBatchDeliveryBoys={setSelectedBatchDeliveryBoys}
+        batchSummaryList={batchSummaryList}
+        finalBatchTotalQty={finalBatchTotalQty}
+        finalBatchTotalAmount={finalBatchTotalAmount}
+        isSendingBatchWhatsApp={isSendingBatchWhatsApp}
+        onConfirmSend={() => {
+          if (isSendingBatchRef.current || isSendingBatchWhatsApp) return;
+          setShowConfirmBatchModal(false);
+          handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys);
+        }}
+      />
 
-            {/* Quick Bulk Staff Assignment Header */}
-            {deliveryBoysList.length > 0 && (
-              <div className="bg-bg3/60 px-5 py-2.5 border-b border-glass-border flex flex-wrap items-center justify-between gap-2.5 shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold text-muted flex items-center gap-1">
-                    <Truck size={13} className="text-primary" /> Assign all to:
-                  </span>
-                  <select
-                    value={bulkApplyDeliveryBoyId}
-                    onChange={(e) => setBulkApplyDeliveryBoyId(e.target.value)}
-                    className="text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="">-- Choose Delivery Person --</option>
-                    {deliveryBoysList.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    disabled={!bulkApplyDeliveryBoyId}
-                    onClick={() => {
-                      const boyId = Number(bulkApplyDeliveryBoyId);
-                      if (!boyId) return;
-                      setSelectedBatchDeliveryBoys((prev) => {
-                        const next = { ...prev };
-                        batchSummaryList.forEach((item) => {
-                          next[item.storeId] = boyId;
-                        });
-                        return next;
-                      });
-                    }}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-primary text-white hover:opacity-90 transition-all disabled:opacity-40 active:scale-95 cursor-pointer shadow-sm"
-                  >
-                    Apply to All
-                  </button>
-                </div>
-                <span className="text-[10px] font-mono text-muted bg-bg px-2 py-1 rounded-lg border border-glass-border/40">
-                  {deliveryBoysList.length} staff registered
-                </span>
-              </div>
-            )}
-
-            {/* Modal Body: Distributor Table (Distributor Name, Total Qty, Cart Value, Delivery Person) */}
-            <div className="p-4 sm:p-5 flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-3">
-              <div className="border border-glass-border rounded-xl overflow-hidden bg-bg/40">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-glass-border bg-bg3/60 text-muted uppercase text-[10px] font-bold tracking-wider">
-                      <th className="py-2.5 px-3.5">Distributor Name</th>
-                      <th className="py-2.5 px-3 text-center">Total Qty</th>
-                      <th className="py-2.5 px-3.5 text-right">Cart Value</th>
-                      <th className="py-2.5 px-3.5">Delivery Person</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-glass-border/30">
-                    {batchSummaryList.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="py-8 text-center text-muted">
-                          No order items currently ready to send.
-                        </td>
-                      </tr>
-                    ) : (
-                      batchSummaryList.map((item) => (
-                        <tr key={item.storeId} className="hover:bg-bg3/20 transition-colors">
-                          <td className="py-3 px-3.5 font-bold text-text">
-                            <div className="flex items-center gap-2">
-                              <span>{item.storeName}</span>
-                              {item.isMapped ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                  Mapped
-                                </span>
-                              ) : (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                  No phone
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3 text-center font-mono font-extrabold text-text">
-                            {item.totalQty}
-                          </td>
-                          <td className="py-3 px-3.5 text-right font-mono font-black text-emerald-400">
-                            ₹{item.totalAmount.toFixed(2)}
-                          </td>
-                          <td className="py-2 px-3.5 min-w-[190px]">
-                            <select
-                              value={selectedBatchDeliveryBoys[item.storeId] ?? ''}
-                              onChange={(e) => {
-                                const val = e.target.value ? Number(e.target.value) : null;
-                                setSelectedBatchDeliveryBoys((prev) => ({
-                                  ...prev,
-                                  [item.storeId]: val,
-                                  }));
-                              }}
-                              className="w-full text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
-                            >
-                              <option value="">👤 Unassigned / Admin Fallback</option>
-                              {deliveryBoysList.map((b) => (
-                                <option key={b.id} value={b.id}>
-                                  👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                  {batchSummaryList.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-glass-border bg-bg3/70 font-black">
-                        <td className="py-3 px-3.5 text-text uppercase text-[11px] tracking-wide">
-                          Final Total ({batchSummaryList.length} Distributors)
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono text-sm text-text">
-                          {finalBatchTotalQty}
-                        </td>
-                        <td className="py-3 px-3.5 text-right font-mono text-sm text-emerald-400">
-                          ₹{finalBatchTotalAmount.toFixed(2)}
-                        </td>
-                        <td className="py-3 px-3.5 text-right text-[11px] text-muted font-normal">
-                          {deliveryBoysList.length > 0 ? `${deliveryBoysList.length} staff available` : '—'}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            </div>
-
-            {/* Modal Footer: Cancel vs Confirm & Send */}
-            <div className="bg-bg3/60 px-5 py-3.5 border-t border-glass-border flex items-center justify-end gap-2.5 shrink-0">
-              <button
-                type="button"
-                disabled={isSendingBatchWhatsApp}
-                onClick={() => setShowConfirmBatchModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 border border-glass-border transition-all cursor-pointer disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (isSendingBatchRef.current || isSendingBatchWhatsApp) return;
-                  setShowConfirmBatchModal(false);
-                  handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys);
-                }}
-                disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0}
-                className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-50 cursor-pointer"
-              >
-                {isSendingBatchWhatsApp ? (
-                  <>
-                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    <span>Sending orders…</span>
-                  </>
-                ) : (
-                  <>
-                    <Send size={13} />
-                    <span>Confirm & Send</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
       {/* ── Confirm Single WhatsApp Order Dispatch Modal ── */}
-      {singleDispatchTarget && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-md shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
-            {/* Header */}
-            <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                  <Truck size={16} />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-text text-sm">Assign Delivery Person</h3>
-                  <p className="text-[11px] text-muted truncate max-w-[240px]">{singleDispatchTarget.storeName}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSingleDispatchTarget(null)}
-                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-5 space-y-4">
-              <div className="bg-bg3/40 border border-glass-border rounded-xl p-3 flex items-center justify-between text-xs">
-                <div>
-                  <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Items to Send</span>
-                  <span className="text-sm font-extrabold text-text font-mono">
-                    {singleDispatchTarget.items.filter(i => isItemIncludedInDispatch(i, singleDispatchTarget)).length} items
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Order Value</span>
-                  <span className="text-sm font-black text-emerald-400 font-mono">
-                    ₹{getDistributorCheckedTotal(singleDispatchTarget).toFixed(2)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-text flex items-center gap-1.5">
-                  <Truck size={13} className="text-primary" /> Delivery Boy for this order:
-                </label>
-                <select
-                  value={singleDispatchBoyId ?? ''}
-                  onChange={(e) => setSingleDispatchBoyId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full text-xs px-3 py-2.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
-                >
-                  <option value="">👤 Unassigned / Store Admin Fallback</option>
-                  {deliveryBoysList.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      👤 {b.name} {b.whatsapp_number ? `(+91 ${b.whatsapp_number.slice(-10)})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-muted">
-                  The selected delivery staff will be included in the order message and assigned to pick up this parcel.
-                </p>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="bg-bg3/60 px-5 py-3 border-t border-glass-border flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setSingleDispatchTarget(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmSingleDispatch}
-                disabled={sendingWaDistributorId === singleDispatchTarget.storeId}
-                className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-md cursor-pointer disabled:opacity-50"
-              >
-                <MessageSquare size={14} />
-                <span>Confirm & Send via WhatsApp</span>
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <SingleDispatchModal
+        target={singleDispatchTarget}
+        onClose={() => setSingleDispatchTarget(null)}
+        singleDispatchBoyId={singleDispatchBoyId}
+        setSingleDispatchBoyId={setSingleDispatchBoyId}
+        deliveryBoysList={deliveryBoysList}
+        isItemIncludedInDispatch={isItemIncludedInDispatch}
+        getDistributorCheckedTotal={getDistributorCheckedTotal}
+        sendingWaDistributorId={sendingWaDistributorId}
+        onConfirm={handleConfirmSingleDispatch}
+      />
     </div>
   );
 }

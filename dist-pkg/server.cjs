@@ -48046,29 +48046,6 @@ var init_inventory = __esm({
           params.push(id);
           await db2.run(`UPDATE inventory_master SET ${updates.join(", ")} WHERE id = ?`, params);
         }
-        if (batchNoVal !== void 0 || expiry_date !== void 0 || mrp !== void 0) {
-          const piUpdates = [];
-          const piParams = [];
-          if (batchNoVal !== void 0) {
-            piUpdates.push("batch_no = ?");
-            piParams.push(batchNoVal);
-          }
-          if (expiry_date !== void 0) {
-            piUpdates.push("expiry_date = ?");
-            piParams.push(expiry_date);
-          }
-          if (mrp !== void 0) {
-            piUpdates.push("mrp = ?");
-            piParams.push(mrp);
-          }
-          if (piUpdates.length > 0) {
-            piParams.push(oldInv.medicine_id, oldInv.batch_no);
-            await db2.run(
-              `UPDATE purchase_items SET ${piUpdates.join(", ")} WHERE medicine_id = ? AND batch_no = ?`,
-              piParams
-            );
-          }
-        }
         if (oldInv.medicine_id) {
           if (name !== void 0 || mrp !== void 0 || pack_size !== void 0 || sell_price !== void 0) {
             const medUpdates = [];
@@ -54537,7 +54514,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.43";
+    APP_VERSION = "0.1.44";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });

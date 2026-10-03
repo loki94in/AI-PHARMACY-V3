@@ -494,6 +494,28 @@ export function isRefillConfirmationResponse(text: string): boolean {
   return devanagariTokens.some(t => cleaned.includes(t));
 }
 
+const AFFIRMATIVE_RESPONSE_REGEX = /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji|हो|होय|होय चालेल|चालेल|पाठवा|द्या|नक्की|बरोबर|कन्फर्म|हाँ|हां|हाँ जी|भेज दो|दीजिए|सही)$/iu;
+const NEGATIVE_RESPONSE_REGEX = /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re|नाही|नको|रद्द|नाही नको|गलत|मत भेजो)$/iu;
+
+/**
+ * Table-driven matcher for affirmative customer responses across English, Hindi, and Marathi.
+ */
+export function isAffirmativeResponse(text: string): boolean {
+  if (!text) return false;
+  const cleaned = text.toLowerCase().replace(/[.,!?;:()_~#*`"']/g, ' ').replace(/\s+/g, ' ').trim();
+  return AFFIRMATIVE_RESPONSE_REGEX.test(cleaned) || isRefillConfirmationResponse(text);
+}
+
+/**
+ * Table-driven matcher for negative customer responses across English, Hindi, and Marathi.
+ */
+export function isNegativeResponse(text: string): boolean {
+  if (!text) return false;
+  const cleaned = text.toLowerCase().replace(/[.,!?;:()_~#*`"']/g, ' ').replace(/\s+/g, ' ').trim();
+  return NEGATIVE_RESPONSE_REGEX.test(cleaned);
+}
+
+
 // ─── Scan Gate: is an OCR'd image actually a medicine? ──────────────────
 // Runs on EVERY OCR result BEFORE any search/escalation, so booking
 // screenshots, tickets, bank/finance docs, food packets and random photos

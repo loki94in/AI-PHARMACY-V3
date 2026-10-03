@@ -1462,6 +1462,18 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
       await cleanupStagedRefillNotifications(db, [Number(id)], 'cancelled');
       removeRefillCartLines([refill], true);
       return res.json({ success: true, message: 'Refill cancelled' });
+    } else if (normalizedStatus === 'ordered') {
+      const storeName = req.body?.storeName || req.body?.note || 'Manual Order';
+      const orderQty = Math.max(1, Number(req.body?.qty || refill.quantity_needed || 1));
+      await db.run(
+        `UPDATE patient_refills 
+         SET status = 'ordered',
+             cart_store_name = COALESCE(cart_store_name, ?),
+             cart_qty = COALESCE(cart_qty, ?)
+         WHERE id = ?`,
+        [storeName, orderQty, id]
+      );
+      return res.json({ success: true, message: 'Refill marked as ordered', cart_store_name: storeName });
     } else {
       await db.run(
         `UPDATE patient_refills SET status = ? WHERE id = ?`,

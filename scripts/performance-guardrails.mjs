@@ -56,6 +56,7 @@ const ALLOW = {
     'frontend/src/components/whatsappqueuepopover.tsx',        // only while popover open
     'frontend/src/components/mobileconnectionmodal.tsx',
     'frontend/src/pages/settings/index.tsx',
+    'frontend/src/pages/settings/integrationscredentialstab.tsx', // only while QR scan standing by
     'frontend/src/pages/phonesales/index.tsx',                 // only while device session connected
     'frontend/src/pages/migration/components/reviewmodal.tsx', // 10s visibility-gated safety poll
     'frontend/src/pages/dispatch/index.tsx',
@@ -80,6 +81,7 @@ const ALLOW = {
   f6RawColor: [
     'frontend/src/components/automationhubpopover.tsx',
     'frontend/src/components/updatebanner.tsx',
+    'frontend/src/pages/settings/triggerschedulestab.tsx',
   ],
 };
 

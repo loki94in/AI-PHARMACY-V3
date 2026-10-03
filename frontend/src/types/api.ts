@@ -140,6 +140,12 @@ export interface Refill {
   auto_remind?: number;
   last_collection_reminder_at?: string | null;
   collection_reminder_count?: number;
+  cart_store_id?: number | null;
+  cart_store_name?: string | null;
+  cart_product_code?: string | null;
+  cart_product_name?: string | null;
+  cart_qty?: number | null;
+  in_live_cart?: boolean;
 }
 
 export interface AutomationNotification {

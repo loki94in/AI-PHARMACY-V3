@@ -23,6 +23,7 @@ import { SaveBillSpecialPriceModal } from '../../components/SaveBillSpecialPrice
 import { isValidDistributorName } from '../../utils/distributorValidator';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { DistributorModal, OpenFDADrawer } from '../../components/Purchases';
 
 /* eslint-disable react-hooks/refs -- conditional JSX ref assignment is standard React pattern */
 
@@ -4647,205 +4648,26 @@ const Purchases: React.FC = () => {
 
 
       {/* Add/Edit Distributor Modal */}
-      {showDistributorModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-bg2 border border-border rounded-xl p-6 w-[95vw] max-w-md shadow-2xl">
-            <h3 className="text-lg font-semibold text-text mb-4">{editDistributorId ? 'Edit Distributor' : 'Add New Distributor'}</h3>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">Name *</label>
-                <input
-                  type="text"
-                  value={newDistributor.name}
-                  onChange={(e) => setNewDistributor({ ...newDistributor, name: e.target.value })}
-                  className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text focus:outline-none focus:border-primary/50"
-                  placeholder="Distributor name"
-                />
-              </div>
-
-              <div>
-                <PhoneInputWithBadge
-                  label="Phone Number"
-                  value={newDistributor.phone}
-                  onChange={val => setNewDistributor({ ...newDistributor, phone: val })}
-                  allowEmpty={true}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">Email (Optional)</label>
-                <input
-                  type="email"
-                  value={newDistributor.email}
-                  onChange={(e) => setNewDistributor({ ...newDistributor, email: e.target.value })}
-                  className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text focus:outline-none focus:border-primary/50"
-                  placeholder="distributor@example.com"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">Address (Optional)</label>
-                <textarea
-                  value={newDistributor.address}
-                  onChange={(e) => setNewDistributor({ ...newDistributor, address: e.target.value })}
-                  className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text focus:outline-none focus:border-primary/50"
-                  placeholder="Full address"
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">State Code (Optional)</label>
-                <select
-                  value={newDistributor.state_code}
-                  onChange={(e) => setNewDistributor({ ...newDistributor, state_code: e.target.value })}
-                  className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text focus:outline-none focus:border-primary/50"
-                >
-                  <option value="">Select State Code (Optional)</option>
-                  {INDIAN_STATE_CODES.sort((a, b) => a.name.localeCompare(b.name)).map((state) => (
-                    <option key={state.code} value={state.code}>
-                      {state.code} - {state.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between gap-3 mt-6">
-              {editDistributorId ? (
-                <a
-                  href={`/learning?tab=distributor_layouts&id=${editDistributorId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-500/10 border border-sky-500/30 text-xs font-bold text-sky hover:bg-sky-500/20 transition-all"
-                  title="Open full distributor profile & OCR rules in AI Learning page"
-                >
-                  <ExternalLink size={13} />
-                  <span>Open in AI Learning</span>
-                </a>
-              ) : <div />}
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowDistributorModal(false)}
-                  className="border border-border text-muted hover:text-text hover:bg-bg3 px-4 py-2 rounded-lg text-xs font-bold transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveDistributor}
-                  disabled={savingDistributor || !newDistributor.name}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
-                >
-                  {savingDistributor ? 'Saving...' : editDistributorId ? 'Save Changes' : 'Add Distributor'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <DistributorModal
+        isOpen={showDistributorModal}
+        onClose={() => setShowDistributorModal(false)}
+        editDistributorId={editDistributorId}
+        newDistributor={newDistributor}
+        setNewDistributor={setNewDistributor}
+        saveDistributor={saveDistributor}
+        savingDistributor={savingDistributor}
+        indianStateCodes={INDIAN_STATE_CODES}
+      />
 
       {/* Sliding Details Drawer for OpenFDA Enrichment */}
-      {createPortal(
-        <div className={`fixed top-0 right-0 h-full w-full max-w-[450px] bg-glass-bg border-l border-glass-border transition-all duration-300 ease-in-out z-drawer flex flex-col pt-16 ${panelOpen ? 'translate-x-0 shadow-[-8px_0_30px_rgba(0,0,0,0.5)] pointer-events-auto' : 'translate-x-full shadow-none pointer-events-none'}`}>
-          {selectedEnrichedItem && (
-            <>
-              {/* Header */}
-              <div className="p-6 border-b border-glass-border flex justify-between items-center bg-white/5">
-                <div className="min-w-0 flex-1 mr-4">
-                  <span className="text-xs font-bold uppercase tracking-wider text-purple-400 px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 mb-1 inline-block">
-                    Medical Profile
-                  </span>
-                  <h4 className="text-xl font-bold mt-1 text-white truncate" title={selectedEnrichedItem.medicine_name}>{selectedEnrichedItem.medicine_name}</h4>
-                </div>
-                <button 
-                  onClick={() => setPanelOpen(false)}
-                  className="p-1.5 rounded-full hover:bg-white/10 text-muted hover:text-white transition-colors shrink-0"
-                  aria-label="Close panel"
-                >
-                  <X size={20} />
-                </button>
-              </div>
+      <OpenFDADrawer
+        isOpen={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        selectedItem={selectedEnrichedItem}
+        enrichedData={enrichedData}
+        loading={detailsLoading}
+      />
 
-              {/* Content */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {/* Enrichment Section */}
-                <div className="space-y-5">
-                  <h5 className="text-xs font-bold uppercase tracking-widest text-muted border-b border-glass-border pb-2">openFDA Intelligence</h5>
-
-                  {detailsLoading ? (
-                    <div className="flex flex-col items-center justify-center py-10 space-y-3">
-                      <RefreshCw className="animate-spin text-purple-500" size={24} />
-                      <span className="text-sm text-muted">Retrieving OpenFDA monographs...</span>
-                    </div>
-                  ) : enrichedData ? (
-                    <div className="space-y-5 fade-in">
-                      {/* Active Ingredients */}
-                      <div>
-                        <span className="text-xs text-muted uppercase font-bold block mb-2">Active Ingredients</span>
-                        <div className="flex flex-wrap gap-2">
-                          {enrichedData.activeIngredients && enrichedData.activeIngredients.length > 0 ? (
-                            enrichedData.activeIngredients.map((ing: string, i: number) => (
-                              <span key={i} className="px-3 py-1 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                                {ing}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-sm text-muted italic">Generic formula not indexed.</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Indications */}
-                      <div className="space-y-1.5">
-                        <span className="text-xs text-muted uppercase font-bold flex items-center gap-1.5 text-sky-400">
-                          <BookOpen size={14} className="text-sky-400" /> Indications & Usage
-                        </span>
-                        <div className="bg-white/5 p-3 rounded-lg border border-glass-border text-sm text-muted leading-relaxed max-h-48 overflow-y-auto">
-                          {enrichedData.indications || 'Not available.'}
-                        </div>
-                      </div>
-
-                      {/* Warnings */}
-                      <div className="space-y-1.5">
-                        <span className="text-xs text-muted uppercase font-bold flex items-center gap-1.5 text-yellow-500">
-                          <AlertTriangle size={14} /> Warnings & Precautions
-                        </span>
-                        <div className="bg-yellow-500/5 p-3 rounded-lg border border-yellow-500/20 text-sm text-yellow-200/80 leading-relaxed max-h-48 overflow-y-auto">
-                          {enrichedData.warnings || 'No active drug safety warnings.'}
-                        </div>
-                      </div>
-
-                      {/* Side Effects */}
-                      <div className="space-y-1.5">
-                        <span className="text-xs text-muted uppercase font-bold flex items-center gap-1.5 text-red-500">
-                          <ShieldAlert size={14} /> Adverse Reactions
-                        </span>
-                        <div className="bg-red-500/5 p-3 rounded-lg border border-red-500/20 text-sm text-red-300 leading-relaxed max-h-48 overflow-y-auto">
-                          {enrichedData.sideEffects || 'No common adverse reactions logged.'}
-                        </div>
-                      </div>
-
-                      {/* Source and Manufacturer */}
-                      <div className="pt-2 flex justify-between items-center text-xs text-muted">
-                        <span className="flex items-center gap-1"><Factory size={12} /> Mfg: {enrichedData.manufacturer || 'Unknown'}</span>
-                        <span className="px-2 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-500 font-bold uppercase text-[10px] tracking-wide">
-                          Source: {enrichedData.enrichmentSource || 'FDA'}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-6 text-muted italic">No enrichment profile found.</div>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </div>,
-        document.body
-      )}
 
       {isUniversalModalOpen && (
         <UniversalMedicineEditModal 
