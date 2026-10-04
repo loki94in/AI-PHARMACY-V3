@@ -115,8 +115,11 @@ export const isLiquidOrSingleUnitForm = (name?: string, packaging?: string | nul
   return /bottle|syrup|syp|suspension|susp|drop|inj|liquid|lotion|spray|ointment|oint|gel|cream|\bml\b|respule|sachet|vial|amp/i.test(combined);
 };
 
-export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boolean | null; name?: string; medicine_name?: string; packaging?: string | null } | null): number => {
+export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boolean | null; name?: string; medicine_name?: string; packaging?: string | null; packSize?: number | null; pack_size?: number | null } | null): number => {
   if (!item) return 1;
+  // A pack holding exactly one unit (typical syrup/suspension) has nothing to sell loose, so the cursor skips Loose.
+  // If the saved pack size is wrong, fix it in the medicine editor — this reads the stored value, never guesses.
+  if (Number(item.packSize ?? item.pack_size) === 1) return 0;
   if (item.allow_loose_sale !== undefined && item.allow_loose_sale !== null) {
     return item.allow_loose_sale ? 1 : 0;
   }
@@ -2882,7 +2885,13 @@ const POS = () => {
         });
     }
 
+    // Same one-unit-pack rule as the row picker: nothing to key in, so go straight to the next medicine.
+    const singlePackAdd = existingIndex === -1 && Number(med.packSize ?? med.pack_size) === 1;
     setTimeout(() => {
+      if (singlePackAdd) {
+        focusCartMedicineInput();
+        return;
+      }
       const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`);
       if (qtyInput) {
         qtyInput.focus();
@@ -3164,13 +3173,20 @@ const POS = () => {
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
+    // One unit per pack (syrup/suspension): qty stays at the default 1 and there is no loose sale, so go straight
+    // to the next medicine row. Tab back or click the Qty box to change it. Presets (doctor chips) keep Qty focus.
+    const singlePack = Number(med.pack_size) === 1 && opts?.presetQty === undefined;
     setTimeout(() => {
+      if (singlePack) {
+        focusCartMedicineInput();
+        return;
+      }
       const qtyInput = document.getElementById(`row-qty-input-${index}`);
       if (qtyInput) {
         qtyInput.focus();
         (qtyInput as HTMLInputElement).select();
       }
-    }, 40);
+    }, singlePack ? 120 : 40);
 
     // Enrich salts & alternatives asynchronously in the background
     api.getMedicineQuickDetails(Number(med.medicine_id))
@@ -5285,7 +5301,7 @@ const POS = () => {
                     ) : null;
 
                     return (
-                      <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''}`}>
+                      <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''} ${(activeRowSearchIndex === cart.indexOf(item) || activeBatchRowId === String(item.id)) ? 'relative z-dropdown' : ''}`}>
                         {/* Medicine Search/Change */}
                         <td className="py-1 px-2.5 min-w-[190px] relative">
                           <div className="flex items-center">
@@ -5363,7 +5379,10 @@ const POS = () => {
                                       const prevDisc = document.getElementById(`row-disc-input-${idx - 1}`) as HTMLInputElement | null;
                                       const prevLoose = document.getElementById(`row-loose-input-${idx - 1}`) as HTMLInputElement | null;
                                       const prevQty = document.getElementById(`row-qty-input-${idx - 1}`) as HTMLInputElement | null;
-                                      const targetEl = prevMrp || prevDisc || (prevLoose && !prevLoose.disabled ? prevLoose : null) || prevQty;
+                                      // Loose locked = one-unit pack: Shift+Tab lands on its Qty so it is quick to edit
+                                      const targetEl = (prevLoose && prevLoose.disabled && prevQty)
+                                        ? prevQty
+                                        : (prevMrp || prevDisc || (prevLoose && !prevLoose.disabled ? prevLoose : null) || prevQty);
                                       if (targetEl) { targetEl.focus(); targetEl.select?.(); }
                                     } else {
                                       const docEl = document.getElementById('doctor-name-input');

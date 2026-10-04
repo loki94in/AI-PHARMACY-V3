@@ -54499,7 +54499,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.49";
+    APP_VERSION = "0.1.50";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -101737,7 +101737,7 @@ var init_server = __esm({
       res.status(503).json({ success: false, ready: false, retryAfter: 1 });
     });
     app.use("/api", (req, res, next) => {
-      if (schemaReady || req.path === "/health" || req.path === "/health/ready" || req.path.startsWith("/migration")) return next();
+      if (schemaReady || req.path === "/health" || req.path === "/health/ready" || req.path.startsWith("/migration") || req.path.startsWith("/system/")) return next();
       res.status(503).json({ error: "Server is initializing", retryAfter: 1 });
     });
     app.use("/api/crm", lazyRoute(() => Promise.resolve().then(() => (init_crm(), crm_exports))));
@@ -101774,6 +101774,9 @@ var init_server = __esm({
     app.post("/api/system/shutdown", (req, res) => {
       const isTabClose = req.query.type === "tab_close";
       if (isTabClose) {
+        if (!isPackagedApp() && process.env.NODE_ENV !== "production") {
+          return res.json({ success: true, message: "Tab-close shutdown ignored in development mode." });
+        }
         console.log("[System] Tab/window close event received. Scheduling graceful shutdown in 3500ms...");
         if (pendingShutdownTimer) clearTimeout(pendingShutdownTimer);
         pendingShutdownTimer = setTimeout(() => {

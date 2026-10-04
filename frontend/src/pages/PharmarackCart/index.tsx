@@ -80,6 +80,30 @@ function getOrderLimitIssues(dist: Distributor): string[] {
   return issues;
 }
 
+// Medicines already ordered from this distributor (real order history with a real PTR) that would cover a
+// minimum-amount shortfall. Items without a known PTR are skipped — amounts are never guessed.
+function getMinAmountFillers(dist: Distributor, recent: ReorderRecentItem[]): { item: ReorderRecentItem; qty: number; amount: number }[] {
+  const minAmt = dist.minAmountLimit ?? 0;
+  const shortfall = minAmt - (dist.lineTotal || 0);
+  if (minAmt <= 0 || shortfall <= 0) return [];
+  const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const inCart = new Set((dist.items || []).map(i => norm(i.productName)));
+  const storeKey = norm(dist.storeName);
+  const picks: { item: ReorderRecentItem; qty: number; amount: number }[] = [];
+  let covered = 0;
+  const candidates = recent
+    .filter(r => (r.storeId != null && Number(r.storeId) === dist.storeId) || (storeKey && norm(r.storeName || r.lastDistributorName) === storeKey))
+    .filter(r => (r.ptr || 0) > 0 && (r.lastQty || 0) > 0 && !inCart.has(norm(r.medicineName)))
+    .sort((a, b) => (b.lastOrderedDate || '').localeCompare(a.lastOrderedDate || ''));
+  for (const r of candidates) {
+    if (covered >= shortfall) break;
+    const amount = (r.ptr as number) * r.lastQty;
+    picks.push({ item: r, qty: r.lastQty, amount });
+    covered += amount;
+  }
+  return picks;
+}
+
 interface LocalPriceHistoryRow {
   date?: string;
   invoice_date?: string;
@@ -5177,6 +5201,31 @@ export default function PharmarackCart() {
                                 {limitIssues.map(msg => (
                                   <p key={msg} className="text-[11px] font-bold text-rose-400">{msg}</p>
                                 ))}
+                                {(() => {
+                                  const fillers = getMinAmountFillers(dist, reorderRecentItems);
+                                  if (fillers.length === 0) return null;
+                                  const sum = fillers.reduce((s, f) => s + f.amount, 0);
+                                  return (
+                                    <div className="mt-1.5 pt-1.5 border-t border-rose-500/20 space-y-1">
+                                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted">
+                                        Previously ordered from {dist.storeName} — add to reach minimum (≈ ₹{sum.toLocaleString('en-IN', { maximumFractionDigits: 0 })})
+                                      </p>
+                                      {fillers.map(({ item, qty, amount }) => (
+                                        <div key={item.medicineName} className="flex items-center justify-between gap-2 text-[11px] text-text">
+                                          <span className="truncate">{item.medicineName} × {qty} <span className="text-muted">(₹{amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })})</span></span>
+                                          <button
+                                            type="button"
+                                            disabled={readdingSentItems}
+                                            onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
+                                            className="shrink-0 px-2 py-0.5 rounded bg-primary text-white text-[10px] font-bold disabled:opacity-50"
+                                          >
+                                            + Add
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             );
                           })()}

@@ -286,6 +286,8 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
 
 import { activityTracker } from '../utils/activityTracker.js';
 
+let lastSearchOkAt = 0;
+
 export type PharmarackSearchOutcome =
   | { status: 'ok'; items: any[] }
   | { status: 'need_login' }
@@ -334,17 +336,23 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     const coreTerm = sanitizePharmarackQuery(qRaw);
     const primaryKeyword = (coreTerm && coreTerm.length >= 2) ? coreTerm : qRaw;
 
-    let response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
+    // After 5+ idle minutes the keep-alive socket/TLS to the search host is gone and the first call is slow.
+    // Give that cold call room to finish instead of aborting at 3.5 s and fanning out three more cold requests.
+    const searchCold = Date.now() - lastSearchOkAt > 5 * 60 * 1000;
+    const response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
       method: 'POST',
       body: JSON.stringify(buildPayload(primaryKeyword)),
-      signal: AbortSignal.timeout(3500)
+      signal: AbortSignal.timeout(searchCold ? 7000 : 3500)
     }).catch(() => null);
 
     let data: any = response && response.ok ? await response.json().catch(() => null) : null;
+    if (data) lastSearchOkAt = Date.now();
 
     // Turbo Fallback: If primaryKeyword returned 0 items, gather unique candidate terms
     // and query them concurrently in parallel (race to first non-empty response) with a tight 3s timeout
-    if (!data || !Array.isArray(data.data) || data.data.length === 0) {
+    // Spelling/case variants only help when the server answered; after a timeout/network failure they would just
+    // repeat the slow call, so fall straight through to the local fallback.
+    if (response && (!data || !Array.isArray(data.data) || data.data.length === 0)) {
       const candidates: string[] = [];
       if (primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
         candidates.push(qRaw);

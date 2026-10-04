@@ -363,6 +363,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   // Input fields
   const [product, setProduct] = useState(initialSearch || '');
   const [qty, setQty] = useState(initialQty || 1);
+  const [qtyDraft, setQtyDraft] = useState<string | null>(null);
   
   // Selected Pharmarack Metadata
   const [selectedDistributor, setSelectedDistributor] = useState('');
@@ -2704,11 +2705,19 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                     </button>
                     <input
                       ref={qtyInputRef}
-                      type="number"
-                      value={qty}
-                      onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                      type="text"
+                      inputMode="numeric"
+                      value={qtyDraft ?? String(qty)}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => {
+                        // Draft lets the box be cleared and retyped; qty only updates for a real number >= 1.
+                        const digits = e.target.value.replace(/\D/g, '').slice(0, 5);
+                        setQtyDraft(digits);
+                        const n = parseInt(digits, 10);
+                        if (n >= 1) setQty(n);
+                      }}
+                      onBlur={() => setQtyDraft(null)}
                       className="w-full bg-transparent text-center text-sm font-bold outline-none text-text focus:ring-0 border-0 p-0"
-                      min="1"
                       required
                     />
                     <button

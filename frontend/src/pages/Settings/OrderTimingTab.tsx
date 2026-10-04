@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiClient, api } from '../../services/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -5,13 +6,24 @@ import { broadcastContactDataChanged, updateSettingsCache } from '../../utils/se
 import { useModalEscape, shortcutEvent } from '../../services/keyboardShortcuts';
 import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice, PharmacyHolidayItem } from './settingsTypes';
-import { Trash2, Save, RefreshCw, Clock, RotateCcw, X, Plus, Calendar } from 'lucide-react';
+import { Trash2, Save, RefreshCw, Clock, RotateCcw, X, Calendar } from 'lucide-react';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const ymd = (y: number, m: number, d: number) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
 
+// Fixed-date national festivals are suggested on their exact day. Lunar festivals move every year, so they are
+// offered as name templates only — no date is ever assumed for them.
+const FIXED_FESTIVALS: Record<string, string> = {
+  '01-01': 'New Year', '01-14': 'Makar Sankranti', '01-26': 'Republic Day', '04-14': 'Ambedkar Jayanti',
+  '05-01': 'Maharashtra Day', '08-15': 'Independence Day', '10-02': 'Gandhi Jayanti', '12-25': 'Christmas'
+};
+const FESTIVAL_TEMPLATES = ['Diwali', 'Dhanteras', 'Bhai Dooj', 'Holi', 'Dussehra', 'Navratri', 'Ganesh Chaturthi', 'Raksha Bandhan',
+  'Janmashtami', 'Maha Shivratri', 'Ram Navami', 'Eid-ul-Fitr', 'Eid-ul-Adha', 'Muharram', 'Guru Nanak Jayanti', 'Mahavir Jayanti',
+  'Good Friday', 'Buddha Purnima', 'Onam', 'Pongal', 'Gudi Padwa', 'Chhath Puja'];
+const REASON_TEMPLATES = ['Personal leave', 'Family function', 'Stock taking', 'Shop maintenance', 'Staff unavailable', 'Not well', 'Local bandh / strike'];
+
 // Month grid where every click toggles a date; Sundays are tinted for quick bulk picking.
-function MultiDatePicker({ selected, onChange }: { selected: string[]; onChange: (dates: string[]) => void }) {
+function MultiDatePicker({ selected, onChange, onPick, marked }: { selected: string[]; onChange: (dates: string[]) => void; onPick?: (date: string) => void; marked?: Set<string> }) {
   const [view, setView] = useState(() => {
     const t = new Date();
     return { y: t.getFullYear(), m: t.getMonth() };
@@ -21,6 +33,7 @@ function MultiDatePicker({ selected, onChange }: { selected: string[]; onChange:
   const cells: (number | null)[] = [...Array(first).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
   const toggle = (d: number) => {
     const k = ymd(view.y, view.m, d);
+    if (onPick) { onPick(k); return; }
     onChange(selected.includes(k) ? selected.filter(x => x !== k) : [...selected, k].sort());
   };
   const allSundays = () => {
@@ -50,7 +63,7 @@ function MultiDatePicker({ selected, onChange }: { selected: string[]; onChange:
             type="button"
             onClick={() => toggle(d)}
             className={`py-1 text-[11px] rounded cursor-pointer ${
-              selected.includes(ymd(view.y, view.m, d))
+              selected.includes(ymd(view.y, view.m, d)) || marked?.has(ymd(view.y, view.m, d))
                 ? 'bg-primary text-white font-bold'
                 : 'text-text hover:bg-bg3'
             }`}
@@ -414,71 +427,82 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
                 <p className="text-[11px] text-muted">{holidays.length} scheduled holiday(s)</p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowAddHoliday(!showAddHoliday)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 text-xs font-bold rounded-lg hover:bg-primary/20 transition-all cursor-pointer"
-            >
-              <Plus size={14} />
-              <span>Add Holiday</span>
-            </button>
           </div>
 
-          {/* Add Holiday Inline Form */}
-          {showAddHoliday && (
-            <form onSubmit={handleAddHoliday} className="p-3 bg-bg border border-border rounded-xl space-y-3">
-              <div className="text-xs font-bold text-text flex items-center justify-between">
-                <span>Add Scheduled Holiday</span>
-                <button
-                  type="button"
-                  onClick={() => setShowAddHoliday(false)}
-                  className="text-muted hover:text-text"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-bold text-muted mb-1">Holiday Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Republic Day"
-                    value={holidayForm.name}
-                    onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
-                    className="w-full px-2.5 py-1.5 text-xs bg-bg2 border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-muted mb-1">
-                    Dates ({holidayForm.dates.length} selected) — click several days
-                  </label>
-                  <MultiDatePicker
-                    selected={holidayForm.dates}
-                    onChange={(dates) => setHolidayForm({ ...holidayForm, dates })}
-                  />
-                </div>
-              </div>
+          <div className="max-w-xs">
+            <p className="text-[10px] font-bold text-muted mb-1">Tap a date to mark it a holiday (market closed by default)</p>
+            <MultiDatePicker
+              selected={[]}
+              onChange={() => {}}
+              marked={new Set(holidays.map(h => h.holiday_date))}
+              onPick={(date) => {
+                setHolidayForm({ name: FIXED_FESTIVALS[date.slice(5)] || '', dates: [date], isClosed: true, customStart: '10:00', customEnd: '14:00' });
+                setShowAddHoliday(true);
+              }}
+            />
+          </div>
 
-              <div className="flex items-center justify-between pt-1">
+          {showAddHoliday && holidayForm.dates[0] && createPortal(
+            <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAddHoliday(false)}>
+              <form onSubmit={handleAddHoliday} onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-bg2 border border-border rounded-2xl p-4 space-y-3 shadow-xl">
+                <div className="flex items-center justify-between text-text">
+                  <div>
+                    <div className="text-sm font-bold">Mark holiday</div>
+                    <div className="text-[11px] text-muted">📅 {new Date(holidayForm.dates[0] + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                  </div>
+                  <button type="button" onClick={() => setShowAddHoliday(false)} className="text-muted hover:text-text"><X size={16} /></button>
+                </div>
+
+                {FIXED_FESTIVALS[holidayForm.dates[0].slice(5)] && (
+                  <div className="text-[11px] text-text">
+                    Suggested for this date:{' '}
+                    <button type="button" onClick={() => setHolidayForm({ ...holidayForm, name: FIXED_FESTIVALS[holidayForm.dates[0].slice(5)] })} className="px-2 py-0.5 rounded bg-primary text-white font-bold">
+                      {FIXED_FESTIVALS[holidayForm.dates[0].slice(5)]}
+                    </button>
+                  </div>
+                )}
+
+                {[['Indian festivals', FESTIVAL_TEMPLATES], ['Other reason', REASON_TEMPLATES]].map(([title, list]) => (
+                  <div key={title as string}>
+                    <label className="block text-[10px] font-bold text-muted mb-1">{title as string}</label>
+                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto dropdown-scroll">
+                      {(list as string[]).map(f => (
+                        <button key={f} type="button" onClick={() => setHolidayForm({ ...holidayForm, name: f })}
+                          className={`px-2 py-0.5 rounded-full text-[11px] border ${holidayForm.name === f ? 'bg-primary text-white border-primary font-bold' : 'bg-bg3 text-text border-border hover:border-primary'}`}>
+                          {f}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <input
+                  type="text"
+                  placeholder="Or type your own reason"
+                  value={holidayForm.name}
+                  onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
+                  className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  required
+                />
+
                 <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={holidayForm.isClosed}
-                    onChange={(e) => setHolidayForm({ ...holidayForm, isClosed: e.target.checked })}
-                    className="w-3.5 h-3.5 rounded text-primary"
-                  />
-                  <span>Full Day Closed (No deliveries)</span>
+                  <input type="checkbox" checked={holidayForm.isClosed} onChange={(e) => setHolidayForm({ ...holidayForm, isClosed: e.target.checked })} className="w-3.5 h-3.5 rounded text-primary" />
+                  <span>Market closed all day (no deliveries)</span>
                 </label>
-                <button
-                  type="submit"
-                  disabled={savingHoliday}
-                  className="px-3 py-1.5 bg-primary text-white text-xs font-bold rounded-lg shadow-sm hover:bg-primary/90 disabled:opacity-50"
-                >
-                  {savingHoliday ? 'Saving...' : `Save ${holidayForm.dates.length || ''} Date(s)`}
+                {!holidayForm.isClosed && (
+                  <div className="flex items-center gap-2 text-xs text-text">
+                    <span>Open</span>
+                    <input type="time" value={holidayForm.customStart} onChange={(e) => setHolidayForm({ ...holidayForm, customStart: e.target.value })} className="px-2 py-1 bg-bg border border-border rounded text-text" />
+                    <span>to</span>
+                    <input type="time" value={holidayForm.customEnd} onChange={(e) => setHolidayForm({ ...holidayForm, customEnd: e.target.value })} className="px-2 py-1 bg-bg border border-border rounded text-text" />
+                  </div>
+                )}
+
+                <button type="submit" disabled={savingHoliday || !holidayForm.name.trim()} className="w-full px-3 py-2 bg-primary text-white text-xs font-bold rounded-lg disabled:opacity-50">
+                  {savingHoliday ? 'Saving...' : 'Save holiday'}
                 </button>
-              </div>
-            </form>
+              </form>
+            </div>,
+            document.body
           )}
 
           {/* Holiday List */}
