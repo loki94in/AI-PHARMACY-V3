@@ -1373,7 +1373,8 @@ export const api = {
   }) => apiClient.post('/medicines/bulk-delete', data).then(res => res.data),
   createMedicine: (data: QuickEditMedicinePayload) => apiClient.post('/medicines', data).then(res => res.data),
   quickEditMedicine: (id: number, data: QuickEditMedicinePayload) => apiClient.put(`/medicines/${id}/quick-edit`, data).then(res => res.data),
-  patchAllowLooseSale: (id: number, allow_loose_sale: number | boolean) => apiClient.patch(`/medicines/${id}/allow-loose-sale`, { allow_loose_sale: allow_loose_sale ? 1 : 0 }).then(res => res.data),
+  getLastSaleInvoice: (): Promise<{ invoice_no: string | null; date: string | null }> => apiClient.get('/sales/last-invoice').then(res => res.data),
+  patchAllowLooseSale:(id: number, allow_loose_sale: number | boolean) => apiClient.patch(`/medicines/${id}/allow-loose-sale`, { allow_loose_sale: allow_loose_sale ? 1 : 0 }).then(res => res.data),
 
   getMedicinePriceHistory: (name: string, medicineId?: number | null) =>
     apiClient.get('/purchases/price-history', {

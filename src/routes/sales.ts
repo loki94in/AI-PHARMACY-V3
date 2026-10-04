@@ -1,6 +1,7 @@
 import express from 'express';
 import { INVENTORY_ACTIVE_WHERE, refreshInventoryActiveStatus } from '../utils/inventoryActive.js';
 import { calculateSalesGstAndTotals } from '../utils/saleTotals.js';
+import { nextSaleInvoiceNo, lastSaleInvoice } from '../utils/billNumber.js';
 import { applySaleBillEdit, SaleEditError } from '../services/saleBillEditService.js';
 import { normalizeToLocalSqlDateTime, toLocalSqlDateTime } from '../utils/localTime.js';
 import { Database } from 'sqlite';
@@ -88,21 +89,20 @@ async function queryAllWithRetry(db: Database, sql: string, params: any[] = []) 
   }
 }
 
-const generateInvoiceNo = async (db: Database) => {
-  const year = new Date().getFullYear();
-  const prefix = `S-${year}-`;
-  // ORDER BY invoice_no DESC sorts as TEXT, not numerically — 'S-2026-9999' sorts after
-  // 'S-2026-10000' lexicographically ('9' > '1'), so once a year passes 9,999 invoices
-  // every subsequent call recomputes an already-taken number and hits a UNIQUE collision
-  // forever. Extract the numeric suffix and take a true MAX instead.
-  const row = await db.get(
-    `SELECT MAX(CAST(SUBSTR(invoice_no, ?) AS INTEGER)) as maxNum FROM sales_invoices WHERE invoice_no LIKE ?`,
-    [prefix.length + 1, `${prefix}%`]
-  );
-  const nextNum = (row && row.maxNum ? row.maxNum : 0) + 1;
-  const padded = String(nextNum).padStart(4, '0');
-  return `${prefix}${padded}`;
-};
+// Next bill = last saved bill + 1 (same prefix/padding), see utils/billNumber.ts
+const generateInvoiceNo = (db: Database) => nextSaleInvoiceNo(db);
+
+// Last saved sale bill (POS shows it so the cashier can confirm the sale landed)
+router.get('/last-invoice', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const last = await lastSaleInvoice(db);
+    res.json({ invoice_no: last?.invoice_no ?? null, date: last?.date ?? null });
+  } catch (error) {
+    console.error('Failed to get last invoice', (error as Error).message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Get next sequential invoice number
 router.get('/next-invoice', async (_req, res) => {

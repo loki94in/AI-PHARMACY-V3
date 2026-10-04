@@ -622,7 +622,7 @@ router.get('/medicines/:id/quick-details', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const medicine = await db.get(
-      'SELECT id, name, generic_name, manufacturer, marketed_by, pack_unit, pack_size, strength, cgst_per, sgst_per, hsn_code, category, api_reference, schedule_type, packaging, sell_price, mrp FROM medicines WHERE id = ?',
+      'SELECT id, name, generic_name, manufacturer, marketed_by, pack_unit, pack_size, strength, cgst_per, sgst_per, hsn_code, category, api_reference, schedule_type, packaging, sell_price, mrp, allow_loose_sale FROM medicines WHERE id = ?',
       [id]
     );
 

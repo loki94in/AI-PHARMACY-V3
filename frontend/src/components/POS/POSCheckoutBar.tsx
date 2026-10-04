@@ -14,6 +14,7 @@ interface POSCheckoutBarProps {
   grandTotal: number;
   cartLength: number;
   isSavingBill: boolean;
+  lastInvoiceNo?: string | null;
   onCompleteSale: (directSave: boolean) => void;
 }
 
@@ -30,6 +31,7 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
   grandTotal,
   cartLength,
   isSavingBill,
+  lastInvoiceNo,
   onCompleteSale,
 }) => {
   return (
@@ -61,6 +63,14 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
           value={discount === 0 || discount === undefined || discount === null ? '' : discount}
           onChange={e => setDiscount(e.target.value === '' ? 0 : Math.min(100, Math.max(0, Number(e.target.value))))}
           placeholder="0"
+          onKeyDown={e => {
+            if (e.key === 'Tab' && e.shiftKey) {
+              // back to the cart's trailing empty medicine row
+              const rows = document.querySelectorAll<HTMLInputElement>('input[id^="row-med-input-"]');
+              const last = rows.length > 0 ? rows[rows.length - 1] : null;
+              if (last && !last.disabled) { e.preventDefault(); last.focus(); last.select?.(); }
+            }
+          }}
           className="w-12 bg-bg border border-glass-border rounded px-1.5 py-0.5 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-6"
         />
         {discountAmount > 0 && (
@@ -79,6 +89,17 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
             key={pm.id}
             type="button"
             onClick={() => setPaymentMedium(pm.id)}
+            // one Tab stop for the group (selected mode); ←/→ switch the mode
+            tabIndex={paymentMedium === pm.id ? 0 : -1}
+            data-pos-payment={pm.id}
+            onKeyDown={e => {
+              if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+              e.preventDefault();
+              const ids = ['CASH', 'UPI', 'CREDIT'];
+              const next = ids[(ids.indexOf(pm.id) + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length];
+              setPaymentMedium(next);
+              setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-pos-payment="${next}"]`)?.focus(), 0);
+            }}
             className={`py-1 px-2 rounded text-[11px] font-extrabold uppercase border text-center transition-all cursor-pointer ${
               paymentMedium === pm.id
                 ? `${pm.activeClass} ring-1 ring-primary/20`
@@ -89,6 +110,14 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
           </button>
         ))}
       </div>
+
+      {/* Last saved bill (real number from the last sale; hidden until a bill exists) */}
+      {lastInvoiceNo && (
+        <div className="flex flex-col leading-tight border-r border-glass-border/30 pr-2.5 shrink-0" title="Last saved bill">
+          <span className="text-[11px] text-muted">Last bill</span>
+          <span className="text-xs font-mono font-bold text-sky">#{lastInvoiceNo}</span>
+        </div>
+      )}
 
       {/* Section 4: Net Payable (compact) */}
       <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded-lg bg-primary/5 border border-primary/20 shrink-0">

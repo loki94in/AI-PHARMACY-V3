@@ -275,6 +275,9 @@ A medicines-master match is NOT shelf presence (291k imported reference rows). E
 ## Sale GST Math (updated 2026-10-03)
 - `utils/saleTotals.ts`: bill total is unchanged (`round(subtotal - discount)`). GST now (a) honours a real 0% medicine (the invented 2.5%+2.5% default was removed; unknown GST stays 0) and (b) is scaled by the bill discount (`(subtotal - discount) / subtotal`). Verified against 15,203 migrated retailer bills: total matched 15,203/15,203, GST 14,419 (was 8,079). Do not re-add a default rate.
 
+## Sale Bill Numbering (changed 2026-10-04, owner rule)
+- A new sale bill number is ALWAYS the last saved bill + 1 (`utils/billNumber.ts`: `incrementBillNo` keeps prefix + zero-padding, `nextSaleInvoiceNo` reads the newest `sales_invoices` row by id, looks back ≤50 rows past digit-less names, steps on only if `invoice_no` (UNIQUE) is taken). `routes/sales.ts` and `invoiceService.generateInvoiceNo` both delegate to it; never re-add a per-year `S-<year>-` MAX scan or any invented number. Migrated bills therefore continue their own series. The only series ever started is `S-<year>-0001` in a database with no bill at all. `GET /sales/last-invoice` feeds POS's "Last bill" chip (query key `last-sale-invoice`, SSE `sale_created`). Purchases' own `P-NNN` app number is the last `P-` row + 1 (unchanged).
+
 ## Holiday Calendar Bulk Save (added 2026-10-04)
 - `POST /api/settings/holidays/bulk {dates[], holiday_name, is_closed, custom_window_start/end}` upserts many `pharmacy_holidays` rows in one transaction (same `(store_id, holiday_date)` upsert as the single POST; ROLLBACK on error). Closure logic stays in `utils/pharmacyCalendar.ts`; `getDynamicDeliveryNotice` (whatsappIntentService) adds the "market closed, order arrives <day>" line whenever the delivery date was shifted. Weekly Sunday closure is the `sunday_orders_enabled` setting, not a holiday row.
 

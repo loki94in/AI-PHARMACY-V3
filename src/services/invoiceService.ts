@@ -4,6 +4,7 @@ import { dbManager } from '../database/connection.js';
 // @ts-ignore from '../database/connection.js';
 // @ts-ignore from '../database/connection.js';
 import { config } from '../config/index.js';
+import { nextSaleInvoiceNo } from '../utils/billNumber.js';
 
 export interface InvoiceItem {
   inventoryId?: number;
@@ -43,19 +44,8 @@ export class InvoiceService {
    * Generate sequential invoice number
    */
   async generateInvoiceNo(db: Database): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `S-${year}-`;
-    // ORDER BY invoice_no DESC sorts as TEXT, not numerically — 'S-2026-9999' sorts after
-    // 'S-2026-10000' lexicographically ('9' > '1'), so once a year passes 9,999 invoices
-    // every subsequent call recomputes an already-taken number and hits a UNIQUE collision
-    // forever. Extract the numeric suffix and take a true MAX instead (mirrors sales.ts).
-    const row = await db.get(
-      `SELECT MAX(CAST(SUBSTR(invoice_no, ?) AS INTEGER)) as maxNum FROM sales_invoices WHERE invoice_no LIKE ?`,
-      [prefix.length + 1, `${prefix}%`]
-    );
-    const nextNum = (row && row.maxNum ? row.maxNum : 0) + 1;
-    const padded = String(nextNum).padStart(4, '0');
-    return `${prefix}${padded}`;
+    // Next bill = last saved bill + 1 (shared with routes/sales.ts)
+    return nextSaleInvoiceNo(db);
   }
 
   /**

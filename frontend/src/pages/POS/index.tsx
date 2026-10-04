@@ -1938,6 +1938,13 @@ const POS = () => {
     { enabled: mountFetchesReady && doctorsControl.shouldFetch }
   );
 
+  // Last saved sale bill, always visible in POS (SSE sale_created marks it stale; a sale just made refreshes it)
+  const { data: lastSale } = useApiQuery<{ invoice_no: string | null; date: string | null }>(
+    'last-sale-invoice',
+    () => api.getLastSaleInvoice(),
+    { enabled: mountFetchesReady }
+  );
+
   const allDoctors = useMemo(() => doctorsList || EMPTY_ARRAY, [doctorsList]);
 
   // Dropdown must never appear unless the user has typed at least 2 characters.
@@ -3774,6 +3781,11 @@ const POS = () => {
         setShowBarcodeModal(true);
       } else {
         toastEvent.trigger(isEditMode ? `Bill #${invoiceNo} updated!` : `Bill #${invoiceNo} saved!`, 'success');
+        // next customer: back to Patient so the keyboard flow restarts
+        setTimeout(() => {
+          const el = document.getElementById('patient-name-input') as HTMLInputElement | null;
+          if (el) { el.focus(); el.select?.(); }
+        }, 120);
       }
       
       // Clear cart and states
@@ -5381,6 +5393,16 @@ const POS = () => {
                                     }, 50);
                                     return;
                                   }
+                                  // Tab with no dropdown pick: leave the cart -> bill CD, Payment, Direct Save, Save
+                                  if (e.key === 'Tab' && !e.shiftKey && item.isEmptyRow && rowSearchResults.length === 0) {
+                                    e.preventDefault();
+                                    setActiveRowSearchIndex(null);
+                                    setRowSearchTerm('');
+                                    setRowSearchHighlightIndex(-1);
+                                    const cdEl = document.getElementById('pos-bill-discount-input') as HTMLInputElement | null;
+                                    if (cdEl) { cdEl.focus(); cdEl.select?.(); }
+                                    return;
+                                  }
                                   if (activeRowSearchIndex !== idx || rowSearchResults.length === 0) return;
                                   if (e.key === 'ArrowDown') {
                                     e.preventDefault();
@@ -5731,6 +5753,13 @@ const POS = () => {
                                         e.preventDefault();
                                         if ((e.target as HTMLInputElement).value === '0' || (e.target as HTMLInputElement).value === '') {
                                           updateCartItem(item.id, 'qty', 0);
+                                          // Qty 0 = loose-only sale: go to Loose when it is allowed
+                                          const looseEl = document.getElementById(`row-loose-input-${cart.indexOf(item)}`) as HTMLInputElement | null;
+                                          if (looseEl && !looseEl.disabled) {
+                                            looseEl.focus();
+                                            looseEl.select?.();
+                                            return;
+                                          }
                                         }
                                         focusCartMedicineInput();
                                       } else if (e.key === 'Tab') {
@@ -5761,13 +5790,7 @@ const POS = () => {
                                             looseInput.focus();
                                             looseInput.select?.();
                                           } else {
-                                           const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
-                                           if (discIn) {
-                                             discIn.focus();
-                                             discIn.select?.();
-                                           } else {
-                                             focusCartMedicineInput();
-                                           }
+                                            focusCartMedicineInput();
                                           }
                                         }
                                       }
@@ -5823,15 +5846,9 @@ const POS = () => {
                                         e.preventDefault();
                                         focusCartMedicineInput();
                                       } else if (e.key === 'Tab' && !e.shiftKey) {
+                                        // Disc/Rate/MRP are skipped in the keyboard chain (still reachable by arrows/mouse)
                                         e.preventDefault();
-                                        const curIdx = cart.indexOf(item);
-                                        const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
-                                        if (discIn) {
-                                          discIn.focus();
-                                          discIn.select?.();
-                                        } else {
-                                          focusCartMedicineInput();
-                                        }
+                                        focusCartMedicineInput();
                                       } else if (e.key === 'Tab' && e.shiftKey) {
                                         e.preventDefault();
                                         const curIdx = cart.indexOf(item);
@@ -6135,6 +6152,7 @@ const POS = () => {
           setPaymentMedium={setPaymentMedium}
           grandTotal={grandTotal}
           cartLength={cart.length}
+          lastInvoiceNo={lastSale?.invoice_no ?? null}
           isSavingBill={isSavingBill}
           onCompleteSale={(directSave) => handleCompleteSale(undefined, directSave)}
         />
@@ -6264,6 +6282,13 @@ const POS = () => {
                         packSize: newPackSize,
                         mrp: details.mrp || item.mrp,
                         salts: details.api_reference || details.hsn_code || item.salts,
+                        // Loose-sale lock edited in the Universal Editor applies to this sale at once
+                        ...(details.allow_loose_sale !== undefined && details.allow_loose_sale !== null
+                          ? {
+                              allow_loose_sale: details.allow_loose_sale ? 1 : 0,
+                              looseQty: details.allow_loose_sale ? item.looseQty : 0,
+                            }
+                          : {}),
                       };
                     }
                     return item;

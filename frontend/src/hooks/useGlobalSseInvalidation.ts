@@ -15,7 +15,7 @@ import { ensureCompactInventoryReady } from '../services/api';
 
 // SSE event type -> react-query cache keys to invalidate
 const SSE_QUERY_MAP: Record<string, string[][]> = {
-  sale_created: [['inventory-todays-receipts'], ['dashboard'], ['reports'], ['sales'], ['invoices'], ['sells-list'], ['investigation-list']],
+  sale_created: [['last-sale-invoice'], ['inventory-todays-receipts'],['dashboard'], ['reports'], ['sales'], ['invoices'], ['sells-list'], ['investigation-list']],
   invoice_saved: [['purchases'], ['purchase-history'], ['purchase-history-list'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports'], ['investigation-list'], ['schedule-drugs-list'], ['medicine-last-by-distributor'], ['inventory-todays-receipts']],
   return_created: [['returns'], ['returns-history'], ['customer-returns'], ['customer-returns-history-list'], ['pending-returns'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports']],
   inventory_changed: [['inventory'], ['inventory-list'], ['compact-inventory'], ['pos-inventory'], ['expiry'], ['schedule-drugs-list']],
