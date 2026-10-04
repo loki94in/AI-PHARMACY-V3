@@ -47134,6 +47134,7 @@ var init_inventoryCache = __esm({
             m.manufacturer,
             m.packaging,
             m.pack_size,
+            m.schedule_type,
             COALESCE(m.allow_loose_sale, 1) AS allow_loose_sale
            FROM inventory_master im
            JOIN medicines m ON im.medicine_id = m.id
@@ -48900,16 +48901,19 @@ var init_saleTotals = __esm({
           medTaxMap.set(r.inventory_id, { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
         }
       }
-      for (const item of items) {
-        const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0, inventory_id } = item;
-        const q = Number(quantity);
-        const l = Number(loose_qty);
+      const lines = items.map((item) => {
+        const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0 } = item;
         const pSize = Math.max(1, Number(pack_size || 1));
         const d = Number(discount_per || item.discountPer || 0);
-        const uPrice = Number(unit_price);
-        const dPrice = uPrice * (1 - d / 100);
-        const lineGross = q * dPrice + l * (dPrice / pSize);
+        const dPrice = Number(unit_price) * (1 - d / 100);
+        const lineGross = Number(quantity) * dPrice + Number(loose_qty) * (dPrice / pSize);
         subtotal += lineGross;
+        return { item, lineGross };
+      });
+      const discountFactor = subtotal > 0 ? Math.max(0, subtotal - Number(discount)) / subtotal : 1;
+      for (const { item, lineGross: gross } of lines) {
+        const inventory_id = item.inventory_id;
+        const lineGross = gross * discountFactor;
         let cgstPer = Number(item.cgst_per !== void 0 ? item.cgst_per : item.cgst !== void 0 ? item.cgst : NaN);
         let sgstPer = Number(item.sgst_per !== void 0 ? item.sgst_per : item.sgst !== void 0 ? item.sgst : NaN);
         if ((isNaN(cgstPer) || isNaN(sgstPer) || cgstPer === 0 && sgstPer === 0) && inventory_id) {
@@ -48919,8 +48923,8 @@ var init_saleTotals = __esm({
             if (isNaN(sgstPer) || sgstPer === 0) sgstPer = Number(medTax.sgst_per) || 0;
           }
         }
-        if (isNaN(cgstPer) || cgstPer === 0) cgstPer = 2.5;
-        if (isNaN(sgstPer) || sgstPer === 0) sgstPer = 2.5;
+        if (isNaN(cgstPer)) cgstPer = 0;
+        if (isNaN(sgstPer)) sgstPer = 0;
         const gstRate = cgstPer + sgstPer;
         const taxable = gstRate > 0 ? lineGross / (1 + gstRate / 100) : lineGross;
         const lineTax = lineGross - taxable;
@@ -54358,7 +54362,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.46";
+    APP_VERSION = "0.1.47";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -68349,7 +68353,9 @@ var init_triggerSchedulerService = __esm({
           const intervalMin = parseInt(cfg.trigger_pharmarack_refresh_interval_min || "20", 10);
           try {
             const { tokenRefreshScheduler: tokenRefreshScheduler2 } = await Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports));
-            tokenRefreshScheduler2.start();
+            const waitMs = Math.max(0, 3e4 - process.uptime() * 1e3);
+            if (waitMs > 0) setTimeout(() => tokenRefreshScheduler2.start(), waitMs);
+            else tokenRefreshScheduler2.start();
             console.log(`[TriggerScheduler] Registered 'Pharmarack Token Refresher' -> Interval: ${intervalMin} minutes`);
           } catch (err) {
             console.error("[TriggerScheduler] Failed to start Pharmarack Token Refresher:", err);
@@ -93947,7 +93953,7 @@ ${upiUri}
         }
         const newNotified = status === "Fulfilled" || whatsappQueued ? 1 : existing.notified;
         const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
-        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : whatsappQueued ? 1 : existing.auto_remind ?? 0;
+        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : existing.auto_remind ?? 0;
         const lastRemindAt = whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : existing.last_collection_reminder_at;
         await db2.run(
           "UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?",
@@ -101910,7 +101916,9 @@ var init_server = __esm({
           }
         }).catch((err) => console.warn("[Boot:Phase2] Master medicines CSV enrichment failed (non-fatal):", err?.message || err));
         console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
-        Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
+        setTimeout(() => {
+          Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
+        }, 3e4);
         Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then(async (m) => {
           m.autoUpdateService.start();
           const failMsg = await m.autoUpdateService.checkFailedUpdate();
@@ -101931,7 +101939,7 @@ var init_server = __esm({
         await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
         const autoRow = await db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'");
         const isAutoEnabled = !autoRow || autoRow.value === "true";
-        setImmediate(async () => {
+        setTimeout(async () => {
           console.log("[Boot:Phase3] Evaluating lightweight workers & startup evaluation...");
           if (isAutoEnabled) {
             const { startStockCalculatorWorker: startStockCalculatorWorker2 } = await Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports));
@@ -102122,7 +102130,7 @@ var init_server = __esm({
             } catch (err) {
               console.warn("[Boot:Phase4] WhatsApp boot check error:", err);
             }
-          }, 12e3);
+          }, 37e3);
           Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => {
             m.tokenRefreshScheduler.onFirstRefreshComplete(() => {
               Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports)).then((mod) => mod.warmupStartupCart()).catch((err) => console.warn("[Boot] Cart warm-up failed:", err?.message || err));
@@ -102131,8 +102139,8 @@ var init_server = __esm({
           setTimeout(() => {
             if (process.env.DISABLE_BACKGROUND_WORKERS === "true") return;
             Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports)).then((mod) => mod.warmupStartupCart()).catch((err) => console.warn("[Boot:Phase4] Cart warm-up fallback failed:", err?.message || err));
-          }, 5e4);
-        });
+          }, 52e3);
+        }, 8e3);
         setTimeout(() => {
           console.log(`[Boot] Progressive background staging complete at T+10s: ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
         }, 1e4);
