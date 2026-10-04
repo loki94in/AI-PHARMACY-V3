@@ -27942,13 +27942,15 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     });
     const coreTerm = sanitizePharmarackQuery(qRaw);
     const primaryKeyword = coreTerm && coreTerm.length >= 2 ? coreTerm : qRaw;
-    let response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+    const searchCold = Date.now() - lastSearchOkAt > 5 * 60 * 1e3;
+    const response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
       method: "POST",
       body: JSON.stringify(buildPayload(primaryKeyword)),
-      signal: AbortSignal.timeout(3500)
+      signal: AbortSignal.timeout(searchCold ? 7e3 : 3500)
     }).catch(() => null);
     let data = response && response.ok ? await response.json().catch(() => null) : null;
-    if (!data || !Array.isArray(data.data) || data.data.length === 0) {
+    if (data) lastSearchOkAt = Date.now();
+    if (response && (!data || !Array.isArray(data.data) || data.data.length === 0)) {
       const candidates = [];
       if (primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
         candidates.push(qRaw);
@@ -29362,7 +29364,7 @@ async function reconcilePaidAndFulfilledCartItems(distributors) {
   }
   return reconciledItems;
 }
-var import_express, import_path20, import_fs19, router, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
+var import_express, import_path20, import_fs19, router, lastSearchOkAt, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
@@ -29384,6 +29386,7 @@ var init_pharmarack = __esm({
     init_marketClosureService();
     init_activityTracker();
     router = import_express.default.Router();
+    lastSearchOkAt = 0;
     searchRevalidations = /* @__PURE__ */ new Map();
     router.get("/search", async (req, res) => {
       const qRaw = (req.query.q || "").trim();
@@ -54499,7 +54502,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.50";
+    APP_VERSION = "0.1.51";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
