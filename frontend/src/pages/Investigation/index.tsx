@@ -1402,7 +1402,7 @@ const InvestigationCenter = () => {
                           className="w-full bg-bg3 border border-glass-border rounded-xl pl-9 pr-4 py-2.5 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-primary/50 transition-colors"
                         />
                         {searchMedicineResults.length > 0 && (
-                          <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                          <div className="absolute top-full left-0 right-0 z-dropdown mt-2 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-200">
                             {searchMedicineResults.map((med, idx) => (
                               <button
                                 key={idx}

@@ -18,6 +18,7 @@ export interface CompactInventoryItem {
   manufacturer: string;
   packaging: string;
   pack_size: number | null;
+  schedule_type?: string | null;
   allow_loose_sale?: number | boolean;
 }
 
@@ -94,6 +95,7 @@ class InventoryCache {
             m.manufacturer,
             m.packaging,
             m.pack_size,
+            m.schedule_type,
             COALESCE(m.allow_loose_sale, 1) AS allow_loose_sale
            FROM inventory_master im
            JOIN medicines m ON im.medicine_id = m.id

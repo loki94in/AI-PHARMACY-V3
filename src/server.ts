@@ -731,9 +731,14 @@ server.on('error', (err: any) => {
       // begins the single-flight browser restore BEFORE a user's first search
       // can hit a mid-typing 401. orderFulfillmentService stays on the T+2s
       // stagger in Phase 4 below.
-      import('./services/tokenRefreshScheduler.js')
-        .then(m => m.tokenRefreshScheduler.start())
-        .catch(err => console.warn('[Boot:Phase2] Pharmarack session heartbeat start failed:', err));
+      // Owner decision 2026-10-03 (i3 / 8 GB / no GPU): the app window must be usable within ~2 s, so
+      // Pharmarack (T+30 s) and WhatsApp (T+45 s) start AFTER the UI is up. Search before T+30 s serves the
+      // disk-persistent search cache; the heartbeat still proves the token before any real need.
+      setTimeout(() => {
+        import('./services/tokenRefreshScheduler.js')
+          .then(m => m.tokenRefreshScheduler.start())
+          .catch(err => console.warn('[Boot:Phase2] Pharmarack session heartbeat start failed:', err));
+      }, 30_000);
 
       // Auto-update scheduler: checks every 15 days (DB-gated, won't hammer on every boot)
       import('./services/autoUpdateService.js')
@@ -765,7 +770,8 @@ server.on('error', (err: any) => {
       const isAutoEnabled = !autoRow || autoRow.value === 'true';
 
       // ── Phase 3: Lightweight workers (gated on automation_enabled !== 'false') ──
-      setImmediate(async () => {
+      // Deferred 8 s so the first screen gets the whole CPU on a dual-core i3 (was setImmediate).
+      setTimeout(async () => {
         console.log('[Boot:Phase3] Evaluating lightweight workers & startup evaluation...');
 
         if (isAutoEnabled) {
@@ -995,7 +1001,7 @@ server.on('error', (err: any) => {
           } catch (err) {
             console.warn('[Boot:Phase4] WhatsApp boot check error:', err);
           }
-        }, 12_000);
+        }, 37_000); // +8 s Phase 3 deferral = T+45 s after boot
 
         // Startup live-cart warm-up: resolves startupSyncCoordinator from real data at boot
         // instead of waiting for the first UI visit to GET /api/pharmarack/cart.
@@ -1011,8 +1017,8 @@ server.on('error', (err: any) => {
         setTimeout(() => {
           if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
           import('./routes/pharmarack.js').then(mod => mod.warmupStartupCart()).catch(err => console.warn('[Boot:Phase4] Cart warm-up fallback failed:', err?.message || err));
-        }, 50_000);
-      });
+        }, 52_000); // safety net, ~T+60 s after boot
+      }, 8_000);
 
       // One-line boot health summary, ~T+10s (covers the T+2/5/6/8s staggers).
       // Later failures (WhatsApp T+45s, cart warm-up) still log their own errors.

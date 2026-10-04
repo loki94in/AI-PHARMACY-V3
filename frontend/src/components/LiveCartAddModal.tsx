@@ -90,6 +90,7 @@ interface LocalRefillPatient {
     in_stock_qty?: number | string;
     refill_interval_days?: number;
     hold_for_stock?: number;
+    is_ready?: number;
     reminder_status?: Refill['reminder_status'];
     reminder_sent_at?: string | null;
   }>;
@@ -671,7 +672,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const data = await api.getOrders();
       if (Array.isArray(data)) {
         const filtered = data.filter(o => 
-          (o.status === 'Pending' || o.status === 'Ordered') &&
+          ['Pending', 'Ordered', 'Confirmed', 'Waiting'].includes(o.status) &&
           !isMedicineIgnored(o.product, cachedIgnoredWords)
         );
         cachedPendingOrders = filtered;
@@ -694,6 +695,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
           patient.medicines.forEach((m) => {
             if (m.status === 'canceled' || m.is_active === 0) return;
+            // Already marked Ready (stock arrived / handled) — nothing left to order
+            if (Number(m.is_ready) === 1) return;
             if (isMedicineIgnored(m.medicine_name, cachedIgnoredWords)) return;
 
             const dueDate = new Date(patient.next_refill_date);
@@ -738,6 +741,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       if (Array.isArray(data)) {
         const filtered = data.filter(r => {
           if (!r.is_active || r.status === 'completed' || r.status === 'canceled') return false;
+          if (Number((r as { is_ready?: number }).is_ready) === 1) return false;
           return !isMedicineIgnored(r.medicine_name, cachedIgnoredWords);
         });
         cachedPendingRefills = filtered;
@@ -1063,10 +1067,22 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         ]);
       }, 500);
     };
+    // Order/refill status changes elsewhere (Mark Ready, fulfil) must drop rows from the open popup
+    const handleListsChanged = () => {
+      if (!isOpen) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        Promise.allSettled([fetchPendingOrders(), fetchPendingRefills()]);
+      }, 500);
+    };
     window.addEventListener('refresh-pharmarack-cart', handleRefresh);
+    window.addEventListener('refresh-special-orders', handleListsChanged);
+    window.addEventListener('app-refills-updated', handleListsChanged);
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('refresh-pharmarack-cart', handleRefresh);
+      window.removeEventListener('refresh-special-orders', handleListsChanged);
+      window.removeEventListener('app-refills-updated', handleListsChanged);
     };
   }, [isOpen]);
 

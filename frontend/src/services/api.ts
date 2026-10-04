@@ -567,6 +567,7 @@ export interface CompactInventoryItem {
   packaging: string;
   pack_size: number | null;
   salts?: string;
+  schedule_type?: string | null;
   medicine_name: string;
   loose_qty?: number;
   allow_loose_sale?: number | boolean;

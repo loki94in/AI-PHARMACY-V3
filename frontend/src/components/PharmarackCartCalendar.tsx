@@ -618,7 +618,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
             {/* Interactive Month Calendar Popover */}
             {isCalendarOpen && (
-              <div className="absolute left-0 top-full mt-1.5 z-50 w-[310px] sm:w-[340px] bg-bg border border-border rounded-2xl shadow-xl p-3.5 space-y-3 backdrop-blur-md">
+              <div className="absolute left-0 top-full mt-1.5 z-dropdown w-[310px] sm:w-[340px] bg-bg border border-border rounded-2xl shadow-xl p-3.5 space-y-3 backdrop-blur-md">
                 {/* Header with Title & Close button */}
                 <div className="flex items-center justify-between pb-1.5 border-b border-glass-border/40">
                   <div className="flex items-center gap-1.5">

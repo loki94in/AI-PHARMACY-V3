@@ -10,6 +10,7 @@ import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady,
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { toastEvent } from '../../services/events';
+import { getMedicineSchedule, SCHEDULE_LABEL } from '../../utils/scheduleBadge';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { useFetchMode } from '../../hooks/useFetchMode';
 import { StagedQueueFloatingWidget } from '../../components/StagedQueueFloatingWidget';
@@ -2759,6 +2760,11 @@ const POS = () => {
       }
     }
 
+    const addedSchedule = getMedicineSchedule(med.medicine_id || med.id);
+    if (addedSchedule) {
+      toastEvent.trigger(`${SCHEDULE_LABEL[addedSchedule]} drug: ${med.name} — prescription required`, 'error');
+    }
+
     // Check if added item has special order request
     const pendingMatches = specialOrders.filter(
       o => o.product.toLowerCase().trim() === (med.name || '').toLowerCase().trim() ||
@@ -4204,7 +4210,7 @@ const POS = () => {
                     aria-label="Patient Name"
                   />
                   {showPatientSuggestions && (
-                    <div className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
+                    <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
                       {isPatientFuzzyMatch && (
                         <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5 shrink-0 select-none">
                           <span>🔍</span> No exact match. Did you mean:
@@ -4399,7 +4405,7 @@ const POS = () => {
                     title="Select or Type Doctor Name"
                   />
                   {isDoctorDropdownOpen && doctor.trim().length >= 2 && (
-                    <div className="absolute left-0 right-0 top-full z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
+                    <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
                       <div ref={doctorSuggestionsRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                       {filteredDoctors.length > 0 ? (
                         filteredDoctors.map((doc, idx) => (
@@ -4643,7 +4649,7 @@ const POS = () => {
                     </button>
                   </div>
                   {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length === 0 && (
-                    <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
+                    <div className="absolute left-0 right-0 top-full z-dropdown mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
                       {/* TOP SECTION: Quick Add */}
                       <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center justify-between gap-2">
                         <div className="text-xs text-muted px-2 min-w-0 truncate">
@@ -4734,7 +4740,7 @@ const POS = () => {
                 
                 {/* Search results dropdown */}
                 {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-[100] mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-96 [will-change:scroll-position]">
+                  <div className="absolute left-0 right-0 top-full z-dropdown mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-96 [will-change:scroll-position]">
                     {/* PINNED TOP SECTION: Quick Add Header */}
                     <div className="p-2 border-b border-border bg-bg3 flex-shrink-0 flex items-center justify-between gap-2">
                       <div className="text-xs text-muted px-2 min-w-0 truncate">
@@ -5252,12 +5258,19 @@ const POS = () => {
                     // 3-Color Classification System:
                     // Color 1 (Theme Normal): Registered in Local Inventory with active stock & batch
                     // Color 2 (Amber Tint): Exists in Master Catalog, but NOT in active local inventory (0 stock)
-                    const rowStatusClass = "border-b border-border/30 hover:bg-bg2/40";
-                    let statusBadge = null;
-
-                    if (!item.isEmptyRow) {
-                      statusBadge = null;
-                    }
+                    const rowSchedule = item.isEmptyRow ? null : getMedicineSchedule(item.medicine_id);
+                    const rowStatusClass = rowSchedule
+                      ? `border-b border-border/30 border-l-4 ${rowSchedule === 'H' ? 'border-l-amber bg-amber-bg' : 'border-l-red bg-red-bg'}`
+                      : "border-b border-border/30 hover:bg-bg2/40";
+                    const statusBadge = rowSchedule ? (
+                      <span
+                        key={`sch-${item.id}`}
+                        title={`${SCHEDULE_LABEL[rowSchedule]} drug — prescription required`}
+                        className={`shrink-0 mr-2 px-1.5 py-0.5 rounded-md border text-[10px] font-extrabold tracking-wide animate-pulse ${rowSchedule === 'H' ? 'border-amber/50 bg-amber-bg text-amber' : 'border-red/50 bg-red-bg text-red'}`}
+                      >
+                        ℞ {rowSchedule}
+                      </span>
+                    ) : null;
 
                     return (
                       <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''}`}>
@@ -5276,7 +5289,7 @@ const POS = () => {
                                   className="w-7.5 h-7.5 object-cover rounded-lg border border-border/60 hover:border-primary/60 transition-all cursor-zoom-in shadow-sm"
                                   onClick={() => setZoomedImage(item.scanImage ?? null)}
                                 />
-                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover/thumb:block z-[100] bg-bg2 border border-border rounded-xl p-2 shadow-2xl w-48 animate-in fade-in duration-150">
+                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover/thumb:block z-dropdown bg-bg2 border border-border rounded-xl p-2 shadow-2xl w-48 animate-in fade-in duration-150">
                                   <img src={item.scanImage} alt="Scan preview" decoding="async" className="w-full h-auto rounded-lg object-contain" />
                                   <div className="text-[10px] text-muted text-center mt-1 font-semibold">Click to enlarge</div>
                                 </div>
@@ -5613,7 +5626,7 @@ const POS = () => {
                             </button>
                             
                             {activeBatchRowId === String(item.id) && rowBatchesList.length > 0 && (
-                              <div className="absolute left-0 z-[100] mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                              <div className="absolute left-0 z-dropdown mt-1 bg-glass-bg border border-border rounded-xl overflow-hidden max-h-48 flex flex-col w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
                                 <div className="p-2 border-b border-border/30 bg-bg3 shrink-0 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
                                   <span>Switch Batch</span>
                                   <span className="text-xs font-normal text-muted/70">{rowBatchesList.length} available</span>

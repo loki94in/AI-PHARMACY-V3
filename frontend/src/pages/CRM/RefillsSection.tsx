@@ -1540,7 +1540,7 @@ export const RefillsSection: React.FC = () => {
                       <ChevronDown size={11} className="text-muted" />
                     </button>
                     {showSnoozeMenu && (
-                      <div className="absolute right-0 top-full mt-1 z-50 bg-bg2 border border-border rounded-xl shadow-2xl p-1.5 min-w-[150px] flex flex-col gap-1 animate-in fade-in">
+                      <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-2xl p-1.5 min-w-[150px] flex flex-col gap-1 animate-in fade-in">
                         <button
                           type="button"
                           onClick={() => handleSnoozePatient(selectedPatient, 1)}
@@ -1843,7 +1843,7 @@ export const RefillsSection: React.FC = () => {
                                           className="fixed inset-0 z-30"
                                           onClick={() => setPriorityDropdownMedId(null)}
                                         />
-                                        <div className="absolute left-0 top-full mt-1.5 z-40 w-64 rounded-xl bg-bg2 border border-border shadow-xl p-1.5 flex flex-col gap-1 text-xs select-none">
+                                        <div className="absolute left-0 top-full mt-1.5 z-dropdown w-64 rounded-xl bg-bg2 border border-border shadow-xl p-1.5 flex flex-col gap-1 text-xs select-none">
                                           <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted flex items-center justify-between border-b border-border/50">
                                             <span>Priority Distributor</span>
                                             <span className="font-mono text-primary">{med.linked_distributors.length} Linked</span>

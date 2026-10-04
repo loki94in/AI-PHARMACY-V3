@@ -316,7 +316,10 @@ class TriggerSchedulerService {
       const intervalMin = parseInt(cfg.trigger_pharmarack_refresh_interval_min || '20', 10);
       try {
         const { tokenRefreshScheduler } = await import('./tokenRefreshScheduler.js');
-        tokenRefreshScheduler.start();
+        // Boot rule (owner 2026-10-03): Pharmarack never starts before T+30 s of process uptime.
+        const waitMs = Math.max(0, 30_000 - process.uptime() * 1000);
+        if (waitMs > 0) setTimeout(() => tokenRefreshScheduler.start(), waitMs);
+        else tokenRefreshScheduler.start();
         console.log(`[TriggerScheduler] Registered 'Pharmarack Token Refresher' -> Interval: ${intervalMin} minutes`);
       } catch (err) {
         console.error('[TriggerScheduler] Failed to start Pharmarack Token Refresher:', err);

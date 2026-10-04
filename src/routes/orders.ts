@@ -1566,7 +1566,8 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
 
     const newNotified = (status === 'Fulfilled' || whatsappQueued) ? 1 : existing.notified;
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
-    const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (whatsappQueued ? 1 : (existing.auto_remind ?? 0));
+    // Sending the arrival WA never arms Auto Remind; only the user's Auto toggle does (manual-only patient messaging).
+    const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (existing.auto_remind ?? 0);
     const lastRemindAt = whatsappQueued ? new Date().toISOString() : existing.last_collection_reminder_at;
     await db.run(
       'UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?',
