@@ -2795,7 +2795,21 @@ export const Layout = ({
   // Intercept window close ('X' button or Alt+F4) to confirm before exiting
   useEffect(() => {
     // Cancel any pending tab-close shutdown if this is a page reload or a new tab opened
-    fetch('/api/system/cancel-shutdown', { method: 'POST' }).catch(() => {});
+    const cancelShutdown = () => {
+      apiClient.post('/system/cancel-shutdown').catch(() => {});
+    };
+
+    cancelShutdown();
+
+    const handleFocus = () => {
+      cancelShutdown();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        cancelShutdown();
+      }
+    };
 
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       // If user already initiated an intentional exit via Exit App button, don't show secondary prompt
@@ -2826,9 +2840,13 @@ export const Layout = ({
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 

@@ -759,15 +759,21 @@ const Sells = () => {
 
           {/* Custom Date Inputs */}
           <div className="flex items-center gap-1.5 bg-bg3 px-2 py-1 rounded-lg border border-glass-border/40 shrink-0 text-sm">
-            <span className="text-xs font-bold text-muted uppercase">FROM:</span>
+            <label htmlFor="sells-filter-date-from" className="text-xs font-bold text-muted uppercase">FROM:</label>
             <input
+              id="sells-filter-date-from"
+              name="sells_date_from"
+              autoComplete="off"
               type="date"
               value={toDateInputValue(dateRangeHelper.dateRange.from)}
               onChange={e => dateRangeHelper.handleFromChange(e.target.value)}
               className="bg-transparent border-none text-sm text-text focus:outline-none cursor-pointer"
             />
-            <span className="text-xs font-bold text-muted uppercase">TO:</span>
+            <label htmlFor="sells-filter-date-to" className="text-xs font-bold text-muted uppercase">TO:</label>
             <input
+              id="sells-filter-date-to"
+              name="sells_date_to"
+              autoComplete="off"
               type="date"
               value={toDateInputValue(dateRangeHelper.dateRange.to)}
               onChange={e => dateRangeHelper.handleToChange(e.target.value)}
@@ -830,6 +836,10 @@ const Sells = () => {
               {/* No. */}
               <th className="px-2 py-1 w-32 shrink-0 flex items-center justify-start">
                 <input
+                  id="sells-filter-invoice-no"
+                  name="sells_filter_invoice_no"
+                  autoComplete="off"
+                  aria-label="Search Invoice Number"
                   type="text"
                   placeholder="Search No..."
                   value={colFilterNo}
@@ -841,6 +851,10 @@ const Sells = () => {
               {/* Name of the patient */}
               <th className="px-2 py-1 flex-1 min-w-[240px] flex items-center justify-start">
                 <input
+                  id="sells-filter-query"
+                  name="sells_filter_query"
+                  autoComplete="off"
+                  aria-label="Search patient, phone, or medicine"
                   type="text"
                   placeholder="Search patient/phone/medicine..."
                   value={colFilterName}
@@ -859,6 +873,10 @@ const Sells = () => {
               {/* Dr Name */}
               <th className="px-2 py-1 w-36 shrink-0 flex items-center justify-start">
                 <input
+                  id="sells-filter-doctor"
+                  name="sells_filter_doctor"
+                  autoComplete="off"
+                  aria-label="Search Doctor"
                   type="text"
                   placeholder="Search doctor..."
                   value={colFilterDrName}
@@ -871,6 +889,10 @@ const Sells = () => {
               <th className="px-1.5 py-1 w-28 shrink-0 flex items-center justify-end text-right">
                 <div className="flex gap-1 w-full">
                   <input
+                    id="sells-filter-min-amount"
+                    name="sells_filter_min_amount"
+                    autoComplete="off"
+                    aria-label="Filter Minimum Bill Amount"
                     type="number"
                     placeholder="Min ₹"
                     value={colFilterMinAmount}
@@ -878,6 +900,10 @@ const Sells = () => {
                     className="w-1/2 px-1 py-1 bg-bg2/90 border border-glass-border rounded-md text-xs text-text font-normal placeholder:text-muted/50 focus:outline-none focus:border-primary/50 text-right"
                   />
                   <input
+                    id="sells-filter-max-amount"
+                    name="sells_filter_max_amount"
+                    autoComplete="off"
+                    aria-label="Filter Maximum Bill Amount"
                     type="number"
                     placeholder="Max ₹"
                     value={colFilterMaxAmount}
@@ -900,6 +926,9 @@ const Sells = () => {
               {/* Pay Via */}
               <th className="px-1.5 py-1 w-24 shrink-0 flex items-center justify-center text-center">
                 <select
+                  id="sells-filter-payment-medium"
+                  name="sells_filter_payment_medium"
+                  aria-label="Filter Payment Method"
                   value={colFilterPayVia}
                   onChange={e => setColFilterPayVia(e.target.value)}
                   className="w-full px-1 py-1 bg-bg2/90 border border-glass-border rounded-md text-sm text-text font-normal focus:outline-none focus:border-primary/50"
@@ -1110,8 +1139,11 @@ const Sells = () => {
               {/* Customer & Payment Info Bar */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-bg2/60 p-3.5 rounded-xl border border-glass-border">
                 <div>
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Patient / Customer Name</label>
+                  <label htmlFor="edit-sale-customer-name" className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Patient / Customer Name</label>
                   <input
+                    id="edit-sale-customer-name"
+                    name="edit_sale_customer_name"
+                    autoComplete="off"
                     type="text"
                     value={editCustomerName}
                     onChange={e => setEditCustomerName(e.target.value)}
@@ -1120,8 +1152,11 @@ const Sells = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Phone Number</label>
+                  <label htmlFor="edit-sale-customer-phone" className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Phone Number</label>
                   <input
+                    id="edit-sale-customer-phone"
+                    name="edit_sale_customer_phone"
+                    autoComplete="off"
                     type="text"
                     value={editCustomerPhone}
                     onChange={e => setEditCustomerPhone(e.target.value)}
@@ -1130,8 +1165,10 @@ const Sells = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Payment Method</label>
+                  <label htmlFor="edit-sale-payment-medium" className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Payment Method</label>
                   <select
+                    id="edit-sale-payment-medium"
+                    name="edit_sale_payment_medium"
                     value={editPaymentMedium}
                     onChange={e => setEditPaymentMedium(e.target.value)}
                     className="w-full px-3 py-1.5 bg-bg3 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
@@ -1236,6 +1273,10 @@ const Sells = () => {
                                   -
                                 </button>
                                 <input
+                                  id={`edit-item-qty-${idx}`}
+                                  name={`edit_item_qty_${idx}`}
+                                  autoComplete="off"
+                                  aria-label={`Quantity for item ${idx + 1}`}
                                   type="number"
                                   value={item.quantity !== undefined && item.quantity !== null ? item.quantity : 0}
                                   onChange={e => updateItemQty(idx, e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10)))}
@@ -1261,6 +1302,10 @@ const Sells = () => {
                                   -
                                 </button>
                                 <input
+                                  id={`edit-item-loose-${idx}`}
+                                  name={`edit_item_loose_${idx}`}
+                                  autoComplete="off"
+                                  aria-label={`Loose units for item ${idx + 1}`}
                                   type="number"
                                   value={looseQty || ''}
                                   placeholder="0"
@@ -1282,6 +1327,10 @@ const Sells = () => {
                             </td>
                             <td className="p-3 border-b border-glass-border/50 text-center">
                               <input
+                                id={`edit-item-discount-${idx}`}
+                                name={`edit_item_discount_${idx}`}
+                                autoComplete="off"
+                                aria-label={`Discount percentage for item ${idx + 1}`}
                                 type="number"
                                 value={item.discount_per || ''}
                                 onChange={e => updateItemDiscountPer(idx, parseFloat(e.target.value) || 0)}
@@ -1293,6 +1342,10 @@ const Sells = () => {
                             </td>
                             <td className="p-3 border-b border-glass-border/50 text-right">
                               <input
+                                id={`edit-item-mrp-${idx}`}
+                                name={`edit_item_mrp_${idx}`}
+                                autoComplete="off"
+                                aria-label={`MRP for item ${idx + 1}`}
                                 type="number"
                                 value={item.mrp || 0}
                                 onChange={e => updateItemMrp(idx, parseFloat(e.target.value) || 0)}
@@ -1303,6 +1356,10 @@ const Sells = () => {
                             </td>
                             <td className="p-3 border-b border-glass-border/50 text-right">
                               <input
+                                id={`edit-item-price-${idx}`}
+                                name={`edit_item_price_${idx}`}
+                                autoComplete="off"
+                                aria-label={`Unit price for item ${idx + 1}`}
                                 type="number"
                                 value={item.unit_price}
                                 onChange={e => updateItemPrice(idx, parseFloat(e.target.value) || 0)}
@@ -1371,7 +1428,7 @@ const Sells = () => {
 
               {/* Reason Note & Quick Chips */}
               <div className="bg-bg2/50 p-4 rounded-xl border border-glass-border space-y-2.5">
-                <label className="text-[11px] font-bold text-muted uppercase tracking-wider block">
+                <label htmlFor="edit-sale-reason" className="text-[11px] font-bold text-muted uppercase tracking-wider block">
                   Modification / Deletion Reason (Recorded in Pharmacy Audit Logs)
                 </label>
                 <div className="flex flex-wrap gap-1.5 mb-2">
@@ -1397,6 +1454,9 @@ const Sells = () => {
                   ))}
                 </div>
                 <input
+                  id="edit-sale-reason"
+                  name="edit_sale_reason"
+                  autoComplete="off"
                   type="text"
                   value={editReason}
                   onChange={e => setEditReason(e.target.value)}
@@ -1422,8 +1482,11 @@ const Sells = () => {
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted">Discount (₹):</span>
+                    <label htmlFor="edit-sale-discount-amount" className="text-muted cursor-pointer">Discount (₹):</label>
                     <input
+                      id="edit-sale-discount-amount"
+                      name="edit_sale_discount_amount"
+                      autoComplete="off"
                       type="number"
                       value={editDiscount}
                       onChange={e => setEditDiscount(parseFloat(e.target.value) || 0)}

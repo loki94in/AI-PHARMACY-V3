@@ -475,6 +475,17 @@
 | **What not to touch** | Canonical image resolution for portal & POS, customer confirmation flow transitions, and special order state machine. |
 | **Verified by** | TypeScript compilation (`tsc --noEmit`); `npm run guardrails` PASS (0 violations); `node scripts/quick-update.mjs` synced. |
 
+### [Fixed] P1-30 — Startup 503 Loop on Reload & Tab Close (Route Readiness Gate & Premature Shutdown)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When starting `npm run dev` or reloading the browser, the browser console flooded with repeated `503 (Service Unavailable)` errors across all routes (`/api/settings`, `/api/jobs`, `/api/pharmarack/live-cart-summary`, etc.) and retried endlessly without recovery. `api/system/cancel-shutdown` failed with 503, and the backend Node/tsx process terminated completely. |
+| **Root cause** | 1. In `src/server.ts`, the boot readiness gate (`app.use('/api', ...)`) blocked all routes with `503` while `schemaReady` was `false`, without exempting `/api/system/cancel-shutdown` and `/api/system/shutdown`.<br>2. On page reload or navigation, `Layout.tsx`'s `pagehide` beacon dispatched `/api/system/shutdown?type=tab_close`, starting a 3.5s `pendingShutdownTimer`. When the reloaded page mounted, its `POST /api/system/cancel-shutdown` was intercepted by the gate with 503 and silently dropped by native `fetch`.<br>3. After 3.5s, `pendingShutdownTimer` fired `gracefulShutdown('TAB_CLOSED')` and executed Windows `taskkill`, killing the backend. Vite proxy was left with `ECONNREFUSED` on port 5174, permanently serving 503s.<br>4. In development mode, `tab_close` should never terminate the server process. |
+| **How it was fixed** | 1. **Schema Gate Exemption:** In `src/server.ts`, added `req.path.startsWith('/system/')` to the readiness gate bypass so in-memory system lifecycle routes respond immediately with 200 OK during boot.<br>2. **Dev Mode Tab-Close Bypass:** In `src/server.ts`, ignored `tab_close` shutdown in dev mode (`!isPackagedApp() && process.env.NODE_ENV !== 'production'`), restricting auto-shutdown strictly to packaged standalone apps.<br>3. **Frontend Resilience:** In `Layout.tsx`, switched `cancel-shutdown` to `apiClient` (which auto-retries on 503) and added listeners on `window.focus` and `document.visibilitychange` to protect multi-tab sessions. |
+| **Priority** | P1 |
+| **What not to touch** | Packaged standalone desktop app window exit callbacks and clean shutdown backup sequence. |
+| **Verified by** | TypeScript compilation (`tsc --noEmit`); `npm run guardrails` PASS (0 violations); `npm run build:client` PASS (0 errors); `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P2-12 — Route Ordering: POST /api/system/cancel-shutdown 404 on App Mount (Shadowed by notFoundHandler)
 
 | Field | Content |

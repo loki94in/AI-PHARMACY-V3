@@ -293,7 +293,7 @@ app.get('/api/health/ready', (_req, res) => {
 // reusing one) could outlast the frontend's 503 retry budget and make file
 // uploads fail outright.
 app.use('/api', (req, res, next) => {
-  if (schemaReady || req.path === '/health' || req.path === '/health/ready' || req.path.startsWith('/migration')) return next();
+  if (schemaReady || req.path === '/health' || req.path === '/health/ready' || req.path.startsWith('/migration') || req.path.startsWith('/system/')) return next();
   res.status(503).json({ error: 'Server is initializing', retryAfter: 1 });
 });
 
@@ -340,6 +340,12 @@ app.post('/api/system/shutdown', (req, res) => {
   const isTabClose = req.query.type === 'tab_close';
 
   if (isTabClose) {
+    // In development mode (Vite / tsx watch), closing or refreshing a browser tab must not terminate the development server.
+    // Auto-shutdown on tab close is reserved for packaged / standalone desktop instances.
+    if (!isPackagedApp() && process.env.NODE_ENV !== 'production') {
+      return res.json({ success: true, message: 'Tab-close shutdown ignored in development mode.' });
+    }
+
     console.log('[System] Tab/window close event received. Scheduling graceful shutdown in 3500ms...');
     if (pendingShutdownTimer) clearTimeout(pendingShutdownTimer);
     pendingShutdownTimer = setTimeout(() => {
