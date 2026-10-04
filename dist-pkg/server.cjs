@@ -54499,7 +54499,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.48";
+    APP_VERSION = "0.1.49";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -84357,6 +84357,46 @@ var init_license = __esm({
   }
 });
 
+// src/utils/billNumber.ts
+var incrementBillNo, LOOK_BACK, MAX_COLLISION_STEPS, nextSaleInvoiceNo, lastSaleInvoice;
+var init_billNumber = __esm({
+  "src/utils/billNumber.ts"() {
+    "use strict";
+    incrementBillNo = (last) => {
+      const m = String(last ?? "").trim().match(/^(.*?)(\d+)(\D*)$/);
+      if (!m) return null;
+      const [, head, digits, tail] = m;
+      const next = (BigInt(digits) + 1n).toString().padStart(digits.length, "0");
+      return `${head}${next}${tail}`;
+    };
+    LOOK_BACK = 50;
+    MAX_COLLISION_STEPS = 1e3;
+    nextSaleInvoiceNo = async (db2) => {
+      const recent = await db2.all(
+        `SELECT invoice_no FROM sales_invoices WHERE invoice_no IS NOT NULL AND invoice_no <> '' ORDER BY id DESC LIMIT ${LOOK_BACK}`
+      );
+      let candidate = null;
+      for (const r of recent) {
+        candidate = incrementBillNo(r.invoice_no);
+        if (candidate) break;
+      }
+      if (!candidate) return `S-${(/* @__PURE__ */ new Date()).getFullYear()}-0001`;
+      for (let i = 0; i < MAX_COLLISION_STEPS; i++) {
+        const taken = await db2.get("SELECT 1 AS x FROM sales_invoices WHERE invoice_no = ? LIMIT 1", [candidate]);
+        if (!taken) return candidate;
+        candidate = incrementBillNo(candidate);
+      }
+      throw new Error("Could not find a free invoice number");
+    };
+    lastSaleInvoice = async (db2) => {
+      const row = await db2.get(
+        `SELECT invoice_no, date FROM sales_invoices WHERE invoice_no IS NOT NULL AND invoice_no <> '' ORDER BY id DESC LIMIT 1`
+      );
+      return row ?? null;
+    };
+  }
+});
+
 // src/routes/sales.ts
 var sales_exports = {};
 __export(sales_exports, {
@@ -84488,6 +84528,7 @@ var init_sales = __esm({
     import_express36 = __toESM(require("express"), 1);
     init_inventoryActive();
     init_saleTotals();
+    init_billNumber();
     init_saleBillEditService();
     init_localTime();
     init_connection();
@@ -84531,17 +84572,17 @@ var init_sales = __esm({
     MAX_ITEMS_IN_BATCH = 200;
     SQLITE_BUSY_RETRIES = 5;
     SQLITE_BUSY_BASE_DELAY_MS = 100;
-    generateInvoiceNo = async (db2) => {
-      const year = (/* @__PURE__ */ new Date()).getFullYear();
-      const prefix = `S-${year}-`;
-      const row = await db2.get(
-        `SELECT MAX(CAST(SUBSTR(invoice_no, ?) AS INTEGER)) as maxNum FROM sales_invoices WHERE invoice_no LIKE ?`,
-        [prefix.length + 1, `${prefix}%`]
-      );
-      const nextNum = (row && row.maxNum ? row.maxNum : 0) + 1;
-      const padded = String(nextNum).padStart(4, "0");
-      return `${prefix}${padded}`;
-    };
+    generateInvoiceNo = (db2) => nextSaleInvoiceNo(db2);
+    router34.get("/last-invoice", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const last = await lastSaleInvoice(db2);
+        res.json({ invoice_no: last?.invoice_no ?? null, date: last?.date ?? null });
+      } catch (error) {
+        console.error("Failed to get last invoice", error.message);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
     router34.get("/next-invoice", async (_req, res) => {
       let db2;
       try {
@@ -97496,7 +97537,7 @@ var init_medicines = __esm({
       try {
         const db2 = await dbManager.getConnection();
         const medicine = await db2.get(
-          "SELECT id, name, generic_name, manufacturer, marketed_by, pack_unit, pack_size, strength, cgst_per, sgst_per, hsn_code, category, api_reference, schedule_type, packaging, sell_price, mrp FROM medicines WHERE id = ?",
+          "SELECT id, name, generic_name, manufacturer, marketed_by, pack_unit, pack_size, strength, cgst_per, sgst_per, hsn_code, category, api_reference, schedule_type, packaging, sell_price, mrp, allow_loose_sale FROM medicines WHERE id = ?",
           [id]
         );
         if (!medicine) {
