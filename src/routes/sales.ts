@@ -171,7 +171,7 @@ router.post('/', async (req, res) => {
       if (!exists) customerId = null;
     }
 
-    if (!customerId && (patient_phone || patient_name)) {
+    if (!customerId && (String(patient_phone || '').trim() || String(patient_name || '').trim())) {
       const rawPhone = (patient_phone || '').trim();
       const digitsOnly = rawPhone.replace(/\D/g, '').slice(-10);
       const cleanPhone = digitsOnly.length === 10 ? digitsOnly : rawPhone;
@@ -250,7 +250,7 @@ router.post('/', async (req, res) => {
 
     const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
     const storeInfo = await storeContextService.getStoreById(targetStoreId, db).catch(() => null);
-    const pharmacyNameSnapshot = storeInfo?.name || 'AI Pharmacy';
+    const pharmacyNameSnapshot = storeInfo?.name || '';
 
     const customerNameSnapshot = String(patient_name || 'Customer').trim();
     const customerPhoneSnapshot = String(patient_phone || '').trim();
@@ -352,7 +352,7 @@ router.post('/', async (req, res) => {
     if (knownInventoryIds.length > 0) {
       const placeholders = knownInventoryIds.map(() => '?').join(',');
       const rows = await db.all(
-        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name
+        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(im.mrp, m.mrp) as mrp, m.pack_size as raw_pack_size, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name
          FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
         knownInventoryIds
       );
@@ -361,7 +361,7 @@ router.post('/', async (req, res) => {
     const getStock = async (id: number) => {
       if (stockMap.has(id)) return stockMap.get(id);
       const row = await conn.get(
-        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name
+        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(im.mrp, m.mrp) as mrp, m.pack_size as raw_pack_size, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name
          FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?`,
         [id]
       );
@@ -424,9 +424,16 @@ router.post('/', async (req, res) => {
           await refreshInventoryActiveStatus(db, inventory_id);
           throw new Error(`Cannot sell expired batch for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Remove or return this stock first.`);
         }
+        const batchLabel = currentStock.db_medicine_name || medicine_name || 'this medicine';
+        if (!String(currentStock.expiry_date || '').trim()) {
+          throw new Error(`Cannot sell "${batchLabel}": this batch has no expiry date saved. Fix the batch in Inventory first.`);
+        }
         const packSize = currentStock.pack_size;
         const soldQty = Number(quantity);
         const soldLoose = Number(loose_qty);
+        if (soldLoose > 0 && !(Number(currentStock.raw_pack_size) > 0)) {
+          throw new Error(`Cannot sell loose units of "${batchLabel}": its pack size is not saved. Set the pack size in Inventory first.`);
+        }
         const currentTotalUnits = currentStock.quantity * packSize + currentStock.loose_quantity;
         const soldTotalUnits = soldQty * packSize + soldLoose;
         if (currentTotalUnits < soldTotalUnits) {
@@ -440,8 +447,12 @@ router.post('/', async (req, res) => {
         const medNameSnap = currentStock.db_medicine_name || medicine_name || 'Medicine';
         const batchNoSnap = currentStock.batch_no || batch_no || '';
         const expDateSnap = currentStock.expiry_date || expiry_date || '';
-        const mrpSnap = Number(mrp || item.mrp || currentStock.mrp || 0);
-        const taxPerSnap = Number(item.gst_per || item.tax_percent || (Number(item.cgst_per || 0) + Number(item.sgst_per || 0)) || 0);
+        // MRP of the batch being sold is the truth; the client value is only used when the batch has none.
+        const mrpSnap = Number(currentStock.mrp || mrp || item.mrp || 0);
+        if (!(mrpSnap > 0)) {
+          throw new Error(`Cannot sell "${batchLabel}": this batch has no MRP saved. Fix the batch in Inventory first.`);
+        }
+        const taxPerSnap = taxBreakdown ? Number(taxBreakdown.cgst_per) + Number(taxBreakdown.sgst_per) : 0;
 
         await insertSaleItemStmt.run([
           invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty),

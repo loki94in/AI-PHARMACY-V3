@@ -21,7 +21,15 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
-  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
+  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve('AVAILABLE')),
+  ensureSessionHealth: jest.fn(() => Promise.resolve(true)),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  resolveChatSession: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true)),
+  getWhatsAppReadiness: jest.fn(() => ({})),
+  prewarmWhatsApp: jest.fn(() => Promise.resolve({})),
+  downloadMessageMediaReliably: jest.fn(() => Promise.resolve(undefined))
 }));
 
 jest.unstable_mockModule('../src/telegramBot.js', () => ({
@@ -176,7 +184,7 @@ describe('Legitimate Pharmacy Data Workflow Verification', () => {
     expect(item.batch_number).toBe('AZ-REAL-45');
     expect(item.expiry_date).toBe('10/28');
     expect(item.medicine_name).toBe('Azithral 500');
-    expect(item.pack_size).toBe(5);
+    expect(Number(item.pack_size)).toBe(5);
     expect(item.unit_price).toBe(120.50);
   });
 

@@ -411,8 +411,8 @@ router.post('/audit-fix', async (_req, res) => {
 router.post('/repair-missing', async (req, res) => {
 
   try {
-    const limit = req.body?.limit ? parseInt(String(req.body.limit), 10) : 50;
-    const result = await catalogImageService.repairMissingImages(limit);
+    const limit = req.body?.limit !== undefined ? parseInt(String(req.body.limit), 10) : 50; // 0 = all remaining
+    const result = await catalogImageService.repairMissingImages(limit, req.body?.retryMisses === true);
     res.json({
       success: true,
       message: `Scanned ${result.scanned} medicines: repaired ${result.repaired}, ${result.failed} not found/failed.`,

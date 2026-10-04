@@ -533,7 +533,10 @@ async function getDynamicDeliveryNotice(db: any): Promise<string> {
     if (isPastAllCutoffs || nextOpen.shiftReason) {
       const defaultDeliverySlot = schedules[0]?.deliveryWindow || '9:00 AM – 11:00 AM';
       const reasonLine = nextOpen.shiftReason ? ` (${nextOpen.shiftReason})` : ' (post-cutoff dispatch)';
-      return `\n\n🛵 *Expected Delivery:* ${nextOpen.formatted} (${defaultDeliverySlot})${reasonLine}`;
+      const closedNote = nextOpen.shiftReason
+        ? `\n📅 _Market/pharmacy is closed on the days before this, so your order will arrive on ${nextOpen.formatted}._`
+        : '';
+      return `\n\n🛵 *Expected Delivery:* ${nextOpen.formatted} (${defaultDeliverySlot})${reasonLine}${closedNote}`;
     } else {
       return `\n\n🛵 *Expected Delivery:* ${matchedSlot?.deliveryWindow || 'Today by evening'}`;
     }

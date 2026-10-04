@@ -180,6 +180,8 @@ let cachedLastSyncedAt: Date | null = null;
 let cachedSelectedEmail: EmailRecord | null = null;
 let cachedAttachments: AttachmentFile[] = [];
 let cachedPendingReviews: EmailOrderReview[] = [];
+// Mails stay in the app until the user deletes them, so the list asks for (snippet-sized) everything.
+const MAIL_INBOX_LIMIT = 5000;
 
 const Mail = () => {
   const navigate = useNavigate();
@@ -196,6 +198,9 @@ const Mail = () => {
   const [emails, setEmails] = useState<EmailRecord[]>(() => cachedEmails);
   const [loading, setLoading] = useState(() => cachedEmails.length === 0);
   const [syncing, setSyncing] = useState(false);
+  const [checkedUids, setCheckedUids] = useState<Set<number>>(() => new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => cachedLastSyncedAt);
   const [selectedEmail, setSelectedEmail] = useState<EmailRecord | null>(() => cachedSelectedEmail);
   const [attachments, setAttachments] = useState<AttachmentFile[]>(() => cachedAttachments);
@@ -402,7 +407,7 @@ const Mail = () => {
       setLoading(true);
     }
     api
-      .getEmailInbox(30)
+      .getEmailInbox(MAIL_INBOX_LIMIT)
       .then((data: EmailRecord[]) => {
         if (Array.isArray(data)) {
           setEmails(data);
@@ -431,7 +436,7 @@ const Mail = () => {
       const res = await api.triggerEmailSync();
       if (res && res.synced > 0) {
         // New emails downloaded — refresh the inbox view from local DB
-        const data = await api.getEmailInbox(30);
+        const data = await api.getEmailInbox(MAIL_INBOX_LIMIT);
         if (Array.isArray(data)) setEmails(data);
         toastEvent.trigger(`Received ${res.synced} new distributor email(s).`, 'mail', '/mail');
       }
@@ -447,7 +452,7 @@ const Mail = () => {
   // Silent live background refresh from local DB (re-reads last 30 emails every 15s)
   const silentRefreshLocal = useCallback(() => {
     api
-      .getEmailInbox(30)
+      .getEmailInbox(MAIL_INBOX_LIMIT)
       .then((data: EmailRecord[]) => {
         if (Array.isArray(data)) setEmails(data);
       })
@@ -520,6 +525,44 @@ const Mail = () => {
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error || err?.message || 'Failed to delete email';
       toastEvent.trigger(`Delete failed: ${errorMsg}`, 'error', '/mail');
+    }
+  };
+
+  const toggleChecked = (id: number) => {
+    setConfirmBulkDelete(false);
+    setCheckedUids((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(checkedUids);
+    if (ids.length === 0) return;
+    setBulkDeleting(true);
+    try {
+      const res = await api.deleteEmails(ids);
+      toastEvent.trigger(res.message || `${res.deletedCount} email(s) deleted.`, 'success', '/mail');
+      setEmails((prev) => {
+        const next = prev.filter((em) => !checkedUids.has(em.id as number));
+        cachedEmails = next;
+        return next;
+      });
+      if (selectedEmail?.id && checkedUids.has(selectedEmail.id)) {
+        setSelectedEmail(null);
+        setAttachments([]);
+        cachedAttachments = [];
+        cachedSelectedEmail = null;
+        setProcessResult(null);
+      }
+      setCheckedUids(new Set());
+      setConfirmBulkDelete(false);
+    } catch (err: unknown) {
+      const e = err as LocalApiError;
+      toastEvent.trigger(`Delete failed: ${e.response?.data?.error || e.message}`, 'error', '/mail');
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -899,6 +942,54 @@ const Mail = () => {
             </button>
           </div>
 
+          {/* Bulk select / delete bar (acts on the mails visible in the current filter) */}
+          {filteredEmails.length > 0 && (
+            <div className="px-3 py-1.5 border-b border-glass-border bg-bg3/40 flex items-center gap-2 shrink-0 text-xs">
+              <input
+                type="checkbox"
+                aria-label="Select all visible mails"
+                checked={filteredEmails.every((e) => checkedUids.has(e.id as number))}
+                onChange={(ev) => {
+                  setConfirmBulkDelete(false);
+                  setCheckedUids(ev.target.checked ? new Set(filteredEmails.map((e) => e.id as number)) : new Set());
+                }}
+                className="cursor-pointer"
+              />
+              <span className="text-muted font-semibold">
+                {checkedUids.size > 0 ? `${checkedUids.size} selected` : 'Select all'}
+              </span>
+              {checkedUids.size > 0 && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  {confirmBulkDelete ? (
+                    <>
+                      <span className="text-red font-bold">Delete {checkedUids.size} mail(s) forever?</span>
+                      <button
+                        onClick={handleBulkDelete}
+                        disabled={bulkDeleting}
+                        className="px-2 py-1 rounded-md bg-red text-white font-bold disabled:opacity-50"
+                      >
+                        {bulkDeleting ? 'Deleting...' : 'Yes, delete'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmBulkDelete(false)}
+                        className="px-2 py-1 rounded-md border border-glass-border text-muted font-bold"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmBulkDelete(true)}
+                      className="px-2 py-1 rounded-md bg-red/10 border border-red/30 text-red font-bold flex items-center gap-1"
+                    >
+                      <Trash2 size={12} /> Delete selected
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Search/Filter input field */}
           <div className="p-2 border-b border-glass-border bg-bg3/20 flex items-center gap-2 relative shrink-0">
             <input
@@ -988,6 +1079,14 @@ const Mail = () => {
                         : 'border-l-2 border-transparent'
                     }`}
                   >
+                    <input
+                      type="checkbox"
+                      aria-label="Select mail"
+                      checked={checkedUids.has(email.id as number)}
+                      onClick={(ev) => ev.stopPropagation()}
+                      onChange={() => toggleChecked(email.id as number)}
+                      className="mt-2.5 cursor-pointer flex-shrink-0"
+                    />
                     <div className={`p-2 rounded-xl border flex-shrink-0 mt-0.5 transition-all ${s.iconCls}`}>
                       <MailIcon size={16} />
                     </div>

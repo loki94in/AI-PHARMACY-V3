@@ -149,3 +149,9 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 
 ## POS Schedule Drug Highlight (added 2026-10-03)
 - POS cart rows for medicines classified H / H1 / X (`medicines.schedule_type`, shipped on the compact inventory cache) get a tinted row, a left accent bar, a pulsing `℞ H1` badge (finite 3-cycle `animate-pulse`) and a toast on add. Lookup is `utils/scheduleBadge.ts getMedicineSchedule(medicine_id)` over the loaded compact cache — zero network. Never hardcode schedule keywords in the UI; classification stays owned by the Schedule Medicine Hub.
+
+## Holiday Calendar Multi-Date Picker (added 2026-10-04)
+- Settings → Order Timing → Holiday Calendar uses `MultiDatePicker` (in `OrderTimingTab.tsx`): click many days (plus "All Sundays this month"), one name/rule, saved via `POST /settings/holidays/bulk`. Dates are built as local `YYYY-MM-DD` strings, never `toISOString()`.
+
+## Inventory Today's Bills Panel (added 2026-10-04)
+- Inventory toolbar **Today's Bills** opens `components/TodaysReceiptsPanel.tsx` (portal, `z-modal`): lines of bills dated a chosen day (default today), purchased vs sold vs on-shelf, a "Sold out" flag and **Find in stock** (sets the Inventory medicine column filter). Data only from `api.getTodaysReceipts` (`GET /inventory/todays-receipts`); query key `inventory-todays-receipts` is SSE-mapped under `invoice_saved` and `sale_created`. Read-only; stock changes go through the existing row actions and real purchase entries.

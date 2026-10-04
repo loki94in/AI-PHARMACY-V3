@@ -824,9 +824,9 @@ router.post('/manual', async (req, res) => {
         }
       }
 
-      // Mark the source email as saved so it stays visible in Mail page for 3 days
+      // Bill is saved in the app: the source mail is removed automatically
       if (email_uid) {
-        emailService.markEmailSaved(parseInt(email_uid, 10)).catch((err: any) => {
+        emailService.markEmailSaved(parseInt(email_uid, 10), true).catch((err: any) => {
           console.warn('[Purchase] Failed to mark source email as saved:', err);
         });
       }
@@ -2490,11 +2490,11 @@ router.post('/reconciliation/resolve', async (req, res) => {
       return res.status(404).json({ error: 'Email not found' });
     }
 
-    await db.run('UPDATE emails SET is_saved = 1, is_seen = 1 WHERE uid = ?', [email_uid]);
     await db.run(
       'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
       ['EMAIL_ORDER_RESOLVED_MANUALLY', `Manually reconciled email order from: ${email.from_addr}, subject: ${email.subject}`]
     );
+    await emailService.markEmailSaved(Number(email_uid), true);
     res.json({ success: true, message: 'Email order marked as reconciled' });
   } catch (error) {
     console.error('Resolve email order error:', error);
@@ -2878,9 +2878,6 @@ router.post('/reconciliation/reissue', async (req, res) => {
     // Update purchases total amount with computed subtotal
     await db.run('UPDATE purchases SET total_amount = ? WHERE id = ?', [subtotal, purchaseId]);
 
-    // Mark email as saved and seen
-    await db.run('UPDATE emails SET is_saved = 1, is_seen = 1 WHERE uid = ?', [email_uid]);
-
     // Log the action
     await db.run(
       'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
@@ -2888,6 +2885,8 @@ router.post('/reconciliation/reissue', async (req, res) => {
     );
 
     await db.run('COMMIT');
+    // Bill committed: the source mail is removed automatically
+    await emailService.markEmailSaved(Number(email_uid), true);
     inventoryCache.invalidate();
     if (uniqueMedicineIds.size > 0) {
       triggerPreCalculatedStockRebuildDebounced(Array.from(uniqueMedicineIds));

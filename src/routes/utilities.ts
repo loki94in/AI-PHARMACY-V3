@@ -471,7 +471,7 @@ router.post('/backup/archive/restore', async (req, res) => {
 // DELETE /api/utilities/backup/archive/:filename
 router.delete('/backup/archive/:filename', async (req, res) => {
   try {
-    backupRecoveryService.deleteArchive(req.params.filename);
+    await backupRecoveryService.deleteArchive(req.params.filename);
     res.json({ success: true, message: 'Archive deleted successfully' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to delete archive: ' + err.message });
@@ -487,7 +487,8 @@ router.post('/backup/manual', async (_req, res) => {
 
     const archiveName = `archive_manual_${new Date().toISOString().split('T')[0]}_${Date.now()}.zip`;
     const archivePath = path.join(ARCHIVES_DIR, archiveName);
-    
+    let upload: Awaited<ReturnType<typeof backupRecoveryService.uploadArchive>> = { gdrive: 'off' };
+
     // Create new snapshot
 //     const _snapshotFile = await backupRecoveryService.createSnapshot();
     const files = fs.readdirSync(SNAPSHOTS_DIR).filter(f => f.startsWith('snapshot_') && (f.endsWith('.db') || f.endsWith('.db.gz')));
@@ -499,7 +500,7 @@ router.post('/backup/manual', async (_req, res) => {
       // Clean up snapshots
       files.forEach(f => fs.unlinkSync(path.join(SNAPSHOTS_DIR, f)));
       // Upload manual archive
-      await backupRecoveryService.uploadArchive(archiveName);
+      upload = await backupRecoveryService.uploadArchive(archiveName);
       await backupRecoveryService.enforceRetention();
     } else {
       // Create backup of active db directly as a zip archive
@@ -514,11 +515,16 @@ router.post('/backup/manual', async (_req, res) => {
       zip.writeZip(archivePath);
       fs.unlinkSync(tempDbPath);
 
-      await backupRecoveryService.uploadArchive(archiveName);
+      upload = await backupRecoveryService.uploadArchive(archiveName);
       await backupRecoveryService.enforceRetention();
     }
 
-    res.json({ success: true, message: 'Manual backup and upload completed successfully', archiveName });
+    const message = upload.gdrive === 'failed'
+      ? `Backup saved on this PC. Google Drive upload failed: ${upload.gdriveError}`
+      : upload.gdrive === 'uploaded'
+        ? 'Backup saved and uploaded to Google Drive'
+        : 'Backup saved on this PC';
+    res.json({ success: true, message, archiveName, gdrive: upload.gdrive, gdriveError: upload.gdriveError });
   } catch (err: any) {
     console.error('[Backup] Manual backup failed:', err);
     res.status(500).json({ error: 'Manual backup failed: ' + err.message });
@@ -543,6 +549,12 @@ router.post('/backup/toggle-pause', async (_req, res) => {
 router.post('/backup/gdrive/toggle', async (req, res) => {
   try {
     const { enabled } = req.body;
+    if (enabled) {
+      const test = await backupRecoveryService.testGoogleDriveConnection();
+      if (!test.success) {
+        return res.status(400).json({ error: `Google Drive is not connected, so auto-backup was not turned on: ${test.error || 'connection test failed'}` });
+      }
+    }
     const db = await dbManager.getConnection();
     const val = enabled ? 'true' : 'false';
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', ?)", [val]);

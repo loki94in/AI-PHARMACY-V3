@@ -52,7 +52,6 @@ export async function startEmailPoller(): Promise<void> {
 
     // Credentials present — proceed with IMAP polling
     emailService.startPolling(effectiveInterval);
-    emailService.pruneOldEmails().catch(err => console.error('[EmailPoller] Prune on startup failed:', err));
     console.log(`[EmailPoller] Email poller worker started with interval: ${effectiveInterval} minutes.`);
     return;
   } catch (dbErr) {

@@ -1047,7 +1047,7 @@
 |---|---|
 | **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
 | **Root cause** | `POST /sales` (`src/routes/sales.ts`): MRP snapshot from the client or 0 (`:441`, the stock query has no `im.mrp`); patient `'Customer'` saved and a customer record created (`:178, :205-207, :255`); `'AI Pharmacy'` shop name (`:251`); `'Medicine'` name (`:438`); `'CASH'/'PAID'` when missing (`:136`); pack size `COALESCE(m.pack_size, 1)` in stock math. `isExpiredForSale` treats a missing expiry as sellable (`src/utils/inventoryActive.ts:11`). POS reloads a saved ₹ discount into the % box and adds an advance payment to it (`POS:1206, 1457`), and back-dated bills overflow the month (`POS:3663-3671`). |
-| **How it was fixed** | Open — Phase 2 of the plan (with P2-68). |
+| **How it was fixed** | Partly fixed 2026-10-04 (Phase 2): `POST /sales` now refuses a batch with no expiry, no MRP, or loose units with no saved pack size; MRP snapshot comes from the batch (`im.mrp`), tax snapshot from the resolved GST rate; no `'AI Pharmacy'` shop name; no customer record created from an empty name+phone. STILL OPEN: `'Customer'` / `'CASH'` / `'PAID'` defaults, `COALESCE(pack_size,1)` in strip math, POS discount/advance/back-date issues. |
 | **Priority** | P1 |
 | **What not to touch** | Bill totals and the tax-inclusive formula in `utils/saleTotals.ts`. |
 | **Verified by** | — |
@@ -1124,7 +1124,7 @@
 |---|---|
 | **What the user saw** | Not reported. Found 2026-09-30 in the edit-old-bill audit. |
 | **Root cause** | `calculateSalesGstAndTotals` (`src/utils/saleTotals.ts`, moved unchanged from `routes/sales.ts`) sets CGST and SGST to 2.5% each when neither the line nor `medicines.cgst_per/sgst_per` has a rate. It also treats a real 0% as missing. The bill TOTAL is unaffected (prices are tax-inclusive), but the saved GST split is assumed, not real. **Wider than first thought (fallback audit, 2026-09-30):** POS sends no GST on any line (`POS:3628-3649`), and in the 27 Sep shop copy every one of the 5,739 shelf medicines has 0% in `medicines`. So EVERY POS sale gets 5%. Real rates live on the purchase lines: 12% (28,585 lines), 18% (14,408), 5% (11,892), 0% (8,558). `tax_percent_snapshot` is saved as 0 on the same line. Customer returns (`customerReturns.ts:110-111`) repeat the same rule. |
-| **How it was fixed** | Open — Phase 2 of `PURCHASE_BILL_TRUTH_AUDIT_AND_FIX_PLAN.md`. Proposed: GST % from the purchase line of the same batch, a 0% there is a real 0%, and no rate at all refuses the sale with a plain message. Needs the owner's yes. |
+| **How it was fixed** | Partly fixed 2026-10-04: the 2.5%+2.5% fallback was already gone; `calculateSalesGstAndTotals` now takes the rate from the purchase line of the same batch (real 0% kept) before the medicine master. A batch with no purchase line and no master rate still saves 0% GST (not refused, so the counter is never blocked; total unaffected). Customer returns not yet changed. Original proposal: GST % from the purchase line of the same batch, a 0% there is a real 0%, and no rate at all refuses the sale with a plain message. Needs the owner's yes. |
 | **Priority** | P1 (was P2) |
 | **What not to touch** | Bill totals. |
 | **Verified by** | — |

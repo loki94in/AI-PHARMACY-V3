@@ -140,9 +140,9 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
     setLastBackupError(null);
     window.dispatchEvent(new CustomEvent('backup-status-changed', { detail: { active: true, label: 'Creating Database Backup...' } }));
     try {
-      const { data } = await apiClient.post('/utilities/backup/manual');
+      const { data } = await apiClient.post('/utilities/backup/manual', undefined, { timeout: 600000 });
       if (data.success) {
-        toastEvent.trigger('Manual backup and cloud upload completed successfully!', 'success');
+        toastEvent.trigger(data.message || 'Backup saved', data.gdrive === 'failed' ? 'error' : 'success');
         setLastBackupError(null);
         refreshStatus();
       }
@@ -160,7 +160,7 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
   const handleRestore = async (filename: string) => {
     setActionLoading(true);
     try {
-      const { data } = await apiClient.post('/utilities/backup/archive/restore', { filename });
+      const { data } = await apiClient.post('/utilities/backup/archive/restore', { filename }, { timeout: 600000 });
       if (data.success) {
         toastEvent.trigger('Database successfully restored! Reloading application...', 'success');
         setConfirmRestore(null);

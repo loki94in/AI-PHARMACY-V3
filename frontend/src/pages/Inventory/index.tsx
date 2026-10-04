@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useQueryClient } from '@tanstack/react-query';
-import { PackageSearch, Plus, Minus, RefreshCw, X, AlertTriangle, ShieldAlert, BookOpen, Factory, Edit, Save, Loader2, Columns3, Check, Download, ShoppingCart, Globe, Eye, EyeOff } from 'lucide-react';
+import { PackageSearch, Plus, Minus, RefreshCw, X, AlertTriangle, ShieldAlert, BookOpen, Factory, Edit, Save, Loader2, Columns3, Check, Download, ShoppingCart, Globe, Eye, EyeOff, CalendarCheck } from 'lucide-react';
 import { api, type InventoryItem, type SpecialOrder } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { parsePackSizeFromPackaging } from '../../utils/packagingMatcher';
@@ -17,6 +17,7 @@ import { useRef } from 'react';
 import { exportToCSV, exportToPDF } from '../../utils/export';
 
 import { LastPurchaseByDistributor } from '../../components/LastPurchaseByDistributor';
+import { TodaysReceiptsPanel } from '../../components/TodaysReceiptsPanel';
 const UniversalMedicineEditModal = lazy(() => import('../../components/UniversalMedicineEditModal').then(m => ({ default: m.UniversalMedicineEditModal })));
 
 type LocalSellSourceItem = InventoryItem & { inventory_id?: number; batch_no?: string };
@@ -287,6 +288,7 @@ const Inventory = () => {
   const [editForm, setEditForm] = useState<Partial<InventoryItem>>({});
   
   const [universalEditMedicineId, setUniversalEditMedicineId] = useState<number | null>(null);
+  const [showTodaysBills, setShowTodaysBills] = useState(false);
 
   // Visibility-gated: a hidden kept-alive Inventory page must not fire this
   // query on warm-mount or background invalidations.
@@ -589,6 +591,16 @@ const Inventory = () => {
               <option value="online">🌐 Online Only</option>
               <option value="offline">📴 Offline Only</option>
             </select>
+
+            {/* Bills received today: reconcile against the shelf */}
+            <button
+              onClick={() => setShowTodaysBills(true)}
+              className="h-8 flex items-center gap-1.5 px-3 rounded-lg border bg-bg3 border-glass-border text-muted hover:text-text hover:bg-bg2 text-[13px] font-semibold transition-all"
+              title="Medicines received through saved purchase bills today"
+            >
+              <CalendarCheck size={14} />
+              Today's Bills
+            </button>
 
             {/* Direct button to Online Catalog */}
             <button
@@ -1282,6 +1294,15 @@ const Inventory = () => {
         document.body
       )}
 
+      {showTodaysBills && (
+        <TodaysReceiptsPanel
+          onClose={() => setShowTodaysBills(false)}
+          onFind={(name) => {
+            setColFilters(prev => ({ ...prev, medicine: name }));
+            setShowTodaysBills(false);
+          }}
+        />
+      )}
       {universalEditMedicineId && (
         <Suspense fallback={<ModalSkeleton />}>
           <UniversalMedicineEditModal

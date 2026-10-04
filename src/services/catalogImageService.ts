@@ -6,6 +6,7 @@ import { eventService } from './eventService.js';
 // import { aiCameraService } from './aiCameraService.js';
 import { hasFormulationModifierConflict } from './productNameFilterService.js';
 import { Jimp } from 'jimp';
+import { imageCompressionService } from './imageCompressionService.js';
 
 export interface BestPackagingFaceResult {
   url: string;
@@ -1515,14 +1516,6 @@ export class CatalogImageService {
     // Download image
     const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
     const filename = `${slug}-candidate-${Date.now()}.jpg`;
-    const frontendDir = path.resolve(process.cwd(), 'frontend/public/products');
-    const uploadsDir = path.resolve(process.cwd(), 'uploads/products');
-
-    fs.mkdirSync(frontendDir, { recursive: true });
-    fs.mkdirSync(uploadsDir, { recursive: true });
-
-    const frontendPath = path.join(frontendDir, filename);
-    const uploadsPath = path.join(uploadsDir, filename);
 
     try {
       let buffer: Buffer;
@@ -1577,16 +1570,13 @@ export class CatalogImageService {
         return null;
       }
 
-      fs.writeFileSync(frontendPath, buffer);
-      fs.writeFileSync(uploadsPath, buffer);
+      const relPath = await this.storeCatalogImage(db, buffer, filename, hash);
 
       // Compute multi-signal score
       const matchResult = this.computeConfidence(med, {
         name: selectedCandidate.name,
         manufacturer: selectedCandidate.manufacturer
       });
-
-      const relPath = `/products/${filename}`;
 
       let imageType = 'combined';
       if (selectedFace === 'combo-stitched' || selectedFace === 'combo') imageType = 'combined';
@@ -2531,7 +2521,25 @@ export class CatalogImageService {
    * Scans medicines that lack an active verified image, generates tiered queries, downloads candidates,
    * validates against product brand and strength, and activates high-confidence images.
    */
-  public async repairMissingImages(limit = 50): Promise<{
+  /**
+   * Single storage path for downloaded catalog images: dedupe by content hash, otherwise
+   * compress (max 900px JPEG) into uploads/products only (server.ts serves /products from it).
+   * Returns the web path to store in catalog_images.image_path.
+   */
+  private async storeCatalogImage(db: any, buffer: Buffer, filename: string, hash: string): Promise<string> {
+    const dup = await db.get('SELECT image_path FROM catalog_images WHERE image_hash = ? LIMIT 1', [hash]);
+    if (dup?.image_path) {
+      const existing = path.join(process.cwd(), 'uploads/products', path.basename(dup.image_path));
+      const legacy = path.join(process.cwd(), 'frontend/public/products', path.basename(dup.image_path));
+      if (fs.existsSync(existing) || fs.existsSync(legacy)) return dup.image_path;
+    }
+    const dir = path.resolve(process.cwd(), 'uploads/products');
+    fs.mkdirSync(dir, { recursive: true });
+    await imageCompressionService.compressAndSave(buffer, path.join(dir, filename), 900);
+    return `/products/${filename}`;
+  }
+
+  public async repairMissingImages(limit = 50, retryMisses = false): Promise<{
     scanned: number;
     repaired: number;
     failed: number;
@@ -2543,6 +2551,27 @@ export class CatalogImageService {
     // Prioritize refill catalog medicines that are missing images
     const targetMeds: Array<{ id: number; name: string; manufacturer: string | null; strength: string | null; packaging: string | null }> = [];
     const seenIds = new Set<number>();
+
+    // Resume support: medicines with no online match are remembered for 7 days so repeated
+    // runs continue with the NEXT medicines instead of re-searching the same misses.
+    const MISS_KEY = 'catalog_image_miss_cache';
+    const MISS_TTL_MS = 7 * 24 * 3600 * 1000;
+    let misses: Record<string, number> = {};
+    try {
+      const row = await db.get('SELECT value FROM app_settings WHERE key = ?', [MISS_KEY]);
+      if (row?.value) misses = JSON.parse(row.value) || {};
+    } catch (_) {}
+    const now = Date.now();
+    for (const [id, ts] of Object.entries(misses)) {
+      if (now - ts > MISS_TTL_MS) delete misses[id];
+      else if (!retryMisses) seenIds.add(Number(id));
+    }
+    const saveMisses = async () => {
+      try {
+        await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [MISS_KEY, JSON.stringify(misses)]);
+      } catch (_) {}
+    };
+    if (limit <= 0) limit = 100000; // 0 = process every remaining medicine
 
     try {
       const csvPath = path.resolve(process.cwd(), 'CATALOG/monthly_refill_master_list.csv');
@@ -2580,7 +2609,7 @@ export class CatalogImageService {
          WHERE m.id NOT IN (SELECT medicine_id FROM catalog_images WHERE is_active = 1)
          ORDER BY m.id ASC
          LIMIT ?`,
-        [remainingLimit]
+        [remainingLimit + seenIds.size]
       );
       for (const m of additional) {
         if (!seenIds.has(m.id)) {
@@ -2597,6 +2626,7 @@ export class CatalogImageService {
       try {
         const record = await this.searchAndDownloadCandidate(med.id);
         if (record) {
+          delete misses[String(med.id)];
           repaired++;
           results.push({
             medicine_id: med.id,
@@ -2607,6 +2637,7 @@ export class CatalogImageService {
           });
         } else {
           failed++;
+          misses[String(med.id)] = Date.now();
           results.push({
             medicine_id: med.id,
             name: med.name,
@@ -2623,9 +2654,11 @@ export class CatalogImageService {
           reason: err?.message || 'Download error'
         });
       }
+      if (results.length % 25 === 0) await saveMisses();
       await new Promise(r => setTimeout(r, 100)); // anti-hammer pacing
     }
 
+    await saveMisses();
     eventService.broadcast('catalog_image_updated', {
       action: 'repair_batch_completed',
       repaired,
@@ -3332,14 +3365,6 @@ export class CatalogImageService {
     // Download image
     const slug = (med.name || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
     const filename = `${slug}-${targetType}-${Date.now()}.jpg`;
-    const frontendDir = path.resolve(process.cwd(), 'frontend/public/products');
-    const uploadsDir = path.resolve(process.cwd(), 'uploads/products');
-
-    fs.mkdirSync(frontendDir, { recursive: true });
-    fs.mkdirSync(uploadsDir, { recursive: true });
-
-    const frontendPath = path.join(frontendDir, filename);
-    const uploadsPath = path.join(uploadsDir, filename);
 
     const cleanCandidateUrl = this.cleanseCdnImageUrl(candidateUrl);
     const downloadHeaders: Record<string, string> = {
@@ -3366,10 +3391,7 @@ export class CatalogImageService {
       throw new Error('This image was previously rejected for this medicine.');
     }
 
-    fs.writeFileSync(frontendPath, buffer);
-    fs.writeFileSync(uploadsPath, buffer);
-
-    const relPath = `/products/${filename}`;
+    const relPath = await this.storeCatalogImage(db, buffer, filename, hash);
     const nextVersion = (current.verification_version || 1) + 1;
 
     await db.run('BEGIN TRANSACTION');

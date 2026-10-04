@@ -13,7 +13,7 @@ import { notificationManager } from '../utils/notifications.js';
 import { parse } from 'csv-parse/sync';
 import { eventService } from './eventService.js';
 import { extractCleanEmail } from '../utils/emailSanitizer.js';
-import { getEmailRetentionLimit, getEmailRetentionDays, getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
+import { getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
 import { config, getAppDataDir } from '../config/index.js';
 import { medicineService } from './medicineService.js';
 import { isValidDistributorName } from '../utils/nameNormalizer.js';
@@ -2076,99 +2076,19 @@ export class EmailService {
   }
 
   /**
-   * Cleans up older emails beyond retention limit in background (pure local SQLite/disk operation).
-   * Kept for interface compatibility; delta sync already downloads attachments on arrival.
+   * Mails are kept until the user deletes them by hand (no age/count pruning).
+   * Bulk manual delete: same per-mail cleanup as deleteEmail, one SSE event at the end.
    */
-  public async syncAndCleanAttachments(): Promise<void> {
-    try {
-      await this.pruneOldEmails();
-    } catch (err) {
-      console.error('[Sync] Error during email cleanup:', err);
+  public async deleteEmails(uids: number[]): Promise<{ deletedCount: number }> {
+    let deletedCount = 0;
+    for (const uid of uids) {
+      const r = await this.deleteEmail(uid, false);
+      if (r.deleted) deletedCount++;
     }
-  }
-
-  /**
-   * Automatically prunes old emails:
-   * 1. Emails older than retention days (default: 14 days) are pruned unconditionally (including is_saved = 1).
-   * 2. Non-saved emails within the retention window beyond the count limit (default: 15) are pruned.
-   * Physically deletes unimported attachment files from disk and removes database records.
-   */
-  public async pruneOldEmails(dbInstance?: any): Promise<{ deletedCount: number }> {
-    try {
-      await ensureEmailSchema();
-      const db = dbInstance || (await dbManager.getConnection());
-      const limit = await getEmailRetentionLimit(db);
-      const retentionDays = await getEmailRetentionDays(db);
-
-      const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-
-      // 1. UIDs of ALL emails older than retentionDays (including saved/processed)
-      const expiredEmails = await db.all(
-        `SELECT uid FROM emails 
-         WHERE datetime(COALESCE(date, synced_at)) < datetime(?)`,
-        [cutoffDate]
-      );
-      const expiredUids: number[] = (expiredEmails || []).map((e: any) => e.uid);
-
-      // 2. Non-saved emails within the retention window (ordered latest first)
-      const nonSavedEmails = await db.all(
-        `SELECT uid FROM emails 
-         WHERE (is_saved IS NULL OR is_saved = 0)
-           AND datetime(COALESCE(date, synced_at)) >= datetime(?)
-         ORDER BY datetime(COALESCE(date, synced_at)) DESC, uid DESC`,
-        [cutoffDate]
-      );
-
-      const countPruneUids: number[] = (nonSavedEmails || []).length > limit
-        ? nonSavedEmails.slice(limit).map((e: any) => e.uid)
-        : [];
-
-      // Combine unique UIDs to delete
-      const uidsToDelete = Array.from(new Set([...expiredUids, ...countPruneUids]));
-
-      if (uidsToDelete.length === 0) {
-        return { deletedCount: 0 };
-      }
-
-      let deletedCount = 0;
-      const uploadsDir = process.env.UPLOADS_DIR || path.join(getAppDataDir(), 'uploads');
-
-      for (const uid of uidsToDelete) {
-        // Find attachments for this email
-        const attachments = await db.all(
-          'SELECT local_path, filename FROM email_attachments WHERE uid = ?',
-          [uid]
-        );
-
-        for (const att of attachments) {
-          const filePath = att.local_path || (att.filename ? path.join(uploadsDir, att.filename) : null);
-          if (filePath && fs.existsSync(filePath)) {
-            try {
-              fs.unlinkSync(filePath);
-              console.log(`[EmailPruner] Cleaned up attachment file: ${filePath}`);
-            } catch (fileErr) {
-              console.warn(`[EmailPruner] Failed to delete file ${filePath}:`, fileErr);
-            }
-          }
-        }
-
-        // Delete records
-        await db.run('DELETE FROM email_attachments WHERE uid = ?', [uid]);
-        await db.run('DELETE FROM processed_emails WHERE uid = ?', [uid]);
-        await db.run('DELETE FROM email_order_reviews WHERE email_uid = ?', [uid]);
-        await db.run('DELETE FROM emails WHERE uid = ?', [uid]);
-        deletedCount++;
-      }
-
-      if (deletedCount > 0) {
-        console.log(`[EmailPruner] Cleaned up ${deletedCount} old email(s). (Pruned emails older than ${retentionDays} days, retained latest ${limit} non-saved emails within window).`);
-      }
-
-      return { deletedCount };
-    } catch (err) {
-      console.error('[EmailPruner] Error during email pruning:', err);
-      return { deletedCount: 0 };
+    if (deletedCount > 0) {
+      eventService.broadcast('email_update', { success: true, deletedCount, message: `${deletedCount} email(s) deleted` });
     }
+    return { deletedCount };
   }
 
 
@@ -2256,7 +2176,7 @@ export class EmailService {
   /**
    * Deletes an email and its associated attachments from the local database and uploads directory.
    */
-  public async deleteEmail(uid: number): Promise<{ success: boolean; deleted: boolean }> {
+  public async deleteEmail(uid: number, notify: boolean = true): Promise<{ success: boolean; deleted: boolean }> {
     try {
       await ensureEmailSchema();
       const db = await dbManager.getConnection();
@@ -2313,11 +2233,12 @@ export class EmailService {
 
       // 3. Delete attachment records and email record
       await db.run('DELETE FROM email_attachments WHERE uid = ?', [uid]);
+      await db.run('DELETE FROM email_order_reviews WHERE email_uid = ?', [uid]);
       const res = await db.run('DELETE FROM emails WHERE uid = ?', [uid]);
       const deleted = (res.changes || 0) > 0;
 
       // 4. Broadcast SSE update so open pages immediately refresh their inbox cache
-      if (deleted) {
+      if (deleted && notify) {
         eventService.broadcast('email_update', { success: true, deletedUid: uid, message: `Email #${uid} deleted` });
       }
 
@@ -2468,9 +2389,11 @@ export class EmailService {
       await ensureEmailSchema();
       const db = await dbManager.getConnection();
 
-      // Find the highest UID already stored
+      // Resume point = highest UID ever synced. The saved watermark survives the user deleting
+      // the newest mail by hand (MAX(uid) alone would re-download it).
       const maxRow = await db.get('SELECT MAX(uid) as maxUid FROM emails');
-      const lastStoredUid: number = maxRow?.maxUid || 0;
+      const wmRow = await db.get("SELECT value FROM app_settings WHERE key = 'email_last_synced_uid'");
+      const lastStoredUid: number = Math.max(maxRow?.maxUid || 0, parseInt(wmRow?.value || '0', 10) || 0);
 
       console.log(`[Sync] Last stored UID: ${lastStoredUid}. Connecting to IMAP for delta sync...`);
 
@@ -2498,14 +2421,10 @@ export class EmailService {
       // Filter strictly: only new UIDs (IMAP UID range can return boundary message)
       const newResults = uids.filter((uid: number) => uid > lastStoredUid);
 
-      // Sort descending (newest first)
-      newResults.sort((a: number, b: number) => b - a);
-
-      // Limit to max 50 per sync to avoid timeouts and connection drops
+      // Oldest first, max 50 per sync (avoids timeouts/connection drops). Taking the OLDEST 50
+      // means a bigger backlog is simply continued by the next poll — nothing is skipped.
+      newResults.sort((a: number, b: number) => a - b);
       const limitedResults = newResults.slice(0, 50);
-
-      // Sort ascending (oldest first of the limited set) so they get inserted in SQLite in chronological order
-      limitedResults.sort((a: number, b: number) => a - b);
 
       console.log(`[Sync] Found ${newResults.length} new email(s) to download.`);
 
@@ -2638,6 +2557,13 @@ export class EmailService {
         }
       }
 
+      if (limitedResults.length > 0) {
+        await db.run(
+          "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('email_last_synced_uid', ?)",
+          [String(limitedResults[limitedResults.length - 1])]
+        );
+      }
+
       // Scan recent emails (up to 30) for any email missing a sent notification
       try {
         const targetPhones = await getInvoiceWhatsAppRecipients(db);
@@ -2681,11 +2607,6 @@ export class EmailService {
       } catch (scanErr) {
         console.error('[Sync] Error scanning un-notified emails:', scanErr);
       }
-
-      // Trigger background local cleanup for database and files (pure SQLite/disk operation, zero secondary IMAP connections)
-      this.pruneOldEmails(db).catch(err => {
-        console.error('[Sync] Background email prune failed:', err);
-      });
 
       console.log(`[Sync] Delta sync complete. Stored ${syncedCount} new email(s).`);
       // P1 push event (API_OPTIMIZATION plan): Mail page updates without polling
@@ -2751,11 +2672,15 @@ export class EmailService {
    * Marks an email as saved (purchase bill processed) in the local DB.
    * This changes the UI color to Grey.
    */
-  public async markEmailSaved(uid: number): Promise<boolean> {
+  public async markEmailSaved(uid: number, removeAfter: boolean = false): Promise<boolean> {
     try {
       await ensureEmailSchema();
       const db = await dbManager.getConnection();
       await db.run('UPDATE emails SET is_saved = 1, is_seen = 1 WHERE uid = ?', [uid]);
+      // removeAfter = the bill from this mail is really saved in the app (purchase committed):
+      // the mail and its attachment files are then removed automatically. The Mail page's
+      // "Proceed" click only greys the mail (removeAfter=false) because the bill isn't saved yet.
+      if (removeAfter) await this.deleteEmail(uid);
       return true;
     } catch (err) {
       console.error('[Mail] markEmailSaved error:', err);

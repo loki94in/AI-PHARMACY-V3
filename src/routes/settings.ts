@@ -445,14 +445,6 @@ router.post('/save', async (req, res) => {
         console.error('[Settings] Trigger scheduler reload error:', tsErr);
       }
 
-      if (payload['email_retention_limit'] !== undefined || payload['email_retention_days'] !== undefined) {
-        try {
-          const db = await dbManager.getConnection();
-          const { emailService } = await import('../services/emailService.js');
-          emailService.pruneOldEmails(db).catch(err => console.error('Pruning after settings update failed:', err));
-        } catch (err) { }
-      }
-
       if (payload['pharmarack_reorder_window_months'] !== undefined) {
         try {
           const db = await dbManager.getConnection();
@@ -1238,6 +1230,48 @@ router.post('/holidays', async (req, res) => {
   } catch (error: any) {
     console.error('Save holiday error:', error);
     res.status(500).json({ error: 'Failed to save holiday: ' + error.message });
+  }
+});
+
+// Multi-date save: one name/rule applied to every picked date (same upsert as POST /holidays).
+router.post('/holidays/bulk', async (req, res) => {
+  try {
+    const { dates, holiday_name, name, is_closed = 1, custom_window_start = null, custom_window_end = null, store_id = 1 } = req.body;
+    const finalName = String(holiday_name || name || '').trim();
+    const list: string[] = Array.isArray(dates)
+      ? Array.from(new Set(dates.map((d: unknown) => String(d)).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))))
+      : [];
+    if (!finalName || list.length === 0 || list.length > 366) {
+      return res.status(400).json({ error: 'name and 1-366 valid YYYY-MM-DD dates are required' });
+    }
+    const isClosedVal = is_closed === false || is_closed === 0 || is_closed === '0' || is_closed === 'false' ? 0 : 1;
+    const winStart = isClosedVal ? null : custom_window_start;
+    const winEnd = isClosedVal ? null : custom_window_end;
+
+    const db = await dbManager.getConnection();
+    await db.run('BEGIN');
+    try {
+      for (const d of list) {
+        await db.run(
+          `INSERT INTO pharmacy_holidays (store_id, holiday_date, name, holiday_name, is_closed, open_time, close_time, custom_window_start, custom_window_end, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(store_id, holiday_date) DO UPDATE SET
+             name = excluded.name, holiday_name = excluded.holiday_name, is_closed = excluded.is_closed,
+             open_time = excluded.open_time, close_time = excluded.close_time,
+             custom_window_start = excluded.custom_window_start, custom_window_end = excluded.custom_window_end,
+             updated_at = CURRENT_TIMESTAMP`,
+          [store_id, d, finalName, finalName, isClosedVal, winStart, winEnd, winStart, winEnd]
+        );
+      }
+      await db.run('COMMIT');
+    } catch (e) {
+      await db.run('ROLLBACK');
+      throw e;
+    }
+    res.json({ success: true, saved: list.length });
+  } catch (error: any) {
+    console.error('Bulk save holidays error:', error);
+    res.status(500).json({ error: 'Failed to save holidays: ' + error.message });
   }
 });
 

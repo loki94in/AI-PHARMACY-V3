@@ -535,6 +535,27 @@ export interface RefillCartResult {
   candidates: RefillCartCandidate[];
 }
 
+export interface TodaysReceiptRow {
+  line_id: number;
+  medicine_id: number;
+  medicine_name: string;
+  pack_size: number;
+  batch_no: string | null;
+  expiry_date: string | null;
+  quantity: number;
+  free_qty: number;
+  mrp: number | null;
+  purchase_id: number;
+  invoice_no: string | null;
+  bill_date: string;
+  distributor_name: string | null;
+  shelf_qty: number;
+  shelf_loose: number;
+  sold_qty: number;
+  sold_loose: number;
+  sold_out: boolean;
+}
+
 export interface LastPurchaseByDistributorRow {
   distributor_id: number;
   distributor_name: string;
@@ -1284,6 +1305,7 @@ export const api = {
     apiClient.get(`/crm/doctors/${id}/combinations/${medicineId}`).then(r => r.data),
   
   getEmailStatus: () => apiClient.get('/email/status').then(res => res.data),
+  deleteEmails: (uids: number[]) => apiClient.post<{ success: boolean; deletedCount: number; message: string }>('/email/delete-many', { uids }).then(res => res.data),
   getEmailInbox: (limit: number = 50, since?: string) => apiClient.get('/email/inbox', { params: { limit, since } }).then(res => res.data),
   getEmailBody: (emailId: number) => apiClient.get(`/email/${emailId}/body`).then(res => res.data as { uid: number; body: string }),
   getEmailAttachments: () => apiClient.get('/email/attachments').then(res => res.data),
@@ -1359,6 +1381,10 @@ export const api = {
         name,
         ...(medicineId ? { medicine_id: medicineId } : {})
       }
+    }).then(res => res.data),
+  getTodaysReceipts: (date?: string) =>
+    apiClient.get<{ date: string; data: TodaysReceiptRow[] }>('/inventory/todays-receipts', {
+      params: date ? { date } : undefined
     }).then(res => res.data),
   getLastPurchaseByDistributor: (medicineId: number) =>
     apiClient.get<{ data: LastPurchaseByDistributorRow[] }>('/purchases/last-by-distributor', {

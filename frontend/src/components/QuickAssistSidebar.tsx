@@ -52,6 +52,7 @@ export const QuickAssistSidebar = memo(({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const cartJobs = React.useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
   const [markingOrderedRefillIds, setMarkingOrderedRefillIds] = useState<Set<number>>(new Set());
+  const [distOpenRefillIds, setDistOpenRefillIds] = useState<Set<number>>(new Set());
   const [processingOrderIds, setProcessingOrderIds] = useState<Set<number>>(new Set());
   const [optimisticHiddenOrderIds, setOptimisticHiddenOrderIds] = useState<Set<number>>(new Set());
   const [arrivalModalGroup, setArrivalModalGroup] = useState<{
@@ -1208,11 +1209,12 @@ export const QuickAssistSidebar = memo(({
                           return (
                             <div
                               key={med.id}
-                              className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-bg3/80 border border-border text-[11px] min-w-0"
+                              className="flex flex-col gap-1 px-2.5 py-1.5 rounded-lg bg-bg3/80 border border-border text-[11px] min-w-0"
                             >
+                            <div className="flex items-center justify-between gap-2 min-w-0">
                               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                 <Package size={11} className="text-purple-500 shrink-0" />
-                                <span className="font-medium text-text truncate">{med.medicine_name}</span>
+                                <span className="font-medium text-text break-words min-w-0">{med.medicine_name}</span>
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0">
                                 <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[10px] font-mono font-bold">
@@ -1220,13 +1222,23 @@ export const QuickAssistSidebar = memo(({
                                 </span>
                                 <span className="text-[9px] text-muted">{med.refill_interval_days}d</span>
                                 {isMedInCart ? (
-                                  <span
-                                    className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-1"
-                                    title={`In Cart / Ordered: ${med.cart_store_name || 'Ordered'}${med.cart_qty ? ` (Qty ${med.cart_qty})` : ''}`}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDistOpenRefillIds(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(med.id)) next.delete(med.id); else next.add(med.id);
+                                        return next;
+                                      });
+                                    }}
+                                    className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-1 cursor-pointer"
+                                    title="Show distributor"
                                   >
                                     <Check size={9} className="text-emerald-500" />
-                                    <span className="truncate max-w-[80px]">{med.cart_store_name || 'In Cart'}</span>
-                                  </span>
+                                    <span>{med.cart_store_name ? 'In Cart' : 'Ordered'}</span>
+                                    <ChevronDown size={10} className={`transition-transform ${distOpenRefillIds.has(med.id) ? 'rotate-180' : ''}`} />
+                                  </button>
                                 ) : (
                                   <div className="flex items-center gap-1">
                                     <button
@@ -1256,6 +1268,13 @@ export const QuickAssistSidebar = memo(({
                                   </div>
                                 )}
                               </div>
+                            </div>
+                            {isMedInCart && distOpenRefillIds.has(med.id) && (
+                              <div className="pl-5 text-[10px] text-muted break-words">
+                                Distributor: <span className="font-semibold text-text">{med.cart_store_name || 'Ordered manually'}</span>
+                                {med.cart_qty ? ` · Qty ${med.cart_qty}` : ''}
+                              </div>
+                            )}
                             </div>
                           );
                         })}

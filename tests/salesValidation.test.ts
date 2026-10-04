@@ -54,7 +54,7 @@ describe('Sales Validation & Loose-Only Sales', () => {
     // Seed database
     await db.run('INSERT INTO medicines (id, name, pack_size) VALUES (200, "LooseOnlyMed", 10)');
     // Seed inventory: 2 strips and 5 loose units (total 25 units)
-    await db.run('INSERT INTO inventory_master (id, medicine_id, quantity, loose_quantity, batch_no, expiry_date) VALUES (200, 200, 2, 5, "B-LOOSE", "12/2099")');
+    await db.run('INSERT INTO inventory_master (id, medicine_id, quantity, loose_quantity, batch_no, expiry_date, mrp) VALUES (200, 200, 2, 5, "B-LOOSE", "12/2099", 100)');
     await db.close();
 
     const res = await request(app)
@@ -136,7 +136,7 @@ describe('Sales Validation & Loose-Only Sales', () => {
     // Seed database
     await db.run('INSERT INTO medicines (id, name, pack_size) VALUES (201, "ConvertMed", 10)');
     // Seed inventory: 2 strips and 2 loose units
-    await db.run('INSERT INTO inventory_master (id, medicine_id, quantity, loose_quantity, batch_no, expiry_date) VALUES (201, 201, 2, 2, "B-CONV", "12/2099")');
+    await db.run('INSERT INTO inventory_master (id, medicine_id, quantity, loose_quantity, batch_no, expiry_date, mrp) VALUES (201, 201, 2, 2, "B-CONV", "12/2099", 100)');
     await db.close();
 
     // Sell 0 strips and 5 loose units (requires breaking 1 strip -> 1 strip remaining, 12 loose total -> 5 sold -> 7 remaining)

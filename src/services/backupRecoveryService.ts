@@ -220,9 +220,9 @@ export class BackupRecoveryService {
   /**
    * Uploads the daily archive to Google Drive and Telegram if configured.
    */
-  public async uploadArchive(filename: string): Promise<void> {
+  public async uploadArchive(filename: string): Promise<{ gdrive: 'uploaded' | 'failed' | 'off'; gdriveError?: string }> {
     const archivePath = path.join(ARCHIVES_DIR, filename);
-    if (!fs.existsSync(archivePath)) return;
+    if (!fs.existsSync(archivePath)) return { gdrive: 'off' };
 
     const gdriveEnabled = await this.getSetting('backup_gdrive_enabled', 'false') === 'true';
     const telegramEnabled = await this.getSetting('backup_telegram_enabled', 'false') === 'true';
@@ -238,6 +238,7 @@ export class BackupRecoveryService {
 
     let gdriveUploaded = uploadLog[filename].gdrive || false;
     let telegramUploaded = uploadLog[filename].telegram || false;
+    let gdriveResult: { gdrive: 'uploaded' | 'failed' | 'off'; gdriveError?: string } = { gdrive: gdriveEnabled ? 'uploaded' : 'off' };
 
     // Google Drive and Telegram are independent destinations (different services,
     // different credentials, no data dependency) — upload to both concurrently
@@ -260,6 +261,7 @@ export class BackupRecoveryService {
             }
           } else {
             console.warn(`[Backup] Google Drive upload failed for ${filename}. Will retry later.`);
+            gdriveResult = { gdrive: 'failed', gdriveError: (await this.getSetting('backup_last_gdrive_error', '')) || 'Google Drive is not connected' };
           }
         } catch (err) {
           console.error(`[Backup] Google Drive upload error for ${filename}:`, err);
@@ -290,6 +292,7 @@ export class BackupRecoveryService {
 
     // Save updated log
     await this.setSetting('backup_upload_log', JSON.stringify(uploadLog));
+    return gdriveResult;
   }
 
   /**
@@ -749,22 +752,11 @@ export class BackupRecoveryService {
   /**
    * Delete a specific archive.
    */
-  public deleteArchive(filename: string): void {
-    const sanitized = path.basename(filename);
-    if (!sanitized.endsWith('.zip')) {
-      throw new Error('Invalid archive filename');
-    }
-
-    const filePath = path.join(ARCHIVES_DIR, sanitized);
-    const resolvedPath = path.resolve(filePath);
-    if (!resolvedPath.startsWith(ARCHIVES_DIR + path.sep)) {
-      throw new Error('Access denied');
-    }
-
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      console.log(`[Backup] Deleted archive: ${sanitized}`);
-    }
+  public async deleteArchive(filename: string): Promise<void> {
+    // listArchives() shows .zip, .db.gz and .db from both backup folders, so delete must accept all of them.
+    const { deleteBackup } = await import('./backupService.js');
+    deleteBackup(filename);
+    console.log(`[Backup] Deleted archive: ${path.basename(filename)}`);
   }
 
   /**

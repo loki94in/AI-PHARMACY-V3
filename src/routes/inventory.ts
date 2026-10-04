@@ -5,6 +5,7 @@ import { dbManager } from '../database/connection.js';
 import { cacheService } from '../services/cacheService.js';
 import { parsePackSizeFromPackaging } from '../utils/packaging.js';
 import { eventService } from '../services/eventService.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { logMutationAudit } from '../services/auditLoggerService.js';
 import { triggerPreCalculatedStockRebuildDebounced } from '../worker/stockCalculatorWorker.js';
@@ -306,6 +307,83 @@ router.get('/peek/:medicine_id', async (req, res) => {
       stack: error.stack,
       timestamp: new Date().toISOString()
     }));
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// READ-ONLY: every line of purchase bills dated `date` (default: shop-local today) with what is
+// still on the shelf and what was already sold from that batch, so the pharmacist can reconcile.
+router.get('/todays-receipts', async (req, res) => {
+  try {
+    const raw = typeof req.query.date === 'string' ? req.query.date : '';
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : toLocalSqlDateTime().slice(0, 10);
+    const db = await dbManager.getConnection();
+    // sargable bounds on purchases.date (stored shop-local, see src/AGENTS.md bill-date contract)
+    const lines = await db.all(
+      `SELECT pi.id AS line_id, pi.medicine_id, m.name AS medicine_name, COALESCE(m.pack_size, 1) AS pack_size,
+              pi.batch_no, pi.expiry_date, pi.quantity, COALESCE(pi.free_qty, 0) AS free_qty, pi.mrp,
+              p.id AS purchase_id, p.invoice_no, p.date AS bill_date, d.name AS distributor_name
+       FROM purchases p
+       JOIN purchase_items pi ON pi.purchase_id = p.id
+       JOIN medicines m ON m.id = pi.medicine_id
+       LEFT JOIN distributors d ON d.id = p.distributor_id
+       WHERE p.date >= ? AND p.date < date(?, '+1 day')
+       ORDER BY p.id DESC, pi.id ASC`,
+      [day, day]
+    );
+
+    const medIds = [...new Set(lines.map((l: any) => l.medicine_id))];
+    const shelfByKey = new Map<string, { qty: number; loose: number; invIds: number[] }>();
+    const soldByInv = new Map<number, { qty: number; loose: number }>();
+    for (let i = 0; i < medIds.length; i += 500) {
+      const chunk = medIds.slice(i, i + 500);
+      const ph = chunk.map(() => '?').join(',');
+      const inv = await db.all(
+        `SELECT id, medicine_id, batch_no, quantity, loose_quantity FROM inventory_master WHERE medicine_id IN (${ph})`,
+        chunk
+      );
+      const invIds = inv.map((r: any) => r.id);
+      for (const r of inv as any[]) {
+        const key = `${r.medicine_id}|${String(r.batch_no || '').trim().toLowerCase()}`;
+        const cur = shelfByKey.get(key) || { qty: 0, loose: 0, invIds: [] };
+        cur.qty += Number(r.quantity) || 0;
+        cur.loose += Number(r.loose_quantity) || 0;
+        cur.invIds.push(r.id);
+        shelfByKey.set(key, cur);
+      }
+      for (let j = 0; j < invIds.length; j += 500) {
+        const ids = invIds.slice(j, j + 500);
+        const sold = await db.all(
+          `SELECT inventory_id, SUM(quantity) AS qty, SUM(COALESCE(loose_qty, 0)) AS loose
+           FROM sale_items WHERE inventory_id IN (${ids.map(() => '?').join(',')}) GROUP BY inventory_id`,
+          ids
+        );
+        for (const s of sold as any[]) soldByInv.set(s.inventory_id, { qty: Number(s.qty) || 0, loose: Number(s.loose) || 0 });
+      }
+    }
+
+    const data = lines.map((l: any) => {
+      const shelf = shelfByKey.get(`${l.medicine_id}|${String(l.batch_no || '').trim().toLowerCase()}`);
+      let soldQty = 0, soldLoose = 0;
+      for (const id of shelf?.invIds || []) {
+        const s = soldByInv.get(id);
+        if (s) { soldQty += s.qty; soldLoose += s.loose; }
+      }
+      const shelfQty = shelf?.qty ?? 0;
+      const shelfLoose = shelf?.loose ?? 0;
+      return {
+        ...l,
+        shelf_qty: shelfQty,
+        shelf_loose: shelfLoose,
+        sold_qty: soldQty,
+        sold_loose: soldLoose,
+        // sold out = nothing of this batch left on the shelf although it was received on this bill
+        sold_out: shelfQty <= 0 && shelfLoose <= 0
+      };
+    });
+    res.json({ date: day, data });
+  } catch (error: any) {
+    console.error(JSON.stringify({ message: 'Error fetching todays receipts', error: error.message, timestamp: new Date().toISOString() }));
     res.status(500).json({ error: 'Internal server error' });
   }
 });

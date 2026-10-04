@@ -7,6 +7,68 @@ import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice, PharmacyHolidayItem } from './settingsTypes';
 import { Trash2, Save, RefreshCw, Clock, RotateCcw, X, Plus, Calendar } from 'lucide-react';
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const ymd = (y: number, m: number, d: number) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
+
+// Month grid where every click toggles a date; Sundays are tinted for quick bulk picking.
+function MultiDatePicker({ selected, onChange }: { selected: string[]; onChange: (dates: string[]) => void }) {
+  const [view, setView] = useState(() => {
+    const t = new Date();
+    return { y: t.getFullYear(), m: t.getMonth() };
+  });
+  const first = new Date(view.y, view.m, 1).getDay();
+  const days = new Date(view.y, view.m + 1, 0).getDate();
+  const cells: (number | null)[] = [...Array(first).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
+  const toggle = (d: number) => {
+    const k = ymd(view.y, view.m, d);
+    onChange(selected.includes(k) ? selected.filter(x => x !== k) : [...selected, k].sort());
+  };
+  const allSundays = () => {
+    const add: string[] = [];
+    for (let d = 1; d <= days; d++) if (new Date(view.y, view.m, d).getDay() === 0) add.push(ymd(view.y, view.m, d));
+    onChange(Array.from(new Set([...selected, ...add])).sort());
+  };
+  const shift = (delta: number) => setView(v => {
+    const dt = new Date(v.y, v.m + delta, 1);
+    return { y: dt.getFullYear(), m: dt.getMonth() };
+  });
+  const label = new Date(view.y, view.m, 1).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+  return (
+    <div className="bg-bg2 border border-border rounded-lg p-2">
+      <div className="flex items-center justify-between mb-1.5 text-xs text-text">
+        <button type="button" onClick={() => shift(-1)} className="px-2 py-0.5 rounded hover:bg-bg3">‹</button>
+        <span className="font-bold">{label}</span>
+        <button type="button" onClick={() => shift(1)} className="px-2 py-0.5 rounded hover:bg-bg3">›</button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-muted mb-0.5">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i}>{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((d, i) => d === null ? <div key={i} /> : (
+          <button
+            key={i}
+            type="button"
+            onClick={() => toggle(d)}
+            className={`py-1 text-[11px] rounded cursor-pointer ${
+              selected.includes(ymd(view.y, view.m, d))
+                ? 'bg-primary text-white font-bold'
+                : 'text-text hover:bg-bg3'
+            }`}
+          >
+            {d}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center justify-between mt-1.5 text-[10px]">
+        <button type="button" onClick={allSundays} className="text-primary font-bold hover:underline">+ All Sundays this month</button>
+        {selected.length > 0 && (
+          <button type="button" onClick={() => onChange([])} className="text-muted hover:text-text">Clear</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: Record<string, string>; refetchSettings: () => void }) {
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
@@ -26,9 +88,9 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
   const [holidays, setHolidays] = useState<PharmacyHolidayItem[]>([]);
   const [loadingHolidays, setLoadingHolidays] = useState(false);
   const [showAddHoliday, setShowAddHoliday] = useState(false);
-  const [holidayForm, setHolidayForm] = useState({
+  const [holidayForm, setHolidayForm] = useState<{ name: string; dates: string[]; isClosed: boolean; customStart: string; customEnd: string }>({
     name: '',
-    date: '',
+    dates: [],
     isClosed: true,
     customStart: '10:00',
     customEnd: '14:00'
@@ -92,23 +154,23 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
 
   const handleAddHoliday = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!holidayForm.name.trim() || !holidayForm.date) {
-      toastEvent.trigger('Holiday name and date are required', 'error');
+    if (!holidayForm.name.trim() || holidayForm.dates.length === 0) {
+      toastEvent.trigger('Holiday name and at least one date are required', 'error');
       return;
     }
 
     setSavingHoliday(true);
     try {
-      await apiClient.post('/settings/holidays', {
+      await apiClient.post('/settings/holidays/bulk', {
         holiday_name: holidayForm.name.trim(),
-        holiday_date: holidayForm.date,
+        dates: holidayForm.dates,
         is_closed: holidayForm.isClosed,
         custom_window_start: holidayForm.isClosed ? null : holidayForm.customStart,
         custom_window_end: holidayForm.isClosed ? null : holidayForm.customEnd
       });
 
-      toastEvent.trigger(`Holiday "${holidayForm.name}" added`, 'success');
-      setHolidayForm({ name: '', date: '', isClosed: true, customStart: '10:00', customEnd: '14:00' });
+      toastEvent.trigger(`"${holidayForm.name}" saved for ${holidayForm.dates.length} date(s)`, 'success');
+      setHolidayForm({ name: '', dates: [], isClosed: true, customStart: '10:00', customEnd: '14:00' });
       setShowAddHoliday(false);
       fetchHolidays();
     } catch (err: any) {
@@ -388,13 +450,12 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-muted mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={holidayForm.date}
-                    onChange={(e) => setHolidayForm({ ...holidayForm, date: e.target.value })}
-                    className="w-full px-2.5 py-1.5 text-xs bg-bg2 border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-                    required
+                  <label className="block text-[10px] font-bold text-muted mb-1">
+                    Dates ({holidayForm.dates.length} selected) — click several days
+                  </label>
+                  <MultiDatePicker
+                    selected={holidayForm.dates}
+                    onChange={(dates) => setHolidayForm({ ...holidayForm, dates })}
                   />
                 </div>
               </div>
@@ -414,7 +475,7 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
                   disabled={savingHoliday}
                   className="px-3 py-1.5 bg-primary text-white text-xs font-bold rounded-lg shadow-sm hover:bg-primary/90 disabled:opacity-50"
                 >
-                  {savingHoliday ? 'Adding...' : 'Save Holiday'}
+                  {savingHoliday ? 'Saving...' : `Save ${holidayForm.dates.length || ''} Date(s)`}
                 </button>
               </div>
             </form>

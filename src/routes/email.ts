@@ -125,7 +125,6 @@ router.post('/:id/seen', async (req, res) => {
 router.post('/sync', async (_req, res) => {
   try {
     const synced = await emailService.syncNewEmailsFromIMAP();
-    await emailService.pruneOldEmails();
     res.json({ success: true, synced, message: `Synced ${synced} new email(s) from Gmail` });
   } catch (error: any) {
     console.error('Manual sync error:', error);
@@ -133,14 +132,19 @@ router.post('/sync', async (_req, res) => {
   }
 });
 
-// POST /api/email/prune — trigger manual email pruning beyond retention limit
-router.post('/prune', async (_req, res) => {
+// POST /api/email/delete-many { uids: number[] } — user-selected bulk delete (the ONLY way mails leave the app)
+router.post('/delete-many', async (req, res) => {
+  const raw = req.body?.uids;
+  const uids: number[] = Array.isArray(raw) ? raw.map((u: unknown) => Number(u)).filter((u) => Number.isInteger(u) && u > 0) : [];
+  if (uids.length === 0) {
+    return res.status(400).json({ error: 'uids must be a non-empty array of email UIDs' });
+  }
   try {
-    const result = await emailService.pruneOldEmails();
-    res.json({ success: true, deletedCount: result.deletedCount, message: `Pruned ${result.deletedCount} old email(s)` });
+    const { deletedCount } = await emailService.deleteEmails(uids);
+    res.json({ success: true, deletedCount, message: `${deletedCount} email(s) deleted` });
   } catch (error: any) {
-    console.error('Manual prune error:', error);
-    res.status(500).json({ error: error.message || 'Failed to prune emails' });
+    console.error('Bulk delete email error:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete emails' });
   }
 });
 

@@ -67,6 +67,13 @@ No purchase ingestion route may silently create `medicines` master rows. Master 
 - Schema: `ensureRefillCartLinkSchema()` in `database.ts` runs on BOTH boot paths (fast-boot + full DDL). No version bump is needed.
 - User-click only. Never call `processRefillCartItem` from a worker, cron or listener: Pharmarack zero-ban rule.
 
+## Mail Retention Contract (changed 2026-10-04)
+
+- Mails are KEPT until the user deletes them. The age/count auto-prune (`pruneOldEmails`, `email_retention_days/limit`) was REMOVED; never reintroduce any background delete of `emails`. The only delete paths are user-clicked: `DELETE /api/email/:uid` and `POST /api/email/delete-many {uids}` (`emailService.deleteEmails`, same per-mail cleanup incl. attachment files, one `email_update` SSE at the end).
+- Delta sync resumes from `max(MAX(emails.uid), app_settings.email_last_synced_uid)` so a hand-deleted newest mail is not re-downloaded. It takes the OLDEST 50 new UIDs per poll (ascending), so a bigger backlog is continued by the next poll instead of skipped. First sync of an empty DB still fetches only the last 14 days (older history would fire arrival WhatsApp alerts).
+- Exception (owner rule, 2026-10-04): once a bill from a mail is REALLY saved in the app (manual purchase save with `email_uid`, reconcile-resolve, reissue after COMMIT) the app removes that mail itself via `markEmailSaved(uid, true)` -> `deleteEmail`. The Mail page's `POST /email/:uid/saved` (Proceed click) only greys the mail (removeAfter=false) because the bill is not saved yet; unsaved mails are never auto-deleted.
+- The Mail page asks for up to 5000 snippet-sized rows (`MAIL_INBOX_LIMIT`) and offers checkbox multi-select + select-all (current filter, e.g. "New (Unopened)") + inline-confirmed bulk delete.
+
 ## Mail-Arrival Alert Truthfulness Contract (added 2026-08)
 
 - **Arrival time is the mailbox time, never the sync moment**: `emailService` delta-sync carries the mail's real timestamp (IMAP INTERNALDATE preferred, sender Date header fallback) on the processed mail; `notifyMailArrival`, the SSE toast, and `sendDistributorWhatsAppAlert` prefer it — `new Date()` is a last-resort only. Do not revert to sync-time fallbacks.
@@ -267,3 +274,11 @@ A medicines-master match is NOT shelf presence (291k imported reference rows). E
 
 ## Sale GST Math (updated 2026-10-03)
 - `utils/saleTotals.ts`: bill total is unchanged (`round(subtotal - discount)`). GST now (a) honours a real 0% medicine (the invented 2.5%+2.5% default was removed; unknown GST stays 0) and (b) is scaled by the bill discount (`(subtotal - discount) / subtotal`). Verified against 15,203 migrated retailer bills: total matched 15,203/15,203, GST 14,419 (was 8,079). Do not re-add a default rate.
+
+## Holiday Calendar Bulk Save (added 2026-10-04)
+- `POST /api/settings/holidays/bulk {dates[], holiday_name, is_closed, custom_window_start/end}` upserts many `pharmacy_holidays` rows in one transaction (same `(store_id, holiday_date)` upsert as the single POST; ROLLBACK on error). Closure logic stays in `utils/pharmacyCalendar.ts`; `getDynamicDeliveryNotice` (whatsappIntentService) adds the "market closed, order arrives <day>" line whenever the delivery date was shifted. Weekly Sunday closure is the `sunday_orders_enabled` setting, not a holiday row.
+
+- Catalog image storage (2026-10-04): `catalogImageService.storeCatalogImage()` is the ONLY writer of downloaded product images — dedupes by `image_hash` (reuses the existing file), compresses to ≤900 px JPEG via `imageCompressionService`, writes to `uploads/products/` ONLY (server.ts serves `/products` from it; `frontend/public/products` is legacy read-only). `repairMissingImages(limit, retryMisses)` is resumable: no-match medicines are remembered 7 days in `app_settings.catalog_image_miss_cache`; `limit=0` = all remaining. One-time library cleanup: `node scripts/dedupeCatalogImages.mjs [--apply] [--db path]` (orphans, byte-duplicates, recompress, consolidate; refuses orphan deletion if the DB references <50% of files).
+
+## Inventory Today's Bills (added 2026-10-04)
+- **`GET /inventory/todays-receipts?date=YYYY-MM-DD`** (blank = shop-local today): READ-ONLY. Every `purchase_items` line of bills dated that day (sargable `p.date >= ? AND p.date < date(?,'+1 day')`, no `'localtime'`), plus per batch the shelf (`inventory_master` by medicine_id + batch) and units already sold (`sale_items` by `inventory_id`), both via ≤500-id chunks. `sold_out` = nothing of that batch left on the shelf. It never writes stock and never creates rows; overselling stays rejected (strict inventory-only sales).

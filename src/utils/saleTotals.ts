@@ -9,6 +9,8 @@ export interface GstItemBreakdown {
   item: any;
   cgst_value: number;
   sgst_value: number;
+  cgst_per: number;
+  sgst_per: number;
 }
 
 export const calculateSalesGstAndTotals = async (
@@ -33,11 +35,19 @@ export const calculateSalesGstAndTotals = async (
   if (missingInventoryIds.length > 0) {
     const placeholders = missingInventoryIds.map(() => '?').join(',');
     const rows = await db.all(
-      `SELECT im.id as inventory_id, m.cgst_per, m.sgst_per FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
+      `SELECT im.id as inventory_id, m.cgst_per, m.sgst_per,
+              (SELECT pi.cgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no ORDER BY pi.id DESC LIMIT 1) AS pur_cgst,
+              (SELECT pi.sgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no ORDER BY pi.id DESC LIMIT 1) AS pur_sgst
+       FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
       missingInventoryIds
     );
     for (const r of rows) {
-      medTaxMap.set(r.inventory_id, { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
+      // The purchase line of the same batch is the real GST rate (a 0% there is a real 0%);
+      // the medicine master rate is only used when the batch has no purchase line.
+      const hasPurchaseRate = r.pur_cgst !== null && r.pur_cgst !== undefined && r.pur_sgst !== null && r.pur_sgst !== undefined;
+      medTaxMap.set(r.inventory_id, hasPurchaseRate
+        ? { cgst_per: r.pur_cgst, sgst_per: r.pur_sgst }
+        : { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
     }
   }
 
@@ -86,7 +96,9 @@ export const calculateSalesGstAndTotals = async (
     itemTaxBreakdowns.push({
       item,
       cgst_value,
-      sgst_value
+      sgst_value,
+      cgst_per: cgstPer,
+      sgst_per: sgstPer
     });
   }
 
