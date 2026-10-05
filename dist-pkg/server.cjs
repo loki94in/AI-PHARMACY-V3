@@ -11641,7 +11641,9 @@ var init_migrationValidation = __esm({
 // src/utils/nameNormalizer.ts
 var nameNormalizer_exports = {};
 __export(nameNormalizer_exports, {
+  BANNED_BATCH_STRINGS: () => BANNED_BATCH_STRINGS,
   isCosmeticProduct: () => isCosmeticProduct,
+  isValidBatchNumber: () => isValidBatchNumber,
   isValidCustomerName: () => isValidCustomerName,
   isValidDistributorName: () => isValidDistributorName,
   isValidDoctorName: () => isValidDoctorName,
@@ -11835,9 +11837,25 @@ function isValidDoctorName(name) {
   }
   return true;
 }
+function isValidBatchNumber(batch) {
+  if (!batch) return false;
+  const trimmed = String(batch).trim();
+  if (!trimmed) return false;
+  const upper = trimmed.toUpperCase();
+  if (BANNED_BATCH_STRINGS.some((b) => upper === b || upper.startsWith(b + "-") || upper.startsWith(b + "_"))) {
+    return false;
+  }
+  return true;
+}
+var BANNED_BATCH_PREFIXES, BANNED_BATCH_STRINGS;
 var init_nameNormalizer = __esm({
   "src/utils/nameNormalizer.ts"() {
     "use strict";
+    BANNED_BATCH_PREFIXES = ["GEN", "CATALOG", "IMPORT", "OFFLINE", "REISSUE", "MANUAL", "NEW"];
+    BANNED_BATCH_STRINGS = [
+      "BATCH123",
+      ...BANNED_BATCH_PREFIXES.map((p) => `B-${p}`)
+    ];
   }
 });
 
@@ -47704,6 +47722,7 @@ var init_inventory = __esm({
     init_auditLoggerService();
     init_stockCalculatorWorker();
     init_expiryAlertService();
+    init_nameNormalizer();
     import_qrcode2 = __toESM(require("qrcode"), 1);
     router2 = import_express2.default.Router();
     router2.use((req, res, next) => {
@@ -48044,6 +48063,13 @@ var init_inventory = __esm({
         if (!oldInv) {
           await db2.run("ROLLBACK");
           return res.status(404).json({ error: "Inventory record not found" });
+        }
+        if (batchNoVal !== void 0) {
+          const cleanBatch = String(batchNoVal).trim();
+          if (!isValidBatchNumber(cleanBatch)) {
+            await db2.run("ROLLBACK");
+            return res.status(400).json({ error: `Invalid batch number "${cleanBatch}". Generic placeholders, fabricated tokens, and empty batches are not allowed.` });
+          }
         }
         const updates = [];
         const params = [];
@@ -54581,7 +54607,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.53";
+    APP_VERSION = "0.1.54";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -55850,6 +55876,7 @@ var init_crm = __esm({
     init_storeSettingsService();
     init_nameFormatter();
     init_pharmacyCalendar();
+    init_nameNormalizer();
     router6 = import_express6.default.Router();
     router6.get("/patients", async (req, res) => {
       const { q, limit } = req.query;
@@ -56604,7 +56631,7 @@ var init_crm = __esm({
           ...specialOrders.map((o) => ({
             id: o.id,
             type: "special_order",
-            patient_name: o.patient_name || "Walk-in Customer",
+            patient_name: o.patient_name ? o.patient_name.trim() : "",
             patient_phone: (o.patient_phone || "").trim(),
             medicine_name: o.medicine_name,
             qty: Number(o.qty) || 1,
@@ -56616,7 +56643,7 @@ var init_crm = __esm({
           ...refills.map((r) => ({
             id: r.id,
             type: "refill",
-            patient_name: r.patient_name || "Customer",
+            patient_name: r.patient_name ? r.patient_name.trim() : "",
             patient_phone: (r.patient_phone || "").trim(),
             medicine_name: r.medicine_name,
             qty: Number(r.qty) || 1,
@@ -56660,7 +56687,7 @@ var init_crm = __esm({
             continue;
           }
           const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
-          const cleanName = formatCustomerName(item.patient_name);
+          const cleanName = item.patient_name && isValidCustomerName(item.patient_name) ? formatCustomerName(item.patient_name) : "Valued Customer";
           const medName = item.medicine_name || "Medicine";
           const personalizedMsg = message_template.replace(/\{patient_name\}/gi, cleanName).replace(/\{customer_name\}/gi, cleanName).replace(/\{medicine_name\}/gi, medName).replace(/\{product_name\}/gi, medName).replace(/\{pharmacy_name\}/gi, storeMedicalName).replace(/\{store_name\}/gi, storeMedicalName).replace(/\{qty\}/gi, String(item.qty || 1));
           try {
@@ -84633,6 +84660,7 @@ var init_sales = __esm({
     init_storeContextService();
     init_imageCompressionService();
     init_investigation();
+    init_nameNormalizer();
     router34 = import_express36.default.Router();
     router34.use(tenantAuthMiddleware);
     router34.use((_req, _res, next) => {
@@ -84712,6 +84740,9 @@ var init_sales = __esm({
         if (!String(patient_name || "").trim()) {
           return res.status(400).json({ error: "Patient name is required to save a bill." });
         }
+        if (!isValidCustomerName(patient_name)) {
+          return res.status(400).json({ error: 'A legitimate patient name is required to save a bill. Placeholder names like "Walk-in" or "Customer" are not permitted.' });
+        }
         if (!String(doctor_name || "").trim() && !doctor_id) {
           return res.status(400).json({ error: "Doctor name is required to save a bill." });
         }
@@ -84747,7 +84778,7 @@ var init_sales = __esm({
             if (cleanPhone2 && (!existing.phone || existing.phone.trim() === "" || existing.phone.length > 10)) {
               await db2.run("UPDATE customers SET phone = ? WHERE id = ?", [cleanPhone2, customerId]);
             }
-          } else {
+          } else if (cleanName && isValidCustomerName(cleanName)) {
             const custResult = await db2.run(
               "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
               [cleanName, cleanPhone2, patient_address || ""]
@@ -85014,7 +85045,7 @@ var init_sales = __esm({
             await applySaleDelta(db2, currentStock.medicine_id, soldQty);
             const cleanPhone2 = (patient_phone || "").replace(/\D/g, "");
             const phoneQuery2 = cleanPhone2.length >= 10 ? `%${cleanPhone2.slice(-10)}%` : "NON_EXISTENT";
-            if (refillEnabled && inventory_id) {
+            if (refillEnabled && inventory_id && (customerId || isValidCustomerName(patient_name) || cleanPhone2.length >= 10)) {
               const invRecord = currentStock;
               if (invRecord && invRecord.medicine_id) {
                 const nextDate = /* @__PURE__ */ new Date();
@@ -85027,19 +85058,20 @@ var init_sales = __esm({
                LIMIT 1`,
                   [invRecord.medicine_id, customerId || -1, phoneQuery2]
                 );
+                const resolvedPatientName = patient_name && typeof patient_name === "string" && patient_name.trim() ? patient_name.trim() : customerId ? (await db2.get("SELECT name FROM customers WHERE id = ?", [customerId]))?.name || null : null;
                 if (existingSchedule) {
                   await db2.run(
                     `UPDATE patient_refills 
                  SET customer_id = COALESCE(?, customer_id), patient_name = COALESCE(?, patient_name), 
                      patient_phone = COALESCE(?, patient_phone), refill_interval_days = ?, next_refill_date = ?, is_active = 1
                  WHERE id = ?`,
-                    [customerId, patient_name, patient_phone, rDays, nextDateStr, existingSchedule.id]
+                    [customerId, resolvedPatientName, patient_phone, rDays, nextDateStr, existingSchedule.id]
                   );
                 } else {
                   await db2.run(
                     `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, is_active)
                  VALUES (?, ?, ?, ?, ?, ?, 'pending', 1)`,
-                    [customerId, patient_name || "Walk-in Customer", patient_phone || "", invRecord.medicine_id, rDays, nextDateStr]
+                    [customerId, resolvedPatientName, patient_phone || "", invRecord.medicine_id, rDays, nextDateStr]
                   );
                 }
               }
@@ -86547,12 +86579,16 @@ var init_sales = __esm({
         const customerChanged = !!newName && (newName.toLowerCase() !== savedName.toLowerCase() || patient_phone !== void 0 && digitsOf(patient_phone) !== savedPhone);
         let customerId = existing.customer_id;
         if (customerChanged) {
-          const existingCust = await db2.get("SELECT id FROM customers WHERE name = ? AND phone = ?", [newName, patient_phone || ""]);
-          if (existingCust) {
-            customerId = existingCust.id;
+          if (!isValidCustomerName(newName)) {
+            customerId = null;
           } else {
-            const custResult = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [newName, patient_phone || ""]);
-            customerId = custResult.lastID;
+            const existingCust = await db2.get("SELECT id FROM customers WHERE name = ? AND phone = ?", [newName, patient_phone || ""]);
+            if (existingCust) {
+              customerId = existingCust.id;
+            } else {
+              const custResult = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [newName, patient_phone || ""]);
+              customerId = custResult.lastID;
+            }
           }
         }
         const doctorTouched = doctor_id !== void 0 || doctor_name !== void 0;
@@ -86591,7 +86627,9 @@ var init_sales = __esm({
           await db2.run("UPDATE sales_invoices SET customer_id = ?, doctor_id = ?, payment_medium = COALESCE(?, payment_medium), payment_status = COALESCE(?, payment_status) WHERE id = ?", [customerId, resolvedDoctorId, paymentMedium || null, paymentStatus || null, id]);
         }
         if (customerChanged) {
-          await db2.run("UPDATE sales_invoices SET customer_name_snapshot = ?, customer_phone_snapshot = ? WHERE id = ?", [newName, patient_phone || "", id]);
+          const snapName = isValidCustomerName(newName) ? newName : null;
+          const snapPhone = isValidCustomerName(newName) ? patient_phone || "" : null;
+          await db2.run("UPDATE sales_invoices SET customer_name_snapshot = ?, customer_phone_snapshot = ? WHERE id = ?", [snapName, snapPhone, id]);
         }
         if (doctorChanged) {
           const doctorRow = resolvedDoctorId ? await db2.get("SELECT name FROM doctors WHERE id = ?", [resolvedDoctorId]) : null;
@@ -88918,6 +88956,11 @@ var init_purchases = __esm({
           const medInputName = medicine || item.medicine_name;
           const medInputId = medicine_id;
           const rawBatch = item.batch !== void 0 ? item.batch : batch_no || "";
+          if (rawBatch && !isValidBatchNumber(rawBatch)) {
+            return res.status(400).json({
+              error: `Invalid batch number "${rawBatch}". Fabricated or placeholder batch numbers are strictly prohibited. Enter the real batch number from the package.`
+            });
+          }
           const rawExpiry = formatExpiryToMMYY(item.expiry !== void 0 ? item.expiry : expiry_date || "");
           const rawQty = parseFloat(item.qty !== void 0 ? item.qty : item.quantity) || 0;
           const rawFreeQty = parseFloat(free_qty !== void 0 ? free_qty : item.free_quantity !== void 0 ? item.free_quantity : 0) || 0;
@@ -90885,8 +90928,8 @@ var init_purchases = __esm({
           const itBatch = String(it.batch_no || "").trim();
           const itQty = Number(it.quantity || it.qty || 0) + Number(it.free_qty || 0);
           const itMrp = Number(it.mrp || 0);
-          if (!itBatch) {
-            return res.status(400).json({ error: `Batch number is required for "${itName}". Please verify/enter the actual batch before approving.` });
+          if (!itBatch || !isValidBatchNumber(itBatch)) {
+            return res.status(400).json({ error: `Valid batch number is required for "${itName}". Generic placeholders, fabricated tokens, and empty batches are not allowed.` });
           }
           if (itQty <= 0) {
             return res.status(400).json({ error: `Quantity must be greater than 0 for "${itName}".` });
@@ -91360,9 +91403,11 @@ var init_returns = __esm({
         }
         db2 = await dbManager.getConnection();
         const resolvedSubType = return_sub_type || (is_expiry ? "expiry" : "good");
+        const defaultReason = type === "sale" ? "Customer Return" : "Supplier Return";
+        const finalReason = req.body.reason && typeof req.body.reason === "string" && req.body.reason.trim() ? req.body.reason.trim() : defaultReason;
         const result = await db2.run(
           "INSERT INTO returns (return_no, original_invoice_id, type, total_amount, distributor_id, reason, return_invoice_id, return_sub_type, return_date_time, date) VALUES (?,?,?,?,?,?,?,?,?, datetime('now', 'localtime'))",
-          [return_no, original_invoice_id, type || null, total_amount || 0, distributor_id || null, req.body.reason || "Supplier Return", return_invoice_id || null, resolvedSubType, return_date_time || null]
+          [return_no, original_invoice_id, type || null, total_amount || 0, distributor_id || null, finalReason, return_invoice_id || null, resolvedSubType, return_date_time || null]
         );
         if (type === "purchase" && is_expiry && distributor_id) {
           if (loss_percentage === void 0 || loss_percentage === null || isNaN(Number(loss_percentage)) || Number(loss_percentage) < 0 || Number(loss_percentage) > 100) {
@@ -100909,7 +100954,7 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs65, import_path59, import_url7, import_child_process9, __filename5, __dirname4, BANNED_BATCH_STRINGS;
+var import_fs65, import_path59, import_url7, import_child_process9, __filename5, __dirname4;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
@@ -100920,7 +100965,6 @@ var init_auditEngine = __esm({
     init_nameNormalizer();
     __filename5 = (0, import_url7.fileURLToPath)(import_meta_url);
     __dirname4 = import_path59.default.dirname(__filename5);
-    BANNED_BATCH_STRINGS = ["BATCH123", "B-GEN", "B-CATALOG", "B-IMPORT", "B-OFFLINE", "B-REISSUE", "B-MANUAL", "B-NEW"];
   }
 });
 
