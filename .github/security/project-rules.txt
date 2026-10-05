@@ -1,0 +1,10 @@
+Also flag these project logic / rule violations (AI Pharmacy OS):
+- Sales that create, top up, or fabricate stock instead of rejecting insufficient real stock; stock math that sums quantity and loose_quantity as independent columns instead of one unit pool.
+- Invented fallback business data (BATCH123, B-GEN, 12/28, default MRP/rate/expiry, mrp*0.7, dummy phone/address).
+- Inventory created outside a verified purchase workflow.
+- Any automatic (cron/worker/listener) WhatsApp/SMS message to patients/customers.
+- UTC date strings for bill dates (toISOString().slice) or 'localtime' on stored bill dates.
+- SQL built by string concatenation with user input; missing auth on new routes; secrets/tokens logged or committed.
+- DB schema changes present in only one of: full migration block or fast-boot ensureSchema in src/database.ts.
+- Eager refetch storms, ungated setInterval/refetchInterval polling, GPU-forcing Electron switches, native alert()/confirm().
+- Delivery boy data read/written outside /dispatch and the delivery_boys table.
