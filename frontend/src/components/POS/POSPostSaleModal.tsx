@@ -64,6 +64,7 @@ export const POSPostSaleModal: React.FC<POSPostSaleModalProps> = ({
   setLastSavedWasWhatsAppSent,
   printCurrentBill,
 }) => {
+  useModalEscape(isOpen, onClose);
   if (!isOpen) return null;
   if (typeof document === 'undefined') return null;
 

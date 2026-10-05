@@ -18,6 +18,7 @@ interface LowStockPickerModalProps {
 }
 
 export const LowStockPickerModal: React.FC<LowStockPickerModalProps> = ({ onClose, onAdd }) => {
+  useModalEscape(true, onClose);
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState<number | null>(null);
   const [rows, setRows] = useState<LowStockRow[]>([]);

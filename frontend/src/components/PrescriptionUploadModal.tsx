@@ -129,6 +129,8 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     };
   }, [selectedPhotos]);
 
+  useModalEscape(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const handleFilesSelect = async (files: FileList | File[]) => {

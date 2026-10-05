@@ -38,6 +38,7 @@ export const DistributorModal: React.FC<DistributorModalProps> = ({
   savingDistributor,
   indianStateCodes,
 }) => {
+  useModalEscape(isOpen, onClose);
   if (!isOpen) return null;
   if (typeof document === 'undefined') return null;
 

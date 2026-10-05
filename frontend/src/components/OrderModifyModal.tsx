@@ -36,6 +36,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
   onClose,
   onSuccess
 }) => {
+  useModalEscape(true, onClose);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [items, setItems] = useState<OrderItemLine[]>([]);

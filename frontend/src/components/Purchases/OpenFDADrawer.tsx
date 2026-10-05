@@ -27,6 +27,7 @@ export const OpenFDADrawer: React.FC<OpenFDADrawerProps> = ({
   enrichedData,
   loading,
 }) => {
+  useModalEscape(isOpen, onClose);
   if (typeof document === 'undefined') return null;
 
   return createPortal(

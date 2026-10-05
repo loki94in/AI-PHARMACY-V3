@@ -22,6 +22,7 @@ interface Props {
 }
 
 const ScheduleResearchModal: React.FC<Props> = ({ item, onClose, onClassified }) => {
+  useModalEscape(true, onClose);
   const research = useApiQuery<Awaited<ReturnType<typeof api.researchScheduleDrug>>>(
     ['schedule-drugs-research', item.id],
     () => api.researchScheduleDrug(item.id),

@@ -39,6 +39,8 @@ export const ClosureCalendarModal: React.FC<ClosureCalendarModalProps> = ({
   const marketSet = useMemo(() => new Set(marketDates), [marketDates]);
   const storeSet = useMemo(() => new Set(storeDates), [storeDates]);
 
+  useModalEscape(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const first = new Date(view.y, view.m, 1).getDay();

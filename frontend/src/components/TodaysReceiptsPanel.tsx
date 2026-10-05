@@ -14,6 +14,7 @@ interface Props {
 // Read-only reconciliation view: bills dated the chosen day, what each batch still has on the
 // shelf, and what was already sold from it. Never writes stock.
 export const TodaysReceiptsPanel: React.FC<Props> = ({ onClose, onFind }) => {
+  useModalEscape(true, onClose);
   const [day, setDay] = useState('');
   const [onlySoldOut, setOnlySoldOut] = useState(false);
   const { data, isLoading, isError, refetch } = useApiQuery<{ date: string; data: TodaysReceiptRow[] }>(

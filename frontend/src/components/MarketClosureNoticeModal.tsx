@@ -196,6 +196,8 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
     onClose();
   };
 
+  useModalEscape(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (

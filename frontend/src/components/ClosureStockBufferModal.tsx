@@ -156,6 +156,9 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
     }
   };
 
+  useModalEscape(isOpen, onClose);
+
+
   if (!isOpen) return null;
 
   return (

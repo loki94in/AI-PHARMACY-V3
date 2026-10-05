@@ -1110,6 +1110,14 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
+  // Search ranking reads these through refs so a silent cart refresh never restarts an in-flight search
+  const cartDistributorsRef = useRef<Distributor[]>(cartDistributors);
+  const lastAddedDistributorRef = useRef<string>(lastAddedDistributor);
+  useEffect(() => {
+    cartDistributorsRef.current = cartDistributors;
+    lastAddedDistributorRef.current = lastAddedDistributor;
+  }, [cartDistributors, lastAddedDistributor]);
+
   // Live Query autocomplete with instant memory cache & request aborting
   useEffect(() => {
     if (isSelectingRef.current || ignoreNextSearchRef.current) {
@@ -1172,7 +1180,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
           // Build lookup for distributors already having items in the live cart
           const activeCartMap = new Map<string, { storeId: number; count: number; total: number; name: string }>();
-          const currentCart = cartDistributors.length > 0 ? cartDistributors : cachedCartDistributors;
+          const liveCart = cartDistributorsRef.current;
+          const currentCart = liveCart.length > 0 ? liveCart : cachedCartDistributors;
           currentCart.forEach(d => {
             if (d.items && d.items.length > 0) {
               const count = d.items.length;
@@ -1237,7 +1246,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
           // 4. In Active Live Cart (Already added distributor prioritized within same stock tier)
           // 5. Recent distributor tie-break
           // 6. Effective rate
-          const lastDist = (lastAddedDistributor || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
+          const lastDist = (lastAddedDistributorRef.current || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
           const cleanQ = cleanQuery.toLowerCase().trim();
           if (mergedList.length > 1) {
             mergedList.sort((a, b) => {
@@ -1346,7 +1355,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     return () => {
       clearTimeout(delayDebounce);
     };
-  }, [product, lastAddedDistributor, cartDistributors]);
+  }, [product]);
 
   const handleProductChange = (val: string) => {
     isSelectingRef.current = false;

@@ -12,6 +12,7 @@ import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRe
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
 import type { QuickAssistEditGroup } from './QuickAssistOrderEditModal';
+import { useModalEscape } from '../services/keyboardShortcuts';
 import { api, apiClient } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -238,6 +239,9 @@ export const QuickAssistSidebar = memo(({
       setExpanded(false);
     }
   });
+
+  // Esc collapses the panel; priority -1 so any modal opened above it closes first
+  useModalEscape(expanded, () => setExpanded(false), -1);
 
   // Clear modal states whenever the sidebar collapses
   useEffect(() => {

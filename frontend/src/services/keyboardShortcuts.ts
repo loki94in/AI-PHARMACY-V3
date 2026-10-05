@@ -67,6 +67,47 @@ export interface ModalStackEntry {
 
 const modalStack: ModalStackEntry[] = [];
 
+
+const OVERLAY_SELECTOR = '.z-global-modal, .z-modal, .z-drawer, [role="dialog"], [data-modal="true"], .fixed.inset-0';
+const CLOSE_BUTTON_SELECTOR = 'button[aria-label*="close" i], button[title*="close" i], button[data-close], button.close-btn, button svg.lucide-x, button svg.lucide-x-circle';
+const CLOSE_LABEL = /^(close|cancel|done|dismiss|got it|ok|×|✕|✖)$/i;
+
+function overlayZ(el: HTMLElement): number {
+  const z = parseInt(getComputedStyle(el).zIndex, 10);
+  return Number.isFinite(z) ? z : 0;
+}
+
+/** Closes the top-most rendered popup: its own close/cancel button first, else a backdrop click. */
+function dismissTopmostOverlay(): boolean {
+  const all = Array.from(document.querySelectorAll<HTMLElement>(OVERLAY_SELECTOR)).filter(el => {
+    if (el.getClientRects().length === 0) return false; // hidden (e.g. kept-alive page)
+    const cs = getComputedStyle(el);
+    return cs.pointerEvents !== 'none' && cs.visibility !== 'hidden';
+  });
+  // Outermost overlays only (a dialog card inside its scrim is part of the scrim)
+  const outer = all.filter(el => !all.some(o => o !== el && o.contains(el)));
+  // Real popups sit above page content; low-z fixed layout wrappers are not popups
+  const popups = outer.filter(el => overlayZ(el) >= 40 || el.matches('.z-global-modal, .z-modal, .z-drawer, [role="dialog"], [data-modal="true"]'));
+  popups.sort((a, b) => overlayZ(a) - overlayZ(b)); // stable: DOM order breaks ties
+  const top = popups[popups.length - 1];
+  if (!top) return false;
+
+  let closeBtn = top.querySelector<HTMLElement>(CLOSE_BUTTON_SELECTOR)?.closest('button') as HTMLElement | null;
+  if (!closeBtn) {
+    closeBtn = Array.from(top.querySelectorAll<HTMLButtonElement>('button')).find(
+      b => !b.disabled && CLOSE_LABEL.test((b.textContent || '').trim())
+    ) || null;
+  }
+  if (closeBtn) {
+    closeBtn.click();
+    return true;
+  }
+  // No button: scrim-style popups dismiss on a click that lands on the backdrop itself
+  top.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  top.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+}
+
 export const modalManager = {
   push: (id: string, onClose: () => void | boolean, priority = 0) => {
     const existingIndex = modalStack.findIndex(m => m.id === id);
@@ -89,23 +130,15 @@ export const modalManager = {
 
   handleEscape: (): boolean => {
     // 1. Stack-based dismissal (highest priority / top-of-stack first)
+    // Entries stay on the stack until their owner unmounts (useModalEscape cleanup), so a
+    // close that doesn't take effect on one press is retried on the next instead of orphaned.
     if (modalStack.length > 0) {
-      let targetIndex = modalStack.length - 1;
-      let maxPriority = modalStack[targetIndex]?.priority || 0;
-      for (let i = modalStack.length - 1; i >= 0; i--) {
-        if ((modalStack[i].priority || 0) > maxPriority) {
-          maxPriority = modalStack[i].priority || 0;
-          targetIndex = i;
-        }
-      }
-
-      const entry = modalStack.splice(targetIndex, 1)[0];
-      if (entry) {
+      const ordered = modalStack
+        .map((entry, idx) => ({ entry, idx }))
+        .sort((a, b) => ((b.entry.priority || 0) - (a.entry.priority || 0)) || (b.idx - a.idx));
+      for (const { entry } of ordered) {
         try {
-          const result = entry.onClose();
-          if (result !== false) {
-            return true;
-          }
+          if (entry.onClose() !== false) return true;
         } catch (err) {
           console.error('Error invoking modal close handler on Escape:', err);
           return true;
@@ -113,30 +146,8 @@ export const modalManager = {
       }
     }
 
-    // 2. DOM fallback: Dismiss any visible un-hooked modal/overlay with a close button
-    if (typeof document !== 'undefined') {
-      const modalOverlays = document.querySelectorAll(
-        '.z-global-modal, .z-modal, [role="dialog"], [data-modal="true"], .fixed.inset-0'
-      );
-      if (modalOverlays.length > 0) {
-        // Iterate backwards from the top-most modal in DOM order
-        for (let i = modalOverlays.length - 1; i >= 0; i--) {
-          const overlay = modalOverlays[i] as HTMLElement;
-          if (!overlay || overlay.offsetParent === null && overlay.style.display === 'none') {
-            continue;
-          }
-          // Find standard close button in overlay (X icon button, aria-label="Close", etc.)
-          const closeBtn = overlay.querySelector<HTMLElement>(
-            'button[aria-label*="close" i], button[data-close], button svg.lucide-x, button svg.lucide-x-circle'
-          )?.closest('button') || overlay.querySelector<HTMLElement>('button.close-btn');
-
-          if (closeBtn && typeof closeBtn.click === 'function') {
-            closeBtn.click();
-            return true;
-          }
-        }
-      }
-    }
+    // 2. DOM fallback: dismiss the topmost visible popup that never registered with the stack
+    if (typeof document !== 'undefined' && dismissTopmostOverlay()) return true;
 
     return false;
   }
@@ -163,3 +174,6 @@ export function useModalEscape(isOpen: boolean, onClose: () => void, priority = 
     };
   }, [isOpen, priority]);
 }
+
+
+
