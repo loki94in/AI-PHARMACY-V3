@@ -94,6 +94,7 @@ import { useFetchMode } from '../hooks/useFetchMode';
 import { useGlobalSseInvalidation } from '../hooks/useGlobalSseInvalidation';
 import { getFormattedFailureReason } from '../utils/whatsappFailureReason';
 import { isOnlineOrder } from '../utils/onlineOrders';
+import { getToastStyle, type ToastStyle } from '../utils/toastStyle';
 
 export interface AppNotification {
   id: number | string;
@@ -508,7 +509,22 @@ const FlashToast = ({
   onOpenReview: () => void;
   onOpenAutomationHub?: () => void;
 }) => {
+  const [style, setStyle] = useState<ToastStyle>(getToastStyle);
+  useEffect(() => {
+    const sync = () => setStyle(getToastStyle());
+    window.addEventListener('toast-style-changed', sync);
+    return () => window.removeEventListener('toast-style-changed', sync);
+  }, []);
+
   if (!toast) return null;
+
+  const placement = {
+    1: 'top-4 left-1/2 -translate-x-1/2 rounded-2xl animate-soft-toast',
+    2: 'top-16 right-5 w-[320px] rounded-xl animate-soft-toast-side',
+    3: 'top-0 inset-x-0 rounded-none justify-center animate-soft-toast-side',
+    4: 'top-4 right-5 rounded-full py-1.5 animate-soft-toast-side',
+    5: 'top-16 right-5 w-[340px] rounded-2xl animate-soft-toast-side',
+  }[style];
 
   const cfg = {
     success: { bg: 'bg-bg2 border-emerald-500/50 text-text shadow-[0_10px_30px_rgba(0,0,0,0.5)]', icon: <Check size={15} className="shrink-0 text-emerald-400" /> },
@@ -531,11 +547,12 @@ const FlashToast = ({
         }
       }}
       className={`
-        fixed top-4 left-1/2 -translate-x-1/2 z-toast
-        flex items-center gap-2.5 px-4 py-2.5 rounded-2xl
+        fixed z-toast ${placement}
+        flex items-center gap-2.5 px-4 py-2.5
         border ${cfg.bg}
-        animate-soft-toast opacity-100
-        min-w-[260px] max-w-[450px]
+        ${style === 2 ? 'border-l-4' : ''}
+        opacity-100
+        ${style === 3 || style === 2 || style === 5 ? '' : 'min-w-[260px] max-w-[450px]'}
         ${isWaFailure ? 'cursor-pointer hover:border-red-400/80 transition-colors' : ''}
       `}
     >
@@ -565,7 +582,7 @@ const FlashToast = ({
           e.stopPropagation();
           onDismiss();
         }}
-        className="ml-1.5 opacity-50 hover:opacity-100 transition-opacity shrink-0"
+        className={`ml-1.5 ${style === 5 ? 'opacity-100' : 'opacity-50'} hover:opacity-100 transition-opacity shrink-0`}
         aria-label="Dismiss"
       >
         <X size={13} />
@@ -2089,6 +2106,18 @@ const Topbar = memo(({
   }, [showShortcutHelp]);
 
   // Flash toast only for errors — success/info/mail/automation log silently to Activity panel only
+  // Appearance tab "Preview": shows one sample of any type in the chosen style (not logged).
+  useEffect(() => {
+    const onPreview = (e: Event) => {
+      const detail = (e as CustomEvent<ToastEventDetail>).detail;
+      setFlashToast({ ...detail, id: Date.now() });
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashToast(null), 4200);
+    };
+    window.addEventListener('toast-preview', onPreview);
+    return () => window.removeEventListener('toast-preview', onPreview);
+  }, []);
+
   useEffect(() => {
     return toastEvent.subscribe((detail) => {
       onNewNotification(detail);

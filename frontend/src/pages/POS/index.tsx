@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback, useDeferredValue } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
@@ -21,11 +21,13 @@ import { isExpiredDate, toDateInputValue, expiryWarning, EXPIRY_WARNING_CLASS, E
 import { printCurrentBill } from '../../utils/printBill';
 import { useDraftStore } from '../../lib/cache/useDraftStore';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
+import { createRecentSearchCache } from '../../utils/recentSearchCache';
 import { combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { POSPatientModal, POSDoctorModal, POSPostSaleModal, POSInteractionsModal, POSPhonePromptModal, POSCheckoutBar } from '../../components/POS';
+import { isValidCustomerName } from '../../utils/customerValidator';
 
 const getLocalDateString = (d: Date = new Date()) => {
   const yyyy = d.getFullYear();
@@ -612,6 +614,16 @@ const groupBatches = (items: PosBatchItem[]): PosBatchItem[] => {
 const EMPTY_ARRAY: never[] = [];
 
 
+// Stock-overlay cache for the POS master leg: short TTL, fresh-only (never serve stale stock).
+const posCatalogCache = createRecentSearchCache<Record<string, unknown>>(30_000);
+const fetchPosCatalogRows = async (term: string, signal: AbortSignal) => {
+  const hit = posCatalogCache.get(term);
+  if (hit && !hit.stale) return hit.results as any[];
+  const rows = await api.catalogSearch(term, signal) as any[] | null;
+  if (Array.isArray(rows)) posCatalogCache.set(term, rows);
+  return rows;
+};
+
 const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatchItem[] => {
   if (!query || query.trim().length < 2) return [];
   const rawTerm = query.trim().toLowerCase();
@@ -620,6 +632,8 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
   const compactTerm = term.replace(/[^a-z0-9]/g, '');
   const index = getCompactInventoryIndex();
   const useIndex = index.length === inventory.length;
+  // Never run the unindexed per-row scan over a large list; the indexed pass repaints once the index matches.
+  if (!useIndex && inventory.length > 2000) return [];
 
   const tier1Map = new Map<string, PosBatchItem>(); // Exact prefix
   const tier2Map = new Map<string, PosBatchItem>(); // Acronym / Shorthand (e.g. CD 12 -> Crocin DS 12)
@@ -2094,8 +2108,10 @@ const POS = () => {
   const headerCatalogSearchSeqRef = useRef(0);
 
   // Local row search autocomplete
+  // Deferred: the local scan yields to keystroke paint (CPU-rendered app).
+  const deferredRowSearchTerm = useDeferredValue(rowSearchTerm);
   useEffect(() => {
-    const term = rowSearchTerm.trim();
+    const term = deferredRowSearchTerm.trim();
     if (activeRowSearchIndex === null || term.length < 2) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clears row dropdown on short term
       setRowSearchResults([]);
@@ -2123,7 +2139,7 @@ const POS = () => {
 
     rowCatalogSearchTimeoutRef.current = setTimeout(async () => {
       try {
-        const catalogRows = await api.catalogSearch(term, controller.signal) as any[] | null;
+        const catalogRows = await fetchPosCatalogRows(term, controller.signal);
         if (seq !== rowCatalogSearchSeqRef.current) return;
         if (Array.isArray(catalogRows) && catalogRows.length > 0) {
           const localMap = new Map<string, PosBatchItem>();
@@ -2174,7 +2190,7 @@ const POS = () => {
         }
       }
     }, 150);
-  }, [rowSearchTerm, activeRowSearchIndex, mappedInventory]);
+  }, [deferredRowSearchTerm, activeRowSearchIndex, mappedInventory]);
 
   // Synchronize selection refs to avoid closure staleness in async callbacks
   useEffect(() => {
@@ -2988,8 +3004,9 @@ const POS = () => {
     }
   };
 
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   useEffect(() => {
-    const term = searchTerm.trim();
+    const term = deferredSearchTerm.trim();
     if (term.length < 2) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- barcode auto-add search pipeline
       setSearchResults([]);
@@ -3032,7 +3049,7 @@ const POS = () => {
 
     headerCatalogSearchTimeoutRef.current = setTimeout(async () => {
       try {
-        const catalogRows = await api.catalogSearch(term, controller.signal) as any[] | null;
+        const catalogRows = await fetchPosCatalogRows(term, controller.signal);
         if (seq !== headerCatalogSearchSeqRef.current) return;
         if (Array.isArray(catalogRows) && catalogRows.length > 0) {
           const localMap = new Map<string, PosBatchItem>();
@@ -3083,7 +3100,7 @@ const POS = () => {
       }
     }, 150);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- handler identity churn must not refire
-  }, [searchTerm, mappedInventory]);
+  }, [deferredSearchTerm, mappedInventory]);
 
   const handleSelectOnlineSuggestion = async (sug: MedSuggestion | PosBatchItem) => {
     try {
@@ -3533,8 +3550,8 @@ const POS = () => {
       return;
     }
 
-    if (!patientName || !patientName.trim()) {
-      toastEvent.trigger('⚠️ Patient name is required to save the bill. Please enter the patient name.', 'error');
+    if (!patientName || !patientName.trim() || !isValidCustomerName(patientName)) {
+      toastEvent.trigger('⚠️ A legitimate patient name is required to save the bill. Placeholder names like "Walk-in" or "Customer" are not allowed.', 'error');
       const patEl = document.querySelector<HTMLInputElement>('input[aria-label="Patient Name"]');
       patEl?.focus();
       return;

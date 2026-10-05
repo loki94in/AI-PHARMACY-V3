@@ -227,7 +227,7 @@ export const RefillCartJobHost: React.FC = () => {
     <>
       {openJob && <RefillCartModal job={openJob} />}
       {cards.length > 0 && createPortal(
-        <div className="fixed bottom-32 right-6 z-modal w-[340px] max-w-[calc(100vw-2rem)] flex flex-col gap-2">
+        <div className="fixed top-16 right-6 z-modal w-[340px] max-w-[calc(100vw-2rem)] flex flex-col gap-2">
           {cards.map(j => <RefillCartCard key={j.id} job={j} />)}
         </div>,
         document.body

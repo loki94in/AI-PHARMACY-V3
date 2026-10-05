@@ -603,6 +603,17 @@ input[type="date"]:focus {
   animation: softToastLifecycle 4.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Same lifecycle for toasts that are not centred (styles 2-5 in Appearance). */
+@keyframes softToastLifecycleSide {
+  0% { opacity: 0; transform: translateY(-14px); }
+  12%, 88% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+
+.animate-soft-toast-side {
+  animation: softToastLifecycleSide 4.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* ──────────────────────────────────────────────
    PHARMARACK OVERSTOCK & DUPLICATE PULSE GLOW
    ────────────────────────────────────────────── */

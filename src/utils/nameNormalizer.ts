@@ -259,3 +259,25 @@ export function isValidDoctorName(name: string | null | undefined): boolean {
   return true;
 }
 
+const BANNED_BATCH_PREFIXES = ['GEN', 'CATALOG', 'IMPORT', 'OFFLINE', 'REISSUE', 'MANUAL', 'NEW'];
+export const BANNED_BATCH_STRINGS: string[] = [
+  'BATCH123',
+  ...BANNED_BATCH_PREFIXES.map(p => `B-${p}`)
+];
+
+/**
+ * Validates if a string is a legitimate medicine batch number.
+ * Rejects empty strings, placeholders, and dummy default batch tokens.
+ */
+export function isValidBatchNumber(batch: string | null | undefined): boolean {
+  if (!batch) return false;
+  const trimmed = String(batch).trim();
+  if (!trimmed) return false;
+  const upper = trimmed.toUpperCase();
+  if (BANNED_BATCH_STRINGS.some(b => upper === b || upper.startsWith(b + '-') || upper.startsWith(b + '_'))) {
+    return false;
+  }
+  return true;
+}
+
+

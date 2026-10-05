@@ -147,9 +147,13 @@ router.post('/', async (req, res) => {
     }
     db = await dbManager.getConnection();
     const resolvedSubType = return_sub_type || (is_expiry ? 'expiry' : 'good');
+    const defaultReason = (type === 'sale') ? 'Customer Return' : 'Supplier Return';
+    const finalReason = (req.body.reason && typeof req.body.reason === 'string' && req.body.reason.trim())
+      ? req.body.reason.trim()
+      : defaultReason;
     const result = await db.run(
       "INSERT INTO returns (return_no, original_invoice_id, type, total_amount, distributor_id, reason, return_invoice_id, return_sub_type, return_date_time, date) VALUES (?,?,?,?,?,?,?,?,?, datetime('now', 'localtime'))",
-      [return_no, original_invoice_id, type || null, total_amount || 0, distributor_id || null, req.body.reason || 'Supplier Return', return_invoice_id || null, resolvedSubType, return_date_time || null]
+      [return_no, original_invoice_id, type || null, total_amount || 0, distributor_id || null, finalReason, return_invoice_id || null, resolvedSubType, return_date_time || null]
     );
     
     if (type === 'purchase' && is_expiry && distributor_id) {

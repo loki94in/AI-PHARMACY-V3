@@ -23,6 +23,7 @@ import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SaveBillSpecialPriceModal } from '../../components/SaveBillSpecialPriceModal';
 import { isValidDistributorName } from '../../utils/distributorValidator';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
+import { createRecentSearchCache, normalizeSearchKey } from '../../utils/recentSearchCache';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { DistributorModal, OpenFDADrawer } from '../../components/Purchases';
 
@@ -406,51 +407,13 @@ const historyRowsAsPriceRecords = (rows: MedicineBatchHistoryRow[] | null): Pric
 // A term fetched once this session repaints instantly with ZERO network on
 // every revisit — typing, deleting a char and retyping, switching rows, or
 // coming back to the page never re-fetches the same master query.
-const SEARCH_CACHE_TTL_MS = 5 * 60_000;
-const SEARCH_CACHE_MAX_ENTRIES = 40;
-const searchResultsCache = new Map<string, { at: number; results: Medicine[] }>();
+// Master-DB TTL is longer than POS's stock overlay; expired entries are still
+// served (stale-while-revalidate) and revalidated once in the background.
+const searchResultsCache = createRecentSearchCache<Medicine>(15 * 60_000);
 
-const getCachedSearchResults = (term: string): Medicine[] | null => {
-  const key = term.toLowerCase().replace(/\s+/g, ' ').trim();
-  const entry = searchResultsCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.at >= SEARCH_CACHE_TTL_MS) {
-    searchResultsCache.delete(key);
-    return null;
-  }
-  entry.at = Date.now(); // LRU touch
-  return entry.results;
-};
-
-const storeCachedSearchResults = (term: string, results: Medicine[]): void => {
-  const key = term.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (!key) return;
-  searchResultsCache.set(key, { at: Date.now(), results });
-  if (searchResultsCache.size > SEARCH_CACHE_MAX_ENTRIES) {
-    const oldestKey = searchResultsCache.keys().next().value;
-    if (oldestKey !== undefined) searchResultsCache.delete(oldestKey);
-  }
-};
-
-// POS-cart-like instant narrowing: find the LONGEST already-cached term that
-// is a prefix of the current term and locally filter its master-sourced rows.
-// Purely a paint accelerator — the debounced backend fetch always follows and
-// replaces this preview with the authoritative full list for the exact term.
 const getInstantNarrowedResults = (term: string): Medicine[] => {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-  const target = norm(term);
-  if (!target || searchResultsCache.size === 0) return [];
-  let bestKey = '';
-  let bestEntry: { at: number; results: Medicine[] } | null = null;
-  for (const [key, entry] of searchResultsCache.entries()) {
-    if (Date.now() - entry.at >= SEARCH_CACHE_TTL_MS) continue;
-    if (target.startsWith(key) && key.length > bestKey.length && entry.results.length > 0) {
-      bestKey = key;
-      bestEntry = entry;
-    }
-  }
-  if (!bestEntry || bestKey === target) return [];
-  return rankAndSortMedicines(bestEntry.results, target);
+  const rows = searchResultsCache.longestPrefix(term);
+  return rows ? rankAndSortMedicines(rows, normalizeSearchKey(term)) : [];
 };
 
 // Local compact inventory preview for cold search cache
@@ -1789,10 +1752,10 @@ const Purchases: React.FC = () => {
     // repaints INSTANTLY from the module cache with zero network — deleting a
     // char and retyping, switching rows, or revisiting a term never re-hits
     // the backend. Cache lives at module scope below.
-    const cached = getCachedSearchResults(cleanTerm);
-    if (cached) {
+    const cached = searchResultsCache.get(cleanTerm);
+    if (cached && !cached.stale) {
       searchSeqRef.current += 1;
-      setSearchResults(cached);
+      setSearchResults(cached.results);
       setSearchHighlightIndex(-1);
       setSearchSearching(false);
       return;
@@ -1804,7 +1767,7 @@ const Purchases: React.FC = () => {
     // single-source (every row came from the master endpoint this session).
     // The debounced backend fetch below then replaces this with the complete,
     // authoritative list for the exact term.
-    const narrowed = getInstantNarrowedResults(cleanTerm);
+    const narrowed = cached?.stale ? cached.results : getInstantNarrowedResults(cleanTerm);
     const instantPreview = dedupeMedicinesByName(narrowed.length > 0 ? narrowed : getInstantLocalInventoryPreview(cleanTerm));
     if (instantPreview.length > 0) {
       setSearchResults(instantPreview);
@@ -1832,7 +1795,7 @@ const Purchases: React.FC = () => {
         if (Array.isArray(response)) {
           const deduped = dedupeMedicinesByName(response as Medicine[]);
           const ranked = rankAndSortMedicines(deduped, cleanTerm);
-          storeCachedSearchResults(cleanTerm, ranked);
+          searchResultsCache.set(cleanTerm, ranked);
           setSearchResults(ranked);
           setSearchHighlightIndex(-1);
         }

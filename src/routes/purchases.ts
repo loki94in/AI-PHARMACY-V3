@@ -13,7 +13,7 @@ import fs from 'fs';
 import { medicineService } from '../services/medicineService.js';
 import { OrderFulfillmentService } from '../services/orderFulfillmentService.js';
 import { getSummaryCache, rebuildPurchaseSummaryCache, triggerBackgroundSummaryRebuild } from '../services/summaryCacheService.js';
-import { isValidDistributorName } from '../utils/nameNormalizer.js';
+import { isValidDistributorName, isValidBatchNumber } from '../utils/nameNormalizer.js';
 import { extractDateFromText } from '../utils/dateExtractor.js';
 import { applyPurchaseDelta } from '../services/medicineSalesMetricsService.js';
 import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
@@ -553,6 +553,11 @@ router.post('/manual', async (req, res) => {
       const medInputName = medicine || item.medicine_name;
       const medInputId = medicine_id;
       const rawBatch = item.batch !== undefined ? item.batch : (batch_no || '');
+      if (rawBatch && !isValidBatchNumber(rawBatch)) {
+        return res.status(400).json({
+          error: `Invalid batch number "${rawBatch}". Fabricated or placeholder batch numbers are strictly prohibited. Enter the real batch number from the package.`
+        });
+      }
       const rawExpiry = formatExpiryToMMYY(item.expiry !== undefined ? item.expiry : (expiry_date || ''));
       const rawQty = parseFloat(item.qty !== undefined ? item.qty : item.quantity) || 0;
       const rawFreeQty = parseFloat(free_qty !== undefined ? free_qty : (item.free_quantity !== undefined ? item.free_quantity : 0)) || 0;
@@ -3219,8 +3224,8 @@ router.post('/staged/:id/approve', async (req, res) => {
       const itBatch = String(it.batch_no || '').trim();
       const itQty = Number(it.quantity || it.qty || 0) + Number(it.free_qty || 0);
       const itMrp = Number(it.mrp || 0);
-      if (!itBatch) {
-        return res.status(400).json({ error: `Batch number is required for "${itName}". Please verify/enter the actual batch before approving.` });
+      if (!itBatch || !isValidBatchNumber(itBatch)) {
+        return res.status(400).json({ error: `Valid batch number is required for "${itName}". Generic placeholders, fabricated tokens, and empty batches are not allowed.` });
       }
       if (itQty <= 0) {
         return res.status(400).json({ error: `Quantity must be greater than 0 for "${itName}".` });

@@ -27,6 +27,7 @@ import { tenantAuthMiddleware } from '../middleware/tenantAuth.js';
 import { resolveStoreId, storeContextService } from '../services/storeContextService.js';
 import { imageCompressionService } from '../services/imageCompressionService.js';
 import { invalidateInvestigationTimelineCache } from './investigation.js';
+import { isValidCustomerName } from '../utils/nameNormalizer.js';
 
 const router = express.Router();
 router.use(tenantAuthMiddleware);
@@ -162,6 +163,9 @@ router.post('/', async (req, res) => {
     if (!String(patient_name || '').trim()) {
       return res.status(400).json({ error: 'Patient name is required to save a bill.' });
     }
+    if (!isValidCustomerName(patient_name)) {
+      return res.status(400).json({ error: 'A legitimate patient name is required to save a bill. Placeholder names like "Walk-in" or "Customer" are not permitted.' });
+    }
     if (!String(doctor_name || '').trim() && !doctor_id) {
       return res.status(400).json({ error: 'Doctor name is required to save a bill.' });
     }
@@ -209,7 +213,7 @@ router.post('/', async (req, res) => {
         if (cleanPhone && (!existing.phone || existing.phone.trim() === '' || existing.phone.length > 10)) {
           await db.run('UPDATE customers SET phone = ? WHERE id = ?', [cleanPhone, customerId]);
         }
-      } else {
+      } else if (cleanName && isValidCustomerName(cleanName)) {
         const custResult = await db.run(
           'INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)',
           [cleanName, cleanPhone, patient_address || '']
@@ -500,7 +504,8 @@ router.post('/', async (req, res) => {
         const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
 
         // Handle refill logic if enabled (Idempotent: update if existing, insert if new)
-        if (refillEnabled && inventory_id) {
+        // Strictly require identified patient (customer ID, valid patient name, or legitimate phone); never schedule for anonymous cash sales
+        if (refillEnabled && inventory_id && (customerId || isValidCustomerName(patient_name) || cleanPhone.length >= 10)) {
           const invRecord = currentStock;
           if (invRecord && invRecord.medicine_id) {
             const nextDate = new Date();
@@ -515,19 +520,23 @@ router.post('/', async (req, res) => {
               [invRecord.medicine_id, customerId || -1, phoneQuery]
             );
 
+            const resolvedPatientName = patient_name && typeof patient_name === 'string' && patient_name.trim()
+              ? patient_name.trim()
+              : (customerId ? (await db.get('SELECT name FROM customers WHERE id = ?', [customerId]))?.name || null : null);
+
             if (existingSchedule) {
               await db.run(
                 `UPDATE patient_refills 
                  SET customer_id = COALESCE(?, customer_id), patient_name = COALESCE(?, patient_name), 
                      patient_phone = COALESCE(?, patient_phone), refill_interval_days = ?, next_refill_date = ?, is_active = 1
                  WHERE id = ?`,
-                [customerId, patient_name, patient_phone, rDays, nextDateStr, existingSchedule.id]
+                [customerId, resolvedPatientName, patient_phone, rDays, nextDateStr, existingSchedule.id]
               );
             } else {
               await db.run(
                 `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, is_active)
                  VALUES (?, ?, ?, ?, ?, ?, 'pending', 1)`,
-                [customerId, patient_name || 'Walk-in Customer', patient_phone || '', invRecord.medicine_id, rDays, nextDateStr]
+                [customerId, resolvedPatientName, patient_phone || '', invRecord.medicine_id, rDays, nextDateStr]
               );
             }
           }
@@ -2343,12 +2352,17 @@ router.put('/:id', async (req, res) => {
     );
     let customerId = existing.customer_id;
     if (customerChanged) {
-      const existingCust = await db.get('SELECT id FROM customers WHERE name = ? AND phone = ?', [newName, patient_phone || '']);
-      if (existingCust) {
-        customerId = existingCust.id;
+      if (!isValidCustomerName(newName)) {
+        // Placeholder or blank name (e.g. Walk-in) — preserve as unlinked counter sale; never create dummy customer
+        customerId = null;
       } else {
-        const custResult = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [newName, patient_phone || '']);
-        customerId = custResult.lastID;
+        const existingCust = await db.get('SELECT id FROM customers WHERE name = ? AND phone = ?', [newName, patient_phone || '']);
+        if (existingCust) {
+          customerId = existingCust.id;
+        } else {
+          const custResult = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [newName, patient_phone || '']);
+          customerId = custResult.lastID;
+        }
       }
     }
 
@@ -2398,7 +2412,9 @@ router.put('/:id', async (req, res) => {
     // The bill list and print read the saved name copies first, so a changed patient or
     // doctor must update them or the edit would never show.
     if (customerChanged) {
-      await db.run('UPDATE sales_invoices SET customer_name_snapshot = ?, customer_phone_snapshot = ? WHERE id = ?', [newName, patient_phone || '', id]);
+      const snapName = isValidCustomerName(newName) ? newName : null;
+      const snapPhone = isValidCustomerName(newName) ? (patient_phone || '') : null;
+      await db.run('UPDATE sales_invoices SET customer_name_snapshot = ?, customer_phone_snapshot = ? WHERE id = ?', [snapName, snapPhone, id]);
     }
     if (doctorChanged) {
       const doctorRow = resolvedDoctorId ? await db.get('SELECT name FROM doctors WHERE id = ?', [resolvedDoctorId]) : null;

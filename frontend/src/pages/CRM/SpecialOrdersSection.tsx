@@ -2128,7 +2128,7 @@ export const SpecialOrdersSection: React.FC = () => {
 
       {/* Live Cart Quantity Auto-Adjustment Animated Notification Card */}
       {cartAdjustmentNotice && createPortal(
-        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-5 duration-300 pointer-events-auto">
+        <div className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-5 duration-300 pointer-events-auto">
           <div className="bg-bg2/95 backdrop-blur-md border border-glass-border shadow-2xl rounded-2xl p-4 max-w-sm w-88 flex flex-col gap-2.5 transition-all">
             <div className="flex items-center justify-between gap-2 border-b border-glass-border/40 pb-2">
               <div className="flex items-center gap-2">

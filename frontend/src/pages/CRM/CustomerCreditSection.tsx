@@ -711,7 +711,7 @@ export const CustomerCreditSection: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-bg3/30 p-3.5 rounded-xl border border-border text-xs">
                 <div>
                   <div className="text-[10px] font-bold text-muted uppercase tracking-wider mb-0.5">Patient Name</div>
-                  <div className="font-bold text-text">{viewInvoice.customer_name || 'Walk-in'}</div>
+                  <div className="font-bold text-text">{viewInvoice.customer_name || '— (Counter Sale)'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] font-bold text-muted uppercase tracking-wider mb-0.5">WhatsApp / Phone</div>

@@ -15,6 +15,7 @@ import { eventService } from '../services/eventService.js';
 import { getStoreMedicalName } from '../services/storeSettingsService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
+import { isValidCustomerName } from '../utils/nameNormalizer.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 
@@ -871,7 +872,7 @@ router.get('/delay-notice-candidates', async (req, res) => {
       ...specialOrders.map(o => ({
         id: o.id,
         type: 'special_order' as const,
-        patient_name: o.patient_name || 'Walk-in Customer',
+        patient_name: o.patient_name ? o.patient_name.trim() : '',
         patient_phone: (o.patient_phone || '').trim(),
         medicine_name: o.medicine_name,
         qty: Number(o.qty) || 1,
@@ -883,7 +884,7 @@ router.get('/delay-notice-candidates', async (req, res) => {
       ...refills.map(r => ({
         id: r.id,
         type: 'refill' as const,
-        patient_name: r.patient_name || 'Customer',
+        patient_name: r.patient_name ? r.patient_name.trim() : '',
         patient_phone: (r.patient_phone || '').trim(),
         medicine_name: r.medicine_name,
         qty: Number(r.qty) || 1,
@@ -939,7 +940,9 @@ router.post('/broadcast-delay-notices', async (req, res) => {
       }
 
       const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
-      const cleanName = formatCustomerName(item.patient_name);
+      const cleanName = (item.patient_name && isValidCustomerName(item.patient_name))
+        ? formatCustomerName(item.patient_name)
+        : 'Valued Customer';
       const medName = item.medicine_name || 'Medicine';
 
       // Interpolate template placeholders

@@ -10,6 +10,7 @@ import { resolveStoreId } from '../services/storeContextService.js';
 import { logMutationAudit } from '../services/auditLoggerService.js';
 import { triggerPreCalculatedStockRebuildDebounced } from '../worker/stockCalculatorWorker.js';
 import { triggerExpiryCacheRebuildDebounced } from '../services/expiryAlertService.js';
+import { isValidBatchNumber } from '../utils/nameNormalizer.js';
 
 // import path from 'path';
 // import { fileURLToPath } from 'url';
@@ -405,6 +406,14 @@ router.put('/:id', async (req, res) => {
     if (!oldInv) {
       await db.run('ROLLBACK');
       return res.status(404).json({ error: 'Inventory record not found' });
+    }
+
+    if (batchNoVal !== undefined) {
+      const cleanBatch = String(batchNoVal).trim();
+      if (!isValidBatchNumber(cleanBatch)) {
+        await db.run('ROLLBACK');
+        return res.status(400).json({ error: `Invalid batch number "${cleanBatch}". Generic placeholders, fabricated tokens, and empty batches are not allowed.` });
+      }
     }
 
     // 1. Update inventory_master fields dynamically

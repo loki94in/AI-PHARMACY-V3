@@ -86,8 +86,8 @@ const ALLOW = {
 };
 
 // Paths whose CONTENT legitimately documents/contains banned dummy tokens:
-// auditEngine.ts is the app's own detector; tests assert banned values are rejected.
-const DUMMY_TOKEN_SANCTIONED = ['src/utils/auditengine.ts', 'tests/', 'scripts/importmedicinenames.mjs'];
+// auditEngine.ts and nameNormalizer.ts are the app's detectors/validators; tests assert banned values are rejected.
+const DUMMY_TOKEN_SANCTIONED = ['src/utils/auditengine.ts', 'src/utils/namenormalizer.ts', 'tests/', 'scripts/importmedicinenames.mjs'];
 
 // Normalize allowlist entries once so comparisons are typo-proof.
 const ALLOW_NORM = Object.fromEntries(Object.entries(ALLOW).map(([k, v]) => [k, new Set(v.map(norm))]));

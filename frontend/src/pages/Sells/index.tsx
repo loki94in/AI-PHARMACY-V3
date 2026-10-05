@@ -286,7 +286,7 @@ const Sells = () => {
       const searchLower = colFilterName.trim().replace(/\s+/g, ' ').toLowerCase();
       const compactClean = searchLower.replace(/[^a-z0-9]/g, '');
       const rawPhone = colFilterName.replace(/\D/g, '');
-      const nameMatch = (inv.customer_name || 'Walk-in').toLowerCase().includes(searchLower) ||
+      const nameMatch = (inv.customer_name || 'Counter Sale').toLowerCase().includes(searchLower) ||
         (compactClean.length > 1 && (inv.customer_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactClean));
       const phoneMatch = rawPhone.length > 0 && (inv.customer_phone || '').replace(/\D/g, '').includes(rawPhone);
       // When inv.items is not populated (list API doesn't include items by default),
@@ -1013,7 +1013,7 @@ const Sells = () => {
                           <User size={16} className="text-muted group-hover:text-primary transition-colors" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-bold text-text group-hover:text-primary transition-colors truncate">{inv.customer_name || 'Walk-in'}</div>
+                          <div className="text-sm font-bold text-text group-hover:text-primary transition-colors truncate">{inv.customer_name || '— (Counter Sale)'}</div>
                           {inv.customer_phone && <div className="text-xs text-muted font-medium mt-0.5 font-mono">{inv.customer_phone}</div>}
                         </div>
                       </div>
@@ -1598,7 +1598,7 @@ const Sells = () => {
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 bg-bg2/50 p-4 rounded-xl border border-glass-border">
                 <div>
                   <div className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1">Customer Name</div>
-                  <div className="text-sm font-semibold text-text">{viewInvoice.customer_name || 'Walk-in'}</div>
+                  <div className="text-sm font-semibold text-text">{viewInvoice.customer_name || '— (Counter Sale)'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1">Phone</div>
@@ -1632,7 +1632,7 @@ const Sells = () => {
                     </div>
                   </div>
                   <button
-                    onClick={() => printCurrentBill(`Invoice-${viewInvoice.invoice_no}-${viewInvoice.customer_name || 'Walk-in'}`)}
+                    onClick={() => printCurrentBill(`Invoice-${viewInvoice.invoice_no}-${viewInvoice.customer_name || 'Counter-Sale'}`)}
                     className="px-3.5 py-2 bg-primary/20 hover:bg-primary text-primary hover:text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border border-primary/30 shrink-0 cursor-pointer"
                     title="Print the complete saved bill (customer, doctor, items with batch/MRP/qty)"
                   >
@@ -1980,7 +1980,7 @@ const Sells = () => {
           <div style={{ fontSize: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', color: '#000' }}>
             <div>
               <p style={{ margin: '2px 0' }}><strong>Invoice No:</strong> #{viewInvoice.invoice_no}</p>
-              <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {viewInvoice.customer_name || 'Walk-in'}</p>
+              <p style={{ margin: '2px 0' }}><strong>Customer:</strong> {viewInvoice.customer_name || 'Counter Sale'}</p>
               {viewInvoice.customer_phone && <p style={{ margin: '2px 0' }}><strong>Phone:</strong> {viewInvoice.customer_phone}</p>}
               {viewInvoice.doctor_name && <p style={{ margin: '2px 0' }}><strong>Doctor:</strong> {viewInvoice.doctor_name}</p>}
             </div>

@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
-import { isValidDistributorName} from './nameNormalizer.js';
+import { isValidDistributorName, BANNED_BATCH_STRINGS } from './nameNormalizer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -300,7 +300,6 @@ async function auditExpiry(db: Db): Promise<CategoryResult> {
 }
 
 // ── OCR ──────────────────────────────────────────────────────────────────────
-const BANNED_BATCH_STRINGS = ['BATCH123', 'B-GEN', 'B-CATALOG', 'B-IMPORT', 'B-OFFLINE', 'B-REISSUE', 'B-MANUAL', 'B-NEW'];
 async function auditOCR(db: Db): Promise<CategoryResult> {
   const findings: AuditFinding[] = [];
   const placeholders = BANNED_BATCH_STRINGS.map(() => 'batch_no = ?').join(' OR ');

@@ -5,6 +5,7 @@ import { useSearchParams, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { formatDisplayDate } from '../../utils/date';
+import { toastEvent } from '../../services/events';
 
 interface SaleItem {
   sale_item_id: number;
@@ -129,6 +130,13 @@ export default function CustomerReturn() {
 
     if (returnItems.length === 0) {
       setError('Please specify return quantities for at least one item');
+      toastEvent.trigger('Please specify return quantities for at least one item', 'error');
+      return;
+    }
+
+    if (!reason || !reason.trim()) {
+      setError('Please specify a legitimate return reason.');
+      toastEvent.trigger('Please specify a return reason before submitting.', 'error');
       return;
     }
 
@@ -137,9 +145,9 @@ export default function CustomerReturn() {
       await api.createCustomerReturn({
         original_invoice_id: invoice!.id,
         return_items: returnItems,
-        reason
+        reason: reason.trim()
       });
-      alert('Return processed successfully!');
+      toastEvent.trigger('Return processed successfully!', 'success');
       // Centralized cache invalidation for frontend lists and local infinite scroll caches
       invalidateAfterStockWrite(queryClient);
 
@@ -152,7 +160,9 @@ export default function CustomerReturn() {
       setReason('');
     } catch (err) {
       const e = err as LocalApiError;
-      setError(e.response?.data?.error || 'Failed to process return');
+      const errorMsg = e.response?.data?.error || 'Failed to process return';
+      setError(errorMsg);
+      toastEvent.trigger(errorMsg, 'error');
     } finally {
       setLoading(false);
     }

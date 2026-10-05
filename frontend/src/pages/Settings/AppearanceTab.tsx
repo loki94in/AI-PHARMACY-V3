@@ -4,6 +4,7 @@ import { useSettingsQuery } from '../../hooks/useSettingsQuery';
 import { api } from '../../services/api';
 import { updateSettingsCache } from '../../utils/settingsSync';
 import { toastEvent } from '../../services/events';
+import { TOAST_STYLE_OPTIONS, getToastStyle, setToastStyle, type ToastStyle } from '../../utils/toastStyle';
 import {
   Palette,
   Sun,
@@ -33,6 +34,7 @@ export const AppearanceTab: React.FC = () => {
   const queryClient = useQueryClient();
   const { data: rawSettings = {}, isLoading } = useSettingsQuery();
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [toastStyle, setToastStyleState] = useState<ToastStyle>(getToastStyle);
 
   // Current values from settings or defaults
   const currentTheme = (rawSettings['app_theme_mode'] || 'light') as AppearancePreferences['themeMode'];
@@ -230,6 +232,54 @@ export const AppearanceTab: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Notification (toast) look — per device, preview shows a sample at the top of the screen */}
+          <div className="p-5 rounded-2xl bg-bg border border-border shadow-sm space-y-4">
+            <div className="flex items-center gap-2.5">
+              <Sparkles size={18} className="text-primary" />
+              <h3 className="text-sm font-bold text-text">Notification Style</h3>
+            </div>
+            <p className="text-xs text-muted">
+              Pick how pop-up messages look. They fade out by themselves after about 4 seconds. Click a style to choose it and see a sample.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {TOAST_STYLE_OPTIONS.map((o) => {
+                const isSelected = toastStyle === o.id;
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => {
+                      setToastStyle(o.id);
+                      setToastStyleState(o.id);
+                      window.dispatchEvent(new CustomEvent('toast-preview', { detail: { message: 'Refill saved. Medicine linked to distributor.', type: 'success' } }));
+                    }}
+                    className={`flex items-start justify-between gap-3 p-3.5 rounded-xl border text-left transition-all ${
+                      isSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border bg-bg2 hover:border-primary/40 hover:bg-bg3'
+                    }`}
+                  >
+                    <div>
+                      <span className="text-xs font-bold text-text">{o.id}. {o.label}</span>
+                      <p className="text-[11px] text-muted mt-1">{o.desc}</p>
+                    </div>
+                    {isSelected && <Check size={14} className="text-primary shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex gap-2">
+              {(['success', 'error', 'info'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('toast-preview', { detail: { message: t === 'error' ? 'Refill saved but no distributor is linked.' : 'Sample notification message.', type: t } }))}
+                  className="px-3 py-1.5 rounded-lg border border-border bg-bg2 text-xs font-bold text-text hover:border-primary/40 cursor-pointer"
+                >
+                  Preview {t}
+                </button>
+              ))}
             </div>
           </div>
 

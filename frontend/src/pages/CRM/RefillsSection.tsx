@@ -38,6 +38,7 @@ export const RefillsSection: React.FC = () => {
   const navigate = useNavigate();
   const [data, setData] = useState<RefillPatient[]>(cachedRefillsData);
   const [selectedPatient, setSelectedPatient] = useState<RefillPatient | null>(null);
+  const [showUnlinked, setShowUnlinked] = useState(false);
   const [loading, setLoading] = useState(cachedRefillsData.length === 0);
   const [search, setSearch] = useState('');
   const [sending, setSending] = useState<string | null>(null);
@@ -1072,6 +1073,17 @@ export const RefillsSection: React.FC = () => {
     return dueDate >= today && diffDays <= 6 && diffDays >= 0;
   }).length;
 
+  // Patients with an active refill medicine that has no linked distributor.
+  // Derived from live data, so the card vanishes by itself once all are linked.
+  const unlinkedPatients = data
+    .map(p => ({
+      patient: p,
+      meds: (p.medicines || []).filter(
+        m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused' && !m.linked_distributors?.length
+      ),
+    }))
+    .filter(x => x.meds.length > 0);
+
   // Selected patient calculations
   const isSelectedOverdue = selectedPatient ? new Date(selectedPatient.next_refill_date) < new Date() : false;
   const selectedDiffDays = selectedPatient
@@ -1120,6 +1132,47 @@ export const RefillsSection: React.FC = () => {
             <Bell size={18} />
           </div>
         </div>
+
+        {unlinkedPatients.length > 0 && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowUnlinked(v => !v)}
+              className="w-full h-full p-3.5 bg-bg border border-amber-500/40 rounded-2xl flex items-center justify-between shadow-sm cursor-pointer text-left"
+              title="Click to see patients whose medicine is not linked to a distributor"
+            >
+              <div>
+                <p className="text-[11px] text-muted font-medium">Not linked to distributor</p>
+                <h3 className="text-lg font-bold text-amber-400 mt-0.5">
+                  {unlinkedPatients.length} Patient{unlinkedPatients.length > 1 ? 's' : ''}
+                </h3>
+              </div>
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <AlertCircle size={18} />
+              </div>
+            </button>
+            {showUnlinked && (
+              <div className="absolute z-dropdown left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto dropdown-scroll bg-bg2 border border-border rounded-xl shadow-lg">
+                {unlinkedPatients.map(({ patient, meds }) => (
+                  <button
+                    key={patient.customer_id ?? patient.patient_phone}
+                    type="button"
+                    onClick={() => {
+                      selectPatientAndLoadDetails(patient);
+                      setShowUnlinked(false);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-bg3 border-b border-border last:border-0 cursor-pointer"
+                  >
+                    <div className="text-xs font-bold text-text">{patient.patient_name}</div>
+                    <div className="text-[10px] text-muted truncate">
+                      {meds.map(m => m.medicine_name).join(', ')}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="p-3.5 bg-bg border border-border rounded-2xl flex items-center justify-between gap-2 shadow-sm">
           <button
@@ -2815,7 +2868,7 @@ export const RefillsSection: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-bg3/30 p-3.5 rounded-xl border border-border text-xs">
                 <div>
                   <div className="text-[10px] font-bold text-muted uppercase tracking-wider mb-0.5">Patient Name</div>
-                  <div className="font-bold text-text">{viewInvoice.customer_name || 'Walk-in'}</div>
+                  <div className="font-bold text-text">{viewInvoice.customer_name || '— (Counter Sale)'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] font-bold text-muted uppercase tracking-wider mb-0.5">WhatsApp / Phone</div>

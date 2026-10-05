@@ -1,5 +1,6 @@
 import React from 'react';
 import { UserCheck, FileText, Zap, CheckCircle } from 'lucide-react';
+import { formatINR } from '../../utils/currency';
 
 interface POSCheckoutBarProps {
   patientName: string;
@@ -34,6 +35,8 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
   lastInvoiceNo,
   onCompleteSale,
 }) => {
+  // grandTotal is the saved, whole-rupee bill amount; this is only the shown difference from the exact total.
+  const roundOff = grandTotal - (subtotal - discountAmount);
   return (
     <div className="shrink-0 w-full flex flex-row items-center gap-2 px-3 py-1.5 bg-bg2/95 border-t border-glass-border/50 shadow-[0_-4px_16px_rgba(0,0,0,0.14)] overflow-x-auto">
       {/* Section 1: Customer (single line) */}
@@ -53,7 +56,7 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
       <div className="flex items-center gap-2 min-w-[220px] border-r border-glass-border/30 pr-2.5 shrink-0">
         <FileText size={13} className="text-muted shrink-0" />
         <span className="text-[11px] text-muted">Sub:</span>
-        <span className="font-mono font-bold text-text text-xs">₹{Math.round(subtotal)}</span>
+        <span className="font-mono font-bold text-text text-xs">₹{formatINR(subtotal)}</span>
         <span className="text-[11px] text-muted ml-1">Disc%</span>
         <input
           id="pos-bill-discount-input"
@@ -74,7 +77,12 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
           className="w-12 bg-bg border border-glass-border rounded px-1.5 py-0.5 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-6"
         />
         {discountAmount > 0 && (
-          <span className="font-mono font-bold text-amber-500 text-xs">-₹{Math.round(discountAmount)}</span>
+          <span className="font-mono font-bold text-amber-500 text-xs">-₹{formatINR(discountAmount)}</span>
+        )}
+        {Math.abs(roundOff) >= 0.005 && (
+          <span className="text-[11px] text-muted font-mono" title="Round-off to the nearest rupee">
+            Rnd {roundOff > 0 ? '+' : '-'}{formatINR(Math.abs(roundOff))}
+          </span>
         )}
       </div>
 
@@ -122,7 +130,7 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
       {/* Section 4: Net Payable (compact) */}
       <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded-lg bg-primary/5 border border-primary/20 shrink-0">
         <span className="text-[11px] font-black text-primary uppercase tracking-widest">Total</span>
-        <span className="text-xl font-black font-mono text-primary leading-none">₹{grandTotal.toLocaleString()}</span>
+        <span className="text-xl font-black font-mono text-primary leading-none">₹{formatINR(grandTotal)}</span>
       </div>
 
       {/* Section 5: Action Buttons */}
