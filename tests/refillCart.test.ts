@@ -21,7 +21,9 @@ const mockAdd = jest.fn(async (items: any[]) => {
   if (addBehaviour === 'offline') return { success: true, offline: true, message: 'Item saved to distributor cart (offline mode).' };
   if (addBehaviour === 'ok') {
     for (const it of items) {
-      cartLines.push({ storeId: it.storeId, storeName: it.storeName, productCode: it.productCode, productName: it.productName, qty: it.qty });
+      const cur = cartLines.find(l => l.storeId === it.storeId && l.productCode === it.productCode);
+      if (cur) cur.qty = it.qty;
+      else cartLines.push({ storeId: it.storeId, storeName: it.storeName, productCode: it.productCode, productName: it.productName, qty: it.qty });
     }
   }
   return { success: true, mode: 'Live' };
@@ -195,12 +197,49 @@ describe('Refill → Live Cart (saved distributor links, one medicine at a time)
     expect(mockAdd).not.toHaveBeenCalled();
   });
 
-  test('several ticked + in stock → adds to ONE: the distributor already in the cart', async () => {
+  test('several ticked + in stock → adds to the FIRST in priority order (pick order when nothing is ranked)', async () => {
     cartLines = [{ storeId: 22, storeName: 'BETA MEDICOS', productCode: 'X-1', productName: 'DOLO 650', qty: 2 }];
     const res = await svc.processRefillCartItem(refillId, { qty: 3, pick: [pickOf(TELMA_ALPHA), pickOf(TELMA_BETA)] });
     expect(res.status).toBe('added');
     expect(mockAdd).toHaveBeenCalledTimes(1);
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 11, productCode: 'A-100' });
+  });
+
+  test('distributor priority list decides the order; out of stock falls to the next', async () => {
+    await svc.saveDistributorPriority(['BETA MEDICOS', 'ALPHA PHARMA']);
+    const res = await svc.processRefillCartItem(refillId, { qty: 3, pick: [pickOf(TELMA_ALPHA), pickOf(TELMA_BETA)] });
+    expect(res.status).toBe('added');
     expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 22, productCode: 'B-200' });
+
+    await db.run('UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?', [refillId]);
+    cartLines = [];
+    mockAdd.mockClear();
+    searchItems = [TELMA_ALPHA, { ...TELMA_BETA, stock: '0' }];
+    const next = await svc.processRefillCartItem(refillId, { qty: 3 });
+    expect(next.status).toBe('added');
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 11, productCode: 'A-100' });
+  });
+
+  test('medicine already in the cart from elsewhere → cart qty + refill qty (1 + 2 = 3), cancel later takes back only 2', async () => {
+    await db.run(
+      "INSERT INTO medicine_distributor_links (medicine_id, store_id, store_name, product_code, product_name) VALUES (?, 11, 'ALPHA PHARMA', 'A-100', 'TELMA 40MG TAB')",
+      [medId]
+    );
+    cartLines = [{ storeId: 11, storeName: 'ALPHA PHARMA', productCode: 'A-100', productName: 'TELMA 40MG TAB', qty: 1 }];
+    const plan = await svc.processRefillCartItem(refillId, { qty: 2, dryRun: true });
+    expect(plan).toMatchObject({ status: 'ready', line: { qty: 3 } });
+    expect(mockAdd).not.toHaveBeenCalled();
+    const res = await svc.processRefillCartItem(refillId, { qty: 2 });
+    expect(res.status).toBe('added');
+    expect(res.line).toEqual({ storeName: 'ALPHA PHARMA', productName: 'TELMA 40MG TAB', qty: 3 });
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 11, productCode: 'A-100', qty: 3 });
+    expect(cartLines).toHaveLength(1);
+    const row = await db.get('SELECT cart_product_code, cart_qty FROM patient_refills WHERE id = ?', [refillId]);
+    expect(row).toEqual({ cart_product_code: 'A-100', cart_qty: 2 });
+    // running the same refill again never adds a second time
+    mockAdd.mockClear();
+    expect((await svc.processRefillCartItem(refillId, { qty: 2 })).status).toBe('in_cart');
+    expect(mockAdd).not.toHaveBeenCalled();
   });
 
   test('"success + offline" from the cart API is reported as failed, not added', async () => {
@@ -348,27 +387,30 @@ describe('Refill → Live Cart (saved distributor links, one medicine at a time)
     expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
-  test('owner WhatsApp summary: distributor + qty per medicine; "Added" only when the DB confirms the cart line', async () => {
+  test('owner WhatsApp summary: one block per distributor (header + medicines × qty); failures listed at the end', async () => {
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('owner_whatsapp_number', '919800000001')");
     await svc.processRefillCartItem(refillId, { qty: 3, pick: [pickOf(TELMA_ALPHA)] });
     const r2 = await db.run(
-      "INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, quantity_needed, is_active, status) VALUES ('Ravi', '9876501234', ?, 2, 1, 'pending')",
+      "INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, quantity_needed, is_active, status, cart_store_name, cart_product_code, cart_qty) VALUES ('Ravi', '9876501234', ?, 2, 1, 'pending', 'ALPHA PHARMA', 'A-200', 2)",
       [medId]
     );
     const res = await request(app).post('/api/refills/cart-summary').send({
       patientName: 'Ravi',
       rows: [
-        { refillId, medicineName: 'TELMA 40MG TAB', status: 'added' },
-        { refillId: r2.lastID, medicineName: 'ROSUVAS 10', status: 'added' }, // claimed, but no cart line in DB
+        { refillId, medicineName: 'TELMA 40MG TAB', status: 'added', storeName: 'ALPHA PHARMA', qty: 3 },
+        { refillId: r2.lastID, medicineName: 'DOLO 650', status: 'added', storeName: 'ALPHA PHARMA', qty: 2 },
+        { refillId: 999001, medicineName: 'ROSUVAS 10', status: 'linked_oos', message: 'Out of stock at ALPHA PHARMA, BETA MEDICOS.' }, // nothing added
+        { refillId: 999002, medicineName: 'AZEE 500', status: 'added', storeName: 'ALPHA PHARMA', qty: 1 }, // claimed, but no cart line in DB
       ]
     });
     expect(res.body).toMatchObject({ ok: true, queued: true });
     const [to, message, type] = mockEnqueue.mock.calls[0] as any[];
     expect(to).toBe('919800000001');
     expect(type).toBe('refill_cart_summary');
-    expect(message).toContain('TELMA 40MG TAB → ALPHA PHARMA × 3');
-    expect(message).toMatch(/Needs you \(1\)[\s\S]*ROSUVAS 10/);
-    expect(message).not.toMatch(/ROSUVAS 10 →/);
+    expect(message).toContain('*ALPHA PHARMA*\n• TELMA 40MG TAB × 3\n• DOLO 650 × 2');
+    expect(message.match(/\*ALPHA PHARMA\*/g)).toHaveLength(1);
+    expect(message).toMatch(/Failed to add \(2\)[\s\S]*ROSUVAS 10 — Out of stock at ALPHA PHARMA, BETA MEDICOS[\s\S]*AZEE 500/);
+    expect(message).not.toMatch(/AZEE 500 ×/);
   });
 
   test('route: cancelling a refill that added nothing never touches the cart', async () => {

@@ -1760,6 +1760,10 @@ export const api = {
   // dryRun: plan only (never writes the cart) → 'ready' with the distributor it would use.
   addRefillToCart: (id: number, body: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean }) =>
     apiClient.post<RefillCartResult>(`/refills/${id}/add-to-cart`, body, { timeout: 90000 }).then(res => res.data),
+  getDistributorPriority: () =>
+    apiClient.get<{ success: boolean; distributors: Array<{ storeName: string; ranked: boolean; linkedMedicines: number }> }>('/refills/distributor-priority').then(res => res.data),
+  saveDistributorPriority: (order: string[]) =>
+    apiClient.put<{ success: boolean; saved: number; distributors: Array<{ storeName: string; ranked: boolean; linkedMedicines: number }> }>('/refills/distributor-priority', { order }).then(res => res.data),
   getDistributorRanks: () =>
     apiClient.get<{ success: boolean; ranks: Array<{ name: string; purchases: number }> }>('/refills/distributor-ranks').then(res => res.data),
   // One WhatsApp to the OWNER after a refill cart run; queued:false + reason when no owner number.

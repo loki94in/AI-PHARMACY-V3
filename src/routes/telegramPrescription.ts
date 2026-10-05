@@ -3,6 +3,7 @@ import express from 'express';
 import { dbManager } from '../database/connection.js';
 // import path from 'path';
 // import { fileURLToPath } from 'url';
+import { calculateSalesGstAndTotals } from '../utils/saleTotals.js';
 import { telegramPrescriptionService } from '../services/telegramPrescriptionService.js';
 
 // const __filename = fileURLToPath(import.meta.url);
@@ -20,7 +21,7 @@ router.get('/cart/:chatId', async (req, res) => {
     }
 
     const cartItems = telegramPrescriptionService.getCartItems(chatId);
-    const { subtotal, tax, total } = telegramPrescriptionService.calculateCartTotal(chatId);
+    const { subtotal, tax, total } = await telegramPrescriptionService.calculateCartTotal(chatId);
 
     res.json({
       chatId,
@@ -63,7 +64,7 @@ router.post('/cart/add', async (req, res) => {
     );
 
     if (success) {
-      const { subtotal, tax, total } = telegramPrescriptionService.calculateCartTotal(parsedChatId);
+      const { subtotal, tax, total } = await telegramPrescriptionService.calculateCartTotal(parsedChatId);
       res.json({
         success: true,
         message: 'Item added to cart',
@@ -158,22 +159,16 @@ router.post('/bill/generate', async (req, res) => {
     const invoice_no = `${prefix}${padded}`;
 
     // Compute totals
-    let subtotal = 0;
-    for (const item of items) {
-      subtotal += item.quantity * item.unit_price;
-    }
-
-    const taxRate = 0.05; // 5% tax
-    const total = Math.round(subtotal - discount);
-    const tax = Number((total * taxRate / (1 + taxRate)).toFixed(2));
+    // GST per line from the purchase-saved rate of the batch (no flat rate)
+    const { total, tax, totalCgst, totalSgst, itemTaxBreakdowns } = await calculateSalesGstAndTotals(db, items, Number(discount) || 0);
 
     const paymentMedium = payment_medium || 'CASH';
     const paymentStatus = paymentMedium === 'CREDIT' ? 'UNPAID' : 'PAID';
 
     // Insert invoice
     const result = await db.run(
-      "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
-      [invoice_no, finalPatientId, total, tax, paymentMedium, paymentStatus]
+      "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, payment_medium, payment_status, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
+      [invoice_no, finalPatientId, total, tax, totalCgst, totalSgst, paymentMedium, paymentStatus]
     );
     const invoiceId = result.lastID!;
 
@@ -187,9 +182,10 @@ router.post('/bill/generate', async (req, res) => {
 
     // Insert line items and update inventory
     for (const item of items) {
+      const tb = itemTaxBreakdowns.find(b => b.item === item);
       await db.run(
-        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price) VALUES (?, ?, ?, ?)',
-        [invoiceId, item.inventory_id, item.quantity, item.unit_price]
+        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, cgst_value, sgst_value) VALUES (?, ?, ?, ?, ?, ?)',
+        [invoiceId, item.inventory_id, item.quantity, item.unit_price, tb?.cgst_value ?? 0, tb?.sgst_value ?? 0]
       );
       // Decrement stock
       await db.run('UPDATE inventory_master SET quantity = quantity - ? WHERE id = ?', [item.quantity, item.inventory_id]);

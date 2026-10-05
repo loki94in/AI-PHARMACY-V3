@@ -844,8 +844,8 @@ router.get('/batch-info', async (req, res) => {
 
     const medRow = await db.get('SELECT rate, mrp, cgst_per, sgst_per FROM medicines WHERE id = ?', [medicine_id]);
 
-    const defaultCgst = (medRow?.cgst_per !== undefined && medRow?.cgst_per !== null && medRow?.cgst_per !== 0) ? medRow.cgst_per : 6;
-    const defaultSgst = (medRow?.sgst_per !== undefined && medRow?.sgst_per !== null && medRow?.sgst_per !== 0) ? medRow.sgst_per : 6;
+    const defaultCgst = (medRow?.cgst_per !== undefined && medRow?.cgst_per !== null && medRow?.cgst_per !== 0) ? medRow.cgst_per : null;
+    const defaultSgst = (medRow?.sgst_per !== undefined && medRow?.sgst_per !== null && medRow?.sgst_per !== 0) ? medRow.sgst_per : null;
 
     if (batchRow) {
       return res.json({

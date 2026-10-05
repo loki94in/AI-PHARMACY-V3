@@ -8,6 +8,67 @@ export interface KeyboardShortcutInfo {
   category: 'Global' | 'POS' | 'Learning' | 'CRM' | 'Purchases' | 'Settings';
 }
 
+// F-key page jumps, handled once in Topbar's capture-phase keydown (components/Layout.tsx).
+// Defaults below; each device can rebind them in Settings → Appearance (localStorage, like toast style).
+export const PAGE_SHORTCUT_DEFAULTS: { path: string; label: string; key: string }[] = [
+  { path: '/pos', label: 'POS', key: 'F1' },
+  { path: '/sells', label: 'Sell', key: 'F2' },
+  { path: '/inventory', label: 'Inventory', key: 'F3' },
+  { path: '/purchases', label: 'Purchases', key: 'F4' },
+  { path: '/purchase-history', label: 'Purchase History', key: 'F5' },
+  { path: '/mail', label: 'Distributor Mail', key: 'F6' },
+  { path: '/reports', label: 'Reports', key: 'F7' },
+  { path: '/pharmarack-cart', label: 'Pharmarack Cart', key: 'F8' },
+  { path: '/investigation', label: 'Investigation Center', key: 'F9' },
+  { path: '/crm', label: 'CRM', key: 'F10' },
+];
+
+const PAGE_SHORTCUT_STORE = 'app_page_shortcuts';
+/** F11 stays full-screen; everything else F1–F12 can be bound. */
+export const isBindableKey = (k: string) => /^F([1-9]|1[0-2])$/.test(k) && k !== 'F11';
+
+/** path → key ('' = unassigned), defaults overlaid with this device's saved choices. */
+export function getPageBindings(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const d of PAGE_SHORTCUT_DEFAULTS) out[d.path] = d.key;
+  try {
+    const saved = JSON.parse(localStorage.getItem(PAGE_SHORTCUT_STORE) || '{}') as Record<string, string>;
+    for (const d of PAGE_SHORTCUT_DEFAULTS) {
+      if (d.path in saved && (saved[d.path] === '' || isBindableKey(saved[d.path]))) out[d.path] = saved[d.path];
+    }
+  } catch { /* corrupt or blocked storage: defaults */ }
+  return out;
+}
+
+export function setPageBindings(bindings: Record<string, string>): void {
+  try {
+    localStorage.setItem(PAGE_SHORTCUT_STORE, JSON.stringify(bindings));
+  } catch { /* ignore */ }
+  window.dispatchEvent(new CustomEvent('page-shortcuts-changed'));
+}
+
+export function resetPageBindings(): void {
+  try {
+    localStorage.removeItem(PAGE_SHORTCUT_STORE);
+  } catch { /* ignore */ }
+  window.dispatchEvent(new CustomEvent('page-shortcuts-changed'));
+}
+
+/** key → path for the live keydown handler. */
+export function getPageShortcutMap(): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const [path, key] of Object.entries(getPageBindings())) if (key) map[key] = path;
+  return map;
+}
+
+export function getShortcutDirectory(): KeyboardShortcutInfo[] {
+  const bindings = getPageBindings();
+  const pages = PAGE_SHORTCUT_DEFAULTS.filter(d => bindings[d.path]).map((d): KeyboardShortcutInfo => ({
+    key: bindings[d.path], description: `Go to ${d.label}`, category: 'Global',
+  }));
+  return [...pages, ...SHORTCUT_DIRECTORY];
+}
+
 export const SHORTCUT_DIRECTORY: KeyboardShortcutInfo[] = [
   { key: 'Ctrl + S', description: 'Save current active page form, profile, or open modal', category: 'Global' },
   { key: 'Esc', description: 'Close active open modal, popup, or overlay', category: 'Global' },
@@ -15,9 +76,8 @@ export const SHORTCUT_DIRECTORY: KeyboardShortcutInfo[] = [
   { key: 'F11', description: 'Toggle Full-Screen / Windowed Mode', category: 'Global' },
   { key: '↑ / ↓ Arrow', description: 'Switch vertically between item rows in POS & Purchases tables', category: 'POS' },
   { key: '↑ / ↓ Arrow', description: 'Switch vertically between item rows in POS & Purchases tables', category: 'Purchases' },
-  { key: 'F2', description: 'Focus medicine search input in POS', category: 'POS' },
-  { key: 'F4 / Ctrl + Enter', description: 'Complete & Print Sales Invoice in POS', category: 'POS' },
-  { key: 'F8', description: 'Hold current POS bill', category: 'POS' },
+  { key: 'Ctrl + K', description: 'Focus medicine search input in POS', category: 'POS' },
+  { key: 'Alt + E', description: 'Edit the medicine on the focused row in POS & Purchases', category: 'POS' },
   { key: 'Alt + N', description: 'Add new item / row in Purchases or POS', category: 'Purchases' },
   { key: 'Alt + M', description: 'Merge duplicate distributor profiles in Learning page', category: 'Learning' },
 ];

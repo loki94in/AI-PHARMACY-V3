@@ -2831,7 +2831,7 @@ const POS = () => {
       const hasRealBatch = !!(med.batch_no || med.batch) && !!(med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000));
       const initialMrp = hasRealBatch ? (med.mrp || 0) : 0;
       const initialUnitPrice = hasRealBatch ? (med.unitPrice || med.unit_price || med.mrp || 0) : 0;
-      const initialGst = Number(med.gst_percent !== undefined ? med.gst_percent : (med.gst !== undefined ? med.gst : (med.tax_percent !== undefined ? med.tax_percent : 12)));
+      const initialGst: number | undefined = (med.gst_percent !== undefined ? med.gst_percent : (med.gst !== undefined ? med.gst : (med.tax_percent !== undefined ? med.tax_percent : undefined)));
 
       // Auto-calculate discount percentage if sell_price is set for this medicine
       let initialDiscount = med.discount !== undefined ? med.discount : 0;

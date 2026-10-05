@@ -2803,30 +2803,17 @@ router.post('/staged/:id/approve', async (req, res) => {
       }
     }
 
-    // Compute totals
-    let subtotal = 0;
-    for (const item of itemsToProcess) {
-      const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0 } = item;
-      const q = Number(quantity);
-      const l = Number(loose_qty);
-      const pSize = Number(pack_size || 1);
-      const d = Number(discount_per);
-      const uPrice = Number(unit_price);
-      const dPrice = uPrice * (1 - d / 100);
-      subtotal += (q * dPrice) + (l * (dPrice / pSize));
-    }
-    const taxRate = 0.05;
-    const total = Math.round(subtotal - Number(finalDiscount));
-    const tax = Number((total * taxRate / (1 + taxRate)).toFixed(2));
+    // Totals + GST from the purchase-saved rate of each batch (same maths as POS save)
+    const { subtotal, total, tax, totalCgst, totalSgst, itemTaxBreakdowns } = await calculateSalesGstAndTotals(db, itemsToProcess, Number(finalDiscount));
 
     // Generate invoice number
     const invoice_no = await generateInvoiceNo(db);
 
     // Save invoice
     const result = await db.run(
-      'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date, discount, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, payment_medium, payment_status, date, discount, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       // The phone sends its sale time as UTC ISO; the bill keeps that moment in shop time.
-      [invoice_no, customerId, total, tax, 'CASH', 'PAID', normalizeToLocalSqlDateTime(staged.sale_date), Number(finalDiscount), subtotal]
+      [invoice_no, customerId, total, tax, totalCgst, totalSgst, 'CASH', 'PAID', normalizeToLocalSqlDateTime(staged.sale_date), Number(finalDiscount), subtotal]
     );
     const invoiceId = result.lastID;
 
@@ -2845,9 +2832,10 @@ router.post('/staged/:id/approve', async (req, res) => {
         );
         await db.run('UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?', [newStock.quantity, newStock.loose_quantity, inventory_id]);
       }
+      const tb = itemTaxBreakdowns.find(b => b.item === item);
       await db.run(
-        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per) VALUES (?, ?, ?, ?, ?, ?)',
-        [invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty), Number(discount_per)]
+        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty), Number(discount_per), tb?.cgst_value ?? 0, tb?.sgst_value ?? 0]
       );
     }
 

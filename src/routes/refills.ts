@@ -17,7 +17,7 @@ import { resolveStoreId } from '../services/storeContextService.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 import { toLocalSqlDateTime } from '../utils/localTime.js';
 import {
-  processRefillCartItem, removeRefillCartLines, REFILL_CART_COLUMNS, getMedicineLinks, saveMedicineLinks,
+  processRefillCartItem, removeRefillCartLines, getDistributorPriorityList, saveDistributorPriority, REFILL_CART_COLUMNS, getMedicineLinks, saveMedicineLinks,
   getDistributorPurchaseRanks, sendRefillCartSummary
 } from '../services/refillCartService.js';
 
@@ -879,6 +879,26 @@ router.get('/distributor-ranks', async (_req, res) => {
     res.json({ success: true, ranks: await getDistributorPurchaseRanks() });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to load distributor purchase counts' });
+  }
+});
+
+// One combined priority list of every mapped distributor (CRM -> Distributor Priority). The add-to-cart
+// flow tries linked distributors in this order and moves to the next when one is out of stock.
+router.get('/distributor-priority', async (_req, res) => {
+  try {
+    res.json({ success: true, distributors: await getDistributorPriorityList() });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load distributor priority' });
+  }
+});
+
+router.put('/distributor-priority', async (req, res) => {
+  if (!Array.isArray(req.body?.order)) return res.status(400).json({ error: 'order array of distributor names is required' });
+  try {
+    const saved = await saveDistributorPriority(req.body.order);
+    res.json({ success: true, saved, distributors: await getDistributorPriorityList() });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save distributor priority' });
   }
 });
 

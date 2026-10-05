@@ -22,7 +22,7 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   expiry_list_changed: [['expiry'], ['expiry-reviews']],
   order_updated: [['orders'], ['pos-special-orders'], ['website-orders']],
   website_order_created: [['website-orders'], ['orders'], ['pos-special-orders']],
-  refill_updated: [['refills'], ['crm-refills']],
+  refill_updated: [['refills'], ['crm-refills'], ['distributor-priority']],
   email_new: [['mail-inbox'], ['mail']],
   email_update: [['mail-inbox'], ['mail']],
   dispatch_updated: [['dispatch-orders'], ['delivery-boys'], ['distributor-reminders']],

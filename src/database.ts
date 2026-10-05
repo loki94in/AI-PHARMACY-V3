@@ -360,6 +360,16 @@ async function ensureRefillCartLinkSchema(db: any) {
       UNIQUE(medicine_id, store_id, product_code)
     )
   `);
+  // Pharmacist's one priority list of distributors (CRM -> Distributor Priority). Keyed by the
+  // normalized store name so Pharmarack links and mapped distributors resolve to the same row.
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS distributor_priority (
+      name_key TEXT PRIMARY KEY,
+      store_name TEXT NOT NULL,
+      priority INTEGER NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   await ensureColumns(db, 'patient_refills', {
     cart_store_id: 'INTEGER DEFAULT NULL',
     cart_store_name: 'TEXT DEFAULT NULL',

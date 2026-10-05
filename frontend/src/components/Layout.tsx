@@ -51,7 +51,7 @@ import {
   Power,
   Store as StoreIcon,
 } from 'lucide-react';
-import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
+import { shortcutEvent, getPageShortcutMap, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
 import {
   ChevronLeft as ChevronLeftIcon,
@@ -2039,6 +2039,17 @@ const Topbar = memo(({
       const targetTag = (e.target as HTMLElement)?.tagName?.toUpperCase();
       const isInputFocused = ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetTag);
 
+      // 0. F1–F10 jump to a page from anywhere (capture phase: beats page-level F2/F8 handlers and browser defaults)
+      // (skipped while Settings → Appearance is capturing a new key)
+      const capturingKey = !!(e.target as HTMLElement)?.closest?.('[data-shortcut-capture]');
+      const pageShortcut = !capturingKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey ? getPageShortcutMap()[e.key] : undefined;
+      if (pageShortcut) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        navigate(pageShortcut);
+        return;
+      }
+
       // 1. Intercept Ctrl + S or Cmd + S globally
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
@@ -2103,7 +2114,7 @@ const Topbar = memo(({
       window.removeEventListener('keydown', handleGlobalKeyDown, true);
       unsubscribeHelp();
     };
-  }, [showShortcutHelp]);
+  }, [showShortcutHelp, navigate]);
 
   // Flash toast only for errors — success/info/mail/automation log silently to Activity panel only
   // Appearance tab "Preview": shows one sample of any type in the chosen style (not logged).

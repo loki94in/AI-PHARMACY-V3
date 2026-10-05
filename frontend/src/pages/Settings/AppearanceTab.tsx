@@ -4,6 +4,7 @@ import { useSettingsQuery } from '../../hooks/useSettingsQuery';
 import { api } from '../../services/api';
 import { updateSettingsCache } from '../../utils/settingsSync';
 import { toastEvent } from '../../services/events';
+import { PAGE_SHORTCUT_DEFAULTS, getPageBindings, setPageBindings, resetPageBindings, isBindableKey } from '../../services/keyboardShortcuts';
 import { TOAST_STYLE_OPTIONS, getToastStyle, setToastStyle, type ToastStyle } from '../../utils/toastStyle';
 import {
   Palette,
@@ -35,6 +36,15 @@ export const AppearanceTab: React.FC = () => {
   const { data: rawSettings = {}, isLoading } = useSettingsQuery();
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [toastStyle, setToastStyleState] = useState<ToastStyle>(getToastStyle);
+  const [bindings, setBindings] = useState(getPageBindings);
+  const [capturing, setCapturing] = useState<string | null>(null);
+
+  const saveBinding = (path: string, key: string) => {
+    const next = { ...bindings, [path]: key };
+    setPageBindings(next);
+    setBindings(next);
+    setCapturing(null);
+  };
 
   // Current values from settings or defaults
   const currentTheme = (rawSettings['app_theme_mode'] || 'light') as AppearancePreferences['themeMode'];
@@ -230,6 +240,58 @@ export const AppearanceTab: React.FC = () => {
                     <span className="text-xs font-bold text-text">{f.label}</span>
                     <span className="text-[10px] text-muted font-mono mt-0.5">{f.px}</span>
                   </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Page shortcut keys — per device */}
+          <div className="p-5 rounded-2xl bg-bg border border-border shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5">
+                <Zap size={18} className="text-primary" />
+                <h3 className="text-sm font-bold text-text">Page Shortcut Keys</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => { resetPageBindings(); setBindings(getPageBindings()); setCapturing(null); }}
+                className="px-3 py-1.5 rounded-lg border border-border bg-bg2 text-xs font-bold text-text hover:border-primary/40 cursor-pointer"
+              >
+                Reset keys
+              </button>
+            </div>
+            <p className="text-xs text-muted">
+              Press a key to jump to a page from anywhere. Click a key, then press the new one (F1–F12 except F11). Backspace clears it. Saved on this device.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {PAGE_SHORTCUT_DEFAULTS.map((d) => {
+                const isCapturing = capturing === d.path;
+                return (
+                  <div key={d.path} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-border bg-bg2">
+                    <span className="text-xs font-bold text-text">{d.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCapturing(isCapturing ? null : d.path)}
+                      onKeyDown={(e) => {
+                        if (!isCapturing) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (e.key === 'Escape') { setCapturing(null); return; }
+                        if (e.key === 'Backspace' || e.key === 'Delete') { saveBinding(d.path, ''); return; }
+                        if (!isBindableKey(e.key)) { toastEvent.trigger('Use F1–F12 (F11 is full-screen)', 'error'); return; }
+                        const owner = PAGE_SHORTCUT_DEFAULTS.find(o => o.path !== d.path && bindings[o.path] === e.key);
+                        if (owner) { toastEvent.trigger(`${e.key} is already used by ${owner.label}`, 'error'); return; }
+                        saveBinding(d.path, e.key);
+                      }}
+                      onBlur={() => { if (isCapturing) setCapturing(null); }}
+                      data-shortcut-capture={isCapturing ? 'true' : undefined}
+                      className={`min-w-[88px] px-3 py-1.5 rounded-lg border text-xs font-mono font-bold cursor-pointer ${
+                        isCapturing ? 'border-primary bg-primary/10 text-text' : 'border-border bg-bg text-text hover:border-primary/40'
+                      }`}
+                    >
+                      {isCapturing ? 'Press a key…' : bindings[d.path] || 'None'}
+                    </button>
+                  </div>
                 );
               })}
             </div>

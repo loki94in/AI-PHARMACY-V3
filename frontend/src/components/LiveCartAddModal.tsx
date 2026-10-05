@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, Store, Tag, Zap, WifiOff, Trash2 } from 'lucide-react';
 import { api, type SpecialOrder, type Refill } from '../services/api';
+import { loadDistributorPriority, priorityRankOf } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
@@ -1246,6 +1247,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
           // 4. In Active Live Cart (Already added distributor prioritized within same stock tier)
           // 5. Recent distributor tie-break
           // 6. Effective rate
+          const distPrio = await loadDistributorPriority();
           const lastDist = (lastAddedDistributorRef.current || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
           const cleanQ = cleanQuery.toLowerCase().trim();
           if (mergedList.length > 1) {
@@ -1280,6 +1282,13 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
               const aStock = getStockTier(a.stock);
               const bStock = getStockTier(b.stock);
               if (aStock !== bStock) return bStock - aStock;
+
+              // 3b. The pharmacist's distributor priority list (CRM → Distributor Priority): within the
+              // same stock tier the higher-priority distributor comes first, so an in-stock top
+              // priority is picked first and an out-of-stock one falls to the next.
+              const aPrio = priorityRankOf(a.distributor, distPrio);
+              const bPrio = priorityRankOf(b.distributor, distPrio);
+              if (aPrio !== bPrio) return aPrio - bPrio;
 
               // 4. In Active Live Cart (Already added distributor prioritized within same stock tier)
               const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);

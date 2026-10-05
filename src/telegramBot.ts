@@ -270,7 +270,7 @@ class TelegramBotService {
       const chatId = msg.chat.id;
       try {
         const cartItems = telegramPrescriptionService.getCartItems(chatId);
-        const { subtotal, tax, total } = telegramPrescriptionService.calculateCartTotal(chatId);
+        const { subtotal, tax, total } = await telegramPrescriptionService.calculateCartTotal(chatId);
 
         if (cartItems.length === 0) {
           this.bot?.sendMessage(chatId, '🛒 Your cart is empty. Add medicines by sending prescription images or using /check command.');

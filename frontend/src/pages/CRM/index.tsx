@@ -2,7 +2,8 @@ import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Users, Repeat2, Phone, MessageSquare, ClipboardList,
-  Globe, Bell, MessageCircle
+  Globe, Bell, MessageCircle,
+  ListOrdered,
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { CallTaskBoard, CallTaskBadge } from '../../components/CallTaskBoard';
@@ -13,11 +14,13 @@ import { SpecialOrdersSection } from './SpecialOrdersSection';
 import { CustomerCreditSection } from './CustomerCreditSection';
 import { DistributorMessagesSection } from './DistributorMessagesSection';
 import { WhatsAppSection } from './WhatsAppSection';
+import { DistributorPrioritySection } from './DistributorPrioritySection';
 
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 const TABS = [
   { key: 'refills', label: 'Refills', icon: <Repeat2 size={15} /> },
+  { key: 'distributor_priority', label: 'Distributor Priority', icon: <ListOrdered size={15} /> },
   { key: 'call_tasks', label: 'Call Reminders', icon: <Phone size={15} /> },
   { key: 'enquiries', label: 'Enquiries', icon: <MessageSquare size={15} /> },
   { key: 'special_orders', label: 'Special Requests', icon: <ClipboardList size={15} /> },
@@ -82,6 +85,7 @@ const CRM: React.FC = () => {
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'refills' && <RefillsSection />}
+        {activeTab === 'distributor_priority' && <DistributorPrioritySection />}
         {activeTab === 'call_tasks' && (
           <div className="p-4 h-full overflow-y-auto bg-bg2 rounded-2xl border border-border">
             <CallTaskBoard />

@@ -33,6 +33,29 @@ export function loadDistributorRanks(): Promise<DistributorRank[]> {
   return ranksPromise;
 }
 
+// The pharmacist's distributor priority (CRM → Distributor Priority): normalized name → rank (0 = first).
+// ponytail: one small fetch, cached 60 s; a failed load simply means "no priority" (never invented).
+let prioCache: { at: number; map: Map<string, number> } | null = null;
+let prioPending: Promise<Map<string, number>> | null = null;
+const prioKey = (s: unknown) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+export function loadDistributorPriority(): Promise<Map<string, number>> {
+  if (prioCache && Date.now() - prioCache.at < 60_000) return Promise.resolve(prioCache.map);
+  if (!prioPending) {
+    prioPending = api.getDistributorPriority()
+      .then(r => {
+        const map = new Map<string, number>();
+        r.distributors.filter(d => d.ranked).forEach((d, i) => map.set(prioKey(d.storeName), i));
+        prioCache = { at: Date.now(), map };
+        return map;
+      })
+      .catch(() => new Map<string, number>())
+      .finally(() => { prioPending = null; });
+  }
+  return prioPending;
+}
+export const NO_PRIORITY = 100000;
+export const priorityRankOf = (storeName: unknown, map: Map<string, number>): number => map.get(prioKey(storeName)) ?? NO_PRIORITY;
+
 const normName = (s: unknown) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** How many purchase bills the shop has from this Pharmarack distributor (name match; 0 = unknown). */

@@ -3,6 +3,7 @@ import { dbManager } from '../database/connection.js';
 // import path from 'path';
 // import { fileURLToPath } from 'url';
 // import { aiCameraService } from './aiCameraService.js';
+import { calculateSalesGstAndTotals } from '../utils/saleTotals.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import TelegramBot from 'node-telegram-bot-api';
 
@@ -400,27 +401,15 @@ class TelegramPrescriptionService {
   /**
    * Calculate cart total
    */
-  calculateCartTotal(chatId: number): { subtotal: number, tax: number, total: number, items: any[] } {
+  async calculateCartTotal(chatId: number): Promise<{ subtotal: number, tax: number, total: number, items: any[] }> {
     const cart = this.getCart(chatId);
     if (!cart || cart.items.length === 0) {
       return { subtotal: 0, tax: 0, total: 0, items: [] };
     }
-
-    let subtotal = 0;
-    for (const item of cart.items) {
-      subtotal += item.quantity * item.unit_price;
-    }
-
-    const taxRate = 0.05; // 5% tax
-    const total = Math.round(subtotal);
-    const tax = Number((total * taxRate / (1 + taxRate)).toFixed(2));
-
-    return {
-      subtotal,
-      tax,
-      total,
-      items: cart.items
-    };
+    // GST comes from what each batch was purchased with (shared sale maths), never a flat rate.
+    const db = await dbManager.getConnection();
+    const { subtotal, tax, total } = await calculateSalesGstAndTotals(db, cart.items, 0);
+    return { subtotal, tax, total, items: cart.items };
   }
 
   // Message sending helpers (these will be called from telegramBot.ts)

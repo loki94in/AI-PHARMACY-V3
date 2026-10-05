@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Keyboard } from 'lucide-react';
 import { BaseModal } from './common';
-import { SHORTCUT_DIRECTORY } from '../services/keyboardShortcuts';
+import { getShortcutDirectory } from '../services/keyboardShortcuts';
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean;
@@ -17,8 +17,8 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
 
   const categories = ['All', 'Global', 'POS', 'Learning', 'CRM', 'Purchases', 'Settings'];
   const filtered = filterCategory === 'All'
-    ? SHORTCUT_DIRECTORY
-    : SHORTCUT_DIRECTORY.filter(s => s.category === filterCategory);
+    ? getShortcutDirectory()
+    : getShortcutDirectory().filter(s => s.category === filterCategory);
 
   return (
     <BaseModal
