@@ -207,6 +207,7 @@ __export(inventoryActive_exports, {
   computeIsActive: () => computeIsActive,
   deactivateExpiredInventory: () => deactivateExpiredInventory,
   isExpiredForSale: () => isExpiredForSale,
+  isExpiryReadable: () => isExpiryReadable,
   refreshInventoryActiveByBatch: () => refreshInventoryActiveByBatch,
   refreshInventoryActiveStatus: () => refreshInventoryActiveStatus
 });
@@ -227,6 +228,12 @@ function isExpiredForSale(expiryDate) {
   const today = /* @__PURE__ */ new Date();
   today.setHours(0, 0, 0, 0);
   return expDate < today;
+}
+function isExpiryReadable(expiryDate) {
+  const str = String(expiryDate ?? "").trim();
+  if (!str) return false;
+  if (str.includes("/")) return Number.isFinite(parseInt(str.split("/")[1], 10)) && Number.isFinite(parseInt(str.split("/")[0], 10));
+  return !isNaN(new Date(str).getTime());
 }
 function computeIsActive(quantity, looseQuantity, expiryDate) {
   const qty = quantity || 0;
@@ -4777,6 +4784,9 @@ var init_getMessage = __esm({
 // src/services/languageDetector.ts
 function detectExplicitLanguageSwitch(text) {
   const clean2 = text.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, "");
+  if (clean2 === "m") return "mr";
+  if (clean2 === "h") return "hi";
+  if (clean2 === "e") return "en";
   if (/^(मराठी|marathi|marathit|मराठीत बोला|marathi madhe bola|marathi madhe sanga|marathi bhasha|change to marathi|speak in marathi)$/i.test(clean2)) {
     return "mr";
   }
@@ -4824,6 +4834,17 @@ function detectLanguage(text, currentLang = "en") {
   if (mrRomanScore >= 2 && mrRomanScore > hiRomanScore) return "mr";
   if (hiRomanScore >= 2 && hiRomanScore > mrRomanScore) return "hi";
   return currentLang;
+}
+function languageFooter(lang) {
+  switch (lang) {
+    case "mr":
+      return "\n\n\u{1F310} \u092D\u093E\u0937\u093E \u092C\u0926\u0932\u093E: *H* = \u0939\u093F\u0902\u0926\u0940 \xB7 *M* = \u092E\u0930\u093E\u0920\u0940 \xB7 *E* = English";
+    case "hi":
+      return "\n\n\u{1F310} \u092D\u093E\u0937\u093E \u092C\u0926\u0932\u0947\u0902: *H* = \u0939\u093F\u0902\u0926\u0940 \xB7 *M* = \u092E\u0930\u093E\u0920\u0940 \xB7 *E* = English";
+    case "en":
+    default:
+      return "\n\n\u{1F310} Change language: *H* = \u0939\u093F\u0902\u0926\u0940 \xB7 *M* = \u092E\u0930\u093E\u0920\u0940 \xB7 *E* = English";
+  }
 }
 var MR_DEV_WORDS, HI_DEV_WORDS, MR_ROMAN_WORDS, HI_ROMAN_WORDS;
 var init_languageDetector = __esm({
@@ -36556,7 +36577,7 @@ Would you like us to check availability & book this for you?
         storeName,
         hoursNotice,
         hoursLine: hoursLineForWelcome
-      });
+      }) + languageFooter(stepLang);
       await db2.run(
         `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
         [cleanDigits]
@@ -36618,7 +36639,7 @@ Would you like us to check availability & book this for you?
           `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
-        const askMsg = getMessage(stepLang, "whatsapp.bot.orderTypeSinglePrompt");
+        const askMsg = getMessage(stepLang, "whatsapp.bot.orderTypeSinglePrompt") + languageFooter(stepLang);
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, askMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         return true;
@@ -36628,7 +36649,7 @@ Would you like us to check availability & book this for you?
           `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
-        const askMsg = getMessage(stepLang, "whatsapp.bot.orderTypeMultiPrompt");
+        const askMsg = getMessage(stepLang, "whatsapp.bot.orderTypeMultiPrompt") + languageFooter(stepLang);
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, askMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
         return true;
@@ -38808,7 +38829,39 @@ async function handleInbound(msg) {
       } catch (_) {
       }
       if (explicitSwitch) {
-        const switchAck = getMessage(chatLang, "whatsapp.bot.langSwitched");
+        let switchAck = getMessage(chatLang, "whatsapp.bot.langSwitched");
+        try {
+          await ensureClarificationsTable(db2);
+          const openFlow = await db2.get(
+            `SELECT phone, step, customer_name FROM wa_pending_clarifications
+             WHERE phone LIKE ? AND created_at > datetime('now', '-10 minutes')
+             ORDER BY created_at DESC LIMIT 1`,
+            [`%${cleanDigitsForLang}`]
+          );
+          if (openFlow) {
+            await db2.run("UPDATE wa_pending_clarifications SET language = ? WHERE phone = ?", [chatLang, openFlow.phone]);
+            let stepPrompt = "";
+            if (openFlow.step === "awaiting_medicine") {
+              stepPrompt = getMessage(chatLang, "whatsapp.bot.orderTypeSinglePrompt");
+            } else if (openFlow.step === "awaiting_multi_medicine_list") {
+              stepPrompt = getMessage(chatLang, "whatsapp.bot.orderTypeMultiPrompt");
+            } else if (openFlow.step === "awaiting_order_type") {
+              const { getStoreMedicalName: getStoreMedicalName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+              const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+              const sched = await getPharmacyOperatingSchedule2(db2);
+              stepPrompt = getMessage(chatLang, "whatsapp.bot.welcomeMenu", {
+                name: openFlow.customer_name || "",
+                storeName: await getStoreMedicalName2(db2) || "AI Pharmacy",
+                hoursNotice: await getStoreHoursNotice(db2),
+                hoursLine: `\u{1F550} Open: ${sched.openTime} \u2013 ${sched.closeTime}${sched.weeklyOff ? ` | Off: ${sched.weeklyOff}` : ""}`
+              });
+            }
+            if (stepPrompt) switchAck += `
+
+${stepPrompt}${languageFooter(chatLang)}`;
+          }
+        } catch (_) {
+        }
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, switchAck, "language_switch", "Customer");
         return;
@@ -39024,7 +39077,7 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         storeName,
         hoursNotice,
         hoursLine: hoursLineForGreet
-      });
+      }) + languageFooter(chatLang);
       await db2.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
          VALUES (?, '', ?, 'awaiting_order_type', ?, ?, CURRENT_TIMESTAMP)`,
@@ -54502,7 +54555,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.51";
+    APP_VERSION = "0.1.52";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -84853,7 +84906,10 @@ var init_sales = __esm({
             if (!currentStock) {
               throw new Error(`Inventory item ID ${inventory_id} does not exist.`);
             }
-            const { isExpiredForSale: isExpiredForSale2, refreshInventoryActiveStatus: refreshInventoryActiveStatus2 } = await Promise.resolve().then(() => (init_inventoryActive(), inventoryActive_exports));
+            const { isExpiredForSale: isExpiredForSale2, isExpiryReadable: isExpiryReadable2, refreshInventoryActiveStatus: refreshInventoryActiveStatus2 } = await Promise.resolve().then(() => (init_inventoryActive(), inventoryActive_exports));
+            if (String(currentStock.expiry_date || "").trim() && !isExpiryReadable2(currentStock.expiry_date)) {
+              throw new Error(`Cannot sell "${currentStock.db_medicine_name || medicine_name || "Medicine"}": its expiry "${currentStock.expiry_date}" cannot be read. Fix the batch expiry in Inventory first.`);
+            }
             if (isExpiredForSale2(currentStock.expiry_date)) {
               await refreshInventoryActiveStatus2(db2, inventory_id);
               throw new Error(`Cannot sell expired batch for "${currentStock.db_medicine_name || medicine_name || "Medicine"}". Remove or return this stock first.`);
@@ -92499,8 +92555,10 @@ var init_customerReturns = __esm({
         for (const item of return_items) {
           if (item.quantity <= 0) continue;
           const invInfo = await db2.get(
-            `SELECT im.medicine_id, im.batch_no, m.cgst_per, m.sgst_per 
-         FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id 
+            `SELECT im.medicine_id, im.batch_no,
+                COALESCE((SELECT pi.cgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no AND pi.cgst_per IS NOT NULL AND pi.sgst_per IS NOT NULL ORDER BY pi.id DESC LIMIT 1), m.cgst_per) AS cgst_per,
+                COALESCE((SELECT pi.sgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no AND pi.cgst_per IS NOT NULL AND pi.sgst_per IS NOT NULL ORDER BY pi.id DESC LIMIT 1), m.sgst_per) AS sgst_per
+         FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id
          WHERE im.id = ?`,
             [item.inventory_id]
           );
@@ -92510,10 +92568,8 @@ var init_customerReturns = __esm({
           const dPrice = Number(item.unit_price) * (1 - Number(item.discount_per || 0) / 100);
           const lineGross = Number(item.quantity) * dPrice;
           totalRefundGross += lineGross;
-          let cgstPer = Number(invInfo.cgst_per);
-          let sgstPer = Number(invInfo.sgst_per);
-          if (isNaN(cgstPer) || cgstPer === 0) cgstPer = 2.5;
-          if (isNaN(sgstPer) || sgstPer === 0) sgstPer = 2.5;
+          const cgstPer = Number(invInfo.cgst_per) || 0;
+          const sgstPer = Number(invInfo.sgst_per) || 0;
           const gstRate = cgstPer + sgstPer;
           const taxable = gstRate > 0 ? lineGross / (1 + gstRate / 100) : lineGross;
           const lineTax = lineGross - taxable;
