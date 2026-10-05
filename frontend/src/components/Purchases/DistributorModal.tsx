@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { ExternalLink } from 'lucide-react';
 import { PhoneInputWithBadge } from '../PhoneInputWithBadge';
+import { useModalEscape } from '../../services/keyboardShortcuts';
 
 export interface DistributorModalProps {
   isOpen: boolean;

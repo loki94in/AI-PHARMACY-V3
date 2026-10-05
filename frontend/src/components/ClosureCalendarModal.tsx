@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, ChevronLeft, ChevronRight, Truck, Store, Info } from 'lucide-react';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 // Fixed-date national festivals are prefilled on their exact day, every year. Lunar festivals move yearly, so they are
 // offered as name templates only — no date is ever assumed for them (owner rule, same as Settings → Order Timing).

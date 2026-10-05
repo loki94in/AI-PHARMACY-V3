@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 interface ClosureStockBufferModalProps {
   isOpen: boolean;

@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { X, RefreshCw, BookOpen, AlertTriangle, ShieldAlert, Factory } from 'lucide-react';
+import { useModalEscape } from '../../services/keyboardShortcuts';
 
 export interface EnrichedDetails {
   activeIngredients?: string[];

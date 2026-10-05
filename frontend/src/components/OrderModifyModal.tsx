@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 export interface OrderItemLine {
   id?: number;

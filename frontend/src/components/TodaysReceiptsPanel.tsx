@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, RefreshCw, CalendarCheck, Search } from 'lucide-react';
 import { api, type TodaysReceiptRow } from '../services/api';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 const units = (strips: number, loose: number) => `${strips} strips${loose ? ` + ${loose} loose` : ''}`;
 

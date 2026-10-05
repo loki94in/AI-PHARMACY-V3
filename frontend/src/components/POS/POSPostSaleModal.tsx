@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CheckCircle, Printer, MessageSquare } from 'lucide-react';
 import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
+import { useModalEscape } from '../../services/keyboardShortcuts';
 
 export interface SavedBillItem {
   name?: string;

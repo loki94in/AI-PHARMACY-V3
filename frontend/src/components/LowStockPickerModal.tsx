@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Package, CheckSquare, Square, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 interface LowStockRow {
   medicine_id: number;

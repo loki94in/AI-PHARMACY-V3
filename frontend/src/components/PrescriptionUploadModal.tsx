@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { optimizeImageForUpload } from '../utils/imageOptimizer';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 const DOSAGE_FORM_OPTIONS = [
   { key: 'TABLET', label: 'Tablet / Capsule', icon: '💊', sub: 'Solid strips (Dolo, Telma, Pan-D)' },

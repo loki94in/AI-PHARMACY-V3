@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { X, Calendar, AlertTriangle, Truck, Clock, Send, CheckSquare, Square, ChevronDown, ChevronUp, Package, RefreshCw, MessageSquare, ShieldCheck, Info } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
+import { useModalEscape } from '../services/keyboardShortcuts';
 
 export interface AffectedCustomerMedicine {
   name: string;
