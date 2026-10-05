@@ -17,7 +17,7 @@ import { StagedQueueFloatingWidget } from '../../components/StagedQueueFloatingW
 import { stagedQueueService, type StagedItem } from '../../services/stagedQueueService';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
-import { isExpiredDate, toDateInputValue } from '../../utils/date';
+import { isExpiredDate, toDateInputValue, expiryWarning, EXPIRY_WARNING_CLASS, EXPIRY_WARNING_LABEL } from '../../utils/date';
 import { printCurrentBill } from '../../utils/printBill';
 import { useDraftStore } from '../../lib/cache/useDraftStore';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
@@ -4908,7 +4908,7 @@ const POS = () => {
                                     </span>
                                   )}
                                   {(item.expiry_date || item.expiry) && (
-                                    <span className="font-mono text-muted text-xs">
+                                    <span className={`font-mono text-xs ${(() => { const w = expiryWarning(item.expiry_date || String(item.expiry || '')); return w ? `px-1.5 py-0.5 rounded ${EXPIRY_WARNING_CLASS[w]}` : 'text-muted'; })()}`}>
                                       Exp: {item.expiry_date || String(item.expiry || '')}
                                     </span>
                                   )}
@@ -5267,21 +5267,8 @@ const POS = () => {
                     const itemTotal = ((stripPrice * (item.qty || 0)) + (unitRate * (item.looseQty || 0))) * (1 - (item.discount || 0) / 100);
                     
                     // Near expiry highlight
-                    let expBadgeClass = "bg-bg3 border border-border text-text";
-                    if (item.expiry) {
-                      const parts = item.expiry.split('/');
-                      if (parts.length === 2) {
-                        let year = parseInt(parts[1], 10);
-                        const month = parseInt(parts[0], 10) - 1;
-                        if (year < 100) year += 2000;
-                        const expDate = new Date(year, month + 1, 0);
-                        const diffMs = expDate.getTime() - new Date().getTime();
-                        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-                        if (diffDays <= 90) {
-                          expBadgeClass = "bg-amber-500/10 border border-amber-500/30 text-amber-500 font-bold";
-                        }
-                      }
-                    }
+                    const expWarn = item.isEmptyRow ? null : expiryWarning(item.expiry);
+                    const expBadgeClass = expWarn ? EXPIRY_WARNING_CLASS[expWarn] : "bg-bg3 border border-border text-text";
 
                     // 3-Color Classification System:
                     // Color 1 (Theme Normal): Registered in Local Inventory with active stock & batch
@@ -5736,9 +5723,17 @@ const POS = () => {
                         
                         {/* Expiry */}
                         <td className="py-1 px-2.5 text-center">
-                          <div className={`font-mono text-sm font-bold px-2 py-0.5 rounded-md inline-block shadow-sm ${expBadgeClass}`}>
+                          <div
+                            title={expWarn ? EXPIRY_WARNING_LABEL[expWarn] : undefined}
+                            className={`font-mono text-sm font-bold px-2 py-0.5 rounded-md inline-block shadow-sm ${expBadgeClass}`}
+                          >
                             {item.isEmptyRow ? '-' : item.expiry}
                           </div>
+                          {expWarn && (
+                            <div className={`mt-0.5 text-[10px] leading-none ${expWarn === 'next-month' ? 'text-amber' : 'text-red'} font-bold`}>
+                              {EXPIRY_WARNING_LABEL[expWarn]}
+                            </div>
+                          )}
                         </td>
 
                         {/* Qty & Stock */}

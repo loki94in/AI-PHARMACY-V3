@@ -26,6 +26,14 @@ export function isExpiredForSale(expiryDate: string | null | undefined): boolean
   return expDate < today;
 }
 
+/** True when the saved expiry can be read as a date (so the expired check is meaningful). */
+export function isExpiryReadable(expiryDate: string | null | undefined): boolean {
+  const str = String(expiryDate ?? '').trim();
+  if (!str) return false;
+  if (str.includes('/')) return Number.isFinite(parseInt(str.split('/')[1], 10)) && Number.isFinite(parseInt(str.split('/')[0], 10));
+  return !isNaN(new Date(str).getTime());
+}
+
 export function computeIsActive(
   quantity: number | null | undefined,
   looseQuantity: number | null | undefined,

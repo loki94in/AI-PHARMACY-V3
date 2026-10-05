@@ -419,7 +419,10 @@ router.post('/', async (req, res) => {
         if (!currentStock) {
           throw new Error(`Inventory item ID ${inventory_id} does not exist.`);
         }
-        const { isExpiredForSale, refreshInventoryActiveStatus } = await import('../utils/inventoryActive.js');
+        const { isExpiredForSale, isExpiryReadable, refreshInventoryActiveStatus } = await import('../utils/inventoryActive.js');
+        if (String(currentStock.expiry_date || '').trim() && !isExpiryReadable(currentStock.expiry_date)) {
+          throw new Error(`Cannot sell "${currentStock.db_medicine_name || medicine_name || 'Medicine'}": its expiry "${currentStock.expiry_date}" cannot be read. Fix the batch expiry in Inventory first.`);
+        }
         if (isExpiredForSale(currentStock.expiry_date)) {
           await refreshInventoryActiveStatus(db, inventory_id);
           throw new Error(`Cannot sell expired batch for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Remove or return this stock first.`);

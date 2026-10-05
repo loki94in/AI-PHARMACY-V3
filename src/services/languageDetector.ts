@@ -54,6 +54,11 @@ const HI_ROMAN_WORDS = new Set([
 export function detectExplicitLanguageSwitch(text: string): SupportedLanguage | null {
   const clean = text.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, '');
 
+  // One-letter shortcuts advertised in the bot's language footer (H / M / E)
+  if (clean === 'm') return 'mr';
+  if (clean === 'h') return 'hi';
+  if (clean === 'e') return 'en';
+
   // Marathi commands
   if (
     /^(मराठी|marathi|marathit|मराठीत बोला|marathi madhe bola|marathi madhe sanga|marathi bhasha|change to marathi|speak in marathi)$/i.test(clean)
@@ -146,6 +151,18 @@ export function detectLanguage(text: string, currentLang: SupportedLanguage = 'e
 
   // 4. Default to current conversation language if neutral or ambiguous
   return currentLang;
+}
+
+/**
+ * One-line footer appended to the bot's menu/selection prompts so the customer
+ * can switch language at any step by replying H, M or E.
+ */
+export function languageFooter(lang: SupportedLanguage): string {
+  switch (lang) {
+    case 'mr': return '\n\n🌐 भाषा बदला: *H* = हिंदी · *M* = मराठी · *E* = English';
+    case 'hi': return '\n\n🌐 भाषा बदलें: *H* = हिंदी · *M* = मराठी · *E* = English';
+    case 'en': default: return '\n\n🌐 Change language: *H* = हिंदी · *M* = मराठी · *E* = English';
+  }
 }
 
 /**

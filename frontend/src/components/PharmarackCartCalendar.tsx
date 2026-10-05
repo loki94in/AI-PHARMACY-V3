@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown, Truck, Package } from 'lucide-react';
+import { Clock, ShoppingCart, Send, Store, Calendar, Truck, Package } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent, whatsappQueueEvent } from '../services/events';
 import { useStore } from '../context/StoreContext';
-import { MarketClosureModal } from './MarketClosureModal';
+import { ClosureCalendarModal } from './ClosureCalendarModal';
 import { ClosureStockBufferModal } from './ClosureStockBufferModal';
 import { MarketClosureNoticeModal } from './MarketClosureNoticeModal';
 
@@ -108,14 +108,12 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   const [deliveryStart, setDeliveryStart] = useState<string>('19:00');
   const [deliveryEnd, setDeliveryEnd] = useState<string>('21:00');
   const [pharmacyClosedDates, setPharmacyClosedDates] = useState<string[]>([]);
+  const [occasions, setOccasions] = useState<Record<string, string>>({});
 
   // Month Calendar Popover State
   const [isCalendarOpen, setIsCalendarOpen] = useState<boolean>(false);
-  const calendarPopoverRef = useRef<HTMLDivElement>(null);
-  const [calendarViewDate, setCalendarViewDate] = useState<Date>(() => new Date());
 
   // Market & Pharmacy Closure Management States
-  const [isClosureModalOpen, setIsClosureModalOpen] = useState<boolean>(false);
   const [isBufferModalOpen, setIsBufferModalOpen] = useState<boolean>(false);
   const [isNoticeModalOpen, setIsNoticeModalOpen] = useState<boolean>(false);
   const [noticeModalTargetDate, setNoticeModalTargetDate] = useState<string>('');
@@ -139,18 +137,6 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       })
       .catch(() => {});
   }, []);
-
-  // Click outside listener for calendar popover
-  useEffect(() => {
-    if (!isCalendarOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (calendarPopoverRef.current && !calendarPopoverRef.current.contains(e.target as Node)) {
-        setIsCalendarOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isCalendarOpen]);
 
   // Fetch current pacing and schedule settings
   useEffect(() => {
@@ -184,6 +170,9 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           }
           if (res.data.delivery_window_start) setDeliveryStart(res.data.delivery_window_start);
           if (res.data.delivery_window_end) setDeliveryEnd(res.data.delivery_window_end);
+          if (res.data.closure_occasions) {
+            try { setOccasions(JSON.parse(res.data.closure_occasions)); } catch (_) {}
+          }
           if (res.data.pharmacy_closed_dates) {
             try {
               setPharmacyClosedDates(JSON.parse(res.data.pharmacy_closed_dates));
@@ -224,42 +213,68 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     }).catch(() => {});
   };
 
-  const toggleCustomClosedDate = (dateStr: string) => {
-    let updated: string[];
-    const isCurrentlyClosed = pharmacyClosedDates.includes(dateStr);
-    if (isCurrentlyClosed) {
-      updated = pharmacyClosedDates.filter(d => d !== dateStr);
-    } else {
-      updated = [...pharmacyClosedDates, dateStr].sort();
+  const ymdOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // Keep the stock-buffer closure plan (single upcoming window) in step with the calendar: the first run of
+  // consecutive closed days from today that holds at least one explicitly marked date (Sundays alone are automatic).
+  const syncClosureConfig = (market: string[], store: string[], reason: string) => {
+    const marketSet = new Set(market);
+    const storeSet = new Set(store);
+    const todayYmd = ymdOf(new Date());
+    const closedOn = (d: Date) => d.getDay() === 0 || marketSet.has(ymdOf(d)) || storeSet.has(ymdOf(d));
+    const explicit = (d: Date) => marketSet.has(ymdOf(d)) || storeSet.has(ymdOf(d));
+    const cursor = new Date();
+    cursor.setHours(12, 0, 0, 0);
+    let start: Date | null = null;
+    for (let i = 0; i < 120 && !start; i++) {
+      if (explicit(cursor) && ymdOf(cursor) >= todayYmd) start = new Date(cursor);
+      cursor.setDate(cursor.getDate() + 1);
     }
+    if (!start) {
+      api.saveMarketClosureStatus({ enabled: false, type: 'market_closed', startDate: '', endDate: '' }).then(loadClosureStatus).catch(() => {});
+      return;
+    }
+    let end = new Date(start);
+    while (true) {
+      const next = new Date(end);
+      next.setDate(next.getDate() + 1);
+      if (!closedOn(next)) break;
+      end = next;
+    }
+    let anyStore = false;
+    for (let d = new Date(start); ymdOf(d) <= ymdOf(end); d.setDate(d.getDate() + 1)) {
+      if (storeSet.has(ymdOf(d))) anyStore = true;
+    }
+    api.saveMarketClosureStatus({
+      enabled: true,
+      type: anyStore ? 'pharmacy_closed' : 'market_closed',
+      startDate: ymdOf(start),
+      endDate: ymdOf(end),
+      reason
+    }).then(loadClosureStatus).catch(() => {});
+  };
+
+  const handleSaveOccasion = (dateStr: string, name: string) => {
+    const next = { ...occasions };
+    if (name.trim()) next[dateStr] = name.trim(); else delete next[dateStr];
+    setOccasions(next);
+    apiClient.post('/settings/save', { closure_occasions: JSON.stringify(next) }).catch(() => {});
+  };
+
+  const handleToggleMarketDate = (dateStr: string, on: boolean, reason: string) => {
+    const updated = on ? Array.from(new Set([...pausedDates, dateStr])).sort() : pausedDates.filter(d => d !== dateStr);
+    updatePausedDates(updated);
+    syncClosureConfig(updated, pharmacyClosedDates, reason);
+    toastEvent.trigger(on ? `Market marked closed on ${dateStr} — store stays open for orders and pickup` : `Market reopened on ${dateStr}`, 'info');
+  };
+
+  const handleToggleStoreDate = (dateStr: string, on: boolean) => {
+    const updated = on ? Array.from(new Set([...pharmacyClosedDates, dateStr])).sort() : pharmacyClosedDates.filter(d => d !== dateStr);
     setPharmacyClosedDates(updated);
-    apiClient.post('/settings/save', {
-      pharmacy_closed_dates: JSON.stringify(updated)
-    }).then(() => {
-      toastEvent.trigger(
-        isCurrentlyClosed ? `Reopened shop on ${dateStr}` : `Marked shop closed on ${dateStr}`,
-        'info'
-      );
+    apiClient.post('/settings/save', { pharmacy_closed_dates: JSON.stringify(updated) }).then(() => {
+      toastEvent.trigger(on ? `Store marked closed on ${dateStr}` : `Store reopened on ${dateStr}`, 'info');
     }).catch(() => {});
-  };
-
-  const clearAllCustomClosedDates = () => {
-    setPharmacyClosedDates([]);
-    apiClient.post('/settings/save', {
-      pharmacy_closed_dates: JSON.stringify([])
-    }).then(() => {
-      toastEvent.trigger('Cleared all custom shop closed dates', 'info');
-    }).catch(() => {});
-  };
-
-  const handlePrevMonth = () => {
-    setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
-  };
-  const handleNextMonth = () => {
-    setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
-  };
-  const handleTodayMonth = () => {
-    setCalendarViewDate(new Date());
+    syncClosureConfig(pausedDates, updated, 'Store Holiday');
   };
 
   const handleTimeChange = (open: string, close: string) => {
@@ -517,41 +532,24 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             </div>
           </div>
 
-          {/* Market Closure Toggle */}
+          {/* Market & Store Closure Calendar */}
           <button
             type="button"
-            onClick={() => setIsClosureModalOpen(true)}
+            onClick={() => setIsCalendarOpen(true)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs ${
-              closureConfig?.enabled && closureConfig?.type === 'market_closed'
-                ? 'bg-amber-500/20 text-amber-500 border border-amber-500/50 hover:bg-amber-500/30'
+              closureConfig?.enabled
+                ? closureConfig.type === 'pharmacy_closed'
+                  ? 'bg-rose-500/20 text-rose-500 border border-rose-500/50 hover:bg-rose-500/30'
+                  : 'bg-amber-500/20 text-amber-500 border border-amber-500/50 hover:bg-amber-500/30'
                 : 'bg-bg border border-border text-muted hover:text-text hover:bg-bg2'
             }`}
-            title="Configure Wholesale Market Holiday / Distributor Closure"
+            title="Mark market closed / store closed dates"
           >
-            <Truck size={12} className={closureConfig?.enabled && closureConfig?.type === 'market_closed' ? 'text-amber-500' : 'text-muted'} />
+            <Calendar size={12} />
             <span>
-              {closureConfig?.enabled && closureConfig?.type === 'market_closed' && closureConfig?.startDate
-                ? `Market Closed (${closureConfig.startDate.slice(5)}${closureConfig.endDate && closureConfig.endDate !== closureConfig.startDate ? ` - ${closureConfig.endDate.slice(5)}` : ''})`
-                : 'Market Closed'}
-            </span>
-          </button>
-
-          {/* Store Closure Toggle */}
-          <button
-            type="button"
-            onClick={() => setIsClosureModalOpen(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs ${
-              closureConfig?.enabled && closureConfig?.type === 'pharmacy_closed'
-                ? 'bg-rose-500/20 text-rose-500 border border-rose-500/50 hover:bg-rose-500/30'
-                : 'bg-bg border border-border text-muted hover:text-text hover:bg-bg2'
-            }`}
-            title="Configure Pharmacy Store Closure / Holiday"
-          >
-            <Store size={12} className={closureConfig?.enabled && closureConfig?.type === 'pharmacy_closed' ? 'text-rose-500' : 'text-muted'} />
-            <span>
-              {closureConfig?.enabled && closureConfig?.type === 'pharmacy_closed' && closureConfig?.startDate
-                ? `Store Closed (${closureConfig.startDate.slice(5)}${closureConfig.endDate && closureConfig.endDate !== closureConfig.startDate ? ` - ${closureConfig.endDate.slice(5)}` : ''})`
-                : 'Store Closed'}
+              {closureConfig?.enabled && closureConfig?.startDate
+                ? `${closureConfig.type === 'pharmacy_closed' ? 'Store' : 'Market'} Closed (${closureConfig.startDate.slice(5)}${closureConfig.endDate && closureConfig.endDate !== closureConfig.startDate ? ` - ${closureConfig.endDate.slice(5)}` : ''})`
+                : 'Market / Store Closures'}
             </span>
           </button>
 
@@ -592,257 +590,24 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             </div>
           )}
 
-          {/* Shop Off Calendar Popover Trigger */}
-          <div className="relative" ref={calendarPopoverRef}>
-            <div className="flex items-center gap-1.5">
-              <Store size={13} className="text-emerald-600 shrink-0" />
-              <span className="text-[11px] font-bold text-muted">Shop Off:</span>
-              <button
-                type="button"
-                onClick={() => setIsCalendarOpen(prev => !prev)}
-                className={`flex items-center gap-1.5 bg-bg border rounded-lg px-2 py-0.5 text-[11px] font-bold text-text hover:border-primary/50 transition-all cursor-pointer shadow-2xs ${
-                  isCalendarOpen ? 'border-primary ring-1 ring-primary/30' : 'border-border'
-                }`}
-                title="Click to open calendar and configure Shop Off Days & Holidays"
-              >
-                <Calendar size={11} className="text-emerald-600 shrink-0" />
-                <span>{shopWeeklyOff}</span>
-                {pharmacyClosedDates.length > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-rose-500/15 text-rose-600 border border-rose-500/30">
-                    +{pharmacyClosedDates.length}
-                  </span>
-                )}
-                <ChevronDown size={11} className={`text-muted transition-transform duration-150 ${isCalendarOpen ? 'rotate-180' : ''}`} />
-              </button>
-            </div>
-
-            {/* Interactive Month Calendar Popover */}
-            {isCalendarOpen && (
-              <div className="absolute left-0 top-full mt-1.5 z-dropdown w-[310px] sm:w-[340px] bg-bg border border-border rounded-2xl shadow-xl p-3.5 space-y-3 backdrop-blur-md">
-                {/* Header with Title & Close button */}
-                <div className="flex items-center justify-between pb-1.5 border-b border-glass-border/40">
-                  <div className="flex items-center gap-1.5">
-                    <Calendar size={14} className="text-primary" />
-                    <span className="text-xs font-bold text-text">Pharmacy Schedule & Off Days</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsCalendarOpen(false)}
-                    className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg2 transition-all cursor-pointer"
-                    title="Close Calendar"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-
-                {/* Month Navigator */}
-                <div className="flex items-center justify-between px-1">
-                  <button
-                    type="button"
-                    onClick={handlePrevMonth}
-                    className="p-1 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer shadow-2xs"
-                    title="Previous Month"
-                  >
-                    <ChevronLeft size={13} />
-                  </button>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black text-text">
-                      {calendarViewDate.toLocaleDateString('en-IN', { month: 'long' })} {calendarViewDate.getFullYear()}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleTodayMonth}
-                      className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-sky-500/15 text-sky-600 hover:bg-sky-500/25 border border-sky-400/40 transition-all cursor-pointer"
-                      title="Jump to current month"
-                    >
-                      Today
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleNextMonth}
-                    className="p-1 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer shadow-2xs"
-                    title="Next Month"
-                  >
-                    <ChevronRight size={13} />
-                  </button>
-                </div>
-
-                {/* Section 1: Recurring Weekly Off Day Selector */}
-                <div className="space-y-1.5 bg-bg2/40 p-2 rounded-xl border border-glass-border/40">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-muted">
-                      Recurring Weekly Off
-                    </span>
-                    <span className="text-[9px] font-bold text-muted/80">
-                      {shopWeeklyOff === 'None' ? 'No weekly off' : `Every ${shopWeeklyOff}`}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {['None', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dayShort => {
-                      const dayFullMap: Record<string, string> = {
-                        None: 'None',
-                        Sun: 'Sunday',
-                        Mon: 'Monday',
-                        Tue: 'Tuesday',
-                        Wed: 'Wednesday',
-                        Thu: 'Thursday',
-                        Fri: 'Friday',
-                        Sat: 'Saturday'
-                      };
-                      const dayFull = dayFullMap[dayShort];
-                      const isSelected = shopWeeklyOff.toLowerCase() === dayFull.toLowerCase();
-
-                      return (
-                        <button
-                          key={dayShort}
-                          type="button"
-                          onClick={() => handleShopWeeklyOffChange(dayFull)}
-                          className={`flex-1 min-w-[32px] py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer text-center ${
-                            isSelected
-                              ? 'bg-red-600 text-white shadow-xs'
-                              : 'bg-bg hover:bg-bg3 text-text border border-border/70 hover:border-border'
-                          }`}
-                        >
-                          {dayShort}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Section 2: Interactive Month Grid */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between px-0.5">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-muted">
-                      Specific Closed Dates
-                    </span>
-                    <span className="text-[9px] text-muted italic">Click date to toggle</span>
-                  </div>
-
-                  {/* Days of Week Header */}
-                  <div className="grid grid-cols-7 gap-1 text-center font-black">
-                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((dw, idx) => (
-                      <div
-                        key={dw}
-                        className={`text-[10px] py-0.5 ${idx === 0 ? 'text-red-600' : 'text-muted'}`}
-                      >
-                        {dw}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Month Day Cells */}
-                  <div className="grid grid-cols-7 gap-1">
-                    {/* Leading blank slots */}
-                    {Array.from({ length: new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay() }).map((_, i) => (
-                      <div key={`blank-${i}`} className="h-7" />
-                    ))}
-
-                    {/* Days in Month */}
-                    {Array.from({ length: new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
-                      const yr = calendarViewDate.getFullYear();
-                      const mo = calendarViewDate.getMonth();
-                      const dateStr = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                      const dayDate = new Date(yr, mo, d);
-                      const dayOfWeekName = dayDate.toLocaleDateString('en-US', { weekday: 'long' });
-                      const isWeeklyOff = shopWeeklyOff.toLowerCase() !== 'none' && dayOfWeekName.toLowerCase() === shopWeeklyOff.toLowerCase();
-                      const isCustomClosed = pharmacyClosedDates.includes(dateStr);
-                      const holidayName = INDIAN_HOLIDAYS[dateStr];
-                      const isSunday = dayDate.getDay() === 0;
-                      const now = new Date();
-                      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-                      const isToday = dateStr === todayStr;
-
-                      return (
-                        <button
-                          key={d}
-                          type="button"
-                          onClick={() => toggleCustomClosedDate(dateStr)}
-                          className={`
-                            relative h-7 w-full rounded-lg text-[11px] font-bold flex flex-col items-center justify-center transition-all cursor-pointer select-none
-                            ${isCustomClosed
-                              ? 'bg-red-600 text-white font-black shadow-xs ring-1 ring-red-400'
-                              : isWeeklyOff
-                                ? 'bg-red-500/15 text-red-600 border border-red-400/40 font-black'
-                                : holidayName
-                                  ? 'bg-purple-500/15 text-purple-600 border border-purple-400/40 font-extrabold'
-                                  : isToday
-                                    ? 'bg-sky-500/15 text-sky-700 border border-sky-400 font-black ring-1 ring-sky-400/50'
-                                    : isSunday
-                                      ? 'text-red-600 hover:bg-bg3 border border-transparent'
-                                      : 'text-text hover:bg-bg3 border border-transparent'
-                            }
-                            hover:scale-105 active:scale-95
-                          `}
-                          title={`${d} ${calendarViewDate.toLocaleDateString('en-IN', { month: 'short' })} ${yr}${
-                            isCustomClosed ? ' • Marked Closed (Click to reopen)' :
-                            isWeeklyOff ? ' • Recurring Weekly Off (Click to toggle custom off)' :
-                            holidayName ? ` • Holiday: ${holidayName} (Click to mark closed)` :
-                            ' • Open (Click to mark closed)'
-                          }`}
-                        >
-                          <span>{d}</span>
-                          <div className="absolute bottom-0.5 flex items-center justify-center gap-0.5 leading-none">
-                            {isCustomClosed && (
-                              <span className="w-1 h-1 rounded-full bg-red-100 inline-block"></span>
-                            )}
-                            {!isCustomClosed && holidayName && (
-                              <span className="w-1 h-1 rounded-full bg-purple-500 inline-block"></span>
-                            )}
-                            {!isCustomClosed && isWeeklyOff && (
-                              <span className="w-1 h-1 rounded-full bg-red-500 inline-block"></span>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Popover Footer: Legend & Actions */}
-                <div className="pt-2 border-t border-glass-border/40 space-y-2">
-                  <div className="flex items-center justify-between text-[10px] text-muted flex-wrap gap-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-xs bg-red-500/20 border border-red-400 inline-block"></span>
-                        <span>Weekly Off</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-xs bg-red-600 inline-block"></span>
-                        <span className="font-semibold text-red-600">Custom Closed</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-xs bg-purple-500/20 border border-purple-400 inline-block"></span>
-                        <span>Holiday</span>
-                      </span>
-                    </div>
-                    {pharmacyClosedDates.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={clearAllCustomClosedDates}
-                        className="text-[10px] font-bold text-red-600 hover:text-red-700 underline cursor-pointer"
-                      >
-                        Clear ({pharmacyClosedDates.length})
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] text-muted italic">
-                      Closed days sync with order auto-dispatch
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsCalendarOpen(false)}
-                      className="px-3 py-1 bg-primary text-white text-[11px] font-bold rounded-lg hover:bg-primary/90 transition-all cursor-pointer shadow-2xs"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+          {/* Shop Off / Market & Store closure calendar (single combined calendar) */}
+          <div className="flex items-center gap-1.5">
+            <Store size={13} className="text-emerald-600 shrink-0" />
+            <span className="text-[11px] font-bold text-muted">Shop Off:</span>
+            <button
+              type="button"
+              onClick={() => setIsCalendarOpen(true)}
+              className="flex items-center gap-1.5 bg-bg border border-border rounded-lg px-2 py-0.5 text-[11px] font-bold text-text hover:border-primary/50 transition-all cursor-pointer shadow-2xs"
+              title="Open the market and store closure calendar"
+            >
+              <Calendar size={11} className="text-emerald-600 shrink-0" />
+              <span>{shopWeeklyOff}</span>
+              {pharmacyClosedDates.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-rose-500/15 text-rose-600 border border-rose-500/30">
+                  +{pharmacyClosedDates.length}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Shop Hours: Open - Close */}
@@ -997,21 +762,18 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         </div>
       </div>
 
-      {/* Market & Pharmacy Closure Configuration Modal */}
-      <MarketClosureModal
-        isOpen={isClosureModalOpen}
-        onClose={() => setIsClosureModalOpen(false)}
-        onConfigSaved={() => {
-          loadClosureStatus();
-          window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
-          api.getMarketClosureStatus().then((res: any) => {
-            if (res?.config?.enabled && res.config.startDate) {
-              setNoticeModalTargetDate(res.config.startDate);
-              setNoticeModalEndDate(res.config.endDate || res.config.startDate);
-              setIsNoticeModalOpen(true);
-            }
-          }).catch(() => {});
-        }}
+      {/* Combined Market & Store Closure Calendar */}
+      <ClosureCalendarModal
+        isOpen={isCalendarOpen}
+        onClose={() => setIsCalendarOpen(false)}
+        marketDates={pausedDates}
+        storeDates={pharmacyClosedDates}
+        weeklyOff={shopWeeklyOff}
+        occasions={occasions}
+        onSaveOccasion={handleSaveOccasion}
+        onToggleMarket={handleToggleMarketDate}
+        onToggleStore={handleToggleStoreDate}
+        onWeeklyOffChange={handleShopWeeklyOffChange}
       />
 
       {/* Closure Stock Buffer Review Checklist Modal (Human-in-the-Loop) */}

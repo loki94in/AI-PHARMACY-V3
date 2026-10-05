@@ -92,8 +92,10 @@ router.post('/', asyncHandler(async (req: express.Request, res: express.Response
     for (const item of return_items) {
       if (item.quantity <= 0) continue;
       const invInfo = await db.get(
-        `SELECT im.medicine_id, im.batch_no, m.cgst_per, m.sgst_per 
-         FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id 
+        `SELECT im.medicine_id, im.batch_no,
+                COALESCE((SELECT pi.cgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no AND pi.cgst_per IS NOT NULL AND pi.sgst_per IS NOT NULL ORDER BY pi.id DESC LIMIT 1), m.cgst_per) AS cgst_per,
+                COALESCE((SELECT pi.sgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no AND pi.cgst_per IS NOT NULL AND pi.sgst_per IS NOT NULL ORDER BY pi.id DESC LIMIT 1), m.sgst_per) AS sgst_per
+         FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id
          WHERE im.id = ?`,
         [item.inventory_id]
       );
@@ -105,10 +107,9 @@ router.post('/', asyncHandler(async (req: express.Request, res: express.Response
       const lineGross = Number(item.quantity) * dPrice;
       totalRefundGross += lineGross;
 
-      let cgstPer = Number(invInfo.cgst_per);
-      let sgstPer = Number(invInfo.sgst_per);
-      if (isNaN(cgstPer) || cgstPer === 0) cgstPer = 2.5;
-      if (isNaN(sgstPer) || sgstPer === 0) sgstPer = 2.5;
+      // Same rule as sales: the batch's purchase line is the real rate (0% = non-taxable); unknown stays 0, never invented.
+      const cgstPer = Number(invInfo.cgst_per) || 0;
+      const sgstPer = Number(invInfo.sgst_per) || 0;
 
       const gstRate = cgstPer + sgstPer;
       const taxable = gstRate > 0 ? (lineGross / (1 + (gstRate / 100))) : lineGross;

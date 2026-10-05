@@ -265,7 +265,6 @@ function writeRef<T>(ref: { current: T }, value: T): void {
 
 const newBillId = (): string => 'bill_' + Date.now();
 const newGrnNo = (): string => `P-${Math.floor(100 + Math.random() * 900)}`;
-const generateInvoiceNo = (): string => `INV-${Date.now().toString().slice(-6)}`;
 const nowMs = (): number => Date.now();
 
 // One-shot purchase-history model (module-level, survives KeepAlive navigation):
@@ -597,8 +596,8 @@ const getInstantLocalInventoryPreview = (term: string): Medicine[] => {
     sell_price: c.sell_price,
     scheme_paid: 0,
     scheme_free: 0,
-    cgst_per: 6,
-    sgst_per: 6,
+    cgst_per: 0,
+    sgst_per: 0,
     hsn_code: '',
     stock_qty: totalStock,
     loose_qty: totalLoose,
@@ -1484,8 +1483,8 @@ const Purchases: React.FC = () => {
       free_qty: '',
       rate: '',
       mrp: '',
-      cgst_per: 6,
-      sgst_per: 6,
+      cgst_per: '',
+      sgst_per: '',
       cd_rs: '',
       cd_per: globalCdPer || '',
       additional_discount: '',
@@ -1634,8 +1633,8 @@ const Purchases: React.FC = () => {
         pack_size: (it.pack_size || '') as number | null,
         manufacturer: medMfg,
         hsn_code: medHsn,
-        cgst_per: Number(medCgst) || 6,
-        sgst_per: Number(medSgst) || 6,
+        cgst_per: Number(medCgst) || undefined,
+        sgst_per: Number(medSgst) || undefined,
         quantity: it.qty as number | null,
         batch_no: it.batch_no
       } as UniversalEditSeed);
@@ -1651,8 +1650,8 @@ const Purchases: React.FC = () => {
         pack_unit: (it.pack_unit as string | undefined) || 'Tablet',
         strength: (it.strength as string | undefined) || '',
         pack_size: (it.pack_size || '') as number | null,
-        cgst_per: Number(medCgst) || 6,
-        sgst_per: Number(medSgst) || 6,
+        cgst_per: Number(medCgst) || undefined,
+        sgst_per: Number(medSgst) || undefined,
         hsn_code: medHsn,
         mrp: medMrp as number | string | null,
         rate: medRate as number | string | null,
@@ -1665,8 +1664,8 @@ const Purchases: React.FC = () => {
         mrp: typeof medMrp === 'number' ? medMrp : parseFloat(String(medMrp)) || undefined,
         rate: typeof medRate === 'number' ? medRate : parseFloat(String(medRate)) || undefined,
         sell_price: typeof medSellPrice === 'number' ? medSellPrice : parseFloat(String(medSellPrice)) || undefined,
-        cgst_per: Number(medCgst) || 6,
-        sgst_per: Number(medSgst) || 6,
+        cgst_per: Number(medCgst) || undefined,
+        sgst_per: Number(medSgst) || undefined,
       });
     }
     setIsUniversalModalOpen(true);
@@ -2080,8 +2079,9 @@ const Purchases: React.FC = () => {
     item.rate = '';
     item.mrp = '';
     item.gstTouched = false; // fresh selection → uses product catalog GST
-    item.cgst_per = (medicine.cgst_per !== undefined && medicine.cgst_per !== null && medicine.cgst_per !== 0) ? medicine.cgst_per : 6;
-    item.sgst_per = (medicine.sgst_per !== undefined && medicine.sgst_per !== null && medicine.sgst_per !== 0) ? medicine.sgst_per : 6;
+    // Tax comes from the bill: left blank (not 6%) unless the medicine already has a saved rate.
+    item.cgst_per = (medicine.cgst_per !== undefined && medicine.cgst_per !== null && medicine.cgst_per !== 0) ? medicine.cgst_per : '';
+    item.sgst_per = (medicine.sgst_per !== undefined && medicine.sgst_per !== null && medicine.sgst_per !== 0) ? medicine.sgst_per : '';
     item.stock_qty = medicine.stock_qty || 0;
     item.loose_qty = medicine.loose_qty || 0;
     item.scheme_paid = medicine.scheme_paid;
@@ -2140,7 +2140,7 @@ const Purchases: React.FC = () => {
       if (distributor_id) setSelectedDistributor(distributor_id);
       if (prefInvoiceNo) setInvoiceNo(prefInvoiceNo);
       if (prefDate !== undefined) {
-        setInvoiceDate(toDateInputValue(prefDate) || (emailSource?.date ? toDateInputValue(emailSource.date) : getTodayString()));
+        setInvoiceDate(toDateInputValue(prefDate) || (emailSource?.date ? toDateInputValue(emailSource.date) : ''));
       } else if (emailSource?.date) {
         setInvoiceDate(toDateInputValue(emailSource.date));
       }
@@ -2558,10 +2558,11 @@ const Purchases: React.FC = () => {
       return null;
     }
 
-    let finalInvoiceNo = (invoiceNo || '').trim();
+    // The bill's own invoice number is the truth: never invent one.
+    const finalInvoiceNo = (invoiceNo || '').trim();
     if (!finalInvoiceNo) {
-      finalInvoiceNo = generateInvoiceNo();
-      setInvoiceNo(finalInvoiceNo);
+      toastEvent.trigger('Invoice number is required. Enter the number printed on the distributor bill.', 'error', '/purchases');
+      return null;
     }
 
     const validItems = items.filter(item => {
@@ -2587,9 +2588,20 @@ const Purchases: React.FC = () => {
         alert(`MRP is required for "${name}". Please enter the actual MRP from invoice before saving.`);
         return null;
       }
+      // The purchase page is the only source of batch, expiry, rate and tax: none may be blank (a real 0% tax is fine).
+      const blankTax = (v: unknown) => v === undefined || v === null || String(v).trim() === '';
+      const missing = !String(item.batch_no || '').trim() ? 'batch'
+        : !String(item.expiry_date || '').trim() ? 'expiry'
+        : !(parseFloat(String(item.rate || 0)) > 0) ? 'rate'
+        : (blankTax(item.cgst_per) || blankTax(item.sgst_per)) ? 'GST % (enter 0 if non-taxable)'
+        : '';
+      if (missing) {
+        toastEvent.trigger(`${missing} is required for "${name}". Enter it from the distributor bill before saving.`, 'error', '/purchases');
+        return null;
+      }
     }
 
-    const cleanInvoiceDate = (invoiceDate || '').trim();
+    const cleanInvoiceDate =(invoiceDate || '').trim();
     if (!cleanInvoiceDate) {
       toastEvent.trigger('Invoice date is required. Please enter or verify the actual invoice date before saving.', 'error', '/purchases');
       alert('Invoice date is required. Please enter or verify the actual invoice date before saving.');
@@ -2617,7 +2629,7 @@ const Purchases: React.FC = () => {
         }
         setDistributorSearch(data.purchase.distributor_name || '');
         setInvoiceNo(data.purchase.invoice_no || '');
-        setInvoiceDate(data.purchase.date ? data.purchase.date.slice(0, 10) : getTodayString());
+        setInvoiceDate(data.purchase.date ? data.purchase.date.slice(0, 10) : '');
         if (data.purchase.cn_amount) setCnAmount(data.purchase.cn_amount);
         if (data.purchase.cn_number) setCnNumber(data.purchase.cn_number);
         if (data.purchase.reconcile_expiry_return_id) setReconcileExpiryReturnId(data.purchase.reconcile_expiry_return_id);
@@ -2987,12 +2999,7 @@ const Purchases: React.FC = () => {
             newItems[i].medicine_id = match.id;
             newItems[i].medicine_name = match.name;
             newItems[i].manufacturer = match.manufacturer || newItems[i].manufacturer;
-            if ((!newItems[i].mrp || Number(newItems[i].mrp) <= 0) && match.mrp) {
-              newItems[i].mrp = match.mrp;
-            }
-            if ((!newItems[i].rate || Number(newItems[i].rate) <= 0) && ((match as any).purchase_rate || (match as any).ptr)) {
-              newItems[i].rate = (match as any).purchase_rate || (match as any).ptr;
-            }
+            // MRP and rate are never borrowed from the catalog: they come from the bill.
             continue;
           }
 
@@ -3018,12 +3025,6 @@ const Purchases: React.FC = () => {
             newItems[i].medicine_id = bestMatch.id;
             newItems[i].medicine_name = bestMatch.name;
             newItems[i].manufacturer = bestMatch.manufacturer || newItems[i].manufacturer;
-            if ((!newItems[i].mrp || Number(newItems[i].mrp) <= 0) && bestMatch.mrp) {
-              newItems[i].mrp = bestMatch.mrp;
-            }
-            if ((!newItems[i].rate || Number(newItems[i].rate) <= 0) && ((bestMatch as any).purchase_rate || (bestMatch as any).ptr)) {
-              newItems[i].rate = (bestMatch as any).purchase_rate || (bestMatch as any).ptr;
-            }
           } else {
             newItems[i].medicine_id = null;
             newItems[i].medicine_name = mName;

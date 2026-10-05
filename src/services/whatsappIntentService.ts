@@ -5,7 +5,7 @@ import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { getMessage } from '../i18n/getMessage.js';
-import { detectLanguage, detectExplicitLanguageSwitch, type SupportedLanguage } from './languageDetector.js';
+import { detectLanguage, detectExplicitLanguageSwitch, languageFooter, type SupportedLanguage } from './languageDetector.js';
 import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isAffirmativeResponse, isNegativeResponse, isPlausibleMedicineName, detectDosageForm, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery, fuzzySearchLocalMedicines } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
@@ -2006,7 +2006,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         storeName,
         hoursNotice,
         hoursLine: hoursLineForWelcome
-      });
+      }) + languageFooter(stepLang);
 
       await db.run(
         `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
@@ -2087,7 +2087,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending.phone]
         );
-        const askMsg = getMessage(stepLang, 'whatsapp.bot.orderTypeSinglePrompt');
+        const askMsg = getMessage(stepLang, 'whatsapp.bot.orderTypeSinglePrompt') + languageFooter(stepLang);
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, askMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         return true;
@@ -2099,7 +2099,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending.phone]
         );
-        const askMsg = getMessage(stepLang, 'whatsapp.bot.orderTypeMultiPrompt');
+        const askMsg = getMessage(stepLang, 'whatsapp.bot.orderTypeMultiPrompt') + languageFooter(stepLang);
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, askMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
         return true;
@@ -4526,7 +4526,38 @@ export async function handleInbound(msg: any): Promise<void> {
 
       // If user explicitly asked to change language, send confirmation and return
       if (explicitSwitch) {
-        const switchAck = getMessage(chatLang, 'whatsapp.bot.langSwitched');
+        let switchAck = getMessage(chatLang, 'whatsapp.bot.langSwitched');
+        // Keep the open flow in sync: store the new language on the pending row and
+        // re-send the current menu step so the customer continues in their language.
+        try {
+          await ensureClarificationsTable(db);
+          const openFlow = await db.get(
+            `SELECT phone, step, customer_name FROM wa_pending_clarifications
+             WHERE phone LIKE ? AND created_at > datetime('now', '-10 minutes')
+             ORDER BY created_at DESC LIMIT 1`,
+            [`%${cleanDigitsForLang}`]
+          );
+          if (openFlow) {
+            await db.run('UPDATE wa_pending_clarifications SET language = ? WHERE phone = ?', [chatLang, openFlow.phone]);
+            let stepPrompt = '';
+            if (openFlow.step === 'awaiting_medicine') {
+              stepPrompt = getMessage(chatLang, 'whatsapp.bot.orderTypeSinglePrompt');
+            } else if (openFlow.step === 'awaiting_multi_medicine_list') {
+              stepPrompt = getMessage(chatLang, 'whatsapp.bot.orderTypeMultiPrompt');
+            } else if (openFlow.step === 'awaiting_order_type') {
+              const { getStoreMedicalName } = await import('./storeSettingsService.js');
+              const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
+              const sched = await getPharmacyOperatingSchedule(db);
+              stepPrompt = getMessage(chatLang, 'whatsapp.bot.welcomeMenu', {
+                name: openFlow.customer_name || '',
+                storeName: (await getStoreMedicalName(db)) || 'AI Pharmacy',
+                hoursNotice: await getStoreHoursNotice(db),
+                hoursLine: `🕐 Open: ${sched.openTime} – ${sched.closeTime}${sched.weeklyOff ? ` | Off: ${sched.weeklyOff}` : ''}`
+              });
+            }
+            if (stepPrompt) switchAck += `\n\n${stepPrompt}${languageFooter(chatLang)}`;
+          }
+        } catch (_) {}
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, switchAck, 'language_switch', 'Customer');
         return;
@@ -4783,7 +4814,7 @@ export async function handleInbound(msg: any): Promise<void> {
         storeName,
         hoursNotice,
         hoursLine: hoursLineForGreet
-      });
+      }) + languageFooter(chatLang);
 
       await db.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)

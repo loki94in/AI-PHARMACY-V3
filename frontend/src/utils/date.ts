@@ -276,3 +276,47 @@ export const isExpiredDate = (expiry_date?: string | null): boolean => {
   return false;
 };
 
+/**
+ * Where a batch expiry sits against the current month: 'expired' (an earlier month),
+ * 'this-month', 'next-month', or null (later, or the expiry cannot be read).
+ * Month-level, same reading as isExpiredDate.
+ */
+export const expiryWarning = (expiry_date?: string | null): 'expired' | 'this-month' | 'next-month' | null => {
+  const trimmed = String(expiry_date ?? '').trim();
+  if (!trimmed) return null;
+  let m: number;
+  let y: number;
+  let p: RegExpMatchArray | null;
+  if ((p = trimmed.match(/^(\d{1,2})\/(\d{2}|\d{4})$/))) {
+    m = parseInt(p[1], 10);
+    y = p[2].length === 2 ? 2000 + parseInt(p[2], 10) : parseInt(p[2], 10);
+  } else if ((p = trimmed.match(/^\d{1,2}[\/-](\d{1,2})[\/-](\d{4})$/))) {
+    m = parseInt(p[1], 10);
+    y = parseInt(p[2], 10);
+  } else if ((p = trimmed.match(/^(\d{4})-(\d{2})/))) {
+    y = parseInt(p[1], 10);
+    m = parseInt(p[2], 10);
+  } else {
+    return null;
+  }
+  if (!(m >= 1 && m <= 12)) return null;
+  const now = new Date();
+  const ahead = (y - now.getFullYear()) * 12 + (m - (now.getMonth() + 1));
+  if (ahead < 0) return 'expired';
+  if (ahead === 0) return 'this-month';
+  if (ahead === 1) return 'next-month';
+  return null;
+};
+
+export const EXPIRY_WARNING_LABEL = {
+  expired: 'Expired',
+  'this-month': 'Expires this month',
+  'next-month': 'Expires next month',
+} as const;
+
+export const EXPIRY_WARNING_CLASS = {
+  expired: 'bg-red-bg border border-red/50 text-red font-bold',
+  'this-month': 'bg-red-bg border border-red/50 text-red font-bold',
+  'next-month': 'bg-amber-bg border border-amber/50 text-amber font-bold',
+} as const;
+
