@@ -1227,7 +1227,7 @@ const POS = () => {
           document.getElementById(`row-${fieldName}-input-${targetIndex}`)
         ) as HTMLInputElement;
         if (el) {
-          el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
           el.focus();
           el.select();
         }
@@ -1244,7 +1244,7 @@ const POS = () => {
           document.getElementById(`row-${fieldName}-input-${targetIndex}`)
         ) as HTMLInputElement;
         if (el) {
-          el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
           el.focus();
           el.select();
         }
@@ -3530,6 +3530,13 @@ const POS = () => {
     if (isSavingBillRef.current) return;
     if (!hasValidItems) {
       toastEvent.trigger('⚠️ Please add at least one valid medicine to the cart before saving the bill.', 'error');
+      return;
+    }
+
+    if (!patientName || !patientName.trim()) {
+      toastEvent.trigger('⚠️ Patient name is required to save the bill. Please enter the patient name.', 'error');
+      const patEl = document.querySelector<HTMLInputElement>('input[aria-label="Patient Name"]');
+      patEl?.focus();
       return;
     }
 

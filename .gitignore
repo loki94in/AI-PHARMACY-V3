@@ -139,3 +139,6 @@ venv/
 
 # ─── Large Datasets ───────────────────────────────────────────────────────────
 medicine_data.csv
+
+# ─── Architecture / Output Artifacts ─────────────────────────────────────────
+.archify/

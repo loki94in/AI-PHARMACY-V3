@@ -1182,6 +1182,35 @@ router.get('/therapeutic-search', async (req, res) => {
   }
 });
 
+// Low-stock list for the Purchases "Order low stock" picker. READ-ONLY. The limit is the single global
+// app_settings.low_stock_default_limit (Settings > Orders & Fulfilment Timing). No limit set => empty list, never a guessed default.
+router.get('/low-stock', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'low_stock_default_limit'");
+    const limit = parseInt(String(row?.value ?? ''), 10);
+    if (!Number.isFinite(limit) || limit <= 0) return res.json({ limit: null, items: [] });
+    const items = await db.all(
+      `SELECT im.medicine_id, m.name AS medicine_name, m.manufacturer,
+              SUM(im.quantity) AS strips, SUM(COALESCE(im.loose_quantity, 0)) AS loose_units
+         FROM inventory_master im
+         JOIN medicines m ON m.id = im.medicine_id
+        WHERE im.medicine_id IS NOT NULL
+          AND (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))
+        GROUP BY im.medicine_id
+       HAVING SUM(im.quantity) <= ?
+        ORDER BY strips ASC, m.name ASC
+        LIMIT 300`,
+      [targetStoreId, targetStoreId, limit]
+    );
+    res.json({ limit, items });
+  } catch (err: any) {
+    console.error('Error fetching low-stock list:', err);
+    res.status(500).json({ error: 'Failed to fetch low-stock list' });
+  }
+});
+
 // Pre-Calculated Background Cache Metrics Endpoint (Sub-2ms response)
 router.get('/precalculated-metrics', async (req, res) => {
   try {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, type RefObject } from 'react';
 
 /**
  * High-performance, zero-reflow dropdown auto-scroller.
@@ -50,8 +50,6 @@ export function useDropdownAutoScroll(
   isOpen: boolean = true,
   selector: string = '[data-highlighted="true"]'
 ) {
-  const lastScrollTimeRef = useRef<number>(0);
-
   useEffect(() => {
     if (!isOpen || highlightIndex < 0 || !containerRef.current) return;
 
@@ -64,14 +62,8 @@ export function useDropdownAutoScroll(
 
       const scrollContainer = resolveScrollContainer(activeEl, rootContainer);
 
-      const now = performance.now();
-      const timeDelta = now - lastScrollTimeRef.current;
-      lastScrollTimeRef.current = now;
-
-      // If user is rapidly holding down arrow key (< 130ms between changes),
-      // switch to 'auto' (instant) so animations don't queue up or lag behind keystrokes.
-      // Otherwise, use 'smooth' for fluid motion on single presses.
-      const behavior: ScrollBehavior = timeDelta < 130 ? 'auto' : 'smooth';
+      // Always instant: smooth animation repaints many frames on the CPU-rendered (no-GPU) app and lags while arrow-keying.
+      const behavior: ScrollBehavior = 'auto';
 
       const containerRect = scrollContainer.getBoundingClientRect();
       const activeRect = activeEl.getBoundingClientRect();

@@ -1069,7 +1069,7 @@
 |---|---|
 | **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
 | **Root cause** | Frontend: new lines start at 6% + 6% GST (`PUR:1447-1448`), a missing invoice number becomes `INV-######` (`PUR:2521-2524`), the date starts as today, the credit-note amount is set to the computed-vs-bill difference (`PUR:2184-2186`), and uploads borrow MRP/rate from the catalog. Backend: `formatExpiryToMMYY` clamps the month to 1–12 and turns `31/03/2027` into `12/03` (`src/routes/purchases.ts:70-106`; same in `frontend/src/utils/date.ts:121-125`). Blank batch, missing expiry, rate 0 and GST 0 are saved (`purchases.ts:1097-1105`). |
-| **How it was fixed** | Partly fixed 2026-10-05 (Purchases page): the 6%+6% GST default is gone (new lines and medicine picks start blank; Universal editor seeds only a real saved rate), the `INV-######` invoice number is gone (save is refused without one), and Save is refused when a line has no batch, expiry, rate>0 or GST % (0 is accepted as real non-taxable). STILL OPEN: expiry month clamp (`31/03/2027` → `12/03`), backend `purchases.ts` still accepts blank batch/expiry/rate, invoice date defaults to today, credit-note auto amount, catalog MRP/rate borrowing. |
+| **How it was fixed** | Partly fixed 2026-10-05 (Purchases page): the 6%+6% GST default is gone (new lines and medicine picks start blank; Universal editor seeds only a real saved rate), the `INV-######` invoice number is gone (save is refused without one), and Save is refused when a line has no batch, expiry, rate>0 or GST % (0 is accepted as real non-taxable). Also fixed 2026-10-05: invoice date no longer defaults to today, catalog MRP/rate no longer borrowed on upload, credit-note amount no longer computed from the total difference (only a printed CN amount is used). STILL OPEN: expiry month clamp (`31/03/2027` → `12/03`), backend `purchases.ts` still accepts blank batch/expiry/rate, invoice date defaults to today, credit-note auto amount, catalog MRP/rate borrowing. |
 | **Priority** | P1 |
 | **What not to touch** | The strict medicine-link chain and `400 unresolved_items` (already correct). |
 | **Verified by** | — |
@@ -1102,7 +1102,7 @@
 |---|---|
 | **What the user saw** | Not reported yet. Found 2026-09-30 in the fallback audit. |
 | **Root cause** | `COALESCE(m.pack_size, 1)` in sales, purchase edit/delete and Investigation. `10` in `utils/stockRebuild.ts:28, 58`, `returns.ts` (6 sites), `customerReturns.ts:173`, the boot sale-subtotal "healing" (`database.ts:3943-3972`) and the medicine editor (`UME:195, 228`). `parsePackSizeFromPackaging` saves `10x10` as 100. In the 27 Sep shop copy, 3,112 of 5,739 shelf batches have no pack size (27 are tablets/capsules). |
-| **How it was fixed** | Open — Phase 5 of the plan: unknown pack size refuses loose operations everywhere. |
+| **How it was fixed** | Partly fixed 2026-10-05: `scripts/backfillPackSizes.mjs` (dry run first) fills missing sizes from the old export; STILL OPEN: Phase 5, unknown pack size must refuse loose operations in returns, stock rebuild and the editor. |
 | **Priority** | P2 |
 | **What not to touch** | Medicines whose pack size is saved. |
 | **Verified by** | — |

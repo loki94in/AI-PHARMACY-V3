@@ -95,6 +95,7 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
   const [sundayEnd, setSundayEnd] = useState(rawSettings.sunday_window_end || '14:00');
   const [holidayDeliveryEnabled, setHolidayDeliveryEnabled] = useState(rawSettings.holiday_delivery_enabled === 'true');
   const [returnWindowDays, setReturnWindowDays] = useState(rawSettings.return_window_days || '15');
+  const [lowStockLimit, setLowStockLimit] = useState(rawSettings.low_stock_default_limit || '');
   const [refillPauseRecalc, setRefillPauseRecalc] = useState(rawSettings.refill_pause_recalculation_enabled !== 'false');
 
   // Holidays state
@@ -142,6 +143,7 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
         sunday_window_end: sundayEnd,
         holiday_delivery_enabled: holidayDeliveryEnabled ? 'true' : 'false',
         return_window_days: returnWindowDays,
+        low_stock_default_limit: lowStockLimit.trim(),
         refill_pause_recalculation_enabled: refillPauseRecalc ? 'true' : 'false'
       };
 
@@ -302,6 +304,22 @@ export function OrderTimingTab({ rawSettings, refetchSettings }: { rawSettings: 
           </div>
 
           <div className="space-y-3 pt-2">
+            <div>
+              <label className="block text-xs font-bold text-text mb-1">Low Stock Limit (strips)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  value={lowStockLimit}
+                  onChange={(e) => setLowStockLimit(e.target.value)}
+                  placeholder="Not set"
+                  className="w-24 px-3 py-2 text-xs bg-bg border border-border rounded-xl text-text focus:outline-none focus:border-primary font-bold"
+                />
+                <span className="text-xs text-muted">Medicines at or below this stock appear in Purchases → Order low stock</span>
+              </div>
+              <p className="text-[10px] text-muted mt-1">One limit for every medicine. Leave empty to turn the low-stock list off.</p>
+            </div>
+
             <label className="flex items-center gap-2.5 p-2.5 bg-bg border border-border rounded-xl cursor-pointer hover:bg-bg3/50 transition-all">
               <input
                 type="checkbox"

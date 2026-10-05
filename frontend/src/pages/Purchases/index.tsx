@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { HoverPriceIntelTable } from '../../components/HoverPriceIntelTable';
 import { createPortal } from 'react-dom';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
+import { LowStockPickerModal } from '../../components/LowStockPickerModal';
 import { PurchaseSaveVerificationModal, type SaveVerificationData } from '../../components/PurchaseSaveVerificationModal';
 import { PurchaseDuplicateBillModal, type ExistingDuplicateBill } from '../../components/PurchaseDuplicateBillModal';
 import { calculateSimilarity } from '../../utils/fuzzy';
@@ -1393,6 +1394,7 @@ const Purchases: React.FC = () => {
 
   const savePurchaseRef = useRef<(() => Promise<void>) | null>(null);
   const addNewItemRef = useRef<(() => void) | null>(null);
+  const [showLowStockPicker, setShowLowStockPicker] = useState(false);
   const activeSearchRef = useRef<HTMLDivElement>(null);
 
   const [searchResults, setSearchResults] = useState<Medicine[]>([]);
@@ -1861,7 +1863,7 @@ const Purchases: React.FC = () => {
     setTimeout(() => {
       const el = document.querySelector(`input[data-row-index="${rowIndex}"][data-field="medicine_name"]`) as HTMLInputElement;
       if (el) {
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
         el.focus();
         el.select?.();
       }
@@ -1872,7 +1874,7 @@ const Purchases: React.FC = () => {
     setTimeout(() => {
       const el = document.querySelector(`input[data-row-index="${rowIndex}"][data-field="${fieldName}"]`) as HTMLInputElement | null;
       if (el) {
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
         el.focus();
         el.select?.();
       }
@@ -1884,7 +1886,7 @@ const Purchases: React.FC = () => {
     if (activeSearchIndex !== null && searchResults.length > 0 && activeSearchRef.current) {
       activeSearchRef.current.scrollIntoView({
         block: 'nearest',
-        behavior: 'smooth'
+        behavior: 'auto'
       });
     }
   }, [activeSearchIndex, searchResults.length]);
@@ -2196,38 +2198,6 @@ const Purchases: React.FC = () => {
         
         setItems(loadedItems);
 
-        const calculateAndSetExtraCredit = (currentItems: BillItem[]) => {
-          if (prefTotalAmount !== undefined && prefTotalAmount > 0) {
-            let subtotal = 0;
-            let totalCgst = 0;
-            let totalSgst = 0;
-            currentItems.forEach(item => {
-              const qty = parseFloat(String(item.qty)) || 0;
-              const rate = parseFloat(String(item.rate)) || 0;
-              const cd_rs = parseFloat(String(item.cd_rs)) || 0;
-              const cd_per = parseFloat(String(item.cd_per)) || 0;
-              const additional_discount = parseFloat(String(item.additional_discount)) || 0;
-              const cgst_per = parseFloat(String(item.cgst_per)) || 0;
-              const sgst_per = parseFloat(String(item.sgst_per)) || 0;
-
-              const baseAmount = qty * rate;
-              const discountAmount = cd_rs + additional_discount + (baseAmount * cd_per / 100);
-              const taxableAmount = baseAmount - discountAmount;
-              const cgstAmount = taxableAmount * cgst_per / 100;
-              const sgstAmount = taxableAmount * sgst_per / 100;
-
-              subtotal += taxableAmount;
-              totalCgst += cgstAmount;
-              totalSgst += sgstAmount;
-            });
-
-            const calculatedGrandTotal = subtotal + totalCgst + totalSgst;
-            const diff = calculatedGrandTotal - prefTotalAmount;
-            setCnAmount(diff === 0 ? '' : parseFloat(diff.toFixed(2)));
-          } else {
-            setCnAmount('');
-          }
-        };
         
         // Auto-resolve medicine IDs for the loaded items
         const resolveMedicines = async () => {
@@ -2374,12 +2344,7 @@ const Purchases: React.FC = () => {
               }
             }));
           }
-          if (hasChanges) {
-            setItems(updatedItems);
-            calculateAndSetExtraCredit(updatedItems);
-          } else {
-            calculateAndSetExtraCredit(loadedItems);
-          }
+          if (hasChanges) setItems(updatedItems);
         };
         
         resolveMedicines();
@@ -3071,34 +3036,10 @@ const Purchases: React.FC = () => {
       }
 
       if (response.data.total_amount !== undefined && response.data.total_amount > 0) {
-        // Calculate dynamic grand total to adjust extraCredit to match bill total exactly
-        let subtotal = 0;
-        let totalCgst = 0;
-        let totalSgst = 0;
-        newItems.forEach(item => {
-          const qty = parseFloat(String(item.qty)) || 0;
-          const rate = parseFloat(String(item.rate)) || 0;
-          const cd_rs = parseFloat(String(item.cd_rs)) || 0;
-          const cd_per = parseFloat(String(item.cd_per)) || 0;
-          const additional_discount = parseFloat(String(item.additional_discount)) || 0;
-          const cgst_per = parseFloat(String(item.cgst_per)) || 0;
-          const sgst_per = parseFloat(String(item.sgst_per)) || 0;
-
-          const baseAmount = qty * rate;
-          const discountAmount = cd_rs + additional_discount + (baseAmount * cd_per / 100);
-          const taxableAmount = baseAmount - discountAmount;
-          const cgstAmount = taxableAmount * cgst_per / 100;
-          const sgstAmount = taxableAmount * sgst_per / 100;
-
-          subtotal += taxableAmount;
-          totalCgst += cgstAmount;
-          totalSgst += sgstAmount;
-        });
-
         const parsedCnAmt = parseFloat(response.data.cn_amount);
         if (!isNaN(parsedCnAmt) && parsedCnAmt > 0) {
           setCnAmount(parsedCnAmt);
-          setCnNumber(response.data.cn_number || (response.data.invoice_no ? `CN-${response.data.invoice_no}` : ''));
+          setCnNumber(response.data.cn_number || '');
         } else {
           setCnAmount('');
           setCnNumber('');
@@ -3782,6 +3723,14 @@ const Purchases: React.FC = () => {
                         title="Add Row"
                       >
                         <Plus size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowLowStockPicker(true)}
+                        className="mt-1 bg-amber-600 hover:bg-amber-700 text-white p-1 rounded-md flex items-center justify-center transition-colors shadow-sm"
+                        title="Order low-stock medicines"
+                      >
+                        <Package size={14} />
                       </button>
                     </th>
                     {hasOriginalName && <th className="pb-3 text-xs uppercase tracking-wider text-left pl-2 whitespace-nowrap">Original Bill Name</th>}
@@ -4671,6 +4620,23 @@ const Purchases: React.FC = () => {
         loading={detailsLoading}
       />
 
+
+      {showLowStockPicker && (
+        <LowStockPickerModal
+          onClose={() => setShowLowStockPicker(false)}
+          onAdd={(picked) => {
+            setItems(prev => {
+              const have = new Set(prev.map(i => i.medicine_id).filter(Boolean));
+              const fresh = picked
+                .filter(p => !have.has(p.medicine_id))
+                .map(p => ({ ...createEmptyItem(), medicine_id: p.medicine_id, medicine_name: p.medicine_name, name: p.medicine_name, manufacturer: p.manufacturer || '', stock_qty: p.strips }));
+              const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
+              return [...kept, ...fresh, createEmptyItem()];
+            });
+            setShowLowStockPicker(false);
+          }}
+        />
+      )}
 
       {isUniversalModalOpen && (
         <UniversalMedicineEditModal 

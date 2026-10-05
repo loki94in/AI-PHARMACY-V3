@@ -1383,6 +1383,8 @@ export const api = {
         ...(medicineId ? { medicine_id: medicineId } : {})
       }
     }).then(res => res.data),
+  getLowStock: () =>
+    apiClient.get<{ limit: number | null; items: Array<{ medicine_id: number; medicine_name: string; manufacturer: string | null; strips: number; loose_units: number }> }>('/inventory/low-stock').then(res => res.data),
   getTodaysReceipts: (date?: string) =>
     apiClient.get<{ date: string; data: TodaysReceiptRow[] }>('/inventory/todays-receipts', {
       params: date ? { date } : undefined

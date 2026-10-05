@@ -158,6 +158,14 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Discount must be a valid non-negative number.' });
     }
 
+    // Every sale bill carries a real patient name and doctor name: never a placeholder.
+    if (!String(patient_name || '').trim()) {
+      return res.status(400).json({ error: 'Patient name is required to save a bill.' });
+    }
+    if (!String(doctor_name || '').trim() && !doctor_id) {
+      return res.status(400).json({ error: 'Doctor name is required to save a bill.' });
+    }
+
     db = await dbManager.getConnection();
     const conn: Database = db;
 

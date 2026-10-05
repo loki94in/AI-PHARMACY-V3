@@ -334,14 +334,15 @@ thead[class*="sticky"],
      inside the list forces a redraw every frame (loaders use animate-spin, untouched)
    ═══════════════════════════════════════════ */
 .dropdown-scroll {
-  will-change: scroll-position;
+  /* no will-change: a promoted layer makes software-rendered text look soft */
+  contain: layout style;
   overscroll-behavior: contain;
 }
 /* Every dropdown panel is opaque, same look as the Live Cart Add list:
    any element wrapping a .dropdown-scroll list gets a solid surface + shadow. */
 :has(> .dropdown-scroll):not(body):not(html) {
   background-color: var(--bg2) !important;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .dropdown-scroll * {
   transition: none !important;

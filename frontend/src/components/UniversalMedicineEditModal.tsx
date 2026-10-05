@@ -55,7 +55,7 @@ const ITEM_TYPE_PACKAGING_DEFAULTS: Record<string, ItemTypeDefaults> = {
   TABLET: {
     packType: 'TAB',
     packaging: 'STRIP OF 10 TAB',
-    pack_size: 10,
+    pack_size: 0, // no guessed strip size: the user enters it
     pack_unit: 'TAB',
     allow_loose_sale: 1,
     placeholder: 'e.g. STRIP OF 10 TAB, 10 TAB, 15 TAB',
@@ -63,7 +63,7 @@ const ITEM_TYPE_PACKAGING_DEFAULTS: Record<string, ItemTypeDefaults> = {
   CAPSULE: {
     packType: 'CAP',
     packaging: 'STRIP OF 10 CAP',
-    pack_size: 10,
+    pack_size: 0, // no guessed strip size: the user enters it
     pack_unit: 'CAP',
     allow_loose_sale: 1,
     placeholder: 'e.g. STRIP OF 10 CAP, 10 CAP, 15 CAP',
@@ -192,7 +192,7 @@ export function detectDosageFormAndPack(
 
   // 5. Detect CAPSULE
   if (/\b(CAP|CAPS|CAPSULE|CAPSULES)\b/i.test(combined)) {
-    const size = Number(existingPackSize) > 0 ? Number(existingPackSize) : (parsePackSizeFromPackaging(packaging) || 10);
+    const size = Number(existingPackSize) > 0 ? Number(existingPackSize) : (parsePackSizeFromPackaging(packaging) || 0);
     return {
       item_type: 'CAPSULE',
       packType: 'CAP',
@@ -225,7 +225,7 @@ export function detectDosageFormAndPack(
   }
 
   // Default to TABLET
-  const parsedSize = parsePackSizeFromPackaging(packaging) || 10;
+  const parsedSize = parsePackSizeFromPackaging(packaging) || 0;
   return {
     item_type: 'TABLET',
     packType: 'TAB',
@@ -821,6 +821,10 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       setError('Medicine name is required');
       return;
     }
+    if (!(Number(form.pack_size) >= 1)) {
+      setError('Pack size is required (units per pack). Enter 1 for a bottle, tube or vial, or the tablets/capsules per strip.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -1365,7 +1369,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                         type="number" 
                         name="pack_size" 
                         min={1} 
-                        value={form.pack_size !== undefined && form.pack_size !== null ? form.pack_size : ''} 
+                        value={form.pack_size ? form.pack_size : ''} 
                         onChange={handleChange} 
                         placeholder={['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type) ? '1' : 'e.g. 10'} 
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-mono font-bold focus:border-primary focus:outline-none" 
