@@ -11820,6 +11820,13 @@ function languageFooter(lang) {
       return "\n\n\u{1F310} Change language: *H* = \u0939\u093F\u0902\u0926\u0940 \xB7 *M* = \u092E\u0930\u093E\u0920\u0940 \xB7 *E* = English";
   }
 }
+function firstContactLanguageBanner() {
+  return `
+
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+\u{1F310} *Language / \u092D\u093E\u0937\u093E \u091A\u0941\u0928\u0947\u0902:*
+Reply *E* for English \xB7 *H* for \u0939\u093F\u0902\u0926\u0940 \xB7 *M* for \u092E\u0930\u093E\u0920\u0940`;
+}
 var MR_DEV_WORDS, HI_DEV_WORDS, MR_ROMAN_WORDS, HI_ROMAN_WORDS;
 var init_languageDetector = __esm({
   "src/services/languageDetector.ts"() {
@@ -13648,6 +13655,7 @@ __export(distributorDispatchReminderWorker_exports, {
   checkAndSendAutoReminders: () => checkAndSendAutoReminders,
   getTodayDistributorRemindersFast: () => getTodayDistributorRemindersFast,
   purgeStaleOfflineReminders: () => purgeStaleOfflineReminders,
+  resolveDeliveryBoyForDistributor: () => resolveDeliveryBoyForDistributor,
   startDistributorDispatchReminderWorker: () => startDistributorDispatchReminderWorker,
   stopDistributorDispatchReminderWorker: () => stopDistributorDispatchReminderWorker,
   syncTodayActiveDistributors: () => syncTodayActiveDistributors
@@ -13666,6 +13674,39 @@ async function ensureReminderSchema(db2) {
   } catch (_e) {
   }
 }
+async function resolveDeliveryBoyForDistributor(db2, distributorId, distributorName) {
+  try {
+    if (distributorId) {
+      const distRow = await db2.get("SELECT delivery_boy_id FROM distributors WHERE id = ?", [distributorId]);
+      if (distRow?.delivery_boy_id) {
+        const boy = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [distRow.delivery_boy_id]);
+        if (boy) {
+          const p = (boy.whatsapp_number || "").replace(/\D/g, "").slice(-10);
+          return { delivery_boy_id: boy.id, name: boy.name || "Delivery Staff", phone: p || null };
+        }
+      }
+    }
+    if (distributorName) {
+      const distRow = await db2.get("SELECT delivery_boy_id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [distributorName]);
+      if (distRow?.delivery_boy_id) {
+        const boy = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [distRow.delivery_boy_id]);
+        if (boy) {
+          const p = (boy.whatsapp_number || "").replace(/\D/g, "").slice(-10);
+          return { delivery_boy_id: boy.id, name: boy.name || "Delivery Staff", phone: p || null };
+        }
+      }
+    }
+    const activeBoys = await db2.all("SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC");
+    if (activeBoys && activeBoys.length > 0) {
+      const boy = activeBoys[0];
+      const p = (boy.whatsapp_number || "").replace(/\D/g, "").slice(-10);
+      return { delivery_boy_id: boy.id, name: boy.name || "Delivery Staff", phone: p || null };
+    }
+  } catch (err) {
+    console.warn("[DistributorReminderWorker] Error resolving delivery boy:", err.message);
+  }
+  return { delivery_boy_id: null, name: null, phone: null };
+}
 async function getTodayDistributorRemindersFast(customDateStr) {
   const db2 = await dbManager.getConnection();
   const todayStr2 = customDateStr || getTodayDateString();
@@ -13675,7 +13716,7 @@ async function getTodayDistributorRemindersFast(customDateStr) {
       `SELECT r.id, r.distributor_id,
               COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
               COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
-              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at, r.order_source,
               db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
               1 as has_pharmarack_order_today,
               1 as has_order_today
@@ -13888,14 +13929,15 @@ async function syncTodayActiveDistributors() {
         }
       }
       const existing = await db2.get(
-        `SELECT id, status, distributor_phone, distributor_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
+        `SELECT id, status, distributor_phone, distributor_id, delivery_boy_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
         [dist.name, todayStr2]
       );
+      const boyContact = await resolveDeliveryBoyForDistributor(db2, activeId, dist.name);
       if (!existing) {
         const initialStatus = dist.hasEmailToday ? "Dispatched" : "Pending";
         await db2.run(
-          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at, delivery_boy_id)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
           [
             activeId,
             dist.name,
@@ -13903,7 +13945,8 @@ async function syncTodayActiveDistributors() {
             todayStr2,
             initialStatus,
             dist.hasEmailToday ? "email" : "pharmarack",
-            dist.hasEmailToday ? (/* @__PURE__ */ new Date()).toISOString() : null
+            dist.hasEmailToday ? (/* @__PURE__ */ new Date()).toISOString() : null,
+            boyContact.delivery_boy_id
           ]
         );
       } else {
@@ -13915,13 +13958,15 @@ async function syncTodayActiveDistributors() {
         }
         const phoneToUpdate = activePhone || existing.distributor_phone || "";
         const idToUpdate = activeId || existing.distributor_id || null;
+        const boyToUpdate = existing.delivery_boy_id || boyContact.delivery_boy_id;
         await db2.run(
           `UPDATE distributor_dispatch_reminders 
            SET distributor_id = COALESCE(distributor_id, ?),
+               delivery_boy_id = COALESCE(delivery_boy_id, ?),
                distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
                distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
            WHERE id = ?`,
-          [idToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
+          [idToUpdate, boyToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
         );
       }
     }
@@ -13985,7 +14030,7 @@ async function syncTodayActiveDistributors() {
       `SELECT r.id, r.distributor_id,
               COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
               COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
-              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at, r.order_source,
               db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
               1 as has_pharmarack_order_today,
               1 as has_order_today,
@@ -14020,6 +14065,21 @@ async function syncTodayActiveDistributors() {
                SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
                WHERE id = ?`,
               [resolved.distributor_phone, resolved.distributor_id, r.id]
+            );
+          } catch (_) {
+          }
+        }
+      }
+      if (!r.delivery_boy_id) {
+        const boyContact = await resolveDeliveryBoyForDistributor(db2, r.distributor_id, r.distributor_name);
+        if (boyContact.delivery_boy_id) {
+          r.delivery_boy_id = boyContact.delivery_boy_id;
+          r.delivery_boy_name = boyContact.name;
+          r.delivery_boy_phone = boyContact.phone;
+          try {
+            await db2.run(
+              `UPDATE distributor_dispatch_reminders SET delivery_boy_id = ? WHERE id = ?`,
+              [boyContact.delivery_boy_id, r.id]
             );
           } catch (_) {
           }
@@ -16229,6 +16289,9 @@ async function ensureOrderTimingSchema(db2) {
     if (custCols.length > 0 && !custCols.some((c) => c.name.toLowerCase() === "reminder_mode")) {
       await db2.run("ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'");
     }
+    if (custCols.length > 0 && !custCols.some((c) => c.name.toLowerCase() === "language_confirmed")) {
+      await db2.run("ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0");
+    }
   } catch (_) {
   }
   try {
@@ -16489,6 +16552,10 @@ async function ensureSchema(dbPath) {
           loose: "INTEGER DEFAULT 0",
           ded_per: "REAL DEFAULT 0",
           cd_value: "REAL DEFAULT 0"
+        });
+        await ensureColumns(db2, "customers", {
+          language: "TEXT DEFAULT 'en'",
+          language_confirmed: "INTEGER DEFAULT 0"
         });
         await ensureColumns(db2, "special_orders", {
           medicine_id: "INTEGER DEFAULT NULL REFERENCES medicines(id)",
@@ -17370,6 +17437,8 @@ async function ensureSchema(dbPath) {
       phone TEXT,
       address TEXT,
       notes TEXT,
+      language TEXT DEFAULT 'en',
+      language_confirmed INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS customer_portal_accounts (
@@ -18190,7 +18259,8 @@ async function ensureSchema(dbPath) {
       ["return_items", "ded_per", "ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0"],
       ["return_items", "cd_value", "ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0"],
       ["patient_refills", "reminder_mode", "ALTER TABLE patient_refills ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
-      ["customers", "reminder_mode", "ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"]
+      ["customers", "reminder_mode", "ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
+      ["customers", "language_confirmed", "ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0"]
     ];
     for (const [table, col, stmt] of alterStatements) {
       try {
@@ -20110,7 +20180,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 73;
+    CURRENT_SCHEMA_VERSION = 74;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -34706,7 +34776,28 @@ async function handleInbound(msg) {
       } catch (_) {
       }
       if (explicitSwitch) {
-        let switchAck = getMessage(chatLang, "whatsapp.bot.langSwitched");
+        try {
+          const matchPattern = cleanDigitsForLang ? `%${cleanDigitsForLang}` : `%${phone}%`;
+          await db2.run(
+            `UPDATE customers SET language = ?, language_confirmed = 1 WHERE phone LIKE ? OR phone = ?`,
+            [chatLang, matchPattern, phone]
+          );
+          await db2.run(
+            `UPDATE patient_refills SET language = ? WHERE patient_phone LIKE ? OR patient_phone = ?`,
+            [chatLang, matchPattern, phone]
+          );
+          eventService.broadcast("contacts-updated", { phone: cleanDigitsForLang || phone, language: chatLang });
+          eventService.broadcast("refill_updated", { phone: cleanDigitsForLang || phone, language: chatLang });
+        } catch (_) {
+        }
+        let switchAck = "";
+        if (chatLang === "hi") {
+          switchAck = "\u2705 \u0906\u092A\u0915\u0940 \u092A\u0938\u0902\u0926\u0940\u0926\u093E \u092D\u093E\u0937\u093E \u0939\u093F\u0902\u0926\u0940 \u0938\u0947\u091F \u0915\u0930 \u0926\u0940 \u0917\u0908 \u0939\u0948\u0964 \u0906\u0917\u0947 \u0915\u0947 \u0938\u092D\u0940 \u0938\u0902\u0926\u0947\u0936 \u0939\u093F\u0902\u0926\u0940 \u092E\u0947\u0902 \u092D\u0947\u091C\u0947 \u091C\u093E\u090F\u0902\u0917\u0947\u0964";
+        } else if (chatLang === "mr") {
+          switchAck = "\u2705 \u0924\u0941\u092E\u091A\u0940 \u092A\u0938\u0902\u0924\u0940\u091A\u0940 \u092D\u093E\u0937\u093E \u092E\u0930\u093E\u0920\u0940 \u0928\u093F\u0935\u0921\u0932\u0940 \u0917\u0947\u0932\u0940 \u0906\u0939\u0947. \u092A\u0941\u0922\u0940\u0932 \u0938\u0930\u094D\u0935 \u0938\u0902\u0926\u0947\u0936 \u092E\u0930\u093E\u0920\u0940\u0924 \u092A\u093E\u0920\u0935\u0932\u0947 \u091C\u093E\u0924\u0940\u0932.";
+        } else {
+          switchAck = "\u2705 Language set to English. All future messages will be in English.";
+        }
         try {
           await ensureClarificationsTable(db2);
           const openFlow = await db2.get(
@@ -40352,7 +40443,9 @@ ${message}`;
         msg += `\u{1F4DE} *Pharmacy Contact:* ${store.phone}
 
 `;
-        msg += `\u{1F69A} *AFTERNOON DISPATCH & COLLECTION LIST*
+        const isAfternoon = (/* @__PURE__ */ new Date()).getHours() >= 13;
+        const headerTitle = isAfternoon ? "AFTERNOON DISPATCH & COLLECTION LIST" : "TODAY'S DISPATCH & COLLECTION LIST";
+        msg += `\u{1F69A} *${headerTitle}*
 `;
         if (boyName && boyName !== "Delivery Staff") {
           msg += `\u{1F464} *Assigned Staff:* ${boyName}
@@ -40384,7 +40477,17 @@ ${message}`;
         msg += `\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 `;
         msg += `\u{1F4DD} *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
-        console.log(`[ConsolidatedDispatch] Enqueuing afternoon dispatch summary for ${boyName} (${boyPhone})`);
+        const fifteenMinsAgo = Date.now() - 15 * 60 * 1e3;
+        const recentDuplicate = await db2.get(
+          `SELECT id FROM whatsapp_send_queue 
+       WHERE number = ? AND message = ? AND created_at >= ? AND status != 'cancelled' LIMIT 1`,
+          [boyPhone, msg, fifteenMinsAgo]
+        );
+        if (recentDuplicate) {
+          console.log(`[ConsolidatedDispatch] Identical summary already queued for ${boyName} in the last 15m. Skipping duplicate.`);
+          return { ok: true, queueId: recentDuplicate.id };
+        }
+        console.log(`[ConsolidatedDispatch] Enqueuing dispatch summary for ${boyName} (${boyPhone})`);
         const queueId = await whatsappQueueWorker.enqueue(
           boyPhone,
           msg,
@@ -40392,7 +40495,7 @@ ${message}`;
           boyName
         );
         const todayIso = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-        const refId = queueId ? `queue_${queueId}` : `afternoon_dispatch_${todayIso}_${Date.now()}`;
+        const refId = queueId ? `queue_${queueId}` : `dispatch_summary_${todayIso}_${Date.now()}`;
         const notifStatus = queueId ? "pending" : "failed";
         await db2.run(
           `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
@@ -40790,6 +40893,7 @@ async function runSync() {
   }
   const startOfDayMs = new Date((/* @__PURE__ */ new Date()).setHours(0, 0, 0, 0)).getTime();
   const lateReminders = [];
+  const directOrderRemindersToNotifyBoy = [];
   for (const [storeKey, { storeName, orderNos, appAlreadySent }] of byStore) {
     const row = reminders.find((r) => String(r.distributor_name || "").toLowerCase().trim() === storeKey);
     if (!row || !row.id || row.id >= 8e5) {
@@ -40811,34 +40915,40 @@ ${waiting.message}`;
         await db2.run("UPDATE whatsapp_send_queue SET message = ? WHERE id = ?", [merged, waiting.id]);
       }
       await settle(db2, orderNos, "merged_into_waiting_reminder", true, { storeName, queueId: waiting.id, appAlreadySent });
+      directOrderRemindersToNotifyBoy.push(row);
       continue;
     }
-    const alreadyReminded = Boolean(row.status && row.status !== "Pending");
+    const alreadyReminded = Boolean(
+      row.status && row.status !== "Pending" || row.last_reminded_at && String(row.last_reminded_at).startsWith(today.iso)
+    );
     if (!alreadyReminded) {
-      await settle(db2, orderNos, "scheduled_reminder_will_include", false, { storeName, appAlreadySent });
-      continue;
-    }
-    const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { followUp: true, orderNos });
-    await settle(db2, orderNos, sent ? "follow_up_queued" : "follow_up_not_sent", sent, { storeName, status: row.status, appAlreadySent });
-    if (sent) {
-      result.followUps++;
-      lateReminders.push(row);
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { orderNos });
+      await settle(db2, orderNos, sent ? "dispatch_reminder_queued" : "reminder_not_sent", sent, { storeName, status: row.status, appAlreadySent });
+      if (sent) {
+        result.followUps++;
+        directOrderRemindersToNotifyBoy.push(row);
+      }
+    } else {
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { followUp: true, orderNos });
+      await settle(db2, orderNos, sent ? "follow_up_queued" : "follow_up_not_sent", sent, { storeName, status: row.status, appAlreadySent });
+      if (sent) {
+        result.followUps++;
+        lateReminders.push(row);
+        directOrderRemindersToNotifyBoy.push(row);
+      }
     }
   }
-  if (lateReminders.length > 0) {
+  if (directOrderRemindersToNotifyBoy.length > 0) {
     try {
-      const afternoon = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'");
-      const alreadySent = await db2.get(
-        `SELECT id FROM automation_notifications
-         WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at, 'localtime') = ? AND status = 'sent' LIMIT 1`,
-        [today.iso]
-      );
-      if (afternoon?.value === "true" && alreadySent) {
-        await notificationService.sendConsolidatedDeliveryBoyDispatch(lateReminders);
-      }
+      await notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy);
     } catch (err) {
-      console.warn("[PharmarackOrderSync] Delivery boy late-order list failed:", err?.message || err);
+      console.warn("[PharmarackOrderSync] Delivery boy direct-order dispatch failed:", err?.message || err);
     }
+  }
+  try {
+    const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+    eventService2.broadcast("dispatch_updated", { at: Date.now(), source: "pharmarack_order_sync", count: fresh.length });
+  } catch (_) {
   }
   return result;
 }
@@ -40920,9 +41030,8 @@ async function dryRunOrderSync() {
     );
     let wouldDo;
     if (waiting) wouldDo = `merge the order number into the reminder already waiting in the queue (#${waiting.id}); no extra message`;
-    else if (!reminder) wouldDo = "create today's reminder row; the scheduled reminder will carry the order number";
-    else if (reminder.status === "Pending") wouldDo = "the scheduled reminder will carry the order number; no extra message";
-    else wouldDo = `send ONE follow-up to the distributor (reminder row status is "${reminder.status}")`;
+    else if (!reminder || reminder.status === "Pending") wouldDo = "auto-queue today's reminder to distributor and send updated pickup list to delivery boy";
+    else wouldDo = `send ONE follow-up to the distributor (reminder row status is "${reminder.status}") and update delivery boy`;
     rows.push({ ...base, wouldDo });
   }
   return { ok: true, today: today.iso, remindersEnabled: enabled, fetched: fetched.length, orders: rows, note: "Dry run: nothing was saved or sent." };
@@ -46737,6 +46846,7 @@ __export(refillService_exports, {
   checkAllRefills: () => checkAllRefills,
   cleanupStagedRefillNotifications: () => cleanupStagedRefillNotifications,
   createQuickBillForRefill: () => createQuickBillForRefill,
+  isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed,
   notifyAdminStagedReminders: () => notifyAdminStagedReminders,
   sendMorningScheduleBriefingToAdmin: () => sendMorningScheduleBriefingToAdmin,
   syncStagedRefillNotificationForPatient: () => syncStagedRefillNotificationForPatient,
@@ -46949,7 +47059,7 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   const storePhone = await getStorePhone(db2);
   const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
   const readyRefills = await db2.all(
-    `SELECT pr.id, pr.quantity_needed, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
@@ -46981,18 +47091,43 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   }
   const items = Array.from(seenMeds.values());
   const refillIds = readyRefills.map((r) => r.id);
+  const anyReady = readyRefills.some((r) => r.is_ready === 1 || r.quick_bill_id);
   let msg;
-  if (items.length === 1) {
-    msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
+  if (anyReady) {
+    if (items.length === 1) {
+      msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your packed prescription is waiting and ready for collection at our pharmacy:
+
+\u2022 *${items[0].medicine_name}* (Qty: ${items[0].quantity})
+
+\u{1F4CD} *Pickup Location:* ${storeLabel}
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+    } else {
+      const medList = items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
+      msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your packed prescription is waiting and ready for collection at our pharmacy:
+
+${medList}
+
+\u{1F4CD} *Pickup Location:* ${storeLabel}
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+    }
+  } else {
+    if (items.length === 1) {
+      msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
 
 Dear ${patientName},
 Your regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.
 
 You may collect from ${storeLabel}.
 \u{1F449} *Reply "REFILL" or "YES" to confirm.*`;
-  } else {
-    const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
-    msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
+    } else {
+      const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
+      msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
 
 Dear ${patientName},
 Your regular prescription is due for refill:
@@ -47001,6 +47136,11 @@ ${medList}
 
 You may collect from ${storeLabel}.
 \u{1F449} *Reply "REFILL" or "YES" to confirm.*`;
+    }
+  }
+  const needsLangBanner = await isFirstContactOrUnconfirmed(db2, patientPhone);
+  if (needsLangBanner) {
+    msg += firstContactLanguageBanner();
   }
   const referenceIdStr = refillIds.join(",");
   let existing = null;
@@ -47567,6 +47707,38 @@ Review & dispatch in CRM \u2192 Refills or Quick Assist.`;
     console.error("[RefillService] Failed to notify admin of staged reminders:", err);
   }
 }
+async function isFirstContactOrUnconfirmed(db2, phone) {
+  if (!phone) return false;
+  const digits = String(phone).replace(/\D/g, "").slice(-10);
+  if (!digits) return false;
+  try {
+    const customer = await db2.get(
+      `SELECT language_confirmed FROM customers WHERE phone LIKE ? LIMIT 1`,
+      [`%${digits}`]
+    ).catch(() => null);
+    if (customer && customer.language_confirmed === 1) {
+      return false;
+    }
+    const waMsg = await db2.get(
+      `SELECT id FROM whatsapp_messages WHERE (chat_id LIKE ? OR chat_id LIKE ?) AND from_me = 1 LIMIT 1`,
+      [`%${digits}@c.us`, `%${digits}@s.whatsapp.net`]
+    ).catch(() => null);
+    if (waMsg) return false;
+    const waSent = await db2.get(
+      `SELECT id FROM whatsapp_sent_register WHERE phone LIKE ? LIMIT 1`,
+      [`%${digits}%`]
+    ).catch(() => null);
+    if (waSent) return false;
+    const notifSent = await db2.get(
+      `SELECT id FROM automation_notifications WHERE recipient_phone LIKE ? AND status = 'sent' LIMIT 1`,
+      [`%${digits}%`]
+    ).catch(() => null);
+    if (notifSent) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 var init_refillService = __esm({
   "src/services/refillService.ts"() {
     "use strict";
@@ -47575,6 +47747,7 @@ var init_refillService = __esm({
     init_pharmacyCalendar();
     init_refillOrderReconciler();
     init_orderNameMatcher();
+    init_languageDetector();
   }
 });
 
@@ -55337,7 +55510,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.59";
+    APP_VERSION = "0.1.60";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -73806,9 +73979,11 @@ async function runCollectionReminderCycle(force = false) {
     let ordersQueued = 0;
     const readyRefills = await db2.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
-             pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count
+             pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count,
+             COALESCE(pr.language, c.language, 'en') as language
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
+      LEFT JOIN customers c ON (c.phone = pr.patient_phone OR c.name = pr.patient_name)
       WHERE pr.auto_remind = 1
         AND pr.is_ready = 1
         AND pr.is_active = 1
@@ -73826,6 +74001,7 @@ async function runCollectionReminderCycle(force = false) {
         group = {
           patient_name: r.patient_name || "Customer",
           patient_phone: r.patient_phone || "",
+          language: (r.language || "en").toLowerCase(),
           items: []
         };
         refillGroups.set(key, group);
@@ -73838,8 +74014,36 @@ async function runCollectionReminderCycle(force = false) {
     }
     for (const group of refillGroups.values()) {
       if (!group.patient_phone || group.patient_phone.replace(/\D/g, "").length < 10) continue;
-      const medList = group.items.length === 1 ? `\u2022 *${group.items[0].medicine_name}* (Qty: ${group.items[0].quantity})` : group.items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
-      const msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${storeName}*
+      let msg = "";
+      if (group.language === "hi") {
+        const medList = group.items.length === 1 ? `\u2022 *${group.items[0].medicine_name}* (\u092E\u093E\u0924\u094D\u0930\u093E: ${group.items[0].quantity})` : group.items.map((it) => `\u2022 *${it.medicine_name}* (\u092E\u093E\u0924\u094D\u0930\u093E: ${it.quantity})`).join("\n");
+        msg = `\u{1F514} *\u0924\u0948\u092F\u093E\u0930 \u0926\u0935\u093E\u0908 \u0938\u0902\u0917\u094D\u0930\u0939 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${storeName}*
+
+\u0928\u092E\u0938\u094D\u0924\u0947 ${group.patient_name},
+\u0906\u092A\u0915\u0940 \u0924\u0948\u092F\u093E\u0930 \u0915\u0940 \u0917\u0908 \u0926\u0935\u093E\u0908 \u092B\u093E\u0930\u094D\u092E\u0947\u0938\u0940 \u092A\u0930 \u0906\u092A\u0915\u0947 \u0932\u093F\u090F \u0909\u092A\u0932\u092C\u094D\u0927 \u0939\u0948:
+
+${medList}
+
+\u{1F4CD} *\u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u092A\u0924\u093E:* ${storeLabel}
+\u{1F552} *\u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u0938\u092E\u092F:* ${sched.openTime} \u0938\u0947 ${sched.closeTime}
+
+\u{1F449} *\u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u0940 \u0938\u0941\u0935\u093F\u0927\u093E\u0928\u0941\u0938\u093E\u0930 \u0926\u0935\u093E\u0908 \u0932\u0947 \u091C\u093E\u090F\u0902\u0964*`;
+      } else if (group.language === "mr") {
+        const medList = group.items.length === 1 ? `\u2022 *${group.items[0].medicine_name}* (\u092A\u094D\u0930\u092E\u093E\u0923: ${group.items[0].quantity})` : group.items.map((it) => `\u2022 *${it.medicine_name}* (\u092A\u094D\u0930\u092E\u093E\u0923: ${it.quantity})`).join("\n");
+        msg = `\u{1F514} *\u0924\u092F\u093E\u0930 \u0914\u0937\u0927 \u0938\u0902\u0915\u0932\u0928 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${storeName}*
+
+\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${group.patient_name},
+\u0906\u092A\u0932\u0940 \u0924\u092F\u093E\u0930 \u0915\u0947\u0932\u0947\u0932\u0940 \u0914\u0937\u0927\u0947 \u092B\u093E\u0930\u094D\u092E\u0938\u0940\u092E\u0927\u094D\u092F\u0947 \u0909\u092A\u0932\u092C\u094D\u0927 \u0906\u0939\u0947\u0924:
+
+${medList}
+
+\u{1F4CD} *\u092A\u0924\u094D\u0924\u093E:* ${storeLabel}
+\u{1F552} *\u0926\u0941\u0915\u093E\u0928\u093E\u091A\u0940 \u0935\u0947\u0933:* ${sched.openTime} \u0924\u0947 ${sched.closeTime}
+
+\u{1F449} *\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E \u0938\u094B\u092F\u0940\u0928\u0941\u0938\u093E\u0930 \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E\u0935\u0947.*`;
+      } else {
+        const medList = group.items.length === 1 ? `\u2022 *${group.items[0].medicine_name}* (Qty: ${group.items[0].quantity})` : group.items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
+        msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${storeName}*
 
 Dear ${group.patient_name},
 Your packed prescription is waiting and ready for collection at our pharmacy:
@@ -73850,6 +74054,7 @@ ${medList}
 \u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}
 
 \u{1F449} *Please collect your medicine at your earliest convenience.*`;
+      }
       try {
         await whatsappQueueWorker.enqueue(
           group.patient_phone,
@@ -73878,10 +74083,12 @@ ${medList}
     }
     const readySpecialOrders = await db2.all(`
       SELECT so.id, so.requester, so.phone, so.product, so.qty,
-             so.last_collection_reminder_at, so.notification_count
+             so.last_collection_reminder_at, so.notification_count,
+             COALESCE(c.language, 'en') as language
       FROM special_orders so
+      LEFT JOIN customers c ON (c.phone = so.phone OR c.name = so.requester)
       WHERE so.auto_remind = 1
-        AND so.status = 'Ready'
+        AND so.status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
         AND (so.last_collection_reminder_at IS NULL OR DATE(so.last_collection_reminder_at) < DATE('now', 'localtime'))
       ORDER BY so.id ASC
     `);
@@ -73895,6 +74102,7 @@ ${medList}
         group = {
           requester: so.requester || "Customer",
           phone: so.phone || "",
+          language: (so.language || "en").toLowerCase(),
           items: []
         };
         orderGroups.set(key, group);
@@ -73907,8 +74115,36 @@ ${medList}
     }
     for (const group of orderGroups.values()) {
       if (!group.phone || group.phone.replace(/\D/g, "").length < 10) continue;
-      const medList = group.items.length === 1 ? `\u2022 *${group.items[0].product}* (Qty: ${group.items[0].qty})` : group.items.map((it) => `\u2022 *${it.product}* (Qty: ${it.qty})`).join("\n");
-      const msg = `\u{1F514} *SPECIAL ORDER READY FOR PICKUP \u2014 ${storeName}*
+      let msg = "";
+      if (group.language === "hi") {
+        const medList = group.items.length === 1 ? `\u2022 *${group.items[0].product}* (\u092E\u093E\u0924\u094D\u0930\u093E: ${group.items[0].qty})` : group.items.map((it) => `\u2022 *${it.product}* (\u092E\u093E\u0924\u094D\u0930\u093E: ${it.qty})`).join("\n");
+        msg = `\u{1F514} *\u0926\u0935\u093E\u0908 \u0924\u0948\u092F\u093E\u0930 \u0939\u0948 \u2014 ${storeName}*
+
+\u0928\u092E\u0938\u094D\u0924\u0947 ${group.requester},
+\u0906\u092A\u0915\u0940 \u092E\u0902\u0917\u0935\u093E\u0908 \u0917\u0908 \u0926\u0935\u093E\u0908 \u0906 \u091A\u0941\u0915\u0940 \u0939\u0948 \u0914\u0930 \u0938\u0902\u0917\u094D\u0930\u0939 \u0915\u0947 \u0932\u093F\u090F \u0924\u0948\u092F\u093E\u0930 \u0939\u0948:
+
+${medList}
+
+\u{1F4CD} *\u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u092A\u0924\u093E:* ${storeLabel}
+\u{1F552} *\u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u0938\u092E\u092F:* ${sched.openTime} \u0938\u0947 ${sched.closeTime}
+
+\u{1F449} *\u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u0940 \u0938\u0941\u0935\u093F\u0927\u093E\u0928\u0941\u0938\u093E\u0930 \u0926\u0935\u093E\u0908 \u0932\u0947 \u091C\u093E\u090F\u0902\u0964*`;
+      } else if (group.language === "mr") {
+        const medList = group.items.length === 1 ? `\u2022 *${group.items[0].product}* (\u092A\u094D\u0930\u092E\u093E\u0923: ${group.items[0].qty})` : group.items.map((it) => `\u2022 *${it.product}* (\u092A\u094D\u0930\u092E\u093E\u0923: ${it.qty})`).join("\n");
+        msg = `\u{1F514} *\u092E\u093E\u0917\u0935\u0932\u0947\u0932\u0947 \u0914\u0937\u0927 \u0909\u092A\u0932\u092C\u094D\u0927 \u0906\u0939\u0947 \u2014 ${storeName}*
+
+\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${group.requester},
+\u0906\u092A\u0923 \u092E\u093E\u0917\u0935\u0932\u0947\u0932\u0947 \u0914\u0937\u0927 \u0906\u0932\u0947 \u0905\u0938\u0942\u0928 \u0938\u0902\u0915\u0932\u0928\u093E\u0938\u093E\u0920\u0940 \u0924\u092F\u093E\u0930 \u0906\u0939\u0947:
+
+${medList}
+
+\u{1F4CD} *\u092A\u0924\u094D\u0924\u093E:* ${storeLabel}
+\u{1F552} *\u0926\u0941\u0915\u093E\u0928\u093E\u091A\u0940 \u0935\u0947\u0933:* ${sched.openTime} \u0924\u0947 ${sched.closeTime}
+
+\u{1F449} *\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E \u0938\u094B\u092F\u0940\u0928\u0941\u0938\u093E\u0930 \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E\u0935\u0947.*`;
+      } else {
+        const medList = group.items.length === 1 ? `\u2022 *${group.items[0].product}* (Qty: ${group.items[0].qty})` : group.items.map((it) => `\u2022 *${it.product}* (Qty: ${it.qty})`).join("\n");
+        msg = `\u{1F514} *SPECIAL ORDER READY FOR PICKUP \u2014 ${storeName}*
 
 Dear ${group.requester},
 Your requested medicine has arrived and is ready for collection:
@@ -73919,6 +74155,7 @@ ${medList}
 \u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}
 
 \u{1F449} *Please collect your medicine at your earliest convenience.*`;
+      }
       try {
         await whatsappQueueWorker.enqueue(
           group.phone,
@@ -74009,9 +74246,11 @@ var init_collectionReminderWorker = __esm({
 // src/routes/refills.ts
 var refills_exports = {};
 __export(refills_exports, {
+  buildRefillCollectionMessage: () => buildRefillCollectionMessage,
   buildRefillReminderMessage: () => buildRefillReminderMessage,
   default: () => refills_default,
-  initRefillsTable: () => initRefillsTable
+  initRefillsTable: () => initRefillsTable,
+  isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed
 });
 async function initRefillsTable(_db) {
   if (refillsTableInitialized) return;
@@ -74029,13 +74268,14 @@ function parseIntervalDays(val) {
   if (typeof val === "number") return val;
   return 30;
 }
-function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en", dueDateStr, scheduleOpts) {
+function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en", dueDateStr, scheduleOpts, opts) {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || "en").toLowerCase();
   const openT = scheduleOpts?.openTime || "09:00";
   const closeT = scheduleOpts?.closeTime || "22:00";
   const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
+  let message = "";
   if (cleanLang === "hi") {
     const medList = items.map((m) => `\u2022 ${m.medicine_name || "\u0926\u0935\u093E\u0908"} (\u092E\u093E\u0924\u094D\u0930\u093E: ${m.quantity_needed || 1})`).join("\n");
     const dueSuffix = dueDateStr ? `
@@ -74051,7 +74291,7 @@ function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en
 
 \u2753 \u0915\u094D\u092F\u093E \u0906\u092A \u0926\u0935\u093E\u0908 \u0924\u0948\u092F\u093E\u0930 \u0915\u0930\u0935\u093E\u0928\u093E \u091A\u093E\u0939\u0924\u0947 \u0939\u0948\u0902?
 \u{1F449} *\u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0947 \u0932\u093F\u090F "REFILL" \u092F\u093E "\u0939\u093E\u0901" \u0932\u093F\u0916\u0915\u0930 \u0909\u0924\u094D\u0924\u0930 \u0926\u0947\u0902\u0964*`;
-    return `\u{1F514} *\u0926\u0935\u093E\u0908 \u0930\u093F\u092B\u093C\u093F\u0932 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${pharmacyName}*
+    message = `\u{1F514} *\u0926\u0935\u093E\u0908 \u0930\u093F\u092B\u093C\u093F\u0932 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${pharmacyName}*
 
 \u0928\u092E\u0938\u094D\u0924\u0947 ${pName},
 \u0906\u092A\u0915\u0940 \u0928\u093F\u092F\u092E\u093F\u0924 \u0926\u0935\u093E\u0908 \u0915\u093E \u0930\u093F\u092B\u093C\u093F\u0932 \u0938\u092E\u092F \u0906 \u0917\u092F\u093E \u0939\u0948:
@@ -74072,7 +74312,7 @@ ${medList}${dueSuffix}${timingSection}${cta}`;
 
 \u2753 \u0924\u0941\u092E\u094D\u0939\u093E\u0932\u093E \u0939\u0940 \u0914\u0937\u0927\u0947 \u0924\u092F\u093E\u0930 \u0939\u0935\u0940 \u0906\u0939\u0947\u0924 \u0915\u093E?
 \u{1F449} *\u0928\u093F\u0936\u094D\u091A\u093F\u0924\u0940\u0938\u093E\u0920\u0940 "REFILL" \u0915\u093F\u0902\u0935\u093E "\u0939\u094B" \u0932\u093F\u0939\u0942\u0928 \u0909\u0924\u094D\u0924\u0930 \u0926\u094D\u092F\u093E\u0964*`;
-    return `\u{1F514} *\u0914\u0937\u0927 \u0930\u093F\u092B\u093F\u0932 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${pharmacyName}*
+    message = `\u{1F514} *\u0914\u0937\u0927 \u0930\u093F\u092B\u093F\u0932 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${pharmacyName}*
 
 \u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${pName},
 \u0906\u092A\u0932\u094D\u092F\u093E \u0928\u093F\u092F\u092E\u093F\u0924 \u0914\u0937\u0927\u093E\u0902\u091A\u0940 \u0930\u093F\u092B\u093F\u0932 \u0915\u0930\u0923\u094D\u092F\u093E\u091A\u0940 \u0935\u0947\u0933 \u091D\u093E\u0932\u0940 \u0906\u0939\u0947:
@@ -74094,13 +74334,82 @@ Due Date: ${dueDateStr}` : "";
 \u2753 Would you like us to prepare your regular medicines?
 \u{1F449} *Reply "REFILL" or "YES" to confirm.*
 *(Store open ${openT} - ${closeT})*`;
-    return `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${pharmacyName}*
+    message = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${pharmacyName}*
 
 Dear ${pName},
 Your regular prescription is due for refill:
 
 ${medList}${dueSuffix}${timingSection}${cta}`;
   }
+  if (opts?.includeLanguageBanner) {
+    message += firstContactLanguageBanner();
+  }
+  return message;
+}
+function buildRefillCollectionMessage(patientName, items, pharmacyName, lang = "en", scheduleOpts, opts) {
+  const pName = formatCustomerName(patientName);
+  const cleanLang = (lang || "en").toLowerCase();
+  const openT = scheduleOpts?.openTime || "09:00";
+  const closeT = scheduleOpts?.closeTime || "22:00";
+  const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
+  const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
+  let message = "";
+  if (cleanLang === "hi") {
+    const medList = items.map((m) => `\u2022 *${m.medicine_name || "\u0926\u0935\u093E\u0908"}* (\u092E\u093E\u0924\u094D\u0930\u093E: ${m.quantity_needed || 1})`).join("\n");
+    let timingSection = `
+\u{1F552} \u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u0938\u092E\u092F: ${openT} \u0938\u0947 ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `
+\u26A0\uFE0F \u0938\u0942\u091A\u0928\u093E: \u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 ${weeklyOff} \u0915\u094B \u092C\u0902\u0926 \u0930\u0939\u0947\u0917\u0940\u0964 \u0915\u0943\u092A\u092F\u093E \u0938\u092E\u092F \u0938\u0947 \u092A\u0939\u0932\u0947 \u0926\u0935\u093E\u0908 \u0932\u0947 \u0932\u0947\u0902!`;
+    }
+    const cta = `
+
+\u{1F449} *\u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u0940 \u0938\u0941\u0935\u093F\u0927\u093E\u0928\u0941\u0938\u093E\u0930 \u0926\u0935\u093E\u0908 \u0932\u0947 \u091C\u093E\u090F\u0902\u0964*`;
+    message = `\u{1F514} *\u0924\u0948\u092F\u093E\u0930 \u0926\u0935\u093E\u0908 \u0938\u0902\u0917\u094D\u0930\u0939 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${pharmacyName}*
+
+\u0928\u092E\u0938\u094D\u0924\u0947 ${pName},
+\u0906\u092A\u0915\u0940 \u0924\u0948\u092F\u093E\u0930 \u0915\u0940 \u0917\u0908 \u0926\u0935\u093E\u0908 \u092B\u093E\u0930\u094D\u092E\u0947\u0938\u0940 \u092A\u0930 \u0906\u092A\u0915\u0947 \u0932\u093F\u090F \u0909\u092A\u0932\u092C\u094D\u0927 \u0939\u0948:
+
+${medList}${timingSection}${cta}`;
+  } else if (cleanLang === "mr") {
+    const medList = items.map((m) => `\u2022 *${m.medicine_name || "\u0914\u0937\u0927"}* (\u092A\u094D\u0930\u092E\u093E\u0923: ${m.quantity_needed || 1})`).join("\n");
+    let timingSection = `
+\u{1F552} \u0926\u0941\u0915\u093E\u0928\u093E\u091A\u0940 \u0935\u0947\u0933: ${openT} \u0924\u0947 ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `
+\u26A0\uFE0F \u0938\u0942\u091A\u0928\u093E: \u0906\u092E\u091A\u0947 \u0926\u0941\u0915\u093E\u0928 ${weeklyOff} \u0932\u093E \u092C\u0902\u0926 \u0930\u093E\u0939\u0940\u0932. \u0915\u0943\u092A\u092F\u093E \u0906\u0927\u0940\u091A \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E!`;
+    }
+    const cta = `
+
+\u{1F449} *\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E \u0938\u094B\u092F\u0940\u0928\u0941\u0938\u093E\u0930 \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E\u0935\u0947.*`;
+    message = `\u{1F514} *\u0924\u092F\u093E\u0930 \u0914\u0937\u0927 \u0938\u0902\u0915\u0932\u0928 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${pharmacyName}*
+
+\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${pName},
+\u0906\u092A\u0932\u0940 \u0924\u092F\u093E\u0930 \u0915\u0947\u0932\u0947\u0932\u0940 \u0914\u0937\u0927\u0947 \u092B\u093E\u0930\u094D\u092E\u0938\u0940\u092E\u0927\u094D\u092F\u0947 \u0909\u092A\u0932\u092C\u094D\u0927 \u0906\u0939\u0947\u0924:
+
+${medList}${timingSection}${cta}`;
+  } else {
+    const medList = items.map((m) => `\u2022 *${m.medicine_name || "Medicine"}* (Qty: ${m.quantity_needed || 1})`).join("\n");
+    let timingSection = `
+\u{1F552} Store Hours: ${openT} to ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `
+\u26A0\uFE0F Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
+    }
+    const cta = `
+
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+    message = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${pharmacyName}*
+
+Dear ${pName},
+Your packed prescription is waiting and ready for collection at our pharmacy:
+
+${medList}${timingSection}${cta}`;
+  }
+  if (opts?.includeLanguageBanner) {
+    message += firstContactLanguageBanner();
+  }
+  return message;
 }
 var import_express19, import_path45, import_fs49, router19, refillsTableInitialized, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
 var init_refills = __esm({
@@ -74111,6 +74420,7 @@ var init_refills = __esm({
     import_path45 = __toESM(require("path"), 1);
     import_fs49 = __toESM(require("fs"), 1);
     init_refillService();
+    init_languageDetector();
     init_whatsappClient();
     init_whatsappQueueWorker();
     init_pdfInvoiceService();
@@ -74162,22 +74472,31 @@ var init_refills = __esm({
         const nextRefillStr = toLocalSqlDateTime(nextRefillDate);
         const cleanPhone = (patient_phone || "").trim();
         const cleanName = formatCustomerName(patient_name);
-        const cleanLang = (language || "en").trim();
+        let cleanLang = (language || "en").trim();
         let customerId = req.body.customer_id || null;
         if (!customerId && (cleanPhone || cleanName)) {
-          let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          let cust = await db2.get("SELECT id, language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
           if (!cust && cleanName && cleanName.toLowerCase() !== "customer") {
-            cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [cleanName]);
+            cust = await db2.get("SELECT id, language FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [cleanName]);
           }
           if (cust) {
             customerId = cust.id;
-            await db2.run("UPDATE customers SET language = ? WHERE id = ?", [cleanLang, customerId]);
+            if (req.body.language) {
+              await db2.run("UPDATE customers SET language = ? WHERE id = ?", [cleanLang, customerId]);
+            } else if (cust.language) {
+              cleanLang = cust.language;
+            }
           } else if (cleanPhone || cleanName) {
             const custRes = await db2.run("INSERT INTO customers (name, phone, language) VALUES (?, ?, ?)", [cleanName, cleanPhone, cleanLang]);
             customerId = custRes.lastID;
           }
         } else if (customerId) {
-          await db2.run("UPDATE customers SET language = ? WHERE id = ?", [cleanLang, customerId]);
+          if (req.body.language) {
+            await db2.run("UPDATE customers SET language = ? WHERE id = ?", [cleanLang, customerId]);
+          } else {
+            const cust = await db2.get("SELECT language FROM customers WHERE id = ? LIMIT 1", [customerId]);
+            if (cust?.language) cleanLang = cust.language;
+          }
         }
         const quantityNeeded = parseInt(req.body.quantity_needed || req.body.quantity, 10) || 3;
         const existing = await db2.get(
@@ -75373,7 +75692,7 @@ var init_refills = __esm({
         const patientName = refill.patient_name || "Customer";
         const cleanDigits = cleanPhone.replace(/^91/, "");
         const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? OR phone = ? OR id = ? LIMIT 1", [cleanPhone, cleanDigits, refill.customer_id]);
-        const lang = req.body?.language || refill.language || custRow?.language || "en";
+        const lang = req.body?.language || custRow?.language || refill.language || "en";
         const refillReminderEnabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
@@ -75383,13 +75702,15 @@ var init_refills = __esm({
         const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
         const dueDayName = dayNames[nextRefillDateObj.getDay()];
         const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
+        const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
         const msg = buildRefillReminderMessage(
           patientName,
           [{ medicine_name: refill.medicine_name || "Prescribed Medicine", quantity_needed: refill.quantity_needed || 1 }],
           medicalName,
           lang,
           void 0,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
         );
         let pdfPath = void 0;
         try {
@@ -75502,7 +75823,7 @@ var init_refills = __esm({
         const idsToUpdate = unsentRows.map((r) => r.id);
         const cleanDigits = cleanPhone.replace(/^91/, "");
         const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? OR phone = ? LIMIT 1", [cleanPhone, cleanDigits]);
-        const lang = req.body?.language || rows[0]?.language || custRow?.language || "en";
+        const lang = req.body?.language || custRow?.language || rows[0]?.language || "en";
         const refillReminderEnabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
@@ -75512,18 +75833,29 @@ var init_refills = __esm({
         const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
         const dueDayName = dayNames[earliestDue.getDay()];
         const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
-        const msg = buildRefillReminderMessage(
+        const anyReady = unsentRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
+        const notifType = anyReady ? "refill_collection" : "refill_reminder";
+        const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+        const msg = anyReady ? buildRefillCollectionMessage(
+          patientName,
+          unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
+        ) : buildRefillReminderMessage(
           patientName,
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
           void 0,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
           msg,
-          "refill_reminder",
+          notifType,
           patientName
         );
         const placeholders = idsToUpdate.map(() => "?").join(",");
@@ -75543,7 +75875,7 @@ var init_refills = __esm({
           await db2.run(
             `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
-            ["refill_reminder", patientName, cleanPhone, msg, "queued", String(rId)]
+            [notifType, patientName, cleanPhone, msg, "queued", String(rId)]
           );
         }
         res.json({
@@ -75551,7 +75883,7 @@ var init_refills = __esm({
           queueId,
           reminder_status: "QUEUED",
           updatedRefillCount: idsToUpdate.length,
-          message: `Consolidated refill reminder queued for ${patientName} (${cleanPhone})`
+          message: anyReady ? `Consolidated collection reminder queued for ${patientName} (${cleanPhone})` : `Consolidated refill reminder queued for ${patientName} (${cleanPhone})`
         });
       } catch (err) {
         console.error("Failed to send grouped refill reminder:", err);
@@ -75604,7 +75936,7 @@ var init_refills = __esm({
         const patientName = unsent[0].patient_name || "Customer";
         const cleanDigits = cleanPhone.replace(/^91/, "");
         const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? OR phone = ? LIMIT 1", [cleanPhone, cleanDigits]);
-        const lang = req.body?.language || tomorrowRefills[0]?.language || custRow?.language || "en";
+        const lang = req.body?.language || custRow?.language || tomorrowRefills[0]?.language || "en";
         const refillReminderEnabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
@@ -75615,13 +75947,15 @@ var init_refills = __esm({
         const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
         const tomorrowDayName = dayNames[tomorrowDate.getDay()];
         const isOffDayUpcoming = tomorrowDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
+        const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
         const msg = buildRefillReminderMessage(
           patientName,
           unsent.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
           tomorrowDateStr,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
@@ -75693,7 +76027,7 @@ var init_refills = __esm({
         const patientName = unsentRows[0].patient_name || "Customer";
         const cleanDigits = cleanPhone.replace(/^91/, "");
         const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? OR phone = ? LIMIT 1", [cleanPhone, cleanDigits]);
-        const lang = req.body?.language || rows[0]?.language || custRow?.language || "en";
+        const lang = req.body?.language || custRow?.language || rows[0]?.language || "en";
         const refillDate = unsentRows[0].next_refill_date ? new Date(unsentRows[0].next_refill_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : void 0;
         const refillReminderEnabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
         if (refillReminderEnabledRow?.value === "false") {
@@ -75704,18 +76038,29 @@ var init_refills = __esm({
         const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
         const dueDayName = dayNames[earliestDue.getDay()];
         const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
-        const msg = buildRefillReminderMessage(
+        const anyReady = unsentRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
+        const notifType = anyReady ? "refill_collection" : "refill_reminder";
+        const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+        const msg = anyReady ? buildRefillCollectionMessage(
+          patientName,
+          unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
+        ) : buildRefillReminderMessage(
           patientName,
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
           refillDate,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
           msg,
-          "refill_reminder",
+          notifType,
           patientName
         );
         const ids = unsentRows.map((r) => r.id);
@@ -75736,10 +76081,15 @@ var init_refills = __esm({
           await db2.run(
             `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
-            ["refill_reminder", patientName, cleanPhone, msg, "queued", String(r.id)]
+            [notifType, patientName, cleanPhone, msg, "queued", String(r.id)]
           );
         }
-        res.json({ success: true, queueId, reminder_status: "QUEUED", message: "Refill reminder queued via WhatsApp" });
+        res.json({
+          success: true,
+          queueId,
+          reminder_status: "QUEUED",
+          message: anyReady ? "Medicine collection reminder queued via WhatsApp" : "Refill reminder queued via WhatsApp"
+        });
       } catch (err) {
         console.error("Failed to send immediate reminder:", err);
         res.status(500).json({ error: "Internal server error: " + err.message });
@@ -76028,6 +76378,196 @@ ${summaryLines}
         res.json({ success: true, result });
       } catch (err) {
         res.status(500).json({ error: err.message });
+      }
+    });
+    router19.post("/patient/:phone/mark-ready", async (req, res) => {
+      const { phone } = req.params;
+      const cleanPhone = normalizeWhatsAppPhone(phone);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: "Valid 10+ digit patient phone is required" });
+      }
+      let db2;
+      try {
+        db2 = await dbManager.getConnection();
+        const last10 = cleanPhone.slice(-10);
+        const refills = await db2.all(`
+      SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, pr.quantity_needed, pr.language,
+             m.name as medicine_name
+      FROM patient_refills pr
+      JOIN medicines m ON pr.medicine_id = m.id
+      WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
+        AND pr.is_active = 1
+        AND pr.status NOT IN ('completed', 'canceled')
+      ORDER BY pr.id ASC
+    `, [`%${last10}`, `%${cleanPhone}`]);
+        if (refills.length === 0) {
+          return res.status(404).json({ error: "No active refills found for this patient" });
+        }
+        const patientName = refills[0].patient_name || "Customer";
+        const custRow = await db2.get("SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1", [`%${last10}`, `%${cleanPhone}`]);
+        const lang = refills[0].language || custRow?.language || "en";
+        const medicalName = await getConfiguredPharmacyName(db2) || "Pharmacy";
+        const sched = await getPharmacyOperatingSchedule(db2);
+        const schedOpts = {
+          openTime: sched.openTime,
+          closeTime: sched.closeTime,
+          weeklyOff: sched.weeklyOff,
+          isOffDayUpcoming: false
+        };
+        const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+        const msg = buildRefillCollectionMessage(
+          patientName,
+          refills.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          schedOpts,
+          { includeLanguageBanner: includeLangBanner }
+        );
+        const ids = refills.map((r) => r.id);
+        const placeholders = ids.map(() => "?").join(",");
+        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const recentQueue = await db2.get(
+          `SELECT id FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'refill_collection'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+          [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+        );
+        let queueId = null;
+        let whatsappQueued = false;
+        if (!recentQueue) {
+          queueId = await whatsappQueueWorker.enqueue(
+            cleanPhone,
+            msg,
+            "refill_collection",
+            patientName
+          );
+          whatsappQueued = true;
+        } else {
+          console.log(`[Refill Mark-Ready] Suppressed duplicate collection WhatsApp for ${cleanPhone} (queued within 60m).`);
+        }
+        await db2.run(
+          `UPDATE patient_refills
+       SET is_ready = 1,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1,
+           reminder_status = 'SENT',
+           reminder_sent_at = datetime('now')
+       WHERE id IN (${placeholders})`,
+          ids
+        );
+        for (const rId of ids) {
+          await db2.run(
+            `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+            ["refill_collection", patientName, cleanPhone, msg, whatsappQueued ? "queued" : "sent", String(rId)]
+          ).catch(() => {
+          });
+        }
+        eventService.broadcast("refill_updated", { at: Date.now(), patient_phone: cleanPhone, is_ready: 1 });
+        res.json({
+          success: true,
+          whatsapp_queued: whatsappQueued,
+          queueId,
+          updated_count: ids.length,
+          message: whatsappQueued ? `Marked ${ids.length} refill(s) as Ready and queued pickup WhatsApp for ${patientName}` : `Marked ${ids.length} refill(s) as Ready (WhatsApp alert already queued recently)`
+        });
+      } catch (err) {
+        console.error("Failed to mark patient refills ready:", err);
+        res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router19.post("/:id/mark-ready", async (req, res) => {
+      const { id } = req.params;
+      let db2;
+      try {
+        db2 = await dbManager.getConnection();
+        const refill = await db2.get(`
+      SELECT pr.*, m.name as medicine_name
+      FROM patient_refills pr
+      JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.id = ?
+    `, [id]);
+        if (!refill) {
+          return res.status(404).json({ error: "Refill not found" });
+        }
+        const cleanPhone = normalizeWhatsAppPhone(refill.patient_phone);
+        const last10 = cleanPhone ? cleanPhone.slice(-10) : "";
+        const patientName = refill.patient_name || "Customer";
+        const custRow = cleanPhone ? await db2.get("SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1", [`%${last10}`, `%${cleanPhone}`]) : null;
+        const lang = refill.language || custRow?.language || "en";
+        const medicalName = await getConfiguredPharmacyName(db2) || "Pharmacy";
+        const sched = await getPharmacyOperatingSchedule(db2);
+        const schedOpts = {
+          openTime: sched.openTime,
+          closeTime: sched.closeTime,
+          weeklyOff: sched.weeklyOff,
+          isOffDayUpcoming: false
+        };
+        let whatsappQueued = false;
+        let queueId = null;
+        if (cleanPhone && cleanPhone.length >= 10) {
+          const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+          const msg = buildRefillCollectionMessage(
+            patientName,
+            [{ medicine_name: refill.medicine_name, quantity_needed: refill.quantity_needed }],
+            medicalName,
+            lang,
+            schedOpts,
+            { includeLanguageBanner: includeLangBanner }
+          );
+          const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const recentQueue = await db2.get(
+            `SELECT id FROM whatsapp_send_queue
+         WHERE (number LIKE ? OR number LIKE ?)
+           AND type = 'refill_collection'
+           AND status NOT IN ('cancelled', 'failed_perm')
+           AND created_at >= ?
+         ORDER BY created_at DESC LIMIT 1`,
+            [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+          );
+          if (!recentQueue) {
+            queueId = await whatsappQueueWorker.enqueue(
+              cleanPhone,
+              msg,
+              "refill_collection",
+              patientName
+            );
+            whatsappQueued = true;
+          }
+          await db2.run(
+            `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+            ["refill_collection", patientName, cleanPhone, msg, whatsappQueued ? "queued" : "sent", String(id)]
+          ).catch(() => {
+          });
+        }
+        await db2.run(
+          `UPDATE patient_refills
+       SET is_ready = 1,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1,
+           reminder_status = 'SENT',
+           reminder_sent_at = datetime('now')
+       WHERE id = ?`,
+          [id]
+        );
+        eventService.broadcast("refill_updated", { at: Date.now(), refill_id: id, is_ready: 1 });
+        res.json({
+          success: true,
+          whatsapp_queued: whatsappQueued,
+          queueId,
+          message: `Marked refill #${id} as Ready`
+        });
+      } catch (err) {
+        console.error(`Failed to mark refill #${id} as ready:`, err);
+        res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
     refills_default = router19;
@@ -79852,6 +80392,7 @@ Thank you!
         }
         const isSpecialProcurement = Boolean(order.pharmarack_distributor || order.pharmarack_product_id);
         const nextOrderStatus = isSpecialProcurement ? "Confirmed" : order.order_type === "DELIVERY" ? "Ready" : "ORDER_READY_FOR_PICKUP";
+        const autoRemindVal = nextOrderStatus === "Ready" || nextOrderStatus === "ORDER_READY_FOR_PICKUP" ? 1 : 0;
         await db2.run(
           `UPDATE special_orders
        SET payment_status = 'PAYMENT_CONFIRMED',
@@ -79860,9 +80401,11 @@ Thank you!
            payment_reference = ?,
            payment_confirmed_at = CURRENT_TIMESTAMP,
            payment_confirmed_by = ?,
+           auto_remind = ?,
+           last_collection_reminder_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-          [nextOrderStatus, payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, orderId]
+          [nextOrderStatus, payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, autoRemindVal, orderId]
         );
         await db2.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
@@ -86261,6 +86804,22 @@ var init_sales = __esm({
         res.json({ success: true, invoice_no, invoice_id: invoiceId, id: invoiceId, total, tax, matched_special_orders: [] });
         setImmediate(async () => {
           try {
+            const consumedOrderIds = /* @__PURE__ */ new Set();
+            const explicitOrderIds = [];
+            const rawSoId = req.body.special_order_id || req.body.specialOrderId;
+            if (rawSoId && !isNaN(Number(rawSoId))) explicitOrderIds.push(Number(rawSoId));
+            const rawOoId = req.body.online_order_id || req.body.onlineOrderId;
+            if (rawOoId && !isNaN(Number(rawOoId))) explicitOrderIds.push(Number(rawOoId));
+            for (const ordId of explicitOrderIds) {
+              try {
+                await db2.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [ordId]);
+                await db2.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {
+                });
+                consumedOrderIds.add(ordId);
+              } catch (e) {
+                console.warn(`[Sales explicit order] Failed to mark order #${ordId} fulfilled:`, e);
+              }
+            }
             const distinctMedNames = Array.from(new Set(
               items.map((it) => (it.medicine_name || "").trim()).filter(Boolean)
             ));
@@ -86268,9 +86827,8 @@ var init_sales = __esm({
             const openOrders = await db2.all(
               `SELECT id as order_id, product as medicine, qty as qty_ordered, requester, phone as customer_phone, status as order_status
            FROM special_orders
-           WHERE status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'OVERLAP_DETECTED', 'POTENTIAL_ARRIVAL', 'Pending', 'Ordered', 'Ready')`
+           WHERE status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'OVERLAP_DETECTED', 'POTENTIAL_ARRIVAL', 'Pending', 'Ordered', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Confirmed')`
             );
-            const consumedOrderIds = /* @__PURE__ */ new Set();
             for (const item of items) {
               const medName = (item.medicine_name || "").trim();
               if (!medName) continue;
@@ -86285,6 +86843,8 @@ var init_sales = __esm({
                 consumedOrderIds.add(best.order.order_id);
                 try {
                   await db2.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [best.order.order_id]);
+                  await db2.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(best.order.order_id)]).catch(() => {
+                  });
                 } catch (specErr) {
                   console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
                 }
@@ -94204,7 +94764,7 @@ var init_orders = __esm({
         let newCount = Number(order.notification_count || 0);
         if (queued) {
           newCount += 1;
-          await db2.run("UPDATE special_orders SET status = ?, notified = 1, notification_count = ? WHERE id = ?", ["Ready", newCount, id]);
+          await db2.run("UPDATE special_orders SET status = ?, notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?", ["Ready", newCount, id]);
         }
         broadcastOrdersChanged2();
         res.json({
@@ -94307,7 +94867,7 @@ var init_orders = __esm({
           const newCount = Number(ord.notification_count || 0) + 1;
           if (itInfo.status === "arrived") {
             await db2.run(
-              `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ? WHERE id = ?`,
+              `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?`,
               [newCount, ord.id]
             );
           } else {
@@ -94888,14 +95448,17 @@ Thank you!
           newNotified = 1;
         }
         const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
+        const newAutoRemind = newStatus === "Fulfilled" || newStatus === "Cancelled" ? 0 : newStatus === "Ready" ? 1 : existing.auto_remind ?? 0;
+        const lastRemindAt = newStatus === "Ready" || whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : existing.last_collection_reminder_at;
         await db2.run(
           `UPDATE special_orders
        SET status = ?, priority = ?, qty = ?, product = ?, requester = ?, phone = ?,
            pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = ?,
            advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?,
-           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?
+           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?,
+           auto_remind = ?, last_collection_reminder_at = ?
        WHERE id = ?`,
-          [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, id]
+          [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, newAutoRemind, lastRemindAt, id]
         );
         let paymentQrSent = false;
         const distributorNewlyAssigned = !existing.pharmarack_distributor && newDistributor;
@@ -95073,8 +95636,8 @@ ${upiUri}
         }
         const newNotified = status === "Fulfilled" || whatsappQueued ? 1 : existing.notified;
         const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
-        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : existing.auto_remind ?? 0;
-        const lastRemindAt = whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : existing.last_collection_reminder_at;
+        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : status === "Ready" ? 1 : existing.auto_remind ?? 0;
+        const lastRemindAt = status === "Ready" || whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : existing.last_collection_reminder_at;
         await db2.run(
           "UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?",
           [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
