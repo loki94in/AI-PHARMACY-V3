@@ -179,6 +179,8 @@ const Learning: React.FC = () => {
     name: string;
     phone: string;
     email: string;
+    pharmarackStore: string;
+    initialPharmarackStore: string;
     mappingRulesStr: string;
   } | null>(null);
   const [isSavingDistributor, setIsSavingDistributor] = useState(false);
@@ -223,6 +225,8 @@ const Learning: React.FC = () => {
       name: p.distributor_name || '',
       phone: p.distributor_phone || '',
       email: p.distributor_email || '',
+      pharmarackStore: (p.mapped_store_names || '').split(',')[0].trim(),
+      initialPharmarackStore: (p.mapped_store_names || '').split(',')[0].trim(),
       mappingRulesStr: mappingStr
     });
   };
@@ -242,6 +246,12 @@ const Learning: React.FC = () => {
         phone: editingDistributor.phone.trim(),
         email: editingDistributor.email.trim()
       });
+
+      if (editingDistributor.pharmarackStore.trim() !== editingDistributor.initialPharmarackStore.trim()) {
+        await apiClient.post(`/learning/profiles/${editingDistributor.id}/pharmarack-link`, {
+          store_name: editingDistributor.pharmarackStore.trim()
+        });
+      }
 
       if (editingDistributor.mappingRulesStr.trim()) {
         try {
@@ -351,6 +361,12 @@ const Learning: React.FC = () => {
 
   // Doctors Query with module caching — visibility-gated so a hidden kept-alive
   // Learning page never refetches the doctor directory on background stock writes.
+  const { data: pharmarackStores = [] } = useApiQuery<string[]>(
+    'pharmarack-store-names',
+    async () => (await apiClient.get('/learning/pharmarack-stores')).data || [],
+    { enabled: !!editingDistributor, staleTime: 300000, refetchOnWindowFocus: false }
+  );
+
   const { data: doctorsList = cachedDoctorsList, isLoading: loadingDoctors, refetch: refetchDoctors } = useApiQuery<LocalDoctorRow[]>(
     'crm-doctors',
     async () => {
@@ -1845,6 +1861,22 @@ const Learning: React.FC = () => {
                     className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 text-xs text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-text block mb-1">Linked Pharmarack Distributor</label>
+                <select
+                  value={editingDistributor.pharmarackStore}
+                  onChange={e => setEditingDistributor({ ...editingDistributor, pharmarackStore: e.target.value })}
+                  className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 text-xs text-text focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="">Not linked</option>
+                  {editingDistributor.pharmarackStore && !pharmarackStores.includes(editingDistributor.pharmarackStore) && (
+                    <option value={editingDistributor.pharmarackStore}>{editingDistributor.pharmarackStore}</option>
+                  )}
+                  {pharmarackStores.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <p className="text-[10px] text-muted mt-1">With the mail ID and this link, today's mail is checked against today's Pharmarack order for this distributor.</p>
               </div>
 
               <div>

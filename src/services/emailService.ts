@@ -738,6 +738,13 @@ export class EmailService {
       } catch (sseErr) {
         console.error('[MailArrival] Failed to send SSE in-app email notification:', sseErr);
       }
+      // Cross-check this invoice mail against today's Pharmarack order (owner message only; silent when
+      // there is no order today or nothing readable in the mail).
+      if (isOrder && uid) {
+        import('./orderMailCheckService.js')
+          .then(m => m.checkMailAgainstTodaysOrder(uid))
+          .catch(err => console.warn('[MailArrival] order cross-check failed:', err?.message || err));
+      }
       // Note: Incoming email notifications go ONLY to Store Owner / Pharmacy. Delivery boys are NOT notified.
     } catch (err) {
       console.error('[MailArrival] Error in notifyMailArrival:', err);

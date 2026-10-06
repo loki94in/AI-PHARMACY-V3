@@ -267,6 +267,50 @@ router.delete('/corrections/:id', async (req, res) => {
   }
 });
 
+// GET /api/learning/pharmarack-stores - every Pharmarack distributor name the app has seen (for the link picker)
+router.get('/pharmarack-stores', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(`
+      SELECT DISTINCT TRIM(store_name) AS store_name FROM (
+        SELECT store_name FROM pharmarack_distributor_mappings
+        UNION SELECT store_name FROM pharmarack_placed_orders
+        UNION SELECT store_name FROM pharmarack_synced_orders
+      ) WHERE store_name IS NOT NULL AND TRIM(store_name) != '' ORDER BY 1 COLLATE NOCASE LIMIT 500`);
+    res.json(rows.map((r: any) => r.store_name));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/learning/profiles/:distributorId/pharmarack-link { store_name } - user-clicked link of an app
+// distributor to its Pharmarack distributor ('' unlinks). One store per distributor from this screen.
+router.post('/profiles/:distributorId/pharmarack-link', async (req, res) => {
+  try {
+    const id = Number(req.params.distributorId);
+    const store = String(req.body?.store_name ?? '').trim();
+    const db = await dbManager.getConnection();
+    const dist = await db.get('SELECT id FROM distributors WHERE id = ?', [id]);
+    if (!dist) return res.status(404).json({ error: 'Distributor not found' });
+    await db.run('BEGIN');
+    try {
+      await db.run('UPDATE pharmarack_distributor_mappings SET distributor_id = NULL WHERE distributor_id = ? AND LOWER(TRIM(store_name)) != LOWER(TRIM(?))', [id, store]);
+      if (store) {
+        const have = await db.get('SELECT store_name FROM pharmarack_distributor_mappings WHERE LOWER(TRIM(store_name)) = LOWER(TRIM(?))', [store]);
+        if (have) await db.run('UPDATE pharmarack_distributor_mappings SET distributor_id = ?, updated_at = CURRENT_TIMESTAMP WHERE store_name = ?', [id, have.store_name]);
+        else await db.run('INSERT INTO pharmarack_distributor_mappings (store_name, distributor_id, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)', [store, id]);
+      }
+      await db.run('COMMIT');
+    } catch (e) {
+      await db.run('ROLLBACK');
+      throw e;
+    }
+    res.json({ success: true, store_name: store || null });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/learning/profiles - fetch all learning profiles
 router.get('/profiles', async (_req, res) => {
   let db;

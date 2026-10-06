@@ -104,6 +104,61 @@ function getMinAmountFillers(dist: Distributor, recent: ReorderRecentItem[]): { 
   return picks;
 }
 
+interface SentPopupRow { key: string; name: string; qty: number; storeId: number; storeName: string }
+const SentSelectionPopup: React.FC<{
+  rows: Array<SentPopupRow & { item: LocalSentOrderItem }>;
+  busy: boolean;
+  onQty: (key: string, qty: number) => void;
+  onRemove: (key: string) => void;
+  onChangeDistributor: (row: SentPopupRow & { item: LocalSentOrderItem }) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}> = ({ rows, busy, onQty, onRemove, onChangeDistributor, onConfirm, onClose }) => {
+  useModalEscape(true, onClose);
+  return (
+    <div className="fixed inset-0 z-modal bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-md max-h-[80vh] flex flex-col shadow-2xl text-text">
+        <div className="p-4 border-b border-border bg-bg2 rounded-t-2xl">
+          <h3 className="text-sm font-bold">Re-order selected medicines</h3>
+          <p className="text-[11px] text-muted mt-0.5">Each medicine goes to the live cart of the distributor shown. Change a quantity, or pick a different distributor.</p>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
+          {rows.length === 0 && <p className="text-xs text-muted italic text-center py-6">No medicines left in this list.</p>}
+          {rows.map(r => (
+            <div key={r.key} className="flex items-center gap-2 bg-bg2 border border-glass-border/40 rounded-xl p-2.5">
+              <span className="flex-1 min-w-0 text-xs font-semibold" title={r.name}><span className="block truncate">{r.name}</span><span className="block text-[10px] font-normal text-muted truncate">{r.storeName}</span></span>
+              {(r.item.packaging || r.item.Packing) ? <span className="text-[10px] font-mono text-muted shrink-0">{String(r.item.packaging || r.item.Packing)}</span> : null}
+              <input
+                type="number"
+                min={1}
+                value={r.qty}
+                onChange={e => onQty(r.key, Number(e.target.value))}
+                className="w-16 bg-bg border border-border rounded-lg px-2 py-1 text-xs text-text font-mono text-center focus:outline-none focus:border-primary"
+                aria-label={`Quantity for ${r.name}`}
+              />
+              <button type="button" onClick={() => onChangeDistributor(r)} className="px-2 py-1 rounded-lg bg-bg3 border border-border text-[10px] font-bold text-text hover:bg-bg cursor-pointer" title="Search every distributor for this medicine">
+                Change distributor
+              </button>
+              <button type="button" onClick={() => onRemove(r.key)} className="px-1.5 py-1 rounded-lg text-muted hover:text-text text-xs cursor-pointer" aria-label={`Remove ${r.name}`}>✕</button>
+            </div>
+          ))}
+        </div>
+        <div className="p-3 border-t border-border bg-bg2 rounded-b-2xl flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-1.5 rounded-xl border border-border text-xs font-medium text-muted hover:text-text hover:bg-bg3 cursor-pointer">Cancel</button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy || rows.length === 0}
+            className="px-4 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+          >
+            {busy ? 'Adding…' : `Add ${rows.length} to cart`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface LocalPriceHistoryRow {
   date?: string;
   invoice_date?: string;
@@ -329,11 +384,16 @@ const mergeItemIntoDistributors = (
   }
 
   const dist = prev[storeIdx];
-  const itemIdx = dist.items.findIndex(it =>
-    (item.productCode && it.productCode === item.productCode) ||
-    (item.productId && it.productId === item.productId) ||
-    (it.productName.toLowerCase() === item.productName.toLowerCase())
-  );
+  // Same product = same Pharmarack code / id. Two pack variants share a name, so a name match counts only
+  // when neither side carries an identity AND packaging and MRP (when both are known) agree.
+  const itemIdx = dist.items.findIndex(it => {
+    if (item.productCode && it.productCode) return it.productCode === item.productCode;
+    if (item.productId && it.productId) return it.productId === item.productId;
+    if (it.productName.toLowerCase() !== item.productName.toLowerCase()) return false;
+    const samePack = !item.packaging || !it.packaging || item.packaging.trim().toLowerCase() === it.packaging.trim().toLowerCase();
+    const sameMrp = !item.mrp || !it.mrp || Math.abs(item.mrp - it.mrp) < 0.5;
+    return samePack && sameMrp;
+  });
 
   let updatedItems: CartLineItem[];
   if (itemIdx >= 0) {
@@ -565,7 +625,6 @@ export default function PharmarackCart() {
   const [reorderWindowMonths, setReorderWindowMonths] = useState<number>(2);
   const [reorderSearchQuery, setReorderSearchQuery] = useState<string>('');
   const [reorderQuantities, setReorderQuantities] = useState<Record<string, number>>({});
-  const [repeatingOrderId, setRepeatingOrderId] = useState<number | null>(null);
 
   const getReorderItemQty = (itemKey: string, defaultQty: number) => {
     return reorderQuantities[itemKey] ?? defaultQty ?? 1;
@@ -646,6 +705,9 @@ export default function PharmarackCart() {
   });
   const [sentOrdersLoading, setSentOrdersLoading] = useState<boolean>(false);
   const [readdingSentItems, setReaddingSentItems] = useState<boolean>(false);
+  // Sent History: tick medicines (any orders), press the ONE Re-order button, finalize in a small popup (qty + distributor change).
+  const [sentPopup, setSentPopup] = useState<{ rows: Array<{ key: string; item: LocalSentOrderItem; name: string; qty: number; storeId: number; storeName: string }> } | null>(null);
+  const [sentSelection, setSentSelection] = useState<Record<string, boolean>>({});
 
   // Switch Supplier Modal State
   const [switchModalTarget, setSwitchModalTarget] = useState<{ item: CartLineItem; dist: Distributor } | null>(null);
@@ -3092,89 +3154,6 @@ export default function PharmarackCart() {
     processDeleteQueue();
   };
 
-  const handleReaddSingleSentItem = async (item: LocalSentOrderItem, storeId?: number, storeName?: string) => {
-    const medName = item.productName || item.product || item.name || '';
-    const qty = item.qty || item.quantity || 1;
-
-    if (!medName) {
-      toastEvent.trigger('Invalid medicine details.', 'error');
-      return;
-    }
-
-    const targetStoreId = storeId || item.storeId || 0;
-    const itemKey = getItemCheckKey(targetStoreId, { productCode: item.productCode, productId: item.productId, productName: medName });
-    if (pendingDeleteKeysRef.current.has(itemKey) || globalPendingDeleteKeys.has(itemKey)) {
-      pendingDeleteKeysRef.current.delete(itemKey);
-      globalPendingDeleteKeys.delete(itemKey);
-      deleteQueueRef.current = deleteQueueRef.current.filter(q => q.key !== itemKey);
-      globalDeleteQueue = globalDeleteQueue.filter(q => q.key !== itemKey);
-    }
-
-    setReaddingSentItems(true);
-    beginHighPriorityAction(); // Priority lock: pause background delete worker
-    try {
-      const payload = [{
-        productId: item.productId || 0,
-        storeId: targetStoreId,
-        qty: qty,
-        productCode: item.productCode || '',
-        productName: medName,
-        company: item.company || '',
-        packaging: item.packaging || item.Packing || '',
-        rate: item.ptr || item.rate || 0,
-        mrp: item.mrp || 0,
-        storeName: storeName || item.storeName || '',
-        mapped: true
-      }];
-
-      const res = await api.addPharmarackCart(payload);
-      if (res && res.success) {
-        if (targetStoreId) {
-          setSentWaStatusMap(prev => {
-            const next = { ...prev };
-            delete next[targetStoreId];
-            return next;
-          });
-        }
-        const key = getItemCheckKey(targetStoreId, { productCode: item.productCode, productId: item.productId, productName: medName });
-        setUserCheckOverrides(prev => {
-          const next = { ...prev, [key]: true };
-          userCheckOverridesRef.current = next;
-          saveUserCheckOverrides(next);
-          return next;
-        });
-
-        setDistributors(prev => {
-          let updated = prev;
-          for (const it of payload) {
-            updated = mergeItemIntoDistributors(updated, it);
-          }
-          cachedDistributors = updated;
-          persistCartCache(updated, cachedPriceHistory);
-          return updated;
-        });
-
-        scheduleCartSync(1500);
-
-        toastEvent.trigger(`✅ Transferred "${medName}" (x${qty}) to Unsent Cart Orders!`, 'success');
-
-        // Auto-switch to Pharmarack Cart tab and 'unsent' filter
-        setDistributorFilterTab('unsent');
-        setSearchParams({ tab: 'cart' });
-        return;
-      } else {
-        throw new Error(res?.error || 'Failed to add to cart');
-      }
-    } catch (err: unknown) {
-      console.warn('Direct cart add failed, opening Live Cart search modal:', err);
-      toastEvent.trigger(`Opening Live Cart search for "${medName}"...`, 'info');
-      liveCartAddEvent.triggerOpen(medName, qty);
-    } finally {
-      setReaddingSentItems(false);
-      endHighPriorityAction(); // Release priority lock
-    }
-  };
-
   const handleReorderDirect = async (
     item: ReorderRecentItem,
     targetQty: number,
@@ -3233,57 +3212,67 @@ export default function PharmarackCart() {
     }
   };
 
-  const handleRepeatEntireOrder = async (order: LocalSentOrder) => {
-    if (!order || !Array.isArray(order.items) || order.items.length === 0) {
-      toastEvent.trigger('No items found in this order to repeat', 'info');
-      return;
-    }
+  const sentKey = (order: LocalSentOrder, item: LocalSentOrderItem) => `${order.id}:${order.items.indexOf(item)}`;
 
-    setRepeatingOrderId(order.id);
+  const sentSelectedCount = sentOrders.reduce((n, o) => n + (Array.isArray(o.items) ? o.items.filter(it => sentSelection[sentKey(o, it)]).length : 0), 0);
+
+  const openSentPopup = () => {
+    const rows: Array<{ key: string; item: LocalSentOrderItem; name: string; qty: number; storeId: number; storeName: string }> = [];
+    for (const order of sentOrders) {
+      for (const item of (Array.isArray(order.items) ? order.items : [])) {
+        const key = sentKey(order, item);
+        const name = String(item.productName || item.product || item.name || '');
+        if (!name || !sentSelection[key]) continue;
+        const q = Number(item.qty || item.quantity);
+        rows.push({ key, item, name, qty: q > 0 ? q : 1, storeId: order.store_id || item.storeId || 0, storeName: order.store_name || '' });
+      }
+    }
+    if (rows.length === 0) return;
+    setSentPopup({ rows });
+  };
+
+  const handleAddSelectedSent = async () => {
+    if (!sentPopup || sentPopup.rows.length === 0) return;
+    const { rows } = sentPopup;
     setReaddingSentItems(true);
     beginHighPriorityAction();
     try {
-      const payload = order.items.map((it: any) => ({
-        productId: it.productId || it.product_id || 0,
-        storeId: order.store_id || 0,
-        qty: it.qty || it.quantity || 1,
-        productCode: it.productCode || it.product_code || '',
-        productName: it.productName || it.product || it.name || '',
-        company: it.company || '',
-        packaging: it.packaging || it.Packing || '',
-        rate: it.ptr || it.rate || 0,
-        mrp: it.mrp || 0,
-        storeName: order.store_name || '',
+      const payload = rows.map(r => ({
+        productId: r.item.productId || 0,
+        storeId: r.storeId,
+        qty: Math.max(1, Math.floor(r.qty) || 1),
+        productCode: r.item.productCode || '',
+        productName: r.name,
+        company: r.item.company || '',
+        packaging: r.item.packaging || r.item.Packing || '',
+        rate: r.item.ptr || r.item.rate || 0,
+        mrp: r.item.mrp || 0,
+        storeName: r.storeName,
         mapped: true
-      })).filter(it => it.productName);
-
-      if (payload.length === 0) {
-        toastEvent.trigger('Could not parse items for this order', 'error');
-        return;
-      }
-
+      }));
       const res = await api.addPharmarackCart(payload);
       if (res && res.success) {
         setDistributors(prev => {
           let updated = prev;
-          for (const it of payload) {
-            updated = mergeItemIntoDistributors(updated, it);
-          }
+          for (const it of payload) updated = mergeItemIntoDistributors(updated, it);
           cachedDistributors = updated;
           persistCartCache(updated, cachedPriceHistory);
           return updated;
         });
-        toastEvent.trigger(`Repeated Order #${order.id}! Added ${payload.length} items to ${order.store_name} live cart.`, 'success');
+        setSentPopup(null);
+        setSentSelection(prev => {
+          const next = { ...prev };
+          rows.forEach(r => { delete next[r.key]; });
+          return next;
+        });
+        toastEvent.trigger(`Added ${payload.length} item${payload.length > 1 ? 's' : ''} to the live cart.`, 'success');
         window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
       } else {
-        toastEvent.trigger(res?.error || 'Failed to repeat order in live cart', 'error');
+        toastEvent.trigger(res?.error || 'Failed to add the selected items to the live cart', 'error');
       }
     } catch (err: unknown) {
-      const apiErr = err as LocalApiError;
-      console.error('Failed to repeat order:', err);
-      toastEvent.trigger('Error repeating order: ' + (apiErr?.message || 'Error'), 'error');
+      toastEvent.trigger('Failed to add selected items: ' + ((err as LocalApiError)?.message || 'Error'), 'error');
     } finally {
-      setRepeatingOrderId(null);
       setReaddingSentItems(false);
       endHighPriorityAction();
     }
@@ -3721,9 +3710,21 @@ export default function PharmarackCart() {
               </div>
 
               {selectedSentDate && (
-                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white/5 border border-glass-border text-text font-mono shrink-0">
-                  {sentOrders.length} Order{sentOrders.length !== 1 ? 's' : ''} Sent
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
+                    {sentOrders.length} Order{sentOrders.length !== 1 ? 's' : ''} Sent
+                  </span>
+                  <button
+                    type="button"
+                    onClick={openSentPopup}
+                    disabled={sentSelectedCount === 0 || readdingSentItems}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    title="Tick medicines below, then press Re-order to review and add them to the live cart"
+                  >
+                    <RotateCw size={12} />
+                    <span>Re-order{sentSelectedCount > 0 ? ` (${sentSelectedCount})` : ''}</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -3750,18 +3751,11 @@ export default function PharmarackCart() {
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-bg3 text-muted border border-glass-border">
                               Order #{order.id}
                             </span>
+                            {Array.isArray(order.pharmarack_order_nos) && order.pharmarack_order_nos.map((no: string) => (
+                              <span key={no} className="text-[10px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{no}</span>
+                            ))}
                           </div>
                           <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleRepeatEntireOrder(order)}
-                              disabled={readdingSentItems || repeatingOrderId === order.id}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-bold shadow-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-                              title="Repeat entire order and add all items to live cart for this distributor"
-                            >
-                              <RotateCw size={11} className={repeatingOrderId === order.id ? 'animate-spin' : ''} />
-                              <span>{repeatingOrderId === order.id ? 'Repeating…' : 'Repeat Order'}</span>
-                            </button>
                             <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${order.batch_sent ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
                               {order.batch_sent ? '● Sent' : '○ Pending'}
                             </span>
@@ -3770,33 +3764,29 @@ export default function PharmarackCart() {
 
                         {/* Items List */}
                         <div className="space-y-2 mt-3">
+                          {(!Array.isArray(order.items) || order.items.length === 0) && (
+                            <p className="text-[11px] text-muted italic">Placed on the Pharmarack website — product lines not available yet.</p>
+                          )}
                           {Array.isArray(order.items) && [...order.items].sort((a, b) => (a.productName || a.product || a.name || '').localeCompare(b.productName || b.product || b.name || '', undefined, { sensitivity: 'base' })).map((item, idx: number) => {
                             const medName = item.productName || item.product || item.name;
-                            const itemQty = item.qty || item.quantity || 1;
+                            const itemQty = item.qty || item.quantity || 0;
 
                             return (
                               <div key={idx} className="flex justify-between items-center text-xs text-text bg-bg2/40 p-2.5 rounded-xl border border-glass-border/30 hover:border-glass-border transition-all">
                                 <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
                                   <input
                                     type="checkbox"
-                                    checked={false}
-                                    onChange={() => handleReaddSingleSentItem(item, order.store_id, order.store_name)}
+                                    checked={!!sentSelection[sentKey(order, item)]}
+                                    onChange={() => setSentSelection(prev => ({ ...prev, [sentKey(order, item)]: !prev[sentKey(order, item)] }))}
                                     disabled={readdingSentItems}
-                                    className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 cursor-pointer accent-emerald-500 shadow-sm shrink-0 disabled:opacity-50"
-                                    title="Click checkbox to transfer this medicine directly to Unsent Cart Orders"
+                                    className="w-4 h-4 rounded cursor-pointer accent-emerald-500 shrink-0 disabled:opacity-50"
+                                    title="Tick to select, then press Re-order at the top"
                                   />
                                   <span className="truncate font-semibold text-text" title={medName}>{medName}</span>
-                                  <span className="font-mono font-extrabold text-primary shrink-0">x{itemQty}</span>
+                                  {(item.packaging || item.Packing) && <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border shrink-0">{String(item.packaging || item.Packing)}</span>}
+                                  {itemQty > 0 && <span className="font-mono font-extrabold text-primary shrink-0">x{itemQty}</span>}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
-                                  <button
-                                    onClick={() => handleReaddSingleSentItem(item, order.store_id, order.store_name)}
-                                    disabled={readdingSentItems}
-                                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-transparent text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/10 text-[10px] font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50 shadow-xs"
-                                    title="Transfer this medicine to Unsent Cart Orders"
-                                  >
-                                    <Plus size={11} /> Re-add
-                                  </button>
                                   <button
                                     onClick={() => liveCartAddEvent.triggerOpen(medName, itemQty)}
                                     className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-glass-border text-muted hover:text-text text-[10px] font-bold transition-all active:scale-95 cursor-pointer"
@@ -6039,6 +6029,23 @@ export default function PharmarackCart() {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* ── Sent History: finalize ticked medicines ── */}
+      {sentPopup && (
+        <SentSelectionPopup
+          rows={sentPopup.rows}
+          busy={readdingSentItems}
+          onQty={(key, qty) => setSentPopup(prev => prev ? { ...prev, rows: prev.rows.map(r => r.key === key ? { ...r, qty } : r) } : prev)}
+          onRemove={(key) => setSentPopup(prev => prev ? { ...prev, rows: prev.rows.filter(r => r.key !== key) } : prev)}
+          onChangeDistributor={(row) => {
+            // Same search-all-distributors dropdown as Live Cart Add; the row leaves this list once handed over.
+            liveCartAddEvent.triggerOpen(row.name, Math.max(1, Math.floor(row.qty) || 1));
+            setSentPopup(prev => prev ? { ...prev, rows: prev.rows.filter(r => r.key !== row.key) } : prev);
+          }}
+          onConfirm={handleAddSelectedSent}
+          onClose={() => setSentPopup(null)}
+        />
       )}
 
       {/* ── Purchase History Modal ── */}

@@ -1,4 +1,6 @@
 import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../services/api';
 import { createPortal } from 'react-dom';
 import { X, ShieldCheck, AlertTriangle, Sparkles, SearchCheck, CheckCircle2 } from 'lucide-react';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -13,6 +15,7 @@ export interface SaveVerificationData {
   fuzzyMatches: { name: string; matchedName: string; confidence: number }[];
   newRegistrations: string[];
   unresolved: string[];
+  orderLines?: { name: string; mrp?: number }[];
 }
 
 interface Props {
@@ -25,6 +28,14 @@ interface Props {
 export const PurchaseSaveVerificationModal: React.FC<Props> = ({ data, saving, onConfirm, onClose }) => {
   useModalEscape(true, onClose);
   const hasIssues = data.unresolved.length > 0;
+  // One read-only check of this bill against today's Pharmarack order for the distributor.
+  const { data: orderCheck } = useQuery({
+    queryKey: ['pharmarack-order-check', data.distributor, data.invoiceNo],
+    queryFn: () => api.checkPharmarackOrder(data.distributor, data.orderLines || []),
+    enabled: !!data.distributor && (data.orderLines?.length || 0) > 0,
+    staleTime: 60_000,
+    retry: false
+  });
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center p-4 fade-in">
@@ -119,6 +130,48 @@ export const PurchaseSaveVerificationModal: React.FC<Props> = ({ data, saving, o
                 ))}
               </ul>
               <p className="text-xs text-muted mt-2 ml-1">Master records only — stock will be created solely from this verified purchase.</p>
+            </div>
+          )}
+
+          {/* Today's Pharmarack order cross-check */}
+          {orderCheck?.hasOrder && (
+            <div className={`rounded-xl p-4 border ${orderCheck.missing.length > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
+              <p className="text-sm font-bold mb-2">
+                Today's Pharmarack order: {orderCheck.present.length} of {orderCheck.present.length + orderCheck.missing.length} medicines on this bill
+              </p>
+              {orderCheck.missing.length > 0 && (
+                <>
+                  <p className="text-xs font-bold text-amber-500 mb-1">Missing from this bill</p>
+                  <ul className="list-disc list-inside space-y-1 text-xs ml-2 text-text">
+                    {orderCheck.missing.map((m) => (
+                      <li key={m.name} className="font-semibold truncate">{m.name}{m.qty ? ` × ${m.qty}` : ''}{m.mrp ? ` (MRP ₹${m.mrp})` : ''}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {orderCheck.present.some(p => p.short) && (
+                <>
+                  <p className="text-xs font-bold text-amber-500 mt-2 mb-1">Short quantity</p>
+                  <ul className="list-disc list-inside space-y-1 text-xs ml-2 text-text">
+                    {orderCheck.present.filter(p => p.short).map((p) => (
+                      <li key={p.ordered} className="truncate">{p.ordered}: ordered {p.qty}, bill {p.billQty}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {orderCheck.present.some(p => p.mrpMatches === false) && (
+                <>
+                  <p className="text-xs font-bold text-amber-500 mt-2 mb-1">MRP differs from the order</p>
+                  <ul className="list-disc list-inside space-y-1 text-xs ml-2 text-text">
+                    {orderCheck.present.filter(p => p.mrpMatches === false).map((p) => (
+                      <li key={p.ordered} className="truncate">{p.billName}: bill ₹{p.billMrp} vs order ₹{p.orderedMrp}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {orderCheck.notOrdered.length > 0 && (
+                <p className="text-xs text-muted mt-2">On the bill but not in today's order: {orderCheck.notOrdered.join(', ')}</p>
+              )}
             </div>
           )}
 

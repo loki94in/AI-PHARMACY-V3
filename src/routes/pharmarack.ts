@@ -134,7 +134,7 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
       }
       
       for (const p of filtered) {
-        const key = `${(p.name || '').toLowerCase()}|${p.storeId}|${p.distributorPrice}`;
+        const key = `${(p.name || '').toLowerCase()}|${(p.packaging || '').toLowerCase()}|${p.storeId}|${p.distributorPrice}|${p.mrp ?? ''}`;
         if (!seenKeys.has(key)) {
           seenKeys.add(key);
           results.push({
@@ -2999,6 +2999,28 @@ router.get('/sent-orders/dates', async (_req, res) => {
 });
 
 /**
+ * POST /api/pharmarack/order-check  { distributor, lines: [{ name, mrp? }] }
+ * READ-ONLY cross-check of a purchase bill against TODAY'S Pharmarack order for that distributor.
+ * Each ordered product is matched to a bill line by name (orderNameMatcher, MRP as context); the answer is
+ * which ordered products are present, which are missing from the bill, and which bill lines were not ordered.
+ */
+router.post('/order-check', async (req, res) => {
+  try {
+    const { distributor, lines } = req.body || {};
+    if (!String(distributor || '').trim() || !Array.isArray(lines)) return res.status(400).json({ error: 'distributor and lines are required' });
+    const { loadTodaysOrderLines, compareOrderWithBill } = await import('../services/orderMailCheckService.js');
+    const db = await dbManager.getConnection();
+    const distRow = await db.get('SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [String(distributor)]);
+    const links = distRow ? await db.all('SELECT store_name FROM pharmarack_distributor_mappings WHERE distributor_id = ?', [distRow.id]) : [];
+    const ordered = await loadTodaysOrderLines(db, String(distributor), links.map((l: any) => String(l.store_name)));
+    if (ordered.length === 0) return res.json({ success: true, hasOrder: false, present: [], missing: [], notOrdered: [] });
+    res.json({ success: true, hasOrder: true, ...compareOrderWithBill(ordered, lines) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Order check failed: ' + err.message });
+  }
+});
+
+/**
  * GET /api/pharmarack/sent-orders
  * Query param: ?date=YYYY-MM-DD
  * Returns orders placed on the specified date, or today's if unspecified.
@@ -3018,6 +3040,16 @@ router.get('/sent-orders', async (req, res) => {
       [targetDate]
     );
 
+    // Real Pharmarack order numbers noticed by the order sync, grouped by distributor (read-only).
+    const syncedByStore = new Map<string, string[]>();
+    try {
+      const synced = await db.all('SELECT order_no, store_name FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at', [targetDate]);
+      for (const o of synced) {
+        const k = String(o.store_name || '').toLowerCase().trim();
+        syncedByStore.set(k, [...(syncedByStore.get(k) || []), String(o.order_no)]);
+      }
+    } catch (_) { /* table is optional: no order numbers then */ }
+
     const parsedOrders = rows.map(r => {
       let items = [];
       let deliveryPersons = [];
@@ -3029,6 +3061,7 @@ router.get('/sent-orders', async (req, res) => {
         order_date: r.order_date,
         store_id: r.store_id,
         store_name: r.store_name,
+        pharmarack_order_nos: syncedByStore.get(String(r.store_name || '').toLowerCase().trim()) || [],
         items,
         delivery_persons: deliveryPersons,
         placed_at: r.placed_at,

@@ -765,6 +765,14 @@ export interface ProductTraceSaleRow {
   medicine_name: string;
 }
 
+export interface PharmarackOrderCheck {
+  success: boolean;
+  hasOrder: boolean;
+  present: Array<{ ordered: string; billName: string; qty: number | null; billQty?: number | null; short?: boolean; orderedMrp: number | null; billMrp: number | null; mrpMatches: boolean | null }>;
+  missing: Array<{ name: string; qty: number | null; mrp: number | null }>;
+  notOrdered: string[];
+}
+
 export interface PharmarackSentOrderItem {
   productCode?: string;
   productName?: string;
@@ -778,6 +786,7 @@ export interface PharmarackSentOrder {
   order_date: string;
   store_id: number | null;
   store_name: string;
+  pharmarack_order_nos?: string[];
   items: PharmarackSentOrderItem[];
   delivery_persons: Array<Record<string, unknown>>;
   placed_at: number;
@@ -1866,6 +1875,7 @@ export const api = {
   // Pharmarack Sent Orders History
   getPharmarackSentDates: () => apiClient.get<{ success: boolean; dates: string[] }>('/pharmarack/sent-orders/dates').then(res => res.data),
   getPharmarackSentOrders: (date?: string) => apiClient.get<{ success: boolean; date: string; orders: PharmarackSentOrder[] }>('/pharmarack/sent-orders', { params: { date } }).then(res => res.data),
+  checkPharmarackOrder: (distributor: string, lines: Array<{ name: string; mrp?: number }>) => apiClient.post<PharmarackOrderCheck>('/pharmarack/order-check', { distributor, lines }).then(res => res.data),
   getPharmarackLatestSentMap: () => apiClient.get<{ success: boolean; sentMap: Record<string, PharmarackLatestSentMapEntry> }>('/pharmarack/sent-orders/latest-map').then(res => res.data),
   logPharmarackPlacedOrder: (data: { store_id?: number | null; store_name: string; items: readonly unknown[]; delivery_persons?: readonly unknown[] }) => apiClient.post('/pharmarack/log-placed-order', data).then(res => res.data),
 

@@ -2691,7 +2691,8 @@ const Purchases: React.FC = () => {
       autoLinkedCount,
       fuzzyMatches,
       newRegistrations: sessionNewMedicinesRef.current.map(m => m.name),
-      unresolved: unresolvedList
+      unresolved: unresolvedList,
+      orderLines: validItems.map(it => ({ name: String(it.medicine_name || it.name || it.medicine || '').trim(), mrp: Number(it.mrp) > 0 ? Number(it.mrp) : undefined }))
     });
     setShowSaveVerify(true);
   };

@@ -90,6 +90,103 @@ async function fetchTodaysOrders(token: string, ddmmyy: string): Promise<any[] |
   return Array.isArray(json?.data) ? json.data : [];
 }
 
+const ORDER_DETAIL_URL = 'https://pharmretail-api.pharmarack.com/order/api/v1/GetOrderDetailsForRetailerManager';
+
+function pickFirst(o: any, keys: string[]): unknown {
+  for (const k of keys) if (o?.[k] !== undefined && o?.[k] !== null && String(o[k]).trim() !== '') return o[k];
+  return undefined;
+}
+
+/** Walks a response and returns the first array of objects that carry a product-name field. */
+function findLineArray(node: any, depth = 0): any[] | null {
+  if (depth > 4 || !node || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    if (node.length && node.every(r => r && typeof r === 'object' && pickFirst(r, NAME_KEYS) !== undefined)) return node;
+    for (const c of node) { const f = findLineArray(c, depth + 1); if (f) return f; }
+    return null;
+  }
+  for (const v of Object.values(node)) { const f = findLineArray(v, depth + 1); if (f) return f; }
+  return null;
+}
+const NAME_KEYS = ['ProductFullName', 'ProductName', 'productName', 'ItemName', 'itemName', 'MedicineName', 'medicineName', 'Product', 'product_name'];
+const QTY_KEYS = ['Quantity', 'quantity', 'OrderQty', 'orderQty', 'Qty', 'qty'];
+
+/**
+ * Real product lines of one order from Pharmarack's own order-detail call (the one the order page makes).
+ * Returns null when nothing readable came back: lines are never invented, and the response SHAPE (keys only)
+ * is written to action_logs so the parser can be corrected.
+ */
+async function fetchOrderLines(db: any, token: string, orderId: number | null, orderNo: string): Promise<Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> | null> {
+  if (orderId === null) return null;
+  try {
+    const res = await fetch(`${ORDER_DETAIL_URL}?OrderId=${orderId}`, {
+      headers: {
+        'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+        'devicetype': 'web',
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://retailers.pharmarack.com/',
+        'Origin': 'https://retailers.pharmarack.com'
+      },
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (!res.ok) { await audit(db, orderNo, 'detail_http_error', { status: res.status }); return null; }
+    const json: any = await res.json();
+    const rows = Array.isArray(json?.data?.invoicedItems) && json.data.invoicedItems.length ? json.data.invoicedItems : findLineArray(json);
+    if (!rows) {
+      await audit(db, orderNo, 'detail_unreadable', { topKeys: Object.keys(json || {}), dataKeys: Object.keys((Array.isArray(json?.data) ? json.data[0] : json?.data) || {}) });
+      return null;
+    }
+    return rows.map((r: any) => {
+      const q = Number(pickFirst(r, QTY_KEYS));
+      const code = pickFirst(r, ['ProductCode']);
+      const mrp = Number(pickFirst(r, ['MRP', 'mrp']));
+      const rate = Number(pickFirst(r, ['PTR', 'ptr']));
+      const pack = pickFirst(r, ['Packing', 'packing', 'Packaging']);
+      return {
+        productName: String(pickFirst(r, NAME_KEYS)).trim(),
+        qty: Number.isFinite(q) && q > 0 ? q : null,
+        ...(code !== undefined ? { productCode: String(code) } : {}),
+        ...(Number.isFinite(mrp) && mrp > 0 ? { mrp } : {}),
+        ...(Number.isFinite(rate) && rate > 0 ? { rate } : {}),
+        ...(pack !== undefined ? { packaging: String(pack).trim() } : {})
+      };
+    });
+  } catch (err: any) {
+    await audit(db, orderNo, 'detail_failed', { error: err?.message || String(err) });
+    return null;
+  }
+}
+
+/** Fills the product lines of today's distributor rows that were created empty by this sync. */
+async function fillOrderLines(db: any, token: string, orders: any[], todayIso: string): Promise<void> {
+  const byStore = new Map<string, any[]>();
+  for (const o of orders) {
+    const k = String(o?.StoreName ?? '').toLowerCase().trim();
+    if (!k || !o?.OrderNo) continue;
+    const day = orderDayIso(o?.OrderDate);
+    if (day && day !== todayIso) continue;
+    byStore.set(k, [...(byStore.get(k) || []), o]);
+  }
+  for (const [, list] of byStore) {
+    const row = await db.get(
+      `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
+      [todayIso, String(list[0].StoreName).trim()]
+    );
+    if (!row) continue;
+    let existing: any[] = [];
+    try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { /* treat as empty */ }
+    if (existing.length > 0) continue; // the app's own Send All lines are never overwritten
+    const lines: Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number }> = [];
+    for (const o of list) {
+      const got = await fetchOrderLines(db, token, Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null, String(o.OrderNo));
+      if (got) lines.push(...got);
+    }
+    if (lines.length === 0) continue;
+    await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
+  }
+}
+
 async function remindersEnabledToday(db: any, todayIso: string): Promise<boolean> {
   const [globalAuto, trigger, paused] = await Promise.all([
     db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
@@ -191,6 +288,8 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     await audit(db, orderNo, 'order_noticed', { storeName, amount, appAlreadySentOrderMessage: Boolean(logged) });
   }
   result.newOrders = fresh.length;
+  // Product names for Sent History (also back-fills today's rows that earlier syncs left empty).
+  try { await fillOrderLines(db, token, orders, today.iso); } catch (_) { /* lines are optional; never break the sync */ }
   if (fresh.length === 0) return result;
 
   // 2. Announce, under the same switches as the daily reminders.
