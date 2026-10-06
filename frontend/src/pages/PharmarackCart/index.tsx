@@ -210,6 +210,7 @@ interface LocalSentOrder {
   order_date?: string;
   store_id?: number;
   store_name?: string;
+  pharmarack_order_nos?: string[];
   items: LocalSentOrderItem[];
   placed_at?: number;
   batch_sent?: boolean;
