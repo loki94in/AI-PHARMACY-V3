@@ -3,8 +3,10 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
 // import { fileURLToPath } from 'url';
-import { checkAllRefills, cleanupStagedRefillNotifications } from '../services/refillService.js';
+import { checkAllRefills, cleanupStagedRefillNotifications, isFirstContactOrUnconfirmed } from '../services/refillService.js';
+import { firstContactLanguageBanner } from '../services/languageDetector.js';
 import { normalizeWhatsAppPhone } from '../whatsappClient.js';
+export { isFirstContactOrUnconfirmed };
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 
@@ -81,7 +83,8 @@ export function buildRefillReminderMessage(
   pharmacyName: string,
   lang: string = 'en',
   dueDateStr?: string,
-  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean }
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean },
+  opts?: { includeLanguageBanner?: boolean }
 ): string {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
@@ -91,6 +94,7 @@ export function buildRefillReminderMessage(
   const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
 
+  let message = '';
   if (cleanLang === 'hi') {
     const medList = items
       .map(m => `• ${m.medicine_name || 'दवाई'} (मात्रा: ${m.quantity_needed || 1})`)
@@ -101,7 +105,7 @@ export function buildRefillReminderMessage(
       timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
     }
     const cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "REFILL" या "हाँ" लिखकर उत्तर दें।*`;
-    return `🔔 *दवाई रिफ़िल रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी नियमित दवाई का रिफ़िल समय आ गया है:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
+    message = `🔔 *दवाई रिफ़िल रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी नियमित दवाई का रिफ़िल समय आ गया है:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else if (cleanLang === 'mr') {
     const medList = items
       .map(m => `• ${m.medicine_name || 'औषध'} (प्रमाण: ${m.quantity_needed || 1})`)
@@ -112,7 +116,7 @@ export function buildRefillReminderMessage(
       timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
     }
     const cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "REFILL" किंवा "हो" लिहून उत्तर द्या।*`;
-    return `🔔 *औषध रिफिल स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपल्या नियमित औषधांची रिफिल करण्याची वेळ झाली आहे:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
+    message = `🔔 *औषध रिफिल स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपल्या नियमित औषधांची रिफिल करण्याची वेळ झाली आहे:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else {
     const medList = items
       .map(m => `• ${m.medicine_name || 'Medicine'} (Qty: ${m.quantity_needed || 1})`)
@@ -123,8 +127,69 @@ export function buildRefillReminderMessage(
       timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
     }
     const cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "REFILL" or "YES" to confirm.*\n*(Store open ${openT} - ${closeT})*`;
-    return `🔔 *MEDICINE REFILL REMINDER — ${pharmacyName}*\n\nDear ${pName},\nYour regular prescription is due for refill:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
+    message = `🔔 *MEDICINE REFILL REMINDER — ${pharmacyName}*\n\nDear ${pName},\nYour regular prescription is due for refill:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   }
+
+  if (opts?.includeLanguageBanner) {
+    message += firstContactLanguageBanner();
+  }
+  return message;
+}
+
+// Multilingual refill collection / pickup reminder message builder (for prepared / in-stock medicines)
+export function buildRefillCollectionMessage(
+  patientName: string,
+  items: Array<{ medicine_name?: string; quantity_needed?: number }>,
+  pharmacyName: string,
+  lang: string = 'en',
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean },
+  opts?: { includeLanguageBanner?: boolean }
+): string {
+  const pName = formatCustomerName(patientName);
+  const cleanLang = (lang || 'en').toLowerCase();
+
+  const openT = scheduleOpts?.openTime || '09:00';
+  const closeT = scheduleOpts?.closeTime || '22:00';
+  const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
+  const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
+
+  let message = '';
+  if (cleanLang === 'hi') {
+    const medList = items
+      .map(m => `• *${m.medicine_name || 'दवाई'}* (मात्रा: ${m.quantity_needed || 1})`)
+      .join('\n');
+    let timingSection = `\n🕒 दुकान का समय: ${openT} से ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
+    }
+    const cta = `\n\n👉 *कृपया अपनी सुविधानुसार दवाई ले जाएं।*`;
+    message = `🔔 *तैयार दवाई संग्रह रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी तैयार की गई दवाई फार्मेसी पर आपके लिए उपलब्ध है:\n\n${medList}${timingSection}${cta}`;
+  } else if (cleanLang === 'mr') {
+    const medList = items
+      .map(m => `• *${m.medicine_name || 'औषध'}* (प्रमाण: ${m.quantity_needed || 1})`)
+      .join('\n');
+    let timingSection = `\n🕒 दुकानाची वेळ: ${openT} ते ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
+    }
+    const cta = `\n\n👉 *कृपया आपल्या सोयीनुसार औषध घेऊन जावे.*`;
+    message = `🔔 *तयार औषध संकलन स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपली तयार केलेली औषधे फार्मसीमध्ये उपलब्ध आहेत:\n\n${medList}${timingSection}${cta}`;
+  } else {
+    const medList = items
+      .map(m => `• *${m.medicine_name || 'Medicine'}* (Qty: ${m.quantity_needed || 1})`)
+      .join('\n');
+    let timingSection = `\n🕒 Store Hours: ${openT} to ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
+    }
+    const cta = `\n\n👉 *Please collect your medicine at your earliest convenience.*`;
+    message = `🔔 *READY MEDICINE COLLECTION REMINDER — ${pharmacyName}*\n\nDear ${pName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n${medList}${timingSection}${cta}`;
+  }
+
+  if (opts?.includeLanguageBanner) {
+    message += firstContactLanguageBanner();
+  }
+  return message;
 }
 
 // Register or add a medicine to patient refill schedule (Idempotent / Granular)
@@ -149,22 +214,31 @@ router.post('/', async (req, res) => {
     // Resolve or auto-create customer profile in customers table
     const cleanPhone = (patient_phone || '').trim();
     const cleanName = formatCustomerName(patient_name);
-    const cleanLang = (language || 'en').trim();
+    let cleanLang = (language || 'en').trim();
     let customerId = req.body.customer_id || null;
     if (!customerId && (cleanPhone || cleanName)) {
-      let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+      let cust = await db.get('SELECT id, language FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
       if (!cust && cleanName && cleanName.toLowerCase() !== 'customer') {
-        cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [cleanName]);
+        cust = await db.get('SELECT id, language FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [cleanName]);
       }
       if (cust) {
         customerId = cust.id;
-        await db.run('UPDATE customers SET language = ? WHERE id = ?', [cleanLang, customerId]);
+        if (req.body.language) {
+          await db.run('UPDATE customers SET language = ? WHERE id = ?', [cleanLang, customerId]);
+        } else if (cust.language) {
+          cleanLang = cust.language;
+        }
       } else if (cleanPhone || cleanName) {
         const custRes = await db.run('INSERT INTO customers (name, phone, language) VALUES (?, ?, ?)', [cleanName, cleanPhone, cleanLang]);
         customerId = custRes.lastID;
       }
     } else if (customerId) {
-      await db.run('UPDATE customers SET language = ? WHERE id = ?', [cleanLang, customerId]);
+      if (req.body.language) {
+        await db.run('UPDATE customers SET language = ? WHERE id = ?', [cleanLang, customerId]);
+      } else {
+        const cust = await db.get('SELECT language FROM customers WHERE id = ? LIMIT 1', [customerId]);
+        if (cust?.language) cleanLang = cust.language;
+      }
     }
 
     const quantityNeeded = parseInt(req.body.quantity_needed || req.body.quantity, 10) || 3;
@@ -1586,7 +1660,7 @@ router.post('/:id/send', async (req, res) => {
     const patientName = refill.patient_name || 'Customer';
     const cleanDigits = cleanPhone.replace(/^91/, '');
     const custRow = await db.get('SELECT language FROM customers WHERE phone = ? OR phone = ? OR id = ? LIMIT 1', [cleanPhone, cleanDigits, refill.customer_id]);
-    const lang = req.body?.language || refill.language || custRow?.language || 'en';
+    const lang = req.body?.language || custRow?.language || refill.language || 'en';
 
     const refillReminderEnabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
     if (refillReminderEnabledRow?.value === 'false') {
@@ -1600,13 +1674,16 @@ router.post('/:id/send', async (req, res) => {
     const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
       (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
 
+    const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
+
     const msg = buildRefillReminderMessage(
       patientName,
       [{ medicine_name: refill.medicine_name || 'Prescribed Medicine', quantity_needed: refill.quantity_needed || 1 }],
       medicalName,
       lang,
       undefined,
-      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
+      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+      { includeLanguageBanner: includeLangBanner }
     );
 
     let pdfPath: string | undefined = undefined;
@@ -1735,7 +1812,7 @@ router.post('/send-grouped', async (req, res) => {
     const idsToUpdate = unsentRows.map(r => r.id);
     const cleanDigits = cleanPhone.replace(/^91/, '');
     const custRow = await db.get('SELECT language FROM customers WHERE phone = ? OR phone = ? LIMIT 1', [cleanPhone, cleanDigits]);
-    const lang = req.body?.language || rows[0]?.language || custRow?.language || 'en';
+    const lang = req.body?.language || custRow?.language || rows[0]?.language || 'en';
 
     const refillReminderEnabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
     if (refillReminderEnabledRow?.value === 'false') {
@@ -1749,19 +1826,33 @@ router.post('/send-grouped', async (req, res) => {
     const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
       (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
 
-    const msg = buildRefillReminderMessage(
-      patientName,
-      unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
-      medicalName,
-      lang,
-      undefined,
-      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
-    );
+    const anyReady = unsentRows.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
+    const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
+    const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
+
+    const msg = anyReady
+      ? buildRefillCollectionMessage(
+          patientName,
+          unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
+        )
+      : buildRefillReminderMessage(
+          patientName,
+          unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          undefined,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
+        );
 
     const queueId = await whatsappQueueWorker.enqueue(
       cleanPhone,
       msg,
-      'refill_reminder',
+      notifType,
       patientName
     );
 
@@ -1783,7 +1874,7 @@ router.post('/send-grouped', async (req, res) => {
       await db.run(
         `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        ['refill_reminder', patientName, cleanPhone, msg, 'queued', String(rId)]
+        [notifType, patientName, cleanPhone, msg, 'queued', String(rId)]
       );
     }
 
@@ -1792,7 +1883,9 @@ router.post('/send-grouped', async (req, res) => {
       queueId,
       reminder_status: 'QUEUED',
       updatedRefillCount: idsToUpdate.length,
-      message: `Consolidated refill reminder queued for ${patientName} (${cleanPhone})`
+      message: anyReady
+        ? `Consolidated collection reminder queued for ${patientName} (${cleanPhone})`
+        : `Consolidated refill reminder queued for ${patientName} (${cleanPhone})`
     });
   } catch (err: any) {
     console.error('Failed to send grouped refill reminder:', err);
@@ -1858,7 +1951,7 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
     const patientName = unsent[0].patient_name || 'Customer';
     const cleanDigits = cleanPhone.replace(/^91/, '');
     const custRow = await db.get('SELECT language FROM customers WHERE phone = ? OR phone = ? LIMIT 1', [cleanPhone, cleanDigits]);
-    const lang = req.body?.language || tomorrowRefills[0]?.language || custRow?.language || 'en';
+    const lang = req.body?.language || custRow?.language || tomorrowRefills[0]?.language || 'en';
 
     const refillReminderEnabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
     if (refillReminderEnabledRow?.value === 'false') {
@@ -1872,13 +1965,16 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
     const tomorrowDayName = dayNames[tomorrowDate.getDay()];
     const isOffDayUpcoming = tomorrowDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase();
 
+    const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
+
     const msg = buildRefillReminderMessage(
       patientName,
       unsent.map(r => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
       medicalName,
       lang,
       tomorrowDateStr,
-      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
+      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+      { includeLanguageBanner: includeLangBanner }
     );
 
     const queueId = await whatsappQueueWorker.enqueue(
@@ -1964,7 +2060,7 @@ router.post('/send-reminder-now', async (req, res) => {
     const patientName = unsentRows[0].patient_name || 'Customer';
     const cleanDigits = cleanPhone.replace(/^91/, '');
     const custRow = await db.get('SELECT language FROM customers WHERE phone = ? OR phone = ? LIMIT 1', [cleanPhone, cleanDigits]);
-    const lang = req.body?.language || rows[0]?.language || custRow?.language || 'en';
+    const lang = req.body?.language || custRow?.language || rows[0]?.language || 'en';
 
     const refillDate = unsentRows[0].next_refill_date
       ? new Date(unsentRows[0].next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -1982,19 +2078,33 @@ router.post('/send-reminder-now', async (req, res) => {
     const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
       (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
 
-    const msg = buildRefillReminderMessage(
-      patientName,
-      unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
-      medicalName,
-      lang,
-      refillDate,
-      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
-    );
+    const anyReady = unsentRows.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
+    const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
+    const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
+
+    const msg = anyReady
+      ? buildRefillCollectionMessage(
+          patientName,
+          unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
+        )
+      : buildRefillReminderMessage(
+          patientName,
+          unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+          medicalName,
+          lang,
+          refillDate,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          { includeLanguageBanner: includeLangBanner }
+        );
 
     const queueId = await whatsappQueueWorker.enqueue(
       cleanPhone,
       msg,
-      'refill_reminder',
+      notifType,
       patientName
     );
 
@@ -2017,11 +2127,16 @@ router.post('/send-reminder-now', async (req, res) => {
       await db.run(
         `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        ['refill_reminder', patientName, cleanPhone, msg, 'queued', String(r.id)]
+        [notifType, patientName, cleanPhone, msg, 'queued', String(r.id)]
       );
     }
 
-    res.json({ success: true, queueId, reminder_status: 'QUEUED', message: 'Refill reminder queued via WhatsApp' });
+    res.json({
+      success: true,
+      queueId,
+      reminder_status: 'QUEUED',
+      message: anyReady ? 'Medicine collection reminder queued via WhatsApp' : 'Refill reminder queued via WhatsApp'
+    });
   } catch (err: any) {
     console.error('Failed to send immediate reminder:', err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });
@@ -2354,6 +2469,226 @@ router.post('/auto-remind/run-now', async (_req, res) => {
     res.json({ success: true, result });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark all active refills for a patient as Ready, queue pickup WhatsApp, and arm auto-remind
+router.post('/patient/:phone/mark-ready', async (req, res) => {
+  const { phone } = req.params;
+  const cleanPhone = normalizeWhatsAppPhone(phone);
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'Valid 10+ digit patient phone is required' });
+  }
+
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const last10 = cleanPhone.slice(-10);
+
+    const refills = await db.all(`
+      SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, pr.quantity_needed, pr.language,
+             m.name as medicine_name
+      FROM patient_refills pr
+      JOIN medicines m ON pr.medicine_id = m.id
+      WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
+        AND pr.is_active = 1
+        AND pr.status NOT IN ('completed', 'canceled')
+      ORDER BY pr.id ASC
+    `, [`%${last10}`, `%${cleanPhone}`]);
+
+    if (refills.length === 0) {
+      return res.status(404).json({ error: 'No active refills found for this patient' });
+    }
+
+    const patientName = refills[0].patient_name || 'Customer';
+    const custRow = await db.get('SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1', [`%${last10}`, `%${cleanPhone}`]);
+    const lang = refills[0].language || custRow?.language || 'en';
+    const medicalName = (await getConfiguredPharmacyName(db)) || 'Pharmacy';
+    const sched = await getPharmacyOperatingSchedule(db);
+
+    const schedOpts = {
+      openTime: sched.openTime,
+      closeTime: sched.closeTime,
+      weeklyOff: sched.weeklyOff,
+      isOffDayUpcoming: false
+    };
+
+    const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
+    const msg = buildRefillCollectionMessage(
+      patientName,
+      refills.map(r => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
+      medicalName,
+      lang,
+      schedOpts,
+      { includeLanguageBanner: includeLangBanner }
+    );
+
+    const ids = refills.map(r => r.id);
+    const placeholders = ids.map(() => '?').join(',');
+
+    // 60-minute duplicate suppression safeguard
+    const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1000;
+    const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+    const recentQueue = await db.get(
+      `SELECT id FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'refill_collection'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+    );
+
+    let queueId: number | null = null;
+    let whatsappQueued = false;
+
+    if (!recentQueue) {
+      queueId = await whatsappQueueWorker.enqueue(
+        cleanPhone,
+        msg,
+        'refill_collection',
+        patientName
+      );
+      whatsappQueued = true;
+    } else {
+      console.log(`[Refill Mark-Ready] Suppressed duplicate collection WhatsApp for ${cleanPhone} (queued within 60m).`);
+    }
+
+    await db.run(
+      `UPDATE patient_refills
+       SET is_ready = 1,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1,
+           reminder_status = 'SENT',
+           reminder_sent_at = datetime('now')
+       WHERE id IN (${placeholders})`,
+      ids
+    );
+
+    for (const rId of ids) {
+      await db.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        ['refill_collection', patientName, cleanPhone, msg, whatsappQueued ? 'queued' : 'sent', String(rId)]
+      ).catch(() => {});
+    }
+
+    eventService.broadcast('refill_updated', { at: Date.now(), patient_phone: cleanPhone, is_ready: 1 });
+
+    res.json({
+      success: true,
+      whatsapp_queued: whatsappQueued,
+      queueId,
+      updated_count: ids.length,
+      message: whatsappQueued
+        ? `Marked ${ids.length} refill(s) as Ready and queued pickup WhatsApp for ${patientName}`
+        : `Marked ${ids.length} refill(s) as Ready (WhatsApp alert already queued recently)`
+    });
+  } catch (err: any) {
+    console.error('Failed to mark patient refills ready:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// Mark an individual refill item as Ready, queue pickup WhatsApp, and arm auto-remind
+router.post('/:id/mark-ready', async (req, res) => {
+  const { id } = req.params;
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const refill = await db.get(`
+      SELECT pr.*, m.name as medicine_name
+      FROM patient_refills pr
+      JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.id = ?
+    `, [id]);
+
+    if (!refill) {
+      return res.status(404).json({ error: 'Refill not found' });
+    }
+
+    const cleanPhone = normalizeWhatsAppPhone(refill.patient_phone);
+    const last10 = cleanPhone ? cleanPhone.slice(-10) : '';
+    const patientName = refill.patient_name || 'Customer';
+    const custRow = cleanPhone ? await db.get('SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1', [`%${last10}`, `%${cleanPhone}`]) : null;
+    const lang = refill.language || custRow?.language || 'en';
+    const medicalName = (await getConfiguredPharmacyName(db)) || 'Pharmacy';
+    const sched = await getPharmacyOperatingSchedule(db);
+
+    const schedOpts = {
+      openTime: sched.openTime,
+      closeTime: sched.closeTime,
+      weeklyOff: sched.weeklyOff,
+      isOffDayUpcoming: false
+    };
+
+    let whatsappQueued = false;
+    let queueId: number | null = null;
+
+    if (cleanPhone && cleanPhone.length >= 10) {
+      const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
+      const msg = buildRefillCollectionMessage(
+        patientName,
+        [{ medicine_name: refill.medicine_name, quantity_needed: refill.quantity_needed }],
+        medicalName,
+        lang,
+        schedOpts,
+        { includeLanguageBanner: includeLangBanner }
+      );
+
+      const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1000;
+      const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+      const recentQueue = await db.get(
+        `SELECT id FROM whatsapp_send_queue
+         WHERE (number LIKE ? OR number LIKE ?)
+           AND type = 'refill_collection'
+           AND status NOT IN ('cancelled', 'failed_perm')
+           AND created_at >= ?
+         ORDER BY created_at DESC LIMIT 1`,
+        [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+      );
+
+      if (!recentQueue) {
+        queueId = await whatsappQueueWorker.enqueue(
+          cleanPhone,
+          msg,
+          'refill_collection',
+          patientName
+        );
+        whatsappQueued = true;
+      }
+
+      await db.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        ['refill_collection', patientName, cleanPhone, msg, whatsappQueued ? 'queued' : 'sent', String(id)]
+      ).catch(() => {});
+    }
+
+    await db.run(
+      `UPDATE patient_refills
+       SET is_ready = 1,
+           auto_remind = 1,
+           last_collection_reminder_at = datetime('now'),
+           collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1,
+           reminder_status = 'SENT',
+           reminder_sent_at = datetime('now')
+       WHERE id = ?`,
+      [id]
+    );
+
+    eventService.broadcast('refill_updated', { at: Date.now(), refill_id: id, is_ready: 1 });
+
+    res.json({
+      success: true,
+      whatsapp_queued: whatsappQueued,
+      queueId,
+      message: `Marked refill #${id} as Ready`
+    });
+  } catch (err: any) {
+    console.error(`Failed to mark refill #${id} as ready:`, err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
   }
 });
 

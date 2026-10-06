@@ -126,6 +126,7 @@ interface LocalDistributorOrderEntry {
 
 type LocalReminderRow = Omit<DistributorDispatchReminder, 'status'> & {
   status: string;
+  order_source?: string;
   orders_list?: LocalDistributorOrderEntry[];
   order_count?: number;
   latest_notif_status?: string;
@@ -1577,9 +1578,9 @@ const Dispatch = () => {
                                 </button>
                               ) : null}
 
-                              {item.has_pharmarack_order_today === 1 ? (
+                              {item.order_source === 'pharmarack' || item.has_pharmarack_order_today === 1 ? (
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0">
-                                  <ShoppingCart size={10} /> Pharmarack Cart Sent
+                                  <ShoppingCart size={10} /> Direct Order
                                 </span>
                               ) : item.has_order_today === 1 ? (
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-sky/20 text-sky border border-sky/30 flex items-center gap-1 shrink-0">

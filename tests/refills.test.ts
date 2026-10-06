@@ -23,7 +23,9 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
   downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
   ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
-  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true))
+  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true)),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve('AVAILABLE')),
+  ensureSessionHealth: jest.fn(() => Promise.resolve())
 }));
 
 jest.unstable_mockModule('../src/telegramBot.js', () => ({
@@ -112,7 +114,7 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
     const sqlite3 = await import('sqlite3');
     const dbSeed = await open({ filename: dbPath, driver: sqlite3.default.Database });
     await dbSeed.run('INSERT INTO medicines (id, name) VALUES (1, "Test Med")');
-    await dbSeed.run('INSERT INTO inventory_master (id, medicine_id, quantity) VALUES (1, 1, 10)');
+    await dbSeed.run('INSERT INTO inventory_master (id, medicine_id, quantity, expiry_date, mrp, unit_price) VALUES (1, 1, 10, "2028-12-31", 100, 100)');
     await dbSeed.close();
 
     const res = await request(app)
@@ -796,6 +798,137 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
       expect(diffDays).toBeGreaterThanOrEqual(29);
       expect(diffDays).toBeLessThanOrEqual(31);
       await dbCheck.close();
+    });
+
+    test('Scenario 19: Prepared refill (is_ready = 1) queues collection reminder with refill_collection type', async () => {
+      const { open } = await import('sqlite');
+      const sqlite3 = await import('sqlite3');
+      const db = await open({ filename: dbPath, driver: sqlite3.default.Database });
+
+      const readyPhone = '9888877777';
+      const r = await db.run(
+        `INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, next_refill_date, is_active, is_ready, status, reminder_status)
+         VALUES ('Ready Patient', ?, 201, '2026-08-20 10:00:00', 1, 1, 'pending', 'NOT_SENT')`,
+        [readyPhone]
+      );
+      await db.close();
+
+      const sendRes = await request(app).post('/api/refills/send-grouped').send({
+        patient_phone: readyPhone,
+        patient_name: 'Ready Patient',
+        refill_ids: [r.lastID]
+      });
+
+      expect(sendRes.status).toBe(200);
+      expect(sendRes.body.success).toBe(true);
+      expect(sendRes.body.message).toContain('collection reminder queued');
+
+      const dbCheck = await open({ filename: dbPath, driver: sqlite3.default.Database });
+      const notif = await dbCheck.get(
+        `SELECT type, message FROM automation_notifications WHERE recipient_phone = ? ORDER BY id DESC LIMIT 1`,
+        [readyPhone]
+      );
+      expect(notif).toBeDefined();
+      expect(notif.type).toBe('refill_collection');
+      expect(notif.message).toContain('READY MEDICINE COLLECTION REMINDER');
+      await dbCheck.close();
+    });
+
+    test('Scenario 20: First-message language selection banner is included for unconfirmed customer', async () => {
+      const { open } = await import('sqlite');
+      const sqlite3 = await import('sqlite3');
+      const db = await open({ filename: dbPath, driver: sqlite3.default.Database });
+
+      const newPhone = '9777766666';
+      // Ensure customer exists with language_confirmed = 0
+      await db.run(
+        `INSERT INTO customers (name, phone, language, language_confirmed)
+         VALUES ('Language Test Patient', ?, 'en', 0)`,
+        [newPhone]
+      );
+      const r = await db.run(
+        `INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, next_refill_date, is_active, status, reminder_status)
+         VALUES ('Language Test Patient', ?, 201, '2026-08-20 10:00:00', 1, 'pending', 'NOT_SENT')`,
+        [newPhone]
+      );
+      await db.close();
+
+      const sendRes = await request(app).post('/api/refills/send-grouped').send({
+        patient_phone: newPhone,
+        patient_name: 'Language Test Patient',
+        refill_ids: [r.lastID]
+      });
+
+      expect(sendRes.status).toBe(200);
+      expect(sendRes.body.success).toBe(true);
+
+      const dbCheck = await open({ filename: dbPath, driver: sqlite3.default.Database });
+      const notif = await dbCheck.get(
+        `SELECT message FROM automation_notifications WHERE recipient_phone = ? ORDER BY id DESC LIMIT 1`,
+        [newPhone]
+      );
+      expect(notif).toBeDefined();
+      expect(notif.message).toContain('🌐 *Language / भाषा चुनें:*');
+      expect(notif.message).toContain('Reply *E* for English · *H* for हिंदी · *M* for मराठी');
+      await dbCheck.close();
+    });
+
+    test('Scenario 21: Customer explicit language reply persists preference across customers and patient_refills', async () => {
+      const { handleInbound } = await import('../src/services/whatsappIntentService.js');
+      const { open } = await import('sqlite');
+      const sqlite3 = await import('sqlite3');
+
+      const testPhone = '9777766666';
+
+      // Simulate customer replying "H" for Hindi
+      await handleInbound({
+        from: `${testPhone}@c.us`,
+        body: 'H',
+        id: 'msg-lang-test-1',
+        timestamp: Math.floor(Date.now() / 1000)
+      });
+
+      const dbCheck = await open({ filename: dbPath, driver: sqlite3.default.Database });
+      const customer = await dbCheck.get(
+        `SELECT language, language_confirmed FROM customers WHERE phone LIKE ? LIMIT 1`,
+        [`%${testPhone}`]
+      );
+      expect(customer).toBeDefined();
+      expect(customer.language).toBe('hi');
+      expect(customer.language_confirmed).toBe(1);
+
+      const refill = await dbCheck.get(
+        `SELECT language FROM patient_refills WHERE patient_phone LIKE ? LIMIT 1`,
+        [`%${testPhone}`]
+      );
+      expect(refill).toBeDefined();
+      expect(refill.language).toBe('hi');
+
+      // Now send another refill reminder to the confirmed customer and ensure banner is NOT attached
+      const r2 = await dbCheck.run(
+        `INSERT INTO patient_refills (patient_name, patient_phone, medicine_id, next_refill_date, is_active, status, reminder_status)
+         VALUES ('Language Test Patient', ?, 202, '2026-08-21 10:00:00', 1, 'pending', 'NOT_SENT')`,
+        [testPhone]
+      );
+      await dbCheck.close();
+
+      const sendRes2 = await request(app).post('/api/refills/send-grouped').send({
+        patient_phone: testPhone,
+        patient_name: 'Language Test Patient',
+        refill_ids: [r2.lastID]
+      });
+      expect(sendRes2.status).toBe(200);
+
+      const dbCheck2 = await open({ filename: dbPath, driver: sqlite3.default.Database });
+      const notif2 = await dbCheck2.get(
+        `SELECT message FROM automation_notifications WHERE recipient_phone = ? ORDER BY id DESC LIMIT 1`,
+        [testPhone]
+      );
+      expect(notif2).toBeDefined();
+      expect(notif2.message).not.toContain('🌐 *Language / भाषा चुनें:*');
+      // Also confirm the message itself is now in Hindi!
+      expect(notif2.message).toContain('दवाई रिफ़िल रिमाइंडर');
+      await dbCheck2.close();
     });
   });
 

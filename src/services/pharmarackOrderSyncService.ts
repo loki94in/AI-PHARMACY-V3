@@ -312,6 +312,7 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
 
   const startOfDayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
   const lateReminders: any[] = [];
+  const directOrderRemindersToNotifyBoy: any[] = [];
   for (const [storeKey, { storeName, orderNos, appAlreadySent }] of byStore) {
     const row = reminders.find((r: any) => String(r.distributor_name || '').toLowerCase().trim() === storeKey);
     if (!row || !row.id || row.id >= 800000) { // synthetic "No Order Today" rows are not real reminders
@@ -335,43 +336,53 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
         await db.run('UPDATE whatsapp_send_queue SET message = ? WHERE id = ?', [merged, waiting.id]);
       }
       await settle(db, orderNos, 'merged_into_waiting_reminder', true, { storeName, queueId: waiting.id, appAlreadySent });
+      directOrderRemindersToNotifyBoy.push(row);
       continue;
     }
 
     // Status becomes 'Dispatched' when the queue worker really sends the reminder, so anything
     // other than Pending means today's reminder already went out (or the invoice mail arrived).
-    const alreadyReminded = Boolean(row.status && row.status !== 'Pending');
+    const alreadyReminded = Boolean(
+      (row.status && row.status !== 'Pending') ||
+      (row.last_reminded_at && String(row.last_reminded_at).startsWith(today.iso))
+    );
+
     if (!alreadyReminded) {
-      // Nothing queued yet: the reminder built later will list these order number(s) itself.
-      await settle(db, orderNos, 'scheduled_reminder_will_include', false, { storeName, appAlreadySent });
-      continue;
-    }
-
-    const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos });
-    await settle(db, orderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent });
-    if (sent) {
-      result.followUps++;
-      lateReminders.push(row);
-    }
-  }
-
-  // 3. Delivery boys: their afternoon list is unchanged. If it already went out today, send the same
-  //    list again for just the distributors that received a late order.
-  if (lateReminders.length > 0) {
-    try {
-      const afternoon = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'");
-      const alreadySent = await db.get(
-        `SELECT id FROM automation_notifications
-         WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at, 'localtime') = ? AND status = 'sent' LIMIT 1`,
-        [today.iso]
-      );
-      if (afternoon?.value === 'true' && alreadySent) {
-        await notificationService.sendConsolidatedDeliveryBoyDispatch(lateReminders);
+      // Direct order detected for today and reminder NOT yet sent today:
+      // Auto-send the dispatch reminder to the distributor for today's orders
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { orderNos });
+      await settle(db, orderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent });
+      if (sent) {
+        result.followUps++;
+        directOrderRemindersToNotifyBoy.push(row);
       }
-    } catch (err: any) {
-      console.warn('[PharmarackOrderSync] Delivery boy late-order list failed:', err?.message || err);
+    } else {
+      // Reminder already sent today: send single follow-up naming only the new order(s)
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos });
+      await settle(db, orderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent });
+      if (sent) {
+        result.followUps++;
+        lateReminders.push(row);
+        directOrderRemindersToNotifyBoy.push(row);
+      }
     }
   }
+
+  // 3. Delivery boys: send updated consolidated pickup list to assigned delivery staff for today's direct orders
+  if (directOrderRemindersToNotifyBoy.length > 0) {
+    try {
+      await notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy);
+    } catch (err: any) {
+      console.warn('[PharmarackOrderSync] Delivery boy direct-order dispatch failed:', err?.message || err);
+    }
+  }
+
+  // Broadcast SSE update so kept-alive /dispatch and /pharmarack-cart update instantly
+  try {
+    const { eventService } = await import('./eventService.js');
+    eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'pharmarack_order_sync', count: fresh.length });
+  } catch (_) {}
+
   return result;
 }
 
@@ -453,9 +464,8 @@ export async function dryRunOrderSync() {
     );
     let wouldDo: string;
     if (waiting) wouldDo = `merge the order number into the reminder already waiting in the queue (#${waiting.id}); no extra message`;
-    else if (!reminder) wouldDo = 'create today\'s reminder row; the scheduled reminder will carry the order number';
-    else if (reminder.status === 'Pending') wouldDo = 'the scheduled reminder will carry the order number; no extra message';
-    else wouldDo = `send ONE follow-up to the distributor (reminder row status is "${reminder.status}")`;
+    else if (!reminder || reminder.status === 'Pending') wouldDo = 'auto-queue today\'s reminder to distributor and send updated pickup list to delivery boy';
+    else wouldDo = `send ONE follow-up to the distributor (reminder row status is "${reminder.status}") and update delivery boy`;
     rows.push({ ...base, wouldDo });
   }
   return { ok: true, today: today.iso, remindersEnabled: enabled, fetched: fetched.length, orders: rows, note: 'Dry run: nothing was saved or sent.' };

@@ -175,3 +175,12 @@ export function getLanguageDisplayName(lang: SupportedLanguage): string {
     case 'en': default: return 'English';
   }
 }
+
+/**
+ * Multilingual language selection banner appended to first-contact messages
+ * when the customer's language preference is not yet confirmed.
+ */
+export function firstContactLanguageBanner(): string {
+  return `\n\n──────────────────────\n🌐 *Language / भाषा चुनें:*\nReply *E* for English · *H* for हिंदी · *M* for मराठी`;
+}
+

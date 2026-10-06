@@ -994,7 +994,9 @@ export class NotificationService {
     let msg = `🏥 *${store.storeName}*\n`;
     msg += `📍 *Delivery Location:* ${store.address}\n`;
     msg += `📞 *Pharmacy Contact:* ${store.phone}\n\n`;
-    msg += `🚚 *AFTERNOON DISPATCH & COLLECTION LIST*\n`;
+    const isAfternoon = new Date().getHours() >= 13;
+    const headerTitle = isAfternoon ? 'AFTERNOON DISPATCH & COLLECTION LIST' : 'TODAY\'S DISPATCH & COLLECTION LIST';
+    msg += `🚚 *${headerTitle}*\n`;
     if (boyName && boyName !== 'Delivery Staff') {
       msg += `👤 *Assigned Staff:* ${boyName}\n`;
     }
@@ -1019,7 +1021,19 @@ export class NotificationService {
     msg += `─────────────────────────\n`;
     msg += `📝 *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
 
-    console.log(`[ConsolidatedDispatch] Enqueuing afternoon dispatch summary for ${boyName} (${boyPhone})`);
+    // Deduplication check: prevent identical queue item sent to same delivery boy within 15 minutes
+    const fifteenMinsAgo = Date.now() - 15 * 60 * 1000;
+    const recentDuplicate = await db.get(
+      `SELECT id FROM whatsapp_send_queue 
+       WHERE number = ? AND message = ? AND created_at >= ? AND status != 'cancelled' LIMIT 1`,
+      [boyPhone, msg, fifteenMinsAgo]
+    );
+    if (recentDuplicate) {
+      console.log(`[ConsolidatedDispatch] Identical summary already queued for ${boyName} in the last 15m. Skipping duplicate.`);
+      return { ok: true, queueId: recentDuplicate.id };
+    }
+
+    console.log(`[ConsolidatedDispatch] Enqueuing dispatch summary for ${boyName} (${boyPhone})`);
     const queueId = await whatsappQueueWorker.enqueue(
       boyPhone,
       msg,
@@ -1028,7 +1042,7 @@ export class NotificationService {
     );
 
     const todayIso = new Date().toISOString().split('T')[0];
-    const refId = queueId ? `queue_${queueId}` : `afternoon_dispatch_${todayIso}_${Date.now()}`;
+    const refId = queueId ? `queue_${queueId}` : `dispatch_summary_${todayIso}_${Date.now()}`;
     const notifStatus = queueId ? 'pending' : 'failed';
     await db.run(
       `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)

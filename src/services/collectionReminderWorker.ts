@@ -77,9 +77,11 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     // 4. Scan ready patient refills with auto_remind = 1 that have not been reminded today
     const readyRefills = await db.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
-             pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count
+             pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count,
+             COALESCE(pr.language, c.language, 'en') as language
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
+      LEFT JOIN customers c ON (c.phone = pr.patient_phone OR c.name = pr.patient_name)
       WHERE pr.auto_remind = 1
         AND pr.is_ready = 1
         AND pr.is_active = 1
@@ -92,6 +94,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     const refillGroups = new Map<string, {
       patient_name: string;
       patient_phone: string;
+      language: string;
       items: Array<{ id: number; medicine_name: string; quantity: number }>;
     }>();
 
@@ -105,6 +108,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
         group = {
           patient_name: r.patient_name || 'Customer',
           patient_phone: r.patient_phone || '',
+          language: (r.language || 'en').toLowerCase(),
           items: []
         };
         refillGroups.set(key, group);
@@ -119,17 +123,41 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     for (const group of refillGroups.values()) {
       if (!group.patient_phone || group.patient_phone.replace(/\D/g, '').length < 10) continue;
 
-      const medList = group.items.length === 1
-        ? `• *${group.items[0].medicine_name}* (Qty: ${group.items[0].quantity})`
-        : group.items.map(it => `• *${it.medicine_name}* (Qty: ${it.quantity})`).join('\n');
-
-      const msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${storeName}*\n\n` +
-        `Dear ${group.patient_name},\n` +
-        `Your packed prescription is waiting and ready for collection at our pharmacy:\n\n` +
-        `${medList}\n\n` +
-        `📍 *Pickup Location:* ${storeLabel}\n` +
-        `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n\n` +
-        `👉 *Please collect your medicine at your earliest convenience.*`;
+      let msg = '';
+      if (group.language === 'hi') {
+        const medList = group.items.length === 1
+          ? `• *${group.items[0].medicine_name}* (मात्रा: ${group.items[0].quantity})`
+          : group.items.map(it => `• *${it.medicine_name}* (मात्रा: ${it.quantity})`).join('\n');
+        msg = `🔔 *तैयार दवाई संग्रह रिमाइंडर — ${storeName}*\n\n` +
+          `नमस्ते ${group.patient_name},\n` +
+          `आपकी तैयार की गई दवाई फार्मेसी पर आपके लिए उपलब्ध है:\n\n` +
+          `${medList}\n\n` +
+          `📍 *दुकान का पता:* ${storeLabel}\n` +
+          `🕒 *दुकान का समय:* ${sched.openTime} से ${sched.closeTime}\n\n` +
+          `👉 *कृपया अपनी सुविधानुसार दवाई ले जाएं।*`;
+      } else if (group.language === 'mr') {
+        const medList = group.items.length === 1
+          ? `• *${group.items[0].medicine_name}* (प्रमाण: ${group.items[0].quantity})`
+          : group.items.map(it => `• *${it.medicine_name}* (प्रमाण: ${it.quantity})`).join('\n');
+        msg = `🔔 *तयार औषध संकलन स्मरणपत्र — ${storeName}*\n\n` +
+          `नमस्कार ${group.patient_name},\n` +
+          `आपली तयार केलेली औषधे फार्मसीमध्ये उपलब्ध आहेत:\n\n` +
+          `${medList}\n\n` +
+          `📍 *पत्ता:* ${storeLabel}\n` +
+          `🕒 *दुकानाची वेळ:* ${sched.openTime} ते ${sched.closeTime}\n\n` +
+          `👉 *कृपया आपल्या सोयीनुसार औषध घेऊन जावे.*`;
+      } else {
+        const medList = group.items.length === 1
+          ? `• *${group.items[0].medicine_name}* (Qty: ${group.items[0].quantity})`
+          : group.items.map(it => `• *${it.medicine_name}* (Qty: ${it.quantity})`).join('\n');
+        msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${storeName}*\n\n` +
+          `Dear ${group.patient_name},\n` +
+          `Your packed prescription is waiting and ready for collection at our pharmacy:\n\n` +
+          `${medList}\n\n` +
+          `📍 *Pickup Location:* ${storeLabel}\n` +
+          `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n\n` +
+          `👉 *Please collect your medicine at your earliest convenience.*`;
+      }
 
       try {
         await whatsappQueueWorker.enqueue(
@@ -159,13 +187,15 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
       }
     }
 
-    // 5. Scan ready special orders with auto_remind = 1 that have not been reminded today
+    // 5. Scan ready special orders & online pickup orders with auto_remind = 1 that have not been reminded today
     const readySpecialOrders = await db.all(`
       SELECT so.id, so.requester, so.phone, so.product, so.qty,
-             so.last_collection_reminder_at, so.notification_count
+             so.last_collection_reminder_at, so.notification_count,
+             COALESCE(c.language, 'en') as language
       FROM special_orders so
+      LEFT JOIN customers c ON (c.phone = so.phone OR c.name = so.requester)
       WHERE so.auto_remind = 1
-        AND so.status = 'Ready'
+        AND so.status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
         AND (so.last_collection_reminder_at IS NULL OR DATE(so.last_collection_reminder_at) < DATE('now', 'localtime'))
       ORDER BY so.id ASC
     `);
@@ -174,6 +204,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     const orderGroups = new Map<string, {
       requester: string;
       phone: string;
+      language: string;
       items: Array<{ id: number; product: string; qty: number }>;
     }>();
 
@@ -187,6 +218,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
         group = {
           requester: so.requester || 'Customer',
           phone: so.phone || '',
+          language: (so.language || 'en').toLowerCase(),
           items: []
         };
         orderGroups.set(key, group);
@@ -201,17 +233,41 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     for (const group of orderGroups.values()) {
       if (!group.phone || group.phone.replace(/\D/g, '').length < 10) continue;
 
-      const medList = group.items.length === 1
-        ? `• *${group.items[0].product}* (Qty: ${group.items[0].qty})`
-        : group.items.map(it => `• *${it.product}* (Qty: ${it.qty})`).join('\n');
-
-      const msg = `🔔 *SPECIAL ORDER READY FOR PICKUP — ${storeName}*\n\n` +
-        `Dear ${group.requester},\n` +
-        `Your requested medicine has arrived and is ready for collection:\n\n` +
-        `${medList}\n\n` +
-        `📍 *Pickup Location:* ${storeLabel}\n` +
-        `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n\n` +
-        `👉 *Please collect your medicine at your earliest convenience.*`;
+      let msg = '';
+      if (group.language === 'hi') {
+        const medList = group.items.length === 1
+          ? `• *${group.items[0].product}* (मात्रा: ${group.items[0].qty})`
+          : group.items.map(it => `• *${it.product}* (मात्रा: ${it.qty})`).join('\n');
+        msg = `🔔 *दवाई तैयार है — ${storeName}*\n\n` +
+          `नमस्ते ${group.requester},\n` +
+          `आपकी मंगवाई गई दवाई आ चुकी है और संग्रह के लिए तैयार है:\n\n` +
+          `${medList}\n\n` +
+          `📍 *दुकान का पता:* ${storeLabel}\n` +
+          `🕒 *दुकान का समय:* ${sched.openTime} से ${sched.closeTime}\n\n` +
+          `👉 *कृपया अपनी सुविधानुसार दवाई ले जाएं।*`;
+      } else if (group.language === 'mr') {
+        const medList = group.items.length === 1
+          ? `• *${group.items[0].product}* (प्रमाण: ${group.items[0].qty})`
+          : group.items.map(it => `• *${it.product}* (प्रमाण: ${it.qty})`).join('\n');
+        msg = `🔔 *मागवलेले औषध उपलब्ध आहे — ${storeName}*\n\n` +
+          `नमस्कार ${group.requester},\n` +
+          `आपण मागवलेले औषध आले असून संकलनासाठी तयार आहे:\n\n` +
+          `${medList}\n\n` +
+          `📍 *पत्ता:* ${storeLabel}\n` +
+          `🕒 *दुकानाची वेळ:* ${sched.openTime} ते ${sched.closeTime}\n\n` +
+          `👉 *कृपया आपल्या सोयीनुसार औषध घेऊन जावे.*`;
+      } else {
+        const medList = group.items.length === 1
+          ? `• *${group.items[0].product}* (Qty: ${group.items[0].qty})`
+          : group.items.map(it => `• *${it.product}* (Qty: ${it.qty})`).join('\n');
+        msg = `🔔 *SPECIAL ORDER READY FOR PICKUP — ${storeName}*\n\n` +
+          `Dear ${group.requester},\n` +
+          `Your requested medicine has arrived and is ready for collection:\n\n` +
+          `${medList}\n\n` +
+          `📍 *Pickup Location:* ${storeLabel}\n` +
+          `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n\n` +
+          `👉 *Please collect your medicine at your earliest convenience.*`;
+      }
 
       try {
         await whatsappQueueWorker.enqueue(

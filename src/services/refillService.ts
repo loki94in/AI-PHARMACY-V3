@@ -4,6 +4,7 @@ import { getConfiguredPharmacyName, getStorePhone } from './storeSettingsService
 import { effectiveNoticeDays, advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 import { refillOrderReconciler } from './refillOrderReconciler.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
+import { firstContactLanguageBanner } from './languageDetector.js';
 
 export async function checkAllRefills(db: Database): Promise<void> {
   // Clean up paused refills (is_active = 0) so they don't remain marked ready or held
@@ -243,7 +244,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
 
   // Find all active patient refills for this patient that have not been notified/completed and due within upcoming 7 calendar days
   const readyRefills = await db.all(
-    `SELECT pr.id, pr.quantity_needed, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
@@ -281,13 +282,30 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   const items = Array.from(seenMeds.values());
   const refillIds = readyRefills.map((r: any) => r.id);
 
+  const anyReady = readyRefills.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
+
   let msg: string;
-  if (items.length === 1) {
-    msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+  if (anyReady) {
+    if (items.length === 1) {
+      msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n• *${items[0].medicine_name}* (Qty: ${items[0].quantity})\n\n📍 *Pickup Location:* ${storeLabel}\n👉 *Please collect your medicine at your earliest convenience.*`;
+    } else {
+      const medList = items.map(it => `• *${it.medicine_name}* (Qty: ${it.quantity})`).join('\n');
+      msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n${medList}\n\n📍 *Pickup Location:* ${storeLabel}\n👉 *Please collect your medicine at your earliest convenience.*`;
+    }
   } else {
-    const medList = items.map(it => `• ${it.medicine_name} (Qty: ${it.quantity})`).join('\n');
-    msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+    if (items.length === 1) {
+      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+    } else {
+      const medList = items.map(it => `• ${it.medicine_name} (Qty: ${it.quantity})`).join('\n');
+      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+    }
   }
+
+  const needsLangBanner = await isFirstContactOrUnconfirmed(db, patientPhone);
+  if (needsLangBanner) {
+    msg += firstContactLanguageBanner();
+  }
+
   const referenceIdStr = refillIds.join(',');
 
   // Check if a staged or active snoozed notification already exists for this patient
@@ -979,4 +997,49 @@ export async function notifyAdminStagedReminders(db: Database): Promise<void> {
     console.error('[RefillService] Failed to notify admin of staged reminders:', err);
   }
 }
+
+/**
+ * Check if the customer has not yet confirmed their language preference
+ * and has not received any prior outbound WhatsApp messages.
+ */
+export async function isFirstContactOrUnconfirmed(db: any, phone: string): Promise<boolean> {
+  if (!phone) return false;
+  const digits = String(phone).replace(/\D/g, '').slice(-10);
+  if (!digits) return false;
+
+  try {
+    // 1. If customer has explicitly confirmed language preference, omit banner
+    const customer = await db.get(
+      `SELECT language_confirmed FROM customers WHERE phone LIKE ? LIMIT 1`,
+      [`%${digits}`]
+    ).catch(() => null);
+    if (customer && customer.language_confirmed === 1) {
+      return false;
+    }
+
+    // 2. Check if any prior message was sent to this customer
+    const waMsg = await db.get(
+      `SELECT id FROM whatsapp_messages WHERE (chat_id LIKE ? OR chat_id LIKE ?) AND from_me = 1 LIMIT 1`,
+      [`%${digits}@c.us`, `%${digits}@s.whatsapp.net`]
+    ).catch(() => null);
+    if (waMsg) return false;
+
+    const waSent = await db.get(
+      `SELECT id FROM whatsapp_sent_register WHERE phone LIKE ? LIMIT 1`,
+      [`%${digits}%`]
+    ).catch(() => null);
+    if (waSent) return false;
+
+    const notifSent = await db.get(
+      `SELECT id FROM automation_notifications WHERE recipient_phone LIKE ? AND status = 'sent' LIMIT 1`,
+      [`%${digits}%`]
+    ).catch(() => null);
+    if (notifSent) return false;
+
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 

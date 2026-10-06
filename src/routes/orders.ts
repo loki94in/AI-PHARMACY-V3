@@ -543,11 +543,11 @@ router.post('/:id/notify-arrival', async (req, res) => {
     const isResend = Number(order.notified) === 1 || Number(order.notification_count) > 0;
     const queued = await enqueueArrivalWhatsApp(db, order, { skipDedupe: isResend, forceResend: isForce });
     
-    // Update order status to 'Ready', mark notified, and increment notification_count
+    // Update order status to 'Ready', mark notified, increment notification_count, and arm auto_remind
     let newCount = Number(order.notification_count || 0);
     if (queued) {
       newCount += 1;
-      await db.run('UPDATE special_orders SET status = ?, notified = 1, notification_count = ? WHERE id = ?', ['Ready', newCount, id]);
+      await db.run('UPDATE special_orders SET status = ?, notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime(\'now\') WHERE id = ?', ['Ready', newCount, id]);
     }
 
     broadcastOrdersChanged();
@@ -675,7 +675,7 @@ router.post('/batch-notify-arrival', async (req, res) => {
       const newCount = Number(ord.notification_count || 0) + 1;
       if (itInfo.status === 'arrived') {
         await db.run(
-          `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ? WHERE id = ?`,
+          `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?`,
           [newCount, ord.id]
         );
       } else {
@@ -1362,15 +1362,18 @@ router.put('/:id', async (req, res) => {
       newNotified = 1;
     }
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
+    const newAutoRemind = (newStatus === 'Fulfilled' || newStatus === 'Cancelled') ? 0 : (newStatus === 'Ready' ? 1 : (existing.auto_remind ?? 0));
+    const lastRemindAt = (newStatus === 'Ready' || whatsappQueued) ? new Date().toISOString() : existing.last_collection_reminder_at;
 
     await db.run(
       `UPDATE special_orders
        SET status = ?, priority = ?, qty = ?, product = ?, requester = ?, phone = ?,
            pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = ?,
            advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?,
-           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?
+           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?,
+           auto_remind = ?, last_collection_reminder_at = ?
        WHERE id = ?`,
-      [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, id]
+      [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, newAutoRemind, lastRemindAt, id]
     );
 
     // Auto-send payment QR when distributor is newly assigned via the CRM UI
@@ -1566,9 +1569,8 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
 
     const newNotified = (status === 'Fulfilled' || whatsappQueued) ? 1 : existing.notified;
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
-    // Sending the arrival WA never arms Auto Remind; only the user's Auto toggle does (manual-only patient messaging).
-    const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (existing.auto_remind ?? 0);
-    const lastRemindAt = whatsappQueued ? new Date().toISOString() : existing.last_collection_reminder_at;
+    const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (status === 'Ready' ? 1 : (existing.auto_remind ?? 0));
+    const lastRemindAt = (status === 'Ready' || whatsappQueued) ? new Date().toISOString() : existing.last_collection_reminder_at;
     await db.run(
       'UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?',
       [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]

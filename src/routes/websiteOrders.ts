@@ -590,6 +590,7 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
     const nextOrderStatus = isSpecialProcurement
       ? 'Confirmed'
       : (order.order_type === 'DELIVERY' ? 'Ready' : 'ORDER_READY_FOR_PICKUP');
+    const autoRemindVal = (nextOrderStatus === 'Ready' || nextOrderStatus === 'ORDER_READY_FOR_PICKUP') ? 1 : 0;
 
     await db.run(
       `UPDATE special_orders
@@ -599,9 +600,11 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
            payment_reference = ?,
            payment_confirmed_at = CURRENT_TIMESTAMP,
            payment_confirmed_by = ?,
+           auto_remind = ?,
+           last_collection_reminder_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [nextOrderStatus, payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, orderId]
+      [nextOrderStatus, payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, autoRemindVal, orderId]
     );
 
     await db.run(

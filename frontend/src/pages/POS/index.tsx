@@ -1193,6 +1193,8 @@ const POS = () => {
   const pendingRefillIdsRef = useRef<number[]>([]);
   // Online/Website order ID for linking POS sale to online order fulfilment
   const pendingOnlineOrderIdRef = useRef<number | null>(null);
+  // Special order ID for linking POS sale to special order fulfilment & auto_remind cancellation
+  const pendingSpecialOrderIdRef = useRef<number | null>(null);
   const pendingDirectSaveRef = useRef<boolean>(false);
   const [doctor, setDoctor] = useState(() => editSaleFromState?.doctor_name || initialActiveTab.doctor || '');
   const [isDoctorDropdownOpen, setIsDoctorDropdownOpen] = useState(false);
@@ -1442,6 +1444,9 @@ const POS = () => {
       }
       if (prefill.onlineOrderId || prefill.orderId) {
         pendingOnlineOrderIdRef.current = Number(prefill.onlineOrderId || prefill.orderId);
+      }
+      if (prefill.specialOrderId) {
+        pendingSpecialOrderIdRef.current = Number(prefill.specialOrderId);
       }
       if (name) {
         const parsed = parseSalutationAndName(name);
@@ -3715,10 +3720,12 @@ const POS = () => {
         refillId: activeRefillId || undefined,
         refill_ids: pendingRefillIdsRef.current.length > 0 ? [...pendingRefillIdsRef.current] : undefined,
         online_order_id: pendingOnlineOrderIdRef.current || undefined,
+        special_order_id: pendingSpecialOrderIdRef.current || undefined,
         editingInvoiceId: editingInvoiceId || undefined
       };
       writeRef(pendingRefillIdsRef, []);
       writeRef(pendingOnlineOrderIdRef, null);
+      writeRef(pendingSpecialOrderIdRef, null);
 
       // Verification Layer Check: Pre-save validation
       try {
@@ -3849,6 +3856,7 @@ const POS = () => {
       setRefillDays(30);
       pendingRefillIdsRef.current = [];
       pendingOnlineOrderIdRef.current = null;
+      pendingSpecialOrderIdRef.current = null;
       setSearchTerm('');
       setSearchResults([]);
       updateCart([makeEmptyCartRow()]);

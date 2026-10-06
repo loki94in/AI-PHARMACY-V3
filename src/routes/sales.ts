@@ -867,6 +867,25 @@ router.post('/', async (req, res) => {
     // Defer CPU-bound fuzzy match + DB write until after HTTP flush
     setImmediate(async () => {
       try {
+        const consumedOrderIds = new Set<number>();
+
+        // Handle explicit special_order_id or online_order_id passed from POS prefill
+        const explicitOrderIds: number[] = [];
+        const rawSoId = req.body.special_order_id || req.body.specialOrderId;
+        if (rawSoId && !isNaN(Number(rawSoId))) explicitOrderIds.push(Number(rawSoId));
+        const rawOoId = req.body.online_order_id || req.body.onlineOrderId;
+        if (rawOoId && !isNaN(Number(rawOoId))) explicitOrderIds.push(Number(rawOoId));
+
+        for (const ordId of explicitOrderIds) {
+          try {
+            await db!.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [ordId]);
+            await db!.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {});
+            consumedOrderIds.add(ordId);
+          } catch (e) {
+            console.warn(`[Sales explicit order] Failed to mark order #${ordId} fulfilled:`, e);
+          }
+        }
+
         const distinctMedNames = Array.from(new Set(
           items.map((it: any) => (it.medicine_name || '').trim()).filter(Boolean)
         ));
@@ -874,9 +893,8 @@ router.post('/', async (req, res) => {
         const openOrders = await db!.all(
           `SELECT id as order_id, product as medicine, qty as qty_ordered, requester, phone as customer_phone, status as order_status
            FROM special_orders
-           WHERE status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'OVERLAP_DETECTED', 'POTENTIAL_ARRIVAL', 'Pending', 'Ordered', 'Ready')`
+           WHERE status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'OVERLAP_DETECTED', 'POTENTIAL_ARRIVAL', 'Pending', 'Ordered', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Confirmed')`
         );
-        const consumedOrderIds = new Set<number>();
         for (const item of items) {
           const medName = (item.medicine_name || '').trim();
           if (!medName) continue;
@@ -891,6 +909,7 @@ router.post('/', async (req, res) => {
             consumedOrderIds.add(best.order.order_id);
             try {
               await db!.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [best.order.order_id]);
+              await db!.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(best.order.order_id)]).catch(() => {});
             } catch (specErr) {
               console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
             }

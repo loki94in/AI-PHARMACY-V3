@@ -4543,7 +4543,30 @@ export async function handleInbound(msg: any): Promise<void> {
 
       // If user explicitly asked to change language, send confirmation and return
       if (explicitSwitch) {
-        let switchAck = getMessage(chatLang, 'whatsapp.bot.langSwitched');
+        // Persist language choice across customers and patient_refills tables
+        try {
+          const matchPattern = cleanDigitsForLang ? `%${cleanDigitsForLang}` : `%${phone}%`;
+          await db.run(
+            `UPDATE customers SET language = ?, language_confirmed = 1 WHERE phone LIKE ? OR phone = ?`,
+            [chatLang, matchPattern, phone]
+          );
+          await db.run(
+            `UPDATE patient_refills SET language = ? WHERE patient_phone LIKE ? OR patient_phone = ?`,
+            [chatLang, matchPattern, phone]
+          );
+          eventService.broadcast('contacts-updated', { phone: cleanDigitsForLang || phone, language: chatLang });
+          eventService.broadcast('refill_updated', { phone: cleanDigitsForLang || phone, language: chatLang });
+        } catch (_) {}
+
+        let switchAck = '';
+        if (chatLang === 'hi') {
+          switchAck = '✅ आपकी पसंदीदा भाषा हिंदी सेट कर दी गई है। आगे के सभी संदेश हिंदी में भेजे जाएंगे।';
+        } else if (chatLang === 'mr') {
+          switchAck = '✅ तुमची पसंतीची भाषा मराठी निवडली गेली आहे. पुढील सर्व संदेश मराठीत पाठवले जातील.';
+        } else {
+          switchAck = '✅ Language set to English. All future messages will be in English.';
+        }
+
         // Keep the open flow in sync: store the new language on the pending row and
         // re-send the current menu step so the customer continues in their language.
         try {

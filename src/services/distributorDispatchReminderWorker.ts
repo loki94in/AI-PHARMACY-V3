@@ -21,6 +21,58 @@ async function ensureReminderSchema(db: any): Promise<void> {
 }
 
 /**
+ * Smart delivery boy auto-assignment resolver.
+ * 1. Checks if the distributor has an assigned delivery_boy_id in master `distributors` table.
+ * 2. If missing, checks active delivery boys:
+ *    - If exactly 1 active delivery boy exists in the store, auto-assigns to them.
+ *    - If multiple active delivery boys exist, takes the first active one as default.
+ */
+export async function resolveDeliveryBoyForDistributor(
+  db: any,
+  distributorId: number | null,
+  distributorName?: string
+): Promise<{ delivery_boy_id: number | null; name: string | null; phone: string | null }> {
+  try {
+    // 1. Check mapped delivery_boy_id in distributors table
+    if (distributorId) {
+      const distRow = await db.get("SELECT delivery_boy_id FROM distributors WHERE id = ?", [distributorId]);
+      if (distRow?.delivery_boy_id) {
+        const boy = await db.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [distRow.delivery_boy_id]);
+        if (boy) {
+          const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+          return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
+        }
+      }
+    }
+
+    if (distributorName) {
+      const distRow = await db.get("SELECT delivery_boy_id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [distributorName]);
+      if (distRow?.delivery_boy_id) {
+        const boy = await db.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [distRow.delivery_boy_id]);
+        if (boy) {
+          const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+          return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
+        }
+      }
+    }
+
+    // 2. Fallback to active delivery boys in store
+    const activeBoys = await db.all("SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC");
+    if (activeBoys && activeBoys.length > 0) {
+      const boy = activeBoys[0];
+      const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+      return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
+    }
+  } catch (err: any) {
+    console.warn('[DistributorReminderWorker] Error resolving delivery boy:', err.message);
+  }
+
+  return { delivery_boy_id: null, name: null, phone: null };
+}
+
+
+
+/**
  * Fast read of today's distributor dispatch reminders (<10ms).
  * Strictly reads existing SQLite records without executing heavy multi-table substring scans.
  */
@@ -35,7 +87,7 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
       `SELECT r.id, r.distributor_id,
               COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
               COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
-              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at, r.order_source,
               db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
               1 as has_pharmarack_order_today,
               1 as has_order_today
@@ -293,18 +345,20 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
       }
 
       const existing = await db.get(
-        `SELECT id, status, distributor_phone, distributor_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
+        `SELECT id, status, distributor_phone, distributor_id, delivery_boy_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
         [dist.name, todayStr]
       );
+      const boyContact = await resolveDeliveryBoyForDistributor(db, activeId, dist.name);
       if (!existing) {
         const initialStatus = dist.hasEmailToday ? 'Dispatched' : 'Pending';
         await db.run(
-          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at, delivery_boy_id)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
           [
             activeId, dist.name, activePhone || '', todayStr, initialStatus,
             dist.hasEmailToday ? 'email' : 'pharmarack',
-            dist.hasEmailToday ? new Date().toISOString() : null
+            dist.hasEmailToday ? new Date().toISOString() : null,
+            boyContact.delivery_boy_id
           ]
         );
       } else {
@@ -314,16 +368,18 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
             [existing.id]
           );
         }
-        // Keep distributor_phone and distributor_name in sync with master distributors directory
+        // Keep distributor_phone, distributor_name, and delivery_boy_id in sync with master distributors directory
         const phoneToUpdate = activePhone || existing.distributor_phone || '';
         const idToUpdate = activeId || existing.distributor_id || null;
+        const boyToUpdate = existing.delivery_boy_id || boyContact.delivery_boy_id;
         await db.run(
           `UPDATE distributor_dispatch_reminders 
            SET distributor_id = COALESCE(distributor_id, ?),
+               delivery_boy_id = COALESCE(delivery_boy_id, ?),
                distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
                distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
            WHERE id = ?`,
-          [idToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
+          [idToUpdate, boyToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
         );
       }
     }
@@ -402,7 +458,7 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
       `SELECT r.id, r.distributor_id,
               COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
               COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
-              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at, r.order_source,
               db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
               1 as has_pharmarack_order_today,
               1 as has_order_today,
@@ -438,6 +494,20 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
                SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
                WHERE id = ?`,
               [resolved.distributor_phone, resolved.distributor_id, r.id]
+            );
+          } catch (_) {}
+        }
+      }
+      if (!r.delivery_boy_id) {
+        const boyContact = await resolveDeliveryBoyForDistributor(db, r.distributor_id, r.distributor_name);
+        if (boyContact.delivery_boy_id) {
+          r.delivery_boy_id = boyContact.delivery_boy_id;
+          r.delivery_boy_name = boyContact.name;
+          r.delivery_boy_phone = boyContact.phone;
+          try {
+            await db.run(
+              `UPDATE distributor_dispatch_reminders SET delivery_boy_id = ? WHERE id = ?`,
+              [boyContact.delivery_boy_id, r.id]
             );
           } catch (_) {}
         }

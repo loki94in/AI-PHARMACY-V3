@@ -1294,15 +1294,20 @@ export const RefillsSection: React.FC = () => {
                       >
                         Dismiss
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSendSingleStagedItem(item)}
-                        disabled={actioningNotifId === item.id}
-                        className="px-2 py-0.5 rounded bg-primary hover:bg-primary/90 text-white font-bold text-[10px] cursor-pointer"
-                        title="Send this reminder now via WhatsApp"
-                      >
-                        Send
-                      </button>
+                      {(() => {
+                        const isPickup = item.message.includes('READY') || item.message.includes('COLLECTION') || item.message.includes('collection') || item.message.includes('तैयार') || item.message.includes('तयार');
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => handleSendSingleStagedItem(item)}
+                            disabled={actioningNotifId === item.id}
+                            className={isPickup ? 'px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer text-white transition-colors bg-emerald-600 hover:bg-emerald-700' : 'px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer text-white transition-colors bg-primary hover:bg-primary/90'}
+                            title={isPickup ? "Send pickup reminder now via WhatsApp" : "Send refill reminder now via WhatsApp"}
+                          >
+                            {isPickup ? 'Send Pickup' : 'Send'}
+                          </button>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1428,6 +1433,11 @@ export const RefillsSection: React.FC = () => {
                           {patient.medicines?.some(m => m.patient_confirmed === 1) && (
                             <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Patient confirmed refill via WhatsApp">
                               WA Confirmed ✅
+                            </span>
+                          )}
+                          {patient.medicines?.some(m => m.is_ready === 1 || m.quick_bill_id) && (
+                            <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Medicines packed and ready for pickup">
+                              Ready for Pickup 📦
                             </span>
                           )}
                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border/60 shrink-0 font-normal">
@@ -1568,16 +1578,31 @@ export const RefillsSection: React.FC = () => {
                     <span>Order to Cart</span>
                   </button>
 
-                  {/* WhatsApp Reminder Button */}
-                  <button
-                    onClick={() => handleRemindNow(selectedPatient.patient_phone)}
-                    disabled={sending === selectedPatient.patient_phone}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                    title="Send instant manual refill reminder on WhatsApp"
-                  >
-                    <Send size={12} className={sending === selectedPatient.patient_phone ? 'animate-pulse' : ''} />
-                    <span>{sending === selectedPatient.patient_phone ? 'Sending…' : 'Remind Now'}</span>
-                  </button>
+                  {/* WhatsApp Reminder Button (Context-Aware: Pickup vs Refill) */}
+                  {(() => {
+                    const isReady = (selectedPatient.medicines || []).some(m => m.is_ready === 1 || m.quick_bill_id);
+                    return isReady ? (
+                      <button
+                        onClick={() => handleRemindNow(selectedPatient.patient_phone)}
+                        disabled={sending === selectedPatient.patient_phone}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                        title="Send WhatsApp pickup reminder for packed medicines"
+                      >
+                        <Package size={12} className={sending === selectedPatient.patient_phone ? 'animate-pulse' : ''} />
+                        <span>{sending === selectedPatient.patient_phone ? 'Sending…' : 'Send Pickup Reminder'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleRemindNow(selectedPatient.patient_phone)}
+                        disabled={sending === selectedPatient.patient_phone}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                        title="Send instant manual refill reminder on WhatsApp"
+                      >
+                        <Send size={12} className={sending === selectedPatient.patient_phone ? 'animate-pulse' : ''} />
+                        <span>{sending === selectedPatient.patient_phone ? 'Sending…' : 'Remind Now'}</span>
+                      </button>
+                    );
+                  })()}
 
                   {/* Snooze Reminder Menu */}
                   <div className="relative">

@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 73;
+const CURRENT_SCHEMA_VERSION = 74;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -542,6 +542,9 @@ async function ensureOrderTimingSchema(db: any) {
     if (custCols.length > 0 && !custCols.some((c: any) => c.name.toLowerCase() === 'reminder_mode')) {
       await db.run("ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'");
     }
+    if (custCols.length > 0 && !custCols.some((c: any) => c.name.toLowerCase() === 'language_confirmed')) {
+      await db.run("ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0");
+    }
   } catch (_) { }
 
   // Schema v71: Quick Assist Auto Collection Reminders for ready medicines
@@ -853,6 +856,11 @@ export async function ensureSchema(dbPath: string) {
           loose: 'INTEGER DEFAULT 0',
           ded_per: 'REAL DEFAULT 0',
           cd_value: 'REAL DEFAULT 0'
+        });
+
+        await ensureColumns(db, 'customers', {
+          language: "TEXT DEFAULT 'en'",
+          language_confirmed: 'INTEGER DEFAULT 0'
         });
 
         await ensureColumns(db, 'special_orders', {
@@ -1777,6 +1785,8 @@ export async function ensureSchema(dbPath: string) {
       phone TEXT,
       address TEXT,
       notes TEXT,
+      language TEXT DEFAULT 'en',
+      language_confirmed INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS customer_portal_accounts (
@@ -2596,6 +2606,7 @@ export async function ensureSchema(dbPath: string) {
       ['return_items', 'cd_value', 'ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0'],
       ['patient_refills', 'reminder_mode', "ALTER TABLE patient_refills ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
       ['customers', 'reminder_mode', "ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
+      ['customers', 'language_confirmed', "ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0"],
     ];
 
     // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs

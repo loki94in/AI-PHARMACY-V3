@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ShoppingCart, Check, BellRing, X, Edit, Edit3, Package, Loader2, ChevronDown,
@@ -7,7 +7,7 @@ import {
   Activity as ActivityIcon, ShieldCheck as ShieldCheckIcon, Clock as ClockIcon,
   AlertTriangle as AlertIcon, MessageSquare as MessageSquareIcon, Send as SendIcon, Calendar, RotateCw
 } from 'lucide-react';
-import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent } from '../services/events';
+import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, quickOrderEvent } from '../services/events';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
@@ -50,8 +50,29 @@ export const QuickAssistSidebar = memo(({
 }) => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const cartJobs = React.useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
+
+  // Auto-close sidebar and collapse all items when route path changes in the app
+  const prevPathRef = useRef(location.pathname);
+  useEffect(() => {
+    if (prevPathRef.current !== location.pathname) {
+      prevPathRef.current = location.pathname;
+      if (expanded) {
+        setExpanded(false);
+      }
+    }
+  }, [location.pathname, expanded, setExpanded]);
+
+  // Auto-close sidebar when global Quick Order modal is triggered elsewhere in the app
+  useEffect(() => {
+    return quickOrderEvent.subscribeOpen(() => {
+      if (expanded) {
+        setExpanded(false);
+      }
+    });
+  }, [expanded, setExpanded]);
   const [markingOrderedRefillIds, setMarkingOrderedRefillIds] = useState<Set<number>>(new Set());
   const [distOpenRefillIds, setDistOpenRefillIds] = useState<Set<number>>(new Set());
   const [processingOrderIds, setProcessingOrderIds] = useState<Set<number>>(new Set());
@@ -148,12 +169,10 @@ export const QuickAssistSidebar = memo(({
   }, [expanded, onRefreshDailyLog, notifications]);
 
   const toggleStagedKey = (key: string) => {
-    setExpandedStagedKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExpandedStagedKeys(prev => (prev.has(key) ? new Set() : new Set([key])));
+    setExpandedRefillKeys(new Set());
+    setExpandedWebsiteOrderKeys(new Set());
+    setExpandedSpecialOrderKeys(new Set());
   };
 
   const handleSnoozeStagedGroup = async (group: {
@@ -200,30 +219,24 @@ export const QuickAssistSidebar = memo(({
   }, [expanded]);
 
   const toggleRefillKey = (key: string) => {
-    setExpandedRefillKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExpandedRefillKeys(prev => (prev.has(key) ? new Set() : new Set([key])));
+    setExpandedWebsiteOrderKeys(new Set());
+    setExpandedSpecialOrderKeys(new Set());
+    setExpandedStagedKeys(new Set());
   };
 
   const toggleWebsiteOrderKey = (key: string) => {
-    setExpandedWebsiteOrderKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExpandedWebsiteOrderKeys(prev => (prev.has(key) ? new Set() : new Set([key])));
+    setExpandedRefillKeys(new Set());
+    setExpandedSpecialOrderKeys(new Set());
+    setExpandedStagedKeys(new Set());
   };
 
   const toggleSpecialOrderKey = (key: string) => {
-    setExpandedSpecialOrderKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExpandedSpecialOrderKeys(prev => (prev.has(key) ? new Set() : new Set([key])));
+    setExpandedRefillKeys(new Set());
+    setExpandedWebsiteOrderKeys(new Set());
+    setExpandedStagedKeys(new Set());
   };
 
   useOnClickOutside(sidebarRef, (event) => {
@@ -232,7 +245,7 @@ export const QuickAssistSidebar = memo(({
       return;
     }
     const target = event.target as HTMLElement | null;
-    if (target?.closest?.('.z-modal, [role="dialog"], .glass-panel, [data-modal]')) {
+    if (target?.closest?.('.z-modal, [role="dialog"], [data-modal], [aria-modal="true"]')) {
       return;
     }
     if (expanded) {
@@ -243,11 +256,15 @@ export const QuickAssistSidebar = memo(({
   // Esc collapses the panel; priority -1 so any modal opened above it closes first
   useModalEscape(expanded, () => setExpanded(false), -1);
 
-  // Clear modal states whenever the sidebar collapses
+  // Clear modal and expanded sub-panels whenever the sidebar collapses
   useEffect(() => {
     if (!expanded) {
       setEditingGroup(null);
       setArrivalModalGroup(null);
+      setExpandedRefillKeys(new Set());
+      setExpandedWebsiteOrderKeys(new Set());
+      setExpandedSpecialOrderKeys(new Set());
+      setExpandedStagedKeys(new Set());
     }
   }, [expanded]);
 
@@ -262,20 +279,21 @@ export const QuickAssistSidebar = memo(({
     }
   };
 
-  const handleSendRefillGroup = async (group: { patient_name: string; patient_phone: string; medicines: Array<{ id: number; medicine_name: string; quantity_needed: number }> }) => {
+  const handleSendRefillGroup = async (group: { patient_name: string; patient_phone: string; isReady?: boolean; medicines: Array<{ id: number; medicine_name: string; quantity_needed: number; is_ready?: number; quick_bill_id?: number | null }> }) => {
     try {
-      messageSendEvent.triggerSendProgress(group.patient_name || 'Patient', 'Dispatching WhatsApp refill reminder...', 10);
+      const anyReady = group.isReady || group.medicines.some(m => m.is_ready === 1 || m.quick_bill_id);
+      messageSendEvent.triggerSendProgress(group.patient_name || 'Patient', anyReady ? 'Dispatching WhatsApp collection reminder...' : 'Dispatching WhatsApp refill reminder...', 10);
       if (group.patient_phone) {
         await api.sendGroupedRefill({
           patient_name: group.patient_name,
           patient_phone: group.patient_phone,
           medicines: group.medicines
         });
-        toastEvent.trigger(`Consolidated refill reminder sent to ${group.patient_name}!`, 'success');
+        toastEvent.trigger(anyReady ? `Consolidated collection reminder sent to ${group.patient_name}!` : `Consolidated refill reminder sent to ${group.patient_name}!`, 'success');
         whatsappQueueEvent.triggerUpdated();
       } else {
         await Promise.all(group.medicines.map(m => api.sendRefillNow(m.id).catch(() => {})));
-        toastEvent.trigger(`Refill reminder sent to ${group.patient_name}!`, 'success');
+        toastEvent.trigger(anyReady ? `Collection reminder sent to ${group.patient_name}!` : `Refill reminder sent to ${group.patient_name}!`, 'success');
         whatsappQueueEvent.triggerUpdated();
       }
       refillEvent.triggerRefresh();
@@ -321,6 +339,47 @@ export const QuickAssistSidebar = memo(({
       qty: Math.max(1, Number(med.quantity_needed || 3))
     }]);
     toastEvent.trigger(`Adding "${med.medicine_name}" to Live Cart...`, 'info', '/pharmarack-cart');
+  };
+
+  const [markingReadyRefillPhones, setMarkingReadyRefillPhones] = useState<Set<string>>(new Set());
+
+  const handleMarkRefillGroupReady = async (group: {
+    patient_name: string;
+    patient_phone?: string;
+    medicines: Array<{ id: number; medicine_name: string }>;
+  }) => {
+    const phone = (group.patient_phone || '').trim();
+    if (!phone) {
+      toastEvent.trigger('Patient has no phone number stored', 'error');
+      return;
+    }
+    setMarkingReadyRefillPhones(prev => new Set(prev).add(phone));
+    try {
+      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`);
+      if (res?.data?.success) {
+        toastEvent.trigger(
+          res.data.whatsapp_queued
+            ? `Marked ready & pickup WhatsApp alert queued for "${group.patient_name}"!`
+            : `Marked refills for "${group.patient_name}" as Ready!`,
+          'success'
+        );
+        refillEvent.triggerRefresh();
+        whatsappQueueEvent.triggerUpdated();
+        onActionComplete();
+      } else {
+        throw new Error(res?.data?.error || 'Failed to mark refills ready');
+      }
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiErrorShape;
+      console.error('Failed to mark refill group ready:', err);
+      toastEvent.trigger(apiErr?.response?.data?.error || apiErr?.message || 'Failed to mark refills ready', 'error');
+    } finally {
+      setMarkingReadyRefillPhones(prev => {
+        const next = new Set(prev);
+        next.delete(phone);
+        return next;
+      });
+    }
   };
 
   const handleMarkRefillGroupOrdered = async (group: {
@@ -404,6 +463,7 @@ export const QuickAssistSidebar = memo(({
           const sourceOrders = (Array.isArray(specialOrders) ? specialOrders : []).filter((s) => itemIds.includes(s.id));
           const totalAdvance = sourceOrders.reduce((sum: number, s) => sum + (Number(s.advance_payment) || 0), 0);
           toastEvent.trigger(`Opening POS to bill "${group.requester}"...`, 'info', '/pos');
+          setExpanded(false);
           navigate('/pos', {
             state: {
               prefill: {
@@ -649,6 +709,7 @@ export const QuickAssistSidebar = memo(({
       auto_remind?: number;
       collection_reminder_count?: number;
       last_collection_reminder_at?: string | null;
+      isReady?: boolean;
       medicines: Array<{
         id: number;
         medicine_id: number;
@@ -656,6 +717,8 @@ export const QuickAssistSidebar = memo(({
         quantity_needed: number;
         refill_interval_days: number;
         hold_for_stock: number;
+        is_ready?: number;
+        quick_bill_id?: number | null;
         next_refill_date: string;
         diffDays: number;
         reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
@@ -691,6 +754,7 @@ export const QuickAssistSidebar = memo(({
           timingCategory: diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : 'Within 7 Days',
           hasHoldStock: false,
           isPatientConfirmed: false,
+          isReady: false,
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
           auto_remind: 0,
@@ -716,6 +780,8 @@ export const QuickAssistSidebar = memo(({
         quantity_needed: Number(r.quantity_needed || 3),
         refill_interval_days: r.refill_interval_days || 30,
         hold_for_stock: r.hold_for_stock || 0,
+        is_ready: (r as any).is_ready ?? 0,
+        quick_bill_id: (r as any).quick_bill_id ?? null,
         next_refill_date: r.next_refill_date,
         diffDays,
         reminder_status: medReminderStatus,
@@ -750,6 +816,7 @@ export const QuickAssistSidebar = memo(({
         }
 
         group.auto_remind = group.medicines.some(m => m.auto_remind === 1) ? 1 : 0;
+        group.isReady = group.medicines.some(m => m.is_ready === 1 || m.quick_bill_id);
         group.collection_reminder_count = Math.max(0, ...group.medicines.map(m => m.collection_reminder_count || 0));
         const collDates = group.medicines.map(m => m.last_collection_reminder_at).filter(Boolean) as string[];
         group.last_collection_reminder_at = collDates.length > 0 ? collDates.sort().reverse()[0] : null;
@@ -1137,7 +1204,10 @@ export const QuickAssistSidebar = memo(({
               <span>Refills Due Soon ({groupedActionableRefills.length})</span>
             </div>
             <button
-              onClick={() => navigate('/crm?tab=refills')}
+              onClick={() => {
+                setExpanded(false);
+                navigate('/crm?tab=refills');
+              }}
               className="text-[9px] font-black text-sky-300 hover:underline uppercase tracking-widest cursor-pointer"
             >
               Manage
@@ -1360,37 +1430,51 @@ export const QuickAssistSidebar = memo(({
                             Ack
                           </button>
                         )}
-                        {group.isPatientConfirmed && (
+                        {!group.isReady && (
                           <button
                             type="button"
+                            disabled={markingReadyRefillPhones.has(group.patient_phone)}
                             onClick={(e) => {
                               e.stopPropagation();
-                              toastEvent.trigger(`Opening POS to bill refills for "${group.patient_name}"...`, 'info', '/pos');
-                              navigate('/pos', {
-                                state: {
-                                  prefill: {
-                                    patientName: group.patient_name,
-                                    patientPhone: group.patient_phone,
-                                    refillPatient: true,
-                                    refillIds: group.medicines.map(m => m.id),
-                                    medicines: group.medicines.map(m => ({
-                                      id: m.id,
-                                      medicine_id: m.medicine_id,
-                                      medicineName: m.medicine_name,
-                                      medicine_name: m.medicine_name,
-                                      quantity_needed: m.quantity_needed
-                                    }))
-                                  }
-                                }
-                              });
+                              handleMarkRefillGroupReady(group);
                             }}
-                            className="py-1 px-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold uppercase transition-colors flex items-center gap-1 shadow-sm cursor-pointer shrink-0"
-                            title={`Load ${group.patient_name}'s confirmed refill items into POS for manual verification and billing`}
+                            className="py-1 px-2.5 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9px] font-bold uppercase transition-colors flex items-center gap-1 shadow-xs cursor-pointer shrink-0"
+                            title={`Mark medicines packed & ready for pickup and auto-send collection WhatsApp to ${group.patient_name}`}
                           >
-                            <ShoppingCart size={10} />
-                            <span>Bill in POS</span>
+                            {markingReadyRefillPhones.has(group.patient_phone) ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                            <span>Mark Ready</span>
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toastEvent.trigger(`Opening POS to bill refills for "${group.patient_name}"...`, 'info', '/pos');
+                            setExpanded(false);
+                            navigate('/pos', {
+                              state: {
+                                prefill: {
+                                  patientName: group.patient_name,
+                                  patientPhone: group.patient_phone,
+                                  refillPatient: true,
+                                  refillIds: group.medicines.map(m => m.id),
+                                  medicines: group.medicines.map(m => ({
+                                    id: m.id,
+                                    medicine_id: m.medicine_id,
+                                    medicineName: m.medicine_name,
+                                    medicine_name: m.medicine_name,
+                                    quantity_needed: m.quantity_needed
+                                  }))
+                                }
+                              }
+                            });
+                          }}
+                          className="py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold uppercase transition-colors flex items-center gap-1 shadow-xs cursor-pointer shrink-0"
+                          title={`Load ${group.patient_name}'s refill items into POS for manual verification and billing`}
+                        >
+                          <ShoppingCart size={10} />
+                          <span>Bill in POS</span>
+                        </button>
                       </div>
 
                       {/* Tier 2: Communications & Lifecycle Actions */}
@@ -1465,6 +1549,18 @@ export const QuickAssistSidebar = memo(({
                               <AlertIcon size={10} />
                               <span>Retry</span>
                             </button>
+                          ) : group.isReady ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSendRefillGroup(group);
+                              }}
+                              className="py-0.5 px-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold uppercase transition-colors flex items-center gap-1 shadow-sm cursor-pointer"
+                              title={`Send WhatsApp pickup reminder for packed medicines to ${group.patient_name}`}
+                            >
+                              <Package size={10} />
+                              <span>Pickup Reminder</span>
+                            </button>
                           ) : (
                             <button
                               onClick={(e) => {
@@ -1472,7 +1568,7 @@ export const QuickAssistSidebar = memo(({
                                 handleSendRefillGroup(group);
                               }}
                               className="py-0.5 px-2 rounded bg-purple-600 hover:bg-purple-700 text-white text-[9px] font-bold uppercase transition-colors flex items-center gap-1 shadow-sm cursor-pointer"
-                              title={`Send WhatsApp reminder to ${group.patient_name}`}
+                              title={`Send Refill WhatsApp reminder to ${group.patient_name}`}
                             >
                               <SendIcon size={10} />
                               <span>Send</span>
@@ -1533,7 +1629,10 @@ export const QuickAssistSidebar = memo(({
               <span>Online Orders ({groupedWebsiteOrders.length})</span>
             </div>
             <button
-              onClick={() => navigate('/website-orders')}
+              onClick={() => {
+                setExpanded(false);
+                navigate('/website-orders');
+              }}
               className="text-[9px] font-black text-cyan-300 hover:underline uppercase tracking-widest cursor-pointer"
             >
               Online Orders
@@ -1706,7 +1805,10 @@ export const QuickAssistSidebar = memo(({
               <span>Quick Special Requests ({groupedSpecialOrders.length})</span>
             </div>
             <button
-              onClick={() => navigate('/crm?tab=special_orders')}
+              onClick={() => {
+                setExpanded(false);
+                navigate('/crm?tab=special_orders');
+              }}
               className="text-[9px] font-black text-amber-300 hover:underline uppercase tracking-widest cursor-pointer"
             >
               View All
