@@ -11859,6 +11859,93 @@ var init_nameNormalizer = __esm({
   }
 });
 
+// src/utils/saleTotals.ts
+var calculateSalesGstAndTotals;
+var init_saleTotals = __esm({
+  "src/utils/saleTotals.ts"() {
+    "use strict";
+    calculateSalesGstAndTotals = async (db2, items, discount) => {
+      let subtotal = 0;
+      let totalCgst = 0;
+      let totalSgst = 0;
+      const itemTaxBreakdowns = [];
+      const missingInventoryIds = items.filter((item) => {
+        const c = Number(item.cgst_per !== void 0 ? item.cgst_per : item.cgst !== void 0 ? item.cgst : NaN);
+        const s = Number(item.sgst_per !== void 0 ? item.sgst_per : item.sgst !== void 0 ? item.sgst : NaN);
+        return (isNaN(c) || isNaN(s) || c === 0 && s === 0) && item.inventory_id;
+      }).map((item) => item.inventory_id);
+      const medTaxMap = /* @__PURE__ */ new Map();
+      if (missingInventoryIds.length > 0) {
+        const placeholders = missingInventoryIds.map(() => "?").join(",");
+        const rows = await db2.all(
+          `SELECT im.id as inventory_id, m.cgst_per, m.sgst_per,
+              (SELECT pi.cgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no ORDER BY pi.id DESC LIMIT 1) AS pur_cgst,
+              (SELECT pi.sgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no ORDER BY pi.id DESC LIMIT 1) AS pur_sgst
+       FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
+          missingInventoryIds
+        );
+        for (const r of rows) {
+          const hasPurchaseRate = r.pur_cgst !== null && r.pur_cgst !== void 0 && r.pur_sgst !== null && r.pur_sgst !== void 0;
+          medTaxMap.set(r.inventory_id, hasPurchaseRate ? { cgst_per: r.pur_cgst, sgst_per: r.pur_sgst } : { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
+        }
+      }
+      const lines = items.map((item) => {
+        const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0 } = item;
+        const pSize = Math.max(1, Number(pack_size || 1));
+        const d = Number(discount_per || item.discountPer || 0);
+        const dPrice = Number(unit_price) * (1 - d / 100);
+        const lineGross = Number(quantity) * dPrice + Number(loose_qty) * (dPrice / pSize);
+        subtotal += lineGross;
+        return { item, lineGross };
+      });
+      const discountFactor = subtotal > 0 ? Math.max(0, subtotal - Number(discount)) / subtotal : 1;
+      for (const { item, lineGross: gross } of lines) {
+        const inventory_id = item.inventory_id;
+        const lineGross = gross * discountFactor;
+        let cgstPer = Number(item.cgst_per !== void 0 ? item.cgst_per : item.cgst !== void 0 ? item.cgst : NaN);
+        let sgstPer = Number(item.sgst_per !== void 0 ? item.sgst_per : item.sgst !== void 0 ? item.sgst : NaN);
+        if ((isNaN(cgstPer) || isNaN(sgstPer) || cgstPer === 0 && sgstPer === 0) && inventory_id) {
+          const medTax = medTaxMap.get(inventory_id);
+          if (medTax) {
+            if (isNaN(cgstPer) || cgstPer === 0) cgstPer = Number(medTax.cgst_per) || 0;
+            if (isNaN(sgstPer) || sgstPer === 0) sgstPer = Number(medTax.sgst_per) || 0;
+          }
+        }
+        if (isNaN(cgstPer)) cgstPer = 0;
+        if (isNaN(sgstPer)) sgstPer = 0;
+        const gstRate = cgstPer + sgstPer;
+        const taxable = gstRate > 0 ? lineGross / (1 + gstRate / 100) : lineGross;
+        const lineTax = lineGross - taxable;
+        const cgst_value = Number((lineTax * cgstPer / (gstRate || 1)).toFixed(2));
+        const sgst_value = Number((lineTax * sgstPer / (gstRate || 1)).toFixed(2));
+        totalCgst += cgst_value;
+        totalSgst += sgst_value;
+        itemTaxBreakdowns.push({
+          item,
+          cgst_value,
+          sgst_value,
+          cgst_per: cgstPer,
+          sgst_per: sgstPer
+        });
+      }
+      const roundedCgst = Number(totalCgst.toFixed(2));
+      const roundedSgst = Number(totalSgst.toFixed(2));
+      const total = Math.round(subtotal - Number(discount));
+      const tax = Number((roundedCgst + roundedSgst).toFixed(2));
+      const roff = Number((total - (subtotal - Number(discount))).toFixed(2));
+      return {
+        subtotal,
+        total,
+        tax,
+        roff,
+        totalCgst: roundedCgst,
+        totalSgst: roundedSgst,
+        itemTaxBreakdowns
+      };
+    };
+  }
+});
+
 // src/services/telegramPrescriptionService.ts
 async function initCartStore() {
   try {
@@ -11890,6 +11977,7 @@ var init_telegramPrescriptionService = __esm({
   "src/services/telegramPrescriptionService.ts"() {
     "use strict";
     init_connection();
+    init_saleTotals();
     init_productNameFilterService();
     carts = /* @__PURE__ */ new Map();
     initCartStore();
@@ -12166,24 +12254,14 @@ var init_telegramPrescriptionService = __esm({
       /**
        * Calculate cart total
        */
-      calculateCartTotal(chatId) {
+      async calculateCartTotal(chatId) {
         const cart = this.getCart(chatId);
         if (!cart || cart.items.length === 0) {
           return { subtotal: 0, tax: 0, total: 0, items: [] };
         }
-        let subtotal = 0;
-        for (const item of cart.items) {
-          subtotal += item.quantity * item.unit_price;
-        }
-        const taxRate = 0.05;
-        const total = Math.round(subtotal);
-        const tax = Number((total * taxRate / (1 + taxRate)).toFixed(2));
-        return {
-          subtotal,
-          tax,
-          total,
-          items: cart.items
-        };
+        const db2 = await dbManager.getConnection();
+        const { subtotal, tax, total } = await calculateSalesGstAndTotals(db2, cart.items, 0);
+        return { subtotal, tax, total, items: cart.items };
       }
       // Message sending helpers (these will be called from telegramBot.ts)
       async sendNoMedicineDetectedMessage(chatId, bot) {
@@ -13143,7 +13221,7 @@ Welcome back!`,
           const chatId = msg.chat.id;
           try {
             const cartItems = telegramPrescriptionService.getCartItems(chatId);
-            const { subtotal, tax, total } = telegramPrescriptionService.calculateCartTotal(chatId);
+            const { subtotal, tax, total } = await telegramPrescriptionService.calculateCartTotal(chatId);
             if (cartItems.length === 0) {
               this.bot?.sendMessage(chatId, "\u{1F6D2} Your cart is empty. Add medicines by sending prescription images or using /check command.");
               return;
@@ -13833,6 +13911,14 @@ async function ensureRefillCartLinkSchema(db2) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(medicine_id, store_id, product_code)
+    )
+  `);
+  await db2.run(`
+    CREATE TABLE IF NOT EXISTS distributor_priority (
+      name_key TEXT PRIMARY KEY,
+      store_name TEXT NOT NULL,
+      priority INTEGER NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   await ensureColumns(db2, "patient_refills", {
@@ -48465,8 +48551,8 @@ var init_inventory = __esm({
           [medicine_id, batch_no]
         );
         const medRow = await db2.get("SELECT rate, mrp, cgst_per, sgst_per FROM medicines WHERE id = ?", [medicine_id]);
-        const defaultCgst = medRow?.cgst_per !== void 0 && medRow?.cgst_per !== null && medRow?.cgst_per !== 0 ? medRow.cgst_per : 6;
-        const defaultSgst = medRow?.sgst_per !== void 0 && medRow?.sgst_per !== null && medRow?.sgst_per !== 0 ? medRow.sgst_per : 6;
+        const defaultCgst = medRow?.cgst_per !== void 0 && medRow?.cgst_per !== null && medRow?.cgst_per !== 0 ? medRow.cgst_per : null;
+        const defaultSgst = medRow?.sgst_per !== void 0 && medRow?.sgst_per !== null && medRow?.sgst_per !== 0 ? medRow.sgst_per : null;
         if (batchRow) {
           return res.json({
             found: true,
@@ -49112,93 +49198,6 @@ async function recordStockLedger(db2, entry) {
 var init_stockRebuild = __esm({
   "src/utils/stockRebuild.ts"() {
     "use strict";
-  }
-});
-
-// src/utils/saleTotals.ts
-var calculateSalesGstAndTotals;
-var init_saleTotals = __esm({
-  "src/utils/saleTotals.ts"() {
-    "use strict";
-    calculateSalesGstAndTotals = async (db2, items, discount) => {
-      let subtotal = 0;
-      let totalCgst = 0;
-      let totalSgst = 0;
-      const itemTaxBreakdowns = [];
-      const missingInventoryIds = items.filter((item) => {
-        const c = Number(item.cgst_per !== void 0 ? item.cgst_per : item.cgst !== void 0 ? item.cgst : NaN);
-        const s = Number(item.sgst_per !== void 0 ? item.sgst_per : item.sgst !== void 0 ? item.sgst : NaN);
-        return (isNaN(c) || isNaN(s) || c === 0 && s === 0) && item.inventory_id;
-      }).map((item) => item.inventory_id);
-      const medTaxMap = /* @__PURE__ */ new Map();
-      if (missingInventoryIds.length > 0) {
-        const placeholders = missingInventoryIds.map(() => "?").join(",");
-        const rows = await db2.all(
-          `SELECT im.id as inventory_id, m.cgst_per, m.sgst_per,
-              (SELECT pi.cgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no ORDER BY pi.id DESC LIMIT 1) AS pur_cgst,
-              (SELECT pi.sgst_per FROM purchase_items pi WHERE pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no ORDER BY pi.id DESC LIMIT 1) AS pur_sgst
-       FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
-          missingInventoryIds
-        );
-        for (const r of rows) {
-          const hasPurchaseRate = r.pur_cgst !== null && r.pur_cgst !== void 0 && r.pur_sgst !== null && r.pur_sgst !== void 0;
-          medTaxMap.set(r.inventory_id, hasPurchaseRate ? { cgst_per: r.pur_cgst, sgst_per: r.pur_sgst } : { cgst_per: r.cgst_per, sgst_per: r.sgst_per });
-        }
-      }
-      const lines = items.map((item) => {
-        const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0 } = item;
-        const pSize = Math.max(1, Number(pack_size || 1));
-        const d = Number(discount_per || item.discountPer || 0);
-        const dPrice = Number(unit_price) * (1 - d / 100);
-        const lineGross = Number(quantity) * dPrice + Number(loose_qty) * (dPrice / pSize);
-        subtotal += lineGross;
-        return { item, lineGross };
-      });
-      const discountFactor = subtotal > 0 ? Math.max(0, subtotal - Number(discount)) / subtotal : 1;
-      for (const { item, lineGross: gross } of lines) {
-        const inventory_id = item.inventory_id;
-        const lineGross = gross * discountFactor;
-        let cgstPer = Number(item.cgst_per !== void 0 ? item.cgst_per : item.cgst !== void 0 ? item.cgst : NaN);
-        let sgstPer = Number(item.sgst_per !== void 0 ? item.sgst_per : item.sgst !== void 0 ? item.sgst : NaN);
-        if ((isNaN(cgstPer) || isNaN(sgstPer) || cgstPer === 0 && sgstPer === 0) && inventory_id) {
-          const medTax = medTaxMap.get(inventory_id);
-          if (medTax) {
-            if (isNaN(cgstPer) || cgstPer === 0) cgstPer = Number(medTax.cgst_per) || 0;
-            if (isNaN(sgstPer) || sgstPer === 0) sgstPer = Number(medTax.sgst_per) || 0;
-          }
-        }
-        if (isNaN(cgstPer)) cgstPer = 0;
-        if (isNaN(sgstPer)) sgstPer = 0;
-        const gstRate = cgstPer + sgstPer;
-        const taxable = gstRate > 0 ? lineGross / (1 + gstRate / 100) : lineGross;
-        const lineTax = lineGross - taxable;
-        const cgst_value = Number((lineTax * cgstPer / (gstRate || 1)).toFixed(2));
-        const sgst_value = Number((lineTax * sgstPer / (gstRate || 1)).toFixed(2));
-        totalCgst += cgst_value;
-        totalSgst += sgst_value;
-        itemTaxBreakdowns.push({
-          item,
-          cgst_value,
-          sgst_value,
-          cgst_per: cgstPer,
-          sgst_per: sgstPer
-        });
-      }
-      const roundedCgst = Number(totalCgst.toFixed(2));
-      const roundedSgst = Number(totalSgst.toFixed(2));
-      const total = Math.round(subtotal - Number(discount));
-      const tax = Number((roundedCgst + roundedSgst).toFixed(2));
-      const roff = Number((total - (subtotal - Number(discount))).toFixed(2));
-      return {
-        subtotal,
-        total,
-        tax,
-        roff,
-        totalCgst: roundedCgst,
-        totalSgst: roundedSgst,
-        itemTaxBreakdowns
-      };
-    };
   }
 });
 
@@ -53215,13 +53214,13 @@ async function preScanCsv(filePath, onProgress) {
       if (!nameRaw) return;
       const nameNorm = nameRaw.trim().replace(/\s+/g, " ");
       if (!nameNorm) return;
-      const nameKey = nameNorm.toLowerCase();
+      const nameKey2 = nameNorm.toLowerCase();
       totalCount++;
-      if (seenInCsv.has(nameKey)) {
+      if (seenInCsv.has(nameKey2)) {
         duplicateCount++;
       } else {
-        seenInCsv.add(nameKey);
-        if (existingNames.has(nameKey)) {
+        seenInCsv.add(nameKey2);
+        if (existingNames.has(nameKey2)) {
           existingCount++;
         } else {
           newCount++;
@@ -53490,12 +53489,12 @@ async function runCatalogAnalysis(jobId) {
           if (!row || row[finalNameColIdx] === void 0) return;
           const nameRaw = String(row[finalNameColIdx]).trim().replace(/\s+/g, " ");
           if (!nameRaw) return;
-          const nameKey = nameRaw.toLowerCase();
-          if (seenNamesAll.has(nameKey)) {
+          const nameKey2 = nameRaw.toLowerCase();
+          if (seenNamesAll.has(nameKey2)) {
             duplicateCount++;
           } else {
-            seenNamesAll.add(nameKey);
-            if (existingNames.has(nameKey)) {
+            seenNamesAll.add(nameKey2);
+            if (existingNames.has(nameKey2)) {
               existingCount++;
             } else {
               newCount++;
@@ -53537,12 +53536,12 @@ async function runCatalogAnalysis(jobId) {
       extracted.forEach((item) => {
         const nameRaw = String(item.name).trim().replace(/\s+/g, " ");
         if (!nameRaw) return;
-        const nameKey = nameRaw.toLowerCase();
-        if (seenNamesAll.has(nameKey)) {
+        const nameKey2 = nameRaw.toLowerCase();
+        if (seenNamesAll.has(nameKey2)) {
           duplicateCount++;
         } else {
-          seenNamesAll.add(nameKey);
-          if (existingNames.has(nameKey)) {
+          seenNamesAll.add(nameKey2);
+          if (existingNames.has(nameKey2)) {
             existingCount++;
           } else {
             newCount++;
@@ -54607,7 +54606,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.55";
+    APP_VERSION = "0.1.56";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -63151,8 +63150,8 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
       }
       const cleanRow = validation.cleaned;
       if (dataType === "inventory") {
-        let nameKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
-        let rawName = nameKey ? String(cleanRow[nameKey] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
+        let nameKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
+        let rawName = nameKey2 ? String(cleanRow[nameKey2] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
         if (!rawName) {
           migrationStatus.errorCount++;
           await db2.run(
@@ -63434,8 +63433,8 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
             clearedSalesInvoices.add(invoice.id);
           }
         }
-        let nameKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
-        let rawName = nameKey ? String(cleanRow[nameKey] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
+        let nameKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
+        let rawName = nameKey2 ? String(cleanRow[nameKey2] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
         if (!rawName) {
           migrationStatus.errorCount++;
           await db2.run(
@@ -63577,8 +63576,8 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
             clearedPurchases.add(purchase.id);
           }
         }
-        let nameKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
-        let rawName = nameKey ? String(cleanRow[nameKey] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
+        let nameKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
+        let rawName = nameKey2 ? String(cleanRow[nameKey2] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
         if (!rawName) {
           migrationStatus.errorCount++;
           await db2.run(
@@ -63707,8 +63706,8 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
             clearedReturns.add(retRecord.id);
           }
         }
-        let nameKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
-        let rawName = nameKey ? String(cleanRow[nameKey] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
+        let nameKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
+        let rawName = nameKey2 ? String(cleanRow[nameKey2] || "").trim() : String(cleanRow["Medicine"] || cleanRow["name"] || "").trim();
         if (!rawName) {
           migrationStatus.errorCount++;
           await db2.run(
@@ -63878,9 +63877,9 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           }
         }
         let medicineId = null;
-        const nameKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
-        if (nameKey && cleanRow[nameKey]) {
-          let rawName = String(cleanRow[nameKey] || "").trim();
+        const nameKey2 = Object.keys(mapping || {}).find((k) => mapping?.[k] === "name");
+        if (nameKey2 && cleanRow[nameKey2]) {
+          let rawName = String(cleanRow[nameKey2] || "").trim();
           let medName = rawName;
           if (rawName && medicineActions) {
             const actionObj = medicineActions[rawName];
@@ -72235,6 +72234,7 @@ var init_telegramPrescription = __esm({
     "use strict";
     import_express18 = __toESM(require("express"), 1);
     init_connection();
+    init_saleTotals();
     init_telegramPrescriptionService();
     router18 = import_express18.default.Router();
     router18.get("/cart/:chatId", async (req, res) => {
@@ -72244,7 +72244,7 @@ var init_telegramPrescription = __esm({
           return res.status(400).json({ error: "Invalid chat ID" });
         }
         const cartItems = telegramPrescriptionService.getCartItems(chatId);
-        const { subtotal, tax, total } = telegramPrescriptionService.calculateCartTotal(chatId);
+        const { subtotal, tax, total } = await telegramPrescriptionService.calculateCartTotal(chatId);
         res.json({
           chatId,
           items: cartItems,
@@ -72278,7 +72278,7 @@ var init_telegramPrescription = __esm({
           parsedQuantity
         );
         if (success) {
-          const { subtotal, tax, total } = telegramPrescriptionService.calculateCartTotal(parsedChatId);
+          const { subtotal, tax, total } = await telegramPrescriptionService.calculateCartTotal(parsedChatId);
           res.json({
             success: true,
             message: "Item added to cart",
@@ -72355,18 +72355,12 @@ var init_telegramPrescription = __esm({
         }
         const padded = String(nextNum).padStart(4, "0");
         const invoice_no = `${prefix}${padded}`;
-        let subtotal = 0;
-        for (const item of items) {
-          subtotal += item.quantity * item.unit_price;
-        }
-        const taxRate = 0.05;
-        const total = Math.round(subtotal - discount);
-        const tax = Number((total * taxRate / (1 + taxRate)).toFixed(2));
+        const { total, tax, totalCgst, totalSgst, itemTaxBreakdowns } = await calculateSalesGstAndTotals(db2, items, Number(discount) || 0);
         const paymentMedium = payment_medium || "CASH";
         const paymentStatus = paymentMedium === "CREDIT" ? "UNPAID" : "PAID";
         const result = await db2.run(
-          "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
-          [invoice_no, finalPatientId, total, tax, paymentMedium, paymentStatus]
+          "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, payment_medium, payment_status, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
+          [invoice_no, finalPatientId, total, tax, totalCgst, totalSgst, paymentMedium, paymentStatus]
         );
         const invoiceId = result.lastID;
         if (paymentMedium === "CREDIT") {
@@ -72376,9 +72370,10 @@ var init_telegramPrescription = __esm({
           );
         }
         for (const item of items) {
+          const tb = itemTaxBreakdowns.find((b) => b.item === item);
           await db2.run(
-            "INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
-            [invoiceId, item.inventory_id, item.quantity, item.unit_price]
+            "INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, cgst_value, sgst_value) VALUES (?, ?, ?, ?, ?, ?)",
+            [invoiceId, item.inventory_id, item.quantity, item.unit_price, tb?.cgst_value ?? 0, tb?.sgst_value ?? 0]
           );
           await db2.run("UPDATE inventory_master SET quantity = quantity - ? WHERE id = ?", [item.quantity, item.inventory_id]);
         }
@@ -72414,7 +72409,8 @@ function flattenCart(cart) {
         storeName: String(d.storeName || ""),
         productCode: String(it.productCode || ""),
         productName: String(it.productName || ""),
-        qty: Number(it.qty) || 0
+        qty: Number(it.qty) || 0,
+        raw: it
       });
     }
   }
@@ -72477,6 +72473,63 @@ async function saveMedicineLinks(medicineId, picks) {
   }
   return clean2.length;
 }
+async function loadPriorityMap() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all("SELECT name_key, priority FROM distributor_priority");
+  return new Map(rows.map((r) => [String(r.name_key), Number(r.priority)]));
+}
+function orderByPriority(items, storeNameOf, prio) {
+  const rank = (i) => prio.get(nameKey(storeNameOf(i)));
+  return items.map((it, idx) => ({ it, idx, r: rank(it) })).sort((a, b) => (a.r ?? Infinity) - (b.r ?? Infinity) || a.idx - b.idx).map((x) => x.it);
+}
+async function getDistributorPriorityList() {
+  const db2 = await dbManager.getConnection();
+  const found = /* @__PURE__ */ new Map();
+  const add = (name, linked) => {
+    const storeName = String(name || "").trim();
+    const key = nameKey(storeName);
+    if (!key) return;
+    const cur = found.get(key);
+    if (cur) cur.linkedMedicines += linked;
+    else found.set(key, { storeName, ranked: false, linkedMedicines: linked });
+  };
+  const saved = await db2.all("SELECT name_key, store_name, priority FROM distributor_priority ORDER BY priority");
+  const links = await db2.all("SELECT store_name FROM medicine_distributor_links WHERE mapped != 0");
+  const maps = await db2.all("SELECT store_name FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL");
+  const ranked = [];
+  for (const r of saved) {
+    const row = { storeName: String(r.store_name), ranked: true, linkedMedicines: 0 };
+    found.set(String(r.name_key), row);
+    ranked.push(row);
+  }
+  for (const l of links) add(l.store_name, 1);
+  for (const m of maps) add(m.store_name, 0);
+  const rest = [...found.values()].filter((v) => !v.ranked).sort((a, b) => b.linkedMedicines - a.linkedMedicines || a.storeName.localeCompare(b.storeName));
+  return [...ranked, ...rest];
+}
+async function saveDistributorPriority(storeNames) {
+  const seen = /* @__PURE__ */ new Set();
+  const clean2 = storeNames.map((n) => String(n || "").trim()).filter((n) => {
+    const k = nameKey(n);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const db2 = await dbManager.getConnection();
+  await db2.run("BEGIN");
+  try {
+    await db2.run("DELETE FROM distributor_priority");
+    for (let i = 0; i < clean2.length; i++) {
+      await db2.run("INSERT INTO distributor_priority (name_key, store_name, priority) VALUES (?, ?, ?)", [nameKey(clean2[i]), clean2[i], i]);
+    }
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK").catch(() => {
+    });
+    throw err;
+  }
+  return clean2.length;
+}
 function cartErrorMessage(err) {
   if (err?.code === "NEED_LOGIN") return "Pharmarack is not logged in. Log in from the Live Cart page, then retry.";
   if (err?.code === "SESSION_EXPIRED") return "Pharmarack session expired. Re-login, then retry.";
@@ -72511,22 +72564,71 @@ async function processRefillCartItem(refillId, opts = {}) {
   } catch (err) {
     return fail(cartErrorMessage(err));
   }
-  const links = await db2.all(
-    "SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id",
-    [refill.medicine_id]
+  const links = orderByPriority(
+    await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]),
+    (l) => l.store_name,
+    await loadPriorityMap()
   );
-  let hit = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
+  const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
+  if (mine) {
+    return {
+      ...base,
+      status: "in_cart",
+      message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
+      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty }
+    };
+  }
+  let hit;
   for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
   if (!hit) {
     const want = norm(medicineName);
     hit = lines.find((l) => want && norm(l.productName) === want);
   }
   if (hit) {
+    const total = hit.qty + qty;
+    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total };
+    if (opts.dryRun) {
+      return { ...base, status: "ready", message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
+    }
+    const raw = hit.raw || {};
+    const inc = await pr.addItemsToPharmarackCart([{
+      productId: raw.productId,
+      storeId: hit.storeId,
+      productCode: hit.productCode,
+      productName: hit.productName,
+      storeName: hit.storeName,
+      company: raw.company || void 0,
+      rate: raw.ptr != null ? Number(raw.ptr) : void 0,
+      mrp: raw.mrp != null ? Number(raw.mrp) : void 0,
+      scheme: raw.scheme || void 0,
+      packaging: raw.packaging || void 0,
+      mapped: true,
+      qty: total
+    }]);
+    if (!inc.success || inc.offline) {
+      return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || "offline"}`);
+    }
+    pr.invalidatePharmarackCartCache();
+    let after;
+    for (let attempt = 0; attempt < 2 && !(after && after.qty === total); attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      try {
+        after = findLine(flattenCart(await pr.loadLiveCartCore()), hit.storeId, hit.productCode);
+      } catch (_) {
+      }
+    }
+    if (!after || after.qty !== total) {
+      return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
+    }
+    await db2.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
+    );
     return {
       ...base,
-      status: "in_cart",
-      message: `Already in the cart at ${hit.storeName} (qty ${hit.qty}).`,
-      line: { storeName: hit.storeName, productName: hit.productName, qty: hit.qty }
+      status: "added",
+      message: `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`,
+      line: { storeName: after.storeName, productName: after.productName, qty: total }
     };
   }
   const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "";
@@ -72588,8 +72690,7 @@ async function processRefillCartItem(refillId, opts = {}) {
       message: `Out of stock at ${linked.map((l) => l.storeName).join(", ")}. Link another distributor.`
     };
   }
-  const cartStores = new Set(lines.map((l) => l.storeId));
-  const chosen = available.find((s) => cartStores.has(Number(s.link.store_id))) || available[0];
+  const chosen = available[0];
   const it = chosen.item;
   if (opts.dryRun) {
     return {
@@ -72669,29 +72770,27 @@ async function sendRefillCartSummary(patientName, rows) {
     );
     for (const r of dbRows) saved.set(Number(r.id), r);
   }
-  const added = [];
-  const inCart = [];
+  const byStore = /* @__PURE__ */ new Map();
   const needs = [];
   for (const r of rows) {
     const name = String(r.medicineName || "Medicine");
     const db_ = saved.get(Number(r.refillId));
-    if (r.status === "added" && db_?.cart_product_code) {
-      added.push(`\u2022 ${name} \u2192 ${db_.cart_store_name} \xD7 ${db_.cart_qty}`);
-    } else if (r.status === "in_cart") {
-      inCart.push(`\u2022 ${name} \u2192 ${r.storeName || "distributor"} (cart qty ${r.qty ?? "?"})`);
+    const confirmed = r.status === "added" && db_?.cart_product_code;
+    if (confirmed || r.status === "in_cart") {
+      const store = String((confirmed ? r.storeName || db_.cart_store_name : r.storeName) || "Distributor").trim();
+      const qty = r.qty ?? (confirmed ? db_.cart_qty : void 0);
+      const line = `\u2022 ${name} \xD7 ${qty ?? "?"}${r.status === "in_cart" ? " (already in cart)" : ""}`;
+      byStore.set(store, [...byStore.get(store) || [], line]);
     } else {
       needs.push(`\u2022 ${name} \u2014 ${r.message || r.status}`);
     }
   }
   const parts = [`\u{1F6D2} *Refill cart \u2014 ${patientName || "Patient"}*`];
-  if (added.length) parts.push(`
-\u2705 Added (${added.length})
-${added.join("\n")}`);
-  if (inCart.length) parts.push(`
-\u{1F6D2} Already in cart (${inCart.length})
-${inCart.join("\n")}`);
+  for (const [store, lines] of byStore) parts.push(`
+*${store}*
+${lines.join("\n")}`);
   if (needs.length) parts.push(`
-\u26A0\uFE0F Needs you (${needs.length})
+\u26A0\uFE0F *Failed to add (${needs.length})*
 ${needs.join("\n")}
 Open CRM \u2192 Refills to fix.`);
   const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
@@ -72741,7 +72840,7 @@ function removeRefillCartLines(rows, clearRows) {
     }
   });
 }
-var norm, isValidPick, findLine, REFILL_CART_COLUMNS;
+var norm, isValidPick, nameKey, findLine, REFILL_CART_COLUMNS;
 var init_refillCartService = __esm({
   "src/services/refillCartService.ts"() {
     "use strict";
@@ -72749,6 +72848,7 @@ var init_refillCartService = __esm({
     init_eventService();
     norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     isValidPick = (p) => Number(p?.storeId) > 0 && String(p?.productCode || "").trim() !== "" && String(p?.storeName || "").trim() !== "";
+    nameKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     findLine = (lines, storeId, code) => lines.find((l) => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ""));
     REFILL_CART_COLUMNS = "id, cart_store_id, cart_store_name, cart_product_code, cart_product_name, cart_qty";
   }
@@ -73904,6 +74004,22 @@ var init_refills = __esm({
         res.json({ success: true, ranks: await getDistributorPurchaseRanks() });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to load distributor purchase counts" });
+      }
+    });
+    router19.get("/distributor-priority", async (_req, res) => {
+      try {
+        res.json({ success: true, distributors: await getDistributorPriorityList() });
+      } catch (err) {
+        res.status(500).json({ error: err?.message || "Failed to load distributor priority" });
+      }
+    });
+    router19.put("/distributor-priority", async (req, res) => {
+      if (!Array.isArray(req.body?.order)) return res.status(400).json({ error: "order array of distributor names is required" });
+      try {
+        const saved = await saveDistributorPriority(req.body.order);
+        res.json({ success: true, saved, distributors: await getDistributorPriorityList() });
+      } catch (err) {
+        res.status(500).json({ error: err?.message || "Failed to save distributor priority" });
       }
     });
     router19.post("/cart-summary", async (req, res) => {
@@ -86946,25 +87062,12 @@ var init_sales = __esm({
             customerId = custResult.lastID;
           }
         }
-        let subtotal = 0;
-        for (const item of itemsToProcess) {
-          const { quantity = 0, unit_price = 0, loose_qty = 0, pack_size = 1, discount_per = 0 } = item;
-          const q = Number(quantity);
-          const l = Number(loose_qty);
-          const pSize = Number(pack_size || 1);
-          const d = Number(discount_per);
-          const uPrice = Number(unit_price);
-          const dPrice = uPrice * (1 - d / 100);
-          subtotal += q * dPrice + l * (dPrice / pSize);
-        }
-        const taxRate = 0.05;
-        const total = Math.round(subtotal - Number(finalDiscount));
-        const tax = Number((total * taxRate / (1 + taxRate)).toFixed(2));
+        const { subtotal, total, tax, totalCgst, totalSgst, itemTaxBreakdowns } = await calculateSalesGstAndTotals(db2, itemsToProcess, Number(finalDiscount));
         const invoice_no = await generateInvoiceNo(db2);
         const result = await db2.run(
-          "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, payment_medium, payment_status, date, discount, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, payment_medium, payment_status, date, discount, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           // The phone sends its sale time as UTC ISO; the bill keeps that moment in shop time.
-          [invoice_no, customerId, total, tax, "CASH", "PAID", normalizeToLocalSqlDateTime(staged.sale_date), Number(finalDiscount), subtotal]
+          [invoice_no, customerId, total, tax, totalCgst, totalSgst, "CASH", "PAID", normalizeToLocalSqlDateTime(staged.sale_date), Number(finalDiscount), subtotal]
         );
         const invoiceId = result.lastID;
         for (const item of itemsToProcess) {
@@ -86983,9 +87086,10 @@ var init_sales = __esm({
             );
             await db2.run("UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?", [newStock.quantity, newStock.loose_quantity, inventory_id]);
           }
+          const tb = itemTaxBreakdowns.find((b) => b.item === item);
           await db2.run(
-            "INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per) VALUES (?, ?, ?, ?, ?, ?)",
-            [invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty), Number(discount_per)]
+            "INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty), Number(discount_per), tb?.cgst_value ?? 0, tb?.sgst_value ?? 0]
           );
         }
         await db2.run(`UPDATE staged_sales SET status = 'approved' WHERE id = ?`, [id]);

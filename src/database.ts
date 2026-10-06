@@ -370,6 +370,23 @@ async function ensureRefillCartLinkSchema(db: any) {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  // Orders read back from Pharmarack's own order list (retailers.pharmarack.com/orderhistory),
+  // one row per real OrderNo. Lets the app notice orders placed directly on the Pharmarack site
+  // and announce each one to its distributor exactly once. Schema owned here so both boot paths get it.
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pharmarack_synced_orders (
+      order_no TEXT PRIMARY KEY,
+      pharmarack_order_id INTEGER,
+      store_id INTEGER,
+      store_name TEXT NOT NULL,
+      order_amount REAL,
+      order_date TEXT NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      announced_at INTEGER,
+      announce_result TEXT
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pharmarack_synced_orders_date ON pharmarack_synced_orders (order_date, store_name)');
   await ensureColumns(db, 'patient_refills', {
     cart_store_id: 'INTEGER DEFAULT NULL',
     cart_store_name: 'TEXT DEFAULT NULL',

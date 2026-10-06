@@ -2353,6 +2353,40 @@ async function verifyOrderPlacedInPharmarack(storeId: number): Promise<boolean> 
   return false;
 }
 
+// User-clicked: read today's orders from Pharmarack's order list now (orders placed on the site
+// are recorded once by OrderNo and announced to their distributor). Same code the heartbeat runs.
+router.post('/sync-orders', async (_req, res) => {
+  try {
+    const { syncPharmarackOrders } = await import('../services/pharmarackOrderSyncService.js');
+    const result = await syncPharmarackOrders(true);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Failed to sync Pharmarack orders' });
+  }
+});
+
+// DRY RUN of the order sync: reads today's Pharmarack orders with the app's saved login and reports
+// what a real sync would do for each. Writes nothing, queues nothing, sends nothing.
+router.get('/sync-orders/dry-run', async (_req, res) => {
+  try {
+    const { dryRunOrderSync } = await import('../services/pharmarackOrderSyncService.js');
+    res.json(await dryRunOrderSync());
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Dry run failed' });
+  }
+});
+
+// Read-only audit of the order sync for a day: orders noticed, what was decided for each, and every
+// dispatch reminder queued per distributor (flags any distributor that got more than one).
+router.get('/sync-orders/audit', async (req, res) => {
+  try {
+    const { getOrderSyncAudit } = await import('../services/pharmarackOrderSyncService.js');
+    res.json(await getOrderSyncAudit(typeof req.query.date === 'string' ? req.query.date : undefined));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load order sync audit' });
+  }
+});
+
 // Manual notification trigger
 router.post('/cart/notify-manual', async (req, res) => {
   const { storeId, storeName, deliveryPersons, items, skipDistributor } = req.body;

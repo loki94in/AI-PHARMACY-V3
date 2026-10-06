@@ -161,9 +161,12 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
 
   try {
     // 1. Check if number belongs to a registered distributor (main table)
+    // The app saves a distributor's WhatsApp number in `phone` (dispatch reminders send to it) and
+    // older rows keep it in `contact`: a number in EITHER column is a distributor.
     const dist = await db.get(
-      `SELECT id, name FROM distributors WHERE contact IS NOT NULL AND (contact LIKE ? OR contact LIKE ?) LIMIT 1`,
-      [`%${cleanDigits}`, `%${cleanDigits}%`]
+      `SELECT id, name FROM distributors
+       WHERE (contact IS NOT NULL AND contact LIKE ?) OR (phone IS NOT NULL AND phone LIKE ?) LIMIT 1`,
+      [`%${cleanDigits}%`, `%${cleanDigits}%`]
     );
     if (dist) {
       console.log(`[Intent Service] Skipping customer bot for distributor "${dist.name}" (${cleanDigits}).`);
@@ -185,8 +188,9 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
     // 3. Check delivery_boys (dispatch staff)
     try {
       const deliveryBoy = await db.get(
-        `SELECT id, name FROM delivery_boys WHERE phone IS NOT NULL AND (phone LIKE ? OR phone LIKE ?) LIMIT 1`,
-        [`%${cleanDigits}`, `%${cleanDigits}%`]
+        // delivery_boys keeps the number in whatsapp_number (it has no `phone` column).
+        `SELECT id, name FROM delivery_boys WHERE whatsapp_number IS NOT NULL AND whatsapp_number LIKE ? LIMIT 1`,
+        [`%${cleanDigits}%`]
       );
       if (deliveryBoy) {
         console.log(`[Intent Service] Skipping customer bot for delivery staff "${deliveryBoy.name}" (${cleanDigits}).`);
@@ -197,11 +201,24 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
     // 4. Check distributor_dispatch_reminders (reminder-registered contacts)
     try {
       const reminderContact = await db.get(
-        `SELECT id FROM distributor_dispatch_reminders WHERE phone IS NOT NULL AND (phone LIKE ? OR phone LIKE ?) LIMIT 1`,
-        [`%${cleanDigits}`, `%${cleanDigits}%`]
+        // the reminder column is distributor_phone (there is no `phone` column).
+        `SELECT id FROM distributor_dispatch_reminders WHERE distributor_phone IS NOT NULL AND distributor_phone LIKE ? LIMIT 1`,
+        [`%${cleanDigits}%`]
       );
       if (reminderContact) {
         console.log(`[Intent Service] Skipping customer bot for dispatch reminder contact (${cleanDigits}).`);
+        return true;
+      }
+    } catch { /* table may not exist on older installs */ }
+
+    // 4b. Distributor numbers saved from the Pharmarack cart (Edit Distributor Contact)
+    try {
+      const mapped = await db.get(
+        `SELECT id FROM pharmarack_distributor_mappings WHERE phone IS NOT NULL AND phone LIKE ? LIMIT 1`,
+        [`%${cleanDigits}%`]
+      );
+      if (mapped) {
+        console.log(`[Intent Service] Skipping customer bot for mapped Pharmarack distributor (${cleanDigits}).`);
         return true;
       }
     } catch { /* table may not exist on older installs */ }
