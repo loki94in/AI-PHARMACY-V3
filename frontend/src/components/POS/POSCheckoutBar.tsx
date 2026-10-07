@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserCheck, FileText, Zap, CheckCircle } from 'lucide-react';
+import { UserCheck, Receipt, Tag, Scale, Wallet, Zap, CheckCircle } from 'lucide-react';
 import { formatINR } from '../../utils/currency';
 
 interface POSCheckoutBarProps {
@@ -52,37 +52,51 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
         </div>
       </div>
 
-      {/* Section 2: Bill Breakdown (single line) */}
-      <div className="flex items-center gap-2 min-w-[220px] border-r border-glass-border/30 pr-2.5 shrink-0">
-        <FileText size={13} className="text-muted shrink-0" />
-        <span className="text-[11px] text-muted">Sub:</span>
-        <span className="font-mono font-bold text-text text-xs">₹{formatINR(subtotal)}</span>
-        <span className="text-[11px] text-muted ml-1">Disc%</span>
-        <input
-          id="pos-bill-discount-input"
-          name="pos_bill_discount"
-          type="number"
-          autoComplete="off"
-          value={discount === 0 || discount === undefined || discount === null ? '' : discount}
-          onChange={e => setDiscount(e.target.value === '' ? 0 : Math.min(100, Math.max(0, Number(e.target.value))))}
-          placeholder="0"
-          onKeyDown={e => {
-            if (e.key === 'Tab' && e.shiftKey) {
-              // back to the cart's trailing empty medicine row
-              const rows = document.querySelectorAll<HTMLInputElement>('input[id^="row-med-input-"]');
-              const last = rows.length > 0 ? rows[rows.length - 1] : null;
-              if (last && !last.disabled) { e.preventDefault(); last.focus(); last.select?.(); }
-            }
-          }}
-          className="w-12 bg-bg border border-glass-border rounded px-1.5 py-0.5 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-6"
-        />
-        {discountAmount > 0 && (
-          <span className="font-mono font-bold text-amber-500 text-xs">-₹{formatINR(discountAmount)}</span>
-        )}
+      {/* Section 2: Bill Breakdown (icon-first chips) */}
+      <div className="flex items-center gap-2 border-r border-glass-border/30 pr-2.5 shrink-0">
+        {/* Subtotal chip */}
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-bg3/60 border border-glass-border/40" title="Gross Subtotal">
+          <Receipt size={12} className="text-muted shrink-0" />
+          <span className="font-mono font-bold text-text text-xs">₹{formatINR(subtotal)}</span>
+        </div>
+
+        {/* Discount chip */}
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20" title="Bill Discount % and Calculated Savings">
+          <Tag size={12} className="text-amber-500 shrink-0" />
+          <div className="flex items-center gap-0.5">
+            <input
+              id="pos-bill-discount-input"
+              name="pos_bill_discount"
+              type="number"
+              autoComplete="off"
+              value={discount === 0 || discount === undefined || discount === null ? '' : discount}
+              onChange={e => setDiscount(e.target.value === '' ? 0 : Math.min(100, Math.max(0, Number(e.target.value))))}
+              placeholder="0"
+              onKeyDown={e => {
+                if (e.key === 'Tab' && e.shiftKey) {
+                  // back to the cart's trailing empty medicine row
+                  const rows = document.querySelectorAll<HTMLInputElement>('input[id^="row-med-input-"]');
+                  const last = rows.length > 0 ? rows[rows.length - 1] : null;
+                  if (last && !last.disabled) { e.preventDefault(); last.focus(); last.select?.(); }
+                }
+              }}
+              className="w-10 bg-bg border border-glass-border rounded px-1 py-0.2 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-5"
+            />
+            <span className="text-[10px] text-amber-500 font-bold">%</span>
+          </div>
+          {discountAmount > 0 && (
+            <span className="font-mono font-bold text-amber-500 text-xs">-₹{formatINR(discountAmount)}</span>
+          )}
+        </div>
+
+        {/* Round-off chip */}
         {Math.abs(roundOff) >= 0.005 && (
-          <span className="text-[11px] text-muted font-mono" title="Round-off to the nearest rupee">
-            Rnd {roundOff > 0 ? '+' : '-'}{formatINR(Math.abs(roundOff))}
-          </span>
+          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-bg3/60 border border-glass-border/40" title="Round-off to nearest rupee">
+            <Scale size={11} className="text-muted shrink-0" />
+            <span className="text-[11px] text-muted font-mono">
+              {roundOff > 0 ? '+' : '-'}{formatINR(Math.abs(roundOff))}
+            </span>
+          </div>
         )}
       </div>
 
@@ -127,9 +141,9 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
         </div>
       )}
 
-      {/* Section 4: Net Payable (compact) */}
-      <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded-lg bg-primary/5 border border-primary/20 shrink-0">
-        <span className="text-[11px] font-black text-primary uppercase tracking-widest">Total</span>
+      {/* Section 4: Net Payable (compact icon-first badge) */}
+      <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-primary/10 border border-primary/30 shrink-0 shadow-xs" title="Net Payable Total">
+        <Wallet size={15} className="text-primary shrink-0" />
         <span className="text-xl font-black font-mono text-primary leading-none">₹{formatINR(grandTotal)}</span>
       </div>
 

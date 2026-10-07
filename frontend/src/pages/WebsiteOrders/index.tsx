@@ -25,7 +25,8 @@ import {
   CreditCard,
   ShoppingCart,
   Building2,
-  Edit3
+  Edit3,
+  CheckCheck
 } from 'lucide-react';
 import { api, apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
@@ -193,6 +194,25 @@ export default function WebsiteOrders() {
     try {
       setActionInProgress(orderId);
       await apiClient.put(`/orders/${orderId}/status`, { status: 'Ready' });
+      fetchOrders(true);
+    } catch (err: any) {
+      setOrders(prevOrders);
+      cachedOrders = prevOrders;
+      toastEvent.trigger(err.response?.data?.error || 'Failed to update status', 'error');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleMarkOrdered = async (orderId: number) => {
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Ordered' } : o));
+    cachedOrders = cachedOrders.map(o => o.id === orderId ? { ...o, status: 'Ordered' } : o);
+    toastEvent.trigger(`Order #${orderId} marked Ordered`, 'success');
+
+    try {
+      setActionInProgress(orderId);
+      await apiClient.put(`/orders/${orderId}/status`, { status: 'Ordered' });
       fetchOrders(true);
     } catch (err: any) {
       setOrders(prevOrders);
@@ -443,7 +463,7 @@ export default function WebsiteOrders() {
   const getTimelineStep = (order: any): number => {
     if (order.delivery_status === 'delivered' || order.status === 'Fulfilled') return 5;
     if (order.status === 'Ready' || order.status === 'ORDER_READY_FOR_PICKUP' || order.delivery_status === 'dispatched') return 4;
-    if (order.status === 'Preparing' || order.delivery_status === 'preparing') return 3;
+    if (order.status === 'Ordered' || order.status === 'Preparing' || order.delivery_status === 'preparing') return 3;
     if (order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') return 2;
     return 1;
   };
@@ -451,7 +471,7 @@ export default function WebsiteOrders() {
   // KPI Calculations
   const metrics = useMemo(() => {
     const total = orders.length;
-    const pending = orders.filter(o => o.status === 'Pending' || o.delivery_status === 'pending').length;
+    const pending = orders.filter(o => o.status === 'Pending' || o.status === 'Ordered' || o.delivery_status === 'pending').length;
     const ready = orders.filter(o => o.status === 'Ready' || o.delivery_status === 'dispatched').length;
     const delivered = orders.filter(o => o.delivery_status === 'delivered').length;
     const returns = orders.filter(o => o.return_status === 'requested' || o.return_status === 'eligible' || o.return_override_by).length;
@@ -475,7 +495,7 @@ export default function WebsiteOrders() {
       if (!matchesSearch) return false;
 
       // Status matching
-      if (statusFilter === 'pending') return order.status === 'Pending' && order.delivery_status !== 'delivered';
+      if (statusFilter === 'pending') return (order.status === 'Pending' || order.status === 'Ordered') && order.delivery_status !== 'delivered';
       if (statusFilter === 'ready') return order.status === 'Ready' || order.delivery_status === 'dispatched';
       if (statusFilter === 'delivered') return order.delivery_status === 'delivered';
       if (statusFilter === 'returns') return order.return_status === 'requested' || order.return_status === 'expired' || order.return_override_by;
@@ -761,7 +781,7 @@ export default function WebsiteOrders() {
                     <div className="flex items-center justify-between text-[10px] font-bold text-muted">
                       <span>Order Progress</span>
                       <span className="text-primary font-black">
-                        {getTimelineStep(order) === 5 ? 'Delivered' : getTimelineStep(order) === 4 ? 'Ready / Dispatched' : getTimelineStep(order) === 3 ? 'Preparing' : getTimelineStep(order) === 2 ? 'Payment Confirmed' : 'Order Placed'}
+                        {getTimelineStep(order) === 5 ? 'Delivered' : getTimelineStep(order) === 4 ? 'Ready / Dispatched' : getTimelineStep(order) === 3 ? (order.status === 'Ordered' ? 'Ordered' : 'Preparing') : getTimelineStep(order) === 2 ? 'Payment Confirmed' : 'Order Placed'}
                       </span>
                     </div>
                     <div className="grid grid-cols-5 gap-1 items-center">
@@ -1297,15 +1317,29 @@ export default function WebsiteOrders() {
                       </button>
                     )}
 
-                    {order.status === 'Pending' && order.payment_status !== 'CONFIRMED' && order.payment_status !== 'PAYMENT_CONFIRMED' && (
+                    {order.status === 'Pending' && (
+                      <button
+                        type="button"
+                        disabled={actionInProgress === order.id}
+                        onClick={() => handleMarkOrdered(order.id)}
+                        className="flex-1 py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Mark medicine items as ordered from distributor"
+                      >
+                        <CheckCheck size={13} />
+                        <span>{actionInProgress === order.id ? 'Updating…' : 'Mark Ordered'}</span>
+                      </button>
+                    )}
+
+                    {order.status === 'Ordered' && (
                       <button
                         type="button"
                         disabled={actionInProgress === order.id}
                         onClick={() => handleMarkReady(order.id)}
                         className="flex-1 py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Mark order as ready and send customer arrival notification"
                       >
                         <Check size={13} />
-                        <span>Mark Ready</span>
+                        <span>{actionInProgress === order.id ? 'Updating…' : 'Mark Ready'}</span>
                       </button>
                     )}
 

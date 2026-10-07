@@ -24,6 +24,7 @@
     "drill": "node scripts/backup-restore-drill.mjs",
     "watchdog": "node scripts/watchdog.mjs",
     "db:clone-prod": "node scripts/clone-prod-to-dev-db.mjs",
+    "sync:from-prod": "node scripts/sync-from-prod.mjs",
     "harvest:top100": "tsx scripts/harvest_top100_company_images.ts --top=100",
     "harvest:overnight": "tsx scripts/harvest_top100_company_images.ts --top=100 --auto-shutdown --gemini",
     "harvest:company": "tsx scripts/harvest_top100_company_images.ts",
