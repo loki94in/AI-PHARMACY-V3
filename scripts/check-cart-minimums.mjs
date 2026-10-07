@@ -51,15 +51,15 @@ const belowMinList = [];
 
 for (const dist of (cart.distributors ?? [])) {
   const storeId = dist.storeId;
-  const lineTotal = dist.lineTotal ?? 0;
+  const itemsSum = (dist.items ?? []).reduce((sum, i) => sum + ((i.ptr || 0) * (i.qty || 1) || (i.amount || 0)), 0);
+  const lineTotal = Math.max(dist.lineTotal ?? 0, itemsSum);
   const itemCount = dist.items?.length ?? 0;
   const minInfo = minMap[storeId];
   
-  // MinAmountLimit is on each item - grab from the cart items if we have it
-  // Since our processed cart doesn't carry it yet, check minMap or assume 0
-  const minAmount = minInfo?.minAmountLimit ?? 0;
-  const minItems = minInfo?.minItemLimit ?? 0;
-  const meetsAmount = minAmount === 0 || lineTotal >= minAmount;
+  const minAmount = dist.minAmountLimit ?? minInfo?.minAmountLimit ?? 0;
+  const minItems = dist.minItemLimit ?? minInfo?.minItemLimit ?? 0;
+  const hasPricedItems = (dist.items ?? []).some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
+  const meetsAmount = minAmount === 0 || !hasPricedItems || lineTotal >= minAmount;
   const meetsItems = minItems === 0 || itemCount >= minItems;
   const isOk = meetsAmount && meetsItems;
 

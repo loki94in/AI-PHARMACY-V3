@@ -52,6 +52,19 @@ interface Distributor {
   minItemLimit?: number | null;
   maxItemLimit?: number | null;
   maxAmountLimit?: number | null;
+  isUnpricedStore?: boolean;
+}
+
+function getCartLineItemValue(item: { amount?: number; ptr?: number; rate?: number; qty?: number; quantity?: number }): number {
+  if (typeof item.amount === 'number' && item.amount > 0) return item.amount;
+  const rate = item.ptr || item.rate || 0;
+  const qty = item.qty || item.quantity || 1;
+  return rate * qty;
+}
+
+export function getDistributorEffectiveTotal(dist: Distributor): number {
+  const computedTotal = (dist.items || []).reduce((sum, item) => sum + getCartLineItemValue(item), 0);
+  return Math.max(dist.lineTotal || 0, computedTotal);
 }
 
 // Human-readable reasons Pharmarack would reject this store's cart; empty = eligible / nothing known to block.
@@ -59,13 +72,18 @@ interface Distributor {
 function getOrderLimitIssues(dist: Distributor): string[] {
   const issues: string[] = [];
   const fmt = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-  const total = dist.lineTotal || 0;
+  const total = getDistributorEffectiveTotal(dist);
   const stockedCount = (dist.items || []).filter(i => i.stock == null || i.stock > 0).length;
   const minAmt = dist.minAmountLimit ?? 0;
   const minItems = dist.minItemLimit ?? 0;
   const maxAmt = dist.maxAmountLimit ?? 0;
   const maxItems = dist.maxItemLimit ?? 0;
-  if (minAmt > 0 && total < minAmt) {
+
+  // On Pharmarack website, unpriced inquiry orders (where all items have no live PTR or local price,
+  // showing as PTR: - and Total: ₹0.00) are exempt from monetary minimum amount requirements.
+  const hasPricedItems = (dist.items || []).some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
+
+  if (minAmt > 0 && hasPricedItems && total < minAmt) {
     issues.push(`Minimum Order amount is set Rs. ${fmt(minAmt)} for the ${dist.storeName} store (short by ₹${fmt(minAmt - total)})`);
   }
   if (minItems > 0 && stockedCount < minItems) {
@@ -84,7 +102,10 @@ function getOrderLimitIssues(dist: Distributor): string[] {
 // minimum-amount shortfall. Items without a known PTR are skipped — amounts are never guessed.
 function getMinAmountFillers(dist: Distributor, recent: ReorderRecentItem[]): { item: ReorderRecentItem; qty: number; amount: number }[] {
   const minAmt = dist.minAmountLimit ?? 0;
-  const shortfall = minAmt - (dist.lineTotal || 0);
+  const hasPricedItems = (dist.items || []).some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
+  if (!hasPricedItems) return [];
+  const total = getDistributorEffectiveTotal(dist);
+  const shortfall = minAmt - total;
   if (minAmt <= 0 || shortfall <= 0) return [];
   const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const inCart = new Set((dist.items || []).map(i => norm(i.productName)));
@@ -1543,14 +1564,6 @@ export default function PharmarackCart() {
     return isValidPhoneNumber(getDistributorPhoneNumber(dist).replace(/\D/g, ''));
   };
 
-  const failedDistributors = React.useMemo(() => {
-    return distributors.filter(d => sentWaStatusMap[d.storeId] === 'error');
-  }, [distributors, sentWaStatusMap]);
-
-  const unmappedDistributors = React.useMemo(() => {
-    return distributors.filter(d => !isDistributorMapped(d));
-  }, [distributors, customDistributorPhones, savedDistributorsList, distributorMappings]);
-
   const getCartItemAmount = (item: { amount?: number; ptr?: number; rate?: number; qty?: number; quantity?: number }): number => {
     if (typeof item.amount === 'number' && item.amount > 0) return item.amount;
     const rate = item.ptr || item.rate || 0;
@@ -1568,6 +1581,24 @@ export default function PharmarackCart() {
     return (dist.items || [])
       .reduce((sum, item) => sum + getCartItemAmount(item), 0);
   };
+
+  const failedDistributors = React.useMemo(() => {
+    return distributors
+      .map(dist => ({
+        ...dist,
+        lineTotal: getDistributorCheckedTotal(dist)
+      }))
+      .filter(d => sentWaStatusMap[d.storeId] === 'error');
+  }, [distributors, sentWaStatusMap, userCheckOverrides, latestSentMap]);
+
+  const unmappedDistributors = React.useMemo(() => {
+    return distributors
+      .map(dist => ({
+        ...dist,
+        lineTotal: getDistributorCheckedTotal(dist)
+      }))
+      .filter(d => !isDistributorMapped(d));
+  }, [distributors, customDistributorPhones, savedDistributorsList, distributorMappings, userCheckOverrides, latestSentMap]);
 
   const unsentCartDistributors = React.useMemo(() => {
     return distributors.map(dist => {
@@ -2820,8 +2851,14 @@ export default function PharmarackCart() {
         (a.productName || '').localeCompare(b.productName || '', undefined, { sensitivity: 'base' })
       );
 
+      const computedLineTotal = sortedItems.reduce((sum, item) => {
+        const amt = typeof item.amount === 'number' && item.amount > 0 ? item.amount : ((item.ptr || 0) * (item.qty || 1));
+        return sum + amt;
+      }, 0);
+
       return {
         ...dist,
+        lineTotal: Math.max(dist.lineTotal || 0, computedLineTotal),
         items: sortedItems
       };
     });

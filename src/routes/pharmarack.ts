@@ -820,7 +820,7 @@ export function getCachedCartLines(): Array<{ storeId: number; storeName: string
  * so a new distributor is covered with no per-store config. A field absent from every line stays
  * null = unknown (never assumed 0); a real 0 from Pharmarack means "no restriction".
  */
-function extractStoreOrderLimits(rawItems: any[]): { minAmountLimit: number | null; minItemLimit: number | null; maxItemLimit: number | null; maxAmountLimit: number | null } {
+function extractStoreOrderLimits(rawItems: any[]): { minAmountLimit: number | null; minItemLimit: number | null; maxItemLimit: number | null; maxAmountLimit: number | null; isUnpricedStore: boolean } {
   const pick = (key: string): number | null => {
     let found: number | null = null;
     for (const it of rawItems || []) {
@@ -829,7 +829,18 @@ function extractStoreOrderLimits(rawItems: any[]): { minAmountLimit: number | nu
     }
     return found;
   };
-  return { minAmountLimit: pick('MinAmountLimit'), minItemLimit: pick('MinItemLimit'), maxItemLimit: pick('MaxItemLimit'), maxAmountLimit: pick('MaxAmountLimit') };
+  const hasPricedItems = (rawItems || []).some(it => {
+    const p = Number(it?.PTR || it?.ptr || it?.HiddenPTR || it?.NetRate || 0);
+    const a = Number(it?.ProductWiseAmount || it?.amount || it?.LineTotal || 0);
+    return (Number.isFinite(p) && p > 0) || (Number.isFinite(a) && a > 0);
+  });
+  return {
+    minAmountLimit: pick('MinAmountLimit'),
+    minItemLimit: pick('MinItemLimit'),
+    maxItemLimit: pick('MaxItemLimit'),
+    maxAmountLimit: pick('MaxAmountLimit'),
+    isUnpricedStore: !hasPricedItems
+  };
 }
 
 // Core live-cart loader shared by GET /cart and the boot warm-up (startup-sync fix) so
@@ -915,10 +926,18 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
                          store.products || store.Products || store.ProductList || store.productList ||
                          store.CartItemList || store.cartItemList || [];
 
+        const rawStoreTotal = Number(store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0);
+        const rawItemsSum = rawItems.reduce((s: number, it: any) => {
+          const q = Number(it.Quantity || it.qty || it.quantity || 1);
+          const p = Number(it.PTR || it.ptr || it.HiddenPTR || it.NetRate || 0);
+          const a = Number(it.ProductWiseAmount || it.amount || it.LineTotal || (p * q));
+          return s + (Number.isFinite(a) && a > 0 ? a : 0);
+        }, 0);
+
         return {
           storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
           storeName: store.StoreName || store.storeName || store.Name || store.name || 'Unknown Distributor',
-          lineTotal: store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0,
+          lineTotal: Math.max(rawStoreTotal, rawItemsSum),
           deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d: any) => ({
             name: d.SalesmanName || d.name || d.Salesman || '', code: d.SalesmanCode || d.code || ''
           })),

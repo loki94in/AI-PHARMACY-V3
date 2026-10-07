@@ -7,7 +7,18 @@
 
 ## Fixed
 
-### [Fixed] P1-83 — Refill creation failed with SQLite error: no such column: snoozed_until
+### [Fixed] P2-84 — False minimum order requirement warnings in Pharmarack Cart
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In Pharmarack Cart, the store card for SUCCESS SURGICALS LLP showed a red warning banner: `Minimum Order amount is set Rs. 100 for the SUCCESS SURGICALS LLP store (short by ₹100)`, even though the card header showed ₹356.38 (4/4 items), and the official Pharmarack website displayed no minimum requirement at all. Reported 2026-10-07. |
+| **Root cause** | (1) Upstream Pharmarack API returned `lineTotal: 0` for unpriced distributors. Frontend enriched the line items with real catalog/historical prices (summing to ₹356.38), but `getOrderLimitIssues(dist)` evaluated `dist.lineTotal || 0` (evaluating to 0), falsely calculating a shortfall of `100 - 0 = ₹100`. (2) On Pharmarack's official website, distributors with unpriced items (`PTR: -` / `₹0.00`) are treated as inquiry orders and exempt from monetary minimum order amount limits. |
+| **How it was fixed** | (1) In `frontend/src/pages/PharmarackCart/index.tsx`, added `getDistributorEffectiveTotal(dist)` to compute `Math.max(dist.lineTotal || 0, computedItemsSum)`. (2) In `getOrderLimitIssues`, only enforce `minAmountLimit` if the store has priced items (`hasPricedItems`) and the effective total is below `minAmt`. (3) In `unmappedDistributors`, `failedDistributors`, and `applyCartDiff`, populate `dist.lineTotal` with effective item amounts. (4) In `src/routes/pharmarack.ts`, calculate `lineTotal` as `Math.max(rawStoreTotal, rawItemsSum)` and expose `isUnpricedStore`. (5) Fixed unhandled `suggestions` reference in `LiveCartAddModal.tsx` using `topSuggestionRef`. |
+| **Priority** | P2 |
+| **What not to touch** | Minimum line item count restrictions (`minItemLimit`) and WhatsApp dispatch pipelines. |
+| **Verified by** | `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` (built in 46s, 0 errors); behavioral testing confirming ₹356.38 cart generates 0 issues, genuine shortfalls still alert, and unpriced stores are exempted. |
+
+
 
 | Field | Content |
 |---|---|

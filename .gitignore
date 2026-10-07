@@ -72,6 +72,7 @@ eng.traineddata
 *.sql
 
 # ─── IDE / Tool Caches & Agent State ─────────────────────────────────────────
+.playwright-cli/
 .understand-anything/
 .codegraph/
 .opencode/
