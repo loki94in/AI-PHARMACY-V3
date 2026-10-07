@@ -27124,7 +27124,18 @@ function extractStoreOrderLimits(rawItems) {
     }
     return found;
   };
-  return { minAmountLimit: pick("MinAmountLimit"), minItemLimit: pick("MinItemLimit"), maxItemLimit: pick("MaxItemLimit"), maxAmountLimit: pick("MaxAmountLimit") };
+  const hasPricedItems = (rawItems || []).some((it) => {
+    const p = Number(it?.PTR || it?.ptr || it?.HiddenPTR || it?.NetRate || 0);
+    const a = Number(it?.ProductWiseAmount || it?.amount || it?.LineTotal || 0);
+    return Number.isFinite(p) && p > 0 || Number.isFinite(a) && a > 0;
+  });
+  return {
+    minAmountLimit: pick("MinAmountLimit"),
+    minItemLimit: pick("MinItemLimit"),
+    maxItemLimit: pick("MaxItemLimit"),
+    maxAmountLimit: pick("MaxAmountLimit"),
+    isUnpricedStore: !hasPricedItems
+  };
 }
 async function loadLiveCartCore() {
   const settings = await getPharmarackSettings();
@@ -27199,10 +27210,17 @@ async function loadLiveCartCore() {
     if (hasNestedItems) {
       distributors = rawList.map((store) => {
         const rawItems = store.lineItems || store.LineItems || store.items || store.Items || store.products || store.Products || store.ProductList || store.productList || store.CartItemList || store.cartItemList || [];
+        const rawStoreTotal = Number(store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0);
+        const rawItemsSum = rawItems.reduce((s, it) => {
+          const q = Number(it.Quantity || it.qty || it.quantity || 1);
+          const p = Number(it.PTR || it.ptr || it.HiddenPTR || it.NetRate || 0);
+          const a = Number(it.ProductWiseAmount || it.amount || it.LineTotal || p * q);
+          return s + (Number.isFinite(a) && a > 0 ? a : 0);
+        }, 0);
         return {
           storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
           storeName: store.StoreName || store.storeName || store.Name || store.name || "Unknown Distributor",
-          lineTotal: store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0,
+          lineTotal: Math.max(rawStoreTotal, rawItemsSum),
           deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d) => ({
             name: d.SalesmanName || d.name || d.Salesman || "",
             code: d.SalesmanCode || d.code || ""
@@ -55510,7 +55528,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.60";
+    APP_VERSION = "0.1.61";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
