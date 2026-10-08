@@ -178,6 +178,8 @@ export interface DistributorOrderMessageParams {
   pharmacyEmail?: string | null;
   dateLabel?: string;
   isLate?: boolean;
+  orderNo?: string | null;
+  isReminderOnly?: boolean;
 }
 
 /**
@@ -185,6 +187,31 @@ export interface DistributorOrderMessageParams {
  */
 export function buildStandardDistributorOrderMessage(params: DistributorOrderMessageParams): string {
   const dateLabel = params.dateLabel || new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const boyName = params.deliveryBoyName || 'Delivery Staff';
+  const boyPhone = params.deliveryBoyPhone || 'N/A';
+  const format = (params.preferredFileFormat || 'CSV').trim();
+
+  // If orderNo is provided or concise reminder is requested, output the clean PO dispatch reminder (zero medicine item dump)
+  // ponytail: orderNo may hold several same-day IDs ("784512, 784519") — normalize each to #id
+  if (params.orderNo || params.isReminderOnly) {
+    const orderNoClean = (params.orderNo || '').split(',').map((s) => s.trim().replace(/^#+/, '')).filter(Boolean).map((n) => `#${n}`).join(', ');
+    let msg = orderNoClean
+      ? `📦 *Pharmarack Order ${orderNoClean}* has been placed.\n`
+      : `📦 *Pharmarack Order* has been placed.\n`;
+    msg += `Please pack and dispatch as soon as possible.\n\n`;
+    msg += `🏬 *Distributor:* ${(params.distributorName || 'DISTRIBUTOR').toUpperCase()}\n`;
+    if (params.distributorPhone && params.distributorPhone.trim()) {
+      msg += `📞 Contact: ${params.distributorPhone.trim()}\n`;
+    }
+    msg += `🚚 *Delivery / Pickup Staff:* ${boyName} (${boyPhone})\n`;
+    msg += `📅 *Date:* ${dateLabel}\n\n`;
+    msg += `📄 *Preferred Invoice Format:* ${format}\n`;
+    if (params.pharmacyEmail && params.pharmacyEmail.trim()) {
+      msg += `📩 *Please email bill copies to:* ${params.pharmacyEmail.trim()}`;
+    }
+    return msg.trim();
+  }
+
   const prefix = params.isLate ? `📅 TODAY ORDER (LATE ADDITION) — ` : `📅 TODAY DISTRIBUTOR ORDER — `;
 
   let msg = `${prefix}${dateLabel}\n\n`;
@@ -193,8 +220,6 @@ export function buildStandardDistributorOrderMessage(params: DistributorOrderMes
     msg += `📞 Contact: ${params.distributorPhone.trim()}\n`;
   }
 
-  const boyName = params.deliveryBoyName || 'Delivery Staff';
-  const boyPhone = params.deliveryBoyPhone || 'N/A';
   msg += `🚚 *Delivery Boy / Pickup Person:* ${boyName} (${boyPhone})\n\n`;
 
   msg += `📦 *Medicines List:*\n`;
@@ -214,7 +239,6 @@ export function buildStandardDistributorOrderMessage(params: DistributorOrderMes
   }
 
   msg += `\n📊 *Total Items:* ${items.length}\n`;
-  const format = (params.preferredFileFormat || 'CSV').trim();
   msg += `📄 *Preferred Email Invoice Format:* ${format}`;
   if (params.pharmacyEmail && params.pharmacyEmail.trim()) {
     msg += `\n📩 *Please email bill copies to:* ${params.pharmacyEmail.trim()}`;

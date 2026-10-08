@@ -567,6 +567,25 @@ export class NotificationService {
         packaging: item.packaging || item.packing
       }));
 
+      // Look up ALL of today's synced Pharmarack order numbers for this distributor
+      // (same-day re-order before dispatch must list #old + #new in one reminder).
+      let syncedOrderNo: string | undefined;
+      try {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const now = new Date();
+        const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        const syncedRows = await db.all(
+          `SELECT order_no FROM pharmarack_synced_orders
+           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
+           ORDER BY first_seen_at ASC`,
+          [todayLocal, storeName]
+        );
+        const allNos = (syncedRows || []).map((r: any) => String(r?.order_no || '').trim()).filter(Boolean);
+        if (allNos.length > 0) {
+          syncedOrderNo = allNos.join(', ');
+        }
+      } catch (_) {}
+
       const message = buildStandardDistributorOrderMessage({
         distributorName: storeName,
         distributorPhone: rawPhone ? formatDisplayPhone(rawPhone) : undefined,
@@ -575,7 +594,9 @@ export class NotificationService {
         deliveryBoyPhone: boyPhone,
         preferredFileFormat: store.fileFormat,
         pharmacyEmail: store.email,
-        dateLabel
+        dateLabel,
+        orderNo: syncedOrderNo,
+        isReminderOnly: true
       });
 
       // 5. Parse distributor numbers
@@ -596,7 +617,10 @@ export class NotificationService {
         suppressedCount++;
       } else if (uniqueDistPhones.length > 0) {
         // Same-day deduplication check: avoid duplicate orders to distributor if already enqueued/sent in the last 2 hours or today
-        const todayDate = new Date().toISOString().split('T')[0];
+        // ponytail: shop-local day (never UTC) so late-evening orders stay on today's date
+        const _now = new Date();
+        const _pad = (n: number) => String(n).padStart(2, '0');
+        const todayDate = `${_now.getFullYear()}-${_pad(_now.getMonth() + 1)}-${_pad(_now.getDate())}`;
         const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
         const alreadySentRow = await db.get(
           `SELECT id FROM automation_notifications 

@@ -1371,6 +1371,7 @@ export default function PharmarackCart() {
   // Single WhatsApp order dispatch modal state
   const [singleDispatchTarget, setSingleDispatchTarget] = useState<Distributor | null>(null);
   const [singleDispatchBoyId, setSingleDispatchBoyId] = useState<number | null>(null);
+  const [singleDispatchOrderNo, setSingleDispatchOrderNo] = useState<string>('');
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
@@ -1949,7 +1950,8 @@ export default function PharmarackCart() {
   // without relying on stale React state closure from deliveryBoysList
   const buildDistributorOrderMessage = (
     dist: Distributor,
-    resolvedBoy?: { name: string; whatsapp_number: string } | null
+    resolvedBoy?: { name: string; whatsapp_number: string } | null,
+    customOrderNo?: string
   ) => {
     const formatPhone = (raw: string) => {
       if (!raw) return '';
@@ -2027,36 +2029,59 @@ export default function PharmarackCart() {
     const storePhone = storeInfo.phone || storeInfo.adminPhone || '';
     const formattedStorePhone = storePhone ? formatPhone(storePhone) : 'N/A';
 
-    // Filter to send ONLY included items (fresh items + user-checked past items)
-    const itemsToSend = dist.items.filter(item => isItemIncludedInDispatch(item, dist));
+    // Resolve order ID / PO number if known (all of today's IDs: #old + #new in one reminder)
+    // ponytail: customOrderNo may be a comma list — normalize each token to #id, dedupe
+    let orderIdText = '';
+    const givenNo = (customOrderNo || '').trim();
+    if (givenNo) {
+      const seen = new Set<string>();
+      orderIdText = givenNo.split(',').map(s => s.trim().replace(/^#+/, '')).filter(n => n && !seen.has(n) && (seen.add(n), true)).map(n => `#${n}`).join(', ');
+    } else {
+      const matchSent = sentOrders.find(so =>
+        (dist.storeId && so.store_id === dist.storeId) ||
+        (so.store_name && dist.storeName && so.store_name.toLowerCase().trim() === dist.storeName.toLowerCase().trim())
+      );
+      if (matchSent?.pharmarack_order_nos && matchSent.pharmarack_order_nos.length > 0) {
+        const seenIds = new Set<string>();
+        orderIdText = matchSent.pharmarack_order_nos.map((no: string) => String(no).trim().replace(/^#+/, '')).filter(n => n && !seenIds.has(n) && (seenIds.add(n), true)).map(n => `#${n}`).join(', ');
+      } else if (matchSent?.id) {
+        orderIdText = `#${matchSent.id}`;
+      }
+    }
 
-    let msg = `🏥 *${storeName}*\n`;
-    msg += `📍 *Delivery Location:* ${address}\n`;
-    msg += `📞 *Pharmacy Contact:* ${formattedStorePhone}\n\n`;
-    msg += `📅 *Order Date:* ${dateStr}\n\n`;
-    msg += `📋 *ORDER ITEMS (${itemsToSend.length}):*\n`;
-
-    itemsToSend.forEach((item, idx) => {
-      const packInfo = formatPackagingAndUnit(item.packaging, item.qty);
-      const packLine = packInfo.packLabel ? `   📦 *${packInfo.packLabel}*\n` : '';
-      const mrpVal = Number(item.mrp || 0) > 0 ? Number(item.mrp) : (Number(item.ptr || 0) > 0 ? Number(item.ptr) : 0);
-      const mrpLine = mrpVal > 0 ? `   (MRP: ₹${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})\n` : '';
-      msg += `${idx + 1}. *${item.productName}*\n${packLine}   🔢 Order Qty: *${packInfo.unitQtyStr}*\n${mrpLine}\n`;
-    });
-
-    msg = msg.trimEnd();
-    msg += `\n\n🚚 *Delivery Person:*\n`;
-    msg += `  👤 *${boyName}*\n  📞 *${boyPhone || 'N/A'}*\n\n`;
-
+    // Pure dispatch reminder format (omits verbose medicine list for official PO flow)
+    let msg = '';
+    if (orderIdText) {
+      msg = `📦 *Pharmarack Order ${orderIdText}* has been placed.\n`;
+    } else {
+      msg = `📦 *Pharmarack Order* has been placed.\n`;
+    }
+    msg += `Please pack and dispatch as soon as possible.\n\n`;
+    msg += `🚚 *Delivery / Pickup Staff:*\n`;
+    msg += `  👤 *${boyName}*\n`;
+    msg += `  📞 *${boyPhone || 'N/A'}*\n\n`;
+    msg += `🏥 *${storeName}*\n`;
+    if (address && address !== 'N/A') msg += `📍 *Delivery Location:* ${address}\n`;
+    msg += `📞 *Pharmacy Contact:* ${formattedStorePhone}\n`;
+    if (dateStr) msg += `📅 *Order Date:* ${dateStr}\n\n`;
     msg += `📝 *Note:* Please send invoice bill (${fileFormat}) to ${email}.`;
 
-    return msg;
+    return msg.trim();
   };
 
   const handleOpenSingleDispatchModal = (dist: Distributor) => {
     setSingleDispatchTarget(dist);
     const initialBoyId = resolveInitialDeliveryBoyId(dist, distributorMappings, deliveryBoysList);
     setSingleDispatchBoyId(initialBoyId);
+    // Find matching order numbers from sentOrders (all of today's IDs, comma-separated)
+    const matchSent = sentOrders.find(so =>
+      (dist.storeId && so.store_id === dist.storeId) ||
+      (so.store_name && dist.storeName && so.store_name.toLowerCase().trim() === dist.storeName.toLowerCase().trim())
+    );
+    const detectedOrderNo = Array.isArray(matchSent?.pharmarack_order_nos) && matchSent.pharmarack_order_nos.length > 0
+      ? Array.from(new Set(matchSent.pharmarack_order_nos.map((n: string) => String(n).trim().replace(/^#+/, '')).filter(Boolean))).join(', ')
+      : '';
+    setSingleDispatchOrderNo(detectedOrderNo);
   };
 
   const handleConfirmSingleDispatch = async () => {
@@ -2064,6 +2089,7 @@ export default function PharmarackCart() {
     const dist = singleDispatchTarget;
     const boyId = singleDispatchBoyId;
     const resolvedBoy = deliveryBoysList.find(b => b.id === boyId) || null;
+    const orderNo = singleDispatchOrderNo;
 
     if (dist.storeName && boyId) {
       const normName = dist.storeName.toLowerCase().trim();
@@ -2087,7 +2113,7 @@ export default function PharmarackCart() {
     }
 
     setSingleDispatchTarget(null);
-    await handleSendWhatsAppOrder(dist, false, false, 'both', resolvedBoy);
+    await handleSendWhatsAppOrder(dist, false, false, 'both', resolvedBoy, orderNo);
   };
 
   const handleSendWhatsAppOrder = async (
@@ -2095,7 +2121,8 @@ export default function PharmarackCart() {
     bypassMissingBoyCheck = false,
     forceResend = false,
     targetMode: 'distributor_only' | 'both' = 'both',
-    resolvedBoy?: { name: string; whatsapp_number: string } | null
+    resolvedBoy?: { name: string; whatsapp_number: string } | null,
+    customOrderNo?: string
   ) => {
     if (!hasPharmacySettings()) {
       toastEvent.trigger('Pharmacy Name and Contact Phone are required in Settings before sending orders.', 'error');
@@ -2132,7 +2159,7 @@ export default function PharmarackCart() {
       return;
     }
 
-    const msg = buildDistributorOrderMessage(dist, resolvedBoy);
+    const msg = buildDistributorOrderMessage(dist, resolvedBoy, customOrderNo);
 
     setSendingWaDistributorId(dist.storeId);
     try {
@@ -3752,6 +3779,11 @@ export default function PharmarackCart() {
                   <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
                     {sentOrders.length} Order{sentOrders.length !== 1 ? 's' : ''} Sent
                   </span>
+                  {sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0) > 0 && (
+                    <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
+                      {sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0)} PO ID{sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0) !== 1 ? 's' : ''}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={openSentPopup}
@@ -6123,6 +6155,13 @@ export default function PharmarackCart() {
         getDistributorCheckedTotal={getDistributorCheckedTotal}
         sendingWaDistributorId={sendingWaDistributorId}
         onConfirm={handleConfirmSingleDispatch}
+        orderNo={singleDispatchOrderNo}
+        setOrderNo={setSingleDispatchOrderNo}
+        previewMessage={singleDispatchTarget ? buildDistributorOrderMessage(
+          singleDispatchTarget,
+          deliveryBoysList.find(b => b.id === singleDispatchBoyId) || null,
+          singleDispatchOrderNo
+        ) : ''}
       />
     </div>
   );

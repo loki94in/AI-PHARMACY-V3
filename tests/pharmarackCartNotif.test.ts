@@ -103,17 +103,13 @@ describe('Pharmarack Cart Notifications Tests', () => {
     expect(notifs.length).toBe(1);
     expect(notifs[0].recipient_phone).toBe("919876543210");
 
-    // Verify distributor message content
+    // Verify distributor message content: concise PO dispatch reminder
+    // (official-PO contract — distributor gets Order ID + pickup staff, never the item dump)
     const msg = notifs[0].message;
-    expect(msg).toContain("TODAY DISTRIBUTOR ORDER");
-    expect(msg).toContain("Medicines List:");
-    expect(msg).toContain("Aspirin");
-    expect(msg).toContain("Pack: 15's");
-    expect(msg).toContain("*2 Strips*");
-    expect(msg).toContain("Ibuprofen");
-    expect(msg).toContain("Pack: 100 ml");
-    expect(msg).toContain("*5 Bottles*");
+    expect(msg).toContain("Pharmarack Order");
     expect(msg).toContain("Delivery Boy John");
+    expect(msg).not.toContain("Medicines List:");
+    expect(msg).not.toContain("Aspirin");
 
     // Verify placed order was recorded for debounced/batch delivery boy summary
     const placedOrders = await db.all("SELECT * FROM pharmarack_placed_orders WHERE store_name = 'Test Dist'");
@@ -137,5 +133,56 @@ describe('Pharmarack Cart Notifications Tests', () => {
     // Ensure NO raw itemized medicine breakdown messages were sent to the delivery boy
     const rawBoyNotifs = await db.all("SELECT * FROM automation_notifications WHERE type = 'delivery_boy_batch_order'");
     expect(rawBoyNotifs.length).toBe(0);
+  });
+
+  test('notifyDistributorCartOrder lists ALL same-day order numbers in one reminder', async () => {
+    const db = await dbManager.getConnection();
+
+    await db.run(
+      "INSERT INTO distributors (name, phone) VALUES (?, ?)",
+      ["Test Dist Multi", "9876501234"]
+    );
+    await db.run(
+      "INSERT INTO delivery_boys (name, whatsapp_number, is_active) VALUES (?, ?, ?)",
+      ["Delivery Boy Jane", "8888801234", 1]
+    );
+
+    // Two same-day Pharmarack orders for the same distributor (old + re-placed new)
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const now = new Date();
+    const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    await db.run('DELETE FROM pharmarack_synced_orders WHERE store_name = ?', ['Test Dist Multi']);
+    await db.run(
+      `INSERT INTO pharmarack_synced_orders (order_no, pharmarack_order_id, store_id, store_name, order_amount, order_date, first_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ['784512', 1, 456, 'Test Dist Multi', 100, todayLocal, Date.now()]
+    );
+    await db.run(
+      `INSERT INTO pharmarack_synced_orders (order_no, pharmarack_order_id, store_id, store_name, order_amount, order_date, first_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ['784519', 2, 456, 'Test Dist Multi', 200, todayLocal, Date.now() + 1]
+    );
+
+    const items = [
+      { productName: "Aspirin", qty: 2, packaging: "15's" }
+    ];
+    const result = await notificationService.notifyDistributorCartOrder(
+      "Test Dist Multi", 456, items, [{ name: "Delivery Boy Jane", code: "DBJ02" }]
+    );
+    expect(result.ok).toBe(true);
+
+    const notifs = await db.all(
+      "SELECT * FROM automation_notifications WHERE type = 'distributor_cart_order' AND recipient_name = 'Test Dist Multi' ORDER BY id ASC"
+    );
+    expect(notifs.length).toBe(1);
+
+    // One message carries both IDs, each with its own # prefix
+    const msg = notifs[0].message;
+    expect(msg).toContain("#784512");
+    expect(msg).toContain("#784519");
+    expect(msg).toContain("Pharmarack Order");
+    // Distributor reminder carries no item dump
+    expect(msg).not.toContain("Medicines List:");
+    expect(msg).not.toContain("Aspirin");
   });
 });
