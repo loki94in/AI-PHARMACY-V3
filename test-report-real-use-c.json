@@ -1,0 +1,58 @@
+{
+ "rows": [
+  {
+   "page": "/pos",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/sells",
+   "buttonsClicked": 6,
+   "tabsClicked": 0,
+   "inputsTyped": 3,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/inventory",
+   "buttonsClicked": 2,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/purchases",
+   "buttonsClicked": 6,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "Capture Screen / Window (Word, Email, Image)",
+    "Order low-stock medicines"
+   ]
+  },
+  {
+   "page": "/purchase-history",
+   "buttonsClicked": 4,
+   "tabsClicked": 0,
+   "inputsTyped": 2,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "PURCHASE HISTORY",
+    "Reload List"
+   ]
+  }
+ ],
+ "issues": []
+}

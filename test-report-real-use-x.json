@@ -1,0 +1,17 @@
+{
+ "rows": [
+  {
+   "page": "/portal",
+   "buttonsClicked": 5,
+   "tabsClicked": 0,
+   "inputsTyped": 1,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "All Refills (Diabetic, BP, Thyroid, TB)"
+   ]
+  }
+ ],
+ "issues": []
+}

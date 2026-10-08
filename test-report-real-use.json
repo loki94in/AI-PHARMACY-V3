@@ -1,0 +1,194 @@
+{
+ "rows": [
+  {
+   "page": "/pos",
+   "buttonsClicked": 9,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/sells",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/sells\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/sells\", waiting until \"domcontentloa"
+  },
+  {
+   "page": "/inventory",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/inventory\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/inventory\", waiting until \"domco"
+  },
+  {
+   "page": "/purchases",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/purchases\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/purchases\", waiting until \"domco"
+  },
+  {
+   "page": "/purchase-history",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/purchase-history\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/purchase-history\", waitin"
+  },
+  {
+   "page": "/crm",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/crm\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/crm\", waiting until \"domcontentloaded\""
+  },
+  {
+   "page": "/reports",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/reports\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/reports\", waiting until \"domconten"
+  },
+  {
+   "page": "/pharmarack-cart",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/pharmarack-cart\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/pharmarack-cart\", waiting "
+  },
+  {
+   "page": "/live-cart",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/live-cart\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/live-cart\", waiting until \"domco"
+  },
+  {
+   "page": "/investigation",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/investigation\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/investigation\", waiting unti"
+  },
+  {
+   "page": "/ai-engineering",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/ai-engineering\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/ai-engineering\", waiting un"
+  },
+  {
+   "page": "/learning",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/learning\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/learning\", waiting until \"domcont"
+  },
+  {
+   "page": "/dispatch",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/dispatch\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/dispatch\", waiting until \"domcont"
+  },
+  {
+   "page": "/returns",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/returns\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/returns\", waiting until \"domconten"
+  },
+  {
+   "page": "/database",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/database\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/database\", waiting until \"domcont"
+  },
+  {
+   "page": "/phone-sales",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/phone-sales\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/phone-sales\", waiting until \"d"
+  },
+  {
+   "page": "/dashboard",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/dashboard\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/dashboard\", waiting until \"domco"
+  },
+  {
+   "page": "/migration",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/migration\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/migration\", waiting until \"domco"
+  },
+  {
+   "page": "/mail",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/mail\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/mail\", waiting until \"domcontentloade"
+  },
+  {
+   "page": "/settings",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/settings\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/settings\", waiting until \"domcont"
+  },
+  {
+   "page": "/audit",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": true,
+   "blank": false,
+   "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:5174/audit\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:5174/audit\", waiting until \"domcontentloa"
+  }
+ ],
+ "issues": []
+}

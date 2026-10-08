@@ -1,0 +1,83 @@
+{
+ "rows": [
+  {
+   "page": "/returns",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/database",
+   "buttonsClicked": 9,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "Needs Review (0)"
+   ]
+  },
+  {
+   "page": "/phone-sales",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/dashboard",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/migration",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/mail",
+   "buttonsClicked": 5,
+   "tabsClicked": 0,
+   "inputsTyped": 1,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "All Mails 0"
+   ]
+  },
+  {
+   "page": "/settings",
+   "buttonsClicked": 11,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/audit",
+   "buttonsClicked": 1,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  }
+ ],
+ "issues": []
+}

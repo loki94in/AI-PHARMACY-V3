@@ -1,0 +1,422 @@
+{
+  "pages": [
+    {
+      "index": 1,
+      "name": "POS (Sales / Billing)",
+      "path": "/pos",
+      "passed": true,
+      "durationMs": 1804,
+      "details": {
+        "searchInputsFound": 4
+      },
+      "error": null
+    },
+    {
+      "index": 2,
+      "name": "Sells (Sales Invoices & History)",
+      "path": "/sells",
+      "passed": true,
+      "durationMs": 1008,
+      "details": {
+        "buttons": 109,
+        "inputs": 7
+      },
+      "error": null
+    },
+    {
+      "index": 3,
+      "name": "Inventory (Stock Management)",
+      "path": "/inventory",
+      "passed": true,
+      "durationMs": 1416,
+      "details": {
+        "buttons": 40
+      },
+      "error": null
+    },
+    {
+      "index": 4,
+      "name": "Purchases (Inward Invoices Entry)",
+      "path": "/purchases",
+      "passed": true,
+      "durationMs": 949,
+      "details": {
+        "inputs": 21,
+        "buttons": 25
+      },
+      "error": null
+    },
+    {
+      "index": 5,
+      "name": "Purchase History (Inward Audit)",
+      "path": "/purchase-history",
+      "passed": true,
+      "durationMs": 964,
+      "details": {
+        "inputs": 9,
+        "buttons": 101
+      },
+      "error": null
+    },
+    {
+      "index": 6,
+      "name": "CRM (Patients, Special Orders & Refills)",
+      "path": "/crm",
+      "passed": true,
+      "durationMs": 1313,
+      "details": {
+        "tabsTested": 2
+      },
+      "error": null
+    },
+    {
+      "index": 7,
+      "name": "Reports (Analytics & GST)",
+      "path": "/reports",
+      "passed": true,
+      "durationMs": 1057,
+      "details": {
+        "buttons": 29
+      },
+      "error": null
+    },
+    {
+      "index": 8,
+      "name": "Pharmarack Cart (Distributor Ordering)",
+      "path": "/pharmarack-cart",
+      "passed": true,
+      "durationMs": 794,
+      "details": {
+        "buttons": 87
+      },
+      "error": null
+    },
+    {
+      "index": 9,
+      "name": "Live Cart (Pharmacy Live Cart)",
+      "path": "/live-cart",
+      "passed": true,
+      "durationMs": 797,
+      "details": {
+        "buttons": 15
+      },
+      "error": null
+    },
+    {
+      "index": 10,
+      "name": "Investigation Center",
+      "path": "/investigation",
+      "passed": true,
+      "durationMs": 892,
+      "details": {
+        "buttons": 21
+      },
+      "error": null
+    },
+    {
+      "index": 11,
+      "name": "Pharma Intelligence Hub (AI Engineering)",
+      "path": "/ai-engineering",
+      "passed": true,
+      "durationMs": 1514,
+      "details": {
+        "tabsTested": 3
+      },
+      "error": null
+    },
+    {
+      "index": 12,
+      "name": "AI Learning & Layouts",
+      "path": "/learning",
+      "passed": true,
+      "durationMs": 2096,
+      "details": {
+        "tabsTested": 3
+      },
+      "error": null
+    },
+    {
+      "index": 13,
+      "name": "Dispatch & Deliveries",
+      "path": "/dispatch",
+      "passed": true,
+      "durationMs": 781,
+      "details": {
+        "buttons": 12
+      },
+      "error": null
+    },
+    {
+      "index": 14,
+      "name": "Online Orders (Website Orders)",
+      "path": "/website-orders",
+      "passed": true,
+      "durationMs": 884,
+      "details": {
+        "buttons": 20
+      },
+      "error": null
+    },
+    {
+      "index": 15,
+      "name": "Online Catalog Management",
+      "path": "/online-catalog",
+      "passed": true,
+      "durationMs": 832,
+      "details": {
+        "buttons": 20
+      },
+      "error": null
+    },
+    {
+      "index": 16,
+      "name": "Customer Portal",
+      "path": "/portal",
+      "passed": true,
+      "durationMs": 1415,
+      "details": {
+        "inputs": 0,
+        "buttons": 13
+      },
+      "error": null
+    },
+    {
+      "index": 17,
+      "name": "Supplier & Customer Returns",
+      "path": "/returns",
+      "passed": true,
+      "durationMs": 3000,
+      "details": {
+        "tabsTested": 8
+      },
+      "error": null
+    },
+    {
+      "index": 18,
+      "name": "Master Database",
+      "path": "/database",
+      "passed": true,
+      "durationMs": 1260,
+      "details": {
+        "tabsTested": 1
+      },
+      "error": null
+    },
+    {
+      "index": 19,
+      "name": "Phone Sales Pad",
+      "path": "/phone-sales",
+      "passed": true,
+      "durationMs": 707,
+      "details": {
+        "inputs": 1,
+        "buttons": 15
+      },
+      "error": null
+    },
+    {
+      "index": 20,
+      "name": "Dashboard (Executive KPI)",
+      "path": "/dashboard",
+      "passed": true,
+      "durationMs": 850,
+      "details": {
+        "buttons": 15
+      },
+      "error": null
+    },
+    {
+      "index": 21,
+      "name": "Data Migration Wizard",
+      "path": "/migration",
+      "passed": true,
+      "durationMs": 1057,
+      "details": {
+        "buttons": 144
+      },
+      "error": null
+    },
+    {
+      "index": 22,
+      "name": "Distributor Mail & Invoices",
+      "path": "/mail",
+      "passed": true,
+      "durationMs": 911,
+      "details": {
+        "buttons": 66
+      },
+      "error": null
+    },
+    {
+      "index": 23,
+      "name": "Store Settings",
+      "path": "/settings",
+      "passed": true,
+      "durationMs": 1733,
+      "details": {
+        "tabsTested": 4
+      },
+      "error": null
+    },
+    {
+      "index": 24,
+      "name": "Audit Center",
+      "path": "/audit",
+      "passed": true,
+      "durationMs": 848,
+      "details": {
+        "buttons": 17
+      },
+      "error": null
+    }
+  ],
+  "modals": [
+    {
+      "index": 1,
+      "name": "Quick Order Modal (Alt+O / Header)",
+      "passed": true,
+      "durationMs": 1089,
+      "details": {
+        "status": "Opened, filled, and dismissed cleanly via Escape"
+      },
+      "error": null
+    },
+    {
+      "index": 2,
+      "name": "Live Cart Add Modal",
+      "passed": true,
+      "durationMs": 872,
+      "details": {
+        "status": "Live Cart Add opened, typed search, and closed"
+      },
+      "error": null
+    },
+    {
+      "index": 3,
+      "name": "Quick Assist Drawer (Alt+A)",
+      "passed": true,
+      "durationMs": 924,
+      "details": {
+        "status": "Opened and closed via Escape"
+      },
+      "error": null
+    },
+    {
+      "index": 4,
+      "name": "Keyboard Shortcuts Modal (?)",
+      "passed": true,
+      "durationMs": 934,
+      "details": {
+        "status": "Shortcuts cheatsheet opened and dismissed"
+      },
+      "error": null
+    },
+    {
+      "index": 5,
+      "name": "Notification Panel (Bell)",
+      "passed": true,
+      "durationMs": 718,
+      "details": {
+        "status": "Notification panel opened and dismissed"
+      },
+      "error": null
+    },
+    {
+      "index": 6,
+      "name": "Automation Hub Popover",
+      "passed": true,
+      "durationMs": 952,
+      "details": {
+        "status": "Automation Hub opened and dismissed"
+      },
+      "error": null
+    },
+    {
+      "index": 7,
+      "name": "WhatsApp Queue Controller Popover",
+      "passed": true,
+      "durationMs": 922,
+      "details": {
+        "status": "Queue popover opened and dismissed"
+      },
+      "error": null
+    },
+    {
+      "index": 8,
+      "name": "Mobile QR Connection Modal",
+      "passed": true,
+      "durationMs": 627,
+      "details": {
+        "status": "Dispatched"
+      },
+      "error": null
+    },
+    {
+      "index": 9,
+      "name": "Backup Center Modal",
+      "passed": true,
+      "durationMs": 626,
+      "details": {
+        "status": "Dispatched"
+      },
+      "error": null
+    },
+    {
+      "index": 10,
+      "name": "Staged Review Modal",
+      "passed": true,
+      "durationMs": 627,
+      "details": {
+        "status": "Dispatched"
+      },
+      "error": null
+    }
+  ],
+  "startTime": "2026-10-07T15:27:21.276Z",
+  "totalErrors": 1,
+  "deepFlows": [
+    {
+      "name": "Quick Order Draft Restoration",
+      "passed": true,
+      "durationMs": 2967,
+      "details": {
+        "draftRestoredVerified": true
+      },
+      "error": null
+    },
+    {
+      "name": "Sidebar In-App Client Navigation",
+      "passed": true,
+      "durationMs": 9318,
+      "details": {
+        "clickedLinks": 24
+      },
+      "error": null
+    },
+    {
+      "name": "Settings Tabs Audit",
+      "passed": true,
+      "durationMs": 1714,
+      "details": {
+        "tabsSwitched": 4
+      },
+      "error": null
+    },
+    {
+      "name": "Database Search & Modal Audit",
+      "passed": true,
+      "durationMs": 1860,
+      "details": {
+        "actionsVerified": 2
+      },
+      "error": null
+    }
+  ],
+  "endTime": "2026-10-07T15:28:16.596Z",
+  "caughtErrors": [
+    {
+      "type": "console.error",
+      "message": "Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808"
+    }
+  ]
+}

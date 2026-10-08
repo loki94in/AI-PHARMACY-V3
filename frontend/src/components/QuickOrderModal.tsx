@@ -23,7 +23,8 @@ import {
   Zap,
   Package,
   Clock,
-  MessageCircle
+  MessageCircle,
+  RotateCcw
 } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent, specialOrdersEvent } from '../services/events';
@@ -230,7 +231,148 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const [selectedProductCode, setSelectedProductCode] = useState('');
   const [selectedCompany, setSelectedCompany] = useState('');
   const [selectedPackaging, setSelectedPackaging] = useState('');
-  
+
+  // Quick Order draft persistence & resumption
+  const [hasQuickOrderDraft, setHasQuickOrderDraft] = useState(false);
+  const isDraftHydratedRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('quick_order_modal_draft');
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft && (
+          (Array.isArray(draft.cart) && draft.cart.length > 0) ||
+          draft.product ||
+          draft.requester ||
+          draft.phone ||
+          (draft.advancePayment !== undefined && draft.advancePayment !== '')
+        )) {
+          if (Array.isArray(draft.cart)) setCart(draft.cart);
+          if (draft.product) setProduct(draft.product);
+          if (typeof draft.qty === 'number') setQty(draft.qty);
+          if (draft.salutation) setSalutation(draft.salutation);
+          if (draft.customSalutation) setCustomSalutation(draft.customSalutation);
+          if (draft.requester) setRequester(draft.requester);
+          if (draft.phone) setPhone(draft.phone);
+          if (draft.advancePayment !== undefined && draft.advancePayment !== '') setAdvancePayment(draft.advancePayment);
+          if (draft.priority) setPriority(draft.priority);
+          if (draft.language) setLanguage(draft.language);
+          if (typeof draft.sendWhatsApp === 'boolean') setSendWhatsApp(draft.sendWhatsApp);
+          if (draft.selectedDistributor) setSelectedDistributor(draft.selectedDistributor);
+          if (draft.selectedRate !== undefined) setSelectedRate(draft.selectedRate);
+          if (draft.selectedMrp !== undefined) setSelectedMrp(draft.selectedMrp);
+          if (draft.selectedMapped !== undefined) setSelectedMapped(draft.selectedMapped);
+          if (draft.selectedScheme) setSelectedScheme(draft.selectedScheme);
+          if (draft.selectedProductId !== undefined) setSelectedProductId(draft.selectedProductId);
+          if (draft.selectedStoreId !== undefined) setSelectedStoreId(draft.selectedStoreId);
+          if (draft.selectedProductCode) setSelectedProductCode(draft.selectedProductCode);
+          if (draft.selectedCompany) setSelectedCompany(draft.selectedCompany);
+          if (draft.selectedPackaging) setSelectedPackaging(draft.selectedPackaging);
+          setHasQuickOrderDraft(true);
+        }
+      }
+    } catch (_) {}
+    isDraftHydratedRef.current = true;
+  }, []);
+
+  // Auto-persist draft
+  useEffect(() => {
+    if (!isDraftHydratedRef.current) return;
+    const hasContent = cart.length > 0 || product.trim() || requester.trim() || phone.trim() || advancePayment !== '';
+    if (hasContent) {
+      const draft = {
+        cart,
+        product,
+        qty,
+        salutation,
+        customSalutation,
+        requester,
+        phone,
+        advancePayment,
+        priority,
+        language,
+        sendWhatsApp,
+        selectedDistributor,
+        selectedRate,
+        selectedMrp,
+        selectedMapped,
+        selectedScheme,
+        selectedProductId,
+        selectedStoreId,
+        selectedProductCode,
+        selectedCompany,
+        selectedPackaging,
+        updatedAt: Date.now()
+      };
+      try {
+        localStorage.setItem('quick_order_modal_draft', JSON.stringify(draft));
+        setHasQuickOrderDraft(true);
+      } catch (_) {}
+    } else {
+      try {
+        localStorage.removeItem('quick_order_modal_draft');
+        setHasQuickOrderDraft(false);
+      } catch (_) {}
+    }
+  }, [
+    cart,
+    product,
+    qty,
+    salutation,
+    customSalutation,
+    requester,
+    phone,
+    advancePayment,
+    priority,
+    language,
+    sendWhatsApp,
+    selectedDistributor,
+    selectedRate,
+    selectedMrp,
+    selectedMapped,
+    selectedScheme,
+    selectedProductId,
+    selectedStoreId,
+    selectedProductCode,
+    selectedCompany,
+    selectedPackaging
+  ]);
+
+  const handleClearQuickOrderDraft = useCallback(() => {
+    try {
+      localStorage.removeItem('quick_order_modal_draft');
+    } catch (_) {}
+    setHasQuickOrderDraft(false);
+    setCart([]);
+    setProduct('');
+    setSalutation('Mr.');
+    setCustomSalutation('');
+    setRequester('');
+    setPhone('');
+    setQty(1);
+    setAdvancePayment('');
+    setPriority('Normal');
+    try {
+      setSendWhatsApp(localStorage.getItem('quick_order_send_whatsapp') !== 'false');
+    } catch (_) {}
+    setSelectedDistributor('');
+    setSelectedRate('');
+    setSelectedMrp('');
+    setSelectedMapped(null);
+    setSelectedScheme('');
+    setSelectedProductId('');
+    setSelectedStoreId('');
+    setSelectedProductCode('');
+    setSelectedCompany('');
+    setSelectedPackaging('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setActiveSuggestionIndex(-1);
+    toastEvent.trigger('Quick order draft discarded', 'info');
+    setTimeout(() => productInputRef.current?.focus(), 50);
+  }, []);
+
   // Search state
   const [suggestions, setSuggestions] = useState<SuggestionMedicine[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -820,6 +962,13 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
     setSelectedScheme('');
     setSelectedProductId('');
     setSelectedStoreId('');
+    setSelectedProductCode('');
+    setSelectedCompany('');
+    setSelectedPackaging('');
+    try {
+      localStorage.removeItem('quick_order_modal_draft');
+    } catch {}
+    setHasQuickOrderDraft(false);
     handleClose();
 
     // Trigger background queue processing (non-blocking)
@@ -888,6 +1037,26 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
 
         {/* Form Grid */}
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Restored Draft Notice Banner */}
+          {hasQuickOrderDraft && (
+            <div className="flex items-center justify-between p-2.5 px-3.5 rounded-2xl bg-primary/10 border border-primary/25 text-xs animate-in fade-in select-none">
+              <div className="flex items-center gap-2 text-primary font-semibold">
+                <RotateCcw size={14} className="shrink-0" />
+                <span>
+                  Restored uncompleted quick order draft
+                  {cart.length > 0 ? ` (${cart.length} item${cart.length > 1 ? 's' : ''} staged in list)` : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleClearQuickOrderDraft}
+                className="text-[11px] text-muted hover:text-red-400 font-bold underline cursor-pointer transition-colors"
+              >
+                Discard Draft
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
             
             {/* Left Column: Input Form & Staging Controls (3/5 cols) */}

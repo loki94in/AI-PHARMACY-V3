@@ -1,3 +1,4 @@
+import { isPatientRefillsSettled, isOrderGroupSettled } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -826,7 +827,8 @@ export const QuickAssistSidebar = memo(({
 
     // Sort by diffDays ascending (most urgent first)
     list.sort((a, b) => a.diffDays - b.diffDays);
-    return list;
+    // Drop patients whose every medicine is already ordered AND reminded — nothing left to act on
+    return list.filter(g => !isPatientRefillsSettled(g.medicines));
   }, [actionableRefills]);
 
   const formatReminderSentAt = (sentAtStr?: string | null) => {
@@ -922,7 +924,8 @@ export const QuickAssistSidebar = memo(({
       else g.overallStatus = g.items[0]?.status || 'Other';
     }
 
-    return list;
+    // Hide customers whose every order is already ordered/ready AND notified
+    return list.filter(g => !isOrderGroupSettled(g.items));
   }, [activeWebsiteOrders]);
 
   const groupedSpecialOrders = useMemo(() => {
@@ -991,7 +994,7 @@ export const QuickAssistSidebar = memo(({
       g.last_collection_reminder_at = collDates.length > 0 ? collDates.sort().reverse()[0] : null;
     }
 
-    return list;
+    return list.filter(g => !isOrderGroupSettled(g.items));
   }, [activeLocalSpecialOrders]);
 
   const groupedNotifications = useMemo(() => {

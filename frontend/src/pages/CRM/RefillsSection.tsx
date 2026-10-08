@@ -1,3 +1,4 @@
+import { isPatientRefillsSettled } from '../../utils/refillSettled';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -1049,6 +1050,8 @@ export const RefillsSection: React.FC = () => {
     const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
     const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
 
+    // Action tabs hide patients already fully handled (ordered + reminder sent); master tabs keep everyone
+    if ((filterTab === 'overdue' || filterTab === 'lead') && isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })))) return false;
     if (filterTab === 'overdue') return isOverdue;
     if (filterTab === 'lead') return isLeadWindow;
     if (filterTab === 'active') {

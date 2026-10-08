@@ -1,0 +1,307 @@
+{
+  "totalPages": 24,
+  "passed": 24,
+  "rows": [
+    {
+      "page": "/pos",
+      "buttonsClicked": 10,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "💵 CASH"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 174173
+    },
+    {
+      "page": "/sells",
+      "buttonsClicked": 6,
+      "tabsClicked": 0,
+      "inputsTyped": 3,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 213772
+    },
+    {
+      "page": "/inventory",
+      "buttonsClicked": 2,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 172708
+    },
+    {
+      "page": "/purchases",
+      "buttonsClicked": 6,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "Capture Screen / Window (Word, Email, Image)",
+        "Order low-stock medicines"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 127236
+    },
+    {
+      "page": "/purchase-history",
+      "buttonsClicked": 4,
+      "tabsClicked": 0,
+      "inputsTyped": 2,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "PURCHASE HISTORY",
+        "Reload List"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 163000
+    },
+    {
+      "page": "/crm",
+      "buttonsClicked": 19,
+      "tabsClicked": 0,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "All (1)"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 226722
+    },
+    {
+      "page": "/reports",
+      "buttonsClicked": 7,
+      "tabsClicked": 0,
+      "inputsTyped": 0,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "Generate Generate Report Data"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 152588
+    },
+    {
+      "page": "/pharmarack-cart",
+      "buttonsClicked": 12,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "Today Jump back to Today in calendar strip"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 124687
+    },
+    {
+      "page": "/live-cart",
+      "buttonsClicked": 2,
+      "tabsClicked": 0,
+      "inputsTyped": 0,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 89950
+    },
+    {
+      "page": "/investigation",
+      "buttonsClicked": 8,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "✕"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 109438
+    },
+    {
+      "page": "/ai-engineering",
+      "buttonsClicked": 10,
+      "tabsClicked": 0,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "Composition AI"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 145166
+    },
+    {
+      "page": "/learning",
+      "buttonsClicked": 7,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 160241
+    },
+    {
+      "page": "/dispatch",
+      "buttonsClicked": 18,
+      "tabsClicked": 0,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "🌟 All (5)",
+        "ALL"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 192311
+    },
+    {
+      "page": "/website-orders",
+      "buttonsClicked": 10,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 233111
+    },
+    {
+      "page": "/online-catalog",
+      "buttonsClicked": 10,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 167674
+    },
+    {
+      "page": "/portal",
+      "buttonsClicked": 5,
+      "tabsClicked": 0,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "All Refills (Diabetic, BP, Thyroid, TB)"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 82397
+    },
+    {
+      "page": "/returns",
+      "buttonsClicked": 9,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 169760
+    },
+    {
+      "page": "/database",
+      "buttonsClicked": 9,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "Needs Review (0)"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 126807
+    },
+    {
+      "page": "/phone-sales",
+      "buttonsClicked": 2,
+      "tabsClicked": 0,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 105730
+    },
+    {
+      "page": "/dashboard",
+      "buttonsClicked": 1,
+      "tabsClicked": 0,
+      "inputsTyped": 0,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 73097
+    },
+    {
+      "page": "/migration",
+      "buttonsClicked": 0,
+      "tabsClicked": 0,
+      "inputsTyped": 0,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 166986
+    },
+    {
+      "page": "/mail",
+      "buttonsClicked": 5,
+      "tabsClicked": 0,
+      "inputsTyped": 1,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "noEffect": [
+        "All Mails 0"
+      ],
+      "screenshotExists": true,
+      "screenshotSizeBytes": 104860
+    },
+    {
+      "page": "/settings",
+      "buttonsClicked": 11,
+      "tabsClicked": 0,
+      "inputsTyped": 4,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 156322
+    },
+    {
+      "page": "/audit",
+      "buttonsClicked": 1,
+      "tabsClicked": 0,
+      "inputsTyped": 0,
+      "crashed": false,
+      "blank": false,
+      "errorBoundary": false,
+      "screenshotExists": true,
+      "screenshotSizeBytes": 87259
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+ "rows": [
+  {
+   "page": "/pos",
+   "buttonsClicked": 10,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "💵 CASH"
+   ]
+  },
+  {
+   "page": "/dashboard",
+   "buttonsClicked": 1,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/returns",
+   "buttonsClicked": 9,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/phone-sales",
+   "buttonsClicked": 2,
+   "tabsClicked": 0,
+   "inputsTyped": 1,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/migration",
+   "buttonsClicked": 0,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  }
+ ],
+ "issues": []
+}

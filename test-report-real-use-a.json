@@ -1,0 +1,96 @@
+{
+ "rows": [
+  {
+   "page": "/crm",
+   "buttonsClicked": 19,
+   "tabsClicked": 0,
+   "inputsTyped": 1,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "All (1)"
+   ]
+  },
+  {
+   "page": "/reports",
+   "buttonsClicked": 7,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "Generate Generate Report Data"
+   ]
+  },
+  {
+   "page": "/pharmarack-cart",
+   "buttonsClicked": 12,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "Today Jump back to Today in calendar strip"
+   ]
+  },
+  {
+   "page": "/live-cart",
+   "buttonsClicked": 2,
+   "tabsClicked": 0,
+   "inputsTyped": 0,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/investigation",
+   "buttonsClicked": 8,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "✕"
+   ]
+  },
+  {
+   "page": "/ai-engineering",
+   "buttonsClicked": 10,
+   "tabsClicked": 0,
+   "inputsTyped": 1,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "Composition AI"
+   ]
+  },
+  {
+   "page": "/learning",
+   "buttonsClicked": 7,
+   "tabsClicked": 0,
+   "inputsTyped": 4,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false
+  },
+  {
+   "page": "/dispatch",
+   "buttonsClicked": 18,
+   "tabsClicked": 0,
+   "inputsTyped": 1,
+   "crashed": false,
+   "blank": false,
+   "errorBoundary": false,
+   "noEffect": [
+    "🌟 All (5)",
+    "ALL"
+   ]
+  }
+ ],
+ "issues": []
+}
