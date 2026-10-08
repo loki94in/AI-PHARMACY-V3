@@ -15140,6 +15140,35 @@ function formatPackagingAndUnit(packaging, qty = 1) {
 }
 function buildStandardDistributorOrderMessage(params) {
   const dateLabel = params.dateLabel || (/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  const boyName = params.deliveryBoyName || "Delivery Staff";
+  const boyPhone = params.deliveryBoyPhone || "N/A";
+  const format = (params.preferredFileFormat || "CSV").trim();
+  if (params.orderNo || params.isReminderOnly) {
+    const orderNoClean = (params.orderNo || "").split(",").map((s) => s.trim().replace(/^#+/, "")).filter(Boolean).map((n) => `#${n}`).join(", ");
+    let msg2 = orderNoClean ? `\u{1F4E6} *Pharmarack Order ${orderNoClean}* has been placed.
+` : `\u{1F4E6} *Pharmarack Order* has been placed.
+`;
+    msg2 += `Please pack and dispatch as soon as possible.
+
+`;
+    msg2 += `\u{1F3EC} *Distributor:* ${(params.distributorName || "DISTRIBUTOR").toUpperCase()}
+`;
+    if (params.distributorPhone && params.distributorPhone.trim()) {
+      msg2 += `\u{1F4DE} Contact: ${params.distributorPhone.trim()}
+`;
+    }
+    msg2 += `\u{1F69A} *Delivery / Pickup Staff:* ${boyName} (${boyPhone})
+`;
+    msg2 += `\u{1F4C5} *Date:* ${dateLabel}
+
+`;
+    msg2 += `\u{1F4C4} *Preferred Invoice Format:* ${format}
+`;
+    if (params.pharmacyEmail && params.pharmacyEmail.trim()) {
+      msg2 += `\u{1F4E9} *Please email bill copies to:* ${params.pharmacyEmail.trim()}`;
+    }
+    return msg2.trim();
+  }
   const prefix = params.isLate ? `\u{1F4C5} TODAY ORDER (LATE ADDITION) \u2014 ` : `\u{1F4C5} TODAY DISTRIBUTOR ORDER \u2014 `;
   let msg = `${prefix}${dateLabel}
 
@@ -15150,8 +15179,6 @@ function buildStandardDistributorOrderMessage(params) {
     msg += `\u{1F4DE} Contact: ${params.distributorPhone.trim()}
 `;
   }
-  const boyName = params.deliveryBoyName || "Delivery Staff";
-  const boyPhone = params.deliveryBoyPhone || "N/A";
   msg += `\u{1F69A} *Delivery Boy / Pickup Person:* ${boyName} (${boyPhone})
 
 `;
@@ -15181,7 +15208,6 @@ ${mrpLine}
   msg += `
 \u{1F4CA} *Total Items:* ${items.length}
 `;
-  const format = (params.preferredFileFormat || "CSV").trim();
   msg += `\u{1F4C4} *Preferred Email Invoice Format:* ${format}`;
   if (params.pharmacyEmail && params.pharmacyEmail.trim()) {
     msg += `
@@ -40106,6 +40132,23 @@ Mobile: ${formatDisplayPhone(clean2)}
             qty: item.qty || item.Quantity || 1,
             packaging: item.packaging || item.packing
           }));
+          let syncedOrderNo;
+          try {
+            const pad2 = (n) => String(n).padStart(2, "0");
+            const now = /* @__PURE__ */ new Date();
+            const todayLocal = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+            const syncedRows = await db2.all(
+              `SELECT order_no FROM pharmarack_synced_orders
+           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
+           ORDER BY first_seen_at ASC`,
+              [todayLocal, storeName]
+            );
+            const allNos = (syncedRows || []).map((r) => String(r?.order_no || "").trim()).filter(Boolean);
+            if (allNos.length > 0) {
+              syncedOrderNo = allNos.join(", ");
+            }
+          } catch (_) {
+          }
           const message = buildStandardDistributorOrderMessage({
             distributorName: storeName,
             distributorPhone: rawPhone ? formatDisplayPhone(rawPhone) : void 0,
@@ -40114,7 +40157,9 @@ Mobile: ${formatDisplayPhone(clean2)}
             deliveryBoyPhone: boyPhone,
             preferredFileFormat: store.fileFormat,
             pharmacyEmail: store.email,
-            dateLabel
+            dateLabel,
+            orderNo: syncedOrderNo,
+            isReminderOnly: true
           });
           const distPhones = rawPhone.split(/[\s,;]+/).map((num) => num.replace(/\D/g, "")).filter((num) => num.length >= 10).map((num) => num.length === 10 ? `91${num}` : num);
           const uniqueDistPhones = Array.from(new Set(distPhones));
@@ -40124,7 +40169,9 @@ Mobile: ${formatDisplayPhone(clean2)}
             console.log(`[CartOrderNotif] skipDistributor requested for ${storeName} (order already dispatched from UI). Skipping second distributor message.`);
             suppressedCount++;
           } else if (uniqueDistPhones.length > 0) {
-            const todayDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+            const _now = /* @__PURE__ */ new Date();
+            const _pad = (n) => String(n).padStart(2, "0");
+            const todayDate = `${_now.getFullYear()}-${_pad(_now.getMonth() + 1)}-${_pad(_now.getDate())}`;
             const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1e3;
             const alreadySentRow = await db2.get(
               `SELECT id FROM automation_notifications 
@@ -55528,7 +55575,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.62";
+    APP_VERSION = "0.1.63";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
