@@ -30,6 +30,8 @@ interface BatchDispatchModalProps {
   finalBatchTotalAmount: number;
   isSendingBatchWhatsApp: boolean;
   onConfirmSend: () => void;
+  includeMedicineList?: boolean;
+  setIncludeMedicineList?: (val: boolean) => void;
 }
 
 export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
@@ -45,6 +47,8 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
   finalBatchTotalAmount,
   isSendingBatchWhatsApp,
   onConfirmSend,
+  includeMedicineList = false,
+  setIncludeMedicineList,
 }) => {
   return (
     <BaseModal
@@ -54,7 +58,9 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
       maxWidth="max-w-2xl"
     >
       <div className="space-y-3 max-h-[75vh] flex flex-col">
-        <p className="text-[11px] text-muted -mt-2">Review today's orders & values before sending</p>
+        <p className="text-[11px] text-muted -mt-2">
+          Notifies delivery staff with assigned pickup stores. Distributor dispatch reminders will queue automatically when official Order IDs are detected.
+        </p>
 
         {/* Quick Bulk Staff Assignment Header */}
         {deliveryBoysList.length > 0 && (
@@ -99,6 +105,35 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
             </span>
           </div>
         )}
+
+        {/* Itemized Medicine List Toggle (Template 7A) */}
+        <div className="bg-bg3/40 px-4 py-2.5 rounded-xl border border-glass-border flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
+              <MessageSquare size={14} />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-text flex items-center gap-2">
+                <span>Include Itemized Medicines in Staff Dispatch</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Template 7A
+                </span>
+              </div>
+              <p className="text-[10px] text-muted">
+                When enabled, delivery staff receives full medicine names, packs, and quantities for each store.
+              </p>
+            </div>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              checked={Boolean(includeMedicineList)}
+              onChange={(e) => setIncludeMedicineList?.(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-text after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-muted after:border-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-text border border-glass-border"></div>
+          </label>
+        </div>
 
         {/* Modal Body: Distributor Table */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-3">
@@ -207,12 +242,12 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
             {isSendingBatchWhatsApp ? (
               <>
                 <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                <span>Sending orders…</span>
+                <span>Notifying staff…</span>
               </>
             ) : (
               <>
                 <Send size={13} />
-                <span>Confirm & Send</span>
+                <span>Notify Staff &amp; Queue Dispatch</span>
               </>
             )}
           </button>

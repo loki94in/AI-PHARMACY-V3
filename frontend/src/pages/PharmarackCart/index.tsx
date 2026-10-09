@@ -1368,6 +1368,7 @@ export default function PharmarackCart() {
   const [isValidatingBeforeSend, setIsValidatingBeforeSend] = useState(false);
   const [selectedBatchDeliveryBoys, setSelectedBatchDeliveryBoys] = useState<Record<number, number | null>>({});
   const [bulkApplyDeliveryBoyId, setBulkApplyDeliveryBoyId] = useState<string>('');
+  const [includeMedicineListInBatch, setIncludeMedicineListInBatch] = useState<boolean>(false);
   // Single WhatsApp order dispatch modal state
   const [singleDispatchTarget, setSingleDispatchTarget] = useState<Distributor | null>(null);
   const [singleDispatchBoyId, setSingleDispatchBoyId] = useState<number | null>(null);
@@ -2285,7 +2286,8 @@ export default function PharmarackCart() {
 
   const handleSendAllWhatsAppOrders = async (
     bypassMissingBoyCheck = false,
-    customDeliveryBoys?: Record<number, number | null>
+    customDeliveryBoys?: Record<number, number | null>,
+    includeMedicineList = false
   ) => {
     if (isSendingBatchRef.current) {
       toastEvent.trigger('A WhatsApp batch send is already in progress.', 'info');
@@ -2404,12 +2406,14 @@ export default function PharmarackCart() {
         return;
       }
 
-      // ENQUEUE ALL MESSAGES INSTANTLY TO BACKGROUND QUEUE WORKER
-      messageSendEvent.triggerSendProgress('Pharmarack Batch Orders', `Batch dispatch for ${ordersPayload.length} stores...`, 10);
+      // ENQUEUE DELIVERY BOY PICKUP SUMMARY & PREPARE DEFERRED DISTRIBUTOR DISPATCH
+      messageSendEvent.triggerSendProgress('Pharmarack Batch Orders', `Dispatching pickup summary for ${ordersPayload.length} stores...`, 10);
       const res = await api.enqueuePharmarackBatch({
         orders: ordersPayload,
         deliveryBoyPhone,
-        deliveryBoyName
+        deliveryBoyName,
+        dispatchDistributorsLater: true,
+        includeMedicineList,
       });
 
       if (res && res.success) {
@@ -2432,7 +2436,7 @@ export default function PharmarackCart() {
         window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
 
         toastEvent.trigger(
-          `⚡ WhatsApp Queue started in background! Enqueued 1 Delivery Boy + ${ordersPayload.length} Distributor orders. Dispatching automatically!`,
+          `⚡ Delivery staff notified with pickup list! Official orders recorded. Distributor dispatch will trigger once Order IDs are confirmed.`,
           'info'
         );
 
@@ -6137,10 +6141,12 @@ export default function PharmarackCart() {
         finalBatchTotalQty={finalBatchTotalQty}
         finalBatchTotalAmount={finalBatchTotalAmount}
         isSendingBatchWhatsApp={isSendingBatchWhatsApp}
+        includeMedicineList={includeMedicineListInBatch}
+        setIncludeMedicineList={setIncludeMedicineListInBatch}
         onConfirmSend={() => {
           if (isSendingBatchRef.current || isSendingBatchWhatsApp) return;
           setShowConfirmBatchModal(false);
-          handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys);
+          handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys, includeMedicineListInBatch);
         }}
       />
 

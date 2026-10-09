@@ -737,6 +737,11 @@ export interface DistributorDispatchReminder {
   has_order_today?: number;
   scheduled_send_time?: string | null;
   created_at?: string;
+  pending_queue_id?: number | null;
+  queue_scheduled_at?: number | null;
+  is_held_in_grace_period?: boolean;
+  queue_message?: string | null;
+  synced_order_nos?: string[];
 }
 
 export interface NonMovingReportItem {
@@ -1933,12 +1938,13 @@ export const api = {
     return res.data;
   }),
   enqueueDistributorCollection: (data: { orderIds: number[]; deliveryBoyPhone: string; deliveryBoyName?: string }) => apiClient.post<{ success: boolean; enqueuedCount: number; queueIds: number[]; message: string }>('/whatsapp/queue/enqueue-distributor-collection', data).then(res => res.data),
-  enqueuePharmarackBatch: (data: { orders: { storeName: string; storeId: number; phone: string; message: string; lineTotal?: number; items: readonly unknown[]; deliveryBoyId?: number | null; deliveryBoyName?: string; deliveryBoyPhone?: string }[]; deliveryBoyPhone?: string; deliveryBoyName?: string }) => apiClient.post<{ success: boolean; enqueuedCount: number; queueIds: number[]; message: string }>('/whatsapp/queue/enqueue-pharmarack-batch', data).then(res => res.data),
+  enqueuePharmarackBatch: (data: { orders: { storeName: string; storeId: number; phone: string; message: string; lineTotal?: number; items: readonly unknown[]; deliveryBoyId?: number | null; deliveryBoyName?: string; deliveryBoyPhone?: string }[]; deliveryBoyPhone?: string; deliveryBoyName?: string; dispatchDistributorsLater?: boolean; includeMedicineList?: boolean }) => apiClient.post<{ success: boolean; enqueuedCount: number; queueIds: number[]; message: string }>('/whatsapp/queue/enqueue-pharmarack-batch', data).then(res => res.data),
   enqueueSingleWhatsApp: (data: { number: string; message: string; type?: string; targetName?: string; explicitScheduledAt?: number; skipDedupe?: boolean }) => apiClient.post<{ success: boolean; queueId: number; message: string }>('/whatsapp/queue/enqueue-single', data).then(res => res.data),
   flushWhatsAppQueue: () => apiClient.post<{ success: boolean; message: string }>('/whatsapp/queue/flush').then(res => res.data),
   flushNextWhatsAppQueueItem: () => apiClient.post<{ success: boolean; forced: boolean; message: string; state: WhatsAppQueueStatus | null }>('/whatsapp/queue/flush-next').then(res => res.data),
   retryFailedWhatsAppQueue: () => apiClient.post<{ success: boolean; retriedCount: number; message: string }>('/whatsapp/queue/retry-failed').then(res => res.data),
   resendWhatsAppQueueItem: (id: number, payload?: { number?: string; message?: string; targetName?: string }) => apiClient.post<{ success: boolean; queueId: number; message: string }>(`/whatsapp/queue/items/${id}/resend`, payload).then(res => res.data),
+  sendWhatsAppQueueItemNow: (id: number) => apiClient.post<{ success: boolean; message: string }>(`/whatsapp/queue/item/${id}/send-now`).then(res => res.data),
   updateWhatsAppPacingConfig: (minSec: number, maxSec: number) => apiClient.post<{ success: boolean; minSec?: number; maxSec?: number; preset?: string; message: string }>('/whatsapp/queue/pacing', { minSec, maxSec }).then(res => res.data),
   setWhatsAppQueuePacingPreset: (preset: 'safe') => apiClient.post<{ success: boolean; preset: string; minMs: number; maxMs: number; message: string; state: WhatsAppQueueStatus | null }>('/whatsapp/queue/pacing', { preset }).then(res => res.data),
   updateWhatsAppQueueItem: (data: { id: number; number: string; message?: string }) => apiClient.put<{ success: boolean; message: string }>('/whatsapp/queue/update-item', data).then(res => res.data),

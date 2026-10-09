@@ -84,7 +84,7 @@ ${order.items || 'Standard Pharmacy Order'}
 
 // POST enqueue Pharmarack cart batch dispatch messages (Delivery Boy summary FIRST, then Distributors one by one)
 router.post('/enqueue-pharmarack-batch', async (req, res) => {
-  const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
+  const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo, dispatchDistributorsLater, includeMedicineList } = req.body;
   if (!orders || !Array.isArray(orders) || orders.length === 0) {
     return res.status(400).json({ error: 'orders array is required' });
   }
@@ -172,6 +172,15 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
         const last10 = cleanP.slice(-10);
         const phoneFormatted = last10.length === 10 ? `+91 ${last10.slice(0, 5)} ${last10.slice(5)}` : (o.phone || 'N/A');
         summaryMsg += `${idx + 1}. *${o.storeName}* (${o.items?.length || 0} items)\n    📞 Contact: ${phoneFormatted}\n`;
+        if (includeMedicineList && Array.isArray(o.items) && o.items.length > 0) {
+          summaryMsg += `    📦 *Medicines List:*\n`;
+          o.items.forEach((it: any) => {
+            const itName = it.productName || it.name || it.item_name || 'Medicine';
+            const itQty = it.qty || it.quantity || 1;
+            const itPack = it.packSize || it.pack || it.pack_size || '';
+            summaryMsg += `      • ${itName}${itPack ? ` (${itPack})` : ''} - Qty: ${itQty}\n`;
+          });
+        }
       });
       summaryMsg += `\n==================================\n`;
       summaryMsg += `🚚 *Total Assigned Distributors:* ${group.orders.length}\n`;
@@ -224,13 +233,15 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
         console.log(`[Queue Safeguard] Order for ${order.storeName} was already placed today (${today}). Enqueuing fresh items delta.`);
       }
 
-      const distQueueId = await whatsappQueueWorker.enqueue(
-        cleanPhone,
-        order.message,
-        'pharmarack_distributor_order',
-        order.storeName
-      );
-      if (distQueueId) enqueuedIds.push(distQueueId);
+      if (!dispatchDistributorsLater) {
+        const distQueueId = await whatsappQueueWorker.enqueue(
+          cleanPhone,
+          order.message,
+          'pharmarack_distributor_order',
+          order.storeName
+        );
+        if (distQueueId) enqueuedIds.push(distQueueId);
+      }
 
       // Log placed order to DB history
       try {
@@ -303,7 +314,9 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
       success: true,
       enqueuedCount: enqueuedIds.length,
       queueIds: enqueuedIds,
-      message: `Enqueued ${enqueuedIds.length} WhatsApp order message(s) in background (Delivery Boy first, then ${orders.length} distributors)`
+      message: dispatchDistributorsLater
+        ? `Enqueued ${enqueuedIds.length} Delivery Staff summary message(s); distributor dispatch scheduled pending official Order IDs`
+        : `Enqueued ${enqueuedIds.length} WhatsApp order message(s) in background (Delivery Boy first, then ${orders.length} distributors)`
     });
   } catch (err: any) {
     console.error('Failed to enqueue Pharmarack batch orders:', err);
@@ -562,6 +575,28 @@ router.post('/items/:id/resend', async (req, res) => {
   } catch (err: any) {
     console.error('Failed to resend queue item:', err);
     res.status(500).json({ error: err?.message || 'Failed to resend message' });
+  }
+});
+
+// POST send a scheduled queue item immediately (releases the 5-min grace period)
+router.post(['/item/:id/send-now', '/items/:id/send-now'], async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id || isNaN(id)) {
+    return res.status(400).json({ error: 'Valid item id is required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    const item = await db.get("SELECT id, status, scheduled_at FROM whatsapp_send_queue WHERE id = ?", [id]);
+    if (!item) {
+      return res.status(404).json({ error: 'Queue item not found' });
+    }
+    await db.run("UPDATE whatsapp_send_queue SET scheduled_at = ? WHERE id = ?", [Date.now(), id]);
+    whatsappQueueWorker.triggerProcessing();
+    eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'send_now', id });
+    res.json({ success: true, message: `Dispatched queue item #${id} immediately` });
+  } catch (err: any) {
+    console.error('Failed to release scheduled queue item:', err);
+    res.status(500).json({ error: err?.message || 'Failed to release queue item' });
   }
 });
 

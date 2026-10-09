@@ -340,6 +340,20 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       continue;
     }
 
+    // Query previously announced Order IDs for this distributor today to guarantee strict deduplication
+    const announcedRows = await db.all(
+      `SELECT order_no FROM pharmarack_synced_orders 
+       WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND announced_at IS NOT NULL`,
+      [today.iso, storeName]
+    );
+    const announcedIds = new Set(announcedRows.map((r: any) => String(r.order_no).trim()));
+    // Strictly filter out any Order ID that was already communicated in an earlier message today
+    const freshOnlyOrderNos = orderNos.filter(n => !announcedIds.has(String(n).trim()));
+    if (freshOnlyOrderNos.length === 0) {
+      await settle(db, orderNos, 'already_announced_earlier', true, { storeName, appAlreadySent });
+      continue;
+    }
+
     // Status becomes 'Dispatched' when the queue worker really sends the reminder, so anything
     // other than Pending means today's reminder already went out (or the invoice mail arrived).
     const alreadyReminded = Boolean(
@@ -347,19 +361,22 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       (row.last_reminded_at && String(row.last_reminded_at).startsWith(today.iso))
     );
 
+    // 5-Minute review grace period for human-in-the-loop review before automated release
+    const gracePeriodMs = Date.now() + 5 * 60 * 1000;
+
     if (!alreadyReminded) {
       // Direct order detected for today and reminder NOT yet sent today:
       // Auto-send the dispatch reminder to the distributor for today's orders
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { orderNos });
-      await settle(db, orderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent });
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { orderNos: freshOnlyOrderNos });
+      await settle(db, freshOnlyOrderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         directOrderRemindersToNotifyBoy.push(row);
       }
     } else {
       // Reminder already sent today: send single follow-up naming only the new order(s)
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos });
-      await settle(db, orderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent });
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { followUp: true, orderNos: freshOnlyOrderNos });
+      await settle(db, freshOnlyOrderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         lateReminders.push(row);

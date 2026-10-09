@@ -131,6 +131,11 @@ type LocalReminderRow = Omit<DistributorDispatchReminder, 'status'> & {
   order_count?: number;
   latest_notif_status?: string;
   latest_notif_error?: string | null;
+  pending_queue_id?: number | null;
+  queue_scheduled_at?: number | null;
+  is_held_in_grace_period?: boolean;
+  queue_message?: string | null;
+  synced_order_nos?: string[];
 };
 
 type LocalApiError = { response?: { data?: { error?: string } }; message?: string };
@@ -424,6 +429,14 @@ const Dispatch = () => {
       const distName = targetItem?.distributor_name || 'Distributor';
       const msgToSend = customMessageOverride !== undefined ? customMessageOverride : customMessages[id];
 
+      // If item is currently held in 5-minute scheduled review hold, release immediately via queue
+      if (targetItem?.pending_queue_id && !customMessageOverride) {
+        await api.sendWhatsAppQueueItemNow(targetItem.pending_queue_id);
+        showNotif(`Dispatch reminder for ${distName} released & sent immediately!`);
+        await fetchDistributorReminders(true);
+        return;
+      }
+
       let targetId = id;
       if (id >= 800000 && targetItem) {
         const createRes = await api.createManualDistributorOrderReminder({
@@ -446,6 +459,17 @@ const Dispatch = () => {
       showNotif(e.message || 'Failed to send WhatsApp reminder', 'error');
     } finally {
       setSendingReminderId(null);
+    }
+  };
+
+  const handleCancelGracePeriod = async (queueId: number) => {
+    try {
+      await api.deleteWhatsAppQueueItem(queueId);
+      showNotif('Scheduled dispatch reminder cancelled.');
+      await fetchDistributorReminders(true);
+    } catch (err) {
+      const e = err as LocalApiError;
+      showNotif(e.message || 'Failed to cancel scheduled reminder', 'error');
     }
   };
 
@@ -1588,6 +1612,26 @@ const Dispatch = () => {
                                 </span>
                               ) : null}
 
+                              {/* Synced Official Order IDs Badge */}
+                              {item.synced_order_nos && item.synced_order_nos.length > 0 ? (
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-primary/20 text-primary border border-primary/30 flex items-center gap-1 shrink-0"
+                                  title={`Detected official Pharmarack Order ID(s): ${item.synced_order_nos.map(n => `#${n}`).join(', ')}`}
+                                >
+                                  📦 PO #{item.synced_order_nos.join(', #')}
+                                </span>
+                              ) : null}
+
+                              {/* 5-Minute Grace Period Review Hold Badge */}
+                              {item.is_held_in_grace_period && item.queue_scheduled_at ? (
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 shrink-0 animate-pulse"
+                                  title={`Human-in-the-loop 5-minute review hold. Automated send will trigger at ${new Date(item.queue_scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Click 'Send Now' to release immediately or 'Cancel Hold' to revoke.`}
+                                >
+                                  <Clock size={10} className="text-amber-400" /> ⏳ 5-Min Hold ({new Date(item.queue_scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                                </span>
+                              ) : null}
+
                               {item.latest_notif_status === 'skipped_offline' || item.status === 'Skipped (PC Offline)' ? (
                                 <span
                                   className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 shrink-0 cursor-help"
@@ -1716,6 +1760,18 @@ const Dispatch = () => {
                           </td>
                           <td className="p-3.5 align-middle text-right">
                             <div className="flex items-center justify-end gap-2">
+                              {item.is_held_in_grace_period && item.pending_queue_id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelGracePeriod(item.pending_queue_id!)}
+                                  className="flex items-center gap-1 text-xs font-bold px-2.5 py-1.5 rounded-xl bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 transition-all active:scale-95 cursor-pointer shadow-sm shrink-0"
+                                  title="Cancel this scheduled dispatch reminder before it releases"
+                                >
+                                  <Trash2 size={12} />
+                                  <span>Cancel Hold</span>
+                                </button>
+                              ) : null}
+
                               <button
                                 type="button"
                                 onClick={() => handleSendReminderNow(item.id)}

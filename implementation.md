@@ -1,66 +1,95 @@
-# Implementation Plan: Overdue Metric Alignment & Per-Medicine Priority Enforcement
+# Implementation Plan: Pharmarack Order Placement, Delivery Staff Dispatch & Deduplicated Distributor Reminder Workflow
 
-## Problem Analysis & Re-Check Summary
-
-### 1. Overdue Count Discrepancy (Top Card vs. Tab List)
-* **Root Cause**:
-  * In `frontend/src/pages/CRM/RefillsSection.tsx` (line 1104), `overdueCount` is computed by a raw date comparison:
-    `data.filter(p => new Date(p.next_refill_date) < new Date()).length`
-  * In `RefillsSection.tsx` (lines 1086-1088), the `Overdue` tab filter excludes patients who are already settled:
-    `if ((filterTab === 'overdue' || filterTab === 'lead') && isPatientRefillsSettled(...)) return false;`
-  * In the active database (`app.dev.db`), `Mr. MOKASHI` has `next_refill_date = '2026-10-06'` (past), but his refill is already ordered in Live Cart (`cart_store_name: NITIN AGENCY / AJAY PHARMA`) and notified (`reminder_status: 'SENT'`).
-  * Because he is settled, the tab list hides him (showing `0` / empty), while the top card still counts him as `1 Overdue`.
-
-### 2. Per-Medicine Distributor Priority Overridden by Global Priority
-* **Root Cause**:
-  * In `MedicineLinkModal.tsx` and `RefillsSection.tsx`, users can arrange distributors for a specific medicine (`#1, #2, #3` via up/down arrows or the `⭐ Priority #1` button). This saves ordered rows into `medicine_distributor_links` with `pick_order = 0, 1, 2...`.
-  * However, in `src/services/refillCartService.ts` (lines 262-267), the backend immediately runs `orderByPriority(..., await loadPriorityMap())`.
-  * `orderByPriority` prioritizes global rankings from `distributor_priority` over `pick_order`. If two distributors exist in the global list, the global ranking always wins, completely bypassing the user's custom per-medicine choice.
-* **Desired Behavior**:
-  * For a given medicine, the pharmacist's explicit `pick_order` (`#1, #2, #3`) in `medicine_distributor_links` must be the primary priority at Live Cart add time.
-  * If Distributor #1 is out of stock, it automatically rotates to Distributor #2 in that medicine's exact saved order.
-  * Global distributor ranking serves as the fallback/default order for unranked distributors.
+> **Task Context & Workflow Governance:**
+> Based on user specification and architectural alignment:
+> 1. When clicking **"Send All via WhatsApp"** in Pharmarack Cart, the app notifies **Delivery Staff** with their assigned pickup list (and optional itemized medicine list if toggled). It does **NOT** send WhatsApp messages to distributors upfront.
+> 2. The order is placed officially (via direct background checkout / manual user placement on Pharmarack).
+> 3. When background sync (`pharmarackOrderSyncService`) detects newly generated official Order IDs:
+>    - First dispatch message to the distributor includes the newly detected Order IDs and pickup staff details.
+>    - **Deduplication Rule (Same-Day Re-orders):** If a distributor was *already sent* a dispatch reminder earlier today and a new Order ID appears later, the follow-up message contains **ONLY the newly detected Order ID(s)**. Old, already sent Order IDs are strictly excluded.
+>    - **Human-in-the-Loop & 5-Minute Grace Period:** Generated distributor dispatch messages are scheduled in `whatsapp_send_queue` with a 5-minute review delay. The user can view, edit, approve immediately ("Send Now"), or cancel before release.
+> 4. **No installed app code was broken or touched prematurely.** This plan governs the surgical implementation once approved.
 
 ---
 
-## Proposed Changes
+## Architecture & Technical Contracts
 
-### Component 1: Frontend CRM Refills (`frontend/src/pages/CRM/RefillsSection.tsx`)
-1. **Align `overdueCount` metric**:
-   * Compute `overdueCount` by checking both `dueDate < new Date()` and `!isPatientRefillsSettled(...)`.
-   * Add an optional toggle/chip in the Overdue tab (`Show Settled (N)`) so pharmacists can inspect handled overdue records on demand without cluttering the active queue.
+### 1. Delivery Staff Dispatch & Optional Itemized Medicine Breakdown
+- **Frontend ([BatchDispatchModal.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/PharmarackCart/BatchDispatchModal.tsx)):**
+  - Add a toggle switch in the modal: `📋 Include Detailed Medicine List in Staff Dispatch`.
+  - Update confirmation summary copy: "Notifies delivery staff with pickup stores; distributor dispatch will be queued once official Pharmarack Order IDs are detected."
+- **Backend ([whatsappQueue.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/whatsappQueue.ts)):**
+  - In `/enqueue-pharmarack-batch`:
+    - If `dispatchDistributorsLater: true`, enqueue ONLY to assigned delivery boys.
+    - If `includeMedicineList: true`, format each assigned distributor section in the delivery boy's message with itemized lines (Name, Pack, Qty, MRP).
+    - Save cart items and distributor preferences into `pharmarack_placed_orders` with status `awaiting_order_id`.
 
-### Component 2: Backend Cart Service (`src/services/refillCartService.ts`)
-1. **Enforce Per-Medicine `pick_order` Priority**:
-   * When fetching links for a refill medicine:
-     `SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id`
-   * Preserve the explicit `pick_order` saved by the pharmacist as the primary order.
-   * If any linked distributor has an unranked/default `pick_order`, sort those remaining using the global priority map as secondary fallback.
-   * Ensure out-of-stock rotation strictly tries `#1` -> `#2` -> `#3` in this medicine-specific order.
+### 2. Official Order Placement (Pharmarack Checkout Integration)
+- Connect "Send All via WhatsApp" action to trigger official order placement:
+  - Background checkout call or automated headless placement where supported, while fully accommodating manual placement by the user on `retailers.pharmarack.com`.
+  - Maintain session persistence without violating the no-headless-browser-loop contract (`src/AGENTS.md`).
 
-### Component 3: Verification & Test Suite
-1. Run existing test suite `tests/refillCart.test.ts`.
-2. Verify that:
-   * Setting Distributor B as `#1` for Medicine X orders Distributor B first, even if Distributor A has a higher global priority.
-   * Out of stock at Distributor B falls back to Distributor A.
-   * Top overdue metric card matches the Overdue tab count (both show `0` when all past refills are settled).
-3. Run `npm run guardrails` to guarantee 0 regressions.
+### 3. Order Sync & Order ID Detection ([pharmarackOrderSyncService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/pharmarackOrderSyncService.ts))
+- Sync detects today's orders via `POST pharmretail-api.pharmarack.com/order/api/v2/DisplayOrders`.
+- Save newly detected Order IDs into `pharmarack_synced_orders`.
+- Query already communicated Order IDs for each distributor today.
+- Compute delta: `freshOrderNos = detectedOrderNos.filter(id => !alreadyCommunicatedIds.has(id))`.
+
+### 4. Same-Day Deduplication & Follow-Up Formatting
+- **If first dispatch today:**
+  - Build standard PO dispatch reminder:
+    `📦 Pharmarack Order #<orderNos> has been placed. Please pack and dispatch as soon as possible...`
+- **If distributor was ALREADY sent a dispatch message today:**
+  - Build follow-up message strictly mentioning **ONLY newly detected Order IDs**:
+    `🆕 New Pharmarack Order #<freshOrderNos> placed. Please dispatch ASAP — to be collected by <boyName> (<boyPhone>) - <storeName>`
+  - Strictly omit old, previously messaged Order IDs.
+
+### 5. 5-Minute Grace Period & Human-in-the-Loop Safeguard
+- Distributor messages are queued with `scheduled_at = Date.now() + 5 * 60 * 1000`.
+- UI surfaces live banner / drawer with:
+  - `[Send Immediately]`
+  - `[Edit Message]`
+  - `[Cancel Dispatch]`
+- Real-time updates via SSE `sse-dispatch-updated` and `dispatch_updated`.
 
 ---
 
-## Human-in-the-Loop Review Contract (Rule 6)
-* Pharmacists maintain full visibility:
-  * The Refill modal shows live stock per linked distributor.
-  * The medicine card displays the `⭐ #1 Priority` distributor with a quick dropdown to change it.
-  * Pharmacists can toggle settled vs. pending overdue items at any time.
+## Verifiable Task Breakdown
+
+1. [x] **UI Updates in BatchDispatchModal & Cart**
+   - File: `frontend/src/pages/PharmarackCart/BatchDispatchModal.tsx`
+   - File: `frontend/src/pages/PharmarackCart/index.tsx`
+   - File: `frontend/src/services/api.ts`
+   - Completed: Added `includeMedicineList` state & toggle switch with theme-compliant semantic tokens. Wired `dispatchDistributorsLater: true` and `includeMedicineList` into batch dispatch request.
+
+2. [x] **Backend Route Refinement in whatsappQueue.ts**
+   - File: `src/routes/whatsappQueue.ts`
+   - Completed: Extracted `dispatchDistributorsLater` and `includeMedicineList`. Formatted itemized medicine breakdown when toggled. Deferred immediate distributor enqueue while saving placed orders and delivery boy mappings to database. Added `/item/:id/send-now` and `/items/:id/send-now` routes for immediate release.
+
+3. [x] **Order Sync Service Deduplication & Follow-Up Logic**
+   - File: `src/services/pharmarackOrderSyncService.ts`
+   - File: `src/services/distributorDispatchReminderWorker.ts`
+   - Completed: Added detection of previously announced order numbers today (`pharmarack_synced_orders.announced_at`). Filtered newly detected orders strictly to unannounced IDs (`newOrderNos`). Built follow-up messages strictly omitting previously announced IDs. Enforced a 5-minute scheduled hold window for distributor reminders. Adhered to Guardrail B4 for local dates.
+
+4. [x] **Human-in-the-Loop Queue Controls on Dispatch Page**
+   - File: `frontend/src/pages/Dispatch/index.tsx`
+   - Completed: Exposed `pending_queue_id`, `queue_scheduled_at`, `is_held_in_grace_period`, and `synced_order_nos` on reminder rows. Added "⏳ 5-Min Review Hold" badge, "Send Now" one-click immediate release button, and "Cancel Hold" action to delete scheduled queue items.
+
+5. [x] **Quality Checks & Knowledge Graph Sync**
+   - Executed `npm run guardrails` (`tsc --noEmit` + guardrail audit): PASS (exit code 0).
+   - Executed `node scripts/quick-update.mjs`: Successfully updated knowledge graph with 1169 files.
 
 ---
 
-## Tasks & Execution Log
-
-| Task # | Description | Status | Verification Check |
-| :--- | :--- | :--- | :--- |
-| **Task 1** | Synchronize `overdueCount` in `RefillsSection.tsx` with `isPatientRefillsSettled` & add handled toggle | **COMPLETED** | Top card and tab list show matching counts; handled patients viewable with toggle |
-| **Task 2** | Update `refillCartService.ts` so per-medicine `pick_order` is primary priority | **COMPLETED** | Per-medicine priority (#1, #2, ...) strictly preserved at cart add time with automatic stock rotation fallback |
-| **Task 3** | Verify test suite `tests/refillCart.test.ts` & `npm run guardrails` | **COMPLETED** | 25/25 tests passed (including per-medicine priority override unit test); Guardrails exit 0 (clean compilation & integrity) |
-| **Task 4** | Update `scripts/quick-update.mjs` knowledge graph | **COMPLETED** | Knowledge graph refreshed (1196 files, 0 errors, 5.2s) |
+## Completed Tasks Log
+*(New agents will resume from here; tasks are checked off as executed)*
+- [x] Documentation & Template Specification updated in `ALL_TEMPLATES_IN_DETAIL.md` (Templates 1B, 1B.1, 1B.2, and 7A).
+- [x] Implementation Plan created in `implementation.md`.
+- [x] BatchDispatchModal toggle switch & semantic styles implemented in `BatchDispatchModal.tsx`.
+- [x] Cart batch dispatch flow updated in `PharmarackCart/index.tsx` & `api.ts`.
+- [x] Backend queue routing & itemized medicines toggle in `whatsappQueue.ts`.
+- [x] Same-day re-order deduplication & 5-minute grace period scheduler in `pharmarackOrderSyncService.ts`.
+- [x] Reminder worker schema queries updated with queue item status in `distributorDispatchReminderWorker.ts`.
+- [x] Human-in-the-loop review hold & action buttons implemented in `Dispatch/index.tsx`.
+- [x] Guardrails verification & TypeScript compilation verified passing with 0 violations.
+- [x] Knowledge graph refreshed via `node scripts/quick-update.mjs`.
