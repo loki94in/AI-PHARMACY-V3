@@ -127,8 +127,8 @@ export const AppearanceTab: React.FC = () => {
   ];
 
   const radiusOptions: { id: AppearancePreferences['borderRadius']; label: string; desc: string }[] = [
-    { id: 'sharp', label: 'Sharp Corners (4px)', desc: 'Clean square edges with minimal rounding' },
-    { id: 'standard', label: 'Modern Rounded (12px)', desc: 'Balanced standard rounded cards & inputs' },
+    { id: 'sharp', label: 'Compact Corners (8px)', desc: 'Clean square edges with minimal rounding' },
+    { id: 'standard', label: 'Apple Rounded (16px)', desc: 'Balanced standard rounded cards & inputs' },
     { id: 'curved', label: 'Curved Soft (20px)', desc: 'Smooth pill-shaped buttons & curved panels' },
   ];
 

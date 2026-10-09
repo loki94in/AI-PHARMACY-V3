@@ -207,9 +207,9 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm motion-modal-backdrop">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 motion-modal-backdrop">
       <div 
-        className="relative w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col bg-bg2 border border-glass-border rounded-2xl shadow-2xl overflow-hidden motion-modal-content"
+        className="relative w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col bg-bg2 border border-glass-border rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden motion-modal-content"
         onClick={(e) => e.stopPropagation()}
       >
         {/* MODAL HEADER */}
@@ -505,7 +505,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
                               loading="lazy"
                             />
                             
-                            <div className="absolute inset-0 bg-bg/60 backdrop-blur-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <div className="absolute inset-0 bg-bg/60-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                               <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-bold shadow-lg">
                                 <Maximize2 size={14} />
                                 <span>Inspect Full View</span>
@@ -513,7 +513,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
                             </div>
 
                             {/* Angle Badge */}
-                            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-bg3/90 backdrop-blur-sm text-text text-[11px] font-bold border border-border">
+                            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-bg3/90 text-text text-[11px] font-bold border border-border">
                               {formatAngleLabel(img.image_type)}
                             </span>
 
@@ -820,11 +820,11 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
       {/* LIGHTBOX INSPECTION MODAL */}
       {lightboxIndex !== null && imagesList[lightboxIndex] && (
         <div 
-          className="fixed inset-0 z-submodal flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150"
+          className="fixed inset-0 z-submodal flex items-center justify-center p-4 bg-black/85 animate-in fade-in duration-150"
           onClick={() => setLightboxIndex(null)}
         >
           <div 
-            className="relative w-[95vw] max-w-3xl h-[80vh] min-h-[500px] max-h-[750px] flex flex-col bg-bg2 border border-glass-border rounded-2xl overflow-hidden shadow-2xl p-4"
+            className="relative w-[95vw] max-w-3xl h-[80vh] min-h-[500px] max-h-[750px] flex flex-col bg-bg2 border border-glass-border rounded-2xl overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-glass-border mb-3">

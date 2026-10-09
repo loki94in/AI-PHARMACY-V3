@@ -32,8 +32,8 @@ export const TABLE_DENSITY_MAP: Record<AppearancePreferences['tableDensity'], { 
 };
 
 export const BORDER_RADIUS_MAP: Record<AppearancePreferences['borderRadius'], string> = {
-  sharp: '0.25rem',
-  standard: '0.75rem',
+  sharp: '0.5rem',
+  standard: '1rem',
   curved: '1.25rem',
 };
 

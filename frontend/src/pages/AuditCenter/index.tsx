@@ -194,13 +194,13 @@ export default function AuditCenter() {
   return (
     <div className="h-full flex flex-col overflow-hidden text-text">
       {/* Header */}
-      <div className="flex-none p-5 border-b border-border bg-glass-bg/60 backdrop-blur-sm">
+      <div className="flex-none p-5 border-b border-border bg-glass-bg/60">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <div className="flex items-center gap-3 mb-1.5">
               {report ? (isReady ? <ShieldCheck size={24} className="text-green-400" /> : <ShieldX size={24} className="text-red-400" />)
                 : <ShieldCheck size={24} className="text-muted" />}
-              <h1 className="text-2xl font-black tracking-tight text-text">Project Readiness Audit</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-text">Project Readiness Audit</h1>
               {report && (
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-bg3 border border-border text-muted">
                   v{report.appVersion} · {report.buildId}

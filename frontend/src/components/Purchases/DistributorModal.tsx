@@ -49,7 +49,7 @@ export const DistributorModal: React.FC<DistributorModalProps> = ({
 
   return createPortal(
     <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-in fade-in">
-      <div className="bg-bg2 border border-border rounded-xl p-6 w-[95vw] max-w-md shadow-2xl">
+      <div className="bg-bg2 border border-border rounded-xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
         <h3 className="text-lg font-semibold text-text mb-4">
           {editDistributorId ? 'Edit Distributor' : 'Add New Distributor'}
         </h3>

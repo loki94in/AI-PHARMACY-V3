@@ -13764,7 +13764,10 @@ async function getTodayDistributorRemindersFast(customDateStr) {
       if (n.recipient_name) notifMap.set(n.recipient_name.toLowerCase().trim(), { status: s, error: err });
       if (n.recipient_phone) notifMap.set(n.recipient_phone.replace(/\\D/g, "").slice(-10), { status: s, error: err });
     }
-    const [todayPlacedOrders, todayPurchases] = await Promise.all([
+    const startOfDay = /* @__PURE__ */ new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDayMs = startOfDay.getTime();
+    const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
       db2.all(
         `SELECT id, order_date, store_id, store_name, items_json, placed_at 
          FROM pharmarack_placed_orders 
@@ -13777,14 +13780,51 @@ async function getTodayDistributorRemindersFast(customDateStr) {
          JOIN distributors d ON p.distributor_id = d.id
          WHERE (p.date IS NOT NULL AND DATE(p.date) = ?)`,
         [todayStr2]
+      ),
+      db2.all(
+        `SELECT id, target_name, number, scheduled_at, message, created_at
+         FROM whatsapp_send_queue
+         WHERE type = 'distributor_dispatch_reminder'
+           AND status = 'pending'
+           AND created_at >= ?
+         ORDER BY id DESC`,
+        [startOfDayMs]
+      ),
+      db2.all(
+        `SELECT order_no, store_name, announced_at FROM pharmarack_synced_orders WHERE order_date = ?`,
+        [todayStr2]
       )
     ]);
+    const queueMap = /* @__PURE__ */ new Map();
+    for (const q of pendingQueueRows || []) {
+      if (q.target_name) queueMap.set(q.target_name.toLowerCase().trim(), q);
+      if (q.number) queueMap.set(String(q.number).replace(/\D/g, "").slice(-10), q);
+    }
+    const syncedOrdersMap = /* @__PURE__ */ new Map();
+    for (const so of syncedOrderRows || []) {
+      const k = (so.store_name || "").toLowerCase().trim();
+      if (!syncedOrdersMap.has(k)) syncedOrdersMap.set(k, []);
+      syncedOrdersMap.get(k).push(String(so.order_no));
+    }
     for (const r of todayReminders) {
       const normDistName = (r.distributor_name || "").toLowerCase().trim();
-      const phoneDigits = (r.distributor_phone || "").replace(/\\D/g, "").slice(-10);
+      const phoneDigits = (r.distributor_phone || "").replace(/\D/g, "").slice(-10);
       const notif = notifMap.get(normDistName) || (phoneDigits ? notifMap.get(phoneDigits) : void 0);
       r.latest_notif_status = notif?.status || null;
       r.latest_notif_error = notif?.error || null;
+      const queueItem = queueMap.get(normDistName) || (phoneDigits ? queueMap.get(phoneDigits) : void 0);
+      if (queueItem) {
+        r.pending_queue_id = queueItem.id;
+        r.queue_scheduled_at = queueItem.scheduled_at;
+        r.is_held_in_grace_period = Boolean(queueItem.scheduled_at && queueItem.scheduled_at > Date.now());
+        r.queue_message = queueItem.message;
+      } else {
+        r.pending_queue_id = null;
+        r.queue_scheduled_at = null;
+        r.is_held_in_grace_period = false;
+        r.queue_message = null;
+      }
+      r.synced_order_nos = syncedOrdersMap.get(normDistName) || [];
       const distId = r.distributor_id;
       const matchingPlaced = todayPlacedOrders.filter(
         (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId
@@ -14177,24 +14217,67 @@ async function syncTodayActiveDistributors() {
       console.warn("[DistributorReminderWorker] Error merging master saved distributors:", err.message);
     }
     try {
-      const todayPlacedOrders = await db2.all(
-        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
-         FROM pharmarack_placed_orders 
-         WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
-         ORDER BY placed_at ASC`,
-        [todayStr2, todayStr2, todayStr2]
-      );
-      const todayPurchases = await db2.all(
-        `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
-         FROM purchases p
-         JOIN distributors d ON p.distributor_id = d.id
-         WHERE (p.date IS NOT NULL AND (DATE(p.date) = ? OR DATE(p.date, 'localtime') = ?))
-         ORDER BY p.id ASC`,
-        [todayStr2, todayStr2]
-      );
+      const startOfDay = /* @__PURE__ */ new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDayMs = startOfDay.getTime();
+      const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
+        db2.all(
+          `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+           FROM pharmarack_placed_orders 
+           WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
+           ORDER BY placed_at ASC`,
+          [todayStr2, todayStr2, todayStr2]
+        ),
+        db2.all(
+          `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
+           FROM purchases p
+           JOIN distributors d ON p.distributor_id = d.id
+           WHERE (p.date IS NOT NULL AND DATE(p.date) = ?)
+           ORDER BY p.id ASC`,
+          [todayStr2]
+        ),
+        db2.all(
+          `SELECT id, target_name, number, scheduled_at, message, created_at
+           FROM whatsapp_send_queue
+           WHERE type = 'distributor_dispatch_reminder'
+             AND status = 'pending'
+             AND created_at >= ?
+           ORDER BY id DESC`,
+          [startOfDayMs]
+        ),
+        db2.all(
+          `SELECT order_no, store_name, announced_at FROM pharmarack_synced_orders WHERE order_date = ?`,
+          [todayStr2]
+        )
+      ]);
+      const queueMap = /* @__PURE__ */ new Map();
+      for (const q of pendingQueueRows || []) {
+        if (q.target_name) queueMap.set(q.target_name.toLowerCase().trim(), q);
+        if (q.number) queueMap.set(String(q.number).replace(/\D/g, "").slice(-10), q);
+      }
+      const syncedOrdersMap = /* @__PURE__ */ new Map();
+      for (const so of syncedOrderRows || []) {
+        const k = (so.store_name || "").toLowerCase().trim();
+        if (!syncedOrdersMap.has(k)) syncedOrdersMap.set(k, []);
+        syncedOrdersMap.get(k).push(String(so.order_no));
+      }
       for (const r of todayReminders) {
         const normDistName = (r.distributor_name || "").toLowerCase().trim();
+        const phoneDigits = (r.distributor_phone || "").replace(/\D/g, "").slice(-10);
         const distId = r.distributor_id;
+        const queueItem = queueMap.get(normDistName) || (phoneDigits ? queueMap.get(phoneDigits) : void 0);
+        if (queueItem) {
+          r.pending_queue_id = queueItem.id;
+          r.queue_scheduled_at = queueItem.scheduled_at;
+          r.is_held_in_grace_period = Boolean(queueItem.scheduled_at && queueItem.scheduled_at > Date.now());
+          r.queue_message = queueItem.message;
+        } else {
+          r.pending_queue_id = null;
+          r.queue_scheduled_at = null;
+          r.is_held_in_grace_period = false;
+          r.queue_message = null;
+        }
+        r.synced_order_nos = syncedOrdersMap.get(normDistName) || [];
         const matchingPlaced = todayPlacedOrders.filter(
           (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId
         );
@@ -41027,19 +41110,31 @@ ${waiting.message}`;
       directOrderRemindersToNotifyBoy.push(row);
       continue;
     }
+    const announcedRows = await db2.all(
+      `SELECT order_no FROM pharmarack_synced_orders 
+       WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND announced_at IS NOT NULL`,
+      [today.iso, storeName]
+    );
+    const announcedIds = new Set(announcedRows.map((r) => String(r.order_no).trim()));
+    const freshOnlyOrderNos = orderNos.filter((n) => !announcedIds.has(String(n).trim()));
+    if (freshOnlyOrderNos.length === 0) {
+      await settle(db2, orderNos, "already_announced_earlier", true, { storeName, appAlreadySent });
+      continue;
+    }
     const alreadyReminded = Boolean(
       row.status && row.status !== "Pending" || row.last_reminded_at && String(row.last_reminded_at).startsWith(today.iso)
     );
+    const gracePeriodMs = Date.now() + 5 * 60 * 1e3;
     if (!alreadyReminded) {
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { orderNos });
-      await settle(db2, orderNos, sent ? "dispatch_reminder_queued" : "reminder_not_sent", sent, { storeName, status: row.status, appAlreadySent });
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { orderNos: freshOnlyOrderNos });
+      await settle(db2, freshOnlyOrderNos, sent ? "dispatch_reminder_queued" : "reminder_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         directOrderRemindersToNotifyBoy.push(row);
       }
     } else {
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { followUp: true, orderNos });
-      await settle(db2, orderNos, sent ? "follow_up_queued" : "follow_up_not_sent", sent, { storeName, status: row.status, appAlreadySent });
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { followUp: true, orderNos: freshOnlyOrderNos });
+      await settle(db2, freshOnlyOrderNos, sent ? "follow_up_queued" : "follow_up_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         lateReminders.push(row);
@@ -55619,7 +55714,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.64";
+    APP_VERSION = "0.1.65";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -101464,7 +101559,7 @@ ${order.items || "Standard Pharmacy Order"}
       }
     });
     router55.post("/enqueue-pharmarack-batch", async (req, res) => {
-      const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
+      const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo, dispatchDistributorsLater, includeMedicineList } = req.body;
       if (!orders || !Array.isArray(orders) || orders.length === 0) {
         return res.status(400).json({ error: "orders array is required" });
       }
@@ -101537,6 +101632,17 @@ ${order.items || "Standard Pharmacy Order"}
             summaryMsg += `${idx + 1}. *${o.storeName}* (${o.items?.length || 0} items)
     \u{1F4DE} Contact: ${phoneFormatted}
 `;
+            if (includeMedicineList && Array.isArray(o.items) && o.items.length > 0) {
+              summaryMsg += `    \u{1F4E6} *Medicines List:*
+`;
+              o.items.forEach((it) => {
+                const itName = it.productName || it.name || it.item_name || "Medicine";
+                const itQty = it.qty || it.quantity || 1;
+                const itPack = it.packSize || it.pack || it.pack_size || "";
+                summaryMsg += `      \u2022 ${itName}${itPack ? ` (${itPack})` : ""} - Qty: ${itQty}
+`;
+              });
+            }
           });
           summaryMsg += `
 ==================================
@@ -101585,13 +101691,15 @@ ${order.items || "Standard Pharmacy Order"}
             }
             console.log(`[Queue Safeguard] Order for ${order.storeName} was already placed today (${today}). Enqueuing fresh items delta.`);
           }
-          const distQueueId = await whatsappQueueWorker.enqueue(
-            cleanPhone,
-            order.message,
-            "pharmarack_distributor_order",
-            order.storeName
-          );
-          if (distQueueId) enqueuedIds.push(distQueueId);
+          if (!dispatchDistributorsLater) {
+            const distQueueId = await whatsappQueueWorker.enqueue(
+              cleanPhone,
+              order.message,
+              "pharmarack_distributor_order",
+              order.storeName
+            );
+            if (distQueueId) enqueuedIds.push(distQueueId);
+          }
           try {
             const today2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
             const placedAt = Date.now();
@@ -101649,7 +101757,7 @@ ${order.items || "Standard Pharmacy Order"}
           success: true,
           enqueuedCount: enqueuedIds.length,
           queueIds: enqueuedIds,
-          message: `Enqueued ${enqueuedIds.length} WhatsApp order message(s) in background (Delivery Boy first, then ${orders.length} distributors)`
+          message: dispatchDistributorsLater ? `Enqueued ${enqueuedIds.length} Delivery Staff summary message(s); distributor dispatch scheduled pending official Order IDs` : `Enqueued ${enqueuedIds.length} WhatsApp order message(s) in background (Delivery Boy first, then ${orders.length} distributors)`
         });
       } catch (err) {
         console.error("Failed to enqueue Pharmarack batch orders:", err);
@@ -101874,6 +101982,26 @@ ${order.items || "Standard Pharmacy Order"}
       } catch (err) {
         console.error("Failed to resend queue item:", err);
         res.status(500).json({ error: err?.message || "Failed to resend message" });
+      }
+    });
+    router55.post(["/item/:id/send-now", "/items/:id/send-now"], async (req, res) => {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        return res.status(400).json({ error: "Valid item id is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const item = await db2.get("SELECT id, status, scheduled_at FROM whatsapp_send_queue WHERE id = ?", [id]);
+        if (!item) {
+          return res.status(404).json({ error: "Queue item not found" });
+        }
+        await db2.run("UPDATE whatsapp_send_queue SET scheduled_at = ? WHERE id = ?", [Date.now(), id]);
+        whatsappQueueWorker.triggerProcessing();
+        eventService.broadcast("dispatch_updated", { at: Date.now(), source: "send_now", id });
+        res.json({ success: true, message: `Dispatched queue item #${id} immediately` });
+      } catch (err) {
+        console.error("Failed to release scheduled queue item:", err);
+        res.status(500).json({ error: err?.message || "Failed to release queue item" });
       }
     });
     router55.post("/flush-next", async (_req, res) => {

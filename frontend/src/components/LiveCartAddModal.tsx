@@ -1729,7 +1729,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-all duration-300">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 transition-all duration-300">
       {/* ponytail: fix height to h-[85vh] to prevent modal size from jumping when cart preview loads */}
       <div className="glass-panel w-[95vw] max-w-6xl xl:max-w-7xl h-[85vh] min-h-[560px] max-h-[840px] p-3.5 md:p-4.5 relative border border-glass-border/60 shadow-[0_0_60px_rgba(59,130,246,0.25)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 flex flex-col overflow-hidden">
         

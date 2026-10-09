@@ -145,8 +145,8 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
-      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-3xl h-[85vh] min-h-[540px] max-h-[780px] shadow-2xl overflow-hidden flex flex-col text-text">
+    <div className="fixed inset-0 z-global-modal bg-black/60 flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-3xl h-[85vh] min-h-[540px] max-h-[780px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col text-text">
         {/* Header */}
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">

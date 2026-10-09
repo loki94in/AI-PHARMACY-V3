@@ -520,7 +520,7 @@ const CompositionPanel: React.FC = () => {
 
         <div className="flex-1 overflow-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="sticky top-0 bg-bg/95 backdrop-blur z-10">
+            <thead className="sticky top-0 bg-bg/95 z-10">
               <tr>
                 <th className="p-3 text-xs font-bold text-muted uppercase tracking-wider border-b border-glass-border w-16">ID</th>
                 <th className="p-3 text-xs font-bold text-muted uppercase tracking-wider border-b border-glass-border">Medicine Name</th>

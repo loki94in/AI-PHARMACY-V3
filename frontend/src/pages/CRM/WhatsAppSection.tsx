@@ -1175,8 +1175,8 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
 
       {/* Template Manager Modal */}
       {showManageModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-lg h-[75vh] min-h-[480px] max-h-[680px] overflow-hidden shadow-2xl flex flex-col">
+        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-lg h-[75vh] min-h-[480px] max-h-[680px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
             <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <Zap size={16} className="text-primary" />
@@ -1297,8 +1297,8 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
 
       {/* New Chat Modal */}
       {showNewChatModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm overflow-hidden shadow-2xl flex flex-col">
+        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
             <div className="p-4 border-b border-border flex items-center justify-between">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <MessageSquare size={16} className="text-emerald-400" />

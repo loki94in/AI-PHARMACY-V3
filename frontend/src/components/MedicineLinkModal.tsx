@@ -137,8 +137,8 @@ export const MedicineLinkModal: React.FC<{
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-2xl overflow-hidden flex flex-col text-text">
+    <div className="fixed inset-0 z-global-modal bg-black/60 flex items-center justify-center p-3 sm:p-5">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col text-text">
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-primary">

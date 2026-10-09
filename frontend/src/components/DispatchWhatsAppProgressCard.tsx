@@ -186,7 +186,7 @@ export const DispatchWhatsAppProgressCard: React.FC = memo(() => {
   }
 
   return (
-    <div className="rounded-2xl border border-glass-border/80 bg-bg2/50 backdrop-blur-md shadow-sm overflow-hidden transition-all duration-300 animate-in fade-in">
+    <div className="rounded-2xl border border-glass-border/80 bg-bg2/50 shadow-sm overflow-hidden transition-all duration-300 animate-in fade-in">
       {/* ── HEADER / SUMMARY ROW ── */}
       <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-glass-border/40 bg-bg2/40">
         <div className="flex items-center gap-2.5 min-w-0">

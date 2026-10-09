@@ -237,7 +237,7 @@ export default function LiveCart() {
             <ShoppingCart size={22} />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-text">Pharmacy Live Cart</h1>
+            <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Pharmacy Live Cart</h1>
             <p className="text-xs text-muted">Paid orders awaiting pharmacy verification</p>
           </div>
           {orders.length > 0 && (

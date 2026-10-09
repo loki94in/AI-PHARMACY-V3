@@ -297,7 +297,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
       {/* Top Banner / Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
         {/* Pending Card */}
-        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-amber-500/30 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-amber-500/30 flex items-center justify-between shadow-sm">
           <div className="space-y-1">
             <span className="text-[11px] font-bold text-amber-500 uppercase tracking-wider flex items-center gap-1.5">
               <ShieldAlert size={14} />
@@ -314,7 +314,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
         </div>
 
         {/* Proposed Return Value */}
-        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-border/80 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-border/80 flex items-center justify-between shadow-sm">
           <div className="space-y-1">
             <span className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1.5">
               <FileText size={14} className="text-primary" />
@@ -331,7 +331,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
         </div>
 
         {/* Approved Card */}
-        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-emerald-500/30 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-emerald-500/30 flex items-center justify-between shadow-sm">
           <div className="space-y-1">
             <span className="text-[11px] font-bold text-emerald-500 uppercase tracking-wider flex items-center gap-1.5">
               <CheckCircle2 size={14} />
@@ -348,7 +348,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
         </div>
 
         {/* Audit & Rejected Summary */}
-        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-border/80 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div className="p-3.5 rounded-2xl bg-bg2/90 border border-border/80 flex items-center justify-between shadow-sm">
           <div className="space-y-1">
             <span className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1.5">
               <History size={14} className="text-indigo-400" />
@@ -370,7 +370,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
       </div>
 
       {/* Action Bar & Controls */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-3 shadow-sm shrink-0">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-bg2/90 border border-border/80 rounded-2xl p-3 shadow-sm shrink-0">
         {/* Search and Status Pills */}
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {/* Status Tabs */}
@@ -455,10 +455,10 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
       </div>
 
       {/* Main Review Table Workspace */}
-      <div className="flex-1 min-h-0 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 bg-bg2/90 border border-border/80 rounded-2xl shadow-sm overflow-hidden flex flex-col">
         <div className="flex-1 overflow-y-auto overflow-x-auto scrollbar-thin">
           <table className="w-full text-left border-collapse text-xs">
-            <thead className="sticky top-0 bg-bg3/90 backdrop-blur-md border-b border-border/80 text-muted uppercase text-[10px] font-black tracking-wider z-10">
+            <thead className="sticky top-0 bg-bg3/90 border-b border-border/80 text-muted uppercase text-[10px] font-black tracking-wider z-10">
               <tr>
                 {statusFilter === 'pending' && (
                   <th className="p-3 w-10 text-center">
@@ -664,8 +664,8 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Single Item Approval Modal */}
       {approvingItem && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-lg shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-lg shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <CheckCircle2 size={18} className="text-emerald-500" />
@@ -788,8 +788,8 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Bulk Approval Modal */}
       {showBulkApproveModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <CheckCircle2 size={18} className="text-emerald-500" />
@@ -885,8 +885,8 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Reject Modal */}
       {rejectingItem && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <XCircle size={18} className="text-red-500" />
@@ -937,8 +937,8 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Audit History Modal */}
       {showAuditModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col shadow-2xl space-y-4 overflow-hidden">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 overflow-hidden">
             <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <History size={18} className="text-indigo-400" />

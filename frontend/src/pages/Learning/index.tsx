@@ -722,7 +722,7 @@ const Learning: React.FC = () => {
   return (
     <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 py-5 space-y-5 animate-fadeIn">
       {/* Navigation Bar Tabs & Retrain Control */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-glass-bg border border-glass-border p-2 rounded-2xl shadow-sm backdrop-blur-md">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-glass-bg border border-glass-border p-2 rounded-2xl shadow-sm">
         <div className="flex items-center gap-1.5 p-1 bg-bg2 border border-border rounded-xl overflow-x-auto scrollbar-none">
           {[
             { id: 'clinical', label: 'Clinical AI & OCR Rules', icon: Brain, badge: correctionsArray.length },
@@ -975,7 +975,7 @@ const Learning: React.FC = () => {
 
               <div className="overflow-x-auto rounded-xl border border-border flex-1 max-h-[560px] overflow-y-auto scrollbar-thin">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-bg2/90 backdrop-blur-sm text-muted font-bold uppercase text-[10px] tracking-wider border-b border-border sticky top-0 z-10">
+                  <thead className="bg-bg2/90 text-muted font-bold uppercase text-[10px] tracking-wider border-b border-border sticky top-0 z-10">
                     <tr>
                       <th className="py-3 px-4">Raw Scanned OCR String</th>
                       <th className="py-3 px-4">Mapped Master Brand</th>
@@ -1203,7 +1203,7 @@ const Learning: React.FC = () => {
 
               <div className="overflow-x-auto rounded-xl border border-border flex-1 max-h-[560px] overflow-y-auto scrollbar-thin">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-bg2/90 backdrop-blur-sm text-muted font-bold uppercase text-[10px] tracking-wider border-b border-border sticky top-0 z-10">
+                  <thead className="bg-bg2/90 text-muted font-bold uppercase text-[10px] tracking-wider border-b border-border sticky top-0 z-10">
                     <tr>
                       <th className="py-3 px-4">Doctor Name & Hospital</th>
                       <th className="py-3 px-4">Reg License #</th>
@@ -1607,8 +1607,8 @@ const Learning: React.FC = () => {
       {/* ADD DISTRIBUTOR MODAL PORTAL */}
       {/* ========================================================================= */}
       {showAddDistributorModal && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-lg space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-lg space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <Building2 size={18} className="text-primary" />
@@ -1739,8 +1739,8 @@ const Learning: React.FC = () => {
       {/* MERGE MODAL PORTAL */}
       {/* ========================================================================= */}
       {showMergeModal && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <GitMerge size={18} className="text-amber-500" />
@@ -1817,8 +1817,8 @@ const Learning: React.FC = () => {
       {/* EDIT DISTRIBUTOR MODAL PORTAL */}
       {/* ========================================================================= */}
       {editingDistributor && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-lg space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-lg space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <Edit size={18} className="text-primary" />
@@ -1926,8 +1926,8 @@ const Learning: React.FC = () => {
       {/* EDIT DOCTOR MODAL PORTAL */}
       {/* ========================================================================= */}
       {editingDoctor && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-2xl backdrop-blur-xl animate-fadeIn">
+        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-fadeIn">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="font-bold text-text text-base flex items-center gap-2">
                 <Stethoscope size={18} className="text-primary" />

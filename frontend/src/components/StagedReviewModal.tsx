@@ -392,10 +392,10 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
     <>
     <div className="fixed inset-0 z-submodal flex items-center justify-center p-4 sm:p-6 fade-in">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Modal Container */}
-      <div className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-5xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up text-text">
+      <div className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-5xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden slide-up text-text">
         {/* Header */}
         <div className="p-5 border-b border-border bg-bg2 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -755,7 +755,7 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
                                 {(lineSearchTerms[index]?.trim().length || 0) >= 3 && (
                                   <div className="absolute z-dropdown left-0 right-0 mt-1 bg-bg border border-glass-border rounded-xl shadow-xl overflow-hidden flex flex-col max-h-60">
                                     {/* PINNED TOP HEADER: Always visible New Medicine Creation */}
-                                    <div className="p-1.5 border-b border-border/40 bg-bg/95 backdrop-blur-sm shrink-0">
+                                    <div className="p-1.5 border-b border-border/40 bg-bg/95 shrink-0">
                                       <button
                                         type="button"
                                         onMouseDown={() => openNewMedicineEditor(index)}

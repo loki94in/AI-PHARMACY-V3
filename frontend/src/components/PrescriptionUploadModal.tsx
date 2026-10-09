@@ -427,15 +427,15 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
 
   return (
     <div
-      className="fixed inset-0 z-global-modal bg-bg3/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+      className="fixed inset-0 z-global-modal bg-bg3/80 flex items-center justify-center p-4 animate-in fade-in"
       onClick={onClose}
     >
       <div
-        className="bg-bg2 border border-border rounded-3xl shadow-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[750px] overflow-hidden flex flex-col"
+        className="bg-bg2 border border-border rounded-3xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[750px] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="p-5 sm:p-6 border-b border-border flex items-center justify-between shrink-0 bg-bg2/95 backdrop-blur-sm z-10">
+        <div className="p-5 sm:p-6 border-b border-border flex items-center justify-between shrink-0 bg-bg2/95 z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
               <Camera className="w-5 h-5" />
@@ -611,7 +611,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                             />
                             {/* Page Badge */}
-                            <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-bg/90 backdrop-blur-xs text-[10px] font-bold text-text border border-border">
+                            <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-bg/90-xs text-[10px] font-bold text-text border border-border">
                               Page {idx + 1}
                             </span>
                             {/* Delete Button */}

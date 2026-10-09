@@ -1263,7 +1263,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                         </div>
                       )}
 
-                      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-bg2/90 backdrop-blur-md px-3 py-1 rounded-xl border border-border text-xs font-bold text-text flex items-center gap-1.5 pointer-events-none">
+                      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-bg2/90 px-3 py-1 rounded-xl border border-border text-xs font-bold text-text flex items-center gap-1.5 pointer-events-none">
                         <ZoomIn size={13} className="text-primary" />
                         <span>Click to Zoom</span>
                       </div>
@@ -1522,7 +1522,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                               onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                             {/* Medicine name label ON the image (AI camera downloaded image has name on it — overlay reinforces) */}
-                            <div style={{ backgroundColor: 'rgba(0,0,0,0.75)' }} className="absolute bottom-0 inset-x-0 backdrop-blur-sm px-2.5 py-1.5 text-center">
+                            <div style={{ backgroundColor: 'rgba(0,0,0,0.75)' }} className="absolute bottom-0 inset-x-0 px-2.5 py-1.5 text-center">
                               <p style={{ color: '#ffffff' }} className="text-[11px] font-black leading-tight line-clamp-2" title={displayName}>{displayName}</p>
                               <p style={{ color: 'rgba(255,255,255,0.8)' }} className="text-[10px] font-semibold truncate">{item.manufacturer || item.company_name || ''}</p>
                             </div>
@@ -2174,7 +2174,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
 
                                 {/* Slot Tag & Badge */}
                                 <div className="absolute top-2 left-2 flex flex-col gap-1 z-10 pointer-events-none">
-                                  <span className="px-2 py-0.5 rounded-md bg-bg2/95 backdrop-blur-md border border-border text-[10px] font-bold text-text shadow-xs flex items-center gap-1">
+                                  <span className="px-2 py-0.5 rounded-md bg-bg2/95 border border-border text-[10px] font-bold text-text shadow-xs flex items-center gap-1">
                                     <Icon size={11} className="text-sky" />
                                     <span>{slot.label}</span>
                                   </span>
@@ -2284,12 +2284,12 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* ============================================================ */}
       {lightboxOpen && selectedMedicine && (
         <div
-          className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex flex-col overflow-hidden animate-in fade-in"
+          className="fixed inset-0 z-[9999] bg-black/95 flex flex-col overflow-hidden animate-in fade-in"
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
         >
           {/* Top Floating Control Header */}
-          <div className="px-6 py-3.5 bg-bg2/90 backdrop-blur-md border-b border-border flex items-center justify-between gap-4 shrink-0 z-20">
+          <div className="px-6 py-3.5 bg-bg2/90 border-b border-border flex items-center justify-between gap-4 shrink-0 z-20">
             <div className="flex items-center gap-3 min-w-0">
               <div className="p-1.5 rounded-xl bg-primary/20 text-primary">
                 <ZoomIn size={18} />
@@ -2392,7 +2392,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                     <img
                       src={slotMap.front?.image_path || slotMap.combined?.image_path || ''}
                       alt="Front Side"
-                      className="max-h-full max-w-full object-contain drop-shadow-2xl"
+                      className="max-h-full max-w-full object-contain drop-shadow-[0_4px_24px_rgba(0,0,0,0.12)]"
                       style={{
                         transform: `scale(${zoomLevel}) rotate(${rotation}deg) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
                         cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default'
@@ -2411,7 +2411,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                       <img
                         src={slotMap.back.image_path}
                         alt="Back Side"
-                        className="max-h-full max-w-full object-contain drop-shadow-2xl"
+                        className="max-h-full max-w-full object-contain drop-shadow-[0_4px_24px_rgba(0,0,0,0.12)]"
                         style={{
                           transform: `scale(${zoomLevel}) rotate(${rotation}deg) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
                           cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default'
@@ -2442,7 +2442,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                     <img
                       src={imgSrc}
                       alt={selectedMedicine.medicine_name}
-                      className="max-h-full max-w-full object-contain drop-shadow-2xl transition-transform duration-75"
+                      className="max-h-full max-w-full object-contain drop-shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-transform duration-75"
                       style={{
                         transform: `scale(${zoomLevel}) rotate(${rotation}deg) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
                         cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default'
@@ -2460,7 +2460,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
           </div>
 
           {/* Bottom Floating Angle Bar & Actions */}
-          <div className="px-6 py-4 bg-bg2/90 backdrop-blur-md border-t border-border flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 z-20">
+          <div className="px-6 py-4 bg-bg2/90 border-t border-border flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 z-20">
             {/* Angle Selector Tabs */}
             <div className="flex items-center gap-1.5 overflow-x-auto">
               {STANDARD_SLOTS.map(s => {
@@ -2527,8 +2527,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* MARK INCORRECT REASON MODAL (Full Reason Options) */}
       {/* ============================================================ */}
       {incorrectModalItem && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95">
+        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95">
             <div className="flex items-center gap-2 text-amber-400">
               <AlertTriangle size={20} />
               <h3 className="text-sm font-bold text-text">Mark Image Incorrect / Missing Angle</h3>
@@ -2627,8 +2627,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* AUDIT LOG HISTORY DRAWER */}
       {/* ============================================================ */}
       {historyDrawerOpen && (
-        <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-md bg-bg2 border-l border-border h-full flex flex-col p-5 shadow-2xl animate-in slide-in-from-right">
+        <div className="fixed inset-0 z-global-modal bg-black/70 flex justify-end">
+          <div className="w-full max-w-md bg-bg2 border-l border-border h-full flex flex-col p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in slide-in-from-right">
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <History size={16} className="text-sky" />
@@ -2705,8 +2705,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* REJECT CONFIRMATION MODAL */}
       {/* ============================================================ */}
       {rejectingImage && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             <div className="flex items-center gap-2 text-rose-400">
               <XCircle size={20} />
               <h3 className="text-sm font-bold text-text">Reject Product Image</h3>
@@ -2747,8 +2747,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* REPLACE IMAGE MODAL */}
       {/* ============================================================ */}
       {replacingSlot && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-text">
                 Replace {replacingSlot.slotId.toUpperCase()} Packaging Image
@@ -2805,8 +2805,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* ONLINE PACKAGING CANDIDATES MODAL (PharmEasy + Tata 1mg) */}
       {/* ============================================================ */}
       {candidateTrayOpen && selectedMedicine && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95 max-h-[88vh] flex flex-col">
+        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95 max-h-[88vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-sky-500/10 text-sky">
@@ -2946,8 +2946,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* CONNECT TO MASTER MEDICINE MODAL */}
       {/* ============================================================ */}
       {relinkModalImage && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95">
+        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-primary">
                 <Link2 size={20} />

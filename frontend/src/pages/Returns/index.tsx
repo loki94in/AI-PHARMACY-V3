@@ -1,3 +1,4 @@
+import { AppleSegmented } from '../../components/common/AppleSegmented';
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense, useMemo } from 'react';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
@@ -1077,14 +1078,14 @@ const Returns: React.FC = () => {
     <div className="h-full flex flex-col fade-in relative overflow-hidden gap-3 p-4 text-text">
       
       {/* Top Bar: Title & Navigation Pills */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-3 px-5 shadow-sm shrink-0">
+      <div className="flex flex-col gap-3 bg-bg2/90 border border-border/80 rounded-2xl p-3 px-5 shadow-sm shrink-0">
         <div className="flex items-center gap-4">
           <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shadow-sm shrink-0">
             <RotateCcw size={22} className="animate-in spin-in-180 duration-500" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-extrabold text-text tracking-tight leading-none">Returns & Expiry Command Center</h1>
+              <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Returns & Expiry Command Center</h1>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                 DISTRIBUTOR HUB
               </span>
@@ -1094,39 +1095,24 @@ const Returns: React.FC = () => {
         </div>
 
         {/* Tab Switcher Pills */}
-        <div className="flex items-center gap-1.5 bg-bg3/60 p-1.5 rounded-xl border border-border/60 overflow-x-auto scrollbar-none shadow-inner">
-          {[
+        <AppleSegmented
+          value={currentTab}
+          onChange={(id) => setSearchParams({ tab: id })}
+          options={[
             { id: 'returns', label: 'Supplier Returns', icon: RotateCcw, count: totalSupplierReturnItemsCount },
             { id: 'expiry', label: 'Expiry Monitor', icon: CalendarDays },
             { id: 'expiry-review', label: 'Expiry Return Review', icon: ShieldAlert, count: pendingReviewCount },
             { id: 'customer', label: 'Customer Returns', icon: Users },
             { id: 'customer-history', label: 'Return History', icon: History, count: supplierHistoryCount },
-          ].map(t => {
-            const Icon = t.icon;
-            const isActive = currentTab === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setSearchParams({ tab: t.id })}
-                className={`flex items-center gap-2 px-3.5 py-1.5 font-bold text-sm rounded-lg transition-all duration-200 whitespace-nowrap cursor-pointer ${
-                  isActive
-                    ? 'bg-bg2 text-primary font-black shadow-md border border-border ring-1 ring-primary/20'
-                    : 'text-muted hover:text-text hover:bg-bg3/90 border border-transparent'
-                }`}
-              >
-                <Icon size={16} className={isActive ? 'text-primary animate-pulse' : 'text-muted'} />
-                <span>{t.label}</span>
-                {t.count !== undefined && (
-                  <span className={`text-xs px-1.5 py-0.2 rounded-full font-mono font-extrabold ${
-                    isActive ? 'bg-primary/20 text-primary' : 'bg-bg/50 text-muted'
-                  }`}>
-                    {t.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+          ].map(t => ({
+            key: t.id,
+            label: t.label,
+            icon: <t.icon size={16} />,
+            badge: t.count !== undefined ? (
+              <span className="text-xs px-1.5 rounded-full font-mono font-bold bg-primary/15 text-primary">{t.count}</span>
+            ) : undefined,
+          }))}
+        />
       </div>
 
       {/* ────────────────────────────────────────────────────────────── */}
@@ -1193,7 +1179,7 @@ const Returns: React.FC = () => {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden text-text gap-3">
           
           {/* Top Tabs Bar: Distributor Return Bills (Purchases Pattern) */}
-          <div className="bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-2 shadow-sm shrink-0 flex items-center justify-between gap-3">
+          <div className="bg-bg2/90 border border-border/80 rounded-2xl p-2 shadow-sm shrink-0 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 overflow-x-auto flex-1 min-w-0 scrollbar-thin py-0.5">
               {bills.map((b) => {
                 const isActive = b.id === activeBillId;
@@ -1241,7 +1227,7 @@ const Returns: React.FC = () => {
           </div>
 
           {/* Quick Distributor Overview Strip: shows bills and near-expiry opportunities */}
-          <div className="bg-bg2/60 backdrop-blur-md border border-border/70 rounded-2xl px-4 py-2 flex items-center gap-2.5 overflow-x-auto scrollbar-none shrink-0 shadow-inner">
+          <div className="bg-bg2/60 border border-border/70 rounded-2xl px-4 py-2 flex items-center gap-2.5 overflow-x-auto scrollbar-none shrink-0 shadow-inner">
             <span className="text-[10px] font-black text-muted uppercase tracking-wider shrink-0 flex items-center gap-1.5">
               <Building2 size={13} className="text-primary" />
               <span>Distributor Hub:</span>
@@ -1285,7 +1271,7 @@ const Returns: React.FC = () => {
           </div>
 
           {/* Active Return Bill Sheet */}
-          <div className="flex-1 flex flex-col min-h-0 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl overflow-hidden shadow-sm">
+          <div className="flex-1 flex flex-col min-h-0 bg-bg2/90 border border-border/80 rounded-2xl overflow-hidden shadow-sm">
             
             {/* Bill Header: Distributor Info & Search */}
             <div className="p-4 pb-3 border-b border-border/60 bg-bg3/20 shrink-0">
@@ -1329,7 +1315,7 @@ const Returns: React.FC = () => {
 
                   {/* Distributor Autocomplete Dropdown */}
                   {showDistDropdown && (
-                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto dropdown-scroll divide-y divide-border/30">
+                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] max-h-60 overflow-y-auto dropdown-scroll divide-y divide-border/30">
                       {filteredMasterDistributors.length === 0 ? (
                         <div className="p-3 text-xs text-muted italic">
                           No registered distributor found. Type name to use as custom distributor.

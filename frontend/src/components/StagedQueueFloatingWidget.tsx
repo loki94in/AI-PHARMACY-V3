@@ -39,7 +39,7 @@ export const StagedQueueFloatingWidget: React.FC<Props> = ({ onLoadIntoPOS }) =>
 
   return createPortal(
     <div className="fixed bottom-14 right-6 z-global-modal slide-up select-none">
-      <div className="bg-glass-bg border border-primary/40 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md w-80 text-text space-y-2.5">
+      <div className="bg-glass-bg border border-primary/40 rounded-2xl p-3.5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] w-80 text-text space-y-2.5">
         {/* Header bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-bold text-primary">

@@ -61,13 +61,13 @@ const ScheduleResearchModal: React.FC<Props> = ({ item, onClose, onClassified })
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="w-full max-w-5xl max-h-[92vh] overflow-y-auto scrollbar-thin bg-bg border border-glass-border rounded-2xl shadow-2xl"
+        className="w-full max-w-5xl max-h-[92vh] overflow-y-auto scrollbar-thin bg-bg border border-glass-border rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="sticky top-0 z-sticky-header bg-bg/95 backdrop-blur border-b border-glass-border px-5 py-4 flex items-start justify-between gap-3">
+        <div className="sticky top-0 z-sticky-header bg-bg/95 border-b border-glass-border px-5 py-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <Globe size={18} className="text-primary shrink-0" />

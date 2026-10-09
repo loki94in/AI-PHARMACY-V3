@@ -1683,8 +1683,8 @@ const CatalogUpload = () => {
           });
 
           return (
-            <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-3">
-              <div className="glass-panel w-full max-w-[99vw] h-[98vh] lg:max-w-[98vw] lg:h-[95vh] flex flex-col rounded-2xl border border-glass-border shadow-2xl overflow-hidden">
+            <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/80 p-2 sm:p-3">
+              <div className="glass-panel w-full max-w-[99vw] h-[98vh] lg:max-w-[98vw] lg:h-[95vh] flex flex-col rounded-2xl border border-glass-border shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
                 {/* Modal Header */}
                 <div className="p-4 md:px-6 md:py-4 border-b border-glass-border bg-white/5 flex justify-between items-center">
                   <div>
@@ -2087,8 +2087,8 @@ const CatalogUpload = () => {
       )}
 
       {isCaptchaActive && createPortal(
-        <div className="fixed inset-0 z-global-modal bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border p-6 rounded-2xl max-w-md w-full shadow-2xl flex flex-col items-center text-center gap-4 animate-pulse">
+        <div className="fixed inset-0 z-global-modal bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border p-6 rounded-2xl max-w-md w-full shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col items-center text-center gap-4 animate-pulse">
             <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-full flex items-center justify-center">
               <AlertTriangle size={32} />
             </div>

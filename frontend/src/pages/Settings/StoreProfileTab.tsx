@@ -820,8 +820,8 @@ export function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings:
 
       {/* Interactive Stamp & Signature Placement Studio Modal */}
       {showStudioModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 backdrop-blur-md p-4 sm:p-6 fade-in overflow-y-auto">
-          <div className="bg-bg border border-border rounded-3xl w-[95vw] max-w-5xl h-[85vh] min-h-[580px] max-h-[860px] shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4 sm:p-6 fade-in overflow-y-auto">
+          <div className="bg-bg border border-border rounded-3xl w-[95vw] max-w-5xl h-[85vh] min-h-[580px] max-h-[860px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col">
             
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-border bg-bg3/40 flex items-center justify-between shrink-0">

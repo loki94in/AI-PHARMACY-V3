@@ -1132,26 +1132,26 @@ const Mail = () => {
           {/* Floating Action Buttons */}
           <div className="absolute bottom-4 right-4 z-30 flex items-center gap-2">
             {syncing && (
-              <div className="flex items-center gap-1.5 text-[10px] text-primary font-semibold animate-pulse px-3 py-2 rounded-full bg-glass-bg/85 border border-glass-border/40 shadow-lg backdrop-blur-sm">
+              <div className="flex items-center gap-1.5 text-[10px] text-primary font-semibold animate-pulse px-3 py-2 rounded-full bg-glass-bg/85 border border-glass-border/40 shadow-lg">
                 <CloudLightning size={12} className="animate-bounce" />
                 <span className="hidden sm:inline">Syncing...</span>
               </div>
             )}
             {!syncing && relTime && (
-              <span className="text-[9px] text-muted font-mono px-3 py-2 rounded-full bg-glass-bg/85 border border-glass-border/40 shadow-lg backdrop-blur-sm hidden sm:inline">Synced {relTime}</span>
+              <span className="text-[9px] text-muted font-mono px-3 py-2 rounded-full bg-glass-bg/85 border border-glass-border/40 shadow-lg hidden sm:inline">Synced {relTime}</span>
             )}
 
             {/* Connectivity indicator */}
             {isOffline || !isImapConfigured ? (
               <div 
-                className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber/10 border border-amber/30 text-[10px] text-amber font-bold select-none shadow-lg backdrop-blur-sm"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber/10 border border-amber/30 text-[10px] text-amber font-bold select-none shadow-lg"
                 title={!isImapConfigured ? "IMAP email credentials not configured in settings" : "Offline"}
               >
                 <CloudOff size={12} />
                 <span>OFFLINE</span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-green/10 border border-green/30 text-[10px] text-green font-bold select-none shadow-lg backdrop-blur-sm">
+              <div className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-green/10 border border-green/30 text-[10px] text-green font-bold select-none shadow-lg">
                 <span className="h-1.5 w-1.5 bg-green rounded-full animate-ping" />
                 <span>ONLINE</span>
               </div>
@@ -1159,7 +1159,7 @@ const Mail = () => {
 
             <button
               onClick={handleManualRefresh}
-              className="p-2.5 rounded-full bg-bg2/90 hover:bg-bg3/95 border border-glass-border text-text transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 text-xs font-semibold shadow-lg backdrop-blur-sm"
+              className="p-2.5 rounded-full bg-bg2/90 hover:bg-bg3/95 border border-glass-border text-text transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 text-xs font-semibold shadow-lg"
               title="Refresh Inbox"
             >
               <RefreshCw size={14} className={loading || syncing ? 'animate-spin' : ''} />
@@ -1167,7 +1167,7 @@ const Mail = () => {
             </button>
             <button
               onClick={handleClearCache}
-              className="p-2.5 rounded-full bg-red/10 hover:bg-red/20 border border-red/30 text-red hover:text-red-400 transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 text-xs font-semibold shadow-lg backdrop-blur-sm"
+              className="p-2.5 rounded-full bg-red/10 hover:bg-red/20 border border-red/30 text-red hover:text-red-400 transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 text-xs font-semibold shadow-lg"
               title="Clear Attachments Cache"
             >
               <Trash2 size={14} />

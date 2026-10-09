@@ -131,12 +131,12 @@ export const MobileConnectionModal: React.FC<Props> = ({ onClose }) => {
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 fade-in">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+        className="absolute inset-0 bg-black/60" 
         onClick={onClose}
       />
       
       {/* Modal Content */}
-      <div className="relative bg-glass-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] flex flex-col shadow-2xl overflow-hidden slide-up">
+      <div className="relative bg-glass-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden slide-up">
         {/* Header */}
         <div className="p-5 border-b border-glass-border bg-white/5 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">

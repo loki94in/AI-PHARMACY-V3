@@ -565,7 +565,7 @@ const Expiry = () => {
           {/* Table Container */}
           <div className="flex-1 overflow-auto bg-bg/40">
             <table className="w-full text-left border-collapse text-sm">
-              <thead className="sticky top-0 bg-bg2/95 backdrop-blur-md z-10 select-none border-b border-glass-border">
+              <thead className="sticky top-0 bg-bg2/95 z-10 select-none border-b border-glass-border">
                 <tr className="border-b border-glass-border/60">
                   <th className="p-3 text-left w-10">
                     <input 
@@ -772,7 +772,7 @@ const Expiry = () => {
             const distEntries = Object.entries(distCounts);
 
             return (
-              <div className="p-3 border-t border-primary/30 bg-primary/10 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 px-5 animate-in slide-in-from-bottom-2">
+              <div className="p-3 border-t border-primary/30 bg-primary/10 flex flex-wrap items-center justify-between gap-3 px-5 animate-in slide-in-from-bottom-2">
                 <div className="flex items-center gap-3 flex-wrap text-xs">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />

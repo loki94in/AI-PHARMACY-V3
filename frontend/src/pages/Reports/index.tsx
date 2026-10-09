@@ -652,7 +652,7 @@ const Reports = () => {
               <PieChart size={22} />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-text leading-none">Analytics & Reports Hub</h1>
+              <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Analytics & Reports Hub</h1>
               <p className="text-xs text-muted mt-0.5">
                 {activeTab === 'nonMoving' 
                   ? 'Identify dormant stock & valuation loss metrics' 
@@ -1379,8 +1379,8 @@ const Reports = () => {
 
       {/* EXPORT COMPLETE REPORT MODAL DIALOG */}
       {showExportModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-5 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between border-b border-glass-border/40 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">

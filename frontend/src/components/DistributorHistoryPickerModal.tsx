@@ -48,7 +48,7 @@ export const DistributorHistoryPickerModal: React.FC<DistributorHistoryPickerMod
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-bg border border-border w-[95vw] max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+      <div className="bg-bg border border-border w-[95vw] max-w-xl rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col max-h-[85vh]">
         <div className="p-4 border-b border-border flex items-center justify-between bg-bg2 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-sky-500/10 text-sky-500"><BookOpen size={20} /></div>

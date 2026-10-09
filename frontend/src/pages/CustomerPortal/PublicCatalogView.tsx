@@ -394,7 +394,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                       className="absolute inset-0 bg-bg3/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-10"
                       title="Inspect all product angles"
                     >
-                      <span className="px-2 py-1 rounded-lg bg-bg/95 backdrop-blur-md border border-border text-[10px] font-bold text-text shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
+                      <span className="px-2 py-1 rounded-lg bg-bg/95 border border-border text-[10px] font-bold text-text shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
                         <Eye size={11} className="text-sky" />
                         <span>Quick View</span>
                       </span>
@@ -402,11 +402,11 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
 
                     {/* Category & Current Angle Badges */}
                     <div className="absolute top-1.5 left-1.5 flex flex-col gap-0.5 z-10 pointer-events-none">
-                      <span className="px-1.5 py-0.5 bg-bg2/90 backdrop-blur-sm border border-border text-[9px] font-bold text-text rounded shadow-xs">
+                      <span className="px-1.5 py-0.5 bg-bg2/90 border border-border text-[9px] font-bold text-text rounded shadow-xs">
                         {med.category}
                       </span>
                       {currentAngle && gallery.length > 1 && (
-                        <span className="px-1 py-0.2 bg-sky/20 backdrop-blur-sm border border-sky/40 text-[8px] font-bold text-sky rounded shadow-xs flex items-center gap-0.5">
+                        <span className="px-1 py-0.2 bg-sky/20 border border-sky/40 text-[8px] font-bold text-sky rounded shadow-xs flex items-center gap-0.5">
                           {currentAngle.is_primary && <span>⭐</span>}
                           <span>{currentAngle.label}</span>
                         </span>
@@ -611,7 +611,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
 
       {/* Floating Bottom Cart Bar */}
       {selectedCount > 0 && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-xl bg-bg2/95 backdrop-blur-md border border-primary/40 rounded-2xl p-3 sm:p-4 shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-bottom-4">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-xl bg-bg2/95 border border-primary/40 rounded-2xl p-3 sm:p-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex items-center justify-between gap-4 animate-in slide-in-from-bottom-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shrink-0">
               <ShoppingCart className="w-5 h-5" />
@@ -651,11 +651,11 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       {/* Multi-Angle Quick View Modal */}
       {quickViewMed && (
         <div
-          className="fixed inset-0 z-50 bg-bg3/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-50 bg-bg3/85 flex items-center justify-center p-4 animate-in fade-in"
           onClick={() => setQuickViewMed(null)}
         >
           <div
-            className="bg-bg2 border border-border rounded-3xl shadow-2xl max-w-3xl w-full overflow-hidden flex flex-col md:flex-row max-h-[90vh]"
+            className="bg-bg2 border border-border rounded-3xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] max-w-3xl w-full overflow-hidden flex flex-col md:flex-row max-h-[90vh]"
             onClick={e => e.stopPropagation()}
           >
             {/* Left: Interactive Multi-Angle Gallery */}
@@ -684,7 +684,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                   if (!curAngle) return null;
                   return (
                     <div className="absolute top-3 left-3 flex items-center gap-1.5">
-                      <span className="px-2.5 py-1 rounded-lg bg-bg2/90 backdrop-blur-md border border-sky/40 text-sky text-[11px] font-bold shadow-md flex items-center gap-1">
+                      <span className="px-2.5 py-1 rounded-lg bg-bg2/90 border border-sky/40 text-sky text-[11px] font-bold shadow-md flex items-center gap-1">
                         {curAngle.is_primary && <span>⭐</span>}
                         <span>{curAngle.label}</span>
                       </span>

@@ -50,8 +50,8 @@ const RefillCartModal: React.FC<{ job: RefillCartJob }> = ({ job }) => {
   const failed = job.rows.filter(r => r.state === 'failed');
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-3xl h-[80vh] min-h-[520px] max-h-[760px] shadow-2xl overflow-hidden flex flex-col text-text">
+    <div className="fixed inset-0 z-global-modal bg-black/60 flex items-center justify-center p-3 sm:p-5">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-3xl h-[80vh] min-h-[520px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col text-text">
         <div className="bg-bg3/80 px-5 py-3.5 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-primary">
@@ -173,7 +173,7 @@ const RefillCartCard: React.FC<{ job: RefillCartJob }> = ({ job }) => {
   const done = job.rows.filter(r => r.state !== 'queued' && r.state !== 'working').length;
   const attention = job.rows.filter(r => r.state !== 'added' && r.state !== 'in_cart' && r.state !== 'queued' && r.state !== 'working');
   return (
-    <div className="bg-bg2 border border-border rounded-xl shadow-2xl p-3 text-xs text-text space-y-2">
+    <div className="bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-3 text-xs text-text space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="font-bold flex items-center gap-1.5 min-w-0">
           {running ? <Loader2 size={12} className="animate-spin text-primary shrink-0" /> : <ShoppingCart size={12} className="text-primary shrink-0" />}

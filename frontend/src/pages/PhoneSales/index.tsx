@@ -321,7 +321,7 @@ export default function PhoneSales() {
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative text-text">
       
       {/* Top filter banner */}
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-glass-bg border border-glass-border p-4 rounded-2xl mb-4 shrink-0 backdrop-blur-xl">
+      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-glass-bg border border-glass-border p-4 rounded-2xl mb-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
             <Smartphone size={20} />
@@ -371,7 +371,7 @@ export default function PhoneSales() {
       <div className="flex-1 flex flex-col lg:flex-row gap-5 min-h-0 overflow-hidden">
         
         {/* LEFT PANEL: TIMELINE VIEW */}
-        <div className="w-full lg:w-2/5 flex flex-col bg-glass-bg border border-glass-border rounded-2xl overflow-hidden backdrop-blur-xl">
+        <div className="w-full lg:w-2/5 flex flex-col bg-glass-bg border border-glass-border rounded-2xl overflow-hidden">
           <div className="p-4 border-b border-glass-border bg-white/[0.02] flex justify-between items-center shrink-0">
             <h3 className="font-bold text-sm uppercase tracking-wider text-muted">Sync Timeline ({filteredSales.length})</h3>
           </div>
@@ -475,7 +475,7 @@ export default function PhoneSales() {
         </div>
 
         {/* RIGHT PANEL: TRANSACTION REVIEW & EDIT FORM */}
-        <div className="flex-1 flex flex-col bg-glass-bg border border-glass-border rounded-2xl overflow-hidden backdrop-blur-xl">
+        <div className="flex-1 flex flex-col bg-glass-bg border border-glass-border rounded-2xl overflow-hidden">
           {selectedSale ? (
             <div className="flex-1 flex flex-col min-h-0">
               

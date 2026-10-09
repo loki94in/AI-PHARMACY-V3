@@ -482,7 +482,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60"
         onClick={phase === 'review' ? onClose : undefined}
       />
 
@@ -491,7 +491,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
         transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-        className="relative w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] overflow-hidden rounded-2xl bg-bg2 border border-border shadow-2xl flex flex-col z-10"
+        className="relative w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] overflow-hidden rounded-2xl bg-bg2 border border-border shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col z-10"
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border shrink-0">
           <div>

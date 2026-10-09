@@ -756,7 +756,7 @@ export default function CustomerPortal() {
   if (orderSuccess) {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center p-4">
-        <div className="w-full max-w-lg bg-bg2 border border-border rounded-2xl p-6 sm:p-8 space-y-6 text-center shadow-2xl">
+        <div className="w-full max-w-lg bg-bg2 border border-border rounded-2xl p-6 sm:p-8 space-y-6 text-center shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
           <div className="w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-9 h-9" />
           </div>
@@ -853,7 +853,7 @@ export default function CustomerPortal() {
   return (
     <div className="min-h-full w-full bg-bg text-text pb-16">
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 bg-bg2/90 backdrop-blur-md border-b border-border px-4 py-3 sm:px-8">
+      <header className="sticky top-0 z-30 bg-bg2/90 border-b border-border px-4 py-3 sm:px-8">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           {/* Logo & Store Title */}
           <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-start">
@@ -2082,8 +2082,8 @@ export default function CustomerPortal() {
 
       {/* Public Catalog Cart Checkout Modal */}
       {isCartModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-primary" />

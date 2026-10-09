@@ -253,8 +253,8 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
 
   const modalContent = (
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 fade-in">
-      <div className="absolute inset-0 bg-bg/80 backdrop-blur-md" onClick={onClose} />
-      <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[540px] max-h-[820px] flex flex-col shadow-2xl overflow-hidden slide-up">
+      <div className="absolute inset-0 bg-bg/80" onClick={onClose} />
+      <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[540px] max-h-[820px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden slide-up">
         
         {/* Header */}
         <div className="p-5 border-b border-glass-border bg-bg3 flex items-center justify-between shrink-0">

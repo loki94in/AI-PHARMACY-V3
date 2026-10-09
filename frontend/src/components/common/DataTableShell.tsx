@@ -64,7 +64,7 @@ export function DataTableShell<T>({
       <div className={`overflow-x-auto overflow-y-auto dropdown-scroll ${maxHeight} w-full`}>
         <table className="w-full text-xs text-text border-collapse">
           {/* Sticky Header */}
-          <thead className="sticky top-0 z-10 bg-bg3/95 backdrop-blur-none border-b border-border text-muted uppercase tracking-wider font-semibold text-[11px]">
+          <thead className="sticky top-0 z-10 bg-bg3/95 border-b border-border text-muted uppercase tracking-wider font-semibold text-[11px]">
             <tr>
               {columns.map((col) => {
                 const isSorted = sortKey === col.key;

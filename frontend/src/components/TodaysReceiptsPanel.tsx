@@ -28,7 +28,7 @@ export const TodaysReceiptsPanel: React.FC<Props> = ({ onClose, onFind }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-modal bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="w-full max-w-5xl max-h-[85vh] flex flex-col bg-glass-bg border border-glass-border rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-5xl max-h-[85vh] flex flex-col bg-glass-bg border border-glass-border rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)]" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-4 py-3 border-b border-glass-border/50">
           <CalendarCheck size={16} className="text-primary" />
           <div className="font-black text-text">Bills Received · {data?.date ?? 'Today'}</div>

@@ -202,8 +202,8 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60-xs p-4 animate-in fade-in duration-150">
+      <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2 shrink-0">
           <div className="flex items-center gap-2.5">

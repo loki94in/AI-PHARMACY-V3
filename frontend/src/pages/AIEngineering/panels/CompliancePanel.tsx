@@ -404,8 +404,8 @@ const CompliancePanel: React.FC = () => {
       {/* Edit Doctor Assignment Modal */}
       {editLog && (
         <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditLog(null)} />
-          <div className="relative bg-bg border border-glass-border rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setEditLog(null)} />
+          <div className="relative bg-bg border border-glass-border rounded-2xl max-w-md w-full p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center justify-between border-b border-glass-border pb-3">
               <div className="flex items-center gap-2">
                 <User size={18} className="text-primary" />

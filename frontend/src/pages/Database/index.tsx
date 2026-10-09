@@ -525,7 +525,7 @@ const DatabasePage = () => {
               <DatabaseIcon size={20} />
             </div>
             <div>
-              <h1 className="text-base font-bold text-text leading-none">Database & Master Catalog</h1>
+              <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Database & Master Catalog</h1>
               <p className="text-[11px] text-muted mt-0.5">Explore SQLite drug records & upload distributor master catalogs</p>
             </div>
           </div>
@@ -614,7 +614,7 @@ const DatabasePage = () => {
         {/* Floating Actions */}
         <div className="absolute bottom-8 right-8 flex flex-col gap-3 z-30">
           <button 
-            className="w-12 h-12 rounded-full shadow-[0_0_15px_rgba(16,185,129,0.3)] bg-bg3 border border-glass-border hover:bg-bg2 text-green-400 flex items-center justify-center transition-all group hover:-translate-y-1"
+            className="w-12 h-12 rounded-full shadow-[0_0_15px_rgba(16,185,129,0.3)] bg-bg3 border border-glass-border hover:bg-bg2 text-green-400 flex items-center justify-center transition-all group"
             onClick={() => {
               setUniversalEditMedicineId(null);
               setUniversalEditMode('create');
@@ -627,7 +627,7 @@ const DatabasePage = () => {
           </button>
 
           <button 
-            className="w-12 h-12 rounded-full shadow-[0_0_15px_rgba(14,165,233,0.3)] bg-bg3 border border-glass-border hover:bg-bg2 text-sky-400 flex items-center justify-center transition-all group hover:-translate-y-1"
+            className="w-12 h-12 rounded-full shadow-[0_0_15px_rgba(14,165,233,0.3)] bg-bg3 border border-glass-border hover:bg-bg2 text-sky-400 flex items-center justify-center transition-all group"
             onClick={() => { setPage(1); setSort(s => s === 'name_asc' ? 'id_desc' : 'name_asc'); }} 
             title="Toggle Sort Order"
           >
@@ -635,7 +635,7 @@ const DatabasePage = () => {
           </button>
 
           <button 
-            className="w-12 h-12 rounded-full shadow-[0_0_20px_rgba(245,158,11,0.5)] bg-bg3 border border-glass-border hover:bg-bg2 text-amber-400 flex items-center justify-center transition-all group hover:-translate-y-1"
+            className="w-12 h-12 rounded-full shadow-[0_0_20px_rgba(245,158,11,0.5)] bg-bg3 border border-glass-border hover:bg-bg2 text-amber-400 flex items-center justify-center transition-all group"
             onClick={async () => {
               try {
                 const res = await api.unlockDatabase();
@@ -651,7 +651,7 @@ const DatabasePage = () => {
           </button>
 
           <button 
-            className="w-12 h-12 rounded-full shadow-[0_0_20px_rgba(14,165,233,0.5)] bg-sky-500 text-white hover:bg-sky-400 flex items-center justify-center transition-all group hover:-translate-y-1"
+            className="w-12 h-12 rounded-full shadow-[0_0_20px_rgba(14,165,233,0.5)] bg-sky-500 text-white hover:bg-sky-400 flex items-center justify-center transition-all group"
             onClick={() => { setPage(1); loadDatabase(); }} 
             title="Refresh Data"
           >
@@ -715,7 +715,7 @@ const DatabasePage = () => {
             )}
           </div>
           <table className="w-full text-left border-collapse">
-            <thead className="sticky top-0 bg-bg/95 backdrop-blur z-10 shadow-md">
+            <thead className="sticky top-0 bg-bg/95 z-10 shadow-md">
               <tr>
                 <th className="p-4 border-b border-glass-border w-12 text-center align-middle">
                   <input 
@@ -969,8 +969,8 @@ const DatabasePage = () => {
 
       {/* Price History Modal */}
       {showPriceHistoryModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-          <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 p-4">
+          <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border bg-bg3/50 shrink-0">
               <div>
@@ -1079,8 +1079,8 @@ const DatabasePage = () => {
       
       {/* Bulk Multi-Add Medicine Modal */}
       {showBulkAddModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
+          <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col">
             {/* Header */}
             <div className="p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-3">

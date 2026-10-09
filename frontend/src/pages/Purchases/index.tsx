@@ -3199,7 +3199,7 @@ const Purchases: React.FC = () => {
       )}
 
       {/* ── Main Purchase Card Container ── */}
-      <div className="flex-1 flex flex-col min-h-0 bg-glass-bg border border-glass-border rounded-2xl overflow-hidden backdrop-blur-xl">
+      <div className="flex-1 flex flex-col min-h-0 bg-glass-bg border border-glass-border rounded-2xl overflow-hidden">
         {/* Header Section */}
         <div className="relative z-30 p-4 pb-3 border-b border-glass-border bg-white/[0.02]">
         {/* Purchases Tabs Bar */}
@@ -3319,7 +3319,7 @@ const Purchases: React.FC = () => {
                   autoComplete="off"
                 />
                 {showDistributorDropdown && distributorSearch.trim().length >= 2 && (
-                  <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 flex flex-col shadow-2xl">
+                  <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-glass-border rounded-xl overflow-hidden max-h-64 flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
                     <div className="px-3 py-1 bg-bg3 border-b border-glass-border/40 flex items-center justify-end shrink-0">
                       <button
                         type="button"
@@ -3602,7 +3602,7 @@ const Purchases: React.FC = () => {
             />
             
             {showCreditNotesPanel && pendingReturns.length > 0 && (
-              <div className="absolute z-dropdown w-64 mt-1 bg-bg2 border border-purple-500/30 rounded-xl shadow-2xl p-2 max-h-48 overflow-y-auto dropdown-scroll">
+              <div className="absolute z-dropdown w-64 mt-1 bg-bg2 border border-purple-500/30 rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-2 max-h-48 overflow-y-auto dropdown-scroll">
                 {pendingReturns.map(ret => (
                   <button
                     key={ret.id}
@@ -3724,7 +3724,7 @@ const Purchases: React.FC = () => {
             const hasOriginalName = items.some(i => Boolean(i.original_name && i.original_name.trim() !== ''));
             return (
               <table className="w-full">
-                <thead className="sticky top-0 z-20 bg-glass-bg backdrop-blur-sm shadow-sm">
+                <thead className="sticky top-0 z-20 bg-glass-bg shadow-sm">
                   <tr className="text-left text-gray-300 border-b border-white/20">
                     <th className="pb-3">
                       <button
@@ -4015,7 +4015,7 @@ const Purchases: React.FC = () => {
                             )}
                           </div>
                           {activeSearchIndex === index && searchResults.length === 0 && item.medicine_name.trim().length >= 2 && (
-                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-2xl p-2 left-0 [will-change:scroll-position] ${
+                            <div ref={searchResultsRef} className={`absolute z-[9999] w-[440px] max-w-[90vw] bg-bg2 border border-glass-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-2 left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -4056,7 +4056,7 @@ const Purchases: React.FC = () => {
                             </div>
                           )}
                           {activeSearchIndex === index && searchResults.length > 0 && (
-                            <div className={`absolute z-[9999] w-[460px] max-w-[90vw] max-h-80 bg-bg2 border border-glass-border rounded-xl shadow-2xl flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
+                            <div className={`absolute z-[9999] w-[460px] max-w-[90vw] max-h-80 bg-bg2 border border-glass-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden left-0 [will-change:scroll-position] ${
                               purchaseSearchDropUp
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -4247,7 +4247,7 @@ const Purchases: React.FC = () => {
 
                       return (
                         <div 
-                          className="absolute left-0 top-full mt-1 z-dropdown min-w-[280px] max-w-[340px] max-h-60 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-1 duration-150"
+                          className="absolute left-0 top-full mt-1 z-dropdown min-w-[280px] max-w-[340px] max-h-60 bg-bg2 border border-glass-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-1 duration-150"
                         >
                           <div className="px-3 py-1.5 bg-bg3 border-b border-glass-border/40 flex items-center justify-between shrink-0">
                             <span className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">

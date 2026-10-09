@@ -45,7 +45,7 @@ export const BaseModal: React.FC<BaseModalProps> = ({
       aria-modal="true"
     >
       <div
-        className={`bg-bg2 border border-border rounded-2xl w-full ${maxWidth} ${maxHeight} shadow-2xl overflow-hidden flex flex-col text-text animate-in fade-in zoom-in-95 duration-150`}
+        className={`bg-bg2 border border-border rounded-3xl w-full ${maxWidth} ${maxHeight} shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col text-text animate-in fade-in zoom-in-95 duration-150`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}

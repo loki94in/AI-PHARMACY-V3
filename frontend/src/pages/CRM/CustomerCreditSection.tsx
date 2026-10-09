@@ -686,8 +686,8 @@ export const CustomerCreditSection: React.FC = () => {
 
       {/* Bill Preview Modal (Matching Sales History Page Popup) */}
       {viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <div>

@@ -1738,7 +1738,7 @@ export const RefillsSection: React.FC = () => {
                       <MoreHorizontal size={13} />
                     </button>
                     {showMoreMenu && (
-                      <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-2xl p-1.5 min-w-[170px] flex flex-col gap-1 animate-in fade-in">
+                      <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-1.5 min-w-[170px] flex flex-col gap-1 animate-in fade-in">
                         <button
                           type="button"
                           disabled={snoozing}
@@ -2339,8 +2339,8 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Add / Edit Refill Modal ── */}
       {showAddModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-2xl flex flex-col">
+        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex items-center justify-between shrink-0 bg-bg3/40">
               <div>
@@ -2658,7 +2658,7 @@ export const RefillsSection: React.FC = () => {
 
                           {/* Dropdown Suggestions List */}
                           {row.isOpen && (
-                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll ${
+                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden max-h-56 overflow-y-auto dropdown-scroll ${
                               dropUpIndex === idx
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
@@ -2895,8 +2895,8 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Inline Edit Refill Frequency Modal ── */}
       {editingRefill && createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-5 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <Sliders size={16} className="text-primary" />
@@ -2986,8 +2986,8 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Bill / Invoice Preview Modal ── */}
       {viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <div>

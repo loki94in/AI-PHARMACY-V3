@@ -430,11 +430,11 @@ export const DailyCommunicationsModal: React.FC<DailyCommunicationsModalProps> =
       aria-modal="true"
       data-modal="daily-communications"
       onClick={onClose}
-      className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150"
+      className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-150"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-bg border border-border w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] rounded-2xl shadow-2xl flex flex-col overflow-hidden relative"
+        className="bg-bg border border-border w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden relative"
       >
 
         {/* Header */}

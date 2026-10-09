@@ -35,7 +35,7 @@ export const OpenFDADrawer: React.FC<OpenFDADrawerProps> = ({
     <div
       className={`fixed top-0 right-0 h-full w-full max-w-[450px] bg-bg2 border-l border-border transition-all duration-300 ease-in-out z-drawer flex flex-col pt-16 ${
         isOpen
-          ? 'translate-x-0 shadow-2xl pointer-events-auto'
+          ? 'translate-x-0 shadow-[0_4px_24px_rgba(0,0,0,0.12)] pointer-events-auto'
           : 'translate-x-full shadow-none pointer-events-none'
       }`}
     >

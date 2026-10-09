@@ -873,8 +873,8 @@ const BackupCenterModal: React.FC<BackupCenterModalProps> = ({
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
-      <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-2xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden">
         <BackupCenterContent isStartupMode={isStartupMode} onClose={onClose} isInline={false} />
       </div>
     </div>,

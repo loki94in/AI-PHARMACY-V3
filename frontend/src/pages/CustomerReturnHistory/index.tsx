@@ -115,7 +115,7 @@ export default function CustomerReturnHistory() {
           >
             <ArrowLeft className="w-4 h-4" /> Back to Returns
           </button>
-          <h1 className="text-2xl font-bold text-text flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-text flex items-center gap-2">
             <History className="w-6 h-6 text-sky" />
             Customer Return History
           </h1>

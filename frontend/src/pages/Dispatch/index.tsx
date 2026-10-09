@@ -865,7 +865,7 @@ const Dispatch = () => {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-extrabold text-text tracking-tight leading-none">
+              <h1 className="text-xl font-semibold text-text tracking-tight leading-none">
                 Dispatch &amp; Delivery Management
               </h1>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
@@ -992,7 +992,7 @@ const Dispatch = () => {
 
       {/* ── TAB CONTENT 1: ACTIVE DISPATCH QUEUE ── */}
       {(activeTab === 'queue' || activeTab === 'all') && (
-        <div className="glass-panel rounded-2xl overflow-hidden bg-bg2/40 border border-glass-border/80 shadow-2xl backdrop-blur-xl flex flex-col">
+        <div className="glass-panel rounded-2xl overflow-hidden bg-bg2/40 border border-glass-border/80 shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
           {/* Section Bar */}
           <div className="p-4 bg-bg3/40 border-b border-glass-border/60 flex flex-wrap justify-between items-center gap-3">
             <div className="flex items-center gap-2.5">
@@ -1099,7 +1099,7 @@ const Dispatch = () => {
           {/* Orders Table */}
           <div className="overflow-x-auto bg-bg/20">
             <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-bg2/90 sticky top-0 backdrop-blur z-10 border-b border-glass-border">
+              <thead className="bg-bg2/90 sticky top-0 z-10 border-b border-glass-border">
                 <tr>
                   <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Channel</th>
                   <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Patient / Customer</th>
@@ -1272,8 +1272,8 @@ const Dispatch = () => {
 
       {/* Prescription Zoom Lightbox Modal */}
       {selectedPrescription && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
-          <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col rounded-3xl p-5 space-y-4 shadow-2xl relative overflow-hidden">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+          <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col rounded-3xl p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden">
             <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <FileImage size={18} className="text-primary" />
@@ -1317,7 +1317,7 @@ const Dispatch = () => {
 
       {/* ── TAB CONTENT 2: DISTRIBUTOR DISPATCH REMINDERS ── */}
       {(activeTab === 'reminders' || activeTab === 'all') && (
-        <div className="glass-panel p-5 space-y-5 bg-bg2/40 border border-glass-border/80 rounded-2xl shadow-2xl backdrop-blur-xl transition-all duration-300">
+        <div className="glass-panel p-5 space-y-5 bg-bg2/40 border border-glass-border/80 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-all duration-300">
           
           {/* Section Header & High-Level Actions */}
           <div className="flex flex-wrap justify-between items-center gap-4 border-b border-glass-border/60 pb-4">
@@ -1453,7 +1453,7 @@ const Dispatch = () => {
           })()}
 
           {/* ── AUTO-SEND SCHEDULE WINDOW & FILTER TOOLBAR ── */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-bg/40 p-3 rounded-xl border border-glass-border/60 backdrop-blur-md">
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-bg/40 p-3 rounded-xl border border-glass-border/60">
             {/* Today Filter Segmented Selector */}
             <div className="flex items-center gap-1 bg-bg p-1 rounded-xl border border-glass-border text-xs shadow-inner">
               <button
@@ -1529,7 +1529,7 @@ const Dispatch = () => {
           </div>
 
           {/* Table of Today's Distributors */}
-          <div className="overflow-x-auto bg-bg/30 rounded-2xl border border-glass-border/80 shadow-lg backdrop-blur-md">
+          <div className="overflow-x-auto bg-bg/30 rounded-2xl border border-glass-border/80 shadow-lg">
             <table className="w-full text-left border-collapse text-xs table-fixed min-w-[900px]">
               <thead className="bg-bg2/90 border-b border-glass-border/80 sticky top-0 z-10">
                 <tr>
@@ -1807,7 +1807,7 @@ const Dispatch = () => {
                         {isPreviewOpen && (
                           <tr className="bg-bg3/20 border-b border-glass-border/50">
                             <td colSpan={5} className="p-4">
-                              <div className="p-4 rounded-2xl bg-bg2/95 border border-glass-border/80 space-y-3.5 text-xs shadow-2xl backdrop-blur-xl transition-all">
+                              <div className="p-4 rounded-2xl bg-bg2/95 border border-glass-border/80 space-y-3.5 text-xs shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-all">
                                 <div className="flex items-center justify-between flex-wrap gap-2 border-b border-glass-border/40 pb-2.5">
                                   <span className="font-extrabold text-amber-400 flex items-center gap-2 text-xs">
                                     <Edit3 size={16} /> Direct WhatsApp Message Editor <span className="text-text font-black">({item.distributor_name})</span>
@@ -1883,7 +1883,7 @@ const Dispatch = () => {
                         {isOrdersOpen && (
                           <tr className="bg-bg3/20 border-b border-glass-border/50">
                             <td colSpan={5} className="p-4">
-                              <div className="p-4 rounded-2xl bg-bg2/95 border border-glass-border/80 space-y-3 text-xs shadow-2xl backdrop-blur-xl transition-all">
+                              <div className="p-4 rounded-2xl bg-bg2/95 border border-glass-border/80 space-y-3 text-xs shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-all">
                                 <div className="flex items-center justify-between border-b border-glass-border/40 pb-2">
                                   <div className="flex items-center gap-2">
                                     <Package size={15} className="text-amber-400" />
@@ -1954,7 +1954,7 @@ const Dispatch = () => {
 
       {/* ── TAB CONTENT 3: DELIVERY STAFF DIRECTORY ── */}
       {(activeTab === 'staff' || activeTab === 'all') && (
-        <div className="glass-panel p-5 space-y-5 bg-bg2/40 border border-glass-border/80 rounded-2xl shadow-2xl backdrop-blur-xl transition-all duration-300">
+        <div className="glass-panel p-5 space-y-5 bg-bg2/40 border border-glass-border/80 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-all duration-300">
           <div className="flex justify-between items-center flex-wrap gap-3 border-b border-glass-border/60 pb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-500/25 to-purple-600/10 text-purple-400 flex items-center justify-center font-bold border border-purple-500/30 shadow-lg shadow-purple-500/10 shrink-0">
@@ -2113,7 +2113,7 @@ const Dispatch = () => {
 
       {/* ── TAB CONTENT 4: WHATSAPP MESSAGE HISTORY LOGS ── */}
       {(activeTab === 'logs' || activeTab === 'all') && (
-        <div className="glass-panel p-5 space-y-5 bg-bg2/40 border border-glass-border/80 rounded-2xl shadow-2xl backdrop-blur-xl transition-all duration-300">
+        <div className="glass-panel p-5 space-y-5 bg-bg2/40 border border-glass-border/80 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-all duration-300">
           <div className="flex justify-between items-center flex-wrap gap-3 border-b border-glass-border/60 pb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500/25 to-emerald-600/10 text-emerald-400 flex items-center justify-center font-bold border border-emerald-500/30 shadow-lg shadow-emerald-500/10 shrink-0">

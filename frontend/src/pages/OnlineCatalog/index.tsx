@@ -700,8 +700,8 @@ export default function OnlineCatalog() {
 
       {/* ── QR Code Popup Modal ────────────────────────────────────── */}
       {showQrModal && portalFullUrl && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-sm shadow-2xl text-center space-y-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60-xs p-4 animate-in fade-in">
+          <div className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-sm shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-center space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <QrCode className="w-5 h-5 text-emerald-500" />
@@ -756,8 +756,8 @@ export default function OnlineCatalog() {
 
       {/* ── Cloudflare Token & Permanent Domain Modal ─────────────── */}
       {showConfigModal && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-md shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60-xs p-4 animate-in fade-in">
+          <div className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-sky" />

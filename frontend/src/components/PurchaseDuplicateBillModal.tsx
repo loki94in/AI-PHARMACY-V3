@@ -37,10 +37,10 @@ export const PurchaseDuplicateBillModal: React.FC<Props> = ({
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center p-4 fade-in">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Modal Dialog */}
-      <div className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-lg overflow-hidden shadow-2xl slide-up text-text flex flex-col">
+      <div className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-lg overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] slide-up text-text flex flex-col">
         {/* Header */}
         <div className="p-5 border-b border-border bg-bg2 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">

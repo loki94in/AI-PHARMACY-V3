@@ -178,8 +178,8 @@ const ExitAppButton = () => {
 
       {/* Confirmation Modal */}
       {showConfirmModal && !isShuttingDown && createPortal(
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left animate-fade-in">
-          <div className="bg-bg border border-glass-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4 text-left animate-fade-in">
+          <div className="bg-bg border border-glass-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 text-left shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             <div className="flex items-start gap-3">
               <div className="p-3 rounded-2xl bg-red-500/10 text-red-500 border border-red-500/20 shrink-0">
                 <Power size={22} />
@@ -231,7 +231,7 @@ const ExitAppButton = () => {
 
       {/* Shutdown in Progress Fullscreen Overlay */}
       {isShuttingDown && createPortal(
-        <div className="fixed inset-0 z-[999999] bg-bg/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 select-none animate-fade-in">
+        <div className="fixed inset-0 z-[999999] bg-bg/95 flex flex-col items-center justify-center text-center p-6 select-none animate-fade-in">
           <div className="p-4 rounded-3xl bg-red-500/10 text-red-500 mb-4 animate-pulse border border-red-500/20">
             <Power size={36} />
           </div>
@@ -332,7 +332,7 @@ const Sidebar = memo(({
         className={`
           fixed inset-y-0 left-0 z-drawer w-72 max-w-[85vw]
           lg:static lg:z-auto lg:w-64 lg:max-w-none
-          bg-glass-bg border-r border-glass-border backdrop-blur-xl flex flex-col h-full
+          bg-glass-bg border-r border-glass-border flex flex-col h-full
           transition-transform duration-300 ease-in-out
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0
         `}
@@ -468,13 +468,13 @@ const Sidebar = memo(({
                   }}
                   onClick={onClose}
                   className={`
-                  flex items-center gap-3 px-5 py-2.5 mx-2 rounded-lg text-sm font-medium uppercase transition-all duration-200
+                  flex items-center gap-3 px-4 py-2.5 mx-2 rounded-xl text-sm font-medium transition-colors duration-150 active:scale-[.98]
                   ${isActive
-                      ? 'text-white bg-gradient-to-r from-primary/20 to-transparent border-l-2 border-primary shadow-[inset_0_0_20px_rgba(59,130,246,0.1)]'
-                      : 'text-muted hover:text-white hover:bg-white/5 hover:translate-x-1 border-l-2 border-transparent'}
+                      ? 'text-text bg-primary/15 border-l-2 border-primary'
+                      : 'text-muted hover:text-text hover:bg-bg3 border-l-2 border-transparent'}
                 `}
                 >
-                  <span className={`${isActive ? 'text-primary drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' : ''}`}>
+                  <span className={`${isActive ? 'text-primary' : ''}`}>
                     {item.icon}
                   </span>
                   <span className="flex-1 truncate">{item.label}</span>
@@ -703,7 +703,7 @@ const NotificationPanel = ({
   return (
     <div
       ref={panelRef}
-      className="absolute right-0 top-full mt-3 w-[420px] max-w-[calc(100vw-1.5rem)] z-dropdown flex flex-col rounded-3xl overflow-hidden bg-bg2 border border-border shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 opacity-100"
+      className="absolute right-0 top-full mt-3 w-[420px] max-w-[calc(100vw-1.5rem)] z-dropdown flex flex-col rounded-2xl overflow-hidden bg-bg2 border border-border shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in slide-in-from-top-2 duration-200 opacity-100"
       style={{
         boxShadow: '0 25px 65px rgba(0,0,0,0.5), 0 0 35px rgba(0, 0, 0, 0.2)',
       }}
@@ -2152,7 +2152,7 @@ const Topbar = memo(({
         onOpenAutomationHub={onOpenAutomationHub}
       />
 
-      <header className="h-14 bg-glass-bg border-b border-glass-border backdrop-blur-xl flex items-center justify-between px-3 sm:px-6 relative z-sticky-header shrink-0">
+      <header className="h-14 bg-glass-bg border-b border-glass-border flex items-center justify-between px-3 sm:px-6 relative z-sticky-header shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={onMenuClick}
@@ -2552,7 +2552,7 @@ const Topbar = memo(({
               </button>
 
               {showDevicesPopover && (
-                <div className="absolute right-0 top-full mt-2 w-80 bg-glass-bg border border-glass-border backdrop-blur-2xl rounded-2xl shadow-2xl p-4 z-dropdown">
+                <div className="absolute right-0 top-full mt-2 w-80 bg-glass-bg border border-glass-border rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-4 z-dropdown">
                   <div className="flex items-center justify-between pb-3 border-b border-glass-border mb-3">
                     <span className="text-xs font-bold uppercase text-text/80 tracking-wide">Sync Devices</span>
                     <button
@@ -3480,11 +3480,6 @@ export const Layout = ({
           />
         )}
 
-        {/* Subtle background glow */}
-        <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
-          <div className="absolute top-[-10%] right-[-5%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[100px]" />
-          <div className="absolute bottom-[-10%] left-[-5%] w-[40%] h-[40%] bg-purple/5 rounded-full blur-[100px]" />
-        </div>
       </div>
     </div>
   );

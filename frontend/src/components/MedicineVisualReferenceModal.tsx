@@ -229,8 +229,8 @@ export function MedicineVisualReferenceModal({
   const isPendingReview = currentGalleryItem?.verification_status === 'PENDING_REVIEW' || visualData?.auto_pulled;
 
   return createPortal(
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-modal flex items-center justify-center p-4">
-      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
+      <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col animate-in fade-in zoom-in-95 duration-200">
         
         {/* Header */}
         <div className="p-4 border-b border-border flex items-center justify-between bg-bg3/50 shrink-0">
@@ -442,7 +442,7 @@ export function MedicineVisualReferenceModal({
                       alt={selectedMedicine.name}
                       className="max-h-full max-w-full object-contain rounded-lg transition-transform duration-300 group-hover:scale-105"
                     />
-                    <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-bg3/90 border border-border text-text text-[10px] font-medium backdrop-blur-sm">
+                    <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-bg3/90 border border-border text-text text-[10px] font-medium">
                       {livePhotoBase64 ? '📸 Live Counter Photo' : (currentGalleryItem?.type ? `${currentGalleryItem.type.toUpperCase()} Face` : 'Primary Pack')}
                     </div>
                   </div>

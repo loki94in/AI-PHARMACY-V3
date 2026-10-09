@@ -44,8 +44,14 @@ export default {
           border: 'var(--glass-border)',
         }
       },
+      // Radius presets (Settings → Appearance) drive these via --app-border-radius; 1rem = Tailwind defaults
+      borderRadius: {
+        xl: 'calc(var(--app-border-radius, 1rem) * 0.75)',
+        '2xl': 'var(--app-border-radius, 1rem)',
+        '3xl': 'calc(var(--app-border-radius, 1rem) * 1.5)',
+      },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', 'Inter', 'system-ui', 'sans-serif'],
       },
       zIndex: {
         'dropdown': '999',

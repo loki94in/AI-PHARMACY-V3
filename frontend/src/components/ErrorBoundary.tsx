@@ -32,7 +32,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex items-center justify-center p-6 bg-bg text-text">
-          <div className="max-w-md w-full p-8 rounded-2xl bg-bg2 border border-border text-center shadow-2xl">
+          <div className="max-w-md w-full p-8 rounded-2xl bg-bg2 border border-border text-center shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-bg3 border border-border flex items-center justify-center text-red-500 font-bold text-2xl">
               !
             </div>

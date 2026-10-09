@@ -979,7 +979,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-all duration-300">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 transition-all duration-300">
       <div className="glass-panel w-[95vw] max-w-3xl p-6 relative border border-glass-border shadow-[0_0_50px_rgba(59,130,246,0.2)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 rounded-3xl max-h-[90vh] overflow-y-auto">
         
         {/* Close Button */}
@@ -1548,8 +1548,8 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
 
         {/* Duplicate Item Resolution Overlay */}
         {duplicateMatch && pendingItemToAdd && (
-          <div className="absolute inset-0 z-submodal flex items-center justify-center p-6 bg-black/80 backdrop-blur-md rounded-3xl transition-all duration-300 animate-in fade-in">
-            <div className="bg-bg2 border border-glass-border p-6 rounded-3xl w-[95vw] max-w-md space-y-4 shadow-2xl">
+          <div className="absolute inset-0 z-submodal flex items-center justify-center p-6 bg-black/80 rounded-3xl transition-all duration-300 animate-in fade-in">
+            <div className="bg-bg2 border border-glass-border p-6 rounded-3xl w-[95vw] max-w-md space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
               <div className="flex items-center gap-2 text-amber-400">
                 <AlertTriangle size={20} />
                 <h4 className="text-sm font-extrabold uppercase tracking-wide">Similar Item Staged</h4>

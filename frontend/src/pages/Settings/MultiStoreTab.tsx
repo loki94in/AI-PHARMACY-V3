@@ -206,8 +206,8 @@ export function MultiStoreTab() {
 
       {/* Add Branch Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left">
-          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4 text-left">
+          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 text-left shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <StoreIcon size={18} className="text-primary" />

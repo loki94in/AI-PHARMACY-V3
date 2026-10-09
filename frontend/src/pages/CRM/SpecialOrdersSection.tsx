@@ -1554,8 +1554,8 @@ export const SpecialOrdersSection: React.FC = () => {
 
       {/* Add Special Request Modal inside CRM */}
       {showAddModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-lg h-[85vh] min-h-[560px] max-h-[840px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+          <div className="glass-panel w-[95vw] max-w-lg h-[85vh] min-h-[560px] max-h-[840px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <h3 className="font-bold text-sm text-text flex items-center gap-2">
                 <ClipboardList size={16} className="text-primary" />
@@ -1631,7 +1631,7 @@ export const SpecialOrdersSection: React.FC = () => {
 
                 {/* Dropdown Live Results from Pharmarack */}
                 {showPrDropdown && prSearchResults.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-2xl z-50 max-h-56 flex flex-col overflow-hidden">
+                  <div className="absolute left-0 right-0 mt-1 bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] z-50 max-h-56 flex flex-col overflow-hidden">
                     <div className="p-2 border-b border-border/40 bg-bg3 shrink-0 text-[9px] font-bold text-muted uppercase tracking-wider flex justify-between items-center">
                       <span>Pharmarack Live Matches</span>
                       <button
@@ -1943,8 +1943,8 @@ export const SpecialOrdersSection: React.FC = () => {
 
       {/* Edit Special Request Modal */}
       {showEditModal && editingOrder && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-lg h-[80vh] min-h-[500px] max-h-[760px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+          <div className="glass-panel w-[95vw] max-w-lg h-[80vh] min-h-[500px] max-h-[760px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <h3 className="font-bold text-sm text-text flex items-center gap-2">
                 <Pencil size={16} className="text-primary" />
@@ -2129,7 +2129,7 @@ export const SpecialOrdersSection: React.FC = () => {
       {/* Live Cart Quantity Auto-Adjustment Animated Notification Card */}
       {cartAdjustmentNotice && createPortal(
         <div className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-5 duration-300 pointer-events-auto">
-          <div className="bg-bg2/95 backdrop-blur-md border border-glass-border shadow-2xl rounded-2xl p-4 max-w-sm w-88 flex flex-col gap-2.5 transition-all">
+          <div className="bg-bg2/95 border border-glass-border shadow-[0_4px_24px_rgba(0,0,0,0.12)] rounded-2xl p-4 max-w-sm w-88 flex flex-col gap-2.5 transition-all">
             <div className="flex items-center justify-between gap-2 border-b border-glass-border/40 pb-2">
               <div className="flex items-center gap-2">
                 <div className="w-6 h-6 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
@@ -2197,8 +2197,8 @@ export const SpecialOrdersSection: React.FC = () => {
 
       {/* ₹50 Advance Payment QR Modal */}
       {paymentQrModalData && createPortal(
-        <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-global-modal bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-6 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 animate-in fade-in zoom-in-95 duration-200">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">

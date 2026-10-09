@@ -528,7 +528,7 @@ export default function WebsiteOrders() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-black tracking-tight text-text">Online Orders</h1>
+              <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Online Orders</h1>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
                 Live Store Channel
               </span>
@@ -1151,7 +1151,7 @@ export default function WebsiteOrders() {
                                 <span className="text-[9px] text-muted">Click to inspect file</span>
                               </div>
                               {/* Hover Overlay */}
-                              <div className="absolute inset-0 bg-bg3/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 transition-opacity backdrop-blur-2xs">
+                              <div className="absolute inset-0 bg-bg3/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 transition-opacity-2xs">
                                 <span className="px-2.5 py-1 rounded-lg bg-bg border border-border text-[11px] font-bold text-text flex items-center gap-1 shadow-sm">
                                   <Eye size={12} className="text-primary" />
                                   <span>Inspect Photo</span>
@@ -1402,8 +1402,8 @@ export default function WebsiteOrders() {
         const photos = parsePrescriptionUrls(selectedPrescription);
         const currentPhoto = photos[prescriptionPhotoIndex] || photos[0] || '';
         return (
-          <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
-            <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col rounded-3xl p-5 shadow-2xl relative overflow-hidden">
+          <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+            <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col rounded-3xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden">
               <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
                 <div className="flex items-center gap-2">
                   <FileImage size={18} className="text-primary" />
@@ -1553,8 +1553,8 @@ export default function WebsiteOrders() {
 
       {/* Return Override Authorization Modal */}
       {overrideModalOrder && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <ShieldAlert size={18} className="text-amber-500" />
@@ -1619,8 +1619,8 @@ export default function WebsiteOrders() {
 
       {/* Staff Delivery ETA Override Modal */}
       {deliveryOverrideOrder && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <Clock size={18} className="text-primary" />
@@ -1695,8 +1695,8 @@ export default function WebsiteOrders() {
 
       {/* WhatsApp Payment Screenshot Review Modal (Human-in-the-Loop) */}
       {selectedScreenshot && (
-        <div className="fixed inset-0 z-global-modal bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden">
+        <div className="fixed inset-0 z-global-modal bg-black/70-xs flex items-center justify-center p-4">
+          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <FileImage size={18} className="text-primary" />

@@ -245,7 +245,7 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
 
   return createPortal(
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/50 p-4 animate-fade-in"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           e.preventDefault();
@@ -255,7 +255,7 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
       }}
     >
       <div
-        className="glass-panel w-[95vw] max-w-lg bg-bg2 rounded-2xl border border-border p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col overflow-hidden"
+        className="glass-panel w-[95vw] max-w-lg bg-bg2 rounded-2xl border border-border p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 max-h-[90vh] flex flex-col overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}

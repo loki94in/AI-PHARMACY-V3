@@ -166,7 +166,10 @@ const RULES = [
       // Modal scrim exception: `bg-black/50|60|80` overlay backdrops carry
       // explicit light-mode overrides in index.css (softened to 0.35), so they
       // are theme-safe by design. Buttons/text on colored surfaces are NOT.
-      if (/inset-0/.test(line) && /backdrop-blur|z-(modal|global-modal|drawer)/.test(line)) return null;
+      // 2026-10-09 (Apple reskin): backdrop-blur tokens were stripped repo-wide (dead under the
+      // no-GPU lock), so full-screen `inset-0 bg-black/50..95` opacity scrims are exempt by themselves
+      // (frontend/AGENTS.md: "opacity scrims (bg-black/50+)" are sanctioned solids).
+      if (/inset-0/.test(line) && /backdrop-blur|z-(modal|global-modal|drawer|submodal)|bg-black\/(5|6|7|8|9)\d?\b/.test(line)) return null;
       // Accent-fill label exception: `text-white` (incl. hover:/group-hover:)
       // on an element that also carries a solid accent background class is
       // THEME-SAFE BY CONTRACT — index.css's light-mode override

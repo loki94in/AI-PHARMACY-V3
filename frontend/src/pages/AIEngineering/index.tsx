@@ -42,7 +42,7 @@ const PharmaIntelligencePage: React.FC = () => {
           <div className="p-2 rounded-xl bg-primary/10 text-primary">
             <BrainCircuit size={22} />
           </div>
-          <h1 className="text-2xl font-black text-text tracking-tight">Pharma Intelligence</h1>
+          <h1 className="text-2xl font-semibold text-text tracking-tight">Pharma Intelligence</h1>
           <span className="bg-violet-500/15 text-violet-400 border border-violet-500/30 text-xs font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
             AI Engine
           </span>

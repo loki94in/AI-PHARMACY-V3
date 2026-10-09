@@ -138,7 +138,7 @@ const SentSelectionPopup: React.FC<{
   useModalEscape(true, onClose);
   return (
     <div className="fixed inset-0 z-modal bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-md max-h-[80vh] flex flex-col shadow-2xl text-text">
+      <div onClick={e => e.stopPropagation()} className="relative bg-bg border border-border rounded-2xl w-[95vw] max-w-md max-h-[80vh] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-text">
         <div className="p-4 border-b border-border bg-bg2 rounded-t-2xl">
           <h3 className="text-sm font-bold">Re-order selected medicines</h3>
           <p className="text-[11px] text-muted mt-0.5">Each medicine goes to the live cart of the distributor shown. Change a quantity, or pick a different distributor.</p>
@@ -3895,7 +3895,7 @@ export default function PharmarackCart() {
         /* ── Reorder Hub View ── */
         <div className="flex-1 flex flex-col overflow-hidden bg-glass-bg border border-glass-border rounded-3xl min-h-0">
           {/* Header */}
-          <div className="h-16 border-b border-glass-border/40 px-6 flex items-center justify-between shrink-0 bg-glass-bg/10 backdrop-blur-md">
+          <div className="h-16 border-b border-glass-border/40 px-6 flex items-center justify-between shrink-0 bg-glass-bg/10">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
                 <Clock size={16} />
@@ -4349,7 +4349,7 @@ export default function PharmarackCart() {
       ) : (
         <div className="flex-1 flex flex-col overflow-hidden bg-transparent border border-glass-border/40 rounded-3xl min-h-0">
           {/* ── Top Header ── */}
-          <div className="h-16 border-b border-glass-border/40 px-6 flex items-center justify-between shrink-0 bg-transparent backdrop-blur-md">
+          <div className="h-16 border-b border-glass-border/40 px-6 flex items-center justify-between shrink-0 bg-transparent">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
                 <ShoppingCart size={16} />
@@ -4475,7 +4475,7 @@ export default function PharmarackCart() {
               ) : (
                 <>
                   {/* ── Sticky Sub-Filter Toggle Bar (Unsent Cart Orders / Sent Orders / All / Failed / Missing Phone) ── */}
-                  <div className="sticky top-0 z-10 bg-bg/40 backdrop-blur-md px-6 py-3 border-b border-glass-border/30 shrink-0 flex items-center justify-between gap-4">
+                  <div className="sticky top-0 z-10 bg-bg/40 px-6 py-3 border-b border-glass-border/30 shrink-0 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-1.5 bg-bg3/30 p-1 rounded-xl border border-glass-border/30 text-xs font-bold select-none overflow-x-auto">
                       <button
                         onClick={() => setDistributorFilterTab('active')}
@@ -4551,7 +4551,7 @@ export default function PharmarackCart() {
 
                     {/* ── Auto-Reconciled Paid Orders Review Tray (Human-in-the-Loop) ── */}
                     {autoReconciledItems.length > 0 && (
-                      <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 backdrop-blur-md p-4 shadow-sm space-y-3">
+                      <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-4 shadow-sm space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2.5">
                             <div className="w-8 h-8 rounded-xl bg-sky-500/20 border border-sky-500/40 text-sky-400 flex items-center justify-center shrink-0">
@@ -4627,7 +4627,7 @@ export default function PharmarackCart() {
                       const progressPercent = totalUnmappedInitially > 0 ? Math.round((sessionResolvedCount / totalUnmappedInitially) * 100) : 0;
 
                       return (
-                        <div id="missing-distributors-hub" className="rounded-2xl border border-amber-500/30 bg-bg2/80 backdrop-blur-md shadow-md overflow-hidden transition-all duration-300">
+                        <div id="missing-distributors-hub" className="rounded-2xl border border-amber-500/30 bg-bg2/80 shadow-md overflow-hidden transition-all duration-300">
                           {/* Header Bar */}
                           <div className="px-4 py-3 bg-gradient-to-r from-amber-500/15 via-bg2 to-amber-500/10 border-b border-amber-500/20 flex items-center justify-between gap-3">
                             <div className="flex items-center gap-3 min-w-0">
@@ -5607,8 +5607,8 @@ export default function PharmarackCart() {
 
       {/* ── Edit Distributor Contact Modal ── */}
       {editingDistributor && (
-        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -5792,8 +5792,8 @@ export default function PharmarackCart() {
 
       {/* ── Switch Supplier / Compare Prices Modal ── */}
       {switchModalTarget && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+        <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
@@ -5962,8 +5962,8 @@ export default function PharmarackCart() {
 
       {/* ── Reorder Same Confirmation Modal ── */}
       {reorderSameModalTarget && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[500px] max-h-[760px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
+        <div className="fixed inset-0 z-modal bg-black/75 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[500px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">

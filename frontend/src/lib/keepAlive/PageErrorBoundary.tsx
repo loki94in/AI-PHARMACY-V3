@@ -48,7 +48,7 @@ export class PageErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center h-full p-6 text-center bg-bg/50 backdrop-blur-md">
+        <div className="flex-1 flex flex-col items-center justify-center h-full p-6 text-center bg-bg/50">
           <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-2xl max-w-md w-full space-y-4 shadow-xl">
             <div className="inline-flex p-3 rounded-full bg-red-500/15 text-red-400">
               <AlertTriangle size={28} />

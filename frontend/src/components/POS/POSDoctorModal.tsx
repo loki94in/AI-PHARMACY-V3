@@ -42,7 +42,7 @@ export const POSDoctorModal: React.FC<POSDoctorModalProps> = ({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 fade-in">
-      <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-sm shadow-2xl overflow-hidden flex flex-col">
+      <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-sm shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col">
         <div className="px-5 py-4 border-b border-border bg-bg3/30 flex items-center justify-between">
           <h3 className="font-bold flex items-center gap-2 text-sky text-sm">
             {editingDoctorId ? <Edit size={18} className="text-amber-400" /> : <Plus size={18} />}

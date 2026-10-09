@@ -307,8 +307,8 @@ export function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: 
 
       {/* Full Backup Modal */}
       {showBackupModal && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border rounded-2xl p-6 w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] overflow-y-auto relative shadow-2xl">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-bg border border-border rounded-2xl p-6 w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] overflow-y-auto relative shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             <button
               onClick={() => setShowBackupModal(false)}
               className="absolute top-4 right-4 p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
@@ -331,8 +331,8 @@ export function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: 
 
       {/* Purge Confirmation Modal (Human-in-the-Loop) */}
       {showPurgeConfirmModal && storageStats && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-bg border border-border rounded-2xl p-5 w-[95vw] max-w-md space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-bg border border-border rounded-2xl p-5 w-[95vw] max-w-md space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
                 <Trash2 size={18} className="text-amber-500" />
@@ -455,8 +455,8 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
   };
 
   return (
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-bg border border-border rounded-2xl p-6 w-[95vw] max-w-xl relative shadow-2xl space-y-5">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-bg border border-border rounded-2xl p-6 w-[95vw] max-w-xl relative shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-5">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"

@@ -356,8 +356,8 @@ export const IncompleteOrders24hCard: React.FC<IncompleteOrders24hCardProps> = (
 
       {/* Human-in-the-Loop Delay Notice Modal */}
       {isNoticeModalOpen && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-[95vw] max-w-lg rounded-2xl bg-bg border border-border shadow-2xl overflow-hidden p-6 space-y-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60">
+          <div className="w-[95vw] max-w-lg rounded-2xl bg-bg border border-border shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2 text-amber-500 font-semibold text-base">
                 <ShieldAlert className="w-5 h-5" />

@@ -912,11 +912,11 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-3 sm:p-5 fade-in">
       <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+        className="absolute inset-0 bg-black/60" 
         onClick={onClose}
       />
       
-      <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-5xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up">
+      <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-5xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden slide-up">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -1975,8 +1975,8 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 z-modal flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-bg2 border border-red-500/30 rounded-2xl p-6 w-[95vw] max-w-md shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-modal flex items-center justify-center p-4 bg-black/70 animate-in fade-in duration-150">
+          <div className="bg-bg2 border border-red-500/30 rounded-2xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
             <div className="flex items-center gap-3 text-red-400">
               <div className="p-2.5 bg-red-500/20 rounded-xl border border-red-500/30">
                 <AlertTriangle size={24} />

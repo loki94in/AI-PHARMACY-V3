@@ -61,8 +61,8 @@ interface LocalEnrichmentData {
 
 const ModalSkeleton = () => (
   <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 fade-in">
-    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-    <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up">
+    <div className="absolute inset-0 bg-black/60" />
+    <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden slide-up">
       <div className="p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary animate-pulse" />
@@ -652,7 +652,7 @@ const Inventory = () => {
                 )}
               </button>
               {showColMenu && (
-                <div className="absolute right-0 top-full mt-2 z-[200] w-48 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden">
+                <div className="absolute right-0 top-full mt-2 z-[200] w-48 bg-bg2 border border-glass-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
                   <div className="flex items-center justify-between px-3 py-2 border-b border-glass-border/30">
                     <span className="text-xs font-black uppercase tracking-wider text-muted">Columns</span>
                     <div className="flex items-center gap-2">

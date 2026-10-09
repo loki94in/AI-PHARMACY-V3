@@ -165,7 +165,7 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   };
 
   return (
-    <footer className="h-9 bg-bg2/90 border-t border-glass-border px-3 flex items-center justify-between text-xs shrink-0 select-none z-20 backdrop-blur-md">
+    <footer className="h-9 bg-bg2/90 border-t border-glass-border px-3 flex items-center justify-between text-xs shrink-0 select-none z-20">
       {/* Left: Device status pills */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
         <button

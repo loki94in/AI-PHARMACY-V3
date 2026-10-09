@@ -54,7 +54,7 @@ export const StoreSelector: React.FC<StoreSelectorProps> = ({ className = '', sh
       </button>
 
       {isOpen && hasMultipleStores && (
-        <div className="absolute right-0 mt-2 w-64 rounded-xl bg-bg2 border border-border shadow-2xl py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute right-0 mt-2 w-64 rounded-xl bg-bg2 border border-border shadow-[0_4px_24px_rgba(0,0,0,0.12)] py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="px-3 py-2 border-b border-border text-[11px] font-semibold text-muted uppercase tracking-wider flex items-center justify-between">
             <span>Select Active Store</span>
             <span className="text-[10px] lowercase text-muted font-normal">({stores.length} available)</span>

@@ -756,7 +756,7 @@ const InvestigationCenter = () => {
     <div className="h-full flex flex-col gap-4 overflow-hidden relative">
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-[99999] flex items-center gap-2 px-4 py-3 rounded-xl border backdrop-blur-xl shadow-2xl text-xs font-semibold animate-in slide-in-from-top-4 duration-300
+        <div className={`fixed top-4 right-4 z-[99999] flex items-center gap-2 px-4 py-3 rounded-xl border shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-xs font-semibold animate-in slide-in-from-top-4 duration-300
           ${toast.type === 'success' ? 'bg-green/10 border-green/30 text-green' : 'bg-red/10 border-red/30 text-red'}`}>
           <Check size={14} />
           {toast.message}
@@ -765,8 +765,8 @@ const InvestigationCenter = () => {
 
       {/* Confirmation Modal — portalled to document.body to escape overflow-hidden stacking context */}
       {confirmModal && confirmModal.show && createPortal(
-        <div className="fixed inset-0 z-submodal bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border w-[95vw] max-w-md rounded-2xl shadow-2xl overflow-hidden p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-submodal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border w-[95vw] max-w-md rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 text-amber-500">
               <AlertTriangle size={24} />
               <h3 className="font-bold text-base text-text">{confirmModal.title}</h3>
@@ -825,7 +825,7 @@ const InvestigationCenter = () => {
                       </div>
                     </div>
                     <div>
-                      <h1 className="text-sm font-black text-text tracking-wide leading-none">Investigation Center</h1>
+                      <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Investigation Center</h1>
                       <p className="text-[11px] text-muted font-medium leading-none mt-0.5">Stock Ledger · Audit Trail · Bill Correction</p>
                     </div>
                   </div>
@@ -1050,7 +1050,7 @@ const InvestigationCenter = () => {
                   </button>
 
                   {showColMenu && (
-                    <div className="absolute right-0 top-full mt-1.5 z-[200] w-52 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="absolute right-0 top-full mt-1.5 z-[200] w-52 bg-bg2 border border-glass-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                       <div className="flex items-center justify-between px-3 py-2 border-b border-glass-border/30 bg-bg2/80">
                         <span className="text-[10px] font-black uppercase tracking-wider text-muted">Ledger Columns</span>
                         <div className="flex items-center gap-2">
@@ -1402,7 +1402,7 @@ const InvestigationCenter = () => {
                           className="w-full bg-bg3 border border-glass-border rounded-xl pl-9 pr-4 py-2.5 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-primary/50 transition-colors"
                         />
                         {searchMedicineResults.length > 0 && (
-                          <div className="absolute top-full left-0 right-0 z-dropdown mt-2 bg-bg2 border border-glass-border rounded-xl shadow-2xl overflow-hidden max-h-56 overflow-y-auto dropdown-scroll p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                          <div className="absolute top-full left-0 right-0 z-dropdown mt-2 bg-bg2 border border-glass-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden max-h-56 overflow-y-auto dropdown-scroll p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-200">
                             {searchMedicineResults.map((med, idx) => (
                               <button
                                 key={idx}
@@ -1736,7 +1736,7 @@ const InvestigationCenter = () => {
                   containerRef={parentRef}
                   className="border-t border-glass-border/30"
                   header={
-                    <tr className="flex items-center w-full min-w-full bg-bg2/90 backdrop-blur-sm border-b border-glass-border/40 text-muted font-bold text-[10px] select-none py-2.5 sticky top-0 z-10">
+                    <tr className="flex items-center w-full min-w-full bg-bg2/90 border-b border-glass-border/40 text-muted font-bold text-[10px] select-none py-2.5 sticky top-0 z-10">
                       {/* Medicine Header — always visible, expands to absorb space when columns are hidden */}
                       <th className="px-4 text-left min-w-[240px] flex-1 uppercase text-[9px] tracking-widest text-muted/70 font-black border-r border-glass-border/15">
                         Medicine

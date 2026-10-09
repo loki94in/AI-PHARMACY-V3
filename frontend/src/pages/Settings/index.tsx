@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
+import { AppleSegmented } from '../../components/common/AppleSegmented';
 import {} from '../../utils/phone';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { apiClient, api } from '../../services/api';
@@ -141,39 +142,24 @@ export default function Settings() {
   return (
     <div className="flex flex-col h-full text-text p-4 space-y-4 overflow-y-auto">
       {/* Compact Unified Top Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-bg border border-border rounded-2xl p-3 px-4 shadow-sm">
+      <div className="flex flex-col gap-3 bg-bg border border-border rounded-2xl p-3 px-4 shadow-sm">
         {/* Title */}
         <div className="flex items-center gap-2.5">
           <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
             <SettingsIcon size={22} />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-text leading-none">Settings & Configuration</h1>
+            <h1 className="text-xl font-semibold text-text tracking-tight leading-none">Settings & Configuration</h1>
             <p className="text-xs text-muted mt-0.5">Control center for store rules, security & integrations</p>
           </div>
         </div>
 
         {/* Tab Switcher Pills */}
-        <div className="flex items-center gap-1.5 bg-bg3/40 p-1 rounded-xl border border-border overflow-x-auto scrollbar-none">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => handleTabChange(tab.id)}
-                className={`flex items-center gap-2 px-3 py-1.5 font-semibold text-sm rounded-lg transition-all whitespace-nowrap cursor-pointer ${
-                  isActive
-                    ? 'bg-bg2 text-primary font-bold shadow-sm border border-border'
-                    : 'text-muted hover:text-text hover:bg-bg3/80 border border-transparent'
-                }`}
-              >
-                <Icon size={16} className={isActive ? 'text-primary' : 'text-muted'} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        <AppleSegmented
+          options={tabs.map((t) => ({ key: t.id, label: t.label, icon: <t.icon size={16} /> }))}
+          value={activeTab}
+          onChange={handleTabChange}
+        />
       </div>
 
       {/* Active Tab Workspace Panel — paints cached settings instantly; the

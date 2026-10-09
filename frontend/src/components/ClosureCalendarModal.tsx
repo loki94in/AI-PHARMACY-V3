@@ -71,7 +71,7 @@ export const ClosureCalendarModal: React.FC<ClosureCalendarModalProps> = ({
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-bg border border-border w-[95vw] max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-bg border border-border w-[95vw] max-w-xl rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col max-h-[90vh]">
         <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-primary/10 text-primary"><Calendar size={20} /></div>

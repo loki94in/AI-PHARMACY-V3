@@ -220,8 +220,8 @@ const AICamera: React.FC<AICameraProps> = ({ onScanResult, onClose, initialMode 
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-camera flex items-center justify-center p-4 bg-bg/85 backdrop-blur-sm fade-in">
-      <div className="bg-bg2 border border-border rounded-2xl shadow-2xl w-[95vw] max-w-2xl overflow-hidden flex flex-col relative max-h-[90vh]">
+    <div className="fixed inset-0 z-camera flex items-center justify-center p-4 bg-bg/85 fade-in">
+      <div className="bg-bg2 border border-border rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] w-[95vw] max-w-2xl overflow-hidden flex flex-col relative max-h-[90vh]">
         <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-bold flex items-center gap-2 text-text">
@@ -268,7 +268,7 @@ const AICamera: React.FC<AICameraProps> = ({ onScanResult, onClose, initialMode 
           {/* Scanning Viewfinder Overlay */}
           <div className="absolute inset-0 pointer-events-none border-2 border-primary/40 m-6 rounded-2xl flex flex-col items-center justify-center gap-3 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]">
             {processing && (
-              <div className="flex flex-col items-center bg-bg2/90 p-4 rounded-xl backdrop-blur border border-border">
+              <div className="flex flex-col items-center bg-bg2/90 p-4 rounded-xl border border-border">
                 <Loader2 className="animate-spin text-primary mb-2" size={32} />
                 <span className="font-semibold text-text animate-pulse">Scanning Packaging & Strength...</span>
               </div>
@@ -277,7 +277,7 @@ const AICamera: React.FC<AICameraProps> = ({ onScanResult, onClose, initialMode 
             {/* Verification Status Badge (brief visual indicator) */}
             {verificationFeedback && !reviewResult && (
               <div className={`
-                pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-xl border backdrop-blur shadow-lg animate-in zoom-in-95 duration-200
+                pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-xl border shadow-lg animate-in zoom-in-95 duration-200
                 ${verificationFeedback.confirmed 
                   ? 'bg-green/15 border-green/40 text-green' 
                   : 'bg-amber-500/15 border-amber-500/40 text-amber-500'}

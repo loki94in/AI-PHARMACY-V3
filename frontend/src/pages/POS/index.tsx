@@ -132,8 +132,8 @@ const UniversalMedicineEditModal = lazy(() => import('../../components/Universal
 
 const ModalSkeleton = () => (
   <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 fade-in">
-    <div className="absolute inset-0 bg-bg/80 backdrop-blur-md" />
-    <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-2xl overflow-hidden slide-up">
+    <div className="absolute inset-0 bg-bg/80" />
+    <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden slide-up">
       <div className="p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-6 w-32 bg-glass-border/40 rounded animate-pulse" />
@@ -4271,7 +4271,7 @@ const POS = () => {
                     aria-label="Patient Name"
                   />
                   {showPatientSuggestions && (
-                    <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
+                    <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
                       {isPatientFuzzyMatch && (
                         <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5 shrink-0 select-none">
                           <span>🔍</span> No exact match. Did you mean:
@@ -4466,7 +4466,7 @@ const POS = () => {
                     title="Select or Type Doctor Name"
                   />
                   {isDoctorDropdownOpen && doctor.trim().length >= 2 && (
-                    <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-2xl">
+                    <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
                       <div ref={doctorSuggestionsRef} className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                       {filteredDoctors.length > 0 ? (
                         filteredDoctors.map((doc, idx) => (
@@ -4710,9 +4710,9 @@ const POS = () => {
                     </button>
                   </div>
                   {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length === 0 && (
-                    <div className="absolute left-0 right-0 top-full z-dropdown mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col [will-change:scroll-position]">
+                    <div className="absolute left-0 right-0 top-full z-dropdown mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col [will-change:scroll-position]">
                       {/* TOP SECTION: Quick Add */}
-                      <div className="p-2 border-b border-border/40 bg-bg/95 backdrop-blur-sm flex-shrink-0 flex items-center justify-between gap-2">
+                      <div className="p-2 border-b border-border/40 bg-bg/95 flex-shrink-0 flex items-center justify-between gap-2">
                         <div className="text-xs text-muted px-2 min-w-0 truncate">
                           Not in master catalog: <span className="text-text font-semibold">"{searchTerm.trim()}"</span>
                         </div>
@@ -4801,7 +4801,7 @@ const POS = () => {
                 
                 {/* Search results dropdown */}
                 {showSearchDropdown && searchTerm.trim().length >= 2 && searchResults.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-dropdown mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-96 [will-change:scroll-position]">
+                  <div className="absolute left-0 right-0 top-full z-dropdown mt-2 bg-bg2 border border-border rounded-2xl overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col max-h-96 [will-change:scroll-position]">
                     {/* PINNED TOP SECTION: Quick Add Header */}
                     <div className="p-2 border-b border-border bg-bg3 flex-shrink-0 flex items-center justify-between gap-2">
                       <div className="text-xs text-muted px-2 min-w-0 truncate">
@@ -5279,7 +5279,7 @@ const POS = () => {
             {/* Cart Table Container */}
             <div className="flex-1 overflow-auto bg-bg/25 scrollbar-thin">
               <table className="w-full text-left border-collapse text-sm">
-                <thead className="sticky top-0 bg-bg2/95 backdrop-blur-xl z-10">
+                <thead className="sticky top-0 bg-bg2/95 z-10">
                   <tr>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border">Medicine</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border">Batch</th>
@@ -5337,7 +5337,7 @@ const POS = () => {
                                   className="w-7.5 h-7.5 object-cover rounded-lg border border-border/60 hover:border-primary/60 transition-all cursor-zoom-in shadow-sm"
                                   onClick={() => setZoomedImage(item.scanImage ?? null)}
                                 />
-                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover/thumb:block z-dropdown bg-bg2 border border-border rounded-xl p-2 shadow-2xl w-48 animate-in fade-in duration-150">
+                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover/thumb:block z-dropdown bg-bg2 border border-border rounded-xl p-2 shadow-[0_4px_24px_rgba(0,0,0,0.12)] w-48 animate-in fade-in duration-150">
                                   <img src={item.scanImage} alt="Scan preview" decoding="async" className="w-full h-auto rounded-lg object-contain" />
                                   <div className="text-[10px] text-muted text-center mt-1 font-semibold">Click to enlarge</div>
                                 </div>
@@ -5687,7 +5687,7 @@ const POS = () => {
                             </button>
                             
                             {activeBatchRowId === String(item.id) && rowBatchesList.length > 0 && (
-                              <div className="absolute left-0 z-dropdown mt-1 bg-glass-bg border border-border rounded-xl overflow-hidden max-h-48 flex flex-col w-72 min-w-[280px] text-left shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                              <div className="absolute left-0 z-dropdown mt-1 bg-glass-bg border border-border rounded-xl overflow-hidden max-h-48 flex flex-col w-72 min-w-[280px] text-left shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-100">
                                 <div className="p-2 border-b border-border/30 bg-bg3 shrink-0 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
                                   <span>Switch Batch</span>
                                   <span className="text-xs font-normal text-muted/70">{rowBatchesList.length} available</span>
@@ -6219,7 +6219,7 @@ const POS = () => {
           className="fixed inset-0 bg-black/80 z-global-modal flex items-center justify-center p-4 cursor-pointer animate-in fade-in duration-200"
           onClick={() => setZoomedImage(null)}
         >
-          <div className="relative max-w-3xl max-h-[85vh] bg-bg2 border border-border rounded-2xl overflow-hidden p-2 shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="relative max-w-3xl max-h-[85vh] bg-bg2 border border-border rounded-2xl overflow-hidden p-2 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95 duration-200">
             <img src={zoomedImage} alt="Zoomed medicine scan" className="max-w-full max-h-[80vh] object-contain rounded-lg" />
             <button 
               className="absolute top-4 right-4 bg-black/60 hover:bg-black/80 text-text rounded-full p-2 transition-all"

@@ -1026,7 +1026,7 @@ export const QuickAssistSidebar = memo(({
   return (
     <div ref={sidebarRef} className="w-72 max-w-[85vw] bg-bg border-l border-border flex flex-col h-full min-h-0 overflow-hidden shrink-0 z-20 transition-all duration-200 shadow-xl">
       {/* Header */}
-      <div className="p-3 border-b border-border flex items-center justify-between shrink-0 bg-bg2/90 backdrop-blur-md">
+      <div className="p-3 border-b border-border flex items-center justify-between shrink-0 bg-bg2/90">
         <div className="flex items-center gap-1.5">
           <ActivityIcon size={14} className="text-purple-400 shrink-0" />
           <span className="text-xs font-bold text-text uppercase tracking-wider truncate">Quick Assist</span>

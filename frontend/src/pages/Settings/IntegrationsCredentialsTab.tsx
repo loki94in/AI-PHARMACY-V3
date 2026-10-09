@@ -1540,7 +1540,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
       )}
 
       {/* Sticky Bottom Master Save & Reset Bar */}
-      <div className="sticky bottom-0 bg-bg/95 backdrop-blur-md border border-border p-3.5 rounded-2xl shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3 mt-6 z-20">
+      <div className="sticky bottom-0 bg-bg/95 border border-border p-3.5 rounded-2xl shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3 mt-6 z-20">
         <div className="flex items-center gap-2 text-xs text-muted">
           <CheckCircle2 size={16} className="text-primary shrink-0" />
           <span>

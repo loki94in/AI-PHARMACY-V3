@@ -38,7 +38,7 @@ export const POSPatientModal: React.FC<POSPatientModalProps> = ({
 
   return createPortal(
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-modal p-4 animate-fade-in">
-      <div className="glass-panel w-[95vw] max-w-md p-6 space-y-5 border-border bg-bg2 rounded-2xl relative shadow-2xl">
+      <div className="glass-panel w-[95vw] max-w-md p-6 space-y-5 border-border bg-bg2 rounded-2xl relative shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
         {/* Modal Header */}
         <div className="flex justify-between items-center border-b border-border pb-3">
           <h3 className="font-bold flex items-center gap-2 text-lg text-text">

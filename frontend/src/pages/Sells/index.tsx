@@ -826,7 +826,7 @@ const Sells = () => {
       </div>
 
       {/* Invoices Table */}
-      <div className="bg-bg2/60 backdrop-blur-lg rounded-xl p-0 border border-glass-border flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="bg-bg2/60 rounded-xl p-0 border border-glass-border flex-1 flex flex-col overflow-hidden min-h-0">
         
         <InfiniteTable
           totalSize={rowVirtualizer.getTotalSize()}
@@ -1103,8 +1103,8 @@ const Sells = () => {
       {/* Edit Modal */}
       {/* Bill Management & Deletion Modal */}
       {editInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-panel w-[95vw] max-w-5xl h-[90vh] min-h-[580px] max-h-[880px] flex flex-col overflow-hidden border-primary/30 shadow-2xl">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
+          <div className="glass-panel w-[95vw] max-w-5xl h-[90vh] min-h-[580px] max-h-[880px] flex flex-col overflow-hidden border-primary/30 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
             {/* Modal Header */}
             <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
               <div className="flex items-center gap-3">
@@ -1573,7 +1573,7 @@ const Sells = () => {
 
       {/* View Modal */}
       {viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
           <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden border-sky-500/20">
             {/* Modal Header */}
             <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
@@ -1917,7 +1917,7 @@ const Sells = () => {
 
       {/* Standalone Barcode Modal Portal */}
       {barcodeModalInvoice && !viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
           <div className="glass-panel w-[95vw] max-w-lg p-6 border-purple-500/30 flex flex-col items-center space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="w-full flex justify-between items-center border-b border-glass-border pb-3">
               <h3 className="font-bold text-base flex items-center gap-2 text-text">
@@ -2067,7 +2067,7 @@ const Sells = () => {
 
       {/* Old Financial Year Bill Action Modal */}
       {oldFyBillConfirm && createPortal(
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
           <div className="glass-panel w-[95vw] max-w-md border-amber-500/40 overflow-hidden">
             {/* Header */}
             <div className="p-5 border-b border-glass-border bg-amber-500/10">
@@ -2138,7 +2138,7 @@ const Sells = () => {
       )}
 
       {/* Floating Action Bar for Exporting Data */}
-      <div className="fixed bottom-6 right-8 z-30 flex items-center gap-2 bg-bg2/95 backdrop-blur-md border border-glass-border p-1.5 rounded-full shadow-2xl transition-all">
+      <div className="fixed bottom-6 right-8 z-30 flex items-center gap-2 bg-bg2/95 border border-glass-border p-1.5 rounded-full shadow-[0_4px_24px_rgba(0,0,0,0.12)] transition-all">
         <button
           onClick={() => exportToCSV(items, exportColumns, 'sales_history.csv')}
           className="px-3.5 py-1.5 rounded-full bg-bg3 hover:bg-primary/20 text-text font-semibold hover:text-primary transition-all text-xs flex items-center gap-1.5 border border-glass-border cursor-pointer"

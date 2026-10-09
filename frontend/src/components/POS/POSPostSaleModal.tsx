@@ -266,7 +266,7 @@ export const POSPostSaleModal: React.FC<POSPostSaleModalProps> = ({
       {/* Post-Sale Saved Bill Confirmation Modal */}
       {createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 fade-in">
-          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-md shadow-2xl overflow-hidden flex flex-col p-6 space-y-5">
+          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col p-6 space-y-5">
             <div className="text-center space-y-2">
               <div className="inline-flex p-3 rounded-full bg-green/10 border border-green/20 text-green mb-1">
                 <CheckCircle size={32} className="animate-bounce" />
