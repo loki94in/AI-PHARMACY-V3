@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Edit, Camera, CheckCircle, Mail, Package, X, Plus, BookOpen, AlertTriangle, ShieldAlert, Factory, RefreshCw, ExternalLink, Loader2 } from 'lucide-react';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
-import { api, apiClient, getCompactInventoryCache, ensureCompactInventoryReady, getCompactInventoryIndex, type CompactInventoryItem } from '../../services/api';
+import { api, apiClient, getCompactInventoryCache, ensureCompactInventoryReady, getCompactInventoryIndex, type CompactInventoryItem, type DistributorFrequentRow, type BatchLastPurchaseResult } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import { HoverPriceIntelTable } from '../../components/HoverPriceIntelTable';
 import { createPortal } from 'react-dom';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
 import { LowStockPickerModal } from '../../components/LowStockPickerModal';
+import { DistributorHistoryPickerModal } from '../../components/DistributorHistoryPickerModal';
 import { PurchaseSaveVerificationModal, type SaveVerificationData } from '../../components/PurchaseSaveVerificationModal';
 import { PurchaseDuplicateBillModal, type ExistingDuplicateBill } from '../../components/PurchaseDuplicateBillModal';
 import { calculateSimilarity } from '../../utils/fuzzy';
@@ -127,6 +128,8 @@ interface Distributor {
   email: string;
   address: string;
   state_code: string;
+  min_order_value?: number | null;
+  min_order_items?: number | null;
 }
 
 interface PurchaseHistory {
@@ -1358,6 +1361,7 @@ const Purchases: React.FC = () => {
   const savePurchaseRef = useRef<(() => Promise<void>) | null>(null);
   const addNewItemRef = useRef<(() => void) | null>(null);
   const [showLowStockPicker, setShowLowStockPicker] = useState(false);
+  const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const activeSearchRef = useRef<HTMLDivElement>(null);
 
   const [searchResults, setSearchResults] = useState<Medicine[]>([]);
@@ -1503,6 +1507,8 @@ const Purchases: React.FC = () => {
     email: '',
     address: '',
     state_code: '',
+    min_order_value: '',
+    min_order_items: '',
   });
   const [savingDistributor, setSavingDistributor] = useState(false);
   const [activeMedicineIndex, setActiveMedicineIndex] = useState<number | null>(null);
@@ -1676,9 +1682,19 @@ const Purchases: React.FC = () => {
     }
 
     setSavingDistributor(true);
+    // Minimum-order flags: blank stays blank (no warning); positive numbers are enforced.
+    const minValueRaw = newDistributor.min_order_value?.trim();
+    const minItemsRaw = newDistributor.min_order_items?.trim();
+    const minValueNum = minValueRaw ? Number(minValueRaw) : NaN;
+    const minItemsNum = minItemsRaw ? Math.floor(Number(minItemsRaw)) : NaN;
+    const distributorPayload = {
+      ...newDistributor,
+      min_order_value: minValueRaw ? (Number.isFinite(minValueNum) && minValueNum > 0 ? minValueNum : null) : null,
+      min_order_items: minItemsRaw ? (Number.isFinite(minItemsNum) && minItemsNum >= 1 ? minItemsNum : null) : null,
+    };
     try {
       if (editDistributorId) {
-        const response = await apiClient.put(`/distributors/${editDistributorId}`, newDistributor);
+        const response = await apiClient.put(`/distributors/${editDistributorId}`, distributorPayload);
         const saved = response.data.data || response.data;
         queryClient.setQueryData(['distributors'], (old: unknown) => {
           if (Array.isArray(old)) {
@@ -1691,7 +1707,7 @@ const Purchases: React.FC = () => {
         setSelectedDistributor(saved.id);
         setDistributorSearch(saved.name);
       } else {
-        const response = await apiClient.post('/distributors', newDistributor);
+        const response = await apiClient.post('/distributors', distributorPayload);
         const saved = response.data.data || response.data;
         queryClient.setQueryData(['distributors'], (old: unknown) => {
           if (Array.isArray(old)) {
@@ -1709,7 +1725,7 @@ const Purchases: React.FC = () => {
       window.dispatchEvent(new CustomEvent('phone-numbers-updated'));
       window.dispatchEvent(new CustomEvent('contacts-updated'));
       
-      setNewDistributor({ name: '', phone: '', email: '', address: '', state_code: '' });
+      setNewDistributor({ name: '', phone: '', email: '', address: '', state_code: '', min_order_value: '', min_order_items: '' });
       setEditDistributorId(null);
       setShowDistributorModal(false);
     } catch (error) {
@@ -2442,6 +2458,32 @@ const Purchases: React.FC = () => {
   }, [items, cnAmount, extraCredit]);
 
   const calculateTotals = () => memoizedTotals;
+
+  const selectedDistributorObj = useMemo(
+    () => distributors.find(d => d.id === selectedDistributor) || null,
+    [distributors, selectedDistributor]
+  );
+
+  // Distributor minimum-order warning flag (value + item count). Advisory only —
+  // it never blocks save; missing minimums mean no warning.
+  const minOrderWarning = useMemo(() => {
+    if (!selectedDistributorObj) return null;
+    const minValue = Number(selectedDistributorObj.min_order_value) || 0;
+    const minItems = Math.floor(Number(selectedDistributorObj.min_order_items)) || 0;
+    if (minValue <= 0 && minItems <= 0) return null;
+    const validCount = items.filter(item => {
+      const qtyVal = item.qty !== undefined ? item.qty : item.quantity;
+      return (parseFloat(String(qtyVal || 0)) || 0) > 0;
+    }).length;
+    const shortfalls: string[] = [];
+    if (minValue > 0 && memoizedTotals.grandTotal < minValue) {
+      shortfalls.push(`order ₹${Math.round(memoizedTotals.grandTotal)} < min ₹${Math.round(minValue)}`);
+    }
+    if (minItems > 0 && validCount < minItems) {
+      shortfalls.push(`${validCount}/${minItems} items`);
+    }
+    return shortfalls.length > 0 ? shortfalls.join(' · ') : null;
+  }, [selectedDistributorObj, items, memoizedTotals]);
 
   type PrevalidatedBill = {
     distIdToSave: number | null;
@@ -3359,7 +3401,9 @@ const Purchases: React.FC = () => {
                     phone: '',
                     email: prefilledEmail,
                     address: '',
-                    state_code: ''
+                    state_code: '',
+                    min_order_value: '',
+                    min_order_items: ''
                   });
                   setShowDistributorModal(true);
                 }}
@@ -3379,7 +3423,9 @@ const Purchases: React.FC = () => {
                         phone: dist.phone || '',
                         email: dist.email || '',
                         address: dist.address || '',
-                        state_code: dist.state_code || ''
+                        state_code: dist.state_code || '',
+                        min_order_value: dist.min_order_value !== undefined && dist.min_order_value !== null ? String(dist.min_order_value) : '',
+                        min_order_items: dist.min_order_items !== undefined && dist.min_order_items !== null ? String(dist.min_order_items) : ''
                       });
                       setShowDistributorModal(true);
                     }
@@ -3695,6 +3741,20 @@ const Purchases: React.FC = () => {
                         title="Order low-stock medicines"
                       >
                         <Package size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!selectedDistributor) {
+                            toastEvent.trigger('Select a distributor first to see its order history.', 'error', '/purchases');
+                            return;
+                          }
+                          setShowHistoryPicker(true);
+                        }}
+                        className="mt-1 bg-sky-600 hover:bg-sky-700 text-white p-1 rounded-md flex items-center justify-center transition-colors shadow-sm"
+                        title="Order from this distributor's history (most-ordered medicines)"
+                      >
+                        <BookOpen size={14} />
                       </button>
                     </th>
                     {hasOriginalName && <th className="pb-3 text-xs uppercase tracking-wider text-left pl-2 whitespace-nowrap">Original Bill Name</th>}
@@ -4547,6 +4607,14 @@ const Purchases: React.FC = () => {
                 <span>⚠️ Distributor required before purchase can be finalized.</span>
               </div>
             )}
+            {minOrderWarning && (
+              <div
+                className="flex items-center gap-1.5 text-sm font-semibold text-amber-500 bg-amber-500/10 px-3 py-2 rounded-xl border border-amber-500/30 shadow-sm"
+                title={`Minimum order for ${selectedDistributorObj?.name || 'this distributor'} not met — add more items or value before sending the order`}
+              >
+                <span>⚠️ Min order: {minOrderWarning}</span>
+              </div>
+            )}
             <button
               onClick={savePurchase}
               className="bg-green-600 hover:bg-green-500 active:scale-95 text-white px-10 py-3 rounded-xl font-bold text-lg shadow-lg shadow-green-900/30 transition-all flex items-center gap-2"
@@ -4598,6 +4666,70 @@ const Purchases: React.FC = () => {
               return [...kept, ...fresh, createEmptyItem()];
             });
             setShowLowStockPicker(false);
+          }}
+        />
+      )}
+
+      {showHistoryPicker && selectedDistributor && (
+        <DistributorHistoryPickerModal
+          distributorId={selectedDistributor}
+          distributorName={selectedDistributorObj?.name || selectedDistributorObj?.distributor_name || distributorSearch}
+          onClose={() => setShowHistoryPicker(false)}
+          onAdd={async (picked) => {
+            const existingIds = new Set(items.map(i => i.medicine_id).filter(Boolean));
+            const fresh = picked.filter(p => !existingIds.has(p.medicine_id));
+            if (fresh.length === 0) {
+              setShowHistoryPicker(false);
+              return;
+            }
+            // ONE batched read-only hydrate: last rate/MRP/batch/expiry/GST from
+            // real bills at this distributor. Quantity always stays blank.
+            const hydrated = new Map<string, BatchLastPurchaseResult & { hsn_code?: string }>();
+            try {
+              const res = await api.batchLastPurchase(
+                fresh.map(f => ({ name: f.medicine_name })),
+                selectedDistributor
+              );
+              if (Array.isArray(res)) {
+                for (const r of res) hydrated.set(r.query, r);
+              }
+            } catch (_) {}
+            setItems(prev => {
+              const have = new Set(prev.map(i => i.medicine_id).filter(Boolean));
+              const rows = fresh
+                .filter(f => !have.has(f.medicine_id))
+                .map(f => {
+                  const base = {
+                    ...createEmptyItem(),
+                    medicine_id: f.medicine_id,
+                    medicine_name: f.medicine_name,
+                    name: f.medicine_name,
+                    manufacturer: f.manufacturer || '',
+                  };
+                  const h = hydrated.get(f.medicine_name);
+                  if (h && h.found) {
+                    if (h.batch_no) base.batch_no = h.batch_no;
+                    if (h.expiry_date) base.expiry_date = h.expiry_date;
+                    if (h.cost_price) base.rate = h.cost_price;
+                    if (h.mrp) base.mrp = h.mrp;
+                    if (h.cgst_per !== undefined && h.cgst_per !== null) base.cgst_per = h.cgst_per;
+                    if (h.sgst_per !== undefined && h.sgst_per !== null) base.sgst_per = h.sgst_per;
+                    if (h.hsn_code) base.hsn_code = h.hsn_code;
+                  } else {
+                    if (f.last_batch) base.batch_no = f.last_batch;
+                    if (f.last_rate) base.rate = f.last_rate;
+                    if (f.last_mrp) base.mrp = f.last_mrp;
+                    if (f.last_cgst !== null && f.last_cgst !== undefined) base.cgst_per = f.last_cgst;
+                    if (f.last_sgst !== null && f.last_sgst !== undefined) base.sgst_per = f.last_sgst;
+                    if (f.last_hsn) base.hsn_code = f.last_hsn;
+                  }
+                  base.amount = calculateItemAmount(base);
+                  return base;
+                });
+              const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
+              return [...kept, ...rows, createEmptyItem()];
+            });
+            setShowHistoryPicker(false);
           }}
         />
       )}

@@ -1,4 +1,4 @@
-import { isPatientRefillsSettled } from '../../utils/refillSettled';
+import { isPatientRefillsSettled, getRefillStage } from '../../utils/refillSettled';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -7,7 +7,7 @@ import {
   AlertCircle, Clock, Search, Repeat2, Bell,
   Check, Package, Zap, FileText, X, Plus,
   Trash2, Sliders, ChevronDown, ShoppingCart,
-  Edit2, RotateCcw, Globe, Pill
+  Edit2, RotateCcw, Globe, Pill, MoreHorizontal
 } from 'lucide-react';
 import { apiClient, api, getCompactInventoryCache, getCompactInventoryIndex } from '../../services/api';
 import { toastEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
@@ -42,11 +42,13 @@ export const RefillsSection: React.FC = () => {
   const [showUnlinked, setShowUnlinked] = useState(false);
   const [loading, setLoading] = useState(cachedRefillsData.length === 0);
   const [search, setSearch] = useState('');
-  const [sending, setSending] = useState<string | null>(null);
+  const [markingOrdered, setMarkingOrdered] = useState(false);
+  const [markingReady, setMarkingReady] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [snoozing, setSnoozing] = useState(false);
-  const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const [runningCheck, setRunningCheck] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'overdue' | 'lead' | 'active' | 'paused' | 'canceled'>('all');
+  const [showSettledOverdue, setShowSettledOverdue] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<'prescriptions' | 'fulfillments' | 'invoices'>('prescriptions');
 
   // Sub-detail data states
@@ -698,19 +700,51 @@ export const RefillsSection: React.FC = () => {
     finally { setRunningCheck(false); }
   };
 
-  // ── Remind Now: always-active direct manual WhatsApp trigger ──────────────────
-  const handleRemindNow = async (phone: string) => {
-    setSending(phone);
+  // ── Already Added: mark every active medicine as manually ordered (no cart write) ──
+  const handleMarkAllOrdered = async (patient: RefillPatient) => {
+    const ids = (patient.medicines || []).filter(m => m.status !== 'canceled').map(m => m.id).filter(Boolean);
+    if (ids.length === 0) return;
+    setMarkingOrdered(true);
     try {
-      messageSendEvent.triggerSendProgress(phone, 'Dispatching WhatsApp refill reminder...', 10);
-      await apiClient.post('/refills/send-reminder-now', { patient_phone: phone });
-      toastEvent.trigger(`WhatsApp reminder queued for ${phone}`, 'success', '/crm');
-      whatsappQueueEvent.triggerUpdated();
+      await Promise.all(ids.map(id => api.markRefillOrdered(id, { note: 'Manual / Phone Order' }).catch(() => {})));
+      toastEvent.trigger(`Marked all refills for ${patient.patient_name} as Ordered`, 'success', '/crm');
+      refillEvent.triggerRefresh();
       automationHubEvent.triggerUpdated();
       await load(true);
+    } catch {
+      toastEvent.trigger('Failed to mark as ordered', 'error', '/crm');
+    } finally { setMarkingOrdered(false); }
+  };
+
+  // ── Send / Re-Send Collection Reminder: collection-only WhatsApp (due date + store hours auto from Settings) ──
+  const handleMarkReadyPatient = async (patient: RefillPatient) => {
+    const phone = (patient.patient_phone || '').trim();
+    if (!phone) {
+      toastEvent.trigger('Patient has no phone number stored', 'error', '/crm');
+      return;
+    }
+    setMarkingReady(true);
+    try {
+      messageSendEvent.triggerSendProgress(patient.patient_name || 'Patient', 'Dispatching WhatsApp collection reminder...', 10);
+      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`);
+      if (res?.data?.success) {
+        toastEvent.trigger(
+          res.data.whatsapp_queued
+            ? `Collection reminder queued for ${patient.patient_name}!`
+            : `Marked refills for "${patient.patient_name}" as Ready!`,
+          'success',
+          '/crm'
+        );
+        whatsappQueueEvent.triggerUpdated();
+        automationHubEvent.triggerUpdated();
+        refillEvent.triggerRefresh();
+        await load(true);
+      } else {
+        throw new Error(res?.data?.error || 'Failed to send collection reminder');
+      }
     } catch (err) {
-      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to send reminder', 'error', '/crm');
-    } finally { setSending(null); }
+      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to send collection reminder', 'error', '/crm');
+    } finally { setMarkingReady(false); }
   };
 
   // ── Snooze Patient Refill Reminder (+1d, +3d, +7d) ────────────────────────
@@ -730,7 +764,7 @@ export const RefillsSection: React.FC = () => {
       toastEvent.trigger('Failed to snooze reminder', 'error', '/crm');
     } finally {
       setSnoozing(false);
-      setShowSnoozeMenu(false);
+      setShowMoreMenu(false);
     }
   };
 
@@ -1050,8 +1084,11 @@ export const RefillsSection: React.FC = () => {
     const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
     const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
 
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })));
+
     // Action tabs hide patients already fully handled (ordered + reminder sent); master tabs keep everyone
-    if ((filterTab === 'overdue' || filterTab === 'lead') && isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })))) return false;
+    if (filterTab === 'overdue' && !showSettledOverdue && isSettled) return false;
+    if (filterTab === 'lead' && isSettled) return false;
     if (filterTab === 'overdue') return isOverdue;
     if (filterTab === 'lead') return isLeadWindow;
     if (filterTab === 'active') {
@@ -1068,7 +1105,16 @@ export const RefillsSection: React.FC = () => {
 
   // Top metric stats
   const totalPrescriptions = data.reduce((sum, p) => sum + (p.medicines?.length || 0), 0);
-  const overdueCount = data.filter(p => new Date(p.next_refill_date) < new Date()).length;
+  const actionableOverdueCount = data.filter(p => {
+    const isOverdue = new Date(p.next_refill_date) < new Date();
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })));
+    return isOverdue && !isSettled;
+  }).length;
+  const settledOverdueCount = data.filter(p => {
+    const isOverdue = new Date(p.next_refill_date) < new Date();
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })));
+    return isOverdue && isSettled;
+  }).length;
   const leadWindowCount = data.filter(p => {
     const today = new Date();
     const dueDate = new Date(p.next_refill_date);
@@ -1115,11 +1161,16 @@ export const RefillsSection: React.FC = () => {
         <div className="p-3.5 bg-bg border border-border rounded-2xl flex items-center justify-between shadow-sm">
           <div>
             <p className="text-[11px] text-muted font-medium">Overdue Prescriptions</p>
-            <h3 className={`text-lg font-bold mt-0.5 ${overdueCount > 0 ? 'text-red-400' : 'text-text'}`}>
-              {overdueCount} Overdue
+            <h3 className={`text-lg font-bold mt-0.5 ${actionableOverdueCount > 0 ? 'text-red-400' : 'text-text'}`}>
+              {actionableOverdueCount} Overdue
             </h3>
+            {settledOverdueCount > 0 && (
+              <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+                {settledOverdueCount} handled in cart/reminded
+              </p>
+            )}
           </div>
-          <div className="p-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20">
+          <div className={`p-2 rounded-xl border ${actionableOverdueCount > 0 ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
             <AlertCircle size={18} />
           </div>
         </div>
@@ -1380,6 +1431,20 @@ export const RefillsSection: React.FC = () => {
                 className="w-full pl-8 pr-2.5 py-1.5 bg-bg2 border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
               />
             </div>
+            {filterTab === 'overdue' && settledOverdueCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowSettledOverdue(v => !v)}
+                className={`px-2 py-1 rounded-xl border text-[10px] font-bold transition-colors cursor-pointer shrink-0 ${
+                  showSettledOverdue
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                    : 'bg-bg2 border-border text-muted hover:text-text'
+                }`}
+                title="Toggle display of overdue patients who are already ordered & reminded"
+              >
+                {showSettledOverdue ? 'Hide Handled' : `+${settledOverdueCount} Handled`}
+              </button>
+            )}
             <button
               onClick={() => load()}
               disabled={loading}
@@ -1397,7 +1462,18 @@ export const RefillsSection: React.FC = () => {
                 <RefreshCw size={14} className="animate-spin text-primary" /> Loading refills...
               </div>
             ) : filtered.length === 0 ? (
-              <div className="p-8 text-center text-xs text-muted">No refill patients found for this filter.</div>
+              <div className="p-8 text-center text-xs text-muted space-y-2">
+                <div>No refill patients found for this filter.</div>
+                {filterTab === 'overdue' && settledOverdueCount > 0 && !showSettledOverdue && (
+                  <button
+                    type="button"
+                    onClick={() => setShowSettledOverdue(true)}
+                    className="px-3 py-1.5 rounded-xl bg-bg2 border border-border text-[11px] font-bold text-primary hover:bg-bg3 cursor-pointer"
+                  >
+                    View {settledOverdueCount} handled / settled patient{settledOverdueCount > 1 ? 's' : ''}
+                  </button>
+                )}
+              </div>
             ) : (
               filtered.map(patient => {
                 const isSelected = selectedPatient?.patient_phone === patient.patient_phone;
@@ -1559,126 +1635,165 @@ export const RefillsSection: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Right Action Toolbar */}
+                {/* Right Action Toolbar — simplified 3-button staged workflow (owner rule 2026-10):
+                    Stage A 'upcoming' → [Add to Cart] [Already Added] [Edit]
+                    Stage B 'ordered' → [Send Reminder] [POS] [Edit]
+                    Stage C 'reminded' → [Re-Send Reminder] [POS] (+ ••• overflow) */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* Sell Now → POS */}
-                  <button
-                    onClick={() => handleSellRefillPatient(selectedPatient)}
-                    title="Sell now: Pre-loads all prescribed medicines & quantities into POS"
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer"
-                  >
-                    <ShoppingCart size={13} />
-                    <span>⚡ Sell Now</span>
-                  </button>
-
-                  {/* Shortages → Pharmarack Live Cart (one-at-a-time popup) */}
-                  <button
-                    onClick={() => handleOrderRefillShortages(selectedPatient)}
-                    title="Add every short medicine to the Pharmarack live cart using the saved distributors"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-xs font-bold transition-all active:scale-95 cursor-pointer"
-                  >
-                    <ShoppingCart size={13} />
-                    <span>Order to Cart</span>
-                  </button>
-
-                  {/* WhatsApp Reminder Button (Context-Aware: Pickup vs Refill) */}
                   {(() => {
-                    const isReady = (selectedPatient.medicines || []).some(m => m.is_ready === 1 || m.quick_bill_id);
-                    return isReady ? (
+                    const meds = (selectedPatient.medicines || []).map(m => ({
+                      status: m.status,
+                      cart_store_name: (m as { cart_store_name?: string | null }).cart_store_name ?? null,
+                      reminder_status: m.reminder_status ?? selectedPatient.reminder_status ?? null
+                    }));
+                    const stage = getRefillStage(meds);
+                    const unaddedCount = (selectedPatient.medicines || []).filter(
+                      m => !(m as { cart_store_name?: string | null }).cart_store_name && m.status !== 'ordered' && m.status !== 'canceled'
+                    ).length;
+                    const editBtn = (
                       <button
-                        onClick={() => handleRemindNow(selectedPatient.patient_phone)}
-                        disabled={sending === selectedPatient.patient_phone}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                        title="Send WhatsApp pickup reminder for packed medicines"
+                        onClick={() => handleOpenAddModal(selectedPatient)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-bg3 border border-border text-text hover:text-primary hover:border-primary/40 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                        title="Edit refill schedule for this patient"
                       >
-                        <Package size={12} className={sending === selectedPatient.patient_phone ? 'animate-pulse' : ''} />
-                        <span>{sending === selectedPatient.patient_phone ? 'Sending…' : 'Send Pickup Reminder'}</span>
+                        <Edit2 size={13} />
+                        <span>Edit</span>
                       </button>
-                    ) : (
+                    );
+                    const posBtn = (
                       <button
-                        onClick={() => handleRemindNow(selectedPatient.patient_phone)}
-                        disabled={sending === selectedPatient.patient_phone}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                        title="Send instant manual refill reminder on WhatsApp"
+                        onClick={() => handleSellRefillPatient(selectedPatient)}
+                        title="Sell now: Pre-loads all prescribed medicines & quantities into POS"
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer"
                       >
-                        <Send size={12} className={sending === selectedPatient.patient_phone ? 'animate-pulse' : ''} />
-                        <span>{sending === selectedPatient.patient_phone ? 'Sending…' : 'Remind Now'}</span>
+                        <ShoppingCart size={13} />
+                        <span>POS</span>
                       </button>
+                    );
+                    if (stage === 'upcoming') {
+                      return (
+                        <>
+                          <button
+                            onClick={() => handleOrderRefillShortages(selectedPatient)}
+                            title="Add every short medicine to the Pharmarack live cart using the saved distributors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
+                          >
+                            <ShoppingCart size={13} />
+                            <span>Add to Cart{unaddedCount > 0 ? ` (${unaddedCount})` : ''}</span>
+                          </button>
+                          <button
+                            onClick={() => handleMarkAllOrdered(selectedPatient)}
+                            disabled={markingOrdered}
+                            title="Already added / ordered outside Pharmarack"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                          >
+                            <Check size={13} className={markingOrdered ? 'animate-spin' : ''} />
+                            <span>{markingOrdered ? 'Marking…' : 'Already Added'}</span>
+                          </button>
+                          {editBtn}
+                        </>
+                      );
+                    }
+                    if (stage === 'ordered') {
+                      return (
+                        <>
+                          <button
+                            onClick={() => handleMarkReadyPatient(selectedPatient)}
+                            disabled={markingReady}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                            title="Send collection reminder WhatsApp (due date + store hours auto from Settings)"
+                          >
+                            <Send size={12} className={markingReady ? 'animate-pulse' : ''} />
+                            <span>{markingReady ? 'Sending…' : 'Send Reminder'}</span>
+                          </button>
+                          {posBtn}
+                          {editBtn}
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <button
+                          onClick={() => handleMarkReadyPatient(selectedPatient)}
+                          disabled={markingReady}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                          title="Re-send collection reminder WhatsApp"
+                        >
+                          <RotateCcw size={12} className={markingReady ? 'animate-spin' : ''} />
+                          <span>{markingReady ? 'Sending…' : 'Re-Send Reminder'}</span>
+                        </button>
+                        {posBtn}
+                      </>
                     );
                   })()}
 
-                  {/* Snooze Reminder Menu */}
+                  {/* Overflow: advanced lifecycle actions */}
                   <div className="relative">
                     <button
                       type="button"
-                      onClick={() => setShowSnoozeMenu(prev => !prev)}
-                      disabled={snoozing}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-text text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                      title="Snooze refill reminders for this patient"
+                      onClick={() => setShowMoreMenu(prev => !prev)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-bg3 hover:bg-bg3/80 border border-border text-muted hover:text-text rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
+                      title="More refill actions (snooze, add medicine, fulfill cycle, delete)"
                     >
-                      <Clock size={12} className="text-amber-400" />
-                      <span>{snoozing ? 'Snoozing…' : '💤 Snooze'}</span>
-                      <ChevronDown size={11} className="text-muted" />
+                      <MoreHorizontal size={13} />
                     </button>
-                    {showSnoozeMenu && (
-                      <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-2xl p-1.5 min-w-[150px] flex flex-col gap-1 animate-in fade-in">
+                    {showMoreMenu && (
+                      <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-2xl p-1.5 min-w-[170px] flex flex-col gap-1 animate-in fade-in">
                         <button
                           type="button"
-                          onClick={() => handleSnoozePatient(selectedPatient, 1)}
-                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center justify-between cursor-pointer"
+                          disabled={snoozing}
+                          onClick={() => { setShowMoreMenu(false); handleSnoozePatient(selectedPatient, 1); }}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
                         >
-                          <span>+1 Day</span>
-                          <span className="text-[10px] text-muted font-mono">Tomorrow</span>
+                          <Clock size={11} className="text-amber-400" />
+                          <span>{snoozing ? 'Snoozing…' : '💤 Snooze +1 Day'}</span>
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleSnoozePatient(selectedPatient, 3)}
-                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center justify-between cursor-pointer"
+                          disabled={snoozing}
+                          onClick={() => { setShowMoreMenu(false); handleSnoozePatient(selectedPatient, 3); }}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
                         >
-                          <span>+3 Days</span>
-                          <span className="text-[10px] text-muted font-mono">+3d</span>
+                          <Clock size={11} className="text-amber-400" />
+                          <span>💤 Snooze +3 Days</span>
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleSnoozePatient(selectedPatient, 7)}
-                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center justify-between cursor-pointer"
+                          disabled={snoozing}
+                          onClick={() => { setShowMoreMenu(false); handleSnoozePatient(selectedPatient, 7); }}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
                         >
-                          <span>+7 Days</span>
-                          <span className="text-[10px] text-muted font-mono">+1 week</span>
+                          <Clock size={11} className="text-amber-400" />
+                          <span>💤 Snooze +7 Days</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowMoreMenu(false); handleOpenAddMedicineForSelected(); }}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-text transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <Pill size={11} className="text-primary" />
+                          <span>+ Add Med</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowMoreMenu(false); handleFulfillAllForPatient(selectedPatient); }}
+                          disabled={fulfillingAll}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          <Check size={11} className={fulfillingAll ? 'animate-spin' : ''} />
+                          <span>{fulfillingAll ? 'Advancing…' : 'Fulfill Cycle'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowMoreMenu(false); handleDeletePatientRefill(selectedPatient); }}
+                          className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-red-500/10 rounded-lg text-red-400 transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <Trash2 size={11} />
+                          <span>Delete Schedule</span>
                         </button>
                       </div>
                     )}
                   </div>
-
-                  {/* Add Medicine to this Patient */}
-                  <button
-                    onClick={handleOpenAddMedicineForSelected}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg3 border border-border text-text hover:text-primary hover:border-primary/40 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer"
-                    title="Add a new medicine schedule to this patient"
-                  >
-                    <Pill size={13} className="text-primary" />
-                    <span>+ Add Med</span>
-                  </button>
-
-                  {/* Complete / Renew All Schedule Button */}
-                  <button
-                    onClick={() => handleFulfillAllForPatient(selectedPatient)}
-                    disabled={fulfillingAll}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50"
-                    title="Mark all active medicines fulfilled and advance recurring schedule to next cycle"
-                  >
-                    <Check size={12} className={fulfillingAll ? 'animate-spin' : ''} />
-                    <span>{fulfillingAll ? 'Advancing…' : 'Fulfill Cycle'}</span>
-                  </button>
-
-                  {/* Delete Patient Schedule */}
-                  <button
-                    onClick={() => handleDeletePatientRefill(selectedPatient)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer"
-                    title="Permanently remove refill schedule for this patient"
-                  >
-                    <Trash2 size={12} />
-                  </button>
                 </div>
               </div>
 

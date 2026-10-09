@@ -629,7 +629,7 @@ router.get('/distributors', async (_req, res) => {
 });
 
 router.post('/distributors', async (req, res) => {
-  const { name, phone, email, address, state_code } = req.body;
+  const { name, phone, email, address, state_code, min_order_value, min_order_items } = req.body;
   if (!name) return res.status(400).json({ error: 'Distributor name is required' });
   try {
     const db = await dbManager.getConnection();
@@ -688,6 +688,20 @@ router.post('/distributors', async (req, res) => {
       );
     } catch (_) { }
 
+    // Distributor minimum-order warning flags: undefined = not provided (preserve)
+    if (min_order_value !== undefined) {
+      const parsed = min_order_value === null || min_order_value === '' ? null : Number(min_order_value);
+      await db.run('UPDATE distributors SET min_order_value = ? WHERE id = ?', [
+        Number.isFinite(parsed) && (parsed as number) > 0 ? parsed : null, targetId
+      ]);
+    }
+    if (min_order_items !== undefined) {
+      const parsed = min_order_items === null || min_order_items === '' ? null : Math.floor(Number(min_order_items));
+      await db.run('UPDATE distributors SET min_order_items = ? WHERE id = ?', [
+        Number.isFinite(parsed) && (parsed as number) >= 1 ? parsed : null, targetId
+      ]);
+    }
+
     const saved = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
     res.json({ success: true, data: saved });
   } catch (error: any) {
@@ -699,7 +713,7 @@ router.post('/distributors', async (req, res) => {
 // Update a distributor
 router.put('/distributors/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, phone, email, address, state_code } = req.body;
+  const { name, phone, email, address, state_code, min_order_value, min_order_items } = req.body;
   if (!name) return res.status(400).json({ error: 'Distributor name is required' });
 
   try {
@@ -710,7 +724,9 @@ router.put('/distributors/:id', async (req, res) => {
       phone,
       email,
       address,
-      state_code
+      state_code,
+      min_order_value,
+      min_order_items
     });
 
     if (!updated) return res.status(404).json({ error: 'Distributor not found' });

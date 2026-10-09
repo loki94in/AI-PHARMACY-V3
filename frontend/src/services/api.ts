@@ -569,6 +569,22 @@ export interface LastPurchaseByDistributorRow {
   free_qty: number | null;
 }
 
+export interface DistributorFrequentRow {
+  medicine_id: number;
+  medicine_name: string;
+  manufacturer: string | null;
+  bill_count: number;
+  total_qty: number | null;
+  last_date: string;
+  last_rate: number | null;
+  last_mrp: number | null;
+  last_batch: string | null;
+  last_expiry: string | null;
+  last_cgst: number | null;
+  last_sgst: number | null;
+  last_hsn: string | null;
+}
+
 export interface CompactInventoryItem {
   medicine_id: number;
   inventory_id: number;
@@ -1402,6 +1418,15 @@ export const api = {
   getLastPurchaseByDistributor: (medicineId: number) =>
     apiClient.get<{ data: LastPurchaseByDistributorRow[] }>('/purchases/last-by-distributor', {
       params: { medicine_id: medicineId }
+    }).then(res => res.data),
+  getDistributorFrequent: (distributorId: number, opts?: { days?: number; limit?: number; q?: string }) =>
+    apiClient.get<{ data: DistributorFrequentRow[] }>('/purchases/frequent', {
+      params: {
+        distributor_id: distributorId,
+        ...(opts?.days ? { days: opts.days } : {}),
+        ...(opts?.limit ? { limit: opts.limit } : {}),
+        ...(opts?.q && opts.q.trim().length >= 2 ? { q: opts.q.trim() } : {})
+      }
     }).then(res => res.data),
   searchPharmarack:(q: string, storeId?: string | number, isMapped?: boolean, signal?: AbortSignal) =>
     apiClient.get('/pharmarack/search', {

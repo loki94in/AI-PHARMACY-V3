@@ -1,13 +1,13 @@
-import { isPatientRefillsSettled, isOrderGroupSettled } from '../utils/refillSettled';
+import { getRefillStage, isOrderGroupSettled } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ShoppingCart, Check, BellRing, X, Edit, Edit3, Package, Loader2, ChevronDown,
-  MessageCircle, Zap, Globe, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon,
+  ShoppingCart, Check, BellRing, X, Edit3, Package, Loader2, ChevronDown,
+  Zap, Globe, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon,
   Activity as ActivityIcon, ShieldCheck as ShieldCheckIcon, Clock as ClockIcon,
-  AlertTriangle as AlertIcon, MessageSquare as MessageSquareIcon, Send as SendIcon, Calendar, RotateCw,
-  CheckCheck, CheckSquare, Receipt, Phone, Pill, AlertTriangle
+  MessageSquare as MessageSquareIcon, Send as SendIcon, Calendar, RotateCw,
+  CheckCheck, Receipt, Phone, Pill, AlertTriangle
 } from 'lucide-react';
 import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, quickOrderEvent } from '../services/events';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
@@ -76,7 +76,6 @@ export const QuickAssistSidebar = memo(({
     });
   }, [expanded, setExpanded]);
   const [markingOrderedRefillIds, setMarkingOrderedRefillIds] = useState<Set<number>>(new Set());
-  const [distOpenRefillIds, setDistOpenRefillIds] = useState<Set<number>>(new Set());
   const [processingOrderIds, setProcessingOrderIds] = useState<Set<number>>(new Set());
   const [optimisticHiddenOrderIds, setOptimisticHiddenOrderIds] = useState<Set<number>>(new Set());
   const [arrivalModalGroup, setArrivalModalGroup] = useState<{
@@ -93,9 +92,8 @@ export const QuickAssistSidebar = memo(({
   const [expandedStagedKeys, setExpandedStagedKeys] = useState<Set<string>>(new Set());
   const [snoozingKeys, setSnoozingKeys] = useState<Set<string>>(new Set());
 
-  // Master auto-remind toggle state & optimistic overrides for patients & orders
+  // Master auto-remind toggle state & optimistic overrides for orders
   const [autoRemindMaster, setAutoRemindMaster] = useState<boolean>(true);
-  const [optimisticAutoRemindPhones, setOptimisticAutoRemindPhones] = useState<Map<string, boolean>>(new Map());
   const [optimisticAutoRemindOrders, setOptimisticAutoRemindOrders] = useState<Map<number, boolean>>(new Map());
 
   // Load auto-remind settings on expand
@@ -120,24 +118,6 @@ export const QuickAssistSidebar = memo(({
     } catch (e) {
       setAutoRemindMaster(!nextVal);
       toastEvent.trigger('Failed to update Auto-Remind master setting', 'error');
-    }
-  };
-
-  const handleTogglePatientAutoRemind = async (phone: string, currentVal: boolean) => {
-    if (!phone) return;
-    const nextVal = !currentVal;
-    setOptimisticAutoRemindPhones(prev => new Map(prev).set(phone, nextVal));
-    try {
-      await api.togglePatientRefillAutoRemind(phone, nextVal);
-      toastEvent.trigger(`Auto reminder ${nextVal ? 'Armed' : 'Disarmed'} for this patient`, 'info');
-      refillEvent.triggerRefresh();
-    } catch (e) {
-      setOptimisticAutoRemindPhones(prev => {
-        const next = new Map(prev);
-        next.delete(phone);
-        return next;
-      });
-      toastEvent.trigger('Failed to update auto-remind setting', 'error');
     }
   };
 
@@ -270,43 +250,6 @@ export const QuickAssistSidebar = memo(({
     }
   }, [expanded]);
 
-  const handleAcknowledgeAll = async (items: Array<{ id: number; hold_for_stock: number }>) => {
-    try {
-      const holdItems = items.filter(i => i.hold_for_stock === 1);
-      await Promise.all(holdItems.map(i => api.acknowledgeRefill(i.id).catch(() => {})));
-      refillEvent.triggerRefresh();
-      onActionComplete();
-    } catch (e) {
-      console.error('Failed to acknowledge all refills:', e);
-    }
-  };
-
-  const handleSendRefillGroup = async (group: { patient_name: string; patient_phone: string; isReady?: boolean; medicines: Array<{ id: number; medicine_name: string; quantity_needed: number; is_ready?: number; quick_bill_id?: number | null }> }) => {
-    try {
-      const anyReady = group.isReady || group.medicines.some(m => m.is_ready === 1 || m.quick_bill_id);
-      messageSendEvent.triggerSendProgress(group.patient_name || 'Patient', anyReady ? 'Dispatching WhatsApp collection reminder...' : 'Dispatching WhatsApp refill reminder...', 10);
-      if (group.patient_phone) {
-        await api.sendGroupedRefill({
-          patient_name: group.patient_name,
-          patient_phone: group.patient_phone,
-          medicines: group.medicines
-        });
-        toastEvent.trigger(anyReady ? `Consolidated collection reminder sent to ${group.patient_name}!` : `Consolidated refill reminder sent to ${group.patient_name}!`, 'success');
-        whatsappQueueEvent.triggerUpdated();
-      } else {
-        await Promise.all(group.medicines.map(m => api.sendRefillNow(m.id).catch(() => {})));
-        toastEvent.trigger(anyReady ? `Collection reminder sent to ${group.patient_name}!` : `Refill reminder sent to ${group.patient_name}!`, 'success');
-        whatsappQueueEvent.triggerUpdated();
-      }
-      refillEvent.triggerRefresh();
-      onActionComplete();
-    } catch (e: unknown) {
-      const apiErr = e as LocalApiErrorShape;
-      console.error('Failed to send refill group reminder:', e);
-      toastEvent.trigger(apiErr?.response?.data?.error || 'Failed to send refill reminder', 'error');
-    }
-  };
-
   const handleOrderRefillGroupToCart = (group: {
     patient_name: string;
     medicines: Array<{
@@ -328,19 +271,6 @@ export const QuickAssistSidebar = memo(({
     }));
     startRefillCartJob(group.patient_name, cartInputs);
     toastEvent.trigger(`Adding ${cartInputs.length} refill item(s) for ${group.patient_name} to Live Cart...`, 'info', '/pharmarack-cart');
-  };
-
-  const handleOrderSingleRefillMedToCart = (
-    patientName: string,
-    med: { id: number; medicine_id: number; medicine_name: string; quantity_needed: number }
-  ) => {
-    startRefillCartJob(patientName, [{
-      refillId: med.id,
-      medicineId: med.medicine_id,
-      medicineName: med.medicine_name,
-      qty: Math.max(1, Number(med.quantity_needed || 3))
-    }]);
-    toastEvent.trigger(`Adding "${med.medicine_name}" to Live Cart...`, 'info', '/pharmarack-cart');
   };
 
   const [markingReadyRefillPhones, setMarkingReadyRefillPhones] = useState<Set<string>>(new Set());
@@ -409,25 +339,6 @@ export const QuickAssistSidebar = memo(({
       });
     }
   };
-
-  const handleMarkSingleRefillMedOrdered = async (id: number, medicineName: string) => {
-    setMarkingOrderedRefillIds(prev => new Set(prev).add(id));
-    try {
-      await api.markRefillOrdered(id, { note: 'Manual / Phone Order' });
-      toastEvent.trigger(`Marked "${medicineName}" as Ordered`, 'success');
-      refillEvent.triggerRefresh();
-      onActionComplete();
-    } catch (e) {
-      toastEvent.trigger('Failed to mark as ordered', 'error');
-    } finally {
-      setMarkingOrderedRefillIds(prev => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
-  };
-
 
   const handleUpdateGroupStatus = async (
     group: { requester: string; phone?: string; items: Array<{ id: number; product: string; qty: number; notification_count?: number }> },
@@ -589,7 +500,6 @@ export const QuickAssistSidebar = memo(({
   };
 
   const [optimisticDismissedIds, setOptimisticDismissedIds] = useState<Set<number>>(new Set());
-  const [optimisticHiddenRefillIds, setOptimisticHiddenRefillIds] = useState<Set<number>>(new Set());
 
   const handleDismissStagedNotificationGroup = async (group: {
     key: string;
@@ -632,43 +542,6 @@ export const QuickAssistSidebar = memo(({
     }
   };
 
-  const handleCompleteRefillGroup = async (group: { patient_name: string; patient_phone?: string; medicines: Array<{ id: number }> }) => {
-    const ids = group.medicines.map(m => m.id);
-    setOptimisticHiddenRefillIds(prev => {
-      const next = new Set(prev);
-      ids.forEach(id => next.add(id));
-      return next;
-    });
-
-    try {
-      const phone = (group.patient_phone || '').trim();
-      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone || 'patient')}/fulfill-all`, {
-        patient_phone: phone,
-        refill_ids: ids,
-        fulfilled_via: 'quick_assist'
-      });
-
-      if (res?.data?.success) {
-        toastEvent.trigger(`Marked refills for ${group.patient_name} as Completed!`, 'success');
-        queryClient.invalidateQueries({ queryKey: ['refills'] });
-        refillEvent.triggerRefresh();
-        onActionComplete();
-      } else {
-        throw new Error(res?.data?.error || 'Failed to complete refills');
-      }
-    } catch (err: unknown) {
-      const apiErr = err as LocalApiErrorShape;
-      console.error('Failed to complete refills:', err);
-      const errMsg = apiErr?.response?.data?.error || apiErr?.message || 'Failed to complete refills';
-      toastEvent.trigger(errMsg, 'error');
-      setOptimisticHiddenRefillIds(prev => {
-        const next = new Set(prev);
-        ids.forEach(id => next.delete(id));
-        return next;
-      });
-    }
-  };
-
   // Filter actionable refills: active, non-completed, and due within today + upcoming 7 calendar days (diffDays <= 7)
   const actionableRefills = useMemo(() => {
     const today = new Date();
@@ -680,8 +553,7 @@ export const QuickAssistSidebar = memo(({
         !r.next_refill_date ||
         r.status === 'completed' ||
         r.status === 'fulfilled' ||
-        r.status === 'canceled' ||
-        optimisticHiddenRefillIds.has(r.id)
+        r.status === 'canceled'
       ) {
         return false;
       }
@@ -691,7 +563,7 @@ export const QuickAssistSidebar = memo(({
       const diffDays = Math.round((dueStart - todayStart) / 86400000);
       return diffDays <= 7;
     });
-  }, [refills, optimisticHiddenRefillIds]);
+  }, [refills]);
 
   const groupedActionableRefills = useMemo(() => {
     const today = new Date();
@@ -827,20 +699,11 @@ export const QuickAssistSidebar = memo(({
 
     // Sort by diffDays ascending (most urgent first)
     list.sort((a, b) => a.diffDays - b.diffDays);
-    // Drop patients whose every medicine is already ordered AND reminded — nothing left to act on
-    return list.filter(g => !isPatientRefillsSettled(g.medicines));
+    // 3-button workflow: settled (ordered + reminded) patients STAY visible as
+    // Stage-C [Re-Send Reminder] [POS] until POS fulfillment removes them via
+    // status completed/fulfilled. Do not re-add the settled filter here.
+    return list;
   }, [actionableRefills]);
-
-  const formatReminderSentAt = (sentAtStr?: string | null) => {
-    if (!sentAtStr) return '';
-    try {
-      const d = new Date(sentAtStr);
-      if (isNaN(d.getTime())) return sentAtStr;
-      return d.toLocaleDateString([], { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-    } catch {
-      return sentAtStr;
-    }
-  };
 
   // Distinguish Online Orders (website + WhatsApp) from Local In-Store Special Requests
   const isWebsiteOrder = isOnlineOrder;
@@ -1300,7 +1163,6 @@ export const QuickAssistSidebar = memo(({
                       <div className="flex flex-col gap-1.5 pt-1 border-t border-border">
                         {group.medicines.map((med) => {
                           const isMedInCart = !!med.cart_store_name || med.status === 'ordered';
-                          const isMarkingThisMed = markingOrderedRefillIds.has(med.id);
                           return (
                             <div
                               key={med.id}
@@ -1317,52 +1179,24 @@ export const QuickAssistSidebar = memo(({
                                   </span>
                                   <span className="text-[8.5px] text-muted font-mono" title={`Interval: ${med.refill_interval_days} days`}>{med.refill_interval_days}d</span>
                                   {isMedInCart ? (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDistOpenRefillIds(prev => {
-                                          const next = new Set(prev);
-                                          if (next.has(med.id)) next.delete(med.id); else next.add(med.id);
-                                          return next;
-                                        });
-                                      }}
-                                      className="h-5 px-1 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold flex items-center gap-0.5 cursor-pointer shrink-0"
-                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'Ordered'}) - Click to toggle distributor`}
+                                    <span
+                                      className="h-5 px-1.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0"
+                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'Ordered'})`}
                                     >
                                       <Check size={9} className="shrink-0" />
-                                      <ChevronDown size={8} className={`transition-transform shrink-0 ${distOpenRefillIds.has(med.id) ? 'rotate-180' : ''}`} />
-                                    </button>
+                                      <span>In Cart</span>
+                                    </span>
                                   ) : (
-                                    <div className="flex items-center gap-0.5 shrink-0">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleOrderSingleRefillMedToCart(group.patient_name, med);
-                                        }}
-                                        className="h-5 w-5 rounded bg-primary hover:bg-primary/90 text-white flex items-center justify-center cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                        title={`Order "${med.medicine_name}" to Live Cart`}
-                                      >
-                                        <ShoppingCart size={9} className="shrink-0" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={isMarkingThisMed}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleMarkSingleRefillMedOrdered(med.id, med.medicine_name);
-                                        }}
-                                        className="h-5 w-5 rounded bg-bg2 hover:bg-emerald-600 hover:text-white text-muted border border-border flex items-center justify-center cursor-pointer disabled:opacity-50 shrink-0"
-                                        title={`Mark "${med.medicine_name}" as manually ordered outside Pharmarack`}
-                                      >
-                                        {isMarkingThisMed ? <Loader2 size={9} className="animate-spin" /> : <Check size={9} />}
-                                      </button>
-                                    </div>
+                                    <span
+                                      className="h-5 px-1.5 rounded bg-bg2 text-muted border border-border text-[8px] font-bold flex items-center shrink-0"
+                                      title="Not yet ordered"
+                                    >
+                                      <span>Pending</span>
+                                    </span>
                                   )}
                                 </div>
                               </div>
-                              {isMedInCart && distOpenRefillIds.has(med.id) && (
+                              {isMedInCart && (
                                 <div className="pl-4 text-[9.5px] text-muted break-words">
                                   Distributor: <span className="font-semibold text-text">{med.cart_store_name || 'Ordered manually'}</span>
                                   {med.cart_qty ? ` · Qty ${med.cart_qty}` : ''}
@@ -1374,99 +1208,25 @@ export const QuickAssistSidebar = memo(({
                       </div>
                     )}
 
-                    {/* Patient Card Actions & Reminder Status Footer — 2-Tier Layout */}
+                    {/* Patient Card Actions — simplified 3-button staged workflow (owner rule 2026-10):
+                        Stage A 'upcoming' → [Add to Cart] [Already Added] [Edit]
+                        Stage B 'ordered' → [Send Collection Reminder] [POS] [Edit]
+                        Stage C 'reminded' → [Re-Send Reminder] [POS] (collection msg only, store hours auto) */}
                     <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border min-w-0">
-                      {/* Tier 1: Cart Ordering & Billing Actions — Minimal Icon Row */}
+                      <div className="flex items-center gap-1 text-[9px] text-muted font-medium truncate" title={`Next refill due: ${group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}`}>
+                        <Calendar size={9} className="shrink-0 text-muted/70" />
+                        <span className="truncate">
+                          Due {group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1.5 min-w-0">
                         {(() => {
+                          const stage = getRefillStage(group.medicines);
                           const isPatientJobRunning = cartJobs.some(j => j.patientName === group.patient_name && isRefillJobRunning(j));
                           const unaddedMeds = group.medicines.filter(m => !m.cart_store_name && m.status !== 'ordered');
-                          const allInCart = group.medicines.length > 0 && unaddedMeds.length === 0;
                           const isMarkingGroup = group.medicines.some(m => markingOrderedRefillIds.has(m.id));
-
-                          if (isPatientJobRunning) {
-                            return (
-                              <div className="flex-1 h-6.5 px-2 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[9.5px] font-bold flex items-center justify-center gap-1 animate-pulse truncate" title="Adding un-added medicines to Pharmarack Live Cart...">
-                                <Loader2 size={11} className="animate-spin shrink-0 text-sky-400" />
-                                <span className="truncate">Adding...</span>
-                              </div>
-                            );
-                          }
-
-                          if (allInCart) {
-                            const firstStore = group.medicines.find(m => m.cart_store_name)?.cart_store_name;
-                            return (
-                              <div
-                                className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[9.5px] font-bold flex items-center justify-center gap-1 truncate"
-                                title={`All medicines are in live cart / ordered (${firstStore || 'Ordered'})`}
-                              >
-                                <Check size={11} className="text-emerald-500 shrink-0" />
-                                <span className="truncate">In Cart</span>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOrderRefillGroupToCart(group);
-                                }}
-                                className="flex-1 h-6.5 px-2 rounded-lg bg-primary hover:bg-primary/90 text-white text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 truncate"
-                                title={`Add un-added medicines to Pharmarack Live Cart (${unaddedMeds.length} items)`}
-                              >
-                                <ShoppingCart size={11} className="shrink-0" />
-                                <span className="truncate">Cart ({unaddedMeds.length})</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isMarkingGroup}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMarkRefillGroupOrdered(group);
-                                }}
-                                className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border transition-all flex items-center justify-center cursor-pointer disabled:opacity-50 shrink-0"
-                                title="Mark as manually ordered outside Pharmarack"
-                              >
-                                {isMarkingGroup ? <Loader2 size={11} className="animate-spin" /> : <CheckCheck size={12} />}
-                              </button>
-                            </>
-                          );
-                        })()}
-
-                        {group.hasHoldStock && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAcknowledgeAll(group.medicines);
-                            }}
-                            className="h-6.5 px-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[9px] font-bold flex items-center justify-center gap-0.5 shadow-xs cursor-pointer shrink-0"
-                            title="Acknowledge all held items as checked / resolved"
-                          >
-                            <CheckSquare size={11} className="shrink-0" />
-                            <span>Ack</span>
-                          </button>
-                        )}
-                        {!group.isReady && (
-                          <button
-                            type="button"
-                            disabled={markingReadyRefillPhones.has(group.patient_phone)}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMarkRefillGroupReady(group);
-                            }}
-                            className="h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer shrink-0"
-                            title={`Mark medicines packed & ready for pickup and auto-send collection WhatsApp to ${group.patient_name}`}
-                          >
-                            {markingReadyRefillPhones.has(group.patient_phone) ? <Loader2 size={10} className="animate-spin" /> : <BellRing size={11} className="shrink-0" />}
-                            <span>Ready</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
+                          const isMarkingReady = markingReadyRefillPhones.has(group.patient_phone);
+                          const openPos = (e: React.MouseEvent) => {
                             e.stopPropagation();
                             toastEvent.trigger(`Opening POS to bill refills for "${group.patient_name}"...`, 'info', '/pos');
                             setExpanded(false);
@@ -1487,149 +1247,140 @@ export const QuickAssistSidebar = memo(({
                                 }
                               }
                             });
-                          }}
-                          className="h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer shrink-0"
-                          title={`Load ${group.patient_name}'s refill items into POS for billing`}
-                        >
-                          <Receipt size={11} className="shrink-0" />
-                          <span>POS</span>
-                        </button>
-                      </div>
+                          };
+                          const openEdit = (e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            setEditingGroup({
+                              type: 'refill',
+                              title: 'Edit Refill Schedule',
+                              customerName: group.patient_name,
+                              customerPhone: group.patient_phone || '',
+                              items: group.medicines.map(m => ({
+                                id: m.id,
+                                product: m.medicine_name,
+                                qty: m.quantity_needed,
+                                interval_days: m.refill_interval_days,
+                                hold_for_stock: m.hold_for_stock,
+                                next_refill_date: m.next_refill_date
+                              }))
+                            });
+                          };
 
-                      {/* Tier 2: Communications & Lifecycle Controls — Minimal Icon Chips */}
-                      <div className="flex items-center gap-1 justify-between min-w-0 pt-0.5">
-                        <div className="flex items-center gap-1 text-[9px] text-muted font-medium truncate" title={`Next refill due: ${group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}`}>
-                          <Calendar size={9} className="shrink-0 text-muted/70" />
-                          <span className="truncate">
-                            {group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {/* 1-Click Manual ↔ Auto Collection Reminder Chip */}
-                          {(() => {
-                            const isAutoArmed = optimisticAutoRemindPhones.has(group.patient_phone)
-                              ? optimisticAutoRemindPhones.get(group.patient_phone)
-                              : (group as any).auto_remind === 1;
-                            const collCount = (group as any).collection_reminder_count || 0;
+                          if (isPatientJobRunning) {
                             return (
+                              <div className="flex-1 h-6.5 px-2 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[9.5px] font-bold flex items-center justify-center gap-1 animate-pulse truncate" title="Adding un-added medicines to Pharmarack Live Cart...">
+                                <Loader2 size={11} className="animate-spin shrink-0 text-sky-400" />
+                                <span className="truncate">Adding...</span>
+                              </div>
+                            );
+                          }
+
+                          if (stage === 'upcoming') {
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOrderRefillGroupToCart(group);
+                                  }}
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-primary hover:bg-primary/90 text-white text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 truncate"
+                                  title={`Add un-added medicines to Pharmarack Live Cart (${unaddedMeds.length} items)`}
+                                >
+                                  <ShoppingCart size={11} className="shrink-0" />
+                                  <span className="truncate">Add to Cart ({unaddedMeds.length})</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isMarkingGroup}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMarkRefillGroupOrdered(group);
+                                  }}
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs truncate"
+                                  title="Already added / ordered outside Pharmarack"
+                                >
+                                  {isMarkingGroup ? <Loader2 size={11} className="animate-spin shrink-0" /> : <CheckCheck size={11} className="shrink-0" />}
+                                  <span className="truncate">Already Added</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={openEdit}
+                                  className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
+                                  title={`Edit refill details for ${group.patient_name}`}
+                                >
+                                  <Edit3 size={11} className="shrink-0" />
+                                </button>
+                              </>
+                            );
+                          }
+
+                          if (stage === 'ordered') {
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={isMarkingReady}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMarkRefillGroupReady(group);
+                                  }}
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                                  title={`Send collection reminder WhatsApp to ${group.patient_name} (due date + store hours auto from Settings)`}
+                                >
+                                  {isMarkingReady ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
+                                  <span className="truncate">Send Reminder</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={openPos}
+                                  className="h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer shrink-0"
+                                  title={`Load ${group.patient_name}'s refill items into POS for billing`}
+                                >
+                                  <Receipt size={11} className="shrink-0" />
+                                  <span>POS</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={openEdit}
+                                  className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
+                                  title={`Edit refill details for ${group.patient_name}`}
+                                >
+                                  <Edit3 size={11} className="shrink-0" />
+                                </button>
+                              </>
+                            );
+                          }
+
+                          return (
+                            <>
                               <button
                                 type="button"
+                                disabled={isMarkingReady}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleTogglePatientAutoRemind(group.patient_phone, !isAutoArmed);
+                                  handleMarkRefillGroupReady(group);
                                 }}
-                                className={`h-5 px-1.5 rounded-full text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer border shrink-0 ${
-                                  isAutoArmed
-                                    ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
-                                    : 'bg-bg3 text-muted hover:text-text border-border'
-                                }`}
-                                title={
-                                  isAutoArmed
-                                    ? `Auto collection reminder is ACTIVE (${collCount} sent). Daily follow-up 10 AM - 6 PM. Click to switch to Manual.`
-                                    : 'Manual mode: automatic follow-ups disabled. Click to arm Auto Remind.'
-                                }
+                                className="flex-1 h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                                title={`Re-send collection reminder WhatsApp to ${group.patient_name}`}
                               >
-                                <Zap size={8} className={isAutoArmed ? 'text-purple-400 fill-purple-400 shrink-0' : 'text-muted shrink-0'} />
-                                <span>{isAutoArmed ? `Auto${collCount > 0 ? ` ${collCount}x` : ''}` : 'Off'}</span>
+                                {isMarkingReady ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
+                                <span className="truncate">Re-Send Reminder</span>
                               </button>
-                            );
-                          })()}
-
-                          {group.reminder_status === 'SENT' ? (
-                            <span
-                              className="h-5 px-1.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[8.5px] font-bold flex items-center gap-0.5 shrink-0"
-                              title={`Reminder sent on ${formatReminderSentAt(group.reminder_sent_at)}`}
-                            >
-                              <Check size={9} className="text-emerald-400 shrink-0" />
-                              <span>Sent</span>
-                            </span>
-                          ) : group.reminder_status === 'QUEUED' ? (
-                            <span
-                              className="h-5 px-1.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[8.5px] font-bold flex items-center gap-0.5 shrink-0"
-                              title="Reminder queued in WhatsApp dispatch queue"
-                            >
-                              <ClockIcon size={9} className="text-amber-400 shrink-0" />
-                              <span>Queued</span>
-                            </span>
-                          ) : group.reminder_status === 'SENDING' ? (
-                            <span className="h-5 px-1.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[8.5px] font-bold flex items-center gap-0.5 shrink-0">
-                              <Loader2 size={9} className="animate-spin text-sky-400 shrink-0" />
-                              <span>Sending</span>
-                            </span>
-                          ) : group.reminder_status === 'FAILED' ? (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSendRefillGroup(group);
-                              }}
-                              className="h-5 px-1.5 rounded bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-[8.5px] font-bold uppercase transition-colors flex items-center gap-0.5 shadow-xs cursor-pointer shrink-0"
-                              title="Reminder failed to send — click to retry"
-                            >
-                              <AlertIcon size={9} className="shrink-0" />
-                              <span>Retry</span>
-                            </button>
-                          ) : group.isReady ? (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSendRefillGroup(group);
-                              }}
-                              className="h-5 px-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[8.5px] font-bold uppercase transition-colors flex items-center gap-0.5 shadow-xs cursor-pointer shrink-0"
-                              title={`Send WhatsApp pickup reminder for packed medicines to ${group.patient_name}`}
-                            >
-                              <SendIcon size={8} className="shrink-0" />
-                              <span>Pickup</span>
-                            </button>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSendRefillGroup(group);
-                              }}
-                              className="h-5 px-1.5 rounded bg-purple-600 hover:bg-purple-700 text-white text-[8.5px] font-bold uppercase transition-colors flex items-center gap-0.5 shadow-xs cursor-pointer shrink-0"
-                              title={`Send Refill WhatsApp reminder to ${group.patient_name}`}
-                            >
-                              <SendIcon size={8} className="shrink-0" />
-                              <span>Remind</span>
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCompleteRefillGroup(group);
-                            }}
-                            className="h-5 w-5 rounded bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
-                            title={`Mark all refills for ${group.patient_name} as Completed`}
-                          >
-                            <Check size={9} className="shrink-0" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingGroup({
-                                type: 'refill',
-                                title: 'Edit Refill Schedule',
-                                customerName: group.patient_name,
-                                customerPhone: group.patient_phone || '',
-                                items: group.medicines.map(m => ({
-                                  id: m.id,
-                                  product: m.medicine_name,
-                                  qty: m.quantity_needed,
-                                  interval_days: m.refill_interval_days,
-                                  hold_for_stock: m.hold_for_stock,
-                                  next_refill_date: m.next_refill_date
-                                }))
-                              });
-                            }}
-                            className="h-5 w-5 rounded bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
-                            title={`Edit refill details for ${group.patient_name}`}
-                          >
-                            <Edit3 size={9} className="shrink-0" />
-                          </button>
-                        </div>
+                              <button
+                                type="button"
+                                onClick={openPos}
+                                className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                                title={`Load ${group.patient_name}'s refill items into POS for billing`}
+                              >
+                                <Receipt size={11} className="shrink-0" />
+                                <span className="truncate">POS</span>
+                              </button>
+                            </>
+                          );
+                        })()}
                       </div>
+
                     </div>
                   </div>
                 );

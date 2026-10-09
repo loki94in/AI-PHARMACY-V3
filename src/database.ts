@@ -1628,7 +1628,9 @@ export async function ensureSchema(dbPath: string) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       contact TEXT,
-      delivery_boy_id INTEGER
+      delivery_boy_id INTEGER,
+      min_order_value REAL DEFAULT NULL,
+      min_order_items INTEGER DEFAULT NULL
     );
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2448,6 +2450,8 @@ export async function ensureSchema(dbPath: string) {
       ['distributors', 'preferred_file_format', 'ALTER TABLE distributors ADD COLUMN preferred_file_format TEXT DEFAULT NULL'],
       ['distributors', 'mapping_config', 'ALTER TABLE distributors ADD COLUMN mapping_config TEXT DEFAULT NULL'],
       ['distributors', 'delivery_boy_id', 'ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL'],
+      ['distributors', 'min_order_value', 'ALTER TABLE distributors ADD COLUMN min_order_value REAL DEFAULT NULL'],
+      ['distributors', 'min_order_items', 'ALTER TABLE distributors ADD COLUMN min_order_items INTEGER DEFAULT NULL'],
       ['pharmarack_distributor_mappings', 'delivery_boy_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL'],
       ['distributor_dispatch_reminders', 'scheduled_send_time', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL'],
       ['doctors', 'send_daily_summary', 'ALTER TABLE doctors ADD COLUMN send_daily_summary INTEGER DEFAULT 0'],
@@ -4364,6 +4368,13 @@ export async function ensureSchema(dbPath: string) {
       const distNames = new Set(distCols.map((c: any) => c.name));
       if (distCols.length > 0 && !distNames.has('delivery_boy_id')) {
         await db.run('ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+      }
+      // Distributor minimum-order warning flags (Purchases page): missing = no warning, never assumed 0
+      if (distCols.length > 0 && !distNames.has('min_order_value')) {
+        await db.run('ALTER TABLE distributors ADD COLUMN min_order_value REAL DEFAULT NULL');
+      }
+      if (distCols.length > 0 && !distNames.has('min_order_items')) {
+        await db.run('ALTER TABLE distributors ADD COLUMN min_order_items INTEGER DEFAULT NULL');
       }
     } catch (_) { }
 

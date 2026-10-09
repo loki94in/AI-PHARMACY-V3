@@ -1737,6 +1737,63 @@ router.get('/last-by-distributor', async (req, res) => {
   }
 });
 
+// Most-ordered medicines for ONE distributor (Purchases history reorder picker).
+// READ-ONLY: frequency + recency over real purchase bills, never invented rows.
+// Missing distributor minimums / history stay missing — the UI handles emptiness.
+router.get('/frequent', async (req, res) => {
+  const distributorId = parseInt(req.query.distributor_id as string, 10);
+  if (!distributorId || distributorId <= 0) {
+    return res.status(400).json({ error: 'distributor_id is required' });
+  }
+  const rawDays = parseInt(req.query.days as string, 10);
+  const days = Number.isFinite(rawDays) ? Math.min(730, Math.max(1, rawDays)) : 90;
+  const rawLimit = parseInt(req.query.limit as string, 10);
+  const limit = Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 100;
+  const q = String(req.query.q || '').trim().replace(/\s+/g, ' ');
+  try {
+    const db = await dbManager.getConnection();
+    // Shop-local cutoff (purchases.date is shop local time — never toISOString/UTC here)
+    const d = new Date(Date.now() - days * 86400000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const cutoff = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    const likeTerm = q.length >= 2 ? `%${q}%` : null;
+    const rows = await db.all(
+      `SELECT m.id AS medicine_id, m.name AS medicine_name, m.manufacturer AS manufacturer,
+              a.bill_count, a.total_qty, a.last_date,
+              l.cost_price AS last_rate, l.mrp AS last_mrp, l.batch_no AS last_batch,
+              l.expiry_date AS last_expiry, l.cgst_per AS last_cgst, l.sgst_per AS last_sgst,
+              l.hsn_code AS last_hsn
+       FROM (
+         SELECT pi.medicine_id AS mid, COUNT(DISTINCT p.id) AS bill_count,
+                SUM(pi.quantity) AS total_qty, MAX(p.date) AS last_date
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE p.distributor_id = ? AND p.date >= ?
+         GROUP BY pi.medicine_id
+       ) a
+       JOIN (
+         SELECT pi.medicine_id AS mid2, pi.cost_price, pi.mrp, pi.batch_no,
+                pi.expiry_date, pi.cgst_per, pi.sgst_per, pi.hsn_code,
+                ROW_NUMBER() OVER (PARTITION BY pi.medicine_id ORDER BY p.date DESC, pi.id DESC) AS rn
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE p.distributor_id = ? AND p.date >= ?
+       ) l ON l.mid2 = a.mid AND l.rn = 1
+       JOIN medicines m ON m.id = a.mid
+       ${likeTerm ? 'WHERE m.name LIKE ?' : ''}
+       ORDER BY a.bill_count DESC, a.last_date DESC
+       LIMIT ?`,
+      likeTerm
+        ? [distributorId, cutoff, distributorId, cutoff, likeTerm, limit]
+        : [distributorId, cutoff, distributorId, cutoff, limit]
+    );
+    res.json({ data: rows });
+  } catch (error) {
+    console.error('Frequent-by-distributor error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Batch auto-fill: get last purchase for multiple medicines at once
 router.post('/batch-last-purchase', async (req, res) => {
   let db;

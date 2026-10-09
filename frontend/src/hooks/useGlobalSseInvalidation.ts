@@ -16,7 +16,7 @@ import { ensureCompactInventoryReady } from '../services/api';
 // SSE event type -> react-query cache keys to invalidate
 const SSE_QUERY_MAP: Record<string, string[][]> = {
   sale_created: [['last-sale-invoice'], ['inventory-todays-receipts'],['dashboard'], ['reports'], ['sales'], ['invoices'], ['sells-list'], ['investigation-list']],
-  invoice_saved: [['purchases'], ['purchase-history'], ['purchase-history-list'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports'], ['investigation-list'], ['schedule-drugs-list'], ['medicine-last-by-distributor'], ['inventory-todays-receipts']],
+  invoice_saved: [['purchases'], ['purchase-history'], ['purchase-history-list'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports'], ['investigation-list'], ['schedule-drugs-list'], ['medicine-last-by-distributor'], ['inventory-todays-receipts'], ['distributor-frequent']],
   return_created: [['returns'], ['returns-history'], ['customer-returns'], ['customer-returns-history-list'], ['pending-returns'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports']],
   inventory_changed: [['inventory'], ['inventory-list'], ['compact-inventory'], ['pos-inventory'], ['expiry'], ['schedule-drugs-list']],
   expiry_list_changed: [['expiry'], ['expiry-reviews']],
@@ -28,8 +28,8 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   dispatch_updated: [['dispatch-orders'], ['delivery-boys'], ['distributor-reminders']],
   catalog_job_done: [['catalog-jobs'], ['medicines'], ['schedule-drugs-summary']],
   sales_sync: [['sells-list'], ['investigation-list']],
-  purchases_sync: [['purchase-history-list'], ['investigation-list']],
-  purchase_sync: [['purchases'], ['purchase-history-list'], ['investigation-list'], ['medicine-last-by-distributor']],
+  purchases_sync: [['purchase-history-list'], ['investigation-list'], ['distributor-frequent']],
+  purchase_sync: [['purchases'], ['purchase-history-list'], ['investigation-list'], ['medicine-last-by-distributor'], ['distributor-frequent']],
   inventory_sync: [['inventory'], ['inventory-list'], ['compact-inventory'], ['pos-inventory'], ['investigation-list']],
   pharmarack_cart_changed: [['pharmarack-cart']],
   customers_changed: [['customers'], ['crm-customers'], ['pos-customers']],

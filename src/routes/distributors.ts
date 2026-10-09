@@ -37,7 +37,7 @@ router.get('/pharmarack-list', async (_req, res) => {
 
 // Create or update distributor details
 const postDistributorsHandler = async (req: express.Request, res: express.Response) => {
-  const { name, store_name, phone, contact, email, address, gstin, state_code, preferred_file_format } = req.body;
+  const { name, store_name, phone, contact, email, address, gstin, state_code, preferred_file_format, min_order_value, min_order_items } = req.body;
   const distName = (name || store_name || '').trim();
   if (!distName) {
     return res.status(400).json({ error: 'Distributor name is required' });
@@ -52,7 +52,9 @@ const postDistributorsHandler = async (req: express.Request, res: express.Respon
       address,
       gstin,
       state_code,
-      preferred_file_format
+      preferred_file_format,
+      min_order_value,
+      min_order_items
     });
 
     res.json({
@@ -74,7 +76,7 @@ router.post('/', postDistributorsHandler);
 // Update distributor details including preferred email invoice format
 const putDistributorHandler = async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
-  const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code } = req.body;
+  const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code, min_order_value, min_order_items } = req.body;
   try {
     const db = await dbManager.getConnection();
     const savedDistributor = await syncDistributorPhoneAcrossTables(db, {
@@ -86,7 +88,9 @@ const putDistributorHandler = async (req: express.Request, res: express.Response
       address,
       gstin,
       state_code,
-      preferred_file_format
+      preferred_file_format,
+      min_order_value,
+      min_order_items
     });
 
     syncTodayActiveDistributors().catch(() => {});

@@ -338,11 +338,13 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
 
     // After 5+ idle minutes the keep-alive socket/TLS to the search host is gone and the first call is slow.
     // Give that cold call room to finish instead of aborting at 3.5 s and fanning out three more cold requests.
+    // Slow-network tolerance (owner: CRM add-to-cart on slow net): warm 8 s / cold 12 s so a slow
+    // first answer wins instead of falling back to offline rows with no product code.
     const searchCold = Date.now() - lastSearchOkAt > 5 * 60 * 1000;
     const response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
       method: 'POST',
       body: JSON.stringify(buildPayload(primaryKeyword)),
-      signal: AbortSignal.timeout(searchCold ? 7000 : 3500)
+      signal: AbortSignal.timeout(searchCold ? 12000 : 8000)
     }).catch(() => null);
 
     let data: any = response && response.ok ? await response.json().catch(() => null) : null;
@@ -371,7 +373,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
           fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
             method: 'POST',
             body: JSON.stringify(buildPayload(term)),
-            signal: AbortSignal.timeout(3000)
+            signal: AbortSignal.timeout(5000)
           })
             .then(res => res.ok ? res.json().catch(() => null) : null)
             .then(resJson => (resJson && Array.isArray(resJson.data) && resJson.data.length > 0 ? resJson : null))
@@ -854,9 +856,11 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
     throw Object.assign(new Error('Need to login'), { code: 'NEED_LOGIN' });
   }
 
+  // Slow-network tolerance: 30 s so a CRM add-to-cart cart read survives a slow link
+  // instead of failing fast to "Could not read the live cart".
   const response = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails', {
     method: 'GET',
-    signal: AbortSignal.timeout(15000)
+    signal: AbortSignal.timeout(30000)
   });
 
   if (response.status === 401 || response.status === 403) {
@@ -1574,7 +1578,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
           const searchRes = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
             method: 'POST',
             body: JSON.stringify(searchPayload),
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(8000)
           });
           if (searchRes.ok) {
             const searchData: any = await searchRes.json().catch(() => null);
@@ -1693,11 +1697,28 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         Packing: item.packaging || item.Packing || '1 strip'
       };
 
-      const response = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15000)
-      });
+      const response = await (async () => {
+        // Slow-network tolerance: 30 s per try + ONE retry on timeout/network failure only.
+        // An upstream rejection (non-OK status or success:false body) is never retried here —
+        // the CRM refill path tries the next linked distributor instead.
+        let lastErr: any = null;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            return await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
+              method: 'POST',
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(30000)
+            });
+          } catch (err: any) {
+            lastErr = err;
+            const msg = String(err?.message || err || '');
+            const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted|fetch failed|network/i.test(msg);
+            if (!isTimeout || attempt >= 2) throw err;
+            await new Promise(r => setTimeout(r, 1500));
+          }
+        }
+        throw lastErr;
+      })();
 
       if (response.ok) {
         const resJson = await response.json().catch(() => ({}));

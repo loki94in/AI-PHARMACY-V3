@@ -246,7 +246,9 @@ export async function processRefillCartItem(
   if (Array.isArray(opts.pick) && opts.pick.length > 0) {
     const picks = opts.pick.filter(isValidPick);
     if (picks.length === 0) return fail('Tick a distributor product from the list.');
-    await saveMedicineLinks(refill.medicine_id, picks);
+    const prioMap = await loadPriorityMap();
+    const orderedPicks = orderByPriority(picks, p => p.storeName, prioMap);
+    await saveMedicineLinks(refill.medicine_id, orderedPicks);
   }
 
   const pr = await import('../routes/pharmarack.js');
@@ -259,12 +261,17 @@ export async function processRefillCartItem(
     return fail(cartErrorMessage(err));
   }
 
-  // Saved links, re-ordered by the pharmacist's distributor priority list (CRM -> Distributor Priority)
-  const links: any[] = orderByPriority(
-    await db.all('SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id', [refill.medicine_id]),
-    l => l.store_name,
-    await loadPriorityMap()
-  );
+  // Saved links: preserves explicit per-medicine pick_order (#1, #2, ...), falling back to global priority on ties.
+  const prioMap = await loadPriorityMap();
+  const rawLinks: any[] = await db.all('SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id', [refill.medicine_id]);
+  const links: any[] = [...rawLinks].sort((a, b) => {
+    const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
+    const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;
+    if (poA !== poB) return poA - poB;
+    const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+    const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+    return rA - rB;
+  });
 
   // 3. Already in the cart. If THIS refill already put its qty there -> nothing to do. If the
   //    medicine is in the cart from anything else (the pharmacist, another refill) -> INCREASE that
@@ -401,8 +408,10 @@ export async function processRefillCartItem(
     };
   }
 
-  // 5. First in-stock distributor in the pharmacist's priority order; if it is out of stock the next
-  //    one is used (links are already ordered by the priority list above).
+  // 5. First in-stock distributor in the pharmacist's priority order; when its add is
+  //    rejected or not confirmed, the next in-stock linked distributor is tried in order
+  //    (slow-network tolerance: one medicine still costs one cart write at a time).
+  //    Links are already ordered by the priority list above.
   const chosen = available[0];
   const it = chosen.item;
 
@@ -415,53 +424,64 @@ export async function processRefillCartItem(
     };
   }
 
-  const addRes = await pr.addItemsToPharmarackCart([{
-    productId: it.productId,
-    storeId: Number(it.storeId),
-    productCode: String(it.productCode),
-    productName: String(it.name || chosen.link.product_name || medicineName),
-    storeName: String(it.distributor || chosen.link.store_name),
-    company: it.company || undefined,
-    rate: it.rate != null ? Number(it.rate) : undefined,
-    mrp: it.mrp != null ? Number(it.mrp) : undefined,
-    scheme: it.scheme || undefined,
-    packaging: it.packaging || undefined,
-    mapped: it.mapped !== false,
-    qty
-  }]);
-  // addItemsToPharmarackCart reports "success + offline" when nothing reached
-  // Pharmarack — that is a failure here, never a success.
-  if (!addRes.success || addRes.offline) {
-    return fail(`Pharmarack did not accept the item: ${addRes.details || addRes.error || addRes.message || 'offline'}`, { linked, candidates });
+  const addFailures: string[] = [];
+  for (const cand of available) {
+    const candItem = cand.item;
+    const addRes = await pr.addItemsToPharmarackCart([{
+      productId: candItem.productId,
+      storeId: Number(candItem.storeId),
+      productCode: String(candItem.productCode),
+      productName: String(candItem.name || cand.link.product_name || medicineName),
+      storeName: String(candItem.distributor || cand.link.store_name),
+      company: candItem.company || undefined,
+      rate: candItem.rate != null ? Number(candItem.rate) : undefined,
+      mrp: candItem.mrp != null ? Number(candItem.mrp) : undefined,
+      scheme: candItem.scheme || undefined,
+      packaging: candItem.packaging || undefined,
+      mapped: candItem.mapped !== false,
+      qty
+    }]);
+    // addItemsToPharmarackCart reports "success + offline" when nothing reached
+    // Pharmarack — that is a failure here, never a success. Try the next distributor.
+    if (!addRes.success || addRes.offline) {
+      addFailures.push(`${cand.link.store_name} (${addRes.details || addRes.error || addRes.message || 'offline'})`);
+      continue;
+    }
+
+    // 6. Re-read the cart and only claim success when the line is really there.
+    pr.invalidatePharmarackCartCache();
+    let added: CartLine | undefined;
+    for (let attempt = 0; attempt < 2 && !added; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
+      try {
+        added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
+      } catch (_) { /* retried once, then try next distributor below */ }
+    }
+    if (!added) {
+      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
+      continue;
+    }
+
+    await db.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
+    );
+    await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cand.link.id]);
+
+    const firstLink = linkedState[0];
+    const skipped = linkedState.filter(s => s !== cand && !s.inStock).map(s => String(s.link.store_name));
+    const failedBefore = available.slice(0, available.indexOf(cand)).filter(s => s !== cand && s.inStock).map(s => String(s.link.store_name));
+    const noteParts = [...skipped.map(n => `${n} was out of stock`), ...failedBefore.map(n => `${n} did not accept it`)];
+    const note = noteParts.length > 0 ? ` (${noteParts.join('; ')})` : (firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : '');
+    return {
+      ...base, linked, candidates,
+      status: 'added',
+      message: `Added ${qty} to ${added.storeName}${note}.`,
+      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
+    };
   }
 
-  // 6. Re-read the cart and only claim success when the line is really there.
-  pr.invalidatePharmarackCartCache();
-  let added: CartLine | undefined;
-  for (let attempt = 0; attempt < 2 && !added; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
-    try {
-      added = findLine(flattenCart(await pr.loadLiveCartCore()), it.storeId, it.productCode);
-    } catch (_) { /* retried once, then reported below */ }
-  }
-  if (!added) {
-    return fail('Pharmarack accepted the add, but the item is not showing in the cart yet. Check the Live Cart, or retry.', { linked, candidates });
-  }
-
-  await db.run(
-    `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
-    [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
-  );
-  await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [chosen.link.id]);
-
-  const firstLink = linkedState[0];
-  const note = firstLink !== chosen && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : '';
-  return {
-    ...base, linked, candidates,
-    status: 'added',
-    message: `Added ${qty} to ${added.storeName}${note}.`,
-    line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
-  };
+  return fail(`Pharmarack did not accept the item at ${available.map(s => String(s.link.store_name)).join(', ')}: ${addFailures.join('; ') || 'no confirmation'}`, { linked, candidates });
 }
 
 /**

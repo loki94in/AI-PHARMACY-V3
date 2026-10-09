@@ -11,6 +11,19 @@ export const isRefillSettled = (m: RefillLike) => isRefillOrdered(m) && isRefill
 export const isPatientRefillsSettled = (meds: RefillLike[] | undefined | null) =>
   !!meds && meds.length > 0 && meds.every(isRefillSettled);
 
+// Simplified 3-button refill workflow (Quick Assist + CRM, owner rule 2026-10):
+// Stage A 'upcoming' — no medicine ordered yet → [Add to Cart] [Already Added] [Edit]
+// Stage B 'ordered' — ordered but not yet reminded → [Send Collection Reminder] [POS] [Edit]
+// Stage C 'reminded' — ordered AND reminded → [Re-Send Reminder] [POS] (no Edit on card)
+export type RefillStage = 'upcoming' | 'ordered' | 'reminded';
+export const getRefillStage = (meds: RefillLike[] | undefined | null): RefillStage => {
+  if (!meds || meds.length === 0) return 'upcoming';
+  const orderedCount = meds.filter(isRefillOrdered).length;
+  if (orderedCount === 0) return 'upcoming';
+  if (meds.every(isRefillSettled)) return 'reminded';
+  return 'ordered';
+};
+
 // Special orders and online orders: settled once ordered (or arrived/Ready) AND the customer message was sent
 // (notification_count counts the sent arrival WhatsApp, written only by the user-clicked send).
 type OrderItemLike = { status?: string | null; notification_count?: number | null };

@@ -14,6 +14,8 @@ export interface DistributorModalProps {
     email: string;
     address: string;
     state_code: string;
+    min_order_value: string;
+    min_order_items: string;
   };
   setNewDistributor: React.Dispatch<
     React.SetStateAction<{
@@ -22,6 +24,8 @@ export interface DistributorModalProps {
       email: string;
       address: string;
       state_code: string;
+      min_order_value: string;
+      min_order_items: string;
     }>
   >;
   saveDistributor: () => void;
@@ -110,6 +114,33 @@ export const DistributorModal: React.FC<DistributorModalProps> = ({
                 ))}
             </select>
           </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-muted mb-2">Min Order ₹ (Optional)</label>
+              <input
+                type="number"
+                min="0"
+                value={newDistributor.min_order_value}
+                onChange={(e) => setNewDistributor({ ...newDistributor, min_order_value: e.target.value })}
+                className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text focus:outline-none focus:border-primary/50"
+                placeholder="e.g. 5000"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-muted mb-2">Min Items (Optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={newDistributor.min_order_items}
+                onChange={(e) => setNewDistributor({ ...newDistributor, min_order_items: e.target.value })}
+                className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text focus:outline-none focus:border-primary/50"
+                placeholder="e.g. 10"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted">Empty minimums mean no warning. Bills below a set minimum show a warning flag before save.</p>
         </div>
 
         <div className="flex items-center justify-between gap-3 mt-6">

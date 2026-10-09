@@ -15,6 +15,22 @@ export interface SyncDistributorParams {
   preferred_file_format?: string;
   notes?: string;
   delivery_boy_id?: number | null;
+  min_order_value?: number | string | null;
+  min_order_items?: number | string | null;
+}
+
+function parseMinOrderValue(raw: number | string | null | undefined): number | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseMinOrderItems(raw: number | string | null | undefined): number | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === '') return null;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? n : null;
 }
 
 export function normalizeDistributorName(rawName: string): string {
@@ -428,6 +444,17 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
 
     if (!targetId) {
       throw new Error('Unable to create or locate distributor record.');
+    }
+
+    // Distributor minimum-order warning flags: undefined = not provided (preserve),
+    // null = cleared, positive number = enforced. Missing stays missing, never invented.
+    const parsedMinValue = parseMinOrderValue(params.min_order_value);
+    if (parsedMinValue !== undefined) {
+      await db.run('UPDATE distributors SET min_order_value = ? WHERE id = ?', [parsedMinValue, targetId]);
+    }
+    const parsedMinItems = parseMinOrderItems(params.min_order_items);
+    if (parsedMinItems !== undefined) {
+      await db.run('UPDATE distributors SET min_order_items = ? WHERE id = ?', [parsedMinItems, targetId]);
     }
 
     // Auto register AI Learning profile

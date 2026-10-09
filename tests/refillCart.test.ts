@@ -38,6 +38,7 @@ jest.unstable_mockModule('../src/routes/pharmarack.js', () => ({
   addItemsToPharmarackCart: mockAdd,
   adjustSpecialOrderInLiveCart: mockAdjust,
   invalidatePharmarackCartCache: jest.fn(),
+  getCachedCartLines: jest.fn(() => []),
   resolveCommonOrFrequentDistributor: jest.fn(async () => null),
   isItemInStock: (v: any) => {
     if (v === null || v === undefined || v === '') return false;
@@ -218,6 +219,21 @@ describe('Refill → Live Cart (saved distributor links, one medicine at a time)
     const next = await svc.processRefillCartItem(refillId, { qty: 3 });
     expect(next.status).toBe('added');
     expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 11, productCode: 'A-100' });
+  });
+
+  test('explicit per-medicine pick_order priority is respected even if another distributor has higher global priority', async () => {
+    // Global: ALPHA ranked #0, BETA ranked #1
+    await svc.saveDistributorPriority(['ALPHA PHARMA', 'BETA MEDICOS']);
+    // Medicine links explicitly saved with BETA as #0 (per-medicine priority) and ALPHA as #1
+    await svc.saveMedicineLinks(medId, [pickOf(TELMA_BETA), pickOf(TELMA_ALPHA)]);
+    await db.run('UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?', [refillId]);
+    cartLines = [];
+    mockAdd.mockClear();
+    searchItems = [TELMA_ALPHA, TELMA_BETA];
+    const res = await svc.processRefillCartItem(refillId, { qty: 2 });
+    expect(res.status).toBe('added');
+    // Expect BETA MEDICOS (per-medicine #1) to be chosen first!
+    expect((mockAdd.mock.calls[0][0] as any[])[0]).toMatchObject({ storeId: 22, productCode: 'B-200' });
   });
 
   test('medicine already in the cart from elsewhere → cart qty + refill qty (1 + 2 = 3), cancel later takes back only 2', async () => {
