@@ -53,6 +53,10 @@ export function loadDistributorPriority(): Promise<Map<string, number>> {
   }
   return prioPending;
 }
+export function clearDistributorPriorityCache(): void {
+  prioCache = null;
+  prioPending = null;
+}
 export const NO_PRIORITY = 100000;
 export const priorityRankOf = (storeName: unknown, map: Map<string, number>): number => map.get(prioKey(storeName)) ?? NO_PRIORITY;
 

@@ -171,9 +171,10 @@ class TriggerSchedulerService {
               if (mode === 'off' || (mode === 'manual' && activityTracker.isIdle())) return;
 
               console.log(`[Trigger: Daily Check] Running daily check scheduled at ${timeStr}...`);
-              const { checkAllRefills } = await import('./refillService.js');
+              const { checkAllRefills, dispatchDueRefillReminders } = await import('./refillService.js');
               const { checkOverdueCreditNotes } = await import('./creditNoteService.js');
               await checkAllRefills(database);
+              await dispatchDueRefillReminders(database);
               await checkOverdueCreditNotes(database);
 
               // Reactivate rescheduled call tasks that are now due (v69)
@@ -622,9 +623,10 @@ class TriggerSchedulerService {
         await createBackup('Manual Run Now');
         return { success: true, message: 'Database backup executed successfully.' };
       } else if (triggerId === 'daily_check') {
-        const { checkAllRefills } = await import('./refillService.js');
+        const { checkAllRefills, dispatchDueRefillReminders } = await import('./refillService.js');
         const { checkOverdueCreditNotes } = await import('./creditNoteService.js');
         await checkAllRefills(database);
+        await dispatchDueRefillReminders(database);
         await checkOverdueCreditNotes(database);
         return { success: true, message: 'Daily operational scan executed successfully.' };
       } else if (triggerId === 'expiry_scan') {

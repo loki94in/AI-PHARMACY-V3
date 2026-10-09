@@ -221,6 +221,7 @@ export const RefillsSection: React.FC = () => {
       if (idx > 0) {
         const reordered = [picks[idx], ...picks.filter((_, i) => i !== idx)];
         await api.saveMedicineLinks(medicineId, reordered);
+        refillEvent.triggerRefresh();
         toastEvent.trigger(`⭐ "${targetDistributor}" is now #1 priority for ${medName}`, 'success');
       }
     } catch (err: any) {

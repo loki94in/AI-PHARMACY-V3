@@ -1,72 +1,73 @@
-# Implementation Plan: Default Suggested Quantity to 1 & Fix TypeScript/Vite Issues
+# Implementation Plan: Dynamic Operating Hours & Market Cutoffs in Refill Messaging
 
-> **Task Context & User Requirements:**
-> - User feedback: Set the suggested quantity to default `1` (instead of `lastQty` which could be a large batch count like 10 or 20) in the shortfall suggestions and reorder cards.
-> - In addition, resolve the IDE problems: `lastRate` missing on `ReorderRecentItem`, `handleSetReorderQty` reference error, and Vite Fast Refresh export incompatibility.
-
----
-
-## Root Cause Analysis
-
-1. **Suggested Quantity Over-inflation**:
-   - In `frontend/src/pages/PharmarackCart/index.tsx` line 223, `getDistributorShortfallFillers` computed `const qty = Math.max(1, r.lastQty || 1)`.
-   - When users only need to add 1 line item to fulfill a distributor's minimum order count, suggesting their previous bulk purchase (e.g. 10 or 50) added unnecessary expense. Setting default quantity to `1` fixes this.
-   - In the reorder cards (lines 4349, 4536), cards pre-filled with `lastQty` instead of defaulting to 1 with an adjustable stepper.
-
-2. **TypeScript & Runtime Reference Errors**:
-   - `frontend/src/types/api.ts`: `ReorderRecentItem` was missing optional `lastRate?: number`, causing type errors in `PharmarackCart/index.tsx`.
-   - `frontend/src/pages/PharmarackCart/index.tsx`: lines 4584 and 4592 called `handleSetReorderQty` instead of the defined `setReorderItemQty`.
-   - Vite React plugin warned about Fast Refresh incompatibility due to exporting internal helper functions from a component module.
+> **User Request & Requirements:**
+> - Make refill messages dynamically aware of actual store operating hours (formatted clearly in 12-hour AM/PM format, not rigid/military '9-10').
+> - Automatically detect and notify customers if the store is currently closed, on weekly off, or if the wholesale distributor market / cutoff has passed for placing orders.
+> - Include expected fulfillment/procurement delivery windows (`getDynamicDeliveryNotice`) in customer confirmation messages so expectations are clear when orders are placed after-hours or on weekends/holidays.
 
 ---
 
-## Proposed Changes
+## 1. Root Cause & Architectural Strategy
 
-### 1. `frontend/src/types/api.ts`
-- Add `lastRate?: number;` to `ReorderRecentItem`.
+1. **Refill Confirmation Acknowledgment Missing Market Notice**:
+   - In `src/services/whatsappIntentService.ts` (lines 4800–4825), the confirmation message prints raw `sched.openTime to sched.closeTime` (e.g. `09:00 to 22:00`).
+   - It did not incorporate `getDynamicDeliveryNotice(db)`, which calculates whether the wholesale market cutoff has passed (e.g. after-hours order or Sunday market closure) and computes the exact expected delivery date and slot via `orderScheduleService.ts`.
 
-### 2. `frontend/src/pages/PharmarackCart/index.tsx`
-- Set `const qty = 1;` in `getDistributorShortfallFillers`.
-- Set `const itemQty = getReorderItemQty(itemKey, 1);` in both reorder cards and purchase history cards.
-- Replace `handleSetReorderQty` with `setReorderItemQty` in purchase history card stepper buttons.
-- Remove `export` from internal helper functions (`isLineItemStocked`, `getDistributorEffectiveTotal`, `getOrderLimitIssues`, `getDistributorShortfallDeficit`) to eliminate the Vite HMR Fast Refresh warning.
+2. **24-Hour Military Time Format in Refill Reminders**:
+   - In `src/routes/refills.ts:buildRefillReminderMessage`, hours are displayed as `09:00 to 22:00` and `(Store open 09:00 - 22:00)`.
+   - We will format operating hours using user-friendly 12-hour format with AM/PM (e.g. `9:00 AM to 10:00 PM`) and include weekly off details.
 
----
-
-## Verification Plan
-
-### Automated Guardrails & Compilation
-- Run `npm run guardrails` (`tsc --noEmit` and performance check).
-- Run `node scripts/quick-update.mjs` (synchronize knowledge graph).
-
-### Manual Verification
-1. Open `http://localhost:5173/pharmarack-cart`.
-2. Inspect shortfall past purchase suggestions: verify buttons show `+ Add (x1)` and calculate based on 1 unit.
-3. Inspect reorder cards: verify quantity stepper defaults to `1` with `-` and `+` controls working cleanly.
-4. Verify Vite console is free of Fast Refresh warnings.
+3. **Staged Refill Notification Incomplete Context**:
+   - In `src/services/refillService.ts:syncStagedRefillNotificationForPatient`, reminders did not load the store's operating schedule or check for upcoming weekly off days.
+   - We will fetch `getPharmacyOperatingSchedule(db)` to embed dynamic store hours and upcoming closure notices directly into staged reminders.
 
 ---
 
-## Completed Tasks
-- [x] Task 1: Add `lastRate?: number;` to `ReorderRecentItem` in `frontend/src/types/api.ts`
-  - *Completed*: Added `lastRate?: number;` to `ReorderRecentItem`, eliminating TypeScript compile errors at lines 224 and 3410.
-- [x] Task 2: Default suggested quantity to 1 in shortfall pills and reorder cards
-  - *Completed*: Updated `getDistributorShortfallFillers` in `frontend/src/pages/PharmarackCart/index.tsx` so `const qty = 1;` is used for all shortfall pills. Updated both reorder cards and purchase history cards to use `getReorderItemQty(itemKey, 1)`.
-- [x] Task 3: Fix `handleSetReorderQty` runtime reference error
-  - *Completed*: Replaced `handleSetReorderQty` with `setReorderItemQty` at lines 4584 and 4592.
-- [x] Task 4: Fix Vite Fast Refresh export incompatibility
-  - *Completed*: Removed `export` from internal helpers (`isLineItemStocked`, `getDistributorEffectiveTotal`, `getOrderLimitIssues`, `getDistributorShortfallDeficit`), restoring fast HMR refreshes in Vite.
-- [x] Task 5: Performance guardrails and knowledge graph update
-  - *Completed*: `npm run guardrails` passed clean (`tsc --noEmit` OK, speed rules intact). Ran `node scripts/quick-update.mjs` (1173 nodes, 780 edges updated).
-1. **Removed Past Purchases Suggestion Cards & Pills in [frontend/src/pages/PharmarackCart/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/PharmarackCart/index.tsx)**
-   - Fully removed the suggestions card container, pill controls, quantity tags, and "Past Purchases from... Add ₹... more to fulfill minimum" header from the distributor cart card.
-   - Preserved only the authentic yellow warning banner (`border-amber-500/30 bg-amber-500/10 text-amber-400` with `<AlertTriangle />`) indicating the exact missing medicine count or amount shortfall.
-   - Automatically hides as soon as the item count or order total reaches the threshold.
+## 2. Proposed Changes
 
-2. **Cleaned Up Orphaned Helpers & States**
-   - Removed unused helper functions: `isDistributorCandidateMatch`, `getDistributorShortfallDeficit`, and `getDistributorShortfallFillers`.
-   - Removed unused state & handlers: `skippedFillerKeys`, `setSkippedFillerKeys`, `handleSkipFiller`, `handleResetSkippedFillers`.
+### Backend
 
-3. **Performance Guardrails & Knowledge Graph Synchronization**
-   - Verified TypeScript compilation and speed guardrails with `npm run guardrails` — PASS (0 errors).
-   - Synchronized project graph with `node scripts/quick-update.mjs` — PASS (1173 nodes).
+#### 1. `src/services/whatsappIntentService.ts`
+- In the refill confirmation acknowledgment section:
+  - Format `sched.openTime` and `sched.closeTime` using `formatTime12h` (e.g. `9:00 AM to 10:00 PM`).
+  - Append `sched.weeklyOff` (if configured) so customers know regular weekly off days.
+  - Call `await getDynamicDeliveryNotice(db)` and append the dynamic expected delivery / market closure notice to the acknowledgment message.
+
+#### 2. `src/routes/refills.ts`
+- In `buildRefillReminderMessage`:
+  - Format `openT` and `closeT` through `formatTime12h` so reminder messages display `9:00 AM to 10:00 PM` instead of `09:00 to 22:00`.
+  - Update English, Hindi, and Marathi templates to display clean, localized 12-hour store hours.
+
+#### 3. `src/services/refillService.ts`
+- In `syncStagedRefillNotificationForPatient`:
+  - Load `getPharmacyOperatingSchedule(db)`.
+  - Check upcoming weekly off days (`isOffDayUpcoming`).
+  - Include dynamic store hours and weekly off alert in staged reminder messages.
+
+---
+
+## 3. Verification Plan
+
+### Automated Verification
+- Run `npm run guardrails` (`tsc --noEmit` and performance checks).
+- Run `node scripts/quick-update.mjs` (knowledge graph sync).
+
+### Functional & Scenario Verification
+1. **Refill Confirmation Acknowledgment**:
+   - Verify acknowledgment contains clean 12-hour operating hours (e.g. `9:00 AM to 10:00 PM`).
+   - Verify post-cutoff / closed market notice is appended when ordering outside market hours.
+2. **Reminder Message Formatting**:
+   - Verify `buildRefillReminderMessage` outputs 12-hour store hours.
+   - Verify weekly off notice appears if next day / due day is an off day.
+
+---
+
+## 4. Completed Tasks
+- [x] Task 1: Add dynamic delivery notice and 12-hour store hours to refill confirmation acknowledgment in `whatsappIntentService.ts`
+  - *Completed*: Updated `whatsappIntentService.ts` to format operating hours in 12-hour AM/PM format (e.g. `9:00 AM – 10:00 PM`), append weekly off, and attach `getDynamicDeliveryNotice(db)` so customers receive expected delivery slots or post-cutoff/market closure notifications.
+- [x] Task 2: Format operating hours as 12-hour AM/PM in `buildRefillReminderMessage` in `src/routes/refills.ts`
+  - *Completed*: Added `formatTime12h` in `src/routes/refills.ts` to convert `09:00 - 22:00` into `9:00 AM – 10:00 PM` across English, Hindi, and Marathi reminder and collection templates.
+- [x] Task 3: Embed dynamic store hours & weekly off awareness into `syncStagedRefillNotificationForPatient` in `src/services/refillService.ts`
+  - *Completed*: In `src/services/refillService.ts`, dynamically load `getPharmacyOperatingSchedule(db)`, calculate upcoming weekly off closures, and embed formatted 12-hour hours and off-day warnings in staged messages.
+- [x] Task 4: Run `npm run guardrails` and update knowledge graph with `quick-update.mjs`
+  - *Completed*: Verified with `npm run guardrails` (`tsc --noEmit` passed clean, 0 violations). Synced knowledge graph with `node scripts/quick-update.mjs` (1173 nodes, 782 edges updated).

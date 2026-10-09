@@ -5,7 +5,8 @@ import { api, type RefillCartCandidate, type RefillCartPick } from '../services/
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import {
-  linkKeyOf, toLinkCandidates, loadDistributorRanks, purchaseCountFor, type DistributorRank
+  linkKeyOf, toLinkCandidates, loadDistributorRanks, purchaseCountFor, type DistributorRank,
+  loadDistributorPriority, priorityRankOf
 } from '../utils/pharmarackLinkCandidates';
 
 /**
@@ -36,6 +37,7 @@ export const MedicineLinkModal: React.FC<{
   useModalEscape(true, onClose);
   const [selected, setSelected] = useState<RefillCartPick[]>([]);
   const [ranks, setRanks] = useState<DistributorRank[]>([]);
+  const [prioMap, setPrioMap] = useState<Map<string, number>>(new Map());
   const [loadingLinks, setLoadingLinks] = useState(true);
   // A failed load shows an empty list; saving it would wipe the real links.
   const [loadFailed, setLoadFailed] = useState(false);
@@ -72,6 +74,7 @@ export const MedicineLinkModal: React.FC<{
       })
       .finally(() => { if (alive) setLoadingLinks(false); });
     void loadDistributorRanks().then(r => { if (alive) setRanks(r); });
+    void loadDistributorPriority().then(m => { if (alive) setPrioMap(m); });
     return () => { alive = false; };
   }, [medicineId]);
 
@@ -99,14 +102,21 @@ export const MedicineLinkModal: React.FC<{
   }, [query]);
 
   const selectedKeys = new Set(selected.map(linkKeyOf));
+  const rank = (storeName: string) => priorityRankOf(storeName, prioMap);
   const bought = (storeName: string) => purchaseCountFor(storeName, ranks);
-  // Auto priority: a newly ticked product goes above the first linked one bought from less often.
+  const comparePicks = (storeA: string, storeB: string) => {
+    const rA = rank(storeA);
+    const rB = rank(storeB);
+    if (rA !== rB) return rA - rB;
+    return bought(storeB) - bought(storeA);
+  };
+
+  // Auto priority: a newly ticked product is ordered by global distributor priority, then purchase frequency.
   const toggle = (c: RefillCartCandidate) => {
     const k = linkKeyOf(c);
     setSelected(prev => {
       if (prev.some(p => linkKeyOf(p) === k)) return prev.filter(p => linkKeyOf(p) !== k);
-      const n = bought(c.storeName);
-      const at = prev.findIndex(p => bought(p.storeName) < n);
+      const at = prev.findIndex(p => comparePicks(c.storeName, p.storeName) < 0);
       return at === -1 ? [...prev, toPick(c)] : [...prev.slice(0, at), toPick(c), ...prev.slice(at)];
     });
   };
@@ -117,7 +127,7 @@ export const MedicineLinkModal: React.FC<{
     [next[i], next[j]] = [next[j], next[i]];
     return next;
   });
-  const autoOrder = () => setSelected(prev => [...prev].sort((a, b) => bought(b.storeName) - bought(a.storeName)));
+  const autoOrder = () => setSelected(prev => [...prev].sort((a, b) => comparePicks(a.storeName, b.storeName)));
 
   const save = async () => {
     setSaving(true);

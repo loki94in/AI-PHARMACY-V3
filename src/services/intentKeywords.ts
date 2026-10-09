@@ -478,13 +478,13 @@ export function isRefillConfirmationResponse(text: string): boolean {
   const cleaned = text.trim();
   const lower = cleaned.toLowerCase().replace(/[.,!?;:()_~#*`]/g, ' ').replace(/\s+/g, ' ').trim();
   const confirmationTokens = [
-    'refill', 'yes', 'confirm', 'confirmed', 'send', 'ok', 'okay',
+    '1', 'refill', 'yes', 'confirm', 'confirmed', 'send', 'ok', 'okay',
     'ha', 'haan', 'haa', 'ho', 'hoye', 'chalel',
     'bhej do', 'bhejo', 'dedo', 'de do', 'chahiye',
     'pathva', 'pathav', 'dya', 'daya', 'lagta', 'lagte', 'lagtan',
     'ready rakho', 'pack kar do', 'pack kardo'
   ];
-  if (confirmationTokens.some(t => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
+  if (lower === '1' || lower === '1.' || confirmationTokens.some(t => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
     return true;
   }
   const devanagariTokens = [

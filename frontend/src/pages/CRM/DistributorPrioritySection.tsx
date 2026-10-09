@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { GripVertical, Save, ListOrdered } from 'lucide-react';
 import { api } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { toastEvent } from '../../services/events';
+import { toastEvent, refillEvent } from '../../services/events';
+import { clearDistributorPriorityCache } from '../../utils/pharmarackLinkCandidates';
+import { queryClient } from '../../lib/queryClient';
 
 interface Row { storeName: string; ranked: boolean; linkedMedicines: number }
 
@@ -46,6 +48,11 @@ export const DistributorPrioritySection: React.FC = () => {
       const res = await api.saveDistributorPriority(rows.map(r => r.storeName));
       cachedRows = res.distributors;
       setEdited(null);
+      clearDistributorPriorityCache();
+      queryClient.invalidateQueries({ queryKey: ['distributor-priority'] });
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      queryClient.invalidateQueries({ queryKey: ['crm-refills'] });
+      refillEvent.triggerRefresh();
       toastEvent.trigger('Distributor priority saved', 'success');
     } catch (err: unknown) {
       toastEvent.trigger((err as { message?: string })?.message || 'Could not save distributor priority', 'error');

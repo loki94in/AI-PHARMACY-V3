@@ -77,6 +77,16 @@ function parseIntervalDays(val: any): number {
 }
 
 // Multilingual refill reminder message builder
+function formatTime12h(timeStr: string): string {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  let h = parseInt(hStr, 10);
+  const m = mStr || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
 export function buildRefillReminderMessage(
   patientName: string,
   items: Array<{ medicine_name?: string; quantity_needed?: number }>,
@@ -89,8 +99,10 @@ export function buildRefillReminderMessage(
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
 
-  const openT = scheduleOpts?.openTime || '09:00';
-  const closeT = scheduleOpts?.closeTime || '22:00';
+  const rawOpen = scheduleOpts?.openTime || '09:00';
+  const rawClose = scheduleOpts?.closeTime || '22:00';
+  const openT = formatTime12h(rawOpen);
+  const closeT = formatTime12h(rawClose);
   const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
 
@@ -104,7 +116,7 @@ export function buildRefillReminderMessage(
     if (isOffDayUpcoming) {
       timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
     }
-    const cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "REFILL" या "हाँ" लिखकर उत्तर दें।*`;
+    const cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "1" या "REFILL" लिखकर उत्तर दें।*`;
     message = `🔔 *दवाई रिफ़िल रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी नियमित दवाई का रिफ़िल समय आ गया है:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else if (cleanLang === 'mr') {
     const medList = items
@@ -115,7 +127,7 @@ export function buildRefillReminderMessage(
     if (isOffDayUpcoming) {
       timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
     }
-    const cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "REFILL" किंवा "हो" लिहून उत्तर द्या।*`;
+    const cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "1" किंवा "REFILL" लिहून उत्तर द्या।*`;
     message = `🔔 *औषध रिफिल स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपल्या नियमित औषधांची रिफिल करण्याची वेळ झाली आहे:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else {
     const medList = items
@@ -126,7 +138,7 @@ export function buildRefillReminderMessage(
     if (isOffDayUpcoming) {
       timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
     }
-    const cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "REFILL" or "YES" to confirm.*\n*(Store open ${openT} - ${closeT})*`;
+    const cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "1" or "REFILL" to confirm.*\n*(Store open ${openT} – ${closeT})*`;
     message = `🔔 *MEDICINE REFILL REMINDER — ${pharmacyName}*\n\nDear ${pName},\nYour regular prescription is due for refill:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   }
 
@@ -148,8 +160,10 @@ export function buildRefillCollectionMessage(
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
 
-  const openT = scheduleOpts?.openTime || '09:00';
-  const closeT = scheduleOpts?.closeTime || '22:00';
+  const rawOpen = scheduleOpts?.openTime || '09:00';
+  const rawClose = scheduleOpts?.closeTime || '22:00';
+  const openT = formatTime12h(rawOpen);
+  const closeT = formatTime12h(rawClose);
   const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
 
@@ -721,6 +735,23 @@ router.get('/panel', async (req, res) => {
         linksByMedicine.set(key, [...(linksByMedicine.get(key) || []), String(lr.store_name)]);
       }
     }
+
+    // Ensure linked distributors per medicine are ordered strictly by saved distributor_priority
+    try {
+      const prioRows: any[] = await db.all('SELECT name_key, priority FROM distributor_priority');
+      if (prioRows && prioRows.length > 0) {
+        const prioMap = new Map<string, number>(prioRows.map(p => [String(p.name_key), Number(p.priority)]));
+        for (const [key, dists] of linksByMedicine.entries()) {
+          dists.sort((a, b) => {
+            const kA = a.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const kB = b.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const rA = prioMap.get(kA) ?? Infinity;
+            const rB = prioMap.get(kB) ?? Infinity;
+            return rA - rB;
+          });
+        }
+      }
+    } catch (_) {}
 
     // Check real-time live cart contents (warm cache)
     const { getCachedCartLines } = await import('./pharmarack.js');

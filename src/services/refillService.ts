@@ -6,6 +6,16 @@ import { refillOrderReconciler } from './refillOrderReconciler.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
 import { firstContactLanguageBanner } from './languageDetector.js';
 
+function formatTime12h(timeStr: string): string {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  let h = parseInt(hStr, 10);
+  const m = mStr || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
 export async function checkAllRefills(db: Database): Promise<void> {
   // Clean up paused refills (is_active = 0) so they don't remain marked ready or held
   try {
@@ -284,20 +294,42 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
 
   const anyReady = readyRefills.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
 
+  let timingInfo = '';
+  let hoursPill = '';
+  try {
+    const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
+    const sched = await getPharmacyOperatingSchedule(db);
+    const open12 = formatTime12h(sched.openTime || '09:00');
+    const close12 = formatTime12h(sched.closeTime || '22:00');
+    hoursPill = `\n*(Store open ${open12} – ${close12})*`;
+    const now = new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dueDayName = dayNames[(now.getDay() + 1) % 7];
+    const isOffDayUpcoming = Boolean(sched.weeklyOff && (
+      dueDayName.toLowerCase() === sched.weeklyOff.toLowerCase() ||
+      dayNames[now.getDay()].toLowerCase() === sched.weeklyOff.toLowerCase()
+    ));
+
+    timingInfo = `\n🕒 *Store Hours:* ${open12} to ${close12}`;
+    if (isOffDayUpcoming) {
+      timingInfo += `\n⚠️ *Notice:* Our pharmacy will remain closed on ${sched.weeklyOff}. Please collect before closure!`;
+    }
+  } catch (_) {}
+
   let msg: string;
   if (anyReady) {
     if (items.length === 1) {
-      msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n• *${items[0].medicine_name}* (Qty: ${items[0].quantity})\n\n📍 *Pickup Location:* ${storeLabel}\n👉 *Please collect your medicine at your earliest convenience.*`;
+      msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n• *${items[0].medicine_name}* (Qty: ${items[0].quantity})\n\n📍 *Pickup Location:* ${storeLabel}${timingInfo}\n👉 *Please collect your medicine at your earliest convenience.*`;
     } else {
       const medList = items.map(it => `• *${it.medicine_name}* (Qty: ${it.quantity})`).join('\n');
-      msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n${medList}\n\n📍 *Pickup Location:* ${storeLabel}\n👉 *Please collect your medicine at your earliest convenience.*`;
+      msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n${medList}\n\n📍 *Pickup Location:* ${storeLabel}${timingInfo}\n👉 *Please collect your medicine at your earliest convenience.*`;
     }
   } else {
     if (items.length === 1) {
-      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
     } else {
       const medList = items.map(it => `• ${it.medicine_name} (Qty: ${it.quantity})`).join('\n');
-      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.\n👉 *Reply "REFILL" or "YES" to confirm.*`;
+      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
     }
   }
 
@@ -1149,4 +1181,114 @@ export async function isFirstContactOrUnconfirmed(db: any, phone: string): Promi
   }
 }
 
+/**
+ * Automatically dispatches staged refill reminders if enabled in settings and mode is 'auto'.
+ * If mode is 'manual' (default), reminders remain safely staged for 1-click human review.
+ */
+export async function dispatchDueRefillReminders(db: Database): Promise<{ dispatched: number; skipped: number; reason?: string }> {
+  try {
+    const enabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
+    if (enabledRow?.value === 'false') {
+      return { dispatched: 0, skipped: 0, reason: 'disabled' };
+    }
 
+    const modeRow = await db.get("SELECT value FROM app_settings WHERE key = 'default_refill_reminder_mode'");
+    if (modeRow?.value !== 'auto') {
+      return { dispatched: 0, skipped: 0, reason: 'mode_manual' };
+    }
+
+    // Check operating hours
+    const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
+    const sched = await getPharmacyOperatingSchedule(db);
+    const now = new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const currentDay = dayNames[now.getDay()];
+    if ((sched.weeklyOff || '').toLowerCase() === currentDay.toLowerCase()) {
+      return { dispatched: 0, skipped: 0, reason: 'store_closed_weekly_off' };
+    }
+
+    const staged = await db.all(
+      `SELECT id, recipient_name, recipient_phone, message, reference_id, type 
+       FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') 
+         AND status = 'staged' 
+         AND needs_confirmation = 1 
+       LIMIT 50`
+    );
+
+    if (!staged || staged.length === 0) {
+      return { dispatched: 0, skipped: 0, reason: 'none_staged' };
+    }
+
+    const { normalizeWhatsAppPhone } = await import('../whatsappClient.js');
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+    const { eventService } = await import('./eventService.js');
+
+    let dispatched = 0;
+    let skipped = 0;
+
+    for (const notif of staged) {
+      const cleanPhone = normalizeWhatsAppPhone(String(notif.recipient_phone || ''));
+      if (!cleanPhone || cleanPhone.length < 10) {
+        skipped++;
+        continue;
+      }
+
+      // Check if already queued or sent to this number in the last 24 hours
+      const recentSend = await db.get(
+        `SELECT id FROM whatsapp_send_queue 
+         WHERE number LIKE ? AND type IN ('refill_collection', 'refill_reminder') 
+           AND created_at > datetime('now', '-24 hours') 
+         LIMIT 1`,
+        [`%${cleanPhone.slice(-10)}%`]
+      );
+
+      if (recentSend) {
+        skipped++;
+        continue;
+      }
+
+      const queueId = await whatsappQueueWorker.enqueue(
+        cleanPhone,
+        notif.message,
+        notif.type || 'refill_reminder',
+        notif.recipient_name || undefined,
+        undefined,
+        undefined,
+        undefined,
+        { skipDedupe: false }
+      );
+
+      await db.run(
+        `UPDATE automation_notifications 
+         SET status = 'queued', needs_confirmation = 0 
+         WHERE id = ?`,
+        [notif.id]
+      );
+
+      if (notif.reference_id) {
+        const refIds = String(notif.reference_id).split(',').map(s => Number(s.trim())).filter(Boolean);
+        if (refIds.length > 0) {
+          const placeholders = refIds.map(() => '?').join(',');
+          await db.run(
+            `UPDATE patient_refills 
+             SET reminder_status = 'QUEUED', status = 'notified', reminder_job_id = ? 
+             WHERE id IN (${placeholders})`,
+            [queueId, ...refIds]
+          ).catch(() => {});
+        }
+      }
+      dispatched++;
+    }
+
+    if (dispatched > 0) {
+      eventService.broadcast('automation_hub_updated', { type: 'auto_dispatched', count: dispatched });
+      eventService.broadcast('refill_updated', { type: 'auto_dispatched', count: dispatched });
+    }
+
+    return { dispatched, skipped };
+  } catch (err) {
+    console.error('[RefillService] dispatchDueRefillReminders error:', err);
+    return { dispatched: 0, skipped: 0, reason: String(err) };
+  }
+}

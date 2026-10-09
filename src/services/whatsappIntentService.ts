@@ -4758,6 +4758,44 @@ export async function handleInbound(msg: any): Promise<void> {
             console.warn('[Intent Service] Reconciler upsert note on refill confirm:', recErr);
           }
 
+          // Automatically add confirmed refill medicines directly to Pharmarack Live Cart
+          const cartSummaryRows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; message?: string }> = [];
+          try {
+            const { processRefillCartItem, sendRefillCartSummary } = await import('./refillCartService.js');
+            for (const r of pendingRefills) {
+              const reqQty = Math.max(1, Number(r.quantity_needed || 1));
+              try {
+                const cartRes = await processRefillCartItem(r.id, { qty: reqQty, dryRun: false });
+                cartSummaryRows.push({
+                  refillId: r.id,
+                  medicineName: r.medicine_name,
+                  status: cartRes.status,
+                  storeName: cartRes.line?.storeName,
+                  qty: cartRes.qty,
+                  message: cartRes.message
+                });
+              } catch (itemErr: any) {
+                console.warn(`[Intent Service] processRefillCartItem error for refill ${r.id}:`, itemErr);
+                cartSummaryRows.push({
+                  refillId: r.id,
+                  medicineName: r.medicine_name,
+                  status: 'failed',
+                  message: itemErr?.message || 'Cart processing error'
+                });
+              }
+            }
+
+            if (cartSummaryRows.length > 0) {
+              await sendRefillCartSummary(primaryRefill.patient_name, cartSummaryRows).catch(e => {
+                console.warn('[Intent Service] sendRefillCartSummary error:', e);
+              });
+              eventService.broadcast('live_cart_updated', { at: Date.now(), source: 'whatsapp_refill_confirm' });
+              eventService.broadcast('refill_updated', { at: Date.now(), confirmed_id: primaryRefill.id });
+            }
+          } catch (cartErr) {
+            console.warn('[Intent Service] Live Cart auto-add note on refill confirm:', cartErr);
+          }
+
           // Optional acknowledgement to patient via queue worker (suppressed in active manual takeover)
           if (!isManualSession) {
             try {
@@ -4766,14 +4804,20 @@ export async function handleInbound(msg: any): Promise<void> {
               const storeName = await getStoreMedicalName(db);
               const storePhone = await getStorePhone(db);
               const hoursNotice = await getStoreHoursNotice(db);
+              const deliveryNotice = await getDynamicDeliveryNotice(db);
               const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
               const medListText = pendingRefills.length === 1 
                 ? `*${primaryRefill.medicine_name}*` 
                 : pendingRefills.map((r: any) => `• ${r.medicine_name}`).join('\n');
 
+              const open12 = formatTime12h(sched.openTime || '09:00');
+              const close12 = formatTime12h(sched.closeTime || '22:00');
+              const offDay = sched.weeklyOff ? ` | Weekly Off: ${sched.weeklyOff}` : '';
+
               const ackMsg = `✅ *Refill Confirmed — ${storeName}*\n\n` +
                 `Thank you ${primaryRefill.patient_name}! Your regular prescription for:\n${medListText}\nhas been confirmed.\n\n` +
-                `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}${hoursNotice ? `\n${hoursNotice.trim()}` : ''}\n` +
+                `🕒 *Store Hours:* ${open12} – ${close12}${offDay}${hoursNotice ? `\n${hoursNotice.trim()}` : ''}` +
+                `${deliveryNotice ? `\n${deliveryNotice.trim()}` : ''}\n\n` +
                 `Our team will keep your medicines ready for collection.${phoneSuffix}`;
 
               const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');

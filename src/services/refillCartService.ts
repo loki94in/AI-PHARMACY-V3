@@ -194,6 +194,10 @@ export async function saveDistributorPriority(storeNames: string[]): Promise<num
     seen.add(k);
     return true;
   });
+  const prioMap = new Map<string, number>();
+  for (let i = 0; i < clean.length; i++) {
+    prioMap.set(nameKey(clean[i]), i);
+  }
   const db = await dbManager.getConnection();
   await db.run('BEGIN');
   try {
@@ -201,6 +205,32 @@ export async function saveDistributorPriority(storeNames: string[]): Promise<num
     for (let i = 0; i < clean.length; i++) {
       await db.run('INSERT INTO distributor_priority (name_key, store_name, priority) VALUES (?, ?, ?)', [nameKey(clean[i]), clean[i], i]);
     }
+
+    // Re-align pick_order across all existing medicine_distributor_links to match the new priority rankings
+    const allLinks: any[] = await db.all('SELECT id, medicine_id, store_name, pick_order FROM medicine_distributor_links');
+    if (allLinks.length > 0) {
+      const byMed = new Map<number, any[]>();
+      for (const link of allLinks) {
+        const medId = Number(link.medicine_id);
+        const arr = byMed.get(medId) || [];
+        arr.push(link);
+        byMed.set(medId, arr);
+      }
+      for (const links of byMed.values()) {
+        links.sort((a, b) => {
+          const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+          const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+          if (rA !== rB) return rA - rB;
+          return (Number(a.pick_order) || 0) - (Number(b.pick_order) || 0) || (Number(a.id) - Number(b.id));
+        });
+        for (let newOrder = 0; newOrder < links.length; newOrder++) {
+          if (links[newOrder].pick_order !== newOrder) {
+            await db.run('UPDATE medicine_distributor_links SET pick_order = ? WHERE id = ?', [newOrder, links[newOrder].id]);
+          }
+        }
+      }
+    }
+
     await db.run('COMMIT');
   } catch (err) {
     await db.run('ROLLBACK').catch(() => {});
