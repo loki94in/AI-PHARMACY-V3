@@ -489,6 +489,113 @@ export async function cleanupStagedRefillNotifications(
   }
 }
 
+export interface PurgeReminderOptions {
+  phone?: string | null;
+  customerId?: number | string | null;
+  refillIds?: (number | string)[];
+  specialOrderIds?: (number | string)[];
+  medicineNames?: string[];
+}
+
+/**
+ * Instantly cancels and purges any pending or scheduled customer reminder messages
+ * from whatsapp_send_queue and automation_notifications.
+ * Invoked immediately upon:
+ * - CRM Refill "✓ Complete" / "Fulfill Cycle"
+ * - Special Order "Fulfilled", "Completed", or "Delivered"
+ * - POS Sale checkout completion
+ */
+export async function purgePendingCustomerReminders(
+  db: any,
+  options: PurgeReminderOptions
+): Promise<{ purgedQueueCount: number; purgedNotificationsCount: number }> {
+  let purgedQueueCount = 0;
+  let purgedNotificationsCount = 0;
+
+  try {
+    const rawPhone = (options.phone || '').replace(/\D/g, '');
+    const last10 = rawPhone.length >= 7 ? rawPhone.slice(-10) : '';
+    const refillIdStrs = (options.refillIds || []).map(id => String(id).trim()).filter(Boolean);
+    const orderIdStrs = (options.specialOrderIds || []).map(id => String(id).trim()).filter(Boolean);
+    const medNames = (options.medicineNames || []).map(m => m.trim().toLowerCase()).filter(Boolean);
+
+    // 1. Purge from whatsapp_send_queue
+    const waTypes = [
+      'refill_collection',
+      'order_ready',
+      'refill_reminder',
+      'special_order_arrived',
+      'special_order',
+      'special_order_batch',
+      'special_order_fulfilled',
+      'admin_shortage_reminder'
+    ];
+    const waTypePlaceholders = waTypes.map(() => '?').join(',');
+
+    if (last10) {
+      const pendingItems = await db.all(
+        `SELECT id, message FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'failed_offline') 
+           AND type IN (${waTypePlaceholders})
+           AND number LIKE ?`,
+        [...waTypes, `%${last10}%`]
+      ).catch(() => []);
+
+      const idsToDelete: number[] = [];
+      for (const item of pendingItems || []) {
+        if (medNames.length === 0) {
+          idsToDelete.push(item.id);
+        } else {
+          const msgLower = (item.message || '').toLowerCase();
+          const matchesMed = medNames.some(m => msgLower.includes(m));
+          if (matchesMed) {
+            idsToDelete.push(item.id);
+          }
+        }
+      }
+
+      if (idsToDelete.length > 0) {
+        const delPlaceholders = idsToDelete.map(() => '?').join(',');
+        const res = await db.run(
+          `DELETE FROM whatsapp_send_queue WHERE id IN (${delPlaceholders})`,
+          idsToDelete
+        );
+        purgedQueueCount = res?.changes || idsToDelete.length;
+      }
+    }
+
+    // 2. Clean up automation_notifications
+    if (refillIdStrs.length > 0) {
+      await cleanupStagedRefillNotifications(db, refillIdStrs, 'cancelled');
+    }
+
+    if (orderIdStrs.length > 0) {
+      const orderPlaceholders = orderIdStrs.map(() => '?').join(',');
+      await db.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled', lifecycle_status = 'cancelled' 
+         WHERE reference_id IN (${orderPlaceholders})`,
+        orderIdStrs
+      ).catch(() => {});
+    }
+
+    if (last10 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
+      await db.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled', lifecycle_status = 'cancelled' 
+         WHERE recipient_phone LIKE ? 
+           AND status = 'staged' 
+           AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+        [`%${last10}%`]
+      ).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[Refills] purgePendingCustomerReminders error:', err);
+  }
+
+  return { purgedQueueCount, purgedNotificationsCount };
+}
+
 /**
  * Sends a morning operational briefing strictly to the Store Owner's WhatsApp.
  * Summarizes today's refills, special orders, and whether today has pause/holiday rules.

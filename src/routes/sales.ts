@@ -20,7 +20,8 @@ import PDFDocument from 'pdfkit';
 import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
 import { getAppDataDir } from '../config/index.js';
 import { applySaleDelta, getReorderWindowMonths, computeReorderSuggestion } from '../services/medicineSalesMetricsService.js';
-import { cleanupStagedRefillNotifications } from '../services/refillService.js';
+import { cleanupStagedRefillNotifications, purgePendingCustomerReminders } from '../services/refillService.js';
+import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { tenantAuthMiddleware } from '../middleware/tenantAuth.js';
@@ -121,6 +122,115 @@ router.get('/next-invoice', async (_req, res) => {
       timestamp: new Date().toISOString()
     }));
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Notify POS counter session: user opened POS for this customer / refills / special orders
+// Disables auto-reminders and purges pending reminder messages immediately, before bill save.
+router.post('/counter-session', async (req, res) => {
+  try {
+    let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds } = req.body;
+    let cleanPhone = (phone || '').replace(/\D/g, '');
+
+    const explicitRefillIds: number[] = [];
+    if (refillId && !isNaN(Number(refillId))) explicitRefillIds.push(Number(refillId));
+    if (Array.isArray(refillIds)) explicitRefillIds.push(...refillIds.map(Number).filter((n: number) => !isNaN(n) && n > 0));
+
+    const explicitSoIds: number[] = [];
+    if (specialOrderId && !isNaN(Number(specialOrderId))) explicitSoIds.push(Number(specialOrderId));
+    if (Array.isArray(specialOrderIds)) explicitSoIds.push(...specialOrderIds.map(Number).filter((n: number) => !isNaN(n) && n > 0));
+
+    if (!cleanPhone && !customerId && explicitRefillIds.length === 0 && explicitSoIds.length === 0) {
+      return res.json({ success: true, message: 'No target customer or orders specified' });
+    }
+
+    const db = await dbManager.getConnection();
+
+    // If phone not provided, resolve from customer or orders
+    if (!cleanPhone && customerId) {
+      const c = await db.get('SELECT phone FROM customers WHERE id = ?', [customerId]).catch(() => null);
+      if (c?.phone) cleanPhone = String(c.phone).replace(/\D/g, '');
+    }
+    if (!cleanPhone && explicitRefillIds.length > 0) {
+      const r = await db.get('SELECT patient_phone FROM patient_refills WHERE id = ?', [explicitRefillIds[0]]).catch(() => null);
+      if (r?.patient_phone) cleanPhone = String(r.patient_phone).replace(/\D/g, '');
+    }
+    if (!cleanPhone && explicitSoIds.length > 0) {
+      const o = await db.get('SELECT phone FROM special_orders WHERE id = ?', [explicitSoIds[0]]).catch(() => null);
+      if (o?.phone) cleanPhone = String(o.phone).replace(/\D/g, '');
+    }
+
+    const phoneQuery = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : '';
+
+    // 1. Disable auto_remind for patient refills
+    if (explicitRefillIds.length > 0) {
+      const placeholders = explicitRefillIds.map(() => '?').join(',');
+      await db.run(
+        `UPDATE patient_refills 
+         SET auto_remind = 0, 
+             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+         WHERE id IN (${placeholders})`,
+        explicitRefillIds
+      ).catch(() => {});
+    } else if (customerId || phoneQuery) {
+      await db.run(
+        `UPDATE patient_refills 
+         SET auto_remind = 0, 
+             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+         WHERE (customer_id = ? OR (patient_phone IS NOT NULL AND length(patient_phone) >= 7 AND replace(patient_phone, ' ', '') LIKE ?))`,
+        [customerId || -1, phoneQuery || 'NON_EXISTENT']
+      ).catch(() => {});
+    }
+
+    // 2. Disable auto_remind for special orders
+    if (explicitSoIds.length > 0) {
+      const placeholders = explicitSoIds.map(() => '?').join(',');
+      await db.run(
+        `UPDATE special_orders 
+         SET auto_remind = 0 
+         WHERE id IN (${placeholders})`,
+        explicitSoIds
+      ).catch(() => {});
+    } else if (customerId || phoneQuery) {
+      await db.run(
+        `UPDATE special_orders 
+         SET auto_remind = 0 
+         WHERE status NOT IN ('Fulfilled', 'Cancelled')
+           AND (customer_id = ? OR (phone IS NOT NULL AND length(phone) >= 7 AND replace(phone, ' ', '') LIKE ?))`,
+        [customerId || -1, phoneQuery || 'NON_EXISTENT']
+      ).catch(() => {});
+    }
+
+    // 3. Purge pending reminder messages immediately from WhatsApp queue and automation notifications
+    const purged = await purgePendingCustomerReminders(db, {
+      phone: cleanPhone || undefined,
+      customerId: customerId ? Number(customerId) : undefined,
+      refillIds: explicitRefillIds.length > 0 ? explicitRefillIds : undefined,
+      specialOrderIds: explicitSoIds.length > 0 ? explicitSoIds : undefined
+    });
+
+    // 4. Broadcast live events so UI updates immediately
+    try {
+      if (explicitRefillIds.length > 0 || customerId || phoneQuery) {
+        eventService.broadcast('refill_updated', { at: Date.now(), counter_session: true });
+        eventService.broadcast('app-refills-updated', { at: Date.now() });
+      }
+      if (explicitSoIds.length > 0 || customerId || phoneQuery) {
+        eventService.broadcast('order_updated', { at: Date.now(), counter_session: true });
+        eventService.broadcast('refresh-special-orders', { at: Date.now() });
+      }
+      whatsappQueueWorker.triggerProcessing();
+      whatsappQueueWorker.broadcastQueueState(true);
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      purged,
+      message: 'Counter session active: auto-remind disabled and pending reminders purged.'
+    });
+  } catch (err: any) {
+    console.error('[Sales] Counter session error:', err);
+    res.status(500).json({ error: err?.message || 'Internal server error' });
   }
 });
 
@@ -644,6 +754,79 @@ router.post('/', async (req, res) => {
         // Mark staged message as sent precisely
         await cleanupStagedRefillNotifications(db, [refill.id], 'sent_manually');
       }
+
+      // Purge pending reminders from WhatsApp queue & automation notifications
+      await purgePendingCustomerReminders(db, {
+        phone: patient_phone,
+        refillIds: matchingRefills.map(r => r.id),
+        customerId
+      });
+    }
+
+    // Resolve Special Orders if this sale matches an explicit special_order_id or customer items
+    try {
+      const explicitSoId = req.body.special_order_id ? Number(req.body.special_order_id) : null;
+      const explicitSoIds: number[] = [];
+      if (explicitSoId && !isNaN(explicitSoId) && explicitSoId > 0) explicitSoIds.push(explicitSoId);
+      if (Array.isArray(req.body.special_order_ids)) {
+        explicitSoIds.push(...req.body.special_order_ids.map(Number).filter((n: number) => !isNaN(n) && n > 0));
+      }
+
+      let candidateSpecialOrders: any[] = [];
+      if (explicitSoIds.length > 0) {
+        const placeholders = explicitSoIds.map(() => '?').join(',');
+        candidateSpecialOrders = await db.all(
+          `SELECT * FROM special_orders WHERE id IN (${placeholders}) AND status NOT IN ('Fulfilled', 'Cancelled')`,
+          explicitSoIds
+        );
+      } else if (cleanPhone.length >= 10 || customerId) {
+        candidateSpecialOrders = await db.all(
+          `SELECT * FROM special_orders 
+           WHERE status IN ('Pending', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Arrived', 'Waiting', 'Confirmed')
+             AND (customer_id = ? OR (phone IS NOT NULL AND length(phone) >= 10 AND replace(phone, ' ', '') LIKE ?))`,
+          [customerId || -1, phoneQuery]
+        );
+      }
+
+      if (Array.isArray(candidateSpecialOrders) && candidateSpecialOrders.length > 0) {
+        const soldProductNames = items.map((it: any) => String(it.medicine_name || it.name || '').trim().toLowerCase()).filter(Boolean);
+        const fulfilledSoIds: number[] = [];
+
+        for (const so of candidateSpecialOrders) {
+          const isExplicit = explicitSoIds.includes(so.id);
+          const soProdName = String(so.product || '').trim().toLowerCase();
+          const isProductSold = isExplicit || soldProductNames.some(sp => sp.includes(soProdName) || soProdName.includes(sp));
+
+          if (isProductSold) {
+            await db.run(
+              `UPDATE special_orders 
+               SET status = 'Fulfilled',
+                   notified = 1,
+                   auto_remind = 0,
+                   last_collection_reminder_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+              [so.id]
+            );
+            fulfilledSoIds.push(so.id);
+          }
+        }
+
+        if (fulfilledSoIds.length > 0) {
+          await purgePendingCustomerReminders(db, {
+            phone: patient_phone,
+            specialOrderIds: fulfilledSoIds,
+            customerId
+          });
+
+          for (const soId of fulfilledSoIds) {
+            eventService.broadcast('order_updated', { at: Date.now(), orderId: soId, action: 'fulfilled_pos' });
+            eventService.broadcast('special_orders_updated', { at: Date.now(), orderId: soId });
+          }
+        }
+      }
+    } catch (soErr) {
+      console.warn('[Sales] Special orders resolution warning on POS sale:', soErr);
     }
     // Commit transaction
     await db.run('COMMIT');

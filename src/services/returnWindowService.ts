@@ -133,6 +133,7 @@ export class ReturnWindowService {
       `UPDATE special_orders
        SET delivery_status = 'delivered',
            status = 'Delivered',
+           auto_remind = 0,
            delivered_at = ?,
            return_window_until = ?,
            return_status = 'eligible',

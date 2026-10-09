@@ -1475,6 +1475,15 @@ const POS = () => {
         setDiscount((prev: number) => prev + Number(advancePayment));
       }
 
+      // Customer entered POS: auto-remind disabled and pending reminders purged immediately
+      api.notifyCounterSession({
+        phone: phone || '',
+        customerId: prefCustId || prefCId ? Number(prefCustId || prefCId) : null,
+        refillId: refillId ? Number(refillId) : null,
+        refillIds: Array.isArray(prefill.refillIds) ? prefill.refillIds.map(Number).filter(Boolean) : undefined,
+        specialOrderId: prefill.specialOrderId ? Number(prefill.specialOrderId) : null
+      });
+
       const fetchAndAdd = async () => {
         try {
           const rawMedsList = Array.isArray(prefill.medicines) && prefill.medicines.length > 0
@@ -4241,6 +4250,7 @@ const POS = () => {
                           updatePatientName(sel.name);
                           setPatientPhone(sel.phone || '');
                           setSelectedCustomerId(sel.id);
+                          api.notifyCounterSession({ customerId: sel.id, phone: sel.phone || '' });
                         }
                         setShowPatientSuggestions(false);
                         setPatientHighlightIndex(-1);
@@ -4294,6 +4304,7 @@ const POS = () => {
                               setPatientSuggestions([]);
                               setShowPatientSuggestions(false);
                               setPatientHighlightIndex(-1);
+                              api.notifyCounterSession({ customerId: c.id, phone: c.phone || '' });
                             }}
                             className={`w-full text-left px-3 py-2 text-sm border-b border-border/10 transition-all flex items-center justify-between gap-2 ${
                               idx === patientHighlightIndex

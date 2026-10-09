@@ -1194,6 +1194,14 @@ export const api = {
   searchMedicine: (q: string) => apiClient.get('/sales/search-medicine', { params: { q: (q || '').trim().replace(/\s+/g, ' ') } }).then(res => res.data),
   getMedicineRefillInfo: (medicineId: number) => apiClient.get(`/sales/medicine-refill-info/${medicineId}`).then(res => res.data),
   getPatientRefillMedicines: (params: { customerId?: number; phone?: string; name?: string }) => apiClient.get('/sales/patient-refill-medicines', { params }).then(res => res.data),
+  notifyCounterSession: (data: {
+    phone?: string;
+    customerId?: number | null;
+    refillId?: number | null;
+    refillIds?: number[];
+    specialOrderId?: number | null;
+    specialOrderIds?: number[];
+  }) => apiClient.post('/sales/counter-session', data).then(res => res.data).catch(() => ({})),
   
   // Verification Layer APIs
   verifyHealth: () => apiClient.get('/verification/health').then(res => res.data),
@@ -1456,6 +1464,7 @@ export const api = {
     storeName?: string;
     packaging?: string;
     mapped?: boolean;
+    medicineId?: number;
   }>) => 
     apiClient.post('/pharmarack/cart/add', { items }).then(res => res.data),
   deletePharmarackCartItem: (data: {
@@ -2024,6 +2033,9 @@ export const api = {
   // Pharmarack Reorder Recent API
   getPharmarackReorderRecent: (months?: number) =>
     apiClient.get<{ success: boolean; items: ReorderRecentItem[] }>('/pharmarack/reorder-recent', { params: months ? { months } : {} }).then(res => res.data),
+
+  getPurchaseReorderHistory: (params?: { months?: number; distributor_id?: number; store_id?: number; q?: string; limit?: number }) =>
+    apiClient.get<{ success: boolean; items: ReorderRecentItem[] }>('/pharmarack/purchase-reorder-history', { params: params || {} }).then(res => res.data),
 
   getPharmarackOrderById: (orderId: number | string) =>
     apiClient.get<{ success: boolean; order: any }>(`/pharmarack/order-by-id/${orderId}`).then(res => res.data),

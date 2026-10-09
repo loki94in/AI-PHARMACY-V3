@@ -552,6 +552,10 @@ export const SpecialOrdersSection: React.FC = () => {
       advancePayment: order.advance_payment ? Number(order.advance_payment) : 0,
       medicines: [{ medicineName: order.product, quantity_needed: order.qty }]
     };
+    api.notifyCounterSession({
+      phone: order.phone || '',
+      specialOrderId: order.id
+    });
     toastEvent.trigger(`Transferring "${order.product}" (Qty: ${order.qty}) to POS for ${order.requester}...`, 'info', '/pos');
     navigate('/pos', { state: { prefill } });
   };

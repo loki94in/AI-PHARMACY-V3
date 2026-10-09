@@ -249,6 +249,7 @@ export interface ReorderRecentItem {
   productCode?: string;
   productId?: number;
   ptr?: number;
+  lastRate?: number;
   mrp?: number;
   packaging?: string;
   receiptStatus?: 'RECEIVED' | 'PENDING_INWARD';
@@ -261,4 +262,10 @@ export interface ReorderRecentItem {
     availability: number;
     ptr: number;
   } | null;
+  billCount?: number;
+  medicineId?: number;
+  manufacturer?: string;
+  mapped?: boolean;
+  availability?: number;
+  distributorId?: number | null;
 }

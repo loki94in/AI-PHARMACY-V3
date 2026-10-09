@@ -3,7 +3,7 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
 // import { fileURLToPath } from 'url';
-import { checkAllRefills, cleanupStagedRefillNotifications, isFirstContactOrUnconfirmed } from '../services/refillService.js';
+import { checkAllRefills, cleanupStagedRefillNotifications, purgePendingCustomerReminders, isFirstContactOrUnconfirmed } from '../services/refillService.js';
 import { firstContactLanguageBanner } from '../services/languageDetector.js';
 import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 export { isFirstContactOrUnconfirmed };
@@ -1324,13 +1324,21 @@ router.post('/:id/fulfill', async (req, res) => {
            reminder_status = 'NOT_SENT',
            reminder_sent_at = NULL,
            reminder_job_id = NULL,
-           reminder_occurrence_date = NULL
+           reminder_occurrence_date = NULL,
+           auto_remind = 0,
+           last_collection_reminder_at = NULL,
+           collection_reminder_count = 0
        WHERE id = ?`,
       [nextDateStr, id]
     );
 
-    // 3. Update staged notification to completed precisely
-    await cleanupStagedRefillNotifications(db, [Number(id)], 'sent_manually');
+    // 3. Purge pending WhatsApp queue items and update staged notifications
+    await purgePendingCustomerReminders(db, {
+      phone: refill.patient_phone,
+      refillIds: [Number(id)],
+      customerId: refill.customer_id,
+      medicineNames: refill.medicine_name ? [refill.medicine_name] : undefined
+    });
 
     // Re-run checking engine to process the next cycle or sibling refills
     await checkAllRefills(db);
@@ -1431,7 +1439,10 @@ router.post('/patient/:phone/fulfill-all', async (req, res) => {
              reminder_status = 'NOT_SENT',
              reminder_sent_at = NULL,
              reminder_job_id = NULL,
-             reminder_occurrence_date = NULL
+             reminder_occurrence_date = NULL,
+             auto_remind = 0,
+             last_collection_reminder_at = NULL,
+             collection_reminder_count = 0
          WHERE id = ?`,
         [nextDateStr, refill.id]
       );
@@ -1440,8 +1451,12 @@ router.post('/patient/:phone/fulfill-all', async (req, res) => {
       fulfilledIds.push(refill.id);
     }
 
-    // Clean up staged notifications precisely
-    await cleanupStagedRefillNotifications(db, fulfilledIds, 'sent_manually');
+    // Purge pending WhatsApp queue items and clean up staged notifications
+    await purgePendingCustomerReminders(db, {
+      phone,
+      refillIds: fulfilledIds,
+      customerId
+    });
 
     await checkAllRefills(db);
 
@@ -1555,13 +1570,21 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
              reminder_status = 'NOT_SENT',
              reminder_sent_at = NULL,
              reminder_job_id = NULL,
-             reminder_occurrence_date = NULL
+             reminder_occurrence_date = NULL,
+             auto_remind = 0,
+             last_collection_reminder_at = NULL,
+             collection_reminder_count = 0
          WHERE id = ?`,
         [nextDateStr, id]
       );
 
-      // Clean up staged notification for this refill precisely
-      await cleanupStagedRefillNotifications(db, [Number(id)], 'sent_manually');
+      // Purge pending WhatsApp queue items and clean up staged notifications
+      await purgePendingCustomerReminders(db, {
+        phone: refill.patient_phone,
+        refillIds: [Number(id)],
+        customerId: refill.customer_id,
+        medicineNames: [medName]
+      });
 
       await checkAllRefills(db);
       return res.json({ success: true, message: 'Refill completed and advanced to next cycle', next_refill_date: nextDateStr });
@@ -1577,11 +1600,16 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
     } else if (normalizedStatus === 'canceled' || normalizedStatus === 'cancelled') {
       await db.run(
         `UPDATE patient_refills
-         SET status = 'canceled', is_active = 0, is_ready = 0, hold_for_stock = 0
+         SET status = 'canceled', is_active = 0, is_ready = 0, hold_for_stock = 0, auto_remind = 0,
+             last_collection_reminder_at = NULL, collection_reminder_count = 0
          WHERE id = ?`,
         [id]
       );
-      await cleanupStagedRefillNotifications(db, [Number(id)], 'cancelled');
+      await purgePendingCustomerReminders(db, {
+        phone: refill.patient_phone,
+        refillIds: [Number(id)],
+        customerId: refill.customer_id
+      });
       removeRefillCartLines([refill], true);
       return res.json({ success: true, message: 'Refill cancelled' });
     } else if (normalizedStatus === 'ordered') {
@@ -2395,6 +2423,16 @@ router.post('/:id/auto-remind', async (req, res) => {
       'UPDATE patient_refills SET auto_remind = ? WHERE id = ?',
       [val, id]
     );
+    if (val === 0) {
+      const refill = await db.get('SELECT patient_phone, customer_id, medicine_id FROM patient_refills WHERE id = ?', [id]);
+      if (refill) {
+        await purgePendingCustomerReminders(db, {
+          phone: refill.patient_phone,
+          refillIds: [Number(id)],
+          customerId: refill.customer_id
+        });
+      }
+    }
     eventService.broadcast('refill_updated', { at: Date.now(), refillId: Number(id), auto_remind: val });
     res.json({ success: true, id: Number(id), auto_remind: val });
   } catch (err: any) {
@@ -2419,6 +2457,11 @@ router.post('/patient/:phone/auto-remind', async (req, res) => {
        WHERE is_active = 1 AND (patient_phone LIKE ? OR patient_phone LIKE ?)`,
       [val, `%${cleanPhone}`, `%${cleanPhone}%`]
     );
+    if (val === 0) {
+      await purgePendingCustomerReminders(db, {
+        phone: cleanPhone
+      });
+    }
     eventService.broadcast('refill_updated', { at: Date.now(), phone: cleanPhone, auto_remind: val });
     res.json({ success: true, phone: cleanPhone, auto_remind: val });
   } catch (err: any) {
@@ -2574,7 +2617,13 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
       ).catch(() => {});
     }
 
+    // Clear any live cart lines since the item is now ready in store
+    removeRefillCartLines(refills, true);
+
     eventService.broadcast('refill_updated', { at: Date.now(), patient_phone: cleanPhone, is_ready: 1 });
+    eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+    eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+    eventService.broadcast('app-refills-updated', { at: Date.now() });
 
     res.json({
       success: true,
@@ -2678,7 +2727,13 @@ router.post('/:id/mark-ready', async (req, res) => {
       [id]
     );
 
+    // Clear any live cart lines since the item is now ready in store
+    removeRefillCartLines([refill], true);
+
     eventService.broadcast('refill_updated', { at: Date.now(), refill_id: id, is_ready: 1 });
+    eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+    eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+    eventService.broadcast('app-refills-updated', { at: Date.now() });
 
     res.json({
       success: true,

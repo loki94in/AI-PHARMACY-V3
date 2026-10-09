@@ -14,6 +14,7 @@ import { resolveStoreId } from '../services/storeContextService.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
+import { purgePendingCustomerReminders } from '../services/refillService.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 
@@ -1279,7 +1280,7 @@ async function cancelPendingWhatsAppForOrder(
       await db.run(
         `DELETE FROM whatsapp_send_queue 
          WHERE status IN ('pending', 'failed_offline') 
-           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'admin_shortage_reminder', 'whatsapp_notification')
+           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'order_ready', 'refill_collection', 'admin_shortage_reminder', 'whatsapp_notification')
            AND (${matchConditions.join(' OR ')})`,
         matchArgs
       );
@@ -1436,14 +1437,20 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    if (newStatus === 'Cancelled') {
+    if (newStatus === 'Cancelled' || newStatus === 'Fulfilled') {
       await cancelPendingWhatsAppForOrder(db, {
         id,
         phone: newPhone || existing.phone,
         requester: newRequester || existing.requester,
         product: newProduct || existing.product
       });
-    } else if (newStatus === 'Fulfilled') {
+      await purgePendingCustomerReminders(db, {
+        phone: newPhone || existing.phone,
+        specialOrderIds: [Number(id)],
+        medicineNames: [newProduct || existing.product].filter(Boolean) as string[]
+      });
+    }
+    if (newStatus === 'Fulfilled') {
       await db.run(
         `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -1503,7 +1510,7 @@ router.put('/:id', async (req, res) => {
     }
 
     let cartAdjustment: any = null;
-    if (newStatus === 'Cancelled') {
+    if (newStatus === 'Cancelled' || newStatus === 'Ready') {
       try {
         const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
         cartAdjustment = await Promise.race([
@@ -1516,8 +1523,11 @@ router.put('/:id', async (req, res) => {
           }),
           new Promise(r => setTimeout(() => r(null), 1500))
         ]);
+        eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
+        eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+        eventService.broadcast('refresh-special-orders', { at: Date.now(), id: Number(id) });
       } catch (cartErr) {
-        console.warn('[Orders] Could not auto-adjust live cart on order cancel:', cartErr);
+        console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
       }
     }
 
@@ -1576,9 +1586,15 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
       [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
     );
 
-    if (status === 'Cancelled') {
+    if (status === 'Cancelled' || status === 'Fulfilled') {
       await cancelPendingWhatsAppForOrder(db, existing);
-    } else if (status === 'Fulfilled') {
+      await purgePendingCustomerReminders(db, {
+        phone: existing.phone,
+        specialOrderIds: [Number(id)],
+        medicineNames: existing.product ? [existing.product] : undefined
+      });
+    }
+    if (status === 'Fulfilled') {
       await db.run(
         `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -1589,7 +1605,7 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
     }
 
     let cartAdjustment: any = null;
-    if (status === 'Cancelled') {
+    if (status === 'Cancelled' || status === 'Ready') {
       try {
         const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
         cartAdjustment = await Promise.race([
@@ -1602,8 +1618,11 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
           }),
           new Promise(r => setTimeout(() => r(null), 1500))
         ]);
+        eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
+        eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+        eventService.broadcast('refresh-special-orders', { at: Date.now(), id: Number(id) });
       } catch (cartErr) {
-        console.warn('[Orders] Could not auto-adjust live cart on order status Cancelled:', cartErr);
+        console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
       }
     }
 
@@ -1626,6 +1645,17 @@ router.post('/:id/auto-remind', async (req, res) => {
     const db = await dbManager.getConnection();
     const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
     await db.run('UPDATE special_orders SET auto_remind = ? WHERE id = ?', [val, id]);
+    if (val === 0) {
+      const order = await db.get('SELECT phone, product FROM special_orders WHERE id = ?', [id]);
+      if (order) {
+        await cancelPendingWhatsAppForOrder(db, { id, phone: order.phone, product: order.product });
+        await purgePendingCustomerReminders(db, {
+          phone: order.phone,
+          specialOrderIds: [Number(id)],
+          medicineNames: order.product ? [order.product] : undefined
+        });
+      }
+    }
     broadcastOrdersChanged({ action: 'auto_remind', orderId: Number(id), patch: { auto_remind: val } });
     res.json({ success: true, id: Number(id), auto_remind: val });
   } catch (err: any) {
@@ -1994,6 +2024,16 @@ router.post('/:id/mark-delivered', async (req, res) => {
     if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
 
     const returnStatus = await returnWindowService.markDelivered(orderId);
+    const db = await dbManager.getConnection();
+    const existing = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (existing) {
+      await cancelPendingWhatsAppForOrder(db, existing);
+      await purgePendingCustomerReminders(db, {
+        phone: existing.phone,
+        specialOrderIds: [orderId],
+        medicineNames: existing.product ? [existing.product] : undefined
+      });
+    }
     broadcastOrdersChanged();
     res.json({ success: true, message: 'Order marked as delivered', return_status: returnStatus });
   } catch (err: any) {

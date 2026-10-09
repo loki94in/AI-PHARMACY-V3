@@ -375,6 +375,10 @@ export const QuickAssistSidebar = memo(({
         if (opts?.navigateToPos) {
           const sourceOrders = (Array.isArray(specialOrders) ? specialOrders : []).filter((s) => itemIds.includes(s.id));
           const totalAdvance = sourceOrders.reduce((sum: number, s) => sum + (Number(s.advance_payment) || 0), 0);
+          api.notifyCounterSession({
+            phone: group.phone || '',
+            specialOrderId: group.items[0]?.id
+          });
           toastEvent.trigger(`Opening POS to bill "${group.requester}"...`, 'info', '/pos');
           setExpanded(false);
           navigate('/pos', {
@@ -1228,6 +1232,10 @@ export const QuickAssistSidebar = memo(({
                           const isMarkingReady = markingReadyRefillPhones.has(group.patient_phone);
                           const openPos = (e: React.MouseEvent) => {
                             e.stopPropagation();
+                            api.notifyCounterSession({
+                              phone: group.patient_phone || '',
+                              refillIds: group.medicines.map(m => m.id)
+                            });
                             toastEvent.trigger(`Opening POS to bill refills for "${group.patient_name}"...`, 'info', '/pos');
                             setExpanded(false);
                             navigate('/pos', {

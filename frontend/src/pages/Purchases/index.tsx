@@ -26,7 +26,7 @@ import { isValidDistributorName } from '../../utils/distributorValidator';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
 import { createRecentSearchCache, normalizeSearchKey } from '../../utils/recentSearchCache';
 import { useModalEscape } from '../../services/keyboardShortcuts';
-import { DistributorModal, OpenFDADrawer } from '../../components/Purchases';
+import { DistributorModal, OpenFDADrawer, OldMedicineQuickAddBox } from '../../components/Purchases';
 
 /* eslint-disable react-hooks/refs -- conditional JSX ref assignment is standard React pattern */
 
@@ -2485,6 +2485,70 @@ const Purchases: React.FC = () => {
     return shortfalls.length > 0 ? shortfalls.join(' · ') : null;
   }, [selectedDistributorObj, items, memoizedTotals]);
 
+  // Auto-enable old medicine history picker when distributor minimum order requirement flag appears
+  const hasAutoPromptedDistributorRef = useRef<Record<number, boolean>>({});
+  useEffect(() => {
+    if (selectedDistributor && minOrderWarning) {
+      if (!hasAutoPromptedDistributorRef.current[selectedDistributor]) {
+        hasAutoPromptedDistributorRef.current[selectedDistributor] = true;
+        setShowHistoryPicker(true);
+      }
+    }
+  }, [selectedDistributor, minOrderWarning]);
+
+  const handleQuickAddOldMedicine = async (med: {
+    id: number;
+    name: string;
+    manufacturer?: string;
+    rate?: number | string | null;
+    mrp?: number | string | null;
+    batch_no?: string | null;
+    expiry_date?: string | null;
+    cgst_per?: number | null;
+    sgst_per?: number | null;
+    hsn_code?: string | null;
+  }) => {
+    let lastPurchaseInfo: (BatchLastPurchaseResult & { hsn_code?: string }) | undefined;
+    if (selectedDistributor) {
+      try {
+        const res = await api.batchLastPurchase([{ name: med.name }], selectedDistributor);
+        if (Array.isArray(res) && res.length > 0 && res[0].found) {
+          lastPurchaseInfo = res[0];
+        }
+      } catch (_) {}
+    }
+
+    const newRow: BillItem = {
+      ...createEmptyItem(),
+      medicine_id: med.id,
+      medicine_name: med.name,
+      name: med.name,
+      manufacturer: med.manufacturer || '',
+      rate: lastPurchaseInfo?.cost_price ?? med.rate ?? '',
+      mrp: lastPurchaseInfo?.mrp ?? med.mrp ?? '',
+      batch_no: lastPurchaseInfo?.batch_no ?? med.batch_no ?? '',
+      expiry_date: lastPurchaseInfo?.expiry_date ?? med.expiry_date ?? '',
+      cgst_per: (lastPurchaseInfo?.cgst_per !== undefined && lastPurchaseInfo.cgst_per !== null) ? lastPurchaseInfo.cgst_per : (med.cgst_per ?? ''),
+      sgst_per: (lastPurchaseInfo?.sgst_per !== undefined && lastPurchaseInfo.sgst_per !== null) ? lastPurchaseInfo.sgst_per : (med.sgst_per ?? ''),
+      hsn_code: lastPurchaseInfo?.hsn_code ?? med.hsn_code ?? '',
+    };
+    newRow.amount = calculateItemAmount(newRow);
+
+    let targetRowIdx = items.length;
+    setItems(prev => {
+      const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
+      targetRowIdx = kept.length;
+      return [...kept, newRow, createEmptyItem()];
+    });
+
+    toastEvent.trigger(`Added ${med.name} to bill`, 'success', '/purchases');
+
+    // Automatically focus the new row's Qty field so the cashier can immediately input quantity
+    setTimeout(() => {
+      focusRowField(targetRowIdx, 'qty');
+    }, 80);
+  };
+
   type PrevalidatedBill = {
     distIdToSave: number | null;
     distNameToSave: string;
@@ -3719,6 +3783,27 @@ const Purchases: React.FC = () => {
 
       {/* Items Table */}
       <div className="p-4 pt-3 flex-1 flex flex-col min-h-0">
+        {/* Dedicated Old Medicine Quick-Add Box */}
+        <OldMedicineQuickAddBox
+          selectedDistributor={selectedDistributor}
+          selectedDistributorName={selectedDistributorObj?.name || selectedDistributorObj?.distributor_name || distributorSearch}
+          minOrderWarning={minOrderWarning}
+          minItemsRequired={Math.floor(Number(selectedDistributorObj?.min_order_items)) || 0}
+          currentValidCount={items.filter(item => {
+            const qtyVal = item.qty !== undefined ? item.qty : item.quantity;
+            return (parseFloat(String(qtyVal || 0)) || 0) > 0;
+          }).length}
+          existingMedicineIds={new Set(items.map(i => i.medicine_id).filter(Boolean) as number[])}
+          onQuickAdd={handleQuickAddOldMedicine}
+          onOpenHistoryPicker={() => {
+            if (!selectedDistributor) {
+              toastEvent.trigger('Select a distributor first to view its past orders.', 'error', '/purchases');
+              return;
+            }
+            setShowHistoryPicker(true);
+          }}
+        />
+
         <div className="flex-1 overflow-auto">
           {(() => {
             const hasOriginalName = items.some(i => Boolean(i.original_name && i.original_name.trim() !== ''));
@@ -4608,12 +4693,16 @@ const Purchases: React.FC = () => {
               </div>
             )}
             {minOrderWarning && (
-              <div
-                className="flex items-center gap-1.5 text-sm font-semibold text-amber-500 bg-amber-500/10 px-3 py-2 rounded-xl border border-amber-500/30 shadow-sm"
-                title={`Minimum order for ${selectedDistributorObj?.name || 'this distributor'} not met — add more items or value before sending the order`}
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedDistributor) setShowHistoryPicker(true);
+                }}
+                className="flex items-center gap-1.5 text-sm font-semibold text-amber-500 bg-amber-500/10 hover:bg-amber-500/20 active:scale-95 px-3 py-2 rounded-xl border border-amber-500/30 shadow-sm transition-all cursor-pointer"
+                title={`Minimum order for ${selectedDistributorObj?.name || 'this distributor'} not met — Click to pick from past orders`}
               >
-                <span>⚠️ Min order: {minOrderWarning}</span>
-              </div>
+                <span>⚠️ Min order: {minOrderWarning} (Click to fulfill)</span>
+              </button>
             )}
             <button
               onClick={savePurchase}
@@ -4675,11 +4764,19 @@ const Purchases: React.FC = () => {
           distributorId={selectedDistributor}
           distributorName={selectedDistributorObj?.name || selectedDistributorObj?.distributor_name || distributorSearch}
           onClose={() => setShowHistoryPicker(false)}
-          onAdd={async (picked) => {
+          minOrderWarning={minOrderWarning}
+          minItemsRequired={Math.floor(Number(selectedDistributorObj?.min_order_items)) || 0}
+          currentValidCount={items.filter(item => {
+            const qtyVal = item.qty !== undefined ? item.qty : item.quantity;
+            return (parseFloat(String(qtyVal || 0)) || 0) > 0;
+          }).length}
+          existingMedicineIds={new Set(items.map(i => i.medicine_id).filter(Boolean) as number[])}
+          onAdd={async (picked, keepOpen = false) => {
             const existingIds = new Set(items.map(i => i.medicine_id).filter(Boolean));
             const fresh = picked.filter(p => !existingIds.has(p.medicine_id));
             if (fresh.length === 0) {
-              setShowHistoryPicker(false);
+              if (!keepOpen) setShowHistoryPicker(false);
+              toastEvent.trigger('Item already in bill', 'info', '/purchases');
               return;
             }
             // ONE batched read-only hydrate: last rate/MRP/batch/expiry/GST from
@@ -4729,7 +4826,14 @@ const Purchases: React.FC = () => {
               const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
               return [...kept, ...rows, createEmptyItem()];
             });
-            setShowHistoryPicker(false);
+            toastEvent.trigger(
+              fresh.length === 1 ? `Added ${fresh[0].medicine_name} to bill` : `Added ${fresh.length} items to bill`,
+              'success',
+              '/purchases'
+            );
+            if (!keepOpen) {
+              setShowHistoryPicker(false);
+            }
           }}
         />
       )}

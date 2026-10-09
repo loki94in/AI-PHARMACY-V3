@@ -1465,6 +1465,91 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
       }
     }
 
+    // Resolve missing productId/storeId from medicine_distributor_links or past orders (pharmarack_placed_orders)
+    const medId = Number(item.medicineId || item.medicine_id || 0);
+    const prodName = (item.productName || item.product || item.name || '').trim();
+    if ((!item.productId || Number(item.productId) === 0 || !item.storeId || Number(item.storeId) === 0)) {
+      try {
+        const db = await dbManager.getConnection();
+        const targetStoreId = Number(item.storeId) || 0;
+        const cleanStoreName = String(item.storeName || '').trim();
+
+        // 1. Check medicine_distributor_links by medicine_id
+        let linkRow: any = null;
+        if (medId > 0) {
+          if (targetStoreId > 0) {
+            linkRow = await db.get(
+              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+               FROM medicine_distributor_links
+               WHERE medicine_id = ? AND store_id = ?
+               ORDER BY pick_order, id LIMIT 1`,
+              [medId, targetStoreId]
+            );
+          } else if (cleanStoreName) {
+            linkRow = await db.get(
+              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+               FROM medicine_distributor_links
+               WHERE medicine_id = ? AND LOWER(store_name) = LOWER(?)
+               ORDER BY pick_order, id LIMIT 1`,
+              [medId, cleanStoreName]
+            );
+          }
+          if (!linkRow) {
+            linkRow = await db.get(
+              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+               FROM medicine_distributor_links
+               WHERE medicine_id = ?
+               ORDER BY pick_order, id LIMIT 1`,
+              [medId]
+            );
+          }
+        }
+
+        if (linkRow) {
+          if (!item.storeId || Number(item.storeId) === 0) item.storeId = Number(linkRow.store_id || 0);
+          if (!item.storeName && linkRow.store_name) item.storeName = linkRow.store_name;
+          if (linkRow.product_id) item.productId = Number(linkRow.product_id);
+          if (linkRow.product_code) item.productCode = linkRow.product_code;
+          if (linkRow.product_name) item.productName = linkRow.product_name;
+          if (linkRow.packaging && !item.packaging) item.packaging = linkRow.packaging;
+          if (linkRow.company && !item.company) item.company = linkRow.company;
+          if (linkRow.mapped !== undefined && item.mapped === undefined) item.mapped = Boolean(linkRow.mapped);
+        }
+
+        // 2. Check pharmarack_placed_orders for previous orders of this medicine
+        if ((!item.productId || Number(item.productId) === 0) && prodName) {
+          const poRows = await db.all(
+            `SELECT store_id, store_name, items_json
+             FROM pharmarack_placed_orders
+             WHERE (${targetStoreId > 0 ? 'store_id = ? OR ' : ''} items_json LIKE ?)
+             ORDER BY id DESC LIMIT 5`,
+            targetStoreId > 0 ? [targetStoreId, `%${prodName}%`] : [`%${prodName}%`]
+          );
+          for (const poRow of poRows) {
+            try {
+              const lines = JSON.parse(poRow.items_json || '[]');
+              const matchedLine = lines.find((l: any) => {
+                const ln = String(l.productName || l.product || l.name || '').toLowerCase();
+                return ln.includes(prodName.toLowerCase()) || prodName.toLowerCase().includes(ln);
+              });
+              if (matchedLine && (matchedLine.productId || matchedLine.product_id)) {
+                if (!item.storeId || Number(item.storeId) === 0) item.storeId = Number(poRow.store_id || 0);
+                if (!item.storeName && poRow.store_name) item.storeName = poRow.store_name;
+                item.productId = Number(matchedLine.productId || matchedLine.product_id || 0);
+                item.productCode = matchedLine.productCode || matchedLine.product_code || item.productCode || '';
+                if (matchedLine.productName) item.productName = matchedLine.productName;
+                if (matchedLine.rate && !item.rate) item.rate = Number(matchedLine.rate);
+                if (matchedLine.mrp && !item.mrp) item.mrp = Number(matchedLine.mrp);
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (linkErr) {
+        console.warn('Failed to resolve IDs from links/orders:', linkErr);
+      }
+    }
+
     // Resolve missing productId/storeId from special_orders if previously locked by user/bot
     if ((!item.productId || Number(item.productId) === 0 || !item.storeId || Number(item.storeId) === 0)) {
       try {
@@ -1682,7 +1767,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         RateValidity: null,
         IsShowNonMappedOrderStock: 1,
         RStockVisibility: 0,
-        IsMapped: (item.mapped === false || item.isMapped === false) ? 0 : 1,
+        IsMapped: (item.mapped === false || item.isMapped === false || !item.productId || Number(item.productId) === 0) ? 0 : 1,
         ProductId: (() => { const v = item.productId; if (!v) return 0; const n = Number(v); if (!isNaN(n) && n > 0) return n; const stripped = String(v).replace(/^PR/i, ''); const sn = Number(stripped); return (!isNaN(sn) && sn > 0) ? sn : 0; })(),
         MRP: String(item.mrp || 0),
         ProductWiseAmount: 0,
@@ -3304,6 +3389,186 @@ router.get('/reorder-recent', async (req, res) => {
   } catch (err: any) {
     console.error('Error fetching recently reordered medicines:', err);
     res.status(500).json({ error: 'Failed to fetch recently reordered medicines: ' + err.message });
+  }
+});
+
+/**
+ * GET /api/pharmarack/purchase-reorder-history
+ * Query params:
+ *   ?months=3|6|12 (default 6)
+ *   ?distributor_id=NUMBER (optional filter by local distributor_id)
+ *   ?store_id=NUMBER (optional filter by Pharmarack store_id)
+ *   ?q=STRING (optional medicine name filter)
+ *   ?limit=NUMBER (default 100, max 300)
+ * Returns real purchase bill history from purchase_items & purchases,
+ * aggregated by medicine and distributor, enriched with distributor_catalog mappings.
+ */
+router.get('/purchase-reorder-history', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rawMonths = parseInt(req.query.months as string, 10);
+    const months = Number.isFinite(rawMonths) ? Math.min(24, Math.max(1, rawMonths)) : 6;
+    const days = months * 30;
+    const distributorId = parseInt(req.query.distributor_id as string, 10) || null;
+    const storeId = parseInt(req.query.store_id as string, 10) || null;
+    const q = String(req.query.q || '').trim().replace(/\s+/g, ' ');
+    const rawLimit = parseInt(req.query.limit as string, 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(1000, Math.max(1, rawLimit)) : 200;
+
+    // Shop-local cutoff date (purchases.date is shop local time — never toISOString/UTC here)
+    const d = new Date(Date.now() - days * 86400000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const cutoff = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+    // If storeId is provided, look up associated local distributor_id via pharmarack_distributor_mappings
+    let resolvedDistributorId = distributorId;
+    if (!resolvedDistributorId && storeId) {
+      const mapping = await db.get(
+        `SELECT distributor_id FROM pharmarack_distributor_mappings WHERE store_id = ?`,
+        [storeId]
+      );
+      if (mapping?.distributor_id) {
+        resolvedDistributorId = mapping.distributor_id;
+      }
+    }
+
+    const whereClauses: string[] = ['p.date >= ?'];
+    const params: any[] = [cutoff];
+
+    if (resolvedDistributorId) {
+      whereClauses.push('p.distributor_id = ?');
+      params.push(resolvedDistributorId);
+    }
+    const whereSql = whereClauses.join(' AND ');
+
+    const likeParams: any[] = [];
+    let medFilterSql = '';
+    if (q.length >= 2) {
+      medFilterSql = 'WHERE m.name LIKE ?';
+      likeParams.push(`%${q}%`);
+    }
+
+    const rows = await db.all(
+      `SELECT m.id AS medicine_id, m.name AS medicine_name, m.manufacturer AS manufacturer,
+              a.bill_count, a.total_qty, a.last_date,
+              d.id AS distributor_id, d.name AS distributor_name,
+              l.cost_price AS last_rate, l.mrp AS last_mrp, l.batch_no AS last_batch,
+              l.expiry_date AS last_expiry, l.cgst_per AS last_cgst, l.sgst_per AS last_sgst,
+              l.hsn_code AS last_hsn, l.quantity AS last_qty
+       FROM (
+         SELECT pi.medicine_id AS mid, p.distributor_id AS did,
+                COUNT(DISTINCT p.id) AS bill_count,
+                SUM(pi.quantity) AS total_qty, MAX(p.date) AS last_date,
+                ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY COUNT(DISTINCT p.id) DESC, MAX(p.date) DESC) AS rank_in_dist
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE ${whereSql}
+         GROUP BY pi.medicine_id, p.distributor_id
+       ) a
+       JOIN (
+         SELECT pi.medicine_id AS mid2, p.distributor_id AS did2,
+                pi.cost_price, pi.mrp, pi.batch_no, pi.expiry_date,
+                pi.cgst_per, pi.sgst_per, pi.hsn_code, pi.quantity,
+                ROW_NUMBER() OVER (PARTITION BY pi.medicine_id, p.distributor_id ORDER BY p.date DESC, pi.id DESC) AS rn
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE ${whereSql}
+       ) l ON l.mid2 = a.mid AND l.did2 = a.did AND l.rn = 1
+       JOIN medicines m ON m.id = a.mid
+       LEFT JOIN distributors d ON d.id = a.did
+       WHERE a.rank_in_dist <= 15
+       ${medFilterSql ? `AND ${medFilterSql.replace(/^WHERE /, '')}` : ''}
+       ORDER BY a.bill_count DESC, a.last_date DESC
+       LIMIT ?`,
+      [...params, ...params, ...likeParams, limit]
+    );
+
+    // Map rows and enrich with distributor_catalog or mappings
+    const enriched = await Promise.all(
+      rows.map(async (r: any) => {
+        let matchedStoreId: number | null = storeId;
+        let matchedStoreName = r.distributor_name || '';
+        let matchedProductCode = '';
+        let matchedProductId = 0;
+        let isMapped = false;
+        let avail = 0;
+
+        // 1. Resolve store mapping from pharmarack_distributor_mappings
+        if (!matchedStoreId && r.distributor_id) {
+          const mapRow = await db.get(
+            `SELECT store_id, store_name FROM pharmarack_distributor_mappings 
+             WHERE distributor_id = ? AND store_id IS NOT NULL AND store_id > 0
+             LIMIT 1`,
+            [r.distributor_id]
+          );
+          if (mapRow?.store_id) {
+            matchedStoreId = Number(mapRow.store_id);
+            if (mapRow.store_name) matchedStoreName = mapRow.store_name;
+          }
+        }
+
+        // 2. Resolve store mapping from medicine_distributor_links
+        if (!matchedStoreId && r.medicine_id) {
+          const linkRow = await db.get(
+            `SELECT store_id, store_name, product_code, product_id, packaging, company
+             FROM medicine_distributor_links 
+             WHERE medicine_id = ? AND store_id IS NOT NULL AND store_id > 0
+             ORDER BY pick_order, id LIMIT 1`,
+            [r.medicine_id]
+          );
+          if (linkRow?.store_id) {
+            matchedStoreId = Number(linkRow.store_id);
+            if (linkRow.store_name) matchedStoreName = linkRow.store_name;
+            if (linkRow.product_id) matchedProductId = Number(linkRow.product_id);
+            if (linkRow.product_code) matchedProductCode = linkRow.product_code;
+            if (matchedProductId && matchedProductCode) isMapped = true;
+          }
+        }
+
+        // 3. Try to find catalog mapping for this medicine
+        const catRow = await db.get(
+          `SELECT store_id, store_name, CAST(availability AS INTEGER) as avail, distributor_price
+           FROM distributor_catalog
+           WHERE product_name LIKE ?
+             ${matchedStoreId ? 'AND store_id = ?' : ''}
+           ORDER BY CAST(availability AS INTEGER) DESC
+           LIMIT 1`,
+          matchedStoreId ? [`${r.medicine_name}%`, matchedStoreId] : [`${r.medicine_name}%`]
+        );
+
+        if (catRow) {
+          if (!matchedStoreId && catRow.store_id) matchedStoreId = Number(catRow.store_id);
+          if (catRow.store_name) matchedStoreName = catRow.store_name;
+          avail = Number(catRow.avail || 0);
+        }
+
+        return {
+          medicineId: r.medicine_id,
+          medicineName: r.medicine_name,
+          manufacturer: r.manufacturer || '',
+          billCount: r.bill_count,
+          totalQty: r.total_qty,
+          lastOrderedDate: r.last_date ? String(r.last_date).slice(0, 10) : '',
+          lastQty: Math.max(1, Math.round(Number(r.last_qty) || 1)),
+          lastDistributorName: r.distributor_name || '',
+          distributorId: r.distributor_id || null,
+          storeId: matchedStoreId,
+          storeName: matchedStoreName,
+          ptr: r.last_rate ? Number(r.last_rate) : 0,
+          mrp: r.last_mrp ? Number(r.last_mrp) : 0,
+          productCode: matchedProductCode,
+          productId: matchedProductId,
+          mapped: isMapped,
+          availability: avail,
+          receiptStatus: 'RECEIVED' as const,
+        };
+      })
+    );
+
+    res.json({ success: true, items: enriched });
+  } catch (err: any) {
+    console.error('Error fetching purchase reorder history:', err);
+    res.status(500).json({ error: 'Failed to fetch purchase reorder history: ' + err.message });
   }
 });
 

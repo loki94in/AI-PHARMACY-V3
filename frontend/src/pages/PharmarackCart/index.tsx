@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2, WifiOff, Store, Zap, Loader2 } from 'lucide-react';
+import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star } from 'lucide-react';
 import { formatDisplayDate } from '../../utils/date';
 import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult, type ReorderRecentItem } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
@@ -62,18 +62,37 @@ function getCartLineItemValue(item: { amount?: number; ptr?: number; rate?: numb
   return rate * qty;
 }
 
-export function getDistributorEffectiveTotal(dist: Distributor): number {
-  const computedTotal = (dist.items || []).reduce((sum, item) => sum + getCartLineItemValue(item), 0);
-  return Math.max(dist.lineTotal || 0, computedTotal);
+function isLineItemStocked(item: CartLineItem): boolean {
+  if (item.stock === null || item.stock === undefined || String(item.stock).toLowerCase() === 'offline') {
+    return false;
+  }
+  const n = Number(item.stock);
+  return Number.isFinite(n) && n > 0 && (item.qty || 1) > 0;
+}
+
+function getDistributorEffectiveTotal(
+  dist: Distributor,
+  isIncluded?: (item: CartLineItem, dist: Distributor) => boolean
+): number {
+  const activeItems = (dist.items || []).filter(i => isIncluded ? isIncluded(i, dist) : (i.isChecked !== false));
+  const computedTotal = activeItems.reduce((sum, item) => sum + getCartLineItemValue(item), 0);
+  if (activeItems.length === (dist.items || []).length) {
+    return Math.max(dist.lineTotal || 0, computedTotal);
+  }
+  return computedTotal;
 }
 
 // Human-readable reasons Pharmarack would reject this store's cart; empty = eligible / nothing known to block.
-// Only limits Pharmarack actually sent are checked — unknown rules never block (Pharmarack's own error is shown instead).
-function getOrderLimitIssues(dist: Distributor): string[] {
+// Evaluates active/checked items and confirmed positive stock to match Pharmarack's ordering rules.
+function getOrderLimitIssues(
+  dist: Distributor,
+  isIncluded?: (item: CartLineItem, dist: Distributor) => boolean
+): string[] {
   const issues: string[] = [];
   const fmt = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-  const total = getDistributorEffectiveTotal(dist);
-  const stockedCount = (dist.items || []).filter(i => i.stock == null || i.stock > 0).length;
+  const activeItems = (dist.items || []).filter(i => isIncluded ? isIncluded(i, dist) : (i.isChecked !== false));
+  const total = getDistributorEffectiveTotal(dist, isIncluded);
+  const stockedCount = activeItems.filter(isLineItemStocked).length;
   const minAmt = dist.minAmountLimit ?? 0;
   const minItems = dist.minItemLimit ?? 0;
   const maxAmt = dist.maxAmountLimit ?? 0;
@@ -81,7 +100,7 @@ function getOrderLimitIssues(dist: Distributor): string[] {
 
   // On Pharmarack website, unpriced inquiry orders (where all items have no live PTR or local price,
   // showing as PTR: - and Total: ₹0.00) are exempt from monetary minimum amount requirements.
-  const hasPricedItems = (dist.items || []).some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
+  const hasPricedItems = activeItems.some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
 
   if (minAmt > 0 && hasPricedItems && total < minAmt) {
     issues.push(`Minimum Order amount is set Rs. ${fmt(minAmt)} for the ${dist.storeName} store (short by ₹${fmt(minAmt - total)})`);
@@ -92,36 +111,122 @@ function getOrderLimitIssues(dist: Distributor): string[] {
   if (maxAmt > 0 && total > maxAmt) {
     issues.push(`Maximum Order amount is Rs. ${fmt(maxAmt)} for the ${dist.storeName} store (over by ₹${fmt(total - maxAmt)})`);
   }
-  if (maxItems > 0 && (dist.items || []).length > maxItems) {
-    issues.push(`${dist.storeName} - Maximum line items is ${maxItems} (remove ${(dist.items || []).length - maxItems})`);
+  if (maxItems > 0 && activeItems.length > maxItems) {
+    issues.push(`${dist.storeName} - Maximum line items is ${maxItems} (remove ${activeItems.length - maxItems})`);
   }
   return issues;
 }
 
-// Medicines already ordered from this distributor (real order history with a real PTR) that would cover a
-// minimum-amount shortfall. Items without a known PTR are skipped — amounts are never guessed.
-function getMinAmountFillers(dist: Distributor, recent: ReorderRecentItem[]): { item: ReorderRecentItem; qty: number; amount: number }[] {
+function isDistributorCandidateMatch(
+  r: ReorderRecentItem,
+  dist: Distributor,
+  distributorMappings?: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>
+): boolean {
+  // 1. Direct storeId numeric match
+  if (r.storeId != null && dist.storeId != null && Number(r.storeId) === Number(dist.storeId)) {
+    return true;
+  }
+
+  const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const rStore = norm(r.storeName || r.lastDistributorName);
+  const targetStore = norm(dist.storeName);
+
+  // 2. Exact normalized string match
+  if (rStore && targetStore && rStore === targetStore) {
+    return true;
+  }
+
+  // 3. Match via distributorMappings bridge (local distributorId <-> Pharmarack store)
+  if (distributorMappings) {
+    let mappedDistId = distributorMappings[targetStore]?.distributorId;
+    if (!mappedDistId) {
+      const matchKey = Object.keys(distributorMappings).find(k => k === targetStore || targetStore.includes(k) || k.includes(targetStore));
+      if (matchKey) mappedDistId = distributorMappings[matchKey]?.distributorId;
+    }
+    if (mappedDistId && r.distributorId != null && Number(r.distributorId) === Number(mappedDistId)) {
+      return true;
+    }
+  }
+
+  // 4. Substring inclusion if sufficiently long (at least 5 characters)
+  if (rStore && targetStore && (rStore.length >= 5 && targetStore.length >= 5)) {
+    if (rStore.includes(targetStore) || targetStore.includes(rStore)) {
+      return true;
+    }
+  }
+
+  // 5. Significant word token overlap (e.g. "shree ganesh" matching "shree ganesh pharma")
+  const tokenize = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length >= 3 && !['agency', 'agencies', 'pharma', 'pharmaceuticals', 'enterprises', 'distributor', 'distributors', 'pvt', 'ltd'].includes(w));
+  const rTokens = tokenize(r.storeName || r.lastDistributorName);
+  const targetTokens = tokenize(dist.storeName);
+  if (rTokens.length > 0 && targetTokens.length > 0) {
+    const common = rTokens.filter(t => targetTokens.includes(t));
+    if (common.length >= 1) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Medicines already ordered from this distributor (prioritizing real purchase bills history with real PTR) that would cover a
+// minimum-amount or minimum-items shortfall. Shows 4 medicines at a time; user can skip to see another. Hidden when there is no shortfall.
+function getDistributorShortfallDeficit(
+  dist: Distributor,
+  isIncluded?: (item: CartLineItem, dist: Distributor) => boolean
+): { itemShortfall: number; amtShortfall: number; minItems: number; minAmt: number } {
   const minAmt = dist.minAmountLimit ?? 0;
-  const hasPricedItems = (dist.items || []).some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
-  if (!hasPricedItems) return [];
-  const total = getDistributorEffectiveTotal(dist);
-  const shortfall = minAmt - total;
-  if (minAmt <= 0 || shortfall <= 0) return [];
+  const minItems = dist.minItemLimit ?? 0;
+  const activeItems = (dist.items || []).filter(i => isIncluded ? isIncluded(i, dist) : (i.isChecked !== false));
+  const total = getDistributorEffectiveTotal(dist, isIncluded);
+  const stockedCount = activeItems.filter(isLineItemStocked).length;
+  const hasPricedItems = activeItems.some(i => (i.ptr || 0) > 0 || (i.amount || 0) > 0);
+
+  const amtShortfall = (minAmt > 0 && hasPricedItems) ? Math.max(0, minAmt - total) : 0;
+  const itemShortfall = minItems > 0 ? Math.max(0, minItems - stockedCount) : 0;
+  return { itemShortfall, amtShortfall, minItems, minAmt };
+}
+
+function getDistributorShortfallFillers(
+  dist: Distributor,
+  purchaseHistory: ReorderRecentItem[],
+  recentOrders: ReorderRecentItem[],
+  skippedKeys?: Set<string>,
+  distributorMappings?: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>,
+  isIncluded?: (item: CartLineItem, dist: Distributor) => boolean
+): { item: ReorderRecentItem; qty: number; amount: number }[] {
+  const { amtShortfall, itemShortfall } = getDistributorShortfallDeficit(dist, isIncluded);
+
+  if (amtShortfall <= 0 && itemShortfall <= 0) return [];
+
   const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const inCart = new Set((dist.items || []).map(i => norm(i.productName)));
-  const storeKey = norm(dist.storeName);
+
+  const combined = [...purchaseHistory, ...recentOrders];
+  const seenMeds = new Set<string>();
+
+  const candidates = combined
+    .filter(r => {
+      if (!isDistributorCandidateMatch(r, dist, distributorMappings)) return false;
+      const mKey = norm(r.medicineName);
+      if (inCart.has(mKey) || seenMeds.has(mKey)) return false;
+      if (skippedKeys && skippedKeys.has(mKey)) return false;
+      seenMeds.add(mKey);
+      return true;
+    })
+    .sort((a, b) => (Number(b.billCount || 0) - Number(a.billCount || 0)) || (b.lastOrderedDate || '').localeCompare(a.lastOrderedDate || ''));
+
   const picks: { item: ReorderRecentItem; qty: number; amount: number }[] = [];
-  let covered = 0;
-  const candidates = recent
-    .filter(r => (r.storeId != null && Number(r.storeId) === dist.storeId) || (storeKey && norm(r.storeName || r.lastDistributorName) === storeKey))
-    .filter(r => (r.ptr || 0) > 0 && (r.lastQty || 0) > 0 && !inCart.has(norm(r.medicineName)))
-    .sort((a, b) => (b.lastOrderedDate || '').localeCompare(a.lastOrderedDate || ''));
+  let count = 0;
+
   for (const r of candidates) {
-    if (covered >= shortfall) break;
-    const amount = (r.ptr as number) * r.lastQty;
-    picks.push({ item: r, qty: r.lastQty, amount });
-    covered += amount;
+    const qty = 1; // Default to 1 unit to fill minimum requirements without inflating order
+    const amount = (r.ptr || r.lastRate || 0) * qty;
+    picks.push({ item: r, qty, amount });
+    count += 1;
+    if (count >= 4) break; // Display 4 medicines at a time
   }
+
   return picks;
 }
 
@@ -368,11 +473,13 @@ const mergeItemIntoDistributors = (
     rate?: number;
     mrp?: number;
     scheme?: string;
+    stock?: number | null;
     storeName?: string;
     isChecked?: boolean;
   }
 ): Distributor[] => {
   const itemRate = item.ptr !== undefined ? item.ptr : (item.rate || 0);
+  const itemStock = item.stock !== undefined && item.stock !== null && Number(item.stock) > 0 ? Number(item.stock) : 100;
   const lineItem: CartLineItem = {
     productId: item.productId ?? null,
     storeId: item.storeId,
@@ -384,7 +491,7 @@ const mergeItemIntoDistributors = (
     ptr: itemRate,
     mrp: item.mrp || 0,
     scheme: item.scheme || '',
-    stock: null,
+    stock: itemStock,
     amount: itemRate * (item.qty || 1),
     cartSource: 'manual',
     isChecked: item.isChecked ?? true,
@@ -750,8 +857,46 @@ export default function PharmarackCart() {
   // Purchase History Modal State
   const [purchaseHistoryModalTarget, setPurchaseHistoryModalTarget] = useState<{ medicineName: string; loading: boolean; history: LocalPriceHistoryRow[] } | null>(null);
 
+  // Purchase Bills History for Reorder Hub & Shortfalls
+  const [purchaseHistoryItems, setPurchaseHistoryItems] = useState<ReorderRecentItem[]>([]);
+  const [purchaseHistoryLoading, setPurchaseHistoryLoading] = useState<boolean>(false);
+
+  const fetchPurchaseHistoryItems = async () => {
+    try {
+      setPurchaseHistoryLoading(true);
+      const res = await api.getPurchaseReorderHistory({ months: 6, limit: 500 });
+      if (res && res.success && Array.isArray(res.items)) {
+        setPurchaseHistoryItems(res.items);
+      }
+    } catch (err) {
+      console.warn('Failed to load purchase reorder history:', err);
+    } finally {
+      setPurchaseHistoryLoading(false);
+    }
+  };
+
+  // Skipped shortfall fillers per distributor storeId to allow cycling / suggesting alternative medicines
+  const [skippedFillerKeys, setSkippedFillerKeys] = useState<Record<number, Set<string>>>({});
+
+  const handleSkipFiller = (storeId: number, medName: string) => {
+    const key = (medName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    setSkippedFillerKeys(prev => {
+      const current = new Set(prev[storeId] || []);
+      current.add(key);
+      return { ...prev, [storeId]: current };
+    });
+  };
+
+  const handleResetSkippedFillers = (storeId: number) => {
+    setSkippedFillerKeys(prev => {
+      const next = { ...prev };
+      delete next[storeId];
+      return next;
+    });
+  };
+
   // Shortages Hub Subtab State
-  const [shortagesSubTab, setShortagesSubTab] = useState<'requests' | 'refills' | 'sales_suggestions' | 'ordered_recently'>('requests');
+  const [shortagesSubTab, setShortagesSubTab] = useState<'requests' | 'refills' | 'sales_suggestions' | 'ordered_recently' | 'past_purchases'>('requests');
 
   // Latest sent order history map by store ID / store name
   const [latestSentMap, setLatestSentMap] = useState<Record<string, LocalSentMapEntry>>({});
@@ -1131,8 +1276,8 @@ export default function PharmarackCart() {
 
   useEffect(() => {
     // Proactively pre-warm WhatsApp and Pharmarack session for instant PO dispatch
-    api.prewarmWhatsApp().catch(() => {});
-    api.warmupPharmarackSession().catch(() => {});
+    api.prewarmWhatsApp().catch(() => { });
+    api.warmupPharmarackSession().catch(() => { });
   }, []);
 
   // Saved distributor contacts, delivery boys, and store settings
@@ -1259,6 +1404,7 @@ export default function PharmarackCart() {
     loadContactData();
     fetchReorderSuggestions();
     fetchReorderRecentItems();
+    fetchPurchaseHistoryItems();
 
     const handlePhoneUpdate = () => {
       fetchSavedDistributors();
@@ -1266,6 +1412,7 @@ export default function PharmarackCart() {
       loadContactData();
       fetchReorderSuggestions();
       fetchReorderRecentItems();
+      fetchPurchaseHistoryItems();
     };
 
     const handleClearSentHistory = () => {
@@ -1376,9 +1523,9 @@ export default function PharmarackCart() {
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
-    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d).length > 0);
+    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d, isItemIncludedInDispatch).length > 0);
     if (belowLimit.length > 0) {
-      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(getOrderLimitIssues).join(' | ')}`, 'error');
+      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(d => getOrderLimitIssues(d, isItemIncludedInDispatch)).join(' | ')}`, 'error');
       return;
     }
     setIsValidatingBeforeSend(true);
@@ -1879,11 +2026,22 @@ export default function PharmarackCart() {
     );
   }, [reorderRecentItems, reorderSearchQuery]);
 
+  const filteredPurchaseHistoryItems = React.useMemo(() => {
+    if (!reorderSearchQuery.trim()) return purchaseHistoryItems;
+    const q = reorderSearchQuery.toLowerCase().trim();
+    return purchaseHistoryItems.filter(item =>
+      (item.medicineName || '').toLowerCase().includes(q) ||
+      (item.lastDistributorName || item.storeName || '').toLowerCase().includes(q) ||
+      (item.manufacturer || '').toLowerCase().includes(q)
+    );
+  }, [purchaseHistoryItems, reorderSearchQuery]);
+
   const totalReorderMatchesCount =
     filteredPendingOrders.length +
     filteredPendingRefills.length +
     filteredReorderSuggestions.length +
-    filteredReorderRecentItems.length;
+    filteredReorderRecentItems.length +
+    filteredPurchaseHistoryItems.length;
 
   const [sendingDeliveryBoyNotifId, setSendingDeliveryBoyNotifId] = useState<number | null>(null);
 
@@ -1916,7 +2074,7 @@ export default function PharmarackCart() {
   };
 
   const handleSendManualNotification = async (dist: Distributor) => {
-    const limitIssues = getOrderLimitIssues(dist);
+    const limitIssues = getOrderLimitIssues(dist, isItemIncludedInDispatch);
     if (limitIssues.length > 0) {
       toastEvent.trigger(limitIssues.join(' | '), 'error');
       return;
@@ -2110,7 +2268,7 @@ export default function PharmarackCart() {
           store_name: dist.storeName,
           delivery_boy_id: boyId
         });
-      } catch (_) {}
+      } catch (_) { }
     }
 
     setSingleDispatchTarget(null);
@@ -2137,7 +2295,7 @@ export default function PharmarackCart() {
       return;
     }
 
-    const limitIssues = getOrderLimitIssues(dist);
+    const limitIssues = getOrderLimitIssues(dist, isItemIncludedInDispatch);
     if (limitIssues.length > 0) {
       toastEvent.trigger(limitIssues.join(' | '), 'error');
       return;
@@ -2230,7 +2388,7 @@ export default function PharmarackCart() {
           fetchPendingOrders(),
           fetchLatestSentMap(),
           loadSentDates()
-        ]).catch(() => {});
+        ]).catch(() => { });
       } catch (logErr) {
         console.warn('Could not log placed order:', logErr);
       }
@@ -2275,7 +2433,7 @@ export default function PharmarackCart() {
           fetchPendingOrders(),
           fetchLatestSentMap(),
           loadSentDates()
-        ]).catch(() => {});
+        ]).catch(() => { });
       } catch (logErr) {
         console.warn('Could not log placed order:', logErr);
       }
@@ -2324,11 +2482,11 @@ export default function PharmarackCart() {
     }
 
     // Block the whole batch until every unsent store meets its Pharmarack ordering limits
-    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d).length > 0);
+    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d, isItemIncludedInDispatch).length > 0);
     if (belowLimit.length > 0) {
       isSendingBatchRef.current = false;
       setIsSendingBatchWhatsApp(false);
-      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(getOrderLimitIssues).join(' | ')}`, 'error');
+      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(d => getOrderLimitIssues(d, isItemIncludedInDispatch)).join(' | ')}`, 'error');
       return;
     }
 
@@ -2384,7 +2542,7 @@ export default function PharmarackCart() {
           apiClient.post('/pharmarack/distributor-mappings', {
             store_name: dist.storeName,
             delivery_boy_id: assignedBoyId
-          }).catch(() => {});
+          }).catch(() => { });
         }
 
         const msg = buildDistributorOrderMessage(dist, assignedBoy);
@@ -2449,7 +2607,7 @@ export default function PharmarackCart() {
           fetchPendingOrders(),
           fetchLatestSentMap(),
           loadSentDates()
-        ]).catch(() => {});
+        ]).catch(() => { });
       } else {
         throw new Error(res?.message || 'Failed to enqueue WhatsApp batch orders');
       }
@@ -2519,8 +2677,8 @@ export default function PharmarackCart() {
     const currentBoyId = storedMap?.deliveryBoyId
       || matchedDist?.delivery_boy_id
       || (dist.deliveryPersons && dist.deliveryPersons.length > 0
-          ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id
-          : null)
+        ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id
+        : null)
       || null;
     setModalDeliveryBoyId(currentBoyId);
   };
@@ -3247,12 +3405,14 @@ export default function PharmarackCart() {
         qty: targetQty,
         productCode: item.productCode || '',
         productName: medName,
-        company: '',
+        company: item.manufacturer || '',
         packaging: item.packaging || '',
-        rate: item.ptr || 0,
+        rate: item.ptr || item.lastRate || 0,
         mrp: item.mrp || 0,
         storeName: storeName,
-        mapped: true
+        stock: (item as any).stock != null && Number((item as any).stock) > 0 ? Number((item as any).stock) : 100,
+        mapped: item.mapped ?? Boolean(item.productId),
+        medicineId: item.medicineId || undefined
       }];
 
       const res = await api.addPharmarackCart(payload);
@@ -3513,6 +3673,7 @@ export default function PharmarackCart() {
     if (!showSuggestionsTier) return;
     fetchReorderSuggestions();
     fetchReorderRecentItems();
+    fetchPurchaseHistoryItems();
     apiClient.get('/settings').then(res => {
       const val = parseInt(res.data?.pharmarack_reorder_window_months || '2', 10);
       if ([2, 4, 6, 8].includes(val)) setReorderWindowMonths(val);
@@ -3701,7 +3862,7 @@ export default function PharmarackCart() {
         }}
         hasUnreadSentHistory={hasUnreadSentHistory}
         activeCount={distributors.reduce((acc, d) => acc + (d.items || []).filter(i => isItemIncludedInDispatch(i, d) && !isItemAlreadySent(i, d)).length, 0)}
-        reorderCount={visiblePendingOrders.length + visiblePendingRefills.length + reorderSuggestions.length + reorderRecentItems.length}
+        reorderCount={visiblePendingOrders.length + visiblePendingRefills.length + reorderSuggestions.length + reorderRecentItems.length + purchaseHistoryItems.length}
       />
 
       {currentTab === 'sent-history' ? (
@@ -3740,8 +3901,8 @@ export default function PharmarackCart() {
                       key={d}
                       onClick={() => handleSelectSentDate(d)}
                       className={`w-full text-left p-3 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-2 border ${isSelected
-                          ? 'bg-primary/15 border-primary/40 text-text shadow-md shadow-primary/5'
-                          : 'bg-white/[0.02] border-glass-border/30 text-muted hover:text-text hover:bg-white/[0.05]'
+                        ? 'bg-primary/15 border-primary/40 text-text shadow-md shadow-primary/5'
+                        : 'bg-white/[0.02] border-glass-border/30 text-muted hover:text-text hover:bg-white/[0.05]'
                         }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -3919,8 +4080,8 @@ export default function PharmarackCart() {
                 type="button"
                 onClick={() => setShortagesSubTab('requests')}
                 className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'requests'
-                    ? 'bg-bg2 text-primary font-black shadow-xs border border-border'
-                    : 'text-muted hover:text-text hover:bg-bg3'
+                  ? 'bg-bg2 text-primary font-black shadow-xs border border-border'
+                  : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
               >
                 <Clock size={12} />
@@ -3931,8 +4092,8 @@ export default function PharmarackCart() {
                 type="button"
                 onClick={() => setShortagesSubTab('refills')}
                 className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'refills'
-                    ? 'bg-bg2 text-primary font-black shadow-xs border border-border'
-                    : 'text-muted hover:text-text hover:bg-bg3'
+                  ? 'bg-bg2 text-primary font-black shadow-xs border border-border'
+                  : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
               >
                 <ShoppingCart size={12} />
@@ -3943,8 +4104,8 @@ export default function PharmarackCart() {
                 type="button"
                 onClick={() => setShortagesSubTab('sales_suggestions')}
                 className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'sales_suggestions'
-                    ? 'bg-emerald-500/20 text-emerald-400 font-black shadow-xs border border-emerald-500/30'
-                    : 'text-muted hover:text-text hover:bg-bg3'
+                  ? 'bg-emerald-500/20 text-emerald-400 font-black shadow-xs border border-emerald-500/30'
+                  : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
               >
                 <TrendingUp size={12} />
@@ -3955,12 +4116,24 @@ export default function PharmarackCart() {
                 type="button"
                 onClick={() => setShortagesSubTab('ordered_recently')}
                 className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'ordered_recently'
-                    ? 'bg-violet-500/20 text-violet-400 font-black shadow-xs border border-violet-500/30'
-                    : 'text-muted hover:text-text hover:bg-bg3'
+                  ? 'bg-violet-500/20 text-violet-400 font-black shadow-xs border border-violet-500/30'
+                  : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
               >
                 <RotateCw size={12} />
                 <span>Ordered Recently ({filteredReorderRecentItems.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShortagesSubTab('past_purchases')}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'past_purchases'
+                  ? 'bg-sky-500/20 text-sky-400 font-black shadow-xs border border-sky-500/30'
+                  : 'text-muted hover:text-text hover:bg-bg3'
+                  }`}
+              >
+                <BookOpen size={12} />
+                <span>Past Purchase Bills ({filteredPurchaseHistoryItems.length})</span>
               </button>
             </div>
           </div>
@@ -4173,7 +4346,7 @@ export default function PharmarackCart() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredReorderRecentItems.map((item, idx) => {
                     const itemKey = `${item.medicineName}:::${item.storeId || item.storeName || idx}`;
-                    const itemQty = getReorderItemQty(itemKey, item.lastQty || 1);
+                    const itemQty = getReorderItemQty(itemKey, 1);
                     const stockInfo = checkedStockMap[item.medicineName];
                     const isCheckingStock = checkingStockMed === item.medicineName;
                     const highestStock = stockInfo?.highestStockDistributor || item.highestStockDistributor;
@@ -4344,6 +4517,115 @@ export default function PharmarackCart() {
                 </div>
               )
             )}
+
+            {/* Past Purchase Bills */}
+            {shortagesSubTab === 'past_purchases' && (
+              purchaseHistoryLoading && purchaseHistoryItems.length === 0 ? (
+                <div className="text-center py-16 text-xs text-muted flex items-center justify-center gap-2">
+                  <RotateCw size={15} className="animate-spin text-primary" />
+                  <span>Loading past purchase bills history…</span>
+                </div>
+              ) : filteredPurchaseHistoryItems.length === 0 ? (
+                <div className="text-center py-16 text-xs text-muted italic">
+                  {reorderSearchQuery ? `No past purchase medicines matching "${reorderSearchQuery}".` : 'No purchase bills recorded in the past 6 months.'}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredPurchaseHistoryItems.map((item, idx) => {
+                    const itemKey = `purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                    const itemQty = getReorderItemQty(itemKey, 1);
+
+                    return (
+                      <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                        <div className="space-y-2.5">
+                          {/* Medicine Title & Frequency Badge */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
+                                {item.medicineName}
+                              </div>
+                              {item.manufacturer && (
+                                <p className="text-[10px] text-muted truncate mt-0.5">
+                                  {item.manufacturer}
+                                </p>
+                              )}
+                            </div>
+
+                            {item.billCount && (
+                              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1" title={`Purchased in ${item.billCount} bills`}>
+                                <Star size={9} className="fill-amber-400" /> ×{item.billCount} bills
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Distributor Attribution & Pricing */}
+                          <div className="text-xs text-muted space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <Store size={12} className="text-sky-400 shrink-0" />
+                              <span className="truncate">Distributor: <strong className="text-text font-bold">{item.lastDistributorName || item.storeName || 'Distributor'}</strong></span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span>Last Invoice Date: <strong className="text-text font-mono">{item.lastOrderedDate || 'N/A'}</strong></span>
+                            </div>
+                            {item.ptr ? (
+                              <div className="text-[11px]">
+                                Last PTR: <strong className="text-emerald-400 font-mono">₹{item.ptr.toFixed(2)}</strong>
+                                {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
+                              </div>
+                            ) : null}
+                          </div>
+
+                          {/* Quantity Controls */}
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-xs text-muted">Order Qty:</span>
+                            <div className="flex items-center gap-1 bg-bg3/60 rounded-xl p-1 border border-glass-border/40">
+                              <button
+                                type="button"
+                                onClick={() => setReorderItemQty(itemKey, Math.max(1, itemQty - 1))}
+                                className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg border border-glass-border flex items-center justify-center text-xs font-bold text-muted hover:text-text cursor-pointer transition-all active:scale-95"
+                              >
+                                -
+                              </button>
+                              <span className="w-8 text-center font-mono font-bold text-xs text-text">{itemQty}</span>
+                              <button
+                                type="button"
+                                onClick={() => setReorderItemQty(itemKey, itemQty + 1)}
+                                className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg border border-glass-border flex items-center justify-center text-xs font-bold text-muted hover:text-text cursor-pointer transition-all active:scale-95"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
+                              disabled={readdingSentItems}
+                              className="flex-1 py-1.5 px-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
+                              title={`Add to live cart of ${item.storeName || item.lastDistributorName}`}
+                            >
+                              <ShoppingCart size={12} />
+                              <span className="truncate">Add to Cart (x{itemQty})</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => liveCartAddEvent.triggerOpen(item.medicineName, itemQty)}
+                              className="p-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-muted hover:text-text transition-all active:scale-95 cursor-pointer"
+                              title="Search across all available distributors in modal"
+                            >
+                              <Search size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
           </div>
         </div>
       ) : (
@@ -4480,8 +4762,8 @@ export default function PharmarackCart() {
                       <button
                         onClick={() => setDistributorFilterTab('active')}
                         className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${distributorFilterTab === 'active' || distributorFilterTab === 'unsent'
-                            ? 'bg-primary/20 text-primary border border-primary/30 shadow-sm font-extrabold'
-                            : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
+                          ? 'bg-primary/20 text-primary border border-primary/30 shadow-sm font-extrabold'
+                          : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
                           }`}
                       >
                         <ShoppingCart size={13} />
@@ -4494,8 +4776,8 @@ export default function PharmarackCart() {
                       <button
                         onClick={() => setDistributorFilterTab('success')}
                         className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${distributorFilterTab === 'success' || distributorFilterTab === 'sent'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-sm font-extrabold'
-                            : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-sm font-extrabold'
+                          : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
                           }`}
                       >
                         <Check size={13} className="text-emerald-400" />
@@ -4508,8 +4790,8 @@ export default function PharmarackCart() {
                       <button
                         onClick={() => setDistributorFilterTab('all')}
                         className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${distributorFilterTab === 'all'
-                            ? 'bg-primary/20 text-primary border border-primary/30 shadow-sm font-extrabold'
-                            : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
+                          ? 'bg-primary/20 text-primary border border-primary/30 shadow-sm font-extrabold'
+                          : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
                           }`}
                       >
                         <Building2 size={13} />
@@ -4519,8 +4801,8 @@ export default function PharmarackCart() {
                       <button
                         onClick={() => setDistributorFilterTab('failed')}
                         className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${distributorFilterTab === 'failed'
-                            ? 'bg-red/20 text-red border border-red/30 shadow-sm font-extrabold'
-                            : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
+                          ? 'bg-red/20 text-red border border-red/30 shadow-sm font-extrabold'
+                          : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
                           }`}
                       >
                         <AlertCircle size={13} className="text-red" />
@@ -4533,8 +4815,8 @@ export default function PharmarackCart() {
                       <button
                         onClick={() => setDistributorFilterTab('unmapped')}
                         className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${distributorFilterTab === 'unmapped'
-                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-sm font-extrabold'
-                            : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
+                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-sm font-extrabold'
+                          : 'text-muted hover:text-text hover:bg-bg3/50 border border-transparent'
                           }`}
                       >
                         <Phone size={13} className="text-amber-400" />
@@ -4743,13 +5025,12 @@ export default function PharmarackCart() {
 
                                       {/* Column 2: Phone Input */}
                                       <div className="md:col-span-5">
-                                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-bg border transition-all ${
-                                          isValid
+                                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-bg border transition-all ${isValid
                                             ? 'border-emerald-500/50 ring-1 ring-emerald-500/20'
                                             : digitsOnly.length > 0
-                                            ? 'border-amber-500/50 ring-1 ring-amber-500/20'
-                                            : 'border-border focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20'
-                                        }`}>
+                                              ? 'border-amber-500/50 ring-1 ring-amber-500/20'
+                                              : 'border-border focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20'
+                                          }`}>
                                           <span className="text-xs font-mono font-bold text-muted select-none">
                                             +91
                                           </span>
@@ -5258,35 +5539,109 @@ export default function PharmarackCart() {
 
                           {/* Distributor ordering limits (from Pharmarack, per store) */}
                           {(() => {
-                            const limitIssues = getOrderLimitIssues(dist);
+                            const limitIssues = getOrderLimitIssues(dist, isItemIncludedInDispatch);
                             if (limitIssues.length === 0) return null;
+                            const deficit = getDistributorShortfallDeficit(dist, isItemIncludedInDispatch);
                             return (
-                              <div className="px-4 py-2 border-b border-rose-500/30 bg-rose-500/10 space-y-0.5">
+                              <div className="px-4 py-2 border-b border-amber-500/30 bg-amber-500/10 space-y-1">
                                 {limitIssues.map(msg => (
-                                  <p key={msg} className="text-[11px] font-bold text-rose-400">{msg}</p>
+                                  <p key={msg} className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
+                                    <AlertTriangle size={12} className="text-amber-400 shrink-0" />
+                                    <span>{msg}</span>
+                                  </p>
                                 ))}
                                 {(() => {
-                                  const fillers = getMinAmountFillers(dist, reorderRecentItems);
+                                  const fillers = getDistributorShortfallFillers(dist, purchaseHistoryItems, reorderRecentItems, skippedFillerKeys[dist.storeId], distributorMappings, isItemIncludedInDispatch);
                                   if (fillers.length === 0) return null;
                                   const sum = fillers.reduce((s, f) => s + f.amount, 0);
+                                  const skippedCount = skippedFillerKeys[dist.storeId]?.size || 0;
                                   return (
-                                    <div className="mt-1.5 pt-1.5 border-t border-rose-500/20 space-y-1">
-                                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted">
-                                        Previously ordered from {dist.storeName} — add to reach minimum (≈ ₹{sum.toLocaleString('en-IN', { maximumFractionDigits: 0 })})
-                                      </p>
-                                      {fillers.map(({ item, qty, amount }) => (
-                                        <div key={item.medicineName} className="flex items-center justify-between gap-2 text-[11px] text-text">
-                                          <span className="truncate">{item.medicineName} × {qty} <span className="text-muted">(₹{amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })})</span></span>
+                                    <div className="mt-2 pt-2 border-t border-amber-500/25 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1.5 truncate">
+                                          <BookOpen size={11} className="text-amber-400 shrink-0" />
+                                          <span className="truncate">
+                                            Past Purchases from {dist.storeName} —{' '}
+                                            {deficit.itemShortfall > 0 && deficit.amtShortfall > 0
+                                              ? `Add ${deficit.itemShortfall} more medicine${deficit.itemShortfall > 1 ? 's' : ''} & ₹${deficit.amtShortfall.toFixed(2)} to fulfill minimum`
+                                              : deficit.itemShortfall > 0
+                                                ? `Add ${deficit.itemShortfall} more medicine${deficit.itemShortfall > 1 ? 's' : ''} to fulfill minimum`
+                                                : `Add ₹${deficit.amtShortfall.toFixed(2)} more to fulfill minimum`}
+                                          </span>
+                                        </p>
+                                        {skippedCount > 0 && (
                                           <button
                                             type="button"
-                                            disabled={readdingSentItems}
-                                            onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
-                                            className="shrink-0 px-2 py-0.5 rounded bg-primary text-white text-[10px] font-bold disabled:opacity-50"
+                                            onClick={() => handleResetSkippedFillers(dist.storeId)}
+                                            className="text-[10px] text-amber-300/90 hover:text-amber-200 underline shrink-0 cursor-pointer"
+                                            title="Restore previously skipped suggestions"
                                           >
-                                            + Add
+                                            Reset skipped ({skippedCount})
                                           </button>
-                                        </div>
-                                      ))}
+                                        )}
+                                      </div>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 pt-0.5">
+                                        {fillers.map(({ item, qty, amount }) => (
+                                          <div
+                                            key={`${item.medicineName}-${item.storeId || ''}`}
+                                            className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-bg2/80 hover:bg-bg2 border border-glass-border/40 text-[11px] text-text transition-colors"
+                                          >
+                                            <div className="min-w-0 flex-1">
+                                              <div className="flex items-center gap-1.5 truncate">
+                                                <span
+                                                  className="font-bold text-text truncate cursor-pointer hover:text-primary transition-colors"
+                                                  title={`${item.medicineName} — Click to add`}
+                                                  onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
+                                                >
+                                                  {item.medicineName}
+                                                </span>
+                                                {item.billCount && item.billCount > 1 ? (
+                                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-0.5" title={`Purchased in ${item.billCount} bills`}>
+                                                    <Star size={8} className="fill-amber-400" /> ×{item.billCount}
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                              <div className="text-[10px] text-muted flex items-center gap-2 mt-0.5">
+                                                <span>Qty: <strong className="text-text font-mono">×{qty}</strong></span>
+                                                {amount > 0 ? (
+                                                  <span>Total: <strong className="text-emerald-400 font-mono">₹{amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</strong></span>
+                                                ) : null}
+                                                {item.ptr ? (
+                                                  <span className="text-[9px] opacity-75">PTR ₹{item.ptr.toFixed(1)}</span>
+                                                ) : null}
+                                              </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-1 shrink-0">
+                                              <button
+                                                type="button"
+                                                disabled={readdingSentItems}
+                                                onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
+                                                className="px-2.5 py-1 rounded-md bg-primary hover:bg-primary/90 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
+                                                title={`Add ${item.medicineName} (x${qty}) directly to cart`}
+                                              >
+                                                + Add (x{qty})
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleSkipFiller(dist.storeId, item.medicineName)}
+                                                className="p-1 rounded-md bg-bg hover:bg-rose-500/20 border border-glass-border text-muted hover:text-rose-400 transition-all active:scale-95 cursor-pointer"
+                                                title="Skip this medicine and suggest another"
+                                              >
+                                                <RotateCcw size={11} />
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => liveCartAddEvent.triggerOpen(item.medicineName, qty)}
+                                                className="p-1 rounded-md bg-bg hover:bg-bg3 border border-glass-border text-muted hover:text-text transition-all active:scale-95 cursor-pointer"
+                                                title="Search / pick specific pack in modal"
+                                              >
+                                                <Search size={11} />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
                                     </div>
                                   );
                                 })()}
@@ -5334,12 +5689,12 @@ export default function PharmarackCart() {
                                     <tr
                                       key={`${item.productCode}-${idx}`}
                                       className={`transition-colors ${!isIncluded
-                                          ? 'opacity-60 hover:opacity-90 text-muted'
-                                          : isYesterdayOrPast
-                                            ? 'bg-amber-500/[0.06] hover:bg-amber-500/[0.12] border-l-2 border-l-amber-500'
-                                            : isSent
-                                              ? 'opacity-75 hover:opacity-100 text-muted'
-                                              : 'hover:bg-bg3/40'
+                                        ? 'opacity-60 hover:opacity-90 text-muted'
+                                        : isYesterdayOrPast
+                                          ? 'bg-amber-500/[0.06] hover:bg-amber-500/[0.12] border-l-2 border-l-amber-500'
+                                          : isSent
+                                            ? 'opacity-75 hover:opacity-100 text-muted'
+                                            : 'hover:bg-bg3/40'
                                         }`}
                                     >
                                       <td className="px-2 py-2.5 text-center w-12">
@@ -5348,8 +5703,8 @@ export default function PharmarackCart() {
                                           checked={isIncluded}
                                           onChange={(e) => handleToggleItemCheck(dist.storeId, item, e.target.checked)}
                                           className={`w-4 h-4 rounded cursor-pointer shadow-sm ${isYesterdayOrPast
-                                              ? 'text-amber-500 focus:ring-amber-500 accent-amber-500'
-                                              : 'text-emerald-500 focus:ring-emerald-500 accent-emerald-500'
+                                            ? 'text-amber-500 focus:ring-amber-500 accent-amber-500'
+                                            : 'text-emerald-500 focus:ring-emerald-500 accent-emerald-500'
                                             }`}
                                           title={isIncluded ? "Checked: Included in WhatsApp order. Click to exclude." : "Unchecked: Excluded from WhatsApp order. Click to include."}
                                         />
@@ -5563,8 +5918,8 @@ export default function PharmarackCart() {
                     {isSendingBatchWhatsApp
                       ? 'Sending orders…'
                       : isValidatingBeforeSend
-                      ? 'Verifying live cart…'
-                      : `Send All via WhatsApp (${readyToSendDistributors.length})`}
+                        ? 'Verifying live cart…'
+                        : `Send All via WhatsApp (${readyToSendDistributors.length})`}
                   </span>
                 </button>
 
@@ -5856,8 +6211,8 @@ export default function PharmarackCart() {
                         <div
                           key={idx}
                           className={`p-3 rounded-xl border flex items-center justify-between gap-3 transition-all ${isCurrentDist
-                              ? 'border-primary/40 bg-primary/5'
-                              : 'border-glass-border/50 bg-bg/40 hover:border-sky-500/40 hover:bg-bg/70'
+                            ? 'border-primary/40 bg-primary/5'
+                            : 'border-glass-border/50 bg-bg/40 hover:border-sky-500/40 hover:bg-bg/70'
                             }`}
                         >
                           <div className="min-w-0 flex-1 space-y-0.5">
