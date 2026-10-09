@@ -27759,12 +27759,91 @@ async function addItemsToPharmarackCart(items) {
         console.warn("Failed to resolve storeId from distributor tables:", distErr);
       }
     }
+    const medId = Number(item.medicineId || item.medicine_id || 0);
+    const prodName = (item.productName || item.product || item.name || "").trim();
+    if (!item.productId || Number(item.productId) === 0 || !item.storeId || Number(item.storeId) === 0) {
+      try {
+        const db2 = await dbManager.getConnection();
+        const targetStoreId = Number(item.storeId) || 0;
+        const cleanStoreName = String(item.storeName || "").trim();
+        let linkRow = null;
+        if (medId > 0) {
+          if (targetStoreId > 0) {
+            linkRow = await db2.get(
+              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+               FROM medicine_distributor_links
+               WHERE medicine_id = ? AND store_id = ?
+               ORDER BY pick_order, id LIMIT 1`,
+              [medId, targetStoreId]
+            );
+          } else if (cleanStoreName) {
+            linkRow = await db2.get(
+              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+               FROM medicine_distributor_links
+               WHERE medicine_id = ? AND LOWER(store_name) = LOWER(?)
+               ORDER BY pick_order, id LIMIT 1`,
+              [medId, cleanStoreName]
+            );
+          }
+          if (!linkRow) {
+            linkRow = await db2.get(
+              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+               FROM medicine_distributor_links
+               WHERE medicine_id = ?
+               ORDER BY pick_order, id LIMIT 1`,
+              [medId]
+            );
+          }
+        }
+        if (linkRow) {
+          if (!item.storeId || Number(item.storeId) === 0) item.storeId = Number(linkRow.store_id || 0);
+          if (!item.storeName && linkRow.store_name) item.storeName = linkRow.store_name;
+          if (linkRow.product_id) item.productId = Number(linkRow.product_id);
+          if (linkRow.product_code) item.productCode = linkRow.product_code;
+          if (linkRow.product_name) item.productName = linkRow.product_name;
+          if (linkRow.packaging && !item.packaging) item.packaging = linkRow.packaging;
+          if (linkRow.company && !item.company) item.company = linkRow.company;
+          if (linkRow.mapped !== void 0 && item.mapped === void 0) item.mapped = Boolean(linkRow.mapped);
+        }
+        if ((!item.productId || Number(item.productId) === 0) && prodName) {
+          const poRows = await db2.all(
+            `SELECT store_id, store_name, items_json
+             FROM pharmarack_placed_orders
+             WHERE (${targetStoreId > 0 ? "store_id = ? OR " : ""} items_json LIKE ?)
+             ORDER BY id DESC LIMIT 5`,
+            targetStoreId > 0 ? [targetStoreId, `%${prodName}%`] : [`%${prodName}%`]
+          );
+          for (const poRow of poRows) {
+            try {
+              const lines = JSON.parse(poRow.items_json || "[]");
+              const matchedLine = lines.find((l) => {
+                const ln = String(l.productName || l.product || l.name || "").toLowerCase();
+                return ln.includes(prodName.toLowerCase()) || prodName.toLowerCase().includes(ln);
+              });
+              if (matchedLine && (matchedLine.productId || matchedLine.product_id)) {
+                if (!item.storeId || Number(item.storeId) === 0) item.storeId = Number(poRow.store_id || 0);
+                if (!item.storeName && poRow.store_name) item.storeName = poRow.store_name;
+                item.productId = Number(matchedLine.productId || matchedLine.product_id || 0);
+                item.productCode = matchedLine.productCode || matchedLine.product_code || item.productCode || "";
+                if (matchedLine.productName) item.productName = matchedLine.productName;
+                if (matchedLine.rate && !item.rate) item.rate = Number(matchedLine.rate);
+                if (matchedLine.mrp && !item.mrp) item.mrp = Number(matchedLine.mrp);
+                break;
+              }
+            } catch (_) {
+            }
+          }
+        }
+      } catch (linkErr) {
+        console.warn("Failed to resolve IDs from links/orders:", linkErr);
+      }
+    }
     if (!item.productId || Number(item.productId) === 0 || !item.storeId || Number(item.storeId) === 0) {
       try {
         const db2 = await dbManager.getConnection();
         const cleanStoreName = String(item.storeName || "").trim();
-        const prodName = (item.productName || item.product || item.name || "").trim();
-        if (prodName) {
+        const prodName2 = (item.productName || item.product || item.name || "").trim();
+        if (prodName2) {
           let soRow = null;
           if (cleanStoreName) {
             soRow = await db2.get(
@@ -27774,7 +27853,7 @@ async function addItemsToPharmarackCart(items) {
                  AND (LOWER(pharmarack_distributor) = LOWER(?) OR LOWER(pharmarack_distributor) LIKE LOWER(?))
                  AND pharmarack_product_id > 0
                ORDER BY id DESC LIMIT 1`,
-              [prodName, `%${prodName}%`, cleanStoreName, `%${cleanStoreName}%`]
+              [prodName2, `%${prodName2}%`, cleanStoreName, `%${cleanStoreName}%`]
             );
           }
           if (!soRow) {
@@ -27784,7 +27863,7 @@ async function addItemsToPharmarackCart(items) {
                WHERE (LOWER(product) = LOWER(?) OR LOWER(product) LIKE LOWER(?))
                  AND pharmarack_product_id > 0
                ORDER BY id DESC LIMIT 1`,
-              [prodName, `%${prodName}%`]
+              [prodName2, `%${prodName2}%`]
             );
           }
           if (soRow) {
@@ -27964,7 +28043,7 @@ async function addItemsToPharmarackCart(items) {
         RateValidity: null,
         IsShowNonMappedOrderStock: 1,
         RStockVisibility: 0,
-        IsMapped: item.mapped === false || item.isMapped === false ? 0 : 1,
+        IsMapped: item.mapped === false || item.isMapped === false || !item.productId || Number(item.productId) === 0 ? 0 : 1,
         ProductId: (() => {
           const v = item.productId;
           if (!v) return 0;
@@ -29554,6 +29633,155 @@ var init_pharmarack = __esm({
       } catch (err) {
         console.error("Error fetching recently reordered medicines:", err);
         res.status(500).json({ error: "Failed to fetch recently reordered medicines: " + err.message });
+      }
+    });
+    router.get("/purchase-reorder-history", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rawMonths = parseInt(req.query.months, 10);
+        const months = Number.isFinite(rawMonths) ? Math.min(24, Math.max(1, rawMonths)) : 6;
+        const days = months * 30;
+        const distributorId = parseInt(req.query.distributor_id, 10) || null;
+        const storeId = parseInt(req.query.store_id, 10) || null;
+        const q = String(req.query.q || "").trim().replace(/\s+/g, " ");
+        const rawLimit = parseInt(req.query.limit, 10);
+        const limit = Number.isFinite(rawLimit) ? Math.min(1e3, Math.max(1, rawLimit)) : 200;
+        const d = new Date(Date.now() - days * 864e5);
+        const pad2 = (n) => String(n).padStart(2, "0");
+        const cutoff = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+        let resolvedDistributorId = distributorId;
+        if (!resolvedDistributorId && storeId) {
+          const mapping = await db2.get(
+            `SELECT distributor_id FROM pharmarack_distributor_mappings WHERE store_id = ?`,
+            [storeId]
+          );
+          if (mapping?.distributor_id) {
+            resolvedDistributorId = mapping.distributor_id;
+          }
+        }
+        const whereClauses = ["p.date >= ?"];
+        const params = [cutoff];
+        if (resolvedDistributorId) {
+          whereClauses.push("p.distributor_id = ?");
+          params.push(resolvedDistributorId);
+        }
+        const whereSql = whereClauses.join(" AND ");
+        const likeParams = [];
+        let medFilterSql = "";
+        if (q.length >= 2) {
+          medFilterSql = "WHERE m.name LIKE ?";
+          likeParams.push(`%${q}%`);
+        }
+        const rows = await db2.all(
+          `SELECT m.id AS medicine_id, m.name AS medicine_name, m.manufacturer AS manufacturer,
+              a.bill_count, a.total_qty, a.last_date,
+              d.id AS distributor_id, d.name AS distributor_name,
+              l.cost_price AS last_rate, l.mrp AS last_mrp, l.batch_no AS last_batch,
+              l.expiry_date AS last_expiry, l.cgst_per AS last_cgst, l.sgst_per AS last_sgst,
+              l.hsn_code AS last_hsn, l.quantity AS last_qty
+       FROM (
+         SELECT pi.medicine_id AS mid, p.distributor_id AS did,
+                COUNT(DISTINCT p.id) AS bill_count,
+                SUM(pi.quantity) AS total_qty, MAX(p.date) AS last_date,
+                ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY COUNT(DISTINCT p.id) DESC, MAX(p.date) DESC) AS rank_in_dist
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE ${whereSql}
+         GROUP BY pi.medicine_id, p.distributor_id
+       ) a
+       JOIN (
+         SELECT pi.medicine_id AS mid2, p.distributor_id AS did2,
+                pi.cost_price, pi.mrp, pi.batch_no, pi.expiry_date,
+                pi.cgst_per, pi.sgst_per, pi.hsn_code, pi.quantity,
+                ROW_NUMBER() OVER (PARTITION BY pi.medicine_id, p.distributor_id ORDER BY p.date DESC, pi.id DESC) AS rn
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE ${whereSql}
+       ) l ON l.mid2 = a.mid AND l.did2 = a.did AND l.rn = 1
+       JOIN medicines m ON m.id = a.mid
+       LEFT JOIN distributors d ON d.id = a.did
+       WHERE a.rank_in_dist <= 15
+       ${medFilterSql ? `AND ${medFilterSql.replace(/^WHERE /, "")}` : ""}
+       ORDER BY a.bill_count DESC, a.last_date DESC
+       LIMIT ?`,
+          [...params, ...params, ...likeParams, limit]
+        );
+        const enriched = await Promise.all(
+          rows.map(async (r) => {
+            let matchedStoreId = storeId;
+            let matchedStoreName = r.distributor_name || "";
+            let matchedProductCode = "";
+            let matchedProductId = 0;
+            let isMapped = false;
+            let avail = 0;
+            if (!matchedStoreId && r.distributor_id) {
+              const mapRow = await db2.get(
+                `SELECT store_id, store_name FROM pharmarack_distributor_mappings 
+             WHERE distributor_id = ? AND store_id IS NOT NULL AND store_id > 0
+             LIMIT 1`,
+                [r.distributor_id]
+              );
+              if (mapRow?.store_id) {
+                matchedStoreId = Number(mapRow.store_id);
+                if (mapRow.store_name) matchedStoreName = mapRow.store_name;
+              }
+            }
+            if (!matchedStoreId && r.medicine_id) {
+              const linkRow = await db2.get(
+                `SELECT store_id, store_name, product_code, product_id, packaging, company
+             FROM medicine_distributor_links 
+             WHERE medicine_id = ? AND store_id IS NOT NULL AND store_id > 0
+             ORDER BY pick_order, id LIMIT 1`,
+                [r.medicine_id]
+              );
+              if (linkRow?.store_id) {
+                matchedStoreId = Number(linkRow.store_id);
+                if (linkRow.store_name) matchedStoreName = linkRow.store_name;
+                if (linkRow.product_id) matchedProductId = Number(linkRow.product_id);
+                if (linkRow.product_code) matchedProductCode = linkRow.product_code;
+                if (matchedProductId && matchedProductCode) isMapped = true;
+              }
+            }
+            const catRow = await db2.get(
+              `SELECT store_id, store_name, CAST(availability AS INTEGER) as avail, distributor_price
+           FROM distributor_catalog
+           WHERE product_name LIKE ?
+             ${matchedStoreId ? "AND store_id = ?" : ""}
+           ORDER BY CAST(availability AS INTEGER) DESC
+           LIMIT 1`,
+              matchedStoreId ? [`${r.medicine_name}%`, matchedStoreId] : [`${r.medicine_name}%`]
+            );
+            if (catRow) {
+              if (!matchedStoreId && catRow.store_id) matchedStoreId = Number(catRow.store_id);
+              if (catRow.store_name) matchedStoreName = catRow.store_name;
+              avail = Number(catRow.avail || 0);
+            }
+            return {
+              medicineId: r.medicine_id,
+              medicineName: r.medicine_name,
+              manufacturer: r.manufacturer || "",
+              billCount: r.bill_count,
+              totalQty: r.total_qty,
+              lastOrderedDate: r.last_date ? String(r.last_date).slice(0, 10) : "",
+              lastQty: Math.max(1, Math.round(Number(r.last_qty) || 1)),
+              lastDistributorName: r.distributor_name || "",
+              distributorId: r.distributor_id || null,
+              storeId: matchedStoreId,
+              storeName: matchedStoreName,
+              ptr: r.last_rate ? Number(r.last_rate) : 0,
+              mrp: r.last_mrp ? Number(r.last_mrp) : 0,
+              productCode: matchedProductCode,
+              productId: matchedProductId,
+              mapped: isMapped,
+              availability: avail,
+              receiptStatus: "RECEIVED"
+            };
+          })
+        );
+        res.json({ success: true, items: enriched });
+      } catch (err) {
+        console.error("Error fetching purchase reorder history:", err);
+        res.status(500).json({ error: "Failed to fetch purchase reorder history: " + err.message });
       }
     });
     router.get("/check-medicine-stock", async (req, res) => {
@@ -45947,6 +46175,59 @@ var init_whatsappQueueWorker = __esm({
               }
               continue;
             }
+            if (["refill_collection", "refill_reminder", "order_ready", "special_order_arrived", "special_order"].includes(item.type)) {
+              if (item.type === "refill_collection" || item.type === "refill_reminder") {
+                const activeRefills = await db2.all(
+                  `SELECT id FROM patient_refills 
+               WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
+                 AND is_active = 1
+                 AND is_ready = 1
+                 AND auto_remind = 1
+                 AND status NOT IN ('completed', 'canceled')`,
+                  [`%${target10Digits}`, `%${target10Digits}`]
+                ).catch(() => []);
+                if (!activeRefills || activeRefills.length === 0) {
+                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 refill already fulfilled or reminder cancelled for ${target10Digits}.`);
+                  await db2.run(
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled or reminder cancelled' WHERE id = ?",
+                    [item.id]
+                  );
+                  await db2.run(
+                    `UPDATE automation_notifications 
+                 SET status = 'cancelled', error_message = 'Already fulfilled' 
+                 WHERE reference_id = ? OR reference_id = ?`,
+                    [`queue_${item.id}`, String(item.id)]
+                  ).catch(() => {
+                  });
+                  this.broadcastQueueState(true);
+                  continue;
+                }
+              } else if (item.type === "order_ready" || item.type === "special_order_arrived" || item.type === "special_order") {
+                const activeOrders = await db2.all(
+                  `SELECT id FROM special_orders 
+               WHERE (phone LIKE ? OR replace(phone, ' ', '') LIKE ?)
+                 AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
+                 AND auto_remind = 1`,
+                  [`%${target10Digits}`, `%${target10Digits}`]
+                ).catch(() => []);
+                if (!activeOrders || activeOrders.length === 0) {
+                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 special order already fulfilled, delivered, or cancelled for ${target10Digits}.`);
+                  await db2.run(
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled or delivered' WHERE id = ?",
+                    [item.id]
+                  );
+                  await db2.run(
+                    `UPDATE automation_notifications 
+                 SET status = 'cancelled', error_message = 'Already fulfilled' 
+                 WHERE reference_id = ? OR reference_id = ?`,
+                    [`queue_${item.id}`, String(item.id)]
+                  ).catch(() => {
+                  });
+                  this.broadcastQueueState(true);
+                  continue;
+                }
+              }
+            }
             if (!useBusiness && status.isReady) {
               const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
               if (regStatus === "NOT_AVAILABLE") {
@@ -47052,6 +47333,7 @@ __export(refillService_exports, {
   createQuickBillForRefill: () => createQuickBillForRefill,
   isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed,
   notifyAdminStagedReminders: () => notifyAdminStagedReminders,
+  purgePendingCustomerReminders: () => purgePendingCustomerReminders,
   sendMorningScheduleBriefingToAdmin: () => sendMorningScheduleBriefingToAdmin,
   syncStagedRefillNotificationForPatient: () => syncStagedRefillNotificationForPatient,
   triggerPendingRefillsForMedicine: () => triggerPendingRefillsForMedicine,
@@ -47499,6 +47781,84 @@ async function cleanupStagedRefillNotifications(db2, refillIds, targetStatus = "
   } catch (cleanErr) {
     console.warn("[Refills] Cleanup of staged notifications warning:", cleanErr);
   }
+}
+async function purgePendingCustomerReminders(db2, options) {
+  let purgedQueueCount = 0;
+  let purgedNotificationsCount = 0;
+  try {
+    const rawPhone = (options.phone || "").replace(/\D/g, "");
+    const last10 = rawPhone.length >= 7 ? rawPhone.slice(-10) : "";
+    const refillIdStrs = (options.refillIds || []).map((id) => String(id).trim()).filter(Boolean);
+    const orderIdStrs = (options.specialOrderIds || []).map((id) => String(id).trim()).filter(Boolean);
+    const medNames = (options.medicineNames || []).map((m) => m.trim().toLowerCase()).filter(Boolean);
+    const waTypes = [
+      "refill_collection",
+      "order_ready",
+      "refill_reminder",
+      "special_order_arrived",
+      "special_order",
+      "special_order_batch",
+      "special_order_fulfilled",
+      "admin_shortage_reminder"
+    ];
+    const waTypePlaceholders = waTypes.map(() => "?").join(",");
+    if (last10) {
+      const pendingItems = await db2.all(
+        `SELECT id, message FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'failed_offline') 
+           AND type IN (${waTypePlaceholders})
+           AND number LIKE ?`,
+        [...waTypes, `%${last10}%`]
+      ).catch(() => []);
+      const idsToDelete = [];
+      for (const item of pendingItems || []) {
+        if (medNames.length === 0) {
+          idsToDelete.push(item.id);
+        } else {
+          const msgLower = (item.message || "").toLowerCase();
+          const matchesMed = medNames.some((m) => msgLower.includes(m));
+          if (matchesMed) {
+            idsToDelete.push(item.id);
+          }
+        }
+      }
+      if (idsToDelete.length > 0) {
+        const delPlaceholders = idsToDelete.map(() => "?").join(",");
+        const res = await db2.run(
+          `DELETE FROM whatsapp_send_queue WHERE id IN (${delPlaceholders})`,
+          idsToDelete
+        );
+        purgedQueueCount = res?.changes || idsToDelete.length;
+      }
+    }
+    if (refillIdStrs.length > 0) {
+      await cleanupStagedRefillNotifications(db2, refillIdStrs, "cancelled");
+    }
+    if (orderIdStrs.length > 0) {
+      const orderPlaceholders = orderIdStrs.map(() => "?").join(",");
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled', lifecycle_status = 'cancelled' 
+         WHERE reference_id IN (${orderPlaceholders})`,
+        orderIdStrs
+      ).catch(() => {
+      });
+    }
+    if (last10 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled', lifecycle_status = 'cancelled' 
+         WHERE recipient_phone LIKE ? 
+           AND status = 'staged' 
+           AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+        [`%${last10}%`]
+      ).catch(() => {
+      });
+    }
+  } catch (err) {
+    console.warn("[Refills] purgePendingCustomerReminders error:", err);
+  }
+  return { purgedQueueCount, purgedNotificationsCount };
 }
 async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
   let templateKey = requestedTemplate || "";
@@ -55714,7 +56074,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.66";
+    APP_VERSION = "0.1.67";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -75637,11 +75997,19 @@ var init_refills = __esm({
            reminder_status = 'NOT_SENT',
            reminder_sent_at = NULL,
            reminder_job_id = NULL,
-           reminder_occurrence_date = NULL
+           reminder_occurrence_date = NULL,
+           auto_remind = 0,
+           last_collection_reminder_at = NULL,
+           collection_reminder_count = 0
        WHERE id = ?`,
           [nextDateStr, id]
         );
-        await cleanupStagedRefillNotifications(db2, [Number(id)], "sent_manually");
+        await purgePendingCustomerReminders(db2, {
+          phone: refill.patient_phone,
+          refillIds: [Number(id)],
+          customerId: refill.customer_id,
+          medicineNames: refill.medicine_name ? [refill.medicine_name] : void 0
+        });
         await checkAllRefills(db2);
         res.json({
           success: true,
@@ -75729,14 +76097,21 @@ var init_refills = __esm({
              reminder_status = 'NOT_SENT',
              reminder_sent_at = NULL,
              reminder_job_id = NULL,
-             reminder_occurrence_date = NULL
+             reminder_occurrence_date = NULL,
+             auto_remind = 0,
+             last_collection_reminder_at = NULL,
+             collection_reminder_count = 0
          WHERE id = ?`,
             [nextDateStr, refill.id]
           );
           fulfilledCount++;
           fulfilledIds.push(refill.id);
         }
-        await cleanupStagedRefillNotifications(db2, fulfilledIds, "sent_manually");
+        await purgePendingCustomerReminders(db2, {
+          phone,
+          refillIds: fulfilledIds,
+          customerId
+        });
         await checkAllRefills(db2);
         res.json({
           success: true,
@@ -75835,11 +76210,19 @@ var init_refills = __esm({
              reminder_status = 'NOT_SENT',
              reminder_sent_at = NULL,
              reminder_job_id = NULL,
-             reminder_occurrence_date = NULL
+             reminder_occurrence_date = NULL,
+             auto_remind = 0,
+             last_collection_reminder_at = NULL,
+             collection_reminder_count = 0
          WHERE id = ?`,
             [nextDateStr, id]
           );
-          await cleanupStagedRefillNotifications(db2, [Number(id)], "sent_manually");
+          await purgePendingCustomerReminders(db2, {
+            phone: refill.patient_phone,
+            refillIds: [Number(id)],
+            customerId: refill.customer_id,
+            medicineNames: [medName]
+          });
           await checkAllRefills(db2);
           return res.json({ success: true, message: "Refill completed and advanced to next cycle", next_refill_date: nextDateStr });
         } else if (normalizedStatus === "notified" || normalizedStatus === "dismissed") {
@@ -75854,11 +76237,16 @@ var init_refills = __esm({
         } else if (normalizedStatus === "canceled" || normalizedStatus === "cancelled") {
           await db2.run(
             `UPDATE patient_refills
-         SET status = 'canceled', is_active = 0, is_ready = 0, hold_for_stock = 0
+         SET status = 'canceled', is_active = 0, is_ready = 0, hold_for_stock = 0, auto_remind = 0,
+             last_collection_reminder_at = NULL, collection_reminder_count = 0
          WHERE id = ?`,
             [id]
           );
-          await cleanupStagedRefillNotifications(db2, [Number(id)], "cancelled");
+          await purgePendingCustomerReminders(db2, {
+            phone: refill.patient_phone,
+            refillIds: [Number(id)],
+            customerId: refill.customer_id
+          });
           removeRefillCartLines([refill], true);
           return res.json({ success: true, message: "Refill cancelled" });
         } else if (normalizedStatus === "ordered") {
@@ -76549,6 +76937,16 @@ ${summaryLines}
           "UPDATE patient_refills SET auto_remind = ? WHERE id = ?",
           [val, id]
         );
+        if (val === 0) {
+          const refill = await db2.get("SELECT patient_phone, customer_id, medicine_id FROM patient_refills WHERE id = ?", [id]);
+          if (refill) {
+            await purgePendingCustomerReminders(db2, {
+              phone: refill.patient_phone,
+              refillIds: [Number(id)],
+              customerId: refill.customer_id
+            });
+          }
+        }
         eventService.broadcast("refill_updated", { at: Date.now(), refillId: Number(id), auto_remind: val });
         res.json({ success: true, id: Number(id), auto_remind: val });
       } catch (err) {
@@ -76571,6 +76969,11 @@ ${summaryLines}
        WHERE is_active = 1 AND (patient_phone LIKE ? OR patient_phone LIKE ?)`,
           [val, `%${cleanPhone}`, `%${cleanPhone}%`]
         );
+        if (val === 0) {
+          await purgePendingCustomerReminders(db2, {
+            phone: cleanPhone
+          });
+        }
         eventService.broadcast("refill_updated", { at: Date.now(), phone: cleanPhone, auto_remind: val });
         res.json({ success: true, phone: cleanPhone, auto_remind: val });
       } catch (err) {
@@ -76705,7 +77108,11 @@ ${summaryLines}
           ).catch(() => {
           });
         }
+        removeRefillCartLines(refills, true);
         eventService.broadcast("refill_updated", { at: Date.now(), patient_phone: cleanPhone, is_ready: 1 });
+        eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
+        eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+        eventService.broadcast("app-refills-updated", { at: Date.now() });
         res.json({
           success: true,
           whatsapp_queued: whatsappQueued,
@@ -76795,7 +77202,11 @@ ${summaryLines}
        WHERE id = ?`,
           [id]
         );
+        removeRefillCartLines([refill], true);
         eventService.broadcast("refill_updated", { at: Date.now(), refill_id: id, is_ready: 1 });
+        eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
+        eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+        eventService.broadcast("app-refills-updated", { at: Date.now() });
         res.json({
           success: true,
           whatsapp_queued: whatsappQueued,
@@ -79724,6 +80135,7 @@ var init_returnWindowService = __esm({
           `UPDATE special_orders
        SET delivery_status = 'delivered',
            status = 'Delivered',
+           auto_remind = 0,
            delivered_at = ?,
            return_window_until = ?,
            return_status = 'eligible',
@@ -86320,6 +86732,7 @@ var init_sales = __esm({
     init_config();
     init_medicineSalesMetricsService();
     init_refillService();
+    init_whatsappQueueWorker();
     init_orderNameMatcher();
     init_returnWindowService();
     init_tenantAuth();
@@ -86374,6 +86787,101 @@ var init_sales = __esm({
           timestamp: (/* @__PURE__ */ new Date()).toISOString()
         }));
         res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router34.post("/counter-session", async (req, res) => {
+      try {
+        let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds } = req.body;
+        let cleanPhone = (phone || "").replace(/\D/g, "");
+        const explicitRefillIds = [];
+        if (refillId && !isNaN(Number(refillId))) explicitRefillIds.push(Number(refillId));
+        if (Array.isArray(refillIds)) explicitRefillIds.push(...refillIds.map(Number).filter((n) => !isNaN(n) && n > 0));
+        const explicitSoIds = [];
+        if (specialOrderId && !isNaN(Number(specialOrderId))) explicitSoIds.push(Number(specialOrderId));
+        if (Array.isArray(specialOrderIds)) explicitSoIds.push(...specialOrderIds.map(Number).filter((n) => !isNaN(n) && n > 0));
+        if (!cleanPhone && !customerId && explicitRefillIds.length === 0 && explicitSoIds.length === 0) {
+          return res.json({ success: true, message: "No target customer or orders specified" });
+        }
+        const db2 = await dbManager.getConnection();
+        if (!cleanPhone && customerId) {
+          const c = await db2.get("SELECT phone FROM customers WHERE id = ?", [customerId]).catch(() => null);
+          if (c?.phone) cleanPhone = String(c.phone).replace(/\D/g, "");
+        }
+        if (!cleanPhone && explicitRefillIds.length > 0) {
+          const r = await db2.get("SELECT patient_phone FROM patient_refills WHERE id = ?", [explicitRefillIds[0]]).catch(() => null);
+          if (r?.patient_phone) cleanPhone = String(r.patient_phone).replace(/\D/g, "");
+        }
+        if (!cleanPhone && explicitSoIds.length > 0) {
+          const o = await db2.get("SELECT phone FROM special_orders WHERE id = ?", [explicitSoIds[0]]).catch(() => null);
+          if (o?.phone) cleanPhone = String(o.phone).replace(/\D/g, "");
+        }
+        const phoneQuery = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : "";
+        if (explicitRefillIds.length > 0) {
+          const placeholders = explicitRefillIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE patient_refills 
+         SET auto_remind = 0, 
+             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+         WHERE id IN (${placeholders})`,
+            explicitRefillIds
+          ).catch(() => {
+          });
+        } else if (customerId || phoneQuery) {
+          await db2.run(
+            `UPDATE patient_refills 
+         SET auto_remind = 0, 
+             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+         WHERE (customer_id = ? OR (patient_phone IS NOT NULL AND length(patient_phone) >= 7 AND replace(patient_phone, ' ', '') LIKE ?))`,
+            [customerId || -1, phoneQuery || "NON_EXISTENT"]
+          ).catch(() => {
+          });
+        }
+        if (explicitSoIds.length > 0) {
+          const placeholders = explicitSoIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE special_orders 
+         SET auto_remind = 0 
+         WHERE id IN (${placeholders})`,
+            explicitSoIds
+          ).catch(() => {
+          });
+        } else if (customerId || phoneQuery) {
+          await db2.run(
+            `UPDATE special_orders 
+         SET auto_remind = 0 
+         WHERE status NOT IN ('Fulfilled', 'Cancelled')
+           AND (customer_id = ? OR (phone IS NOT NULL AND length(phone) >= 7 AND replace(phone, ' ', '') LIKE ?))`,
+            [customerId || -1, phoneQuery || "NON_EXISTENT"]
+          ).catch(() => {
+          });
+        }
+        const purged = await purgePendingCustomerReminders(db2, {
+          phone: cleanPhone || void 0,
+          customerId: customerId ? Number(customerId) : void 0,
+          refillIds: explicitRefillIds.length > 0 ? explicitRefillIds : void 0,
+          specialOrderIds: explicitSoIds.length > 0 ? explicitSoIds : void 0
+        });
+        try {
+          if (explicitRefillIds.length > 0 || customerId || phoneQuery) {
+            eventService.broadcast("refill_updated", { at: Date.now(), counter_session: true });
+            eventService.broadcast("app-refills-updated", { at: Date.now() });
+          }
+          if (explicitSoIds.length > 0 || customerId || phoneQuery) {
+            eventService.broadcast("order_updated", { at: Date.now(), counter_session: true });
+            eventService.broadcast("refresh-special-orders", { at: Date.now() });
+          }
+          whatsappQueueWorker.triggerProcessing();
+          whatsappQueueWorker.broadcastQueueState(true);
+        } catch (_) {
+        }
+        res.json({
+          success: true,
+          purged,
+          message: "Counter session active: auto-remind disabled and pending reminders purged."
+        });
+      } catch (err) {
+        console.error("[Sales] Counter session error:", err);
+        res.status(500).json({ error: err?.message || "Internal server error" });
       }
     });
     router34.post("/", async (req, res) => {
@@ -86832,6 +87340,69 @@ var init_sales = __esm({
             }
             await cleanupStagedRefillNotifications(db2, [refill.id], "sent_manually");
           }
+          await purgePendingCustomerReminders(db2, {
+            phone: patient_phone,
+            refillIds: matchingRefills.map((r) => r.id),
+            customerId
+          });
+        }
+        try {
+          const explicitSoId = req.body.special_order_id ? Number(req.body.special_order_id) : null;
+          const explicitSoIds = [];
+          if (explicitSoId && !isNaN(explicitSoId) && explicitSoId > 0) explicitSoIds.push(explicitSoId);
+          if (Array.isArray(req.body.special_order_ids)) {
+            explicitSoIds.push(...req.body.special_order_ids.map(Number).filter((n) => !isNaN(n) && n > 0));
+          }
+          let candidateSpecialOrders = [];
+          if (explicitSoIds.length > 0) {
+            const placeholders = explicitSoIds.map(() => "?").join(",");
+            candidateSpecialOrders = await db2.all(
+              `SELECT * FROM special_orders WHERE id IN (${placeholders}) AND status NOT IN ('Fulfilled', 'Cancelled')`,
+              explicitSoIds
+            );
+          } else if (cleanPhone.length >= 10 || customerId) {
+            candidateSpecialOrders = await db2.all(
+              `SELECT * FROM special_orders 
+           WHERE status IN ('Pending', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Arrived', 'Waiting', 'Confirmed')
+             AND (customer_id = ? OR (phone IS NOT NULL AND length(phone) >= 10 AND replace(phone, ' ', '') LIKE ?))`,
+              [customerId || -1, phoneQuery]
+            );
+          }
+          if (Array.isArray(candidateSpecialOrders) && candidateSpecialOrders.length > 0) {
+            const soldProductNames = items.map((it) => String(it.medicine_name || it.name || "").trim().toLowerCase()).filter(Boolean);
+            const fulfilledSoIds = [];
+            for (const so of candidateSpecialOrders) {
+              const isExplicit = explicitSoIds.includes(so.id);
+              const soProdName = String(so.product || "").trim().toLowerCase();
+              const isProductSold = isExplicit || soldProductNames.some((sp) => sp.includes(soProdName) || soProdName.includes(sp));
+              if (isProductSold) {
+                await db2.run(
+                  `UPDATE special_orders 
+               SET status = 'Fulfilled',
+                   notified = 1,
+                   auto_remind = 0,
+                   last_collection_reminder_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+                  [so.id]
+                );
+                fulfilledSoIds.push(so.id);
+              }
+            }
+            if (fulfilledSoIds.length > 0) {
+              await purgePendingCustomerReminders(db2, {
+                phone: patient_phone,
+                specialOrderIds: fulfilledSoIds,
+                customerId
+              });
+              for (const soId of fulfilledSoIds) {
+                eventService.broadcast("order_updated", { at: Date.now(), orderId: soId, action: "fulfilled_pos" });
+                eventService.broadcast("special_orders_updated", { at: Date.now(), orderId: soId });
+              }
+            }
+          }
+        } catch (soErr) {
+          console.warn("[Sales] Special orders resolution warning on POS sale:", soErr);
         }
         await db2.run("COMMIT");
         inventoryCache.invalidate();
@@ -94638,7 +95209,7 @@ async function cancelPendingWhatsAppForOrder(db2, order) {
       await db2.run(
         `DELETE FROM whatsapp_send_queue 
          WHERE status IN ('pending', 'failed_offline') 
-           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'admin_shortage_reminder', 'whatsapp_notification')
+           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'order_ready', 'refill_collection', 'admin_shortage_reminder', 'whatsapp_notification')
            AND (${matchConditions.join(" OR ")})`,
         matchArgs
       );
@@ -94676,6 +95247,7 @@ var init_orders = __esm({
     init_returnWindowService();
     init_orderScheduleService();
     init_paymentQrService();
+    init_refillService();
     router40 = import_express42.default.Router();
     broadcastOrdersChanged2 = (delta) => {
       try {
@@ -95805,14 +96377,20 @@ ${upiUri}
             console.error("[Orders] Failed to auto-send payment QR on distributor assignment:", qrErr?.message || qrErr);
           }
         }
-        if (newStatus === "Cancelled") {
+        if (newStatus === "Cancelled" || newStatus === "Fulfilled") {
           await cancelPendingWhatsAppForOrder(db2, {
             id,
             phone: newPhone || existing.phone,
             requester: newRequester || existing.requester,
             product: newProduct || existing.product
           });
-        } else if (newStatus === "Fulfilled") {
+          await purgePendingCustomerReminders(db2, {
+            phone: newPhone || existing.phone,
+            specialOrderIds: [Number(id)],
+            medicineNames: [newProduct || existing.product].filter(Boolean)
+          });
+        }
+        if (newStatus === "Fulfilled") {
           await db2.run(
             `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -95867,7 +96445,7 @@ ${upiUri}
           }
         }
         let cartAdjustment = null;
-        if (newStatus === "Cancelled") {
+        if (newStatus === "Cancelled" || newStatus === "Ready") {
           try {
             const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
             cartAdjustment = await Promise.race([
@@ -95880,8 +96458,11 @@ ${upiUri}
               }),
               new Promise((r) => setTimeout(() => r(null), 1500))
             ]);
+            eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
+            eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+            eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
           } catch (cartErr) {
-            console.warn("[Orders] Could not auto-adjust live cart on order cancel:", cartErr);
+            console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
           }
         }
         broadcastOrdersChanged2();
@@ -95929,9 +96510,15 @@ ${upiUri}
           "UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?",
           [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
         );
-        if (status === "Cancelled") {
+        if (status === "Cancelled" || status === "Fulfilled") {
           await cancelPendingWhatsAppForOrder(db2, existing);
-        } else if (status === "Fulfilled") {
+          await purgePendingCustomerReminders(db2, {
+            phone: existing.phone,
+            specialOrderIds: [Number(id)],
+            medicineNames: existing.product ? [existing.product] : void 0
+          });
+        }
+        if (status === "Fulfilled") {
           await db2.run(
             `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -95942,7 +96529,7 @@ ${upiUri}
           });
         }
         let cartAdjustment = null;
-        if (status === "Cancelled") {
+        if (status === "Cancelled" || status === "Ready") {
           try {
             const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
             cartAdjustment = await Promise.race([
@@ -95955,8 +96542,11 @@ ${upiUri}
               }),
               new Promise((r) => setTimeout(() => r(null), 1500))
             ]);
+            eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
+            eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+            eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
           } catch (cartErr) {
-            console.warn("[Orders] Could not auto-adjust live cart on order status Cancelled:", cartErr);
+            console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
           }
         }
         broadcastOrdersChanged2({ action: "update_status", orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
@@ -95975,6 +96565,17 @@ ${upiUri}
         const db2 = await dbManager.getConnection();
         const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
         await db2.run("UPDATE special_orders SET auto_remind = ? WHERE id = ?", [val, id]);
+        if (val === 0) {
+          const order = await db2.get("SELECT phone, product FROM special_orders WHERE id = ?", [id]);
+          if (order) {
+            await cancelPendingWhatsAppForOrder(db2, { id, phone: order.phone, product: order.product });
+            await purgePendingCustomerReminders(db2, {
+              phone: order.phone,
+              specialOrderIds: [Number(id)],
+              medicineNames: order.product ? [order.product] : void 0
+            });
+          }
+        }
         broadcastOrdersChanged2({ action: "auto_remind", orderId: Number(id), patch: { auto_remind: val } });
         res.json({ success: true, id: Number(id), auto_remind: val });
       } catch (err) {
@@ -96286,6 +96887,16 @@ We are preparing your order. Thank you!
         const orderId = parseInt(req.params.id, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
         const returnStatus = await returnWindowService.markDelivered(orderId);
+        const db2 = await dbManager.getConnection();
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (existing) {
+          await cancelPendingWhatsAppForOrder(db2, existing);
+          await purgePendingCustomerReminders(db2, {
+            phone: existing.phone,
+            specialOrderIds: [orderId],
+            medicineNames: existing.product ? [existing.product] : void 0
+          });
+        }
         broadcastOrdersChanged2();
         res.json({ success: true, message: "Order marked as delivered", return_status: returnStatus });
       } catch (err) {
