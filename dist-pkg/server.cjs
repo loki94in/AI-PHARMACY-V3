@@ -13168,6 +13168,18 @@ var init_emailSanitizer = __esm({
 });
 
 // src/utils/distributorSyncHelper.ts
+function parseMinOrderValue(raw) {
+  if (raw === void 0) return void 0;
+  if (raw === null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function parseMinOrderItems(raw) {
+  if (raw === void 0) return void 0;
+  if (raw === null || raw === "") return null;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? n : null;
+}
 function normalizeDistributorName2(rawName) {
   if (!rawName) return "";
   return rawName.toLowerCase().trim().replace(/\(.*?\)/g, "").replace(/pvt|ltd|limited|private|distributors|distributor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics/gi, "").replace(/[^a-z0-9]/g, "");
@@ -13523,6 +13535,14 @@ async function syncDistributorPhoneAcrossTables(db2, params) {
     }
     if (!targetId) {
       throw new Error("Unable to create or locate distributor record.");
+    }
+    const parsedMinValue = parseMinOrderValue(params.min_order_value);
+    if (parsedMinValue !== void 0) {
+      await db2.run("UPDATE distributors SET min_order_value = ? WHERE id = ?", [parsedMinValue, targetId]);
+    }
+    const parsedMinItems = parseMinOrderItems(params.min_order_items);
+    if (parsedMinItems !== void 0) {
+      await db2.run("UPDATE distributors SET min_order_items = ? WHERE id = ?", [parsedMinItems, targetId]);
     }
     try {
       await db2.run(
@@ -17306,7 +17326,9 @@ async function ensureSchema(dbPath) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       contact TEXT,
-      delivery_boy_id INTEGER
+      delivery_boy_id INTEGER,
+      min_order_value REAL DEFAULT NULL,
+      min_order_items INTEGER DEFAULT NULL
     );
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -18128,6 +18150,8 @@ async function ensureSchema(dbPath) {
       ["distributors", "preferred_file_format", "ALTER TABLE distributors ADD COLUMN preferred_file_format TEXT DEFAULT NULL"],
       ["distributors", "mapping_config", "ALTER TABLE distributors ADD COLUMN mapping_config TEXT DEFAULT NULL"],
       ["distributors", "delivery_boy_id", "ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL"],
+      ["distributors", "min_order_value", "ALTER TABLE distributors ADD COLUMN min_order_value REAL DEFAULT NULL"],
+      ["distributors", "min_order_items", "ALTER TABLE distributors ADD COLUMN min_order_items INTEGER DEFAULT NULL"],
       ["pharmarack_distributor_mappings", "delivery_boy_id", "ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL"],
       ["distributor_dispatch_reminders", "scheduled_send_time", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL"],
       ["doctors", "send_daily_summary", "ALTER TABLE doctors ADD COLUMN send_daily_summary INTEGER DEFAULT 0"],
@@ -19931,6 +19955,12 @@ async function ensureSchema(dbPath) {
       const distNames = new Set(distCols.map((c) => c.name));
       if (distCols.length > 0 && !distNames.has("delivery_boy_id")) {
         await db2.run("ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL");
+      }
+      if (distCols.length > 0 && !distNames.has("min_order_value")) {
+        await db2.run("ALTER TABLE distributors ADD COLUMN min_order_value REAL DEFAULT NULL");
+      }
+      if (distCols.length > 0 && !distNames.has("min_order_items")) {
+        await db2.run("ALTER TABLE distributors ADD COLUMN min_order_items INTEGER DEFAULT NULL");
       }
     } catch (_) {
     }
@@ -26991,7 +27021,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     const response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
       method: "POST",
       body: JSON.stringify(buildPayload(primaryKeyword)),
-      signal: AbortSignal.timeout(searchCold ? 7e3 : 3500)
+      signal: AbortSignal.timeout(searchCold ? 12e3 : 8e3)
     }).catch(() => null);
     let data = response && response.ok ? await response.json().catch(() => null) : null;
     if (data) lastSearchOkAt = Date.now();
@@ -27013,7 +27043,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
           (term) => fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
             method: "POST",
             body: JSON.stringify(buildPayload(term)),
-            signal: AbortSignal.timeout(3e3)
+            signal: AbortSignal.timeout(5e3)
           }).then((res) => res.ok ? res.json().catch(() => null) : null).then((resJson) => resJson && Array.isArray(resJson.data) && resJson.data.length > 0 ? resJson : null).catch(() => null)
         );
         const results = await Promise.all(parallelFetches);
@@ -27171,7 +27201,7 @@ async function loadLiveCartCore() {
   }
   const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
     method: "GET",
-    signal: AbortSignal.timeout(15e3)
+    signal: AbortSignal.timeout(3e4)
   });
   if (response.status === 401 || response.status === 403) {
     throw Object.assign(
@@ -27752,7 +27782,7 @@ async function addItemsToPharmarackCart(items) {
           const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
             method: "POST",
             body: JSON.stringify(searchPayload),
-            signal: AbortSignal.timeout(4e3)
+            signal: AbortSignal.timeout(8e3)
           });
           if (searchRes.ok) {
             const searchData = await searchRes.json().catch(() => null);
@@ -27873,11 +27903,25 @@ async function addItemsToPharmarackCart(items) {
         CasePacking: item.packaging || item.Packing || "1 strip",
         Packing: item.packaging || item.Packing || "1 strip"
       };
-      const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
-        method: "POST",
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15e3)
-      });
+      const response = await (async () => {
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            return await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
+              method: "POST",
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(3e4)
+            });
+          } catch (err) {
+            lastErr = err;
+            const msg = String(err?.message || err || "");
+            const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError" || /timeout|aborted|fetch failed|network/i.test(msg);
+            if (!isTimeout || attempt >= 2) throw err;
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
+        throw lastErr;
+      })();
       if (response.ok) {
         const resJson = await response.json().catch(() => ({}));
         const isOk = resJson && (resJson.StatusCode === 200 || resJson.statusCode === 200 || String(resJson.StatusCode) === "200" || resJson.status === 200 || resJson.status === "success" || resJson.success === true || resJson.Message && String(resJson.Message).toLowerCase().includes("success") || resJson.message && String(resJson.message).toLowerCase().includes("success"));
@@ -55575,7 +55619,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.63";
+    APP_VERSION = "0.1.64";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -70408,7 +70452,7 @@ var init_settings = __esm({
       }
     });
     router13.post("/distributors", async (req, res) => {
-      const { name, phone, email, address, state_code } = req.body;
+      const { name, phone, email, address, state_code, min_order_value, min_order_items } = req.body;
       if (!name) return res.status(400).json({ error: "Distributor name is required" });
       try {
         const db2 = await dbManager.getConnection();
@@ -70461,6 +70505,20 @@ var init_settings = __esm({
           );
         } catch (_) {
         }
+        if (min_order_value !== void 0) {
+          const parsed = min_order_value === null || min_order_value === "" ? null : Number(min_order_value);
+          await db2.run("UPDATE distributors SET min_order_value = ? WHERE id = ?", [
+            Number.isFinite(parsed) && parsed > 0 ? parsed : null,
+            targetId
+          ]);
+        }
+        if (min_order_items !== void 0) {
+          const parsed = min_order_items === null || min_order_items === "" ? null : Math.floor(Number(min_order_items));
+          await db2.run("UPDATE distributors SET min_order_items = ? WHERE id = ?", [
+            Number.isFinite(parsed) && parsed >= 1 ? parsed : null,
+            targetId
+          ]);
+        }
         const saved = await db2.get("SELECT * FROM distributors WHERE id = ?", [targetId]);
         res.json({ success: true, data: saved });
       } catch (error) {
@@ -70470,7 +70528,7 @@ var init_settings = __esm({
     });
     router13.put("/distributors/:id", async (req, res) => {
       const { id } = req.params;
-      const { name, phone, email, address, state_code } = req.body;
+      const { name, phone, email, address, state_code, min_order_value, min_order_items } = req.body;
       if (!name) return res.status(400).json({ error: "Distributor name is required" });
       try {
         const db2 = await dbManager.getConnection();
@@ -70480,7 +70538,9 @@ var init_settings = __esm({
           phone,
           email,
           address,
-          state_code
+          state_code,
+          min_order_value,
+          min_order_items
         });
         if (!updated) return res.status(404).json({ error: "Distributor not found" });
         res.json({ success: true, data: updated });
@@ -73563,7 +73623,9 @@ async function processRefillCartItem(refillId, opts = {}) {
   if (Array.isArray(opts.pick) && opts.pick.length > 0) {
     const picks = opts.pick.filter(isValidPick);
     if (picks.length === 0) return fail("Tick a distributor product from the list.");
-    await saveMedicineLinks(refill.medicine_id, picks);
+    const prioMap2 = await loadPriorityMap();
+    const orderedPicks = orderByPriority(picks, (p) => p.storeName, prioMap2);
+    await saveMedicineLinks(refill.medicine_id, orderedPicks);
   }
   const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
   let lines;
@@ -73572,11 +73634,16 @@ async function processRefillCartItem(refillId, opts = {}) {
   } catch (err) {
     return fail(cartErrorMessage(err));
   }
-  const links = orderByPriority(
-    await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]),
-    (l) => l.store_name,
-    await loadPriorityMap()
-  );
+  const prioMap = await loadPriorityMap();
+  const rawLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
+  const links = [...rawLinks].sort((a, b) => {
+    const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
+    const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;
+    if (poA !== poB) return poA - poB;
+    const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+    const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+    return rA - rB;
+  });
   const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
   if (mine) {
     return {
@@ -73710,50 +73777,60 @@ async function processRefillCartItem(refillId, opts = {}) {
       line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ""), qty }
     };
   }
-  const addRes = await pr.addItemsToPharmarackCart([{
-    productId: it.productId,
-    storeId: Number(it.storeId),
-    productCode: String(it.productCode),
-    productName: String(it.name || chosen.link.product_name || medicineName),
-    storeName: String(it.distributor || chosen.link.store_name),
-    company: it.company || void 0,
-    rate: it.rate != null ? Number(it.rate) : void 0,
-    mrp: it.mrp != null ? Number(it.mrp) : void 0,
-    scheme: it.scheme || void 0,
-    packaging: it.packaging || void 0,
-    mapped: it.mapped !== false,
-    qty
-  }]);
-  if (!addRes.success || addRes.offline) {
-    return fail(`Pharmarack did not accept the item: ${addRes.details || addRes.error || addRes.message || "offline"}`, { linked, candidates });
-  }
-  pr.invalidatePharmarackCartCache();
-  let added;
-  for (let attempt = 0; attempt < 2 && !added; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
-    try {
-      added = findLine(flattenCart(await pr.loadLiveCartCore()), it.storeId, it.productCode);
-    } catch (_) {
+  const addFailures = [];
+  for (const cand of available) {
+    const candItem = cand.item;
+    const addRes = await pr.addItemsToPharmarackCart([{
+      productId: candItem.productId,
+      storeId: Number(candItem.storeId),
+      productCode: String(candItem.productCode),
+      productName: String(candItem.name || cand.link.product_name || medicineName),
+      storeName: String(candItem.distributor || cand.link.store_name),
+      company: candItem.company || void 0,
+      rate: candItem.rate != null ? Number(candItem.rate) : void 0,
+      mrp: candItem.mrp != null ? Number(candItem.mrp) : void 0,
+      scheme: candItem.scheme || void 0,
+      packaging: candItem.packaging || void 0,
+      mapped: candItem.mapped !== false,
+      qty
+    }]);
+    if (!addRes.success || addRes.offline) {
+      addFailures.push(`${cand.link.store_name} (${addRes.details || addRes.error || addRes.message || "offline"})`);
+      continue;
     }
+    pr.invalidatePharmarackCartCache();
+    let added;
+    for (let attempt = 0; attempt < 2 && !added; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      try {
+        added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
+      } catch (_) {
+      }
+    }
+    if (!added) {
+      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
+      continue;
+    }
+    await db2.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
+    );
+    await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [cand.link.id]);
+    const firstLink = linkedState[0];
+    const skipped = linkedState.filter((s) => s !== cand && !s.inStock).map((s) => String(s.link.store_name));
+    const failedBefore = available.slice(0, available.indexOf(cand)).filter((s) => s !== cand && s.inStock).map((s) => String(s.link.store_name));
+    const noteParts = [...skipped.map((n) => `${n} was out of stock`), ...failedBefore.map((n) => `${n} did not accept it`)];
+    const note = noteParts.length > 0 ? ` (${noteParts.join("; ")})` : firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "added",
+      message: `Added ${qty} to ${added.storeName}${note}.`,
+      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
+    };
   }
-  if (!added) {
-    return fail("Pharmarack accepted the add, but the item is not showing in the cart yet. Check the Live Cart, or retry.", { linked, candidates });
-  }
-  await db2.run(
-    `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
-    [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
-  );
-  await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [chosen.link.id]);
-  const firstLink = linkedState[0];
-  const note = firstLink !== chosen && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
-  return {
-    ...base,
-    linked,
-    candidates,
-    status: "added",
-    message: `Added ${qty} to ${added.storeName}${note}.`,
-    line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
-  };
+  return fail(`Pharmarack did not accept the item at ${available.map((s) => String(s.link.store_name)).join(", ")}: ${addFailures.join("; ") || "no confirmation"}`, { linked, candidates });
 }
 async function getDistributorPurchaseRanks() {
   const db2 = await dbManager.getConnection();
@@ -91206,6 +91283,56 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    router36.get("/frequent", async (req, res) => {
+      const distributorId = parseInt(req.query.distributor_id, 10);
+      if (!distributorId || distributorId <= 0) {
+        return res.status(400).json({ error: "distributor_id is required" });
+      }
+      const rawDays = parseInt(req.query.days, 10);
+      const days = Number.isFinite(rawDays) ? Math.min(730, Math.max(1, rawDays)) : 90;
+      const rawLimit = parseInt(req.query.limit, 10);
+      const limit = Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 100;
+      const q = String(req.query.q || "").trim().replace(/\s+/g, " ");
+      try {
+        const db2 = await dbManager.getConnection();
+        const d = new Date(Date.now() - days * 864e5);
+        const pad2 = (n) => String(n).padStart(2, "0");
+        const cutoff = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+        const likeTerm = q.length >= 2 ? `%${q}%` : null;
+        const rows = await db2.all(
+          `SELECT m.id AS medicine_id, m.name AS medicine_name, m.manufacturer AS manufacturer,
+              a.bill_count, a.total_qty, a.last_date,
+              l.cost_price AS last_rate, l.mrp AS last_mrp, l.batch_no AS last_batch,
+              l.expiry_date AS last_expiry, l.cgst_per AS last_cgst, l.sgst_per AS last_sgst,
+              l.hsn_code AS last_hsn
+       FROM (
+         SELECT pi.medicine_id AS mid, COUNT(DISTINCT p.id) AS bill_count,
+                SUM(pi.quantity) AS total_qty, MAX(p.date) AS last_date
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE p.distributor_id = ? AND p.date >= ?
+         GROUP BY pi.medicine_id
+       ) a
+       JOIN (
+         SELECT pi.medicine_id AS mid2, pi.cost_price, pi.mrp, pi.batch_no,
+                pi.expiry_date, pi.cgst_per, pi.sgst_per, pi.hsn_code,
+                ROW_NUMBER() OVER (PARTITION BY pi.medicine_id ORDER BY p.date DESC, pi.id DESC) AS rn
+         FROM purchase_items pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         WHERE p.distributor_id = ? AND p.date >= ?
+       ) l ON l.mid2 = a.mid AND l.rn = 1
+       JOIN medicines m ON m.id = a.mid
+       ${likeTerm ? "WHERE m.name LIKE ?" : ""}
+       ORDER BY a.bill_count DESC, a.last_date DESC
+       LIMIT ?`,
+          likeTerm ? [distributorId, cutoff, distributorId, cutoff, likeTerm, limit] : [distributorId, cutoff, distributorId, cutoff, limit]
+        );
+        res.json({ data: rows });
+      } catch (error) {
+        console.error("Frequent-by-distributor error:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
     router36.post("/batch-last-purchase", async (req, res) => {
       let db2;
       try {
@@ -100504,7 +100631,7 @@ var init_distributors = __esm({
       }
     });
     postDistributorsHandler = async (req, res) => {
-      const { name, store_name, phone, contact, email, address, gstin, state_code, preferred_file_format } = req.body;
+      const { name, store_name, phone, contact, email, address, gstin, state_code, preferred_file_format, min_order_value, min_order_items } = req.body;
       const distName = (name || store_name || "").trim();
       if (!distName) {
         return res.status(400).json({ error: "Distributor name is required" });
@@ -100519,7 +100646,9 @@ var init_distributors = __esm({
           address,
           gstin,
           state_code,
-          preferred_file_format
+          preferred_file_format,
+          min_order_value,
+          min_order_items
         });
         res.json({
           success: true,
@@ -100537,7 +100666,7 @@ var init_distributors = __esm({
     router53.post("/", postDistributorsHandler);
     putDistributorHandler = async (req, res) => {
       const { id } = req.params;
-      const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code } = req.body;
+      const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code, min_order_value, min_order_items } = req.body;
       try {
         const db2 = await dbManager.getConnection();
         const savedDistributor = await syncDistributorPhoneAcrossTables(db2, {
@@ -100549,7 +100678,9 @@ var init_distributors = __esm({
           address,
           gstin,
           state_code,
-          preferred_file_format
+          preferred_file_format,
+          min_order_value,
+          min_order_items
         });
         syncTodayActiveDistributors().catch(() => {
         });
