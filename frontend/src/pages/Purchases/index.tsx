@@ -11,8 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { HoverPriceIntelTable } from '../../components/HoverPriceIntelTable';
 import { createPortal } from 'react-dom';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
-import { LowStockPickerModal } from '../../components/LowStockPickerModal';
-import { DistributorHistoryPickerModal } from '../../components/DistributorHistoryPickerModal';
+
 import { PurchaseSaveVerificationModal, type SaveVerificationData } from '../../components/PurchaseSaveVerificationModal';
 import { PurchaseDuplicateBillModal, type ExistingDuplicateBill } from '../../components/PurchaseDuplicateBillModal';
 import { calculateSimilarity } from '../../utils/fuzzy';
@@ -1360,8 +1359,7 @@ const Purchases: React.FC = () => {
 
   const savePurchaseRef = useRef<(() => Promise<void>) | null>(null);
   const addNewItemRef = useRef<(() => void) | null>(null);
-  const [showLowStockPicker, setShowLowStockPicker] = useState(false);
-  const [showHistoryPicker, setShowHistoryPicker] = useState(false);
+
   const activeSearchRef = useRef<HTMLDivElement>(null);
 
   const [searchResults, setSearchResults] = useState<Medicine[]>([]);
@@ -2485,16 +2483,7 @@ const Purchases: React.FC = () => {
     return shortfalls.length > 0 ? shortfalls.join(' · ') : null;
   }, [selectedDistributorObj, items, memoizedTotals]);
 
-  // Auto-enable old medicine history picker when distributor minimum order requirement flag appears
-  const hasAutoPromptedDistributorRef = useRef<Record<number, boolean>>({});
-  useEffect(() => {
-    if (selectedDistributor && minOrderWarning) {
-      if (!hasAutoPromptedDistributorRef.current[selectedDistributor]) {
-        hasAutoPromptedDistributorRef.current[selectedDistributor] = true;
-        setShowHistoryPicker(true);
-      }
-    }
-  }, [selectedDistributor, minOrderWarning]);
+
 
   const handleQuickAddOldMedicine = async (med: {
     id: number;
@@ -3795,13 +3784,6 @@ const Purchases: React.FC = () => {
           }).length}
           existingMedicineIds={new Set(items.map(i => i.medicine_id).filter(Boolean) as number[])}
           onQuickAdd={handleQuickAddOldMedicine}
-          onOpenHistoryPicker={() => {
-            if (!selectedDistributor) {
-              toastEvent.trigger('Select a distributor first to view its past orders.', 'error', '/purchases');
-              return;
-            }
-            setShowHistoryPicker(true);
-          }}
         />
 
         <div className="flex-1 overflow-auto">
@@ -3818,28 +3800,6 @@ const Purchases: React.FC = () => {
                         title="Add Row"
                       >
                         <Plus size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowLowStockPicker(true)}
-                        className="mt-1 bg-amber-600 hover:bg-amber-700 text-white p-1 rounded-md flex items-center justify-center transition-colors shadow-sm"
-                        title="Order low-stock medicines"
-                      >
-                        <Package size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!selectedDistributor) {
-                            toastEvent.trigger('Select a distributor first to see its order history.', 'error', '/purchases');
-                            return;
-                          }
-                          setShowHistoryPicker(true);
-                        }}
-                        className="mt-1 bg-sky-600 hover:bg-sky-700 text-white p-1 rounded-md flex items-center justify-center transition-colors shadow-sm"
-                        title="Order from this distributor's history (most-ordered medicines)"
-                      >
-                        <BookOpen size={14} />
                       </button>
                     </th>
                     {hasOriginalName && <th className="pb-3 text-xs uppercase tracking-wider text-left pl-2 whitespace-nowrap">Original Bill Name</th>}
@@ -4693,16 +4653,12 @@ const Purchases: React.FC = () => {
               </div>
             )}
             {minOrderWarning && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedDistributor) setShowHistoryPicker(true);
-                }}
-                className="flex items-center gap-1.5 text-sm font-semibold text-amber-500 bg-amber-500/10 hover:bg-amber-500/20 active:scale-95 px-3 py-2 rounded-xl border border-amber-500/30 shadow-sm transition-all cursor-pointer"
-                title={`Minimum order for ${selectedDistributorObj?.name || 'this distributor'} not met — Click to pick from past orders`}
+              <div
+                className="flex items-center gap-1.5 text-sm font-semibold text-amber-500 bg-amber-500/10 px-3 py-2 rounded-xl border border-amber-500/30 shadow-sm"
+                title={`Minimum order for ${selectedDistributorObj?.name || 'this distributor'} not met`}
               >
-                <span>⚠️ Min order: {minOrderWarning} (Click to fulfill)</span>
-              </button>
+                <span>⚠️ Min order: {minOrderWarning}</span>
+              </div>
             )}
             <button
               onClick={savePurchase}
@@ -4742,103 +4698,7 @@ const Purchases: React.FC = () => {
       />
 
 
-      {showLowStockPicker && (
-        <LowStockPickerModal
-          onClose={() => setShowLowStockPicker(false)}
-          onAdd={(picked) => {
-            setItems(prev => {
-              const have = new Set(prev.map(i => i.medicine_id).filter(Boolean));
-              const fresh = picked
-                .filter(p => !have.has(p.medicine_id))
-                .map(p => ({ ...createEmptyItem(), medicine_id: p.medicine_id, medicine_name: p.medicine_name, name: p.medicine_name, manufacturer: p.manufacturer || '', stock_qty: p.strips }));
-              const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
-              return [...kept, ...fresh, createEmptyItem()];
-            });
-            setShowLowStockPicker(false);
-          }}
-        />
-      )}
-
-      {showHistoryPicker && selectedDistributor && (
-        <DistributorHistoryPickerModal
-          distributorId={selectedDistributor}
-          distributorName={selectedDistributorObj?.name || selectedDistributorObj?.distributor_name || distributorSearch}
-          onClose={() => setShowHistoryPicker(false)}
-          minOrderWarning={minOrderWarning}
-          minItemsRequired={Math.floor(Number(selectedDistributorObj?.min_order_items)) || 0}
-          currentValidCount={items.filter(item => {
-            const qtyVal = item.qty !== undefined ? item.qty : item.quantity;
-            return (parseFloat(String(qtyVal || 0)) || 0) > 0;
-          }).length}
-          existingMedicineIds={new Set(items.map(i => i.medicine_id).filter(Boolean) as number[])}
-          onAdd={async (picked, keepOpen = false) => {
-            const existingIds = new Set(items.map(i => i.medicine_id).filter(Boolean));
-            const fresh = picked.filter(p => !existingIds.has(p.medicine_id));
-            if (fresh.length === 0) {
-              if (!keepOpen) setShowHistoryPicker(false);
-              toastEvent.trigger('Item already in bill', 'info', '/purchases');
-              return;
-            }
-            // ONE batched read-only hydrate: last rate/MRP/batch/expiry/GST from
-            // real bills at this distributor. Quantity always stays blank.
-            const hydrated = new Map<string, BatchLastPurchaseResult & { hsn_code?: string }>();
-            try {
-              const res = await api.batchLastPurchase(
-                fresh.map(f => ({ name: f.medicine_name })),
-                selectedDistributor
-              );
-              if (Array.isArray(res)) {
-                for (const r of res) hydrated.set(r.query, r);
-              }
-            } catch (_) {}
-            setItems(prev => {
-              const have = new Set(prev.map(i => i.medicine_id).filter(Boolean));
-              const rows = fresh
-                .filter(f => !have.has(f.medicine_id))
-                .map(f => {
-                  const base = {
-                    ...createEmptyItem(),
-                    medicine_id: f.medicine_id,
-                    medicine_name: f.medicine_name,
-                    name: f.medicine_name,
-                    manufacturer: f.manufacturer || '',
-                  };
-                  const h = hydrated.get(f.medicine_name);
-                  if (h && h.found) {
-                    if (h.batch_no) base.batch_no = h.batch_no;
-                    if (h.expiry_date) base.expiry_date = h.expiry_date;
-                    if (h.cost_price) base.rate = h.cost_price;
-                    if (h.mrp) base.mrp = h.mrp;
-                    if (h.cgst_per !== undefined && h.cgst_per !== null) base.cgst_per = h.cgst_per;
-                    if (h.sgst_per !== undefined && h.sgst_per !== null) base.sgst_per = h.sgst_per;
-                    if (h.hsn_code) base.hsn_code = h.hsn_code;
-                  } else {
-                    if (f.last_batch) base.batch_no = f.last_batch;
-                    if (f.last_rate) base.rate = f.last_rate;
-                    if (f.last_mrp) base.mrp = f.last_mrp;
-                    if (f.last_cgst !== null && f.last_cgst !== undefined) base.cgst_per = f.last_cgst;
-                    if (f.last_sgst !== null && f.last_sgst !== undefined) base.sgst_per = f.last_sgst;
-                    if (f.last_hsn) base.hsn_code = f.last_hsn;
-                  }
-                  base.amount = calculateItemAmount(base);
-                  return base;
-                });
-              const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
-              return [...kept, ...rows, createEmptyItem()];
-            });
-            toastEvent.trigger(
-              fresh.length === 1 ? `Added ${fresh[0].medicine_name} to bill` : `Added ${fresh.length} items to bill`,
-              'success',
-              '/purchases'
-            );
-            if (!keepOpen) {
-              setShowHistoryPicker(false);
-            }
-          }}
-        />
-      )}
-
-      {isUniversalModalOpen && (
+            {isUniversalModalOpen && (
         <UniversalMedicineEditModal 
           medicineId={universalEditMedicineId} 
           mode={universalEditMode}

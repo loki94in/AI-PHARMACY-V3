@@ -22,7 +22,6 @@ export interface OldMedicineQuickAddBoxProps {
     sgst_per?: number | null;
     hsn_code?: string | null;
   }) => Promise<void> | void;
-  onOpenHistoryPicker: () => void;
 }
 
 export const OldMedicineQuickAddBox: React.FC<OldMedicineQuickAddBoxProps> = ({
@@ -33,7 +32,6 @@ export const OldMedicineQuickAddBox: React.FC<OldMedicineQuickAddBoxProps> = ({
   currentValidCount = 0,
   existingMedicineIds,
   onQuickAdd,
-  onOpenHistoryPicker,
 }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -303,36 +301,19 @@ export const OldMedicineQuickAddBox: React.FC<OldMedicineQuickAddBoxProps> = ({
           )}
         </div>
 
-        {/* Right Side: Minimum Order Shortfall Notice / History Drawer Button */}
-        <div className="flex items-center gap-2 shrink-0">
-          {minOrderWarning && (
-            <button
-              type="button"
-              onClick={onOpenHistoryPicker}
-              className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 cursor-pointer transition-colors shadow-2xs"
-              title="Click to view distributor order history and fulfill minimum requirement"
-            >
-              <AlertTriangle size={13} className="text-amber-400 shrink-0" />
-              <span>
-                Min Shortfall: {minOrderWarning}
-                {neededCount > 0 ? ` (${neededCount} needed)` : ''}
-              </span>
-              <span className="ml-1 underline text-[11px] font-bold">Fulfill →</span>
-            </button>
-          )}
-
-          {selectedDistributor && (
-            <button
-              type="button"
-              onClick={onOpenHistoryPicker}
-              className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30 cursor-pointer transition-colors"
-              title="Browse and pick multiple medicines from this distributor's past orders"
-            >
-              <History size={13} />
-              <span>Order from History</span>
-            </button>
-          )}
-        </div>
+        {/* Right Side: Minimum Order Shortfall Notice */}
+        {minOrderWarning && (
+          <div
+            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-2xs shrink-0"
+            title="Distributor minimum order requirement"
+          >
+            <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+            <span>
+              Min Shortfall: {minOrderWarning}
+              {neededCount > 0 ? ` (${neededCount} needed)` : ''}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
