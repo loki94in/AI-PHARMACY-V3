@@ -374,25 +374,72 @@ app.whenReady().then(async () => {
   }
 });
 
+/**
+ * Force-kill the backend process tree (and any child headless Chrome/Node instances).
+ * Last resort only — this is the path that skips the backend's own gracefulShutdown(),
+ * leaving last_clean_shutdown='false' and WhatsApp's Chrome profile mid-write, which is
+ * what makes the NEXT boot burn 1-3 minutes retrying a corrupted session lock.
+ */
+function forceKillBackendTree(pid: number): void {
+  try {
+    if (process.platform === 'win32') {
+      execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch (_) {}
+}
+
 app.on('window-all-closed', () => {
-  console.log('[ElectronMain] All windows closed. Synchronously shutting down backend & child processes...');
-  if (backendProcess && backendProcess.pid) {
-    const pid = backendProcess.pid;
-    try {
-      if (process.platform === 'win32') {
-        // Synchronous process-tree kill: forcibly terminates backend AND all child headless Chrome/Node instances
-        execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
-      } else {
-        backendProcess.kill('SIGTERM');
-      }
-    } catch (_) {}
+  console.log('[ElectronMain] All windows closed. Requesting graceful backend shutdown...');
+  const proc = backendProcess;
+  const pid = proc?.pid;
+
+  if (!proc || !pid) {
+    const exeDir = path.dirname(process.execPath);
+    cleanAllSessionLocks(exeDir);
+    app.quit();
+    return;
   }
 
-  // Clean session profile locks synchronously on exit
-  const exeDir = path.dirname(process.execPath);
-  cleanAllSessionLocks(exeDir);
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    const exeDir = path.dirname(process.execPath);
+    cleanAllSessionLocks(exeDir);
+    app.quit();
+  };
 
-  app.quit();
+  // The backend's own gracefulShutdown() self-enforces a 6s hard cap (writes
+  // last_clean_shutdown='true', destroys the WhatsApp client cleanly, closes the DB,
+  // then exits itself) — give it a bounded window to finish that path on its own before
+  // falling back to the old hard taskkill, which always produced an unclean shutdown.
+  const GRACE_MS = 5000;
+  const forceTimer = setTimeout(() => {
+    console.warn('[ElectronMain] Graceful shutdown did not finish in time — forcing kill.');
+    forceKillBackendTree(pid);
+    finish();
+  }, GRACE_MS);
+
+  proc.once('exit', () => {
+    clearTimeout(forceTimer);
+    finish();
+  });
+
+  try {
+    const req = http.request(
+      `${BACKEND_URL}/api/system/client-exit`,
+      { method: 'POST', timeout: 2000 },
+      () => {}
+    );
+    req.on('error', () => {
+      // Backend unreachable (already dead/hung) — let the force timer handle it.
+    });
+    req.end();
+  } catch (_) {
+    // Synchronous request-construction failure — force timer still covers this.
+  }
 });
 
 app.on('activate', () => {

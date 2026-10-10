@@ -13198,7 +13198,8 @@ async function resolveDistributorContact(db2, storeOrDistName) {
     if (raw.includes("@") || raw.includes("<")) return "";
     let digits = raw.replace(/\D/g, "");
     if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
-    return digits.length === 10 ? digits : digits ? digits : "";
+    if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+    return digits.length === 10 ? digits : "";
   };
   try {
     const mapRow = await db2.get(
@@ -13395,6 +13396,11 @@ async function syncDistributorPhoneAcrossTables(db2, params) {
   let cleanPhone = rawPhone && !rawPhone.includes("@") && !rawPhone.includes("<") ? rawPhone.replace(/\D/g, "") : "";
   if (cleanPhone.length === 12 && cleanPhone.startsWith("91")) {
     cleanPhone = cleanPhone.slice(2);
+  } else if (cleanPhone.length === 11 && cleanPhone.startsWith("0")) {
+    cleanPhone = cleanPhone.slice(1);
+  }
+  if (rawPhone && cleanPhone.length !== 10) {
+    throw new Error(`Invalid distributor phone number. Phone number must be exactly 10 digits (received ${cleanPhone.length} digits).`);
   }
   const cleanEmail = extractCleanEmail(params.email);
   let isTxOwner = false;
@@ -15178,6 +15184,61 @@ Reply *YES* to confirm your refill.
   }
 });
 
+// src/utils/phoneValidation.ts
+function normalizePhoneDigits(input) {
+  if (input === void 0 || input === null) return "";
+  const raw = String(input).trim();
+  if (raw.includes("@") || raw.includes("<")) return "";
+  let digits = raw.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith("0")) {
+    digits = digits.slice(1);
+  }
+  return digits;
+}
+function validate10DigitPhone(input, options = {}) {
+  const allowEmpty = options.allowEmpty ?? options.allowBlank ?? true;
+  const requireMobile = options.requireMobile ?? options.requireMobilePrefix ?? true;
+  if (input === void 0 || input === null || String(input).trim() === "") {
+    if (allowEmpty) {
+      return { isValid: true, cleanPhone: "" };
+    }
+    const msg = "Phone number is required.";
+    return { isValid: false, cleanPhone: "", error: msg, reason: msg };
+  }
+  const raw = String(input).trim();
+  if (raw.includes("@") || raw.includes("<")) {
+    const msg = "Invalid characters in phone number.";
+    return { isValid: false, cleanPhone: "", error: msg, reason: msg };
+  }
+  const digits = normalizePhoneDigits(input);
+  if (digits.length !== 10) {
+    const msg = `Phone number must be exactly 10 digits (received ${digits.length} digit${digits.length === 1 ? "" : "s"}).`;
+    return {
+      isValid: false,
+      cleanPhone: "",
+      error: msg,
+      reason: msg
+    };
+  }
+  if (requireMobile && !/^[6-9]\d{9}$/.test(digits)) {
+    const msg = "Mobile phone number must start with 6, 7, 8, or 9.";
+    return {
+      isValid: false,
+      cleanPhone: "",
+      error: msg,
+      reason: msg
+    };
+  }
+  return { isValid: true, cleanPhone: digits };
+}
+var init_phoneValidation = __esm({
+  "src/utils/phoneValidation.ts"() {
+    "use strict";
+  }
+});
+
 // src/utils/whatsappTemplateBuilder.ts
 function formatPackagingAndUnit(packaging, qty = 1) {
   const numericQty = Math.max(1, Number(qty) || 1);
@@ -15987,6 +16048,7 @@ var init_orderNameMatcher = __esm({
 // src/database.ts
 var database_exports = {};
 __export(database_exports, {
+  autoHealDistributorPhoneMappings: () => autoHealDistributorPhoneMappings,
   dropFtsTriggers: () => dropFtsTriggers,
   ensureColumns: () => ensureColumns,
   ensureMedicineSearchSummaryTriggers: () => ensureMedicineSearchSummaryTriggers,
@@ -16233,6 +16295,76 @@ async function normalizeBillDatesToLocalTime(db2) {
     if (changed > 0) console.log(`[Boot] Bill dates: ${changed} sale date(s) moved from UTC to shop local time.`);
   } catch (err) {
     console.warn("[Boot] Bill date normalization skipped:", err?.message || err);
+  }
+}
+async function autoHealDistributorPhoneMappings(db2) {
+  try {
+    await db2.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = '8087125156',
+          distributor_id = 134,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE (store_name LIKE '%CM Distributor%' OR store_id = 12928)
+        AND (phone = '087125156' OR phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
+    `);
+    await db2.run(`
+      UPDATE distributors
+      SET phone = '8087125156', contact = '8087125156'
+      WHERE (name LIKE '%CM Distributor%' OR id IN (134, 174))
+        AND (phone IS NULL OR phone = '' OR phone = '087125156')
+    `);
+    await db2.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = (
+        SELECT d.phone FROM distributors d
+        WHERE d.id = pharmarack_distributor_mappings.distributor_id
+          AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+      ),
+      updated_at = CURRENT_TIMESTAMP
+      WHERE (phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
+        AND distributor_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM distributors d
+          WHERE d.id = pharmarack_distributor_mappings.distributor_id
+            AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        )
+    `);
+    await db2.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = (
+        SELECT d.phone FROM distributors d
+        WHERE UPPER(TRIM(d.name)) = UPPER(TRIM(pharmarack_distributor_mappings.store_name))
+          AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        LIMIT 1
+      ),
+      distributor_id = COALESCE(distributor_id, (
+        SELECT d.id FROM distributors d
+        WHERE UPPER(TRIM(d.name)) = UPPER(TRIM(pharmarack_distributor_mappings.store_name))
+          AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        LIMIT 1
+      )),
+      updated_at = CURRENT_TIMESTAMP
+      WHERE (phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
+        AND EXISTS (
+          SELECT 1 FROM distributors d
+          WHERE UPPER(TRIM(d.name)) = UPPER(TRIM(pharmarack_distributor_mappings.store_name))
+            AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        )
+    `);
+    await db2.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE phone IS NOT NULL 
+        AND LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10
+        AND LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) > 0
+    `);
+    await db2.run(`
+      UPDATE contacts
+      SET phone = '8087125156', updated_at = CURRENT_TIMESTAMP
+      WHERE name LIKE '%CM Distributor%' AND (phone = '087125156' OR phone IS NULL OR phone = '')
+    `);
+  } catch (err) {
+    console.warn("[Boot] Auto-heal distributor mappings error:", err?.message || err);
   }
 }
 async function ensureRefillCartLinkSchema(db2) {
@@ -17189,6 +17321,7 @@ async function ensureSchema(dbPath) {
         await ensureRefillCartLinkSchema(db2);
         await ensureMultiPharmacyAndSnapshotSchema(db2);
         await normalizeBillDatesToLocalTime(db2);
+        await autoHealDistributorPhoneMappings(db2);
         await ensureMedicinesFts(db2);
         await ensureMedicineSearchSummaryTriggers(db2);
         return;
@@ -20030,6 +20163,7 @@ async function ensureSchema(dbPath) {
     await ensureOrderTimingSchema(db2);
     await ensureRefillCartLinkSchema(db2);
     await normalizeBillDatesToLocalTime(db2);
+    await autoHealDistributorPhoneMappings(db2);
     await ensureMultiPharmacyAndSnapshotSchema(db2);
     await ensureMedicineSearchSummaryTriggers(db2);
     await db2.exec(`
@@ -20329,6 +20463,7 @@ async function ensureSchema(dbPath) {
       await ensureRefillCartLinkSchema(db2);
       await ensureMultiPharmacyAndSnapshotSchema(db2);
       await normalizeBillDatesToLocalTime(db2);
+      await autoHealDistributorPhoneMappings(db2);
       await ensureMedicinesFts(db2);
       await ensureMedicineSearchSummaryTriggers(db2);
     } catch (postErr) {
@@ -20348,7 +20483,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 74;
+    CURRENT_SCHEMA_VERSION = 75;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -28742,6 +28877,7 @@ var init_pharmarack = __esm({
     init_chromeBrowser();
     init_intentKeywords();
     init_marketClosureService();
+    init_phoneValidation();
     init_activityTracker();
     router = import_express.default.Router();
     lastSearchOkAt = 0;
@@ -28853,12 +28989,16 @@ var init_pharmarack = __esm({
       if (!store_name) {
         return res.status(400).json({ error: "store_name is required" });
       }
+      const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: false });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
       try {
         const db2 = await dbManager.getConnection();
         await syncDistributorPhoneAcrossTables(db2, {
           id: distributor_id ? Number(distributor_id) : void 0,
           store_name,
-          phone,
+          phone: phoneVal.cleanPhone || phone,
           delivery_boy_id: delivery_boy_id !== void 0 ? delivery_boy_id ? Number(delivery_boy_id) : null : void 0
         });
         res.json({ success: true, message: "Store mapping saved successfully" });
@@ -29358,10 +29498,10 @@ var init_pharmarack = __esm({
         for (const dist of cartDistributors) {
           const sLower = String(dist.storeName || "").toLowerCase().trim();
           let mappedPhone = phoneMap.get(sLower) || "";
-          if (!mappedPhone && dist.storeName) {
+          if ((!mappedPhone || mappedPhone.length !== 10) && dist.storeName) {
             try {
               const resolved = await resolveDistributorContact(db2, dist.storeName);
-              if (resolved && resolved.distributor_phone) {
+              if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
                 mappedPhone = resolved.distributor_phone;
                 phoneMap.set(sLower, mappedPhone);
               }
@@ -56914,7 +57054,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.72";
+    APP_VERSION = "0.1.73";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -58184,6 +58324,7 @@ var init_crm = __esm({
     init_nameFormatter();
     init_pharmacyCalendar();
     init_nameNormalizer();
+    init_phoneValidation();
     router6 = import_express6.default.Router();
     router6.get("/patients", async (req, res) => {
       const { q, limit } = req.query;
@@ -58284,11 +58425,16 @@ var init_crm = __esm({
     router6.post("/patients", async (req, res) => {
       const { name, phone, address, notes, language } = req.body;
       if (!name) return res.status(400).json({ error: "Name is required" });
+      const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
+      const cleanPhone = phoneVal.cleanPhone;
       try {
         const db2 = await dbManager.getConnection();
         const result = await db2.run(
           "INSERT INTO customers (name, phone, address, notes, language) VALUES (?, ?, ?, ?, ?)",
-          [name, phone || "", address || "", notes || "", language || "en"]
+          [name, cleanPhone, address || "", notes || "", language || "en"]
         );
         const newPatient = await db2.get("SELECT * FROM customers WHERE id = ?", result.lastID);
         try {
@@ -58304,19 +58450,27 @@ var init_crm = __esm({
     router6.put("/patients/:id", async (req, res) => {
       const { id } = req.params;
       const { name, phone, address, notes, language } = req.body;
+      let cleanPhone = phone || "";
+      if (phone !== void 0 && phone !== null && String(phone).trim() !== "") {
+        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        cleanPhone = phoneVal.cleanPhone;
+      }
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
           "UPDATE customers SET name=?, phone=?, address=?, notes=?, language=? WHERE id=?",
-          [name, phone || "", address || "", notes || "", language || "en", id]
+          [name, cleanPhone, address || "", notes || "", language || "en", id]
         );
-        if (phone || name) {
-          if (phone && name) {
-            await db2.run("UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ?", [name, phone, id]);
-            await db2.run("UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ?", [name, phone, id]);
-          } else if (phone) {
-            await db2.run("UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ?", [phone, id]);
-            await db2.run("UPDATE special_orders SET phone = ? WHERE customer_id = ?", [phone, id]);
+        if (phone !== void 0 || name) {
+          if (phone !== void 0 && name) {
+            await db2.run("UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ?", [name, cleanPhone, id]);
+            await db2.run("UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ?", [name, cleanPhone, id]);
+          } else if (phone !== void 0) {
+            await db2.run("UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ?", [cleanPhone, id]);
+            await db2.run("UPDATE special_orders SET phone = ? WHERE customer_id = ?", [cleanPhone, id]);
           } else if (name) {
             await db2.run("UPDATE patient_refills SET patient_name = ? WHERE customer_id = ?", [name, id]);
             await db2.run("UPDATE special_orders SET requester = ? WHERE customer_id = ?", [name, id]);
@@ -58498,6 +58652,14 @@ var init_crm = __esm({
       const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
       if (!name) return res.status(400).json({ error: "Doctor name is required" });
       const cleanName = sanitizeDoctorName(name) || name.trim();
+      let cleanPhone = null;
+      if (phone !== void 0 && phone !== null && String(phone).trim() !== "") {
+        const phoneCheck = validate10DigitPhone(phone, { allowBlank: true, requireMobilePrefix: false });
+        if (!phoneCheck.isValid) {
+          return res.status(400).json({ error: phoneCheck.reason });
+        }
+        cleanPhone = phoneCheck.cleanPhone || null;
+      }
       try {
         const db2 = await dbManager.getConnection();
         const existing = await db2.get("SELECT * FROM doctors WHERE LOWER(TRIM(name)) = LOWER(?)", [cleanName]);
@@ -58505,20 +58667,20 @@ var init_crm = __esm({
           await db2.run(
             `UPDATE doctors 
          SET speciality = COALESCE(NULLIF(?, ''), speciality),
-             phone = COALESCE(NULLIF(?, ''), phone),
+             phone = COALESCE(?, phone),
              hospital = COALESCE(NULLIF(?, ''), hospital),
              degree = COALESCE(NULLIF(?, ''), degree),
              reg_no = COALESCE(NULLIF(?, ''), reg_no),
              send_daily_summary = CASE WHEN ? = 1 THEN 1 ELSE send_daily_summary END
          WHERE id = ?`,
-            [speciality || "", phone || "", hospital || "", degree || "", reg_no || "", send_daily_summary ? 1 : 0, existing.id]
+            [speciality || "", cleanPhone, hospital || "", degree || "", reg_no || "", send_daily_summary ? 1 : 0, existing.id]
           );
           return res.json({ success: true, message: "Doctor profile updated", doctorId: existing.id });
         }
         const result = await db2.run(
           `INSERT INTO doctors (name, speciality, phone, hospital, degree, reg_no, send_daily_summary)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [cleanName, speciality || null, phone || null, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0]
+          [cleanName, speciality || null, cleanPhone, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0]
         );
         res.json({ success: true, message: "Doctor added successfully", doctorId: result.lastID });
       } catch (error) {
@@ -58531,13 +58693,21 @@ var init_crm = __esm({
       const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
       if (!name) return res.status(400).json({ error: "Doctor name is required" });
       const cleanName = sanitizeDoctorName(name) || name.trim();
+      let cleanPhone = null;
+      if (phone !== void 0 && phone !== null && String(phone).trim() !== "") {
+        const phoneCheck = validate10DigitPhone(phone, { allowBlank: true, requireMobilePrefix: false });
+        if (!phoneCheck.isValid) {
+          return res.status(400).json({ error: phoneCheck.reason });
+        }
+        cleanPhone = phoneCheck.cleanPhone || null;
+      }
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
           `UPDATE doctors 
        SET name = ?, speciality = ?, phone = ?, hospital = ?, degree = ?, reg_no = ?, send_daily_summary = ?
        WHERE id = ?`,
-          [cleanName, speciality || null, phone || null, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0, id]
+          [cleanName, speciality || null, cleanPhone, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0, id]
         );
         const updated = await db2.get("SELECT * FROM doctors WHERE id = ?", id);
         res.json({ success: true, doctor: updated });
@@ -60364,20 +60534,21 @@ function getPreupdateBackupsInfo() {
     try {
       const entries = import_fs36.default.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith("preupdate-")) {
-          const fullPath = import_path35.default.join(dir, entry.name);
-          if (folders.some((f) => f.fullPath === fullPath)) continue;
-          try {
-            const stats = import_fs36.default.statSync(fullPath);
-            const sizeBytes = getDirectorySize(fullPath);
-            folders.push({
-              name: entry.name,
-              fullPath,
-              sizeBytes,
-              createdAt: stats.mtime.toISOString()
-            });
-          } catch (_) {
-          }
+        const isCurrentFolder = entry.isDirectory() && entry.name.startsWith("preupdate-");
+        const isLegacyFile = entry.isFile() && LEGACY_PREUPGRADE_DB_RE.test(entry.name);
+        if (!isCurrentFolder && !isLegacyFile) continue;
+        const fullPath = import_path35.default.join(dir, entry.name);
+        if (folders.some((f) => f.fullPath === fullPath)) continue;
+        try {
+          const stats = import_fs36.default.statSync(fullPath);
+          const sizeBytes = isCurrentFolder ? getDirectorySize(fullPath) : stats.size;
+          folders.push({
+            name: entry.name,
+            fullPath,
+            sizeBytes,
+            createdAt: stats.mtime.toISOString()
+          });
+        } catch (_) {
         }
       }
     } catch (_) {
@@ -60399,16 +60570,18 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
     const toDelete = info.folders.slice(keepCount);
     for (const folder of toDelete) {
       const safeName = import_path35.default.basename(folder.fullPath);
-      if (!safeName.startsWith("preupdate-")) continue;
+      const isCurrentFolder = safeName.startsWith("preupdate-");
+      const isLegacyFile = LEGACY_PREUPGRADE_DB_RE.test(safeName);
+      if (!isCurrentFolder && !isLegacyFile) continue;
       try {
         if (import_fs36.default.existsSync(folder.fullPath)) {
           import_fs36.default.rmSync(folder.fullPath, { recursive: true, force: true });
           freedBytes += folder.sizeBytes;
           deletedCount++;
-          console.log(`[Backup] Pruned old pre-update backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
+          console.log(`[Backup] Pruned old ${isLegacyFile ? "legacy pre-upgrade" : "pre-update"} backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
         }
       } catch (err) {
-        console.error(`[Backup] Failed to remove preupdate folder ${safeName}:`, err?.message);
+        console.error(`[Backup] Failed to remove preupdate backup ${safeName}:`, err?.message);
       }
     }
   }
@@ -60428,7 +60601,7 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
     remainingCount: Math.min(info.folders.length - deletedCount, keepCount)
   };
 }
-var import_fs36, import_path35, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, DB_PATH2, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
+var import_fs36, import_path35, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, DB_PATH2, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask, LEGACY_PREUPGRADE_DB_RE;
 var init_backupService = __esm({
   "src/services/backupService.ts"() {
     "use strict";
@@ -60458,6 +60631,7 @@ var init_backupService = __esm({
       "Service Worker"
     ]);
     scheduledTask = null;
+    LEGACY_PREUPGRADE_DB_RE = /^app-preupgrade-\d{4}-\d{2}-\d{2}-\d+\.db$/i;
   }
 });
 
@@ -71232,6 +71406,7 @@ var init_settings = __esm({
     init_config();
     init_distributorSyncHelper();
     init_password();
+    init_phoneValidation();
     init_triggerSchedulerService();
     init_medicineSalesMetricsService();
     init_paymentQrService();
@@ -71330,11 +71505,23 @@ var init_settings = __esm({
         }
         const phoneKeys = ["shop_phone", "pharmacy_phone", "store_phone", "phone"];
         if (phoneKeys.includes(key) && saveValue) {
+          const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: false });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          saveValue = phoneCheck.cleanPhone;
           for (const pk of phoneKeys) {
             await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [pk, saveValue]);
           }
           await db2.run("UPDATE stores SET phone = ? WHERE id = 1", [saveValue]).catch(() => {
           });
+        }
+        if ((key === "owner_whatsapp_number" || key === "non_wa_fallback_alert_phone") && saveValue) {
+          const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: true });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          saveValue = phoneCheck.cleanPhone;
         }
         const addressKeys = ["address", "shop_address", "store_address", "pharmacy_address"];
         if (addressKeys.includes(key) && saveValue) {
@@ -71383,11 +71570,23 @@ var init_settings = __esm({
         }
         const phoneKeys = ["shop_phone", "pharmacy_phone", "store_phone", "phone"];
         if (phoneKeys.includes(key) && saveValue) {
+          const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: false });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          saveValue = phoneCheck.cleanPhone;
           for (const pk of phoneKeys) {
             await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [pk, saveValue]);
           }
           await db2.run("UPDATE stores SET phone = ? WHERE id = 1", [saveValue]).catch(() => {
           });
+        }
+        if ((key === "owner_whatsapp_number" || key === "non_wa_fallback_alert_phone") && saveValue) {
+          const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: true });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          saveValue = phoneCheck.cleanPhone;
         }
         const addressKeys = ["address", "shop_address", "store_address", "pharmacy_address"];
         if (addressKeys.includes(key) && saveValue) {
@@ -71461,6 +71660,19 @@ var init_settings = __esm({
               let finalVal = v ?? "";
               if (k === "admin_password" && finalVal && !String(finalVal).startsWith("pbkdf2:")) {
                 finalVal = hashPassword(String(finalVal));
+              }
+              if ((k === "owner_whatsapp_number" || k === "non_wa_fallback_alert_phone") && valStr) {
+                const phoneCheck = validate10DigitPhone(valStr, { allowBlank: true, requireMobilePrefix: true });
+                if (!phoneCheck.isValid) {
+                  throw new Error(`Invalid ${k}: ${phoneCheck.reason}`);
+                }
+                finalVal = phoneCheck.cleanPhone;
+              } else if (["shop_phone", "pharmacy_phone", "store_phone", "phone"].includes(k) && valStr) {
+                const phoneCheck = validate10DigitPhone(valStr, { allowBlank: true, requireMobilePrefix: false });
+                if (!phoneCheck.isValid) {
+                  throw new Error(`Invalid ${k}: ${phoneCheck.reason}`);
+                }
+                finalVal = phoneCheck.cleanPhone;
               }
               await upsertStmt.run([k, finalVal]);
               if (k === "gemini_api_key" && finalVal) {
@@ -72414,6 +72626,7 @@ var init_dispatch = __esm({
     init_distributorDispatchReminderWorker();
     init_eventService();
     init_storeContextService();
+    init_phoneValidation();
     router14 = import_express14.default.Router();
     router14.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -72455,12 +72668,20 @@ var init_dispatch = __esm({
       const { patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no, store_id } = req.body;
       const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
       if (!patient_name) return res.status(400).json({ error: "patient_name is required" });
+      let cleanPatientPhone = "";
+      if (patient_phone) {
+        const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: true, requireMobilePrefix: true });
+        if (!phoneCheck.isValid) {
+          return res.status(400).json({ error: phoneCheck.reason });
+        }
+        cleanPatientPhone = phoneCheck.cleanPhone;
+      }
       try {
         const db2 = await dbManager.getConnection();
         const result = await db2.run(
           `INSERT INTO dispatch_orders (store_id, patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [targetStoreId, patient_name, patient_phone || "", address || "", items || "", notes || "", delivery_boy_id || null, invoice_no || ""]
+          [targetStoreId, patient_name, cleanPatientPhone, address || "", items || "", notes || "", delivery_boy_id || null, invoice_no || ""]
         );
         const newOrder = await db2.get(`
       SELECT d.*, db.name as delivery_boy_name FROM dispatch_orders d
@@ -72852,8 +73073,16 @@ var init_dispatch = __esm({
       }
     });
     router14.post("/distributor-reminders/manual-order", async (req, res) => {
-      const { distributor_name, distributor_phone, distributor_id, delivery_boy_id, date } = req.body;
+      const { distributor_id, distributor_name, distributor_phone, delivery_boy_id, date } = req.body;
       if (!distributor_name) return res.status(400).json({ error: "distributor_name is required" });
+      let cleanDistPhone = "";
+      if (distributor_phone) {
+        const phoneCheck = validate10DigitPhone(distributor_phone, { allowBlank: true, requireMobilePrefix: false });
+        if (!phoneCheck.isValid) {
+          return res.status(400).json({ error: phoneCheck.reason });
+        }
+        cleanDistPhone = phoneCheck.cleanPhone;
+      }
       const targetDate = date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
       try {
         const db2 = await dbManager.getConnection();
@@ -72871,14 +73100,14 @@ var init_dispatch = __esm({
              delivery_boy_id = COALESCE(?, delivery_boy_id),
              order_source = 'phone_call'
          WHERE id = ?`,
-            [distributor_id || null, distributor_phone || "", distributor_phone || "", delivery_boy_id || null, existing.id]
+            [distributor_id || null, cleanDistPhone, cleanDistPhone, delivery_boy_id || null, existing.id]
           );
         } else {
           const result = await db2.run(
             `INSERT INTO distributor_dispatch_reminders
          (distributor_id, distributor_name, distributor_phone, delivery_boy_id, date, status, auto_remind, order_source)
          VALUES (?, ?, ?, ?, ?, 'Pending', 1, 'phone_call')`,
-            [distributor_id || null, cleanName, distributor_phone || "", delivery_boy_id || null, targetDate]
+            [distributor_id || null, cleanName, cleanDistPhone, delivery_boy_id || null, targetDate]
           );
           reminderId = result.lastID;
         }
@@ -75391,7 +75620,7 @@ ${medList}${timingSection}${cta}`;
   }
   return message;
 }
-var import_express19, import_path45, import_fs49, router19, refillsTableInitialized, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
+var import_express19, import_path45, import_fs49, router19, refillsTableInitialized, handlePatientProfileUpdate, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
 var init_refills = __esm({
   "src/routes/refills.ts"() {
     "use strict";
@@ -75412,6 +75641,7 @@ var init_refills = __esm({
     init_pharmacyCalendar();
     init_localTime();
     init_refillCartService();
+    init_phoneValidation();
     router19 = import_express19.default.Router();
     refillsTableInitialized = false;
     router19.use(async (_req, _res, next) => {
@@ -75442,6 +75672,10 @@ var init_refills = __esm({
       if (!patient_name || !patient_phone || !medicine_id) {
         return res.status(400).json({ error: "patient_name, patient_phone, and medicine_id are required" });
       }
+      const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
       const targetStoreId = req.tenant?.storeId || (store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req));
       let db2;
       try {
@@ -75450,7 +75684,7 @@ var init_refills = __esm({
         const nextRefillDate = /* @__PURE__ */ new Date();
         nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
         const nextRefillStr = toLocalSqlDateTime(nextRefillDate);
-        const cleanPhone = (patient_phone || "").trim();
+        const cleanPhone = phoneVal.cleanPhone;
         const cleanName = formatCustomerName(patient_name);
         let cleanLang = (language || "en").trim();
         let customerId = req.body.customer_id || null;
@@ -75510,15 +75744,19 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router19.put("/patient-profile", async (req, res) => {
+    handlePatientProfileUpdate = async (req, res) => {
       const { customer_id, original_phone, patient_name, patient_phone, language = "en", next_refill_date } = req.body;
       if (!patient_name || !patient_phone) {
         return res.status(400).json({ error: "Patient name and phone number are required" });
       }
+      const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        const cleanPhone = String(patient_phone).trim();
+        const cleanPhone = phoneVal.cleanPhone;
         const origPhone = String(original_phone || cleanPhone).trim();
         const cleanName = String(patient_name).trim();
         const cleanLang = String(language || "en").trim();
@@ -75571,18 +75809,25 @@ var init_refills = __esm({
         console.error("Failed to update patient profile:", err);
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
-    });
+    };
+    router19.put("/patient-profile", handlePatientProfileUpdate);
+    router19.post(["/update-patient-profile", "/patient-profile"], handlePatientProfileUpdate);
     router19.put("/patient-medicines", async (req, res) => {
       const { original_phone, patient_name, patient_phone, refill_interval_days = 30, medicines, language = "en", next_refill_date } = req.body;
       if (!patient_name || !patient_phone || !Array.isArray(medicines) || medicines.length === 0) {
         return res.status(400).json({ error: "patient_name, patient_phone, and valid medicines array are required" });
       }
+      const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: false, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
       let db2;
       try {
         db2 = await dbManager.getConnection();
         const intervalDays = parseIntervalDays(refill_interval_days);
-        const cleanPhone = (patient_phone || "").trim();
-        const origPhone = (original_phone || cleanPhone).trim();
+        const cleanPhone = phoneCheck.cleanPhone;
+        const origPhoneCheck = validate10DigitPhone(original_phone || cleanPhone, { allowBlank: true });
+        const origPhone = origPhoneCheck.isValid && origPhoneCheck.cleanPhone ? origPhoneCheck.cleanPhone : cleanPhone;
         const cleanName = (patient_name || "Customer").trim();
         const cleanLang = (language || "en").trim();
         await db2.run("BEGIN");
@@ -75728,7 +75973,14 @@ var init_refills = __esm({
           return res.status(404).json({ error: "Refill not found" });
         }
         const updatedName = patient_name !== void 0 ? patient_name : refill.patient_name;
-        const updatedPhone = patient_phone !== void 0 ? patient_phone : refill.patient_phone;
+        let updatedPhone = refill.patient_phone;
+        if (patient_phone !== void 0) {
+          const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+          if (!phoneVal.isValid) {
+            return res.status(400).json({ error: phoneVal.error });
+          }
+          updatedPhone = phoneVal.cleanPhone;
+        }
         const updatedMedicineId = medicine_id !== void 0 ? medicine_id : refill.medicine_id;
         const updatedInterval = refill_interval_days !== void 0 ? parseIntervalDays(refill_interval_days) : refill.refill_interval_days;
         let updatedNextDate = next_refill_date !== void 0 ? next_refill_date : refill.next_refill_date;
@@ -78761,6 +79013,7 @@ var init_enquiries = __esm({
     init_dosageGroupService();
     init_orderScheduleService();
     init_whatsappQueueWorker();
+    init_phoneValidation();
     enquiriesRouter = (0, import_express23.Router)();
     enquiriesRouter.post("/", async (req, res) => {
       try {
@@ -78783,7 +79036,15 @@ var init_enquiries = __esm({
           res.status(400).json({ error: "patient_name and medicine_name are required." });
           return;
         }
-        const cleanPhone = patient_phone ? String(patient_phone).replace(/\D/g, "") : null;
+        let cleanPhone = null;
+        if (patient_phone !== void 0 && patient_phone !== null && String(patient_phone).trim() !== "") {
+          const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: true, requireMobilePrefix: true });
+          if (!phoneCheck.isValid) {
+            res.status(400).json({ error: phoneCheck.reason });
+            return;
+          }
+          cleanPhone = phoneCheck.cleanPhone || null;
+        }
         const db2 = await dbManager.getConnection();
         if (cleanPhone) {
           const existing = await db2.get(
@@ -79972,6 +80233,7 @@ var init_stores = __esm({
     import_express27 = __toESM(require("express"), 1);
     init_storeContextService();
     init_eventService();
+    init_phoneValidation();
     router25 = import_express27.default.Router();
     broadcastStoresChanged = () => {
       try {
@@ -80011,11 +80273,19 @@ var init_stores = __esm({
         if (!name || typeof name !== "string" || !name.trim()) {
           return res.status(400).json({ error: "Store name is required" });
         }
+        let cleanPhone = void 0;
+        if (phone) {
+          const phoneCheck = validate10DigitPhone(phone, { allowBlank: true, requireMobilePrefix: false });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          cleanPhone = phoneCheck.cleanPhone;
+        }
         const newStore = await storeContextService.createStore({
           name: name.trim(),
           code: code ? String(code).trim() : void 0,
           address: address ? String(address).trim() : void 0,
-          phone: phone ? String(phone).trim() : void 0,
+          phone: cleanPhone,
           email: email ? String(email).trim() : void 0,
           is_central: Boolean(is_central)
         });
@@ -80032,7 +80302,15 @@ var init_stores = __esm({
         if (isNaN(storeId)) {
           return res.status(400).json({ error: "Invalid store ID" });
         }
-        const updated = await storeContextService.updateStore(storeId, req.body);
+        const updatePayload = { ...req.body };
+        if (updatePayload.phone !== void 0 && updatePayload.phone !== null) {
+          const phoneCheck = validate10DigitPhone(updatePayload.phone, { allowBlank: true, requireMobilePrefix: false });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          updatePayload.phone = phoneCheck.cleanPhone;
+        }
+        const updated = await storeContextService.updateStore(storeId, updatePayload);
         broadcastStoresChanged();
         res.json(updated);
       } catch (err) {
@@ -83876,6 +84154,7 @@ var init_customerPortal = __esm({
     init_orderScheduleService();
     init_returnWindowService();
     init_cloudflareTunnelService();
+    init_phoneValidation();
     router28 = import_express30.default.Router();
     SESSION_SECRET2 = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
     router28.get("/accounts", async (req, res) => {
@@ -83948,10 +84227,11 @@ var init_customerPortal = __esm({
         custom_pin,
         send_whatsapp = true
       } = req.body;
-      const cleanPhone = normalizePhone2(phone);
-      if (!cleanPhone || cleanPhone.length < 10) {
-        return res.status(400).json({ error: "Valid 10-digit mobile number is required" });
+      const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
       }
+      const cleanPhone = phoneCheck.cleanPhone;
       try {
         const db2 = await dbManager.getConnection();
         let targetCustomerId = customer_id ? parseInt(String(customer_id), 10) : null;
@@ -84279,13 +84559,14 @@ If you did not make this change, please contact your pharmacy immediately.`;
     });
     router28.post("/auth/register", async (req, res) => {
       const { name, phone, address, pin } = req.body;
-      const cleanPhone = normalizePhone2(phone);
+      const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      const cleanPhone = phoneCheck.cleanPhone;
       const cleanPin = String(pin || "").trim();
       const cleanName = formatCustomerName(name || "Customer");
       const cleanAddress = String(address || "").trim();
-      if (!cleanPhone || cleanPhone.length < 10) {
-        return res.status(400).json({ error: "Valid 10-digit mobile number is required" });
-      }
       if (!cleanPin || cleanPin.length < 4) {
         return res.status(400).json({ error: "Please choose a 4-digit PIN for your account" });
       }
@@ -87210,6 +87491,7 @@ var init_sales = __esm({
     init_imageCompressionService();
     init_investigation();
     init_nameNormalizer();
+    init_phoneValidation();
     router34 = import_express36.default.Router();
     router34.use(tenantAuthMiddleware);
     router34.use((_req, _res, next) => {
@@ -87468,6 +87750,14 @@ var init_sales = __esm({
         if (!String(doctor_name || "").trim() && !doctor_id) {
           return res.status(400).json({ error: "Doctor name is required to save a bill." });
         }
+        const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: true, requireMobile: true });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        const cleanPhone = phoneVal.cleanPhone;
+        if (paymentMedium === "CREDIT" && !cleanPhone) {
+          return res.status(400).json({ error: "Valid 10-digit WhatsApp phone number is required for Credit bills." });
+        }
         db2 = await dbManager.getConnection();
         const conn = db2;
         await conn.run("BEGIN IMMEDIATE TRANSACTION");
@@ -87476,17 +87766,14 @@ var init_sales = __esm({
           const exists = await db2.get("SELECT id FROM customers WHERE id = ?", [customerId]);
           if (!exists) customerId = null;
         }
-        if (!customerId && (String(patient_phone || "").trim() || String(patient_name || "").trim())) {
-          const rawPhone = (patient_phone || "").trim();
-          const digitsOnly = rawPhone.replace(/\D/g, "").slice(-10);
-          const cleanPhone2 = digitsOnly.length === 10 ? digitsOnly : rawPhone;
+        if (!customerId && (cleanPhone || String(patient_name || "").trim())) {
           const cleanName = (patient_name || "Customer").trim();
           let existing = null;
-          if (digitsOnly.length === 10) {
+          if (cleanPhone) {
             existing = await db2.get(
               `SELECT id, name, phone FROM customers 
-           WHERE phone = ? OR phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-              [cleanPhone2, rawPhone, `%${digitsOnly}`]
+           WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+              [cleanPhone, `%${cleanPhone}`]
             );
           }
           if (!existing && cleanName && cleanName.toLowerCase() !== "walk-in customer" && cleanName.toLowerCase() !== "customer") {
@@ -87497,13 +87784,13 @@ var init_sales = __esm({
           }
           if (existing) {
             customerId = existing.id;
-            if (cleanPhone2 && (!existing.phone || existing.phone.trim() === "" || existing.phone.length > 10)) {
-              await db2.run("UPDATE customers SET phone = ? WHERE id = ?", [cleanPhone2, customerId]);
+            if (cleanPhone && (!existing.phone || existing.phone.trim() === "" || existing.phone !== cleanPhone)) {
+              await db2.run("UPDATE customers SET phone = ? WHERE id = ?", [cleanPhone, customerId]);
             }
           } else if (cleanName && isValidCustomerName(cleanName)) {
             const custResult = await db2.run(
               "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
-              [cleanName, cleanPhone2, patient_address || ""]
+              [cleanName, cleanPhone, patient_address || ""]
             );
             customerId = custResult.lastID;
           }
@@ -87805,7 +88092,6 @@ var init_sales = __esm({
           await updateInventoryStmt.finalize().catch(() => {
           });
         }
-        const cleanPhone = (patient_phone || "").replace(/\D/g, "");
         const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : "NON_EXISTENT";
         const soldMedicineIds = Array.from(new Set(Array.from(stockMap.values()).map((s) => s.medicine_id).filter(Boolean)));
         const explicitRefillIds = [];
@@ -89220,9 +89506,17 @@ var init_sales = __esm({
             discount_per: 0
           });
         }
+        let cleanPhone = "";
+        if (patient_phone) {
+          const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: true, requireMobilePrefix: true });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          cleanPhone = phoneCheck.cleanPhone;
+        }
         const result = await db2.run(
           `INSERT INTO staged_sales (patient_name, patient_phone, discount, sale_date, items_json) VALUES (?, ?, ?, ?, ?)`,
-          [patient_name, patient_phone || "", Number(discount), (/* @__PURE__ */ new Date()).toISOString(), JSON.stringify(resolvedItems)]
+          [patient_name, cleanPhone, Number(discount), (/* @__PURE__ */ new Date()).toISOString(), JSON.stringify(resolvedItems)]
         );
         try {
           const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
@@ -89383,6 +89677,12 @@ var init_sales = __esm({
         db2 = await dbManager.getConnection();
         const { id } = req.params;
         const { items, patient_name, patient_phone, discount = 0, paymentMedium, paymentStatus, doctor_id, doctor_name } = req.body;
+        if (patient_phone !== void 0 && patient_phone !== null && String(patient_phone).trim() !== "") {
+          const editPhoneVal = validate10DigitPhone(patient_phone, { allowEmpty: true, requireMobile: true });
+          if (!editPhoneVal.isValid) {
+            return res.status(400).json({ error: editPhoneVal.error });
+          }
+        }
         await db2.run("BEGIN TRANSACTION");
         const existing = await db2.get("SELECT * FROM sales_invoices WHERE id = ?", [id]);
         if (!existing) {
@@ -89749,10 +90049,18 @@ var init_sales = __esm({
         const finalPatientName = patient_name !== void 0 ? patient_name : staged.patient_name;
         const finalPatientPhone = patient_phone !== void 0 ? patient_phone : staged.patient_phone;
         const finalDiscount = discount !== void 0 ? discount : staged.discount;
+        let validatedPhone = "";
+        if (finalPatientPhone) {
+          const phoneCheck = validate10DigitPhone(finalPatientPhone, { allowBlank: true, requireMobilePrefix: true });
+          if (!phoneCheck.isValid) {
+            return res.status(400).json({ error: phoneCheck.reason });
+          }
+          validatedPhone = phoneCheck.cleanPhone;
+        }
         await db2.run("BEGIN TRANSACTION");
         let customerId = null;
         if (finalPatientName) {
-          const cleanPhone = finalPatientPhone || "";
+          const cleanPhone = validatedPhone;
           const existing = await db2.get("SELECT id FROM customers WHERE name = ? AND phone = ?", [finalPatientName, cleanPhone]);
           if (existing) {
             customerId = existing.id;
@@ -95812,6 +96120,7 @@ var init_orders = __esm({
     init_orderScheduleService();
     init_paymentQrService();
     init_refillService();
+    init_phoneValidation();
     router40 = import_express42.default.Router();
     broadcastOrdersChanged2 = (delta) => {
       try {
@@ -95867,7 +96176,11 @@ var init_orders = __esm({
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
-        const cleanPhone = phone ? String(phone).replace(/\D/g, "") : "";
+        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        const cleanPhone = phoneVal.cleanPhone;
         const cleanReqName = formatCustomerName(requester);
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
         const insertedOrders = [];
@@ -96014,7 +96327,11 @@ var init_orders = __esm({
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
-        const cleanPhone = phone ? phone.replace(/\D/g, "") : "";
+        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        const cleanPhone = phoneVal.cleanPhone;
         if (cleanPhone && cleanPhone.length >= 10) {
           try {
             const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
@@ -96841,7 +97158,14 @@ Thank you!
         const newQty = qty !== void 0 ? qty : existing.qty;
         const newProduct = product !== void 0 ? product : existing.product;
         const newRequester = requester !== void 0 ? requester : existing.requester;
-        const newPhone = phone !== void 0 ? String(phone).replace(/\D/g, "") : existing.phone;
+        let newPhone = existing.phone;
+        if (phone !== void 0) {
+          const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+          if (!phoneVal.isValid) {
+            return res.status(400).json({ error: phoneVal.error });
+          }
+          newPhone = phoneVal.cleanPhone;
+        }
         const newDistributor = pharmarack_distributor !== void 0 ? pharmarack_distributor : existing.pharmarack_distributor;
         const newRate = pharmarack_rate !== void 0 ? pharmarack_rate : existing.pharmarack_rate;
         const newMrp = pharmarack_mrp !== void 0 ? pharmarack_mrp : existing.pharmarack_mrp;
@@ -101582,6 +101906,7 @@ var init_contacts = __esm({
     import_express54 = __toESM(require("express"), 1);
     init_connection();
     init_distributorSyncHelper();
+    init_phoneValidation();
     router52 = import_express54.default.Router();
     contactsTableInitialized = false;
     router52.get("/", async (req, res) => {
@@ -101613,7 +101938,11 @@ var init_contacts = __esm({
       if (!name || !name.trim()) {
         return res.status(400).json({ error: "Name is required" });
       }
-      const cleanPhone = phone ? String(phone).replace(/\D/g, "") : "";
+      const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: type === "customer" });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
+      const cleanPhone = phoneVal.cleanPhone;
       try {
         const db2 = await dbManager.getConnection();
         await ensureContactsTable(db2);
@@ -101683,7 +102012,14 @@ var init_contacts = __esm({
     router52.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { name, type, phone, email, address, gstin, notes } = req.body;
-      const cleanPhone = phone ? String(phone).replace(/\D/g, "") : "";
+      let cleanPhone = phone || "";
+      if (phone !== void 0 && phone !== null && String(phone).trim() !== "") {
+        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: type === "customer" });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        cleanPhone = phoneVal.cleanPhone;
+      }
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
@@ -101902,6 +102238,7 @@ var init_distributors = __esm({
     init_nameNormalizer();
     init_distributorRecommendationService();
     init_storeContextService();
+    init_phoneValidation();
     router53 = import_express55.default.Router();
     getDistributorsHandler = async (_req, res) => {
       try {
@@ -101929,12 +102266,16 @@ var init_distributors = __esm({
       if (!distName) {
         return res.status(400).json({ error: "Distributor name is required" });
       }
+      const phoneVal = validate10DigitPhone(phone || contact, { allowEmpty: true, requireMobile: false });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
       try {
         const db2 = await dbManager.getConnection();
         const savedDistributor = await syncDistributorPhoneAcrossTables(db2, {
           name: distName,
-          phone,
-          contact,
+          phone: phoneVal.cleanPhone || phone,
+          contact: phoneVal.cleanPhone || contact,
           email,
           address,
           gstin,
@@ -101960,13 +102301,17 @@ var init_distributors = __esm({
     putDistributorHandler = async (req, res) => {
       const { id } = req.params;
       const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code, min_order_value, min_order_items } = req.body;
+      const phoneVal = validate10DigitPhone(phone || contact, { allowEmpty: true, requireMobile: false });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
       try {
         const db2 = await dbManager.getConnection();
         const savedDistributor = await syncDistributorPhoneAcrossTables(db2, {
           id: Number(id),
           name: name || store_name,
-          phone,
-          contact,
+          phone: phoneVal.cleanPhone || phone,
+          contact: phoneVal.cleanPhone || contact,
           email,
           address,
           gstin,
