@@ -1,95 +1,113 @@
-# WhatsApp AI Bot & Auto-Reply Full Control Center Implementation Plan
+# POS Fast-Billing Keyboard Flow — Implementation Plan
 
 ## Goal
-Build a centralized, comprehensive WhatsApp AI Bot & Auto-Reply Control Center in Settings giving the pharmacist 100% manual control over:
-1. **Idle / Cold Reply Speed** (when customer writes after being idle / new chat)
-2. **Continuous / Warm Reply Speed** (when customer is actively chatting back-and-forth)
-3. **Response Speed Presets** (Instant 1-3s, Fast Human-Paced 5-10s, Safe Paced 20-45s, Custom)
-4. **Master Bot On/Off Switch**
-5. **24/7 Always-Awake Inbound Listener Mode** (preventing 20-min browser teardown)
-6. **Human-in-the-Loop Safeguards** (Direct Auto-Reply vs Pharmacist Draft Review & Auto-Resume Takeover Timeout)
-7. **Custom Idle & After-Hours Message Templates**
+Optimize the POS keyboard-first checkout workflow for high-speed counter billing:
+1. **Default Focus on Mount/Reset**: Direct the initial cursor to the first medicine search row (`row-med-input-0` via `focusCartMedicineInput()`) instead of `patient-name-input`.
+2. **Liquid / Suspension Fast-Advance**: For Liquid, Syrup, Suspension, Drops, Injections, and Single-unit products (`isLiquidOrSingleUnitForm`), automatically default Qty to 1, Loose to 0, and immediately jump to Next Medicine without stopping on Qty or Loose.
+3. **Tab / Cap Direct to Loose**: For Solid Oral products (Tablets, Capsules, Strips, or loose-enabled medicines), default Qty to 0 and focus directly on the **LOOSE** input (`row-loose-input-X`).
+4. **Fluid Bidirectional Navigation**:
+   - From **LOOSE**: `ArrowLeft` or `Shift+Tab` moves back to **Strip QTY**. `Enter` or `Tab` moves forward to **Next Medicine**.
+   - From **QTY**: `ArrowRight`, `Enter`, or `Tab` moves forward to **LOOSE**.
 
-## Architecture & Data Flow
-- **Storage**: Persisted in SQLite `app_settings` with schema safety (both DDL migrations and `ensureSchema` fast boot in `src/database.ts`).
-- **Engine**: Dynamic evaluation in `src/services/waSmartReplyScheduler.ts` and `src/services/whatsappIntentService.ts` reading real-time settings on every inbound message.
-- **API**: Whitelisted in `src/routes/settings.ts` with SSE broadcasting (`settings_updated`).
-- **Frontend**: High-aesthetic, responsive, semantic-token-styled control center in `frontend/src/pages/Settings/TriggerSchedulesTab.tsx`.
+---
+
+## Architectural & Data Flow
+
+```text
+[POS Page Mount / New Bill]
+         │
+         ▼
+[focusCartMedicineInput()] ──► Cursor is immediately in row-med-input-0
+         │
+         ▼
+[Cashier selects Medicine]
+         │
+         ├───► Is Liquid / Suspension / Single Unit?
+         │         ├─► Set Qty = 1, Loose = 0
+         │         └─► Jump directly to Next Medicine (row-med-input-X+1)
+         │
+         └───► Is Tablet / Capsule / Loose-Enabled?
+                   ├─► Set Qty = 0, Loose = 0
+                   ├─► Jump directly to LOOSE input (row-loose-input-X)
+                   │
+                   ├───► Cashier enters Loose Count (e.g. 4)
+                   │         └─► Hit [Enter] or [Tab] ──► Jump to Next Medicine
+                   │
+                   └───► Cashier wants Full Strip / Pack
+                             └─► Hit [ArrowLeft] or [Shift+Tab] ──► Move to Strip QTY
+                                       └─► Enter Qty (e.g. 1)
+                                       └─► Hit [Enter] or [Tab] ──► Move to Loose
+```
 
 ---
 
 ## Detailed Step-by-Step Plan
 
-### Step 1: Database Schema & Default Settings Expansion
-- Add new settings to `src/database.ts` in both the migration block and `ensureSchema`:
-  - `wa_bot_enabled` = 'true'
-  - `wa_bot_speed_mode` = 'fast' (options: 'instant' | 'fast' | 'safe' | 'custom')
-  - `wa_bot_cold_delay_min_sec` = '5'
-  - `wa_bot_cold_delay_max_sec` = '10'
-  - `wa_bot_warm_delay_min_sec` = '3'
-  - `wa_bot_warm_delay_max_sec` = '5'
-  - `wa_bot_warm_window_minutes` = '20'
-  - `wa_bot_message_bundling_sec` = '3'
-  - `wa_bot_human_review_mode` = 'false'
-  - `wa_bot_takeover_resume_min` = '15'
-  - `wa_bot_idle_greeting_enabled` = 'false'
-  - `wa_bot_idle_greeting_text` = ''
-  - `wa_bot_after_hours_enabled` = 'true'
-  - `wa_bot_after_hours_text` = ''
-  - `whatsapp_idle_sleep_min` = '0' (enforcing 24/7 always-on inbound listener)
+### Step 1: Default Mount & Reset Focus
+- Modify `frontend/src/pages/POS/index.tsx`:
+  - In the mount `useEffect` (lines 1163–1173), replace the `patient-name-input` focus with `focusCartMedicineInput()`.
+  - Retain `Ctrl+1` and `Shift+Tab` shortcuts to jump back to Patient Name / Phone anytime needed.
 
-### Step 2: Backend Smart Reply Scheduler & Intent Service Upgrade
-- Modify `src/services/waSmartReplyScheduler.ts`:
-  - Load all new keys in `loadSettings()`.
-  - Gate execution on `wa_bot_enabled`: if disabled, immediately log and suppress auto-reply.
-  - Dynamically apply speed presets or custom min/max seconds based on `wa_bot_speed_mode`.
-  - If `wa_bot_speed_mode === 'instant'`, bypass delay timers and reply in 1-2 seconds with jitter.
-  - Support `wa_bot_human_review_mode` to stage drafts or signal pharmacist review in CRM.
-- Modify `src/services/whatsappIntentService.ts`:
-  - Gate `handleInbound` on `wa_bot_enabled`.
-  - Use `wa_bot_takeover_resume_min` for human takeover expiration.
-  - Apply custom idle greeting if `wa_bot_idle_greeting_enabled` is true and chat was idle.
+### Step 2: Medicine Selection & Routing in `fetchDetailsAndChangeRowMedicine` & `addToCart`
+- In `fetchDetailsAndChangeRowMedicine`:
+  - Detect liquid form using `isLiquidOrSingleUnitForm(med.medicine_name || med.name, med.packaging)` or `resolveAllowLooseSale(med) === 0`.
+  - If Liquid/Suspension: set default Qty = 1, default Loose = 0, and call `focusCartMedicineInput()`.
+  - If Tab/Cap/Loose-enabled: set default Qty = 0, default Loose = 0, and focus `row-loose-input-${index}` with `.select()`.
+- In `addToCart`:
+  - Apply the matching logic so both top search bar add and row dropdown select follow the identical speed rules.
 
-### Step 3: Backend Settings Route Persistence
-- Modify `src/routes/settings.ts`:
-  - Ensure all `wa_bot_*` keys and `whatsapp_idle_sleep_min` are whitelisted, fetched, and saved in `/settings/save`.
-  - Trigger SSE broadcast so frontend and running services immediately reflect modified values without server reboot.
+### Step 3: Keydown Handling in `row-qty-input`
+- In `row-qty-input` `onKeyDown`:
+  - When `e.key === 'Enter'` or (`e.key === 'Tab'` && `!e.shiftKey`):
+    - If `!looseInput.disabled && resolveAllowLooseSale(item)`: focus `row-loose-input-${index}` and select.
+    - Else: focus `focusCartMedicineInput()`.
+  - When `e.key === 'ArrowRight'`:
+    - If loose input is available: move focus into `row-loose-input-${index}` and select.
 
-### Step 4: Frontend "WhatsApp AI Bot & Auto-Reply Manager" UI
-- Modify `frontend/src/pages/Settings/TriggerSchedulesTab.tsx`:
-  - Build a comprehensive, modern card for **🤖 WhatsApp AI Bot & Auto-Reply Control Center**:
-    - **Master Toggle**: Enable / Disable AI Bot globally with active pulse badge.
-    - **Speed Presets**: Interactive buttons for:
-      - ⚡ **Fast Human-Paced (5–10s)** (Recommended)
-      - 🚀 **Instant (1–3s)**
-      - 🛡️ **Safe Human-Paced (20–45s)**
-      - 🛠️ **Custom Delays**
-    - **Idle Reply (Cold) Configuration**:
-      - Cold Min Delay (sec) & Cold Max Delay (sec)
-      - Idle Threshold (minutes)
-    - **Continuous Reply (Warm) Configuration**:
-      - Warm Min Delay (sec) & Warm Max Delay (sec)
-      - Multi-Message Bundling Window (sec)
-    - **24/7 Inbound Listener Mode**:
-      - Always-Awake 24/7 (0 min sleep) vs Sleep after N minutes.
-    - **Human-in-the-Loop Safeguards**:
-      - Direct Auto-Send vs Pharmacist Draft Review Mode.
-      - Human Takeover Auto-Resume Timer (min).
-    - **Custom Message Templates**:
-      - Idle Re-Engagement Greeting template editor.
-      - After-Hours / Store Closed auto-reply template editor.
-  - Strict compliance with UI semantic color tokens (`bg-bg`, `bg-bg2`, `bg-bg3`, `text-text`, `text-muted`, `border-border`).
+### Step 4: Keydown Handling in `row-loose-input`
+- In `row-loose-input` `onKeyDown`:
+  - When `e.key === 'ArrowLeft'` or (`e.key === 'Tab'` && `e.shiftKey`):
+    - Prevent default and focus `row-qty-input-${index}` with select.
+  - When `e.key === 'Enter'` or (`e.key === 'Tab'` && `!e.shiftKey`):
+    - Prevent default and focus `focusCartMedicineInput()` (jump to next medicine).
 
-### Step 5: Verification, Guardrails & Knowledge Graph Synchronization
-- Run `npx tsc --noEmit` to verify 0 type errors.
-- Run `npm run guardrails` to guarantee strict compliance with performance, date, and no-GPU standards.
-- Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+### Step 5: Verification & Safety Guardrails
+- Run `npm run guardrails` (which executes `tsc --noEmit` and performance checks).
+- Run `node scripts/quick-update.mjs` to keep the Auto-Knowledge Graph synchronized.
 
 ---
 
-## Tasks & Completion Checklist
-- [x] Task 1: Expand database schema & defaults in `src/database.ts` — Completed (added defaults for wa_bot_enabled, wa_bot_speed_mode, cold/warm delays, bundling, human review mode in both fast-boot and DDL migration paths).
-- [x] Task 2: Update `src/services/waSmartReplyScheduler.ts` & `src/services/whatsappIntentService.ts` — Completed (implemented dynamic speedMode presets, botEnabled suppression check, dynamic human takeover silence timeout, and customer bundling).
-- [x] Task 3: Whitelist & verify settings persistence in `src/routes/settings.ts` — Completed (generic save persists all keys and triggers runtime hot-reloads).
-- [x] Task 4: Implement rich UI controls in `frontend/src/pages/Settings/TriggerSchedulesTab.tsx` — Completed (built full 🤖 WhatsApp AI Bot & Auto-Reply Manager with speed presets, cold/warm timing, 24/7 background listener toggle, human takeover safeguards, and message templates).
-- [x] Task 5: Run TypeScript compilation, guardrails, and knowledge graph update — Completed (backend `tsc --noEmit` and `performance-guardrails.mjs` passed with 0 violations).
+## Tasks & Progress Tracking
+
+- [x] Task 1: Update Default POS Mount Focus to Cart Medicine Input
+- [x] Task 2: Implement Liquid Auto-Advance & Tab/Cap Loose-First in Selection Handlers
+- [x] Task 3: Implement Bidirectional Keyboard Navigation in QTY and LOOSE Fields
+- [x] Task 4: Run Guardrails & Update Knowledge Graph
+
+---
+
+## Completed Tasks Summary
+
+- **Task 1: Default POS Mount Focus Updated**:
+  - In `frontend/src/pages/POS/index.tsx`, the mount `useEffect` was updated to call `focusCartMedicineInput()` instead of focusing `patient-name-input`.
+  - On page load or new sale reset, the cursor lands directly inside `row-med-input-0` (the first cart row's medicine search box), allowing cashiers to begin typing medicine names immediately.
+  - Retained `Ctrl+1` and `Shift+Tab` backward navigation to jump to Patient Name/Phone anytime needed.
+
+- **Task 2: Liquid Auto-Advance & Tab/Cap Loose-First Handlers**:
+  - In `changeRowMedicine`, `fetchDetailsAndChangeRowMedicine`, and `addToCart`:
+    - Evaluated `isLiquidOrSingleUnitForm(name, packaging)` and `resolveAllowLooseSale(item) === 0`.
+    - **Liquids / Suspensions / Single-Unit Bottles**: Automatically sets `qty = 1, loose = 0` and immediately calls `focusCartMedicineInput()` (jumps to next medicine row with 0-second delay).
+    - **Solid Oral (Tablets / Capsules / Loose-Enabled)**: Sets initial `qty = 0, loose = 0` and sets focus directly into `row-loose-input-${index}` with `.select()`.
+
+- **Task 3: Bidirectional Keyboard Navigation Between QTY and LOOSE**:
+  - In `row-loose-input`:
+    - Added `ArrowLeft` and `Shift+Tab` handling to move cursor backward into `row-qty-input-${index}` with `.select()`.
+    - Pressing `Enter` or `Tab` (without Shift) cleanly calls `focusCartMedicineInput()`, advancing the cashier to the next medicine row.
+  - In `row-qty-input`:
+    - Added `ArrowRight`, `Enter`, and `Tab` handling to advance into `row-loose-input-${index}` when loose is enabled.
+    - If loose is not enabled or for single-unit items, `Enter` and `Tab` advance to `focusCartMedicineInput()`.
+    - Fixed `Shift+Tab` to correctly target `row-med-input-${curIdx}`.
+
+- **Task 4: Guardrails & Knowledge Graph Verification**:
+  - Ran `npm run guardrails` (`tsc --noEmit` and performance guardrails scanner) with exit code `0` (clean compilation, zero violations, speed architecture intact).
+  - Executed `node scripts/quick-update.mjs` to synchronize the Auto-Knowledge Graph (1173 nodes, 782 edges, 10 layers).

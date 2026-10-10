@@ -1160,17 +1160,6 @@ const POS = () => {
   const selectedCustomerIdRef = useRef<number | null>(null);
   const justSelectedPatientRef = useRef<boolean>(false);
   const selectedDoctorIdRef = useRef<number | null>(null);
-  // Auto-focus Patient Name input on POS page mount so user can immediately start typing
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const el = document.getElementById('patient-name-input') as HTMLInputElement | null;
-      if (el && document.activeElement !== el) {
-        el.focus();
-        el.select?.();
-      }
-    }, 150);
-    return () => clearTimeout(timer);
-  }, []);
 
   const [showPatientModal, setShowPatientModal] = useState(false);
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
@@ -2071,6 +2060,14 @@ const POS = () => {
     }, 80);
   }, []);
 
+  // Auto-focus Medicine input in cart on POS page mount so cashier can immediately start typing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      focusCartMedicineInput();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [focusCartMedicineInput]);
+
   useDropdownAutoScroll(patientSuggestionsRef, patientHighlightIndex, showPatientSuggestions);
   useDropdownAutoScroll(doctorSuggestionsRef, doctorHighlightIndex, isDoctorDropdownOpen);
   useDropdownAutoScroll(searchResultsRef, searchHighlightIndex, showSearchDropdown);
@@ -2831,13 +2828,14 @@ const POS = () => {
 
     updateCart((prevCart): CartRow[] => {
       const cleanPrev = prevCart.filter(item => !item.isEmptyRow);
-      // ponytail: POS sell cart always adds 1 strip — recommended/default qty is Live Cart only
-      const incQty = 1;
+      // Fast-billing: Liquids default to 1 unit; Tabs/Caps default to 0 for direct loose tablet entry
+      const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
+      const incQty = isLiquid ? 1 : 0;
       const incLooseQty = 0;
       
       if (existingIndex !== -1) {
         const existingItem = cleanPrev[existingIndex];
-        const newQty = (existingItem.qty || 0) + incQty;
+        const newQty = (existingItem.qty || 0) + (isLiquid ? 1 : 0);
         const newLoose = (existingItem.looseQty || 0) + incLooseQty;
         return rebalanceCartMedicine(cleanPrev, Number(existingItem.medicine_id || existingItem.id || 0), existingItem.id, { qty: newQty, looseQty: newLoose });
       }
@@ -2916,17 +2914,23 @@ const POS = () => {
         });
     }
 
-    // Same one-unit-pack rule as the row picker: nothing to key in, so go straight to the next medicine.
-    const singlePackAdd = existingIndex === -1 && Number(med.packSize ?? med.pack_size) === 1;
+    // Fast-billing: Liquids jump directly to next medicine; Tabs/Caps focus directly on LOOSE for instant count
+    const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
     setTimeout(() => {
-      if (singlePackAdd) {
+      if (isLiquid) {
         focusCartMedicineInput();
+        return;
+      }
+      const looseInput = document.getElementById(`row-loose-input-${targetIndex}`) as HTMLInputElement | null;
+      if (looseInput && !looseInput.disabled) {
+        looseInput.focus();
+        looseInput.select?.();
         return;
       }
       const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`);
       if (qtyInput) {
         qtyInput.focus();
-        (qtyInput as HTMLInputElement).select();
+        (qtyInput as HTMLInputElement).select?.();
       }
     }, 120);
   };
@@ -3149,7 +3153,9 @@ const POS = () => {
       }).catch(err => console.error('Failed to post correction learning:', err));
     }
 
-    const defaultQty = opts?.presetQty ?? (originalItem?.isEmptyRow ? 1 : ((originalItem?.qty ?? 0) || 1));
+    // Fast-billing: Liquids default to 1 unit; Tabs/Caps default to 0 for direct loose tablet entry
+    const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
+    const defaultQty = opts?.presetQty ?? (originalItem?.isEmptyRow ? (isLiquid ? 1 : 0) : ((originalItem?.qty ?? 0) || (isLiquid ? 1 : 0)));
     const defaultLooseQty = opts?.presetLooseQty ?? (originalItem?.isEmptyRow ? 0 : (originalItem?.looseQty ?? 0));
     const compactInventory = getCompactInventoryCache();
     const allocated = allocateMedicineBatches({
@@ -3205,20 +3211,25 @@ const POS = () => {
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
-    // One unit per pack (syrup/suspension): qty stays at the default 1 and there is no loose sale, so go straight
-    // to the next medicine row. Tab back or click the Qty box to change it. Presets (doctor chips) keep Qty focus.
-    const singlePack = Number(med.pack_size) === 1 && opts?.presetQty === undefined;
+    // Fast-billing: Liquids jump directly to next medicine; Tabs/Caps focus directly on LOOSE for instant count
+    const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
     setTimeout(() => {
-      if (singlePack) {
+      if (isLiquid && opts?.presetQty === undefined) {
         focusCartMedicineInput();
+        return;
+      }
+      const looseInput = document.getElementById(`row-loose-input-${index}`) as HTMLInputElement | null;
+      if (looseInput && !looseInput.disabled) {
+        looseInput.focus();
+        looseInput.select?.();
         return;
       }
       const qtyInput = document.getElementById(`row-qty-input-${index}`);
       if (qtyInput) {
         qtyInput.focus();
-        (qtyInput as HTMLInputElement).select();
+        (qtyInput as HTMLInputElement).select?.();
       }
-    }, singlePack ? 120 : 40);
+    }, isLiquid ? 120 : 40);
 
     // Enrich salts & alternatives asynchronously in the background
     api.getMedicineQuickDetails(Number(med.medicine_id))
@@ -5805,26 +5816,31 @@ const POS = () => {
                                     placeholder="0"
                                     disabled={item.isEmptyRow}
                                     onKeyDown={e => {
-                                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                                      if (e.key === 'ArrowRight') {
+                                        const looseEl = document.getElementById(`row-loose-input-${cart.indexOf(item)}`) as HTMLInputElement | null;
+                                        if (looseEl && !looseEl.disabled) {
+                                          e.preventDefault();
+                                          looseEl.focus();
+                                          looseEl.select?.();
+                                          return;
+                                        }
+                                      }
+                                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
                                         handlePosRowInputKeyDown(e, cart.indexOf(item), 'qty');
                                       } else if (e.key === 'Enter') {
                                         e.preventDefault();
-                                        if ((e.target as HTMLInputElement).value === '0' || (e.target as HTMLInputElement).value === '') {
-                                          updateCartItem(item.id, 'qty', 0);
-                                          // Qty 0 = loose-only sale: go to Loose when it is allowed
-                                          const looseEl = document.getElementById(`row-loose-input-${cart.indexOf(item)}`) as HTMLInputElement | null;
-                                          if (looseEl && !looseEl.disabled) {
-                                            looseEl.focus();
-                                            looseEl.select?.();
-                                            return;
-                                          }
+                                        const looseEl = document.getElementById(`row-loose-input-${cart.indexOf(item)}`) as HTMLInputElement | null;
+                                        if (looseEl && !looseEl.disabled) {
+                                          looseEl.focus();
+                                          looseEl.select?.();
+                                          return;
                                         }
                                         focusCartMedicineInput();
                                       } else if (e.key === 'Tab') {
                                         const curIdx = cart.indexOf(item);
                                         if (e.shiftKey) {
                                           e.preventDefault();
-                                          const medInput = document.getElementById(`cart-medicine-input-${curIdx}`) as HTMLInputElement | null;
+                                          const medInput = document.getElementById(`row-med-input-${curIdx}`) as HTMLInputElement | null;
                                           if (medInput) {
                                             medInput.focus();
                                             medInput.select?.();
@@ -5898,7 +5914,14 @@ const POS = () => {
                                     disabled={item.isEmptyRow || !isLooseAllowed}
                                     title={isLooseAllowed ? "Loose Tablets Qty" : "Restricted: Full Pack Only"}
                                     onKeyDown={e => {
-                                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                                      if (e.key === 'ArrowLeft') {
+                                        e.preventDefault();
+                                        const curIdx = cart.indexOf(item);
+                                        const qtyIn = document.getElementById(`row-qty-input-${curIdx}`) as HTMLInputElement | null;
+                                        if (qtyIn && !qtyIn.disabled) { qtyIn.focus(); qtyIn.select?.(); }
+                                        return;
+                                      }
+                                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
                                         handlePosRowInputKeyDown(e, cart.indexOf(item), 'looseQty');
                                       } else if (e.key === 'Enter') {
                                         e.preventDefault();

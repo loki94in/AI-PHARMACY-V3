@@ -20,7 +20,7 @@ import PDFDocument from 'pdfkit';
 import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
 import { getAppDataDir } from '../config/index.js';
 import { applySaleDelta, getReorderWindowMonths, computeReorderSuggestion } from '../services/medicineSalesMetricsService.js';
-import { cleanupStagedRefillNotifications, purgePendingCustomerReminders } from '../services/refillService.js';
+import { cleanupStagedRefillNotifications, purgePendingCustomerReminders, checkAllRefills } from '../services/refillService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
 import { returnWindowService } from '../services/returnWindowService.js';
@@ -129,8 +129,9 @@ router.get('/next-invoice', async (_req, res) => {
 // Disables auto-reminders and purges pending reminder messages immediately, before bill save.
 router.post('/counter-session', async (req, res) => {
   try {
-    let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds } = req.body;
+    let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds, autoFulfill } = req.body;
     let cleanPhone = (phone || '').replace(/\D/g, '');
+    const shouldAutoFulfill = autoFulfill === true || autoFulfill === 'true' || autoFulfill === 1;
 
     const explicitRefillIds: number[] = [];
     if (refillId && !isNaN(Number(refillId))) explicitRefillIds.push(Number(refillId));
@@ -161,25 +162,105 @@ router.post('/counter-session', async (req, res) => {
     }
 
     const phoneQuery = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : '';
+    let autoFulfilledCount = 0;
 
-    // 1. Disable auto_remind for patient refills
-    if (explicitRefillIds.length > 0) {
-      const placeholders = explicitRefillIds.map(() => '?').join(',');
-      await db.run(
-        `UPDATE patient_refills 
-         SET auto_remind = 0, 
-             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
-         WHERE id IN (${placeholders})`,
-        explicitRefillIds
-      ).catch(() => {});
-    } else if (customerId || phoneQuery) {
-      await db.run(
-        `UPDATE patient_refills 
-         SET auto_remind = 0, 
-             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
-         WHERE (customer_id = ? OR (patient_phone IS NOT NULL AND length(patient_phone) >= 7 AND replace(patient_phone, ' ', '') LIKE ?))`,
-        [customerId || -1, phoneQuery || 'NON_EXISTENT']
-      ).catch(() => {});
+    // 1. If autoFulfill is enabled (e.g. from POS open), auto-fulfill and advance refill cycle immediately
+    if (shouldAutoFulfill) {
+      let refillsToFulfill: any[] = [];
+      if (explicitRefillIds.length > 0) {
+        const placeholders = explicitRefillIds.map(() => '?').join(',');
+        refillsToFulfill = await db.all(
+          `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
+          explicitRefillIds
+        );
+      } else if (cleanPhone.length >= 7 || customerId) {
+        refillsToFulfill = await db.all(
+          `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE (pr.customer_id = ? OR (pr.patient_phone IS NOT NULL AND length(pr.patient_phone) >= 7 AND replace(pr.patient_phone, ' ', '') LIKE ?)) 
+             AND pr.is_active = 1`,
+          [customerId || -1, phoneQuery || 'NON_EXISTENT']
+        );
+      }
+
+      for (const refill of refillsToFulfill) {
+        const interval = Number(refill.refill_interval_days || 30);
+        const nextDate = new Date();
+        nextDate.setDate(nextDate.getDate() + interval);
+        const nextDateStr = toLocalSqlDateTime(nextDate);
+        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+        const fulfilledQty = Number(refill.quantity_needed || 1);
+
+        await db.run(
+          `INSERT INTO refill_fulfillments (
+            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+            quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'pos_opened')`,
+          [
+            refill.id,
+            refill.customer_id || customerId || null,
+            refill.patient_name || 'Customer',
+            refill.patient_phone || cleanPhone || '',
+            refill.medicine_id,
+            refill.medicine_name || 'Prescribed Medicine',
+            fulfilledQty,
+            cycleDueDate,
+            nextDateStr
+          ]
+        );
+
+        await db.run(
+          `UPDATE patient_refills 
+           SET last_refill_date = datetime('now'),
+               next_refill_date = ?,
+               stock_verified_override = 0,
+               ordering_triggered = 0,
+               cart_product_code = NULL,
+               is_ready = 0,
+               hold_for_stock = 0,
+               acknowledged = 0,
+               quick_bill_id = NULL,
+               status = 'pending',
+               reminder_status = 'NOT_SENT',
+               reminder_sent_at = NULL,
+               reminder_job_id = NULL,
+               reminder_occurrence_date = NULL,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
+               collection_reminder_count = 0
+           WHERE id = ?`,
+          [nextDateStr, refill.id]
+        );
+        autoFulfilledCount++;
+      }
+
+      if (autoFulfilledCount > 0) {
+        await checkAllRefills(db).catch(() => {});
+      }
+    } else {
+      // 1. Disable auto_remind for patient refills
+      if (explicitRefillIds.length > 0) {
+        const placeholders = explicitRefillIds.map(() => '?').join(',');
+        await db.run(
+          `UPDATE patient_refills 
+           SET auto_remind = 0, 
+               reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+           WHERE id IN (${placeholders})`,
+          explicitRefillIds
+        ).catch(() => {});
+      } else if (customerId || phoneQuery) {
+        await db.run(
+          `UPDATE patient_refills 
+           SET auto_remind = 0, 
+               reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+           WHERE (customer_id = ? OR (patient_phone IS NOT NULL AND length(patient_phone) >= 7 AND replace(patient_phone, ' ', '') LIKE ?))`,
+          [customerId || -1, phoneQuery || 'NON_EXISTENT']
+        ).catch(() => {});
+      }
     }
 
     // 2. Disable auto_remind for special orders
@@ -212,7 +293,7 @@ router.post('/counter-session', async (req, res) => {
     // 4. Broadcast live events so UI updates immediately
     try {
       if (explicitRefillIds.length > 0 || customerId || phoneQuery) {
-        eventService.broadcast('refill_updated', { at: Date.now(), counter_session: true });
+        eventService.broadcast('refill_updated', { at: Date.now(), counter_session: true, auto_fulfilled: autoFulfilledCount > 0 });
         eventService.broadcast('app-refills-updated', { at: Date.now() });
       }
       if (explicitSoIds.length > 0 || customerId || phoneQuery) {
@@ -226,7 +307,10 @@ router.post('/counter-session', async (req, res) => {
     res.json({
       success: true,
       purged,
-      message: 'Counter session active: auto-remind disabled and pending reminders purged.'
+      autoFulfilledCount,
+      message: autoFulfilledCount > 0
+        ? `Counter session active: auto-fulfilled ${autoFulfilledCount} refill(s) and advanced to next cycle.`
+        : 'Counter session active: auto-remind disabled and pending reminders purged.'
     });
   } catch (err: any) {
     console.error('[Sales] Counter session error:', err);
@@ -697,54 +781,73 @@ router.post('/', async (req, res) => {
         const interval = Number(refill.refill_interval_days || 30);
         const nextDate = new Date();
         nextDate.setDate(nextDate.getDate() + interval);
-        const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
-        const cycleDueDate = refill.next_refill_date || new Date().toISOString().slice(0, 10);
+        const nextDateStr = toLocalSqlDateTime(nextDate);
+        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
         const fulfilledQty = Number(refill.quantity_needed || 1);
 
-        // 1. Record persistent fulfillment occurrence linked to invoice
-        await db.run(
-          `INSERT INTO refill_fulfillments (
-            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-            quantity_fulfilled, fulfilled_at, invoice_id, invoice_no, cycle_due_date, next_due_date, fulfilled_via
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 'pos_sale')`,
-          [
-            refill.id,
-            refill.customer_id || customerId,
-            refill.patient_name || patient_name || 'Customer',
-            refill.patient_phone || patient_phone || '',
-            refill.medicine_id,
-            refill.medicine_name || 'Prescribed Medicine',
-            fulfilledQty,
-            invoiceId,
-            invoice_no,
-            cycleDueDate,
-            nextDateStr
-          ]
+        // Check if recently auto-fulfilled when opening POS (within last 30 minutes)
+        const recentPosOpened = await db.get(
+          `SELECT id FROM refill_fulfillments 
+           WHERE refill_id = ? AND fulfilled_via = 'pos_opened' 
+             AND fulfilled_at >= datetime('now', '-30 minutes')
+           ORDER BY id DESC LIMIT 1`,
+          [refill.id]
         );
 
-        // 2. Advance the same persistent schedule in-place
-        await db.run(
-          `UPDATE patient_refills 
-           SET last_refill_date = datetime('now'), 
-               next_refill_date = ?, 
-               acknowledged = 0, 
-               ordering_triggered = 0,
-               cart_product_code = NULL,
-               is_ready = 0,
-               hold_for_stock = 0, 
-               quick_bill_id = NULL,
-               stock_verified_override = 0,
-               status = 'pending',
-               reminder_status = 'NOT_SENT',
-               reminder_sent_at = NULL,
-               reminder_job_id = NULL,
-               reminder_occurrence_date = NULL,
-               auto_remind = 0,
-               last_collection_reminder_at = NULL,
-               collection_reminder_count = 0
-           WHERE id = ?`,
-          [nextDateStr, refill.id]
-        );
+        if (recentPosOpened) {
+          // Idempotent: Attach this sale invoice to the existing fulfillment record without double-advancing the cycle
+          await db.run(
+            `UPDATE refill_fulfillments 
+             SET invoice_id = ?, invoice_no = ?, fulfilled_via = 'pos_sale' 
+             WHERE id = ?`,
+            [invoiceId, invoice_no, recentPosOpened.id]
+          );
+        } else {
+          // 1. Record persistent fulfillment occurrence linked to invoice
+          await db.run(
+            `INSERT INTO refill_fulfillments (
+              refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+              quantity_fulfilled, fulfilled_at, invoice_id, invoice_no, cycle_due_date, next_due_date, fulfilled_via
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 'pos_sale')`,
+            [
+              refill.id,
+              refill.customer_id || customerId,
+              refill.patient_name || patient_name || 'Customer',
+              refill.patient_phone || patient_phone || '',
+              refill.medicine_id,
+              refill.medicine_name || 'Prescribed Medicine',
+              fulfilledQty,
+              invoiceId,
+              invoice_no,
+              cycleDueDate,
+              nextDateStr
+            ]
+          );
+
+          // 2. Advance the same persistent schedule in-place
+          await db.run(
+            `UPDATE patient_refills 
+             SET last_refill_date = datetime('now'), 
+                 next_refill_date = ?, 
+                 acknowledged = 0, 
+                 ordering_triggered = 0,
+                 cart_product_code = NULL,
+                 is_ready = 0,
+                 hold_for_stock = 0, 
+                 quick_bill_id = NULL,
+                 stock_verified_override = 0,
+                 status = 'pending',
+                 reminder_status = 'NOT_SENT',
+                 reminder_sent_at = NULL,
+                 reminder_job_id = NULL,
+                 reminder_occurrence_date = NULL,
+                 auto_remind = 0,
+                 last_collection_reminder_at = NULL,
+                 collection_reminder_count = 0
+             WHERE id = ?`,
+            [nextDateStr, refill.id]
+          );
+        }
 
         if (refill.quick_bill_id) {
           // Delete held bill session (no stock restore since it's checked out)

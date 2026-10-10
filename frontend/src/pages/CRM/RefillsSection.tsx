@@ -783,7 +783,8 @@ export const RefillsSection: React.FC = () => {
     api.notifyCounterSession({
       phone: patient.patient_phone || '',
       customerId: patient.customer_id || undefined,
-      refillIds: sellableMeds.map(m => m.id)
+      refillIds: sellableMeds.map(m => m.id),
+      autoFulfill: true
     });
 
     navigate('/pos', {

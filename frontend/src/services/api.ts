@@ -1201,6 +1201,7 @@ export const api = {
     refillIds?: number[];
     specialOrderId?: number | null;
     specialOrderIds?: number[];
+    autoFulfill?: boolean;
   }) => apiClient.post('/sales/counter-session', data).then(res => res.data).catch(() => ({})),
   
   // Verification Layer APIs
@@ -1838,6 +1839,10 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; cart_store_name?: string }>(`/refills/${id}/status`, { status: 'ordered', ...options }).then(res => res.data),
   getRefillsPanel: () => apiClient.get('/refills/panel').then(res => res.data),
   toggleRefillOverride: (id: number) => apiClient.post(`/refills/${id}/toggle-override`).then(res => res.data),
+  fulfillAllRefills: (phone: string, data?: { refill_ids?: number[]; customer_id?: number | null; fulfilled_via?: string }) =>
+    apiClient.post<{ success: boolean; fulfilledCount: number; message: string }>(`/refills/patient/${encodeURIComponent(phone)}/fulfill-all`, data || {}).then(res => res.data),
+  fulfillRefill: (id: number, data?: { fulfilled_via?: string }) =>
+    apiClient.post<{ success: boolean; message: string; next_refill_date: string }>(`/refills/${id}/fulfill`, data || {}).then(res => res.data),
   sendTomorrowReminder: (patientPhone: string) => apiClient.post<{ success: boolean; queueId?: number; message: string }>('/refills/send-tomorrow-reminder', { patient_phone: patientPhone }).then(res => res.data),
   toggleRefillAutoRemind: (id: number, auto_remind: boolean | number) =>
     apiClient.post<{ success: boolean; id: number; auto_remind: number }>(`/refills/${id}/auto-remind`, { auto_remind: auto_remind ? 1 : 0 }).then(res => res.data),

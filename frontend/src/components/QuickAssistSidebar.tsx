@@ -7,7 +7,7 @@ import {
   Zap, Globe, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon,
   Activity as ActivityIcon, ShieldCheck as ShieldCheckIcon, Clock as ClockIcon,
   MessageSquare as MessageSquareIcon, Send as SendIcon, Calendar, RotateCw,
-  CheckCheck, Receipt, Phone, Pill, AlertTriangle
+  CheckCheck, Receipt, Phone, Pill, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, quickOrderEvent } from '../services/events';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
@@ -91,6 +91,7 @@ export const QuickAssistSidebar = memo(({
   const [expandedSpecialOrderKeys, setExpandedSpecialOrderKeys] = useState<Set<string>>(new Set());
   const [expandedStagedKeys, setExpandedStagedKeys] = useState<Set<string>>(new Set());
   const [snoozingKeys, setSnoozingKeys] = useState<Set<string>>(new Set());
+  const [fulfillingRefillKeys, setFulfillingRefillKeys] = useState<Set<string>>(new Set());
 
   // Master auto-remind toggle state & optimistic overrides for orders
   const [autoRemindMaster, setAutoRemindMaster] = useState<boolean>(true);
@@ -339,6 +340,36 @@ export const QuickAssistSidebar = memo(({
       });
     }
   };
+
+  const handleFulfillRefillGroup = async (group: {
+    key: string;
+    patient_name: string;
+    patient_phone: string;
+    medicines: Array<{ id: number }>;
+  }) => {
+    if (fulfillingRefillKeys.has(group.key)) return;
+    setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
+    try {
+      const res = await api.fulfillAllRefills(group.patient_phone, {
+        refill_ids: group.medicines.map(m => m.id),
+        fulfilled_via: 'quick_assist_complete'
+      });
+      toastEvent.trigger(res?.message || `Refill cycle for ${group.patient_name} fulfilled and advanced!`, 'success');
+      refillEvent.triggerRefresh();
+      onRefreshDailyLog();
+      onActionComplete();
+    } catch (err: unknown) {
+      console.error('Failed to fulfill refill group:', err);
+      toastEvent.trigger('Failed to fulfill refill cycle', 'error');
+    } finally {
+      setFulfillingRefillKeys(prev => {
+        const next = new Set(prev);
+        next.delete(group.key);
+        return next;
+      });
+    }
+  };
+
 
   const handleUpdateGroupStatus = async (
     group: { requester: string; phone?: string; items: Array<{ id: number; product: string; qty: number; notification_count?: number }> },
@@ -1230,13 +1261,19 @@ export const QuickAssistSidebar = memo(({
                           const unaddedMeds = group.medicines.filter(m => !m.cart_store_name && m.status !== 'ordered');
                           const isMarkingGroup = group.medicines.some(m => markingOrderedRefillIds.has(m.id));
                           const isMarkingReady = markingReadyRefillPhones.has(group.patient_phone);
+                          const isFulfillingGroup = fulfillingRefillKeys.has(group.key);
                           const openPos = (e: React.MouseEvent) => {
                             e.stopPropagation();
-                            api.notifyCounterSession({
-                              phone: group.patient_phone || '',
-                              refillIds: group.medicines.map(m => m.id)
-                            });
-                            toastEvent.trigger(`Opening POS to bill refills for "${group.patient_name}"...`, 'info', '/pos');
+                            try {
+                              api.notifyCounterSession({
+                                phone: group.patient_phone || '',
+                                refillIds: group.medicines.map(m => m.id),
+                                autoFulfill: true
+                              });
+                              refillEvent.triggerRefresh();
+                              onRefreshDailyLog();
+                            } catch (_) {}
+                            toastEvent.trigger(`Refills marked fulfilled & opening POS for "${group.patient_name}"...`, 'success', '/pos');
                             setExpanded(false);
                             navigate('/pos', {
                               state: {
@@ -1313,6 +1350,19 @@ export const QuickAssistSidebar = memo(({
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={isFulfillingGroup}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleFulfillRefillGroup(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                                  title="Fulfill cycle now & advance schedule (skips cart / order formality)"
+                                >
+                                  {isFulfillingGroup ? <Loader2 size={11} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                                  <span>Fulfill</span>
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={openEdit}
                                   className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
                                   title={`Edit refill details for ${group.patient_name}`}
@@ -1343,10 +1393,23 @@ export const QuickAssistSidebar = memo(({
                                   type="button"
                                   onClick={openPos}
                                   className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                  title={`Load ${group.patient_name}'s refill items into POS for billing (disarms auto-reminders)`}
+                                  title={`Fulfill and load ${group.patient_name}'s refill items into POS for billing`}
                                 >
                                   <Receipt size={11} className="shrink-0" />
                                   <span className="truncate">POS</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isFulfillingGroup}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleFulfillRefillGroup(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                                  title="Fulfill cycle now & advance schedule (skips POS / billing formality)"
+                                >
+                                  {isFulfillingGroup ? <Loader2 size={11} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                                  <span>Fulfill</span>
                                 </button>
                               </>
                             );
@@ -1371,10 +1434,23 @@ export const QuickAssistSidebar = memo(({
                                 type="button"
                                 onClick={openPos}
                                 className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                title={`Load ${group.patient_name}'s refill items into POS for billing (disarms auto-reminders)`}
+                                title={`Fulfill and load ${group.patient_name}'s refill items into POS for billing`}
                               >
                                 <Receipt size={11} className="shrink-0" />
                                 <span className="truncate">POS</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isFulfillingGroup}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleFulfillRefillGroup(group);
+                                }}
+                                className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                                title="Fulfill cycle now & advance schedule (skips POS / billing formality)"
+                              >
+                                {isFulfillingGroup ? <Loader2 size={11} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                                <span>Fulfill</span>
                               </button>
                             </>
                           );
