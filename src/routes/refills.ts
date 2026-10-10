@@ -1154,7 +1154,12 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
         `DELETE FROM automation_notifications WHERE type = 'refill_collection' AND reference_id IN (${placeholders})`,
         refillIds
       );
-      // 2. Delete patient refills
+      // 2. Delete linked special_orders
+      await db.run(
+        `DELETE FROM special_orders WHERE source_refill_id IN (${placeholders}) OR (source = 'refill' AND phone = ?)`,
+        [...refillIds, phone || '']
+      ).catch(() => {});
+      // 3. Delete patient refills
       const result = await db.run(
         `DELETE FROM patient_refills WHERE id IN (${placeholders})`,
         refillIds
@@ -1167,12 +1172,17 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
         message: 'Patient refill schedule deleted successfully'
       });
       removeRefillCartLines(matchingRefills, false);
+      eventService.broadcast('refresh-special-orders', { at: Date.now() });
       setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after delete:', e)); });
       return;
     } else {
       // Direct deletion fallback if query had no pre-match
       let deleted = 0;
       if (phone) {
+        await db.run(
+          `DELETE FROM special_orders WHERE source = 'refill' AND (phone = ? OR phone LIKE ?)`,
+          [phone, `%${phone.replace(/\D/g, '').slice(-10)}%`]
+        ).catch(() => {});
         const delRes = await db.run('DELETE FROM patient_refills WHERE patient_phone = ? OR patient_phone LIKE ?', [phone, `%${phone.replace(/\D/g, '').slice(-10)}%`]);
         deleted = delRes.changes || 0;
       }
@@ -1182,6 +1192,7 @@ const deletePatientRefillsHandler = async (req: any, res: any) => {
         deletedCount: deleted,
         message: 'Patient refill schedule deleted successfully'
       });
+      eventService.broadcast('refresh-special-orders', { at: Date.now() });
       setImmediate(() => { checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after delete:', e)); });
       return;
     }
@@ -1195,6 +1206,65 @@ router.post('/delete-patient', deletePatientRefillsHandler);
 router.delete('/patient/:phone', deletePatientRefillsHandler);
 router.delete('/patient', deletePatientRefillsHandler);
 
+// Cancel a single refill item by id (marks inactive/cancelled and cascades to special_orders)
+router.post('/:id/cancel', async (req, res) => {
+  const { id } = req.params;
+  const numId = parseInt(id, 10);
+  if (!numId || isNaN(numId)) {
+    return res.status(400).json({ error: 'Valid refill ID required' });
+  }
+
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const refill = await db.get(
+      `SELECT pr.*, m.name as medicine_name 
+       FROM patient_refills pr 
+       LEFT JOIN medicines m ON pr.medicine_id = m.id 
+       WHERE pr.id = ?`,
+      [numId]
+    );
+    if (!refill) {
+      return res.status(404).json({ error: 'Refill not found' });
+    }
+
+    // 1. Mark patient_refills as cancelled and inactive
+    await db.run(
+      `UPDATE patient_refills 
+       SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+      [numId]
+    );
+
+    // 2. Clean up staged notifications for this refill
+    await db.run(
+      `DELETE FROM automation_notifications 
+       WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
+      [String(numId), `${numId},%`, `%,${numId}%`]
+    );
+
+    // 3. Clean up linked special_orders
+    await db.run(
+      `DELETE FROM special_orders 
+       WHERE source_refill_id = ? 
+          OR (source = 'refill' AND phone = ? AND (product = ? OR medicine_name = ?))`,
+      [numId, refill.patient_phone || '', refill.medicine_name || '', refill.medicine_name || '']
+    ).catch(() => {});
+
+    // 4. Remove live cart lines
+    removeRefillCartLines([refill], false);
+
+    // 5. Broadcast changes
+    eventService.broadcast('refill_updated', { id: numId, action: 'cancel' });
+    eventService.broadcast('refresh-special-orders', { at: Date.now() });
+
+    res.json({ success: true, message: 'Refill schedule canceled and preserved in history' });
+  } catch (err: any) {
+    console.error('Failed to cancel refill item:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
 // Permanently delete a single refill item by id
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
@@ -1206,7 +1276,13 @@ router.delete('/:id', async (req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
-    const refill = await db.get('SELECT * FROM patient_refills WHERE id = ?', [numId]);
+    const refill = await db.get(
+      `SELECT pr.*, m.name as medicine_name 
+       FROM patient_refills pr 
+       LEFT JOIN medicines m ON pr.medicine_id = m.id 
+       WHERE pr.id = ?`,
+      [numId]
+    );
     if (!refill) {
       return res.status(404).json({ error: 'Refill not found' });
     }
@@ -1217,6 +1293,14 @@ router.delete('/:id', async (req, res) => {
        WHERE type = 'refill_collection' AND (reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ?)`,
       [String(numId), `${numId},%`, `%,${numId}%`]
     );
+
+    // Clean up linked special_orders
+    await db.run(
+      `DELETE FROM special_orders 
+       WHERE source_refill_id = ? 
+          OR (source = 'refill' AND phone = ? AND (product = ? OR medicine_name = ?))`,
+      [numId, refill.patient_phone || '', refill.medicine_name || '', refill.medicine_name || '']
+    ).catch(() => {});
 
     await db.run('DELETE FROM patient_refills WHERE id = ?', [numId]);
     removeRefillCartLines([refill], false);

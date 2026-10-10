@@ -1919,6 +1919,31 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
+    // Cascade deletion/cancellation to patient_refills so checkAllRefills never resurrects it
+    if (existing.source_refill_id || existing.source === 'refill') {
+      try {
+        if (existing.source_refill_id) {
+          await db.run(
+            `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [existing.source_refill_id]
+          );
+        } else if (existing.phone && (existing.product || existing.medicine_name)) {
+          const medName = existing.product || existing.medicine_name || '';
+          const cleanPhone = (existing.phone || '').replace(/\D/g, '');
+          const last10 = cleanPhone.slice(-10);
+          await db.run(
+            `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP 
+             WHERE (patient_phone = ? OR patient_phone LIKE ?) 
+               AND medicine_id IN (SELECT id FROM medicines WHERE name = ? OR name LIKE ?)`,
+            [existing.phone, `%${last10}%`, medName, `%${medName}%`]
+          );
+        }
+        eventService.broadcast('refill_updated', { action: 'cancel', fromOrderId: Number(id) });
+      } catch (refillCascadeErr) {
+        console.warn('[Orders] Cascade cancellation to patient_refills failed:', refillCascadeErr);
+      }
+    }
+
     // Cancel and remove any pending unsent WhatsApp queue items & notifications for this deleted order
     await cancelPendingWhatsAppForOrder(db, existing);
     

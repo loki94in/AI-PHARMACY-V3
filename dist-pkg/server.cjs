@@ -16587,6 +16587,20 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('daily_briefing_template', 'detailed')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_speed_mode', 'fast')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_min_sec', '5')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_max_sec', '10')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_min_sec', '3')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_max_sec', '5')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_window_minutes', '20')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_message_bundling_sec', '3')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_human_review_mode', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_takeover_resume_min', '15')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
     try {
       const versionRow = await db2.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
       const migrationRow = await db2.get("SELECT MAX(version) as version FROM schema_migrations");
@@ -19517,6 +19531,20 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
     await db2.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_speed_mode', 'fast')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_min_sec', '5')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_max_sec', '10')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_min_sec', '3')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_max_sec', '5')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_window_minutes', '20')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_message_bundling_sec', '3')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_human_review_mode', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_takeover_resume_min', '15')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
@@ -35663,6 +35691,11 @@ async function handleInbound(msg) {
     }
     if (await isIgnored(chatId)) return;
     const db2 = await dbManager.getConnection();
+    const botToggleRow = await db2.get("SELECT value FROM app_settings WHERE key = 'wa_bot_enabled'");
+    if (botToggleRow?.value === "false") {
+      console.log(`[Intent Service] AI Auto-Reply Bot is disabled in Settings. Skipping reply for ${chatId}.`);
+      return;
+    }
     let chatLang = "en";
     const cleanDigitsForLang = (phone || "").replace(/\D/g, "").slice(-10);
     try {
@@ -42719,30 +42752,68 @@ var init_waSmartReplyScheduler = __esm({
         try {
           const db2 = await dbManager.getConnection();
           const keys = [
+            "wa_bot_enabled",
+            "wa_bot_speed_mode",
             "wa_bot_cold_delay_min_sec",
             "wa_bot_cold_delay_max_sec",
             "wa_bot_warm_delay_min_sec",
             "wa_bot_warm_delay_max_sec",
-            "wa_bot_warm_window_minutes"
+            "wa_bot_warm_window_minutes",
+            "wa_bot_message_bundling_sec",
+            "wa_bot_human_review_mode"
           ];
           const rows = await db2.all(
             `SELECT key, value FROM app_settings WHERE key IN (${keys.map(() => "?").join(",")})`,
             keys
           );
-          const map = new Map(rows.map((r) => [r.key, Number(r.value)]));
-          const coldMin = map.get("wa_bot_cold_delay_min_sec") || _WaSmartReplyScheduler.DEFAULT_COLD_MIN;
-          const coldMax = map.get("wa_bot_cold_delay_max_sec") || _WaSmartReplyScheduler.DEFAULT_COLD_MAX;
-          const warmMin = map.get("wa_bot_warm_delay_min_sec") || _WaSmartReplyScheduler.DEFAULT_WARM_MIN;
-          const warmMax = map.get("wa_bot_warm_delay_max_sec") || _WaSmartReplyScheduler.DEFAULT_WARM_MAX;
-          const warmWindowMin = map.get("wa_bot_warm_window_minutes") || _WaSmartReplyScheduler.DEFAULT_WARM_WINDOW_MIN;
-          return { coldMin, coldMax, warmMin, warmMax, warmWindowMs: warmWindowMin * 60 * 1e3 };
+          const strMap = new Map(rows.map((r) => [r.key, r.value]));
+          const botEnabled = strMap.get("wa_bot_enabled") !== "false";
+          const speedMode = strMap.get("wa_bot_speed_mode") || "fast";
+          const humanReviewMode = strMap.get("wa_bot_human_review_mode") === "true";
+          let coldMin = Number(strMap.get("wa_bot_cold_delay_min_sec")) || 5;
+          let coldMax = Number(strMap.get("wa_bot_cold_delay_max_sec")) || 10;
+          let warmMin = Number(strMap.get("wa_bot_warm_delay_min_sec")) || 3;
+          let warmMax = Number(strMap.get("wa_bot_warm_delay_max_sec")) || 5;
+          const warmWindowMin = Number(strMap.get("wa_bot_warm_window_minutes")) || 20;
+          const bundlingSec = Number(strMap.get("wa_bot_message_bundling_sec")) || 3;
+          if (speedMode === "instant") {
+            coldMin = 1;
+            coldMax = 3;
+            warmMin = 1;
+            warmMax = 2;
+          } else if (speedMode === "fast") {
+            coldMin = Math.min(coldMin, 5);
+            coldMax = Math.min(coldMax, 10);
+            warmMin = Math.min(warmMin, 3);
+            warmMax = Math.min(warmMax, 5);
+          } else if (speedMode === "safe") {
+            coldMin = 20;
+            coldMax = 45;
+            warmMin = 10;
+            warmMax = 17;
+          }
+          return {
+            botEnabled,
+            speedMode,
+            coldMin,
+            coldMax,
+            warmMin,
+            warmMax,
+            warmWindowMs: warmWindowMin * 60 * 1e3,
+            bundlingMs: bundlingSec * 1e3,
+            humanReviewMode
+          };
         } catch {
           return {
-            coldMin: _WaSmartReplyScheduler.DEFAULT_COLD_MIN,
-            coldMax: _WaSmartReplyScheduler.DEFAULT_COLD_MAX,
-            warmMin: _WaSmartReplyScheduler.DEFAULT_WARM_MIN,
-            warmMax: _WaSmartReplyScheduler.DEFAULT_WARM_MAX,
-            warmWindowMs: _WaSmartReplyScheduler.DEFAULT_WARM_WINDOW_MIN * 60 * 1e3
+            botEnabled: true,
+            speedMode: "fast",
+            coldMin: 5,
+            coldMax: 10,
+            warmMin: 3,
+            warmMax: 5,
+            warmWindowMs: 20 * 60 * 1e3,
+            bundlingMs: 3e3,
+            humanReviewMode: false
           };
         }
       }
@@ -42792,18 +42863,22 @@ var init_waSmartReplyScheduler = __esm({
         }
         (async () => {
           try {
+            const settings = await this.loadSettings();
+            if (!settings.botEnabled) {
+              console.log(`[SmartReplyScheduler] AI Auto-Reply Bot is paused/disabled in Settings. Skipping reply for ${phoneKey2}.`);
+              return;
+            }
             if (await this.isAlreadyReadByPharmacist(chatId)) {
               console.log(`[SmartReplyScheduler] Suppressed reply for ${phoneKey2} - already read by pharmacist.`);
               return;
             }
-            const { coldMin, coldMax, warmMin, warmMax, warmWindowMs } = await this.loadSettings();
             let delayMs;
             if (opts?.forceCold) {
-              delayMs = _WaSmartReplyScheduler.randMs(coldMin, coldMax);
+              delayMs = _WaSmartReplyScheduler.randMs(settings.coldMin, settings.coldMax);
             } else {
-              const warm = await this.isWarmConvo(chatId, warmWindowMs);
-              delayMs = warm ? _WaSmartReplyScheduler.randMs(warmMin, warmMax) : _WaSmartReplyScheduler.randMs(coldMin, coldMax);
-              console.log(`[SmartReplyScheduler] Scheduling reply for ${phoneKey2} in ${Math.round(delayMs / 1e3)}s (${warm ? "warm" : "cold"} window).`);
+              const warm = await this.isWarmConvo(chatId, settings.warmWindowMs);
+              delayMs = warm ? _WaSmartReplyScheduler.randMs(settings.warmMin, settings.warmMax) : _WaSmartReplyScheduler.randMs(settings.coldMin, settings.coldMax);
+              console.log(`[SmartReplyScheduler] Scheduling reply for ${phoneKey2} in ${Math.round(delayMs / 1e3)}s (${warm ? "warm/continuous" : "cold/idle"} window, mode=${settings.speedMode}).`);
             }
             const timer = setTimeout(async () => {
               this.pending.delete(phoneKey2);
@@ -44395,7 +44470,9 @@ function launchClientInstance(forceQr) {
         }
         const isFromMe = !!msg.fromMe;
         const nowMs = Date.now();
-        const manualTimeoutMs = 5 * 60 * 1e3;
+        const takeoverSettingRow = await db2.get("SELECT value FROM app_settings WHERE key = 'wa_bot_takeover_resume_min'").catch(() => null);
+        const takeoverMinutes = takeoverSettingRow?.value ? Math.max(1, parseInt(takeoverSettingRow.value, 10)) : 15;
+        const manualTimeoutMs = (isNaN(takeoverMinutes) ? 15 : takeoverMinutes) * 60 * 1e3;
         const existingChatRow = await db2.get(
           "SELECT session_mode, manual_active_until, last_pharmacist_message_at, resolved_number FROM whatsapp_chats WHERE id = ?",
           [chatId]
@@ -56751,7 +56828,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.70";
+    APP_VERSION = "0.1.71";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -87027,8 +87104,9 @@ var init_sales = __esm({
     });
     router34.post("/counter-session", async (req, res) => {
       try {
-        let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds } = req.body;
+        let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds, autoFulfill } = req.body;
         let cleanPhone = (phone || "").replace(/\D/g, "");
+        const shouldAutoFulfill = autoFulfill === true || autoFulfill === "true" || autoFulfill === 1;
         const explicitRefillIds = [];
         if (refillId && !isNaN(Number(refillId))) explicitRefillIds.push(Number(refillId));
         if (Array.isArray(refillIds)) explicitRefillIds.push(...refillIds.map(Number).filter((n) => !isNaN(n) && n > 0));
@@ -87052,25 +87130,101 @@ var init_sales = __esm({
           if (o?.phone) cleanPhone = String(o.phone).replace(/\D/g, "");
         }
         const phoneQuery = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : "";
-        if (explicitRefillIds.length > 0) {
-          const placeholders = explicitRefillIds.map(() => "?").join(",");
-          await db2.run(
-            `UPDATE patient_refills 
-         SET auto_remind = 0, 
-             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
-         WHERE id IN (${placeholders})`,
-            explicitRefillIds
-          ).catch(() => {
-          });
-        } else if (customerId || phoneQuery) {
-          await db2.run(
-            `UPDATE patient_refills 
-         SET auto_remind = 0, 
-             reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
-         WHERE (customer_id = ? OR (patient_phone IS NOT NULL AND length(patient_phone) >= 7 AND replace(patient_phone, ' ', '') LIKE ?))`,
-            [customerId || -1, phoneQuery || "NON_EXISTENT"]
-          ).catch(() => {
-          });
+        let autoFulfilledCount = 0;
+        if (shouldAutoFulfill) {
+          let refillsToFulfill = [];
+          if (explicitRefillIds.length > 0) {
+            const placeholders = explicitRefillIds.map(() => "?").join(",");
+            refillsToFulfill = await db2.all(
+              `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
+              explicitRefillIds
+            );
+          } else if (cleanPhone.length >= 7 || customerId) {
+            refillsToFulfill = await db2.all(
+              `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE (pr.customer_id = ? OR (pr.patient_phone IS NOT NULL AND length(pr.patient_phone) >= 7 AND replace(pr.patient_phone, ' ', '') LIKE ?)) 
+             AND pr.is_active = 1`,
+              [customerId || -1, phoneQuery || "NON_EXISTENT"]
+            );
+          }
+          for (const refill of refillsToFulfill) {
+            const interval = Number(refill.refill_interval_days || 30);
+            const nextDate = /* @__PURE__ */ new Date();
+            nextDate.setDate(nextDate.getDate() + interval);
+            const nextDateStr = toLocalSqlDateTime(nextDate);
+            const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+            const fulfilledQty = Number(refill.quantity_needed || 1);
+            await db2.run(
+              `INSERT INTO refill_fulfillments (
+            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+            quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'pos_opened')`,
+              [
+                refill.id,
+                refill.customer_id || customerId || null,
+                refill.patient_name || "Customer",
+                refill.patient_phone || cleanPhone || "",
+                refill.medicine_id,
+                refill.medicine_name || "Prescribed Medicine",
+                fulfilledQty,
+                cycleDueDate,
+                nextDateStr
+              ]
+            );
+            await db2.run(
+              `UPDATE patient_refills 
+           SET last_refill_date = datetime('now'),
+               next_refill_date = ?,
+               stock_verified_override = 0,
+               ordering_triggered = 0,
+               cart_product_code = NULL,
+               is_ready = 0,
+               hold_for_stock = 0,
+               acknowledged = 0,
+               quick_bill_id = NULL,
+               status = 'pending',
+               reminder_status = 'NOT_SENT',
+               reminder_sent_at = NULL,
+               reminder_job_id = NULL,
+               reminder_occurrence_date = NULL,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
+               collection_reminder_count = 0
+           WHERE id = ?`,
+              [nextDateStr, refill.id]
+            );
+            autoFulfilledCount++;
+          }
+          if (autoFulfilledCount > 0) {
+            await checkAllRefills(db2).catch(() => {
+            });
+          }
+        } else {
+          if (explicitRefillIds.length > 0) {
+            const placeholders = explicitRefillIds.map(() => "?").join(",");
+            await db2.run(
+              `UPDATE patient_refills 
+           SET auto_remind = 0, 
+               reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+           WHERE id IN (${placeholders})`,
+              explicitRefillIds
+            ).catch(() => {
+            });
+          } else if (customerId || phoneQuery) {
+            await db2.run(
+              `UPDATE patient_refills 
+           SET auto_remind = 0, 
+               reminder_status = CASE WHEN reminder_status = 'SENT' THEN 'SENT' ELSE 'CANCELLED' END
+           WHERE (customer_id = ? OR (patient_phone IS NOT NULL AND length(patient_phone) >= 7 AND replace(patient_phone, ' ', '') LIKE ?))`,
+              [customerId || -1, phoneQuery || "NON_EXISTENT"]
+            ).catch(() => {
+            });
+          }
         }
         if (explicitSoIds.length > 0) {
           const placeholders = explicitSoIds.map(() => "?").join(",");
@@ -87099,7 +87253,7 @@ var init_sales = __esm({
         });
         try {
           if (explicitRefillIds.length > 0 || customerId || phoneQuery) {
-            eventService.broadcast("refill_updated", { at: Date.now(), counter_session: true });
+            eventService.broadcast("refill_updated", { at: Date.now(), counter_session: true, auto_fulfilled: autoFulfilledCount > 0 });
             eventService.broadcast("app-refills-updated", { at: Date.now() });
           }
           if (explicitSoIds.length > 0 || customerId || phoneQuery) {
@@ -87113,7 +87267,8 @@ var init_sales = __esm({
         res.json({
           success: true,
           purged,
-          message: "Counter session active: auto-remind disabled and pending reminders purged."
+          autoFulfilledCount,
+          message: autoFulfilledCount > 0 ? `Counter session active: auto-fulfilled ${autoFulfilledCount} refill(s) and advanced to next cycle.` : "Counter session active: auto-remind disabled and pending reminders purged."
         });
       } catch (err) {
         console.error("[Sales] Counter session error:", err);
@@ -87527,50 +87682,66 @@ var init_sales = __esm({
             const interval = Number(refill.refill_interval_days || 30);
             const nextDate = /* @__PURE__ */ new Date();
             nextDate.setDate(nextDate.getDate() + interval);
-            const nextDateStr = nextDate.toISOString().slice(0, 19).replace("T", " ");
-            const cycleDueDate = refill.next_refill_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+            const nextDateStr = toLocalSqlDateTime(nextDate);
+            const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
             const fulfilledQty = Number(refill.quantity_needed || 1);
-            await db2.run(
-              `INSERT INTO refill_fulfillments (
-            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-            quantity_fulfilled, fulfilled_at, invoice_id, invoice_no, cycle_due_date, next_due_date, fulfilled_via
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 'pos_sale')`,
-              [
-                refill.id,
-                refill.customer_id || customerId,
-                refill.patient_name || patient_name || "Customer",
-                refill.patient_phone || patient_phone || "",
-                refill.medicine_id,
-                refill.medicine_name || "Prescribed Medicine",
-                fulfilledQty,
-                invoiceId,
-                invoice_no,
-                cycleDueDate,
-                nextDateStr
-              ]
+            const recentPosOpened = await db2.get(
+              `SELECT id FROM refill_fulfillments 
+           WHERE refill_id = ? AND fulfilled_via = 'pos_opened' 
+             AND fulfilled_at >= datetime('now', '-30 minutes')
+           ORDER BY id DESC LIMIT 1`,
+              [refill.id]
             );
-            await db2.run(
-              `UPDATE patient_refills 
-           SET last_refill_date = datetime('now'), 
-               next_refill_date = ?, 
-               acknowledged = 0, 
-               ordering_triggered = 0,
-               cart_product_code = NULL,
-               is_ready = 0,
-               hold_for_stock = 0, 
-               quick_bill_id = NULL,
-               stock_verified_override = 0,
-               status = 'pending',
-               reminder_status = 'NOT_SENT',
-               reminder_sent_at = NULL,
-               reminder_job_id = NULL,
-               reminder_occurrence_date = NULL,
-               auto_remind = 0,
-               last_collection_reminder_at = NULL,
-               collection_reminder_count = 0
-           WHERE id = ?`,
-              [nextDateStr, refill.id]
-            );
+            if (recentPosOpened) {
+              await db2.run(
+                `UPDATE refill_fulfillments 
+             SET invoice_id = ?, invoice_no = ?, fulfilled_via = 'pos_sale' 
+             WHERE id = ?`,
+                [invoiceId, invoice_no, recentPosOpened.id]
+              );
+            } else {
+              await db2.run(
+                `INSERT INTO refill_fulfillments (
+              refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+              quantity_fulfilled, fulfilled_at, invoice_id, invoice_no, cycle_due_date, next_due_date, fulfilled_via
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 'pos_sale')`,
+                [
+                  refill.id,
+                  refill.customer_id || customerId,
+                  refill.patient_name || patient_name || "Customer",
+                  refill.patient_phone || patient_phone || "",
+                  refill.medicine_id,
+                  refill.medicine_name || "Prescribed Medicine",
+                  fulfilledQty,
+                  invoiceId,
+                  invoice_no,
+                  cycleDueDate,
+                  nextDateStr
+                ]
+              );
+              await db2.run(
+                `UPDATE patient_refills 
+             SET last_refill_date = datetime('now'), 
+                 next_refill_date = ?, 
+                 acknowledged = 0, 
+                 ordering_triggered = 0,
+                 cart_product_code = NULL,
+                 is_ready = 0,
+                 hold_for_stock = 0, 
+                 quick_bill_id = NULL,
+                 stock_verified_override = 0,
+                 status = 'pending',
+                 reminder_status = 'NOT_SENT',
+                 reminder_sent_at = NULL,
+                 reminder_job_id = NULL,
+                 reminder_occurrence_date = NULL,
+                 auto_remind = 0,
+                 last_collection_reminder_at = NULL,
+                 collection_reminder_count = 0
+             WHERE id = ?`,
+                [nextDateStr, refill.id]
+              );
+            }
             if (refill.quick_bill_id) {
               await db2.run("DELETE FROM held_bills WHERE id = ?", [refill.quick_bill_id]);
             }

@@ -1383,6 +1383,64 @@ export async function rankSpecialOrderDistributorCandidates(
 }
 
 /**
+ * Auto-persist verified medicine-distributor link to SQLite (medicine_distributor_links).
+ * Ensures (medicine_id, store_id) has the latest verified product_code, product_id, and packaging
+ * without duplicating records.
+ */
+export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<void> {
+  if (!items || !Array.isArray(items) || items.length === 0) return;
+  try {
+    const db = await dbManager.getConnection();
+    for (const item of items) {
+      const storeId = Number(item.storeId || item.StoreId || 0);
+      const productCode = String(item.productCode || item.ProductCode || '').trim();
+      const storeName = String(item.storeName || item.StoreName || '').trim();
+      if (!storeId || !productCode) continue;
+
+      let medId = Number(item.medicineId || item.medicine_id || 0);
+      const prodName = String(item.productName || item.product || item.name || '').trim();
+
+      // If medicineId missing, resolve from medicines table by name
+      if (!medId && prodName) {
+        const cleanName = prodName.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        const mRow = await db.get(
+          `SELECT id FROM medicines 
+           WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) OR LOWER(TRIM(name)) = LOWER(TRIM(?))
+           ORDER BY id ASC LIMIT 1`,
+          [prodName, cleanName]
+        );
+        if (mRow?.id) {
+          medId = Number(mRow.id);
+        }
+      }
+
+      if (medId > 0) {
+        const prodId = String(item.productId || item.ProductId || item.PrProductId || '');
+        const packaging = String(item.packaging || item.Packing || '');
+        const company = String(item.company || item.Company || '');
+
+        await db.run(
+          `INSERT INTO medicine_distributor_links 
+             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+           ON CONFLICT(medicine_id, store_id, product_code) DO UPDATE SET
+             product_id = CASE WHEN excluded.product_id != '' THEN excluded.product_id ELSE medicine_distributor_links.product_id END,
+             product_name = excluded.product_name,
+             packaging = CASE WHEN excluded.packaging != '' THEN excluded.packaging ELSE medicine_distributor_links.packaging END,
+             company = CASE WHEN excluded.company != '' THEN excluded.company ELSE medicine_distributor_links.company END,
+             store_name = CASE WHEN excluded.store_name != '' THEN excluded.store_name ELSE medicine_distributor_links.store_name END,
+             mapped = 1,
+             updated_at = CURRENT_TIMESTAMP`,
+          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company]
+        ).catch((linkErr: any) => console.warn('[AutoSaveLink] Conflict/Insert error:', linkErr));
+      }
+    }
+  } catch (err) {
+    console.warn('[AutoSaveLink] Failed to auto-save medicine distributor link:', err);
+  }
+}
+
+/**
  * Add items to Pharmarack cart (callable both from internal services and HTTP endpoint).
  */
 export async function addItemsToPharmarackCart(items: any[]): Promise<{
@@ -1669,12 +1727,19 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
             const searchData: any = await searchRes.json().catch(() => null);
             if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
               const isTargetingSpecificStore = Number(item.storeId) > 0 || Boolean(wantStore);
+              const normKeyword = cleanKeyword.toLowerCase().replace(/[^a-z0-9]/g, '');
+              const isNameMatch = (p: any) => {
+                const pn = String(p.ProductName || p.ProductFullName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                return pn.includes(normKeyword) || normKeyword.includes(pn);
+              };
+
               const matched = searchData.data.find((p: any) => 
                 (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
                 (Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : true)
               ) || searchData.data.find((p: any) => 
-                Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : (wantStore && String(p.StoreName || '').toLowerCase().includes(wantStore))
-              ) || (isTargetingSpecificStore ? null : searchData.data[0]);
+                (Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : (wantStore && String(p.StoreName || '').toLowerCase().includes(wantStore))) &&
+                isNameMatch(p)
+              ) || (!isTargetingSpecificStore && isNameMatch(searchData.data[0]) ? searchData.data[0] : null);
 
               if (matched) {
                 item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
@@ -1703,6 +1768,11 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   // Primary: Call the official AddUserProductCartDetail API
   try {
     for (const item of items) {
+      if (!item.productCode) {
+        lastError = `Medicine "${item.productName || 'unknown'}" is not linked or not available with distributor "${item.storeName || item.storeId}". Please link it before adding.`;
+        cartSuccess = false;
+        break;
+      }
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,
@@ -1821,7 +1891,8 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         if (isOk) {
           cartSuccess = true;
         } else {
-          lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
+          const upstreamMsg = resJson.message || resJson.Message || resJson.Error || resJson.error || '';
+          lastError = upstreamMsg ? `Distributor response: ${upstreamMsg}` : `AddUserProductCartDetail response: ${JSON.stringify(resJson)}`;
           cartSuccess = false;
           break;
         }
@@ -1842,6 +1913,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   } 
 
   if (cartSuccess) {
+    void autoSaveMedicineDistributorLinks(items);
     invalidatePharmarackCartCache();
     // P1 events-not-timers: every cart WRITE pushes one SSE frame so any open
     // Pharmarack Cart page (this tab or another device) silently re-syncs.
@@ -1855,7 +1927,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         message: 'Item saved to distributor cart (offline mode).'
       };
     }
-    return { success: false, error: 'Failed to add items to actual Pharmarack cart', details: lastError };
+    return { success: false, error: lastError || 'Failed to add items to actual Pharmarack cart', details: lastError };
   }
 }
 
@@ -3507,17 +3579,29 @@ router.get('/purchase-reorder-history', async (req, res) => {
           }
         }
 
-        // 2. Resolve store mapping from medicine_distributor_links
-        if (!matchedStoreId && r.medicine_id) {
-          const linkRow = await db.get(
-            `SELECT store_id, store_name, product_code, product_id, packaging, company
-             FROM medicine_distributor_links 
-             WHERE medicine_id = ? AND store_id IS NOT NULL AND store_id > 0
-             ORDER BY pick_order, id LIMIT 1`,
-            [r.medicine_id]
-          );
-          if (linkRow?.store_id) {
-            matchedStoreId = Number(linkRow.store_id);
+        // 2. Resolve store mapping & exact product codes from medicine_distributor_links
+        if (r.medicine_id) {
+          let linkRow: any = null;
+          if (matchedStoreId) {
+            linkRow = await db.get(
+              `SELECT store_id, store_name, product_code, product_id, packaging, company
+               FROM medicine_distributor_links 
+               WHERE medicine_id = ? AND store_id = ?
+               ORDER BY pick_order, id LIMIT 1`,
+              [r.medicine_id, matchedStoreId]
+            );
+          }
+          if (!linkRow && !matchedStoreId) {
+            linkRow = await db.get(
+              `SELECT store_id, store_name, product_code, product_id, packaging, company
+               FROM medicine_distributor_links 
+               WHERE medicine_id = ? AND store_id IS NOT NULL AND store_id > 0
+               ORDER BY pick_order, id LIMIT 1`,
+              [r.medicine_id]
+            );
+          }
+          if (linkRow) {
+            if (!matchedStoreId && linkRow.store_id) matchedStoreId = Number(linkRow.store_id);
             if (linkRow.store_name) matchedStoreName = linkRow.store_name;
             if (linkRow.product_id) matchedProductId = Number(linkRow.product_id);
             if (linkRow.product_code) matchedProductCode = linkRow.product_code;
@@ -3525,9 +3609,9 @@ router.get('/purchase-reorder-history', async (req, res) => {
           }
         }
 
-        // 3. Try to find catalog mapping for this medicine
+        // 3. Try to find catalog mapping for this medicine (strict name verification)
         const catRow = await db.get(
-          `SELECT store_id, store_name, CAST(availability AS INTEGER) as avail, distributor_price
+          `SELECT store_id, store_name, product_code, product_id, product_name, CAST(availability AS INTEGER) as avail, distributor_price
            FROM distributor_catalog
            WHERE product_name LIKE ?
              ${matchedStoreId ? 'AND store_id = ?' : ''}
@@ -3537,8 +3621,16 @@ router.get('/purchase-reorder-history', async (req, res) => {
         );
 
         if (catRow) {
-          if (!matchedStoreId && catRow.store_id) matchedStoreId = Number(catRow.store_id);
-          if (catRow.store_name) matchedStoreName = catRow.store_name;
+          const normCat = String(catRow.product_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const normMed = String(r.medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const isCloseMatch = normCat === normMed || (normCat.startsWith(normMed) && Math.abs(normCat.length - normMed.length) <= 5);
+          if (isCloseMatch) {
+            if (!matchedStoreId && catRow.store_id) matchedStoreId = Number(catRow.store_id);
+            if (catRow.store_name) matchedStoreName = catRow.store_name;
+            if (!matchedProductCode && catRow.product_code) matchedProductCode = catRow.product_code;
+            if (!matchedProductId && catRow.product_id) matchedProductId = Number(catRow.product_id);
+            if (matchedProductCode && matchedProductId) isMapped = true;
+          }
           avail = Number(catRow.avail || 0);
         }
 
@@ -3717,6 +3809,11 @@ router.post('/log-placed-order', async (req, res) => {
 
     // Auto-update matching pending special requests to status = 'Ordered'
     if (Array.isArray(items) && items.length > 0) {
+      void autoSaveMedicineDistributorLinks(items.map((it: any) => ({
+        ...it,
+        storeId: store_id || it.storeId || it.StoreId,
+        storeName: store_name || it.storeName || it.StoreName
+      })));
       try {
         const pendingOrders = await db.all("SELECT id, product FROM special_orders WHERE status IN ('Pending', 'Confirmed', 'Waiting')");
         for (const item of items) {

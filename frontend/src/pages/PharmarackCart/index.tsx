@@ -16,6 +16,7 @@ import { useModalEscape } from '../../services/keyboardShortcuts';
 import { CartPurchaseHistoryModal } from './CartPurchaseHistoryModal';
 import { BatchDispatchModal } from './BatchDispatchModal';
 import { SingleDispatchModal } from './SingleDispatchModal';
+import { MedicineLinkModal } from '../../components/MedicineLinkModal';
 
 interface CartLineItem {
   productId: number | null;
@@ -199,30 +200,69 @@ function getDistributorShortfallFillers(
 
   if (amtShortfall <= 0 && itemShortfall <= 0) return [];
 
+  const maxAmt = dist.maxAmountLimit ?? 0;
+  const maxItems = dist.maxItemLimit ?? 0;
+  const currentTotal = getDistributorEffectiveTotal(dist, isIncluded);
+  const activeItems = (dist.items || []).filter(i => isIncluded ? isIncluded(i, dist) : (i.isChecked !== false));
+  if (maxItems > 0 && activeItems.length >= maxItems) return [];
+  if (maxAmt > 0 && currentTotal >= maxAmt) return [];
+
   const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const inCart = new Set((dist.items || []).map(i => norm(i.productName)));
+
+  // Set of medicines already present in the live cart for this distributor
+  const inCartNames = new Set((dist.items || []).map(i => norm(i.productName)).filter(Boolean));
+  const inCartCodes = new Set((dist.items || []).map(i => norm(i.productCode)).filter(Boolean));
+
+  const isAlreadyInCart = (r: ReorderRecentItem) => {
+    if (r.productCode && inCartCodes.has(norm(r.productCode))) return true;
+    const rKey = norm(r.medicineName);
+    if (!rKey) return false;
+    if (inCartNames.has(rKey)) return true;
+    for (const cn of inCartNames) {
+      if (cn && (cn.includes(rKey) || rKey.includes(cn)) && Math.min(cn.length, rKey.length) >= 5) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   const combined = [...purchaseHistory, ...recentOrders];
+  // Strict de-duplication: Keyed by canonical medicine ID or normalized name for this distributor
   const seenMeds = new Set<string>();
 
   const candidates = combined
     .filter(r => {
       if (!isDistributorCandidateMatch(r, dist, distributorMappings)) return false;
-      const mKey = norm(r.medicineName);
-      if (inCart.has(mKey) || seenMeds.has(mKey)) return false;
-      if (skippedKeys && skippedKeys.has(mKey)) return false;
+      if (isAlreadyInCart(r)) return false;
+
+      const mKey = r.medicineId ? `id_${r.medicineId}` : `name_${norm(r.medicineName)}`;
+      if (seenMeds.has(mKey)) return false;
+      if (skippedKeys && skippedKeys.has(norm(r.medicineName))) return false;
       seenMeds.add(mKey);
       return true;
     })
-    .sort((a, b) => (Number(b.billCount || 0) - Number(a.billCount || 0)) || (b.lastOrderedDate || '').localeCompare(a.lastOrderedDate || ''));
+    .sort((a, b) => {
+      // Prioritize items already mapped/linked with verified product code
+      const aMapped = a.mapped || Boolean(a.productCode && a.productId);
+      const bMapped = b.mapped || Boolean(b.productCode && b.productId);
+      if (aMapped !== bMapped) return aMapped ? -1 : 1;
+      return (Number(b.billCount || 0) - Number(a.billCount || 0)) || (b.lastOrderedDate || '').localeCompare(a.lastOrderedDate || '');
+    });
 
   const picks: { item: ReorderRecentItem; qty: number; amount: number }[] = [];
   let count = 0;
+  let runningTotal = currentTotal;
 
   for (const r of candidates) {
     const qty = 1; // Default to 1 unit to fill minimum requirements without inflating order
     const amount = (r.ptr || r.lastRate || 0) * qty;
+
+    // Do not exceed distributor max ordering limits
+    if (maxAmt > 0 && (runningTotal + amount) > maxAmt) continue;
+    if (maxItems > 0 && (activeItems.length + picks.length) >= maxItems) break;
+
     picks.push({ item: r, qty, amount });
+    runningTotal += amount;
     count += 1;
     if (count >= 4) break; // Display 4 medicines at a time
   }
@@ -877,6 +917,9 @@ export default function PharmarackCart() {
 
   // Skipped shortfall fillers per distributor storeId to allow cycling / suggesting alternative medicines
   const [skippedFillerKeys, setSkippedFillerKeys] = useState<Record<number, Set<string>>>({});
+
+  // Target for MedicineLinkModal when linking a medicine from live cart or shortfall suggestions
+  const [linkModalTarget, setLinkModalTarget] = useState<{ medicineId: number; medicineName: string; storeId?: number; storeName?: string } | null>(null);
 
   const handleSkipFiller = (storeId: number, medName: string) => {
     const key = (medName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3396,6 +3439,16 @@ export default function PharmarackCart() {
       return;
     }
 
+    if (!item.productCode && !item.productId) {
+      // Unlinked item: prompt user to pick or link exact pack in modal
+      if (item.medicineId) {
+        setLinkModalTarget({ medicineId: item.medicineId, medicineName: medName, storeId: Number(storeId) || undefined, storeName });
+      } else {
+        liveCartAddEvent.triggerOpen(medName, targetQty);
+      }
+      return;
+    }
+
     setReaddingSentItems(true);
     beginHighPriorityAction();
     try {
@@ -3429,7 +3482,8 @@ export default function PharmarackCart() {
         toastEvent.trigger(`Added ${medName} (x${targetQty}) to ${storeName} live cart!`, 'success');
         window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
       } else {
-        toastEvent.trigger(res?.error || 'Failed to add item to live cart', 'error');
+        const errDetail = res?.details || res?.error || 'Failed to add item to live cart';
+        toastEvent.trigger(errDetail, 'error');
       }
     } catch (err: unknown) {
       const apiErr = err as LocalApiError;
@@ -5591,10 +5645,30 @@ export default function PharmarackCart() {
                                                 <span
                                                   className="font-bold text-text truncate cursor-pointer hover:text-primary transition-colors"
                                                   title={`${item.medicineName} — Click to add`}
-                                                  onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
+                                                  onClick={() => {
+                                                    if (!item.productCode && !item.productId) {
+                                                      setLinkModalTarget({ medicineId: item.medicineId || 0, medicineName: item.medicineName, storeId: dist.storeId, storeName: dist.storeName });
+                                                    } else {
+                                                      handleReorderDirect(item, qty, dist.storeId, dist.storeName);
+                                                    }
+                                                  }}
                                                 >
                                                   {item.medicineName}
                                                 </span>
+                                                {item.mapped || (item.productCode && item.productId) ? (
+                                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0" title="Verified link for this distributor">
+                                                    ✓ Linked
+                                                  </span>
+                                                ) : (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setLinkModalTarget({ medicineId: item.medicineId || 0, medicineName: item.medicineName, storeId: dist.storeId, storeName: dist.storeName })}
+                                                    className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border border-sky-500/30 font-mono shrink-0 cursor-pointer"
+                                                    title="Link this medicine to distributor catalog"
+                                                  >
+                                                    Link
+                                                  </button>
+                                                )}
                                                 {item.billCount && item.billCount > 1 ? (
                                                   <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-0.5" title={`Purchased in ${item.billCount} bills`}>
                                                     <Star size={8} className="fill-amber-400" /> ×{item.billCount}
@@ -5613,15 +5687,33 @@ export default function PharmarackCart() {
                                             </div>
 
                                             <div className="flex items-center gap-1 shrink-0">
-                                              <button
-                                                type="button"
-                                                disabled={readdingSentItems}
-                                                onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
-                                                className="px-2.5 py-1 rounded-md bg-primary hover:bg-primary/90 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
-                                                title={`Add ${item.medicineName} (x${qty}) directly to cart`}
-                                              >
-                                                + Add (x{qty})
-                                              </button>
+                                              {item.mapped || (item.productCode && item.productId) ? (
+                                                <button
+                                                  type="button"
+                                                  disabled={readdingSentItems}
+                                                  onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
+                                                  className="px-2.5 py-1 rounded-md bg-primary hover:bg-primary/90 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
+                                                  title={`Add ${item.medicineName} (x${qty}) directly to cart`}
+                                                >
+                                                  + Add (x{qty})
+                                                </button>
+                                              ) : (
+                                                <button
+                                                  type="button"
+                                                  disabled={readdingSentItems}
+                                                  onClick={() => {
+                                                    if (item.medicineId) {
+                                                      setLinkModalTarget({ medicineId: item.medicineId, medicineName: item.medicineName, storeId: dist.storeId, storeName: dist.storeName });
+                                                    } else {
+                                                      liveCartAddEvent.triggerOpen(item.medicineName, qty);
+                                                    }
+                                                  }}
+                                                  className="px-2.5 py-1 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
+                                                  title={`Link ${item.medicineName} with ${dist.storeName} catalog to add to cart`}
+                                                >
+                                                  Link & Add
+                                                </button>
+                                              )}
                                               <button
                                                 type="button"
                                                 onClick={() => handleSkipFiller(dist.storeId, item.medicineName)}
@@ -6524,6 +6616,21 @@ export default function PharmarackCart() {
           singleDispatchOrderNo
         ) : ''}
       />
+
+      {/* ── Medicine Distributor Link Modal for Shortfall Fillers ── */}
+      {linkModalTarget && (
+        <MedicineLinkModal
+          medicineId={linkModalTarget.medicineId}
+          medicineName={linkModalTarget.medicineName}
+          onSaved={() => {
+            fetchPurchaseHistoryItems();
+            fetchReorderRecentItems();
+            toastEvent.trigger(`Medicine "${linkModalTarget.medicineName}" linked to distributor! Click Add to place in cart.`, 'success');
+            setLinkModalTarget(null);
+          }}
+          onClose={() => setLinkModalTarget(null)}
+        />
+      )}
     </div>
   );
 }

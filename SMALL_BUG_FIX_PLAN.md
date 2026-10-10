@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P2-85 — CRM Refills/Special Orders cancellation cascades & Pharmarack Cart deficit shortfall deduplication & distributor linking
+
+| Field | Content |
+|---|---|
+| **What the user saw** | (1) Cancelling test refills/special orders in CRM failed with 404 or got resurrected by `checkAllRefills` background worker. Deleting special orders left active refills that recreated special orders indefinitely. (2) When clicking shortfall filler suggestions in the Pharmarack Live Cart, the app added incorrect medicines under that distributor. (3) Live cart shortfall suggestions displayed duplicate medicines under the same distributor, suggested medicines already in the cart, and exceeded distributor max order caps without surfacing upstream limit errors. |
+| **Root cause** | (1) Route `POST /api/refills/:id/cancel` was missing. `DELETE /orders/:id` and `checkAllRefills()` lacked bidirectional cascades to mark `patient_refills.status = 'cancelled'`. (2) In `src/routes/pharmarack.ts` (`addItemsToPharmarackCart`), a fallback matched the first arbitrary item from the store without verifying product name, and items lacked product codes. (3) Shortfall candidates lacked strict de-duplication by `(medicine_id, store_id)` and did not exclude active cart items or cap against distributor order limits. |
+| **How it was fixed** | (1) Implemented `POST /api/refills/:id/cancel`, updated `DELETE /orders/:id` and `refills.ts` deletion handlers to cascade cleanup, and filtered out non-active refills from `checkAllRefills()`. (2) Added auto-saving and upserting into `medicine_distributor_links` on cart add and placed orders. Enforced strict name matching in fallback and guarded against unlinked product adds. (3) De-duplicated shortfall suggestions by `(medicine_id, store_id)`, excluded active live cart items, capped suggestions to distributor `maxAmountLimit` and `maxItemLimit`, and added `MedicineLinkModal` 1-click linking integration. |
+| **Priority** | P2 |
+| **What not to touch** | POS sale writes and stock deductions. |
+| **Verified by** | `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` (built in 48s, 0 errors); knowledge graph synchronized via `node scripts/quick-update.mjs`. |
+
 ### [Fixed] P2-84 — False minimum order requirement warnings in Pharmarack Cart
 
 | Field | Content |

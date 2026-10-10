@@ -27,11 +27,12 @@ export async function checkAllRefills(db: Database): Promise<void> {
        )`
     );
 
-    // Paused-not-missed: if paused refill is within 7 days, ensure it is surfaced in special_orders with shifted open day
+    // Paused-not-missed: if paused refill is within 7 days, ensure it is surfaced in special_orders with shifted open day (excluding cancelled/deleted)
     const pausedUpcoming = await db.all(
       `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
        JOIN medicines m ON pr.medicine_id = m.id
        WHERE pr.is_active = 0 AND pr.next_refill_date IS NOT NULL
+         AND (pr.status IS NULL OR pr.status NOT IN ('cancelled', 'deleted', 'completed'))
          AND date(pr.next_refill_date) <= date('now', '+7 days')`
     ).catch(() => []);
 
