@@ -9,6 +9,7 @@ import { extractCleanEmail } from '../utils/emailSanitizer.js';
 import { getAppDataDir } from '../config/index.js';
 import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper.js';
 import { hashPassword } from '../utils/password.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 
@@ -132,10 +133,23 @@ router.post('/', async (req, res) => {
     // Synchronize store phone alias keys
     const phoneKeys = ['shop_phone', 'pharmacy_phone', 'store_phone', 'phone'];
     if (phoneKeys.includes(key) && saveValue) {
+      const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: false });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      saveValue = phoneCheck.cleanPhone;
       for (const pk of phoneKeys) {
         await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [pk, saveValue]);
       }
       await db.run('UPDATE stores SET phone = ? WHERE id = 1', [saveValue]).catch(() => {});
+    }
+
+    if ((key === 'owner_whatsapp_number' || key === 'non_wa_fallback_alert_phone') && saveValue) {
+      const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      saveValue = phoneCheck.cleanPhone;
     }
 
     // Synchronize address alias keys
@@ -195,10 +209,23 @@ router.post('/save-single', async (req, res) => {
 
     const phoneKeys = ['shop_phone', 'pharmacy_phone', 'store_phone', 'phone'];
     if (phoneKeys.includes(key) && saveValue) {
+      const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: false });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      saveValue = phoneCheck.cleanPhone;
       for (const pk of phoneKeys) {
         await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [pk, saveValue]);
       }
       await db.run('UPDATE stores SET phone = ? WHERE id = 1', [saveValue]).catch(() => {});
+    }
+
+    if ((key === 'owner_whatsapp_number' || key === 'non_wa_fallback_alert_phone') && saveValue) {
+      const phoneCheck = validate10DigitPhone(saveValue, { allowBlank: true, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      saveValue = phoneCheck.cleanPhone;
     }
 
     const addressKeys = ['address', 'shop_address', 'store_address', 'pharmacy_address'];
@@ -283,6 +310,19 @@ router.post('/save', async (req, res) => {
           let finalVal = v ?? '';
           if (k === 'admin_password' && finalVal && !String(finalVal).startsWith('pbkdf2:')) {
             finalVal = hashPassword(String(finalVal));
+          }
+          if ((k === 'owner_whatsapp_number' || k === 'non_wa_fallback_alert_phone') && valStr) {
+            const phoneCheck = validate10DigitPhone(valStr, { allowBlank: true, requireMobilePrefix: true });
+            if (!phoneCheck.isValid) {
+              throw new Error(`Invalid ${k}: ${phoneCheck.reason}`);
+            }
+            finalVal = phoneCheck.cleanPhone;
+          } else if (['shop_phone', 'pharmacy_phone', 'store_phone', 'phone'].includes(k) && valStr) {
+            const phoneCheck = validate10DigitPhone(valStr, { allowBlank: true, requireMobilePrefix: false });
+            if (!phoneCheck.isValid) {
+              throw new Error(`Invalid ${k}: ${phoneCheck.reason}`);
+            }
+            finalVal = phoneCheck.cleanPhone;
           }
           await upsertStmt.run([k, finalVal]);
           if (k === 'gemini_api_key' && finalVal) {

@@ -4,6 +4,7 @@ import { eventService } from '../services/eventService.js';
 import { classifyDosageGroup, getGroupSqlFilter, DosageGroup } from '../services/dosageGroupService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 export const enquiriesRouter = Router();
 
@@ -34,7 +35,15 @@ enquiriesRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const cleanPhone = patient_phone ? String(patient_phone).replace(/\D/g, '') : null;
+    let cleanPhone: string | null = null;
+    if (patient_phone !== undefined && patient_phone !== null && String(patient_phone).trim() !== '') {
+      const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: true, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        res.status(400).json({ error: phoneCheck.reason });
+        return;
+      }
+      cleanPhone = phoneCheck.cleanPhone || null;
+    }
     const db = await dbManager.getConnection();
 
     // 30-minute deduplication window for identical phone + medicine

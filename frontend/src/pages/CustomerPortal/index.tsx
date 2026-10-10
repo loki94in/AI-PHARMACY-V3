@@ -16,6 +16,7 @@ import { PrescriptionUploadModal } from '../../components/PrescriptionUploadModa
 import { PaymentQrModal } from './PaymentQrModal';
 import { ChangePinModal } from './ChangePinModal';
 import { CustomerPortalAuth } from './CustomerPortalAuth';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 
 interface CustomerSession {
   id: number;
@@ -447,9 +448,9 @@ export default function CustomerPortal() {
     setAuthError('');
     setAuthSuccess('');
 
-    const cleanP = regPhone.replace(/\D/g, '');
-    if (cleanP.length < 10) {
-      setAuthError('Please enter a valid 10-digit mobile number');
+    const cleanP = sanitizePhoneInput(regPhone);
+    if (!cleanP || !isValid10DigitPhone(cleanP)) {
+      setAuthError('Please enter a valid 10-digit mobile number (starts with 6–9)');
       return;
     }
     if (!regName.trim()) {

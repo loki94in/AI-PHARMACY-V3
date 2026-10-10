@@ -7,12 +7,15 @@
  */
 export const sanitizePhoneInput = (val: string | null | undefined): string => {
   if (!val) return '';
-  const digits = val.replace(/\D/g, '');
+  let digits = val.replace(/\D/g, '');
   if (digits.length === 12 && digits.startsWith('91')) {
     return digits.slice(2);
   }
   if (digits.length > 10 && digits.startsWith('91')) {
     return digits.slice(2, 12);
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return digits.slice(1);
   }
   return digits.slice(0, 10);
 };
@@ -35,10 +38,12 @@ export const sanitizeMultiPhoneInput = (val: string | null | undefined): string 
 };
 
 /**
- * Checks if the phone input has exactly 10 numerical digits
+ * Checks if the phone input has exactly 10 numerical digits starting with 6, 7, 8, or 9
  */
 export const isValid10DigitPhone = (val: string | null | undefined): boolean => {
   if (!val) return false;
-  const digits = val.replace(/\D/g, '');
-  return digits.length === 10 || (digits.length === 12 && digits.startsWith('91'));
+  let digits = val.replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return digits.length === 10 && /^[6-9]\d{9}$/.test(digits);
 };

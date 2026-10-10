@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 74;
+const CURRENT_SCHEMA_VERSION = 75;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -330,6 +330,96 @@ export async function normalizeBillDatesToLocalTime(db: any): Promise<void> {
     if (changed > 0) console.log(`[Boot] Bill dates: ${changed} sale date(s) moved from UTC to shop local time.`);
   } catch (err: any) {
     console.warn('[Boot] Bill date normalization skipped:', err?.message || err);
+  }
+}
+
+/**
+ * Auto-heal truncated or mislinked distributor phone numbers on startup.
+ * Specifically fixes CM Distributors (087125156 -> 8087125156, link to distributor ID 134)
+ * and resolves any mappings with < 10 digit phones against master distributors.
+ */
+export async function autoHealDistributorPhoneMappings(db: any): Promise<void> {
+  try {
+    // 1. Repair CM Distributors mapping specifically if truncated or mislinked
+    await db.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = '8087125156',
+          distributor_id = 134,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE (store_name LIKE '%CM Distributor%' OR store_id = 12928)
+        AND (phone = '087125156' OR phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
+    `);
+
+    // 2. Ensure distributor 134 / 174 in distributors table has the correct phone
+    await db.run(`
+      UPDATE distributors
+      SET phone = '8087125156', contact = '8087125156'
+      WHERE (name LIKE '%CM Distributor%' OR id IN (134, 174))
+        AND (phone IS NULL OR phone = '' OR phone = '087125156')
+    `);
+
+    // 3. For any mapping in pharmarack_distributor_mappings where phone is not 10 digits,
+    // try to auto-resolve from distributors table by ID
+    await db.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = (
+        SELECT d.phone FROM distributors d
+        WHERE d.id = pharmarack_distributor_mappings.distributor_id
+          AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+      ),
+      updated_at = CURRENT_TIMESTAMP
+      WHERE (phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
+        AND distributor_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM distributors d
+          WHERE d.id = pharmarack_distributor_mappings.distributor_id
+            AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        )
+    `);
+
+    // 4. Try to auto-resolve by matching normalized store name to distributors table
+    await db.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = (
+        SELECT d.phone FROM distributors d
+        WHERE UPPER(TRIM(d.name)) = UPPER(TRIM(pharmarack_distributor_mappings.store_name))
+          AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        LIMIT 1
+      ),
+      distributor_id = COALESCE(distributor_id, (
+        SELECT d.id FROM distributors d
+        WHERE UPPER(TRIM(d.name)) = UPPER(TRIM(pharmarack_distributor_mappings.store_name))
+          AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        LIMIT 1
+      )),
+      updated_at = CURRENT_TIMESTAMP
+      WHERE (phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
+        AND EXISTS (
+          SELECT 1 FROM distributors d
+          WHERE UPPER(TRIM(d.name)) = UPPER(TRIM(pharmarack_distributor_mappings.store_name))
+            AND LENGTH(REPLACE(REPLACE(REPLACE(d.phone, ' ', ''), '-', ''), '+91', '')) = 10
+        )
+    `);
+
+    // 5. If any mapping still has a phone that is not 10 digits (e.g. truncated 9-digit garbage),
+    // clear it so it doesn't carry corrupted data
+    await db.run(`
+      UPDATE pharmarack_distributor_mappings
+      SET phone = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE phone IS NOT NULL 
+        AND LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10
+        AND LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) > 0
+    `);
+
+    // 6. Same for contacts table if type = 'distributor'
+    await db.run(`
+      UPDATE contacts
+      SET phone = '8087125156', updated_at = CURRENT_TIMESTAMP
+      WHERE name LIKE '%CM Distributor%' AND (phone = '087125156' OR phone IS NULL OR phone = '')
+    `);
+
+  } catch (err: any) {
+    console.warn('[Boot] Auto-heal distributor mappings error:', err?.message || err);
   }
 }
 
@@ -1398,6 +1488,7 @@ export async function ensureSchema(dbPath: string) {
         await ensureRefillCartLinkSchema(db);
         await ensureMultiPharmacyAndSnapshotSchema(db);
         await normalizeBillDatesToLocalTime(db);
+        await autoHealDistributorPhoneMappings(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
         return;
@@ -4348,6 +4439,7 @@ export async function ensureSchema(dbPath: string) {
 
     // Bill dates in one form: UTC ISO sale dates -> shop local time (2026-09-30)
     await normalizeBillDatesToLocalTime(db);
+    await autoHealDistributorPhoneMappings(db);
 
     // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
     await ensureMultiPharmacyAndSnapshotSchema(db);
@@ -4669,6 +4761,7 @@ export async function ensureSchema(dbPath: string) {
       await ensureRefillCartLinkSchema(db);
       await ensureMultiPharmacyAndSnapshotSchema(db);
       await normalizeBillDatesToLocalTime(db);
+      await autoHealDistributorPhoneMappings(db);
       await ensureMedicinesFts(db);
       await ensureMedicineSearchSummaryTriggers(db);
     } catch (postErr: any) {

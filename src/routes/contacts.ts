@@ -1,6 +1,7 @@
 import express from 'express';
 import { dbManager } from '../database/connection.js';
 import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 const router = express.Router();
 
@@ -45,7 +46,11 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Name is required' });
   }
 
-  const cleanPhone = phone ? String(phone).replace(/\D/g, '') : '';
+  const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: type === 'customer' });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+  const cleanPhone = phoneVal.cleanPhone;
 
   try {
     const db = await dbManager.getConnection();
@@ -115,11 +120,18 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /api/contacts/:id
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const { name, type, phone, email, address, gstin, notes } = req.body;
-  const cleanPhone = phone ? String(phone).replace(/\D/g, '') : '';
+
+  let cleanPhone = phone || '';
+  if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+    const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: type === 'customer' });
+    if (!phoneVal.isValid) {
+      return res.status(400).json({ error: phoneVal.error });
+    }
+    cleanPhone = phoneVal.cleanPhone;
+  }
 
   try {
     const db = await dbManager.getConnection();

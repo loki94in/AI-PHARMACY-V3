@@ -13,6 +13,7 @@ import { apiClient, api, getCompactInventoryCache, getCompactInventoryIndex } fr
 import { toastEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { MedicineLinkModal } from '../../components/MedicineLinkModal';
@@ -1023,8 +1024,13 @@ export const RefillsSection: React.FC = () => {
   const handleSaveRefill = async (e: React.FormEvent) => {
     e.preventDefault();
     const fullPatientName = combineSalutationAndName(refillSalutation, refillCustomSalutation, addPatientName);
-    if (!fullPatientName || !addPatientPhone.trim()) {
+    const cleanPh = sanitizePhoneInput(addPatientPhone);
+    if (!fullPatientName || !cleanPh) {
       toastEvent.trigger('Patient name and phone are required', 'error');
+      return;
+    }
+    if (!isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Patient phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error', '/crm');
       return;
     }
     const validRows = medicineRows.filter(r => r.medicineId);

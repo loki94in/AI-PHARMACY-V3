@@ -13,6 +13,7 @@ import { paymentQrService } from '../services/paymentQrService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { cloudflareTunnelService } from '../services/cloudflareTunnelService.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 const router = express.Router();
 
@@ -172,10 +173,11 @@ router.post('/accounts/generate', async (req, res) => {
     send_whatsapp = true
   } = req.body;
 
-  const cleanPhone = normalizePhone(phone);
-  if (!cleanPhone || cleanPhone.length < 10) {
-    return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
+  const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
+  if (!phoneCheck.isValid) {
+    return res.status(400).json({ error: phoneCheck.reason });
   }
+  const cleanPhone = phoneCheck.cleanPhone;
 
   try {
     const db = await dbManager.getConnection();
@@ -529,14 +531,15 @@ router.post('/auth/login', async (req, res) => {
 // POST /api/customer-portal/auth/register — Patient Self-Registration
 router.post('/auth/register', async (req, res) => {
   const { name, phone, address, pin } = req.body;
-  const cleanPhone = normalizePhone(phone);
+  const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
+  if (!phoneCheck.isValid) {
+    return res.status(400).json({ error: phoneCheck.reason });
+  }
+  const cleanPhone = phoneCheck.cleanPhone;
   const cleanPin = String(pin || '').trim();
   const cleanName = formatCustomerName(name || 'Customer');
   const cleanAddress = String(address || '').trim();
 
-  if (!cleanPhone || cleanPhone.length < 10) {
-    return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
-  }
   if (!cleanPin || cleanPin.length < 4) {
     return res.status(400).json({ error: 'Please choose a 4-digit PIN for your account' });
   }

@@ -16,6 +16,7 @@ import { getStoreMedicalName } from '../services/storeSettingsService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 import { isValidCustomerName } from '../utils/nameNormalizer.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 
@@ -135,11 +136,18 @@ router.get('/patients', async (req, res) => {
 router.post('/patients', async (req, res) => {
   const { name, phone, address, notes, language } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
+
+  const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+  const cleanPhone = phoneVal.cleanPhone;
+
   try {
     const db = await dbManager.getConnection();
     const result = await db.run(
       'INSERT INTO customers (name, phone, address, notes, language) VALUES (?, ?, ?, ?, ?)',
-      [name, phone || '', address || '', notes || '', language || 'en']
+      [name, cleanPhone, address || '', notes || '', language || 'en']
     );
     const newPatient = await db.get('SELECT * FROM customers WHERE id = ?', result.lastID);
     try {
@@ -156,21 +164,31 @@ router.post('/patients', async (req, res) => {
 router.put('/patients/:id', async (req, res) => {
   const { id } = req.params;
   const { name, phone, address, notes, language } = req.body;
+
+  let cleanPhone = phone || '';
+  if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+    const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+    if (!phoneVal.isValid) {
+      return res.status(400).json({ error: phoneVal.error });
+    }
+    cleanPhone = phoneVal.cleanPhone;
+  }
+
   try {
     const db = await dbManager.getConnection();
     await db.run(
       'UPDATE customers SET name=?, phone=?, address=?, notes=?, language=? WHERE id=?',
-      [name, phone || '', address || '', notes || '', language || 'en', id]
+      [name, cleanPhone, address || '', notes || '', language || 'en', id]
     );
 
     // Cascade update linked operational tables (patient_refills, special_orders) to prevent phone/contact inconsistencies
-    if (phone || name) {
-      if (phone && name) {
-        await db.run('UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ?', [name, phone, id]);
-        await db.run('UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ?', [name, phone, id]);
-      } else if (phone) {
-        await db.run('UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ?', [phone, id]);
-        await db.run('UPDATE special_orders SET phone = ? WHERE customer_id = ?', [phone, id]);
+    if (phone !== undefined || name) {
+      if (phone !== undefined && name) {
+        await db.run('UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ?', [name, cleanPhone, id]);
+        await db.run('UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ?', [name, cleanPhone, id]);
+      } else if (phone !== undefined) {
+        await db.run('UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ?', [cleanPhone, id]);
+        await db.run('UPDATE special_orders SET phone = ? WHERE customer_id = ?', [cleanPhone, id]);
       } else if (name) {
         await db.run('UPDATE patient_refills SET patient_name = ? WHERE customer_id = ?', [name, id]);
         await db.run('UPDATE special_orders SET requester = ? WHERE customer_id = ?', [name, id]);
@@ -378,6 +396,16 @@ router.post('/doctors', async (req, res) => {
   const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
   if (!name) return res.status(400).json({ error: 'Doctor name is required' });
   const cleanName = sanitizeDoctorName(name) || name.trim();
+
+  let cleanPhone: string | null = null;
+  if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+    const phoneCheck = validate10DigitPhone(phone, { allowBlank: true, requireMobilePrefix: false });
+    if (!phoneCheck.isValid) {
+      return res.status(400).json({ error: phoneCheck.reason });
+    }
+    cleanPhone = phoneCheck.cleanPhone || null;
+  }
+
   try {
     const db = await dbManager.getConnection();
     const existing = await db.get('SELECT * FROM doctors WHERE LOWER(TRIM(name)) = LOWER(?)', [cleanName]);
@@ -386,13 +414,13 @@ router.post('/doctors', async (req, res) => {
       await db.run(
         `UPDATE doctors 
          SET speciality = COALESCE(NULLIF(?, ''), speciality),
-             phone = COALESCE(NULLIF(?, ''), phone),
+             phone = COALESCE(?, phone),
              hospital = COALESCE(NULLIF(?, ''), hospital),
              degree = COALESCE(NULLIF(?, ''), degree),
              reg_no = COALESCE(NULLIF(?, ''), reg_no),
              send_daily_summary = CASE WHEN ? = 1 THEN 1 ELSE send_daily_summary END
          WHERE id = ?`,
-        [speciality || '', phone || '', hospital || '', degree || '', reg_no || '', send_daily_summary ? 1 : 0, existing.id]
+        [speciality || '', cleanPhone, hospital || '', degree || '', reg_no || '', send_daily_summary ? 1 : 0, existing.id]
       );
       return res.json({ success: true, message: 'Doctor profile updated', doctorId: existing.id });
     }
@@ -400,7 +428,7 @@ router.post('/doctors', async (req, res) => {
     const result = await db.run(
       `INSERT INTO doctors (name, speciality, phone, hospital, degree, reg_no, send_daily_summary)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [cleanName, speciality || null, phone || null, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0]
+        [cleanName, speciality || null, cleanPhone, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0]
     );
     res.json({ success: true, message: 'Doctor added successfully', doctorId: result.lastID });
   } catch (error) {
@@ -415,13 +443,23 @@ router.put('/doctors/:id', async (req, res) => {
   const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
   if (!name) return res.status(400).json({ error: 'Doctor name is required' });
   const cleanName = sanitizeDoctorName(name) || name.trim();
+
+  let cleanPhone: string | null = null;
+  if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+    const phoneCheck = validate10DigitPhone(phone, { allowBlank: true, requireMobilePrefix: false });
+    if (!phoneCheck.isValid) {
+      return res.status(400).json({ error: phoneCheck.reason });
+    }
+    cleanPhone = phoneCheck.cleanPhone || null;
+  }
+
   try {
     const db = await dbManager.getConnection();
     await db.run(
       `UPDATE doctors 
        SET name = ?, speciality = ?, phone = ?, hospital = ?, degree = ?, reg_no = ?, send_daily_summary = ?
        WHERE id = ?`,
-      [cleanName, speciality || null, phone || null, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0, id]
+      [cleanName, speciality || null, cleanPhone, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0, id]
     );
     const updated = await db.get('SELECT * FROM doctors WHERE id = ?', id);
     res.json({ success: true, doctor: updated });

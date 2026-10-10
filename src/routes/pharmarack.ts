@@ -18,6 +18,7 @@ import { startupSyncCoordinator } from '../services/startupSyncCoordinator.js';
 import { findChromePath as findChromiumPath, copyProfileFolder as copyChromeProfileFolder } from '../utils/chromeBrowser.js';
 import { sanitizePharmarackQuery } from '../services/intentKeywords.js';
 import { marketClosureService } from '../services/marketClosureService.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 // const execAsync = promisify(exec);
 
@@ -622,12 +623,18 @@ router.post('/distributor-mappings', async (req, res) => {
   if (!store_name) {
     return res.status(400).json({ error: 'store_name is required' });
   }
+
+  const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: false });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+
   try {
     const db = await dbManager.getConnection();
     await syncDistributorPhoneAcrossTables(db, {
       id: distributor_id ? Number(distributor_id) : undefined,
       store_name,
-      phone,
+      phone: phoneVal.cleanPhone || phone,
       delivery_boy_id: delivery_boy_id !== undefined ? (delivery_boy_id ? Number(delivery_boy_id) : null) : undefined
     });
 
@@ -3008,10 +3015,10 @@ router.get('/live-cart-summary', async (_req, res) => {
       const sLower = String(dist.storeName || '').toLowerCase().trim();
       let mappedPhone = phoneMap.get(sLower) || '';
 
-      if (!mappedPhone && dist.storeName) {
+      if ((!mappedPhone || mappedPhone.length !== 10) && dist.storeName) {
         try {
           const resolved = await resolveDistributorContact(db, dist.storeName);
-          if (resolved && resolved.distributor_phone) {
+          if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
             mappedPhone = resolved.distributor_phone;
             phoneMap.set(sLower, mappedPhone);
           }

@@ -2729,7 +2729,22 @@ export default function PharmarackCart() {
   const handleSaveDistributorContact = async () => {
     if (!editingDistributor || isSavingContact) return;
     setIsSavingContact(true);
-    const cleanPhone = modalPhoneInput.trim();
+    const rawInput = modalPhoneInput.trim();
+    let cleanPhone = rawInput.replace(/\D/g, '');
+    if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+      cleanPhone = cleanPhone.slice(2);
+    } else if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) {
+      cleanPhone = cleanPhone.slice(1);
+    }
+
+    if (rawInput !== '') {
+      if (cleanPhone.length !== 10) {
+        toastEvent.trigger('Please enter a valid 10-digit phone number.', 'error');
+        setIsSavingContact(false);
+        return;
+      }
+    }
+
     const storeId = editingDistributor.storeId;
     const distName = editingDistributor.storeName;
 

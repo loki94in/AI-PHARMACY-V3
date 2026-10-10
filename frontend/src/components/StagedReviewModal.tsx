@@ -7,6 +7,7 @@ import { stagedQueueService } from '../services/stagedQueueService';
 import { isValidDistributorName } from '../utils/distributorValidator';
 import { UniversalMedicineEditModal, type UniversalMedicineEditModalProps } from './UniversalMedicineEditModal';
 import { useModalEscape } from '../services/keyboardShortcuts';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../utils/phone';
 
 interface Props {
   onClose: () => void;
@@ -289,10 +290,16 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
     setError(null);
     try {
       if (selectedTx.type === 'sales') {
+        const cleanPh = sanitizePhoneInput(patientPhone);
+        if (patientPhone.trim() && !isValid10DigitPhone(cleanPh)) {
+          setError('Patient phone must be a valid 10-digit Indian mobile number (starts with 6–9).');
+          setSaving(false);
+          return;
+        }
         await api.approveStagedSale(selectedTx.id, {
           items: editingItems,
           patient_name: patientName,
-          patient_phone: patientPhone,
+          patient_phone: cleanPh || undefined,
           discount: Number(discount),
         });
       } else {

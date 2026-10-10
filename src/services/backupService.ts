@@ -571,8 +571,17 @@ export interface PreupdateBackupsSummary {
   folders: PreupdateFolderInfo[];
 }
 
+// Legacy naming used by an older build's updater, before it was replaced by the
+// dated preupdate-<timestamp>/ folder scheme (which cleanOldPreupdateBackups already
+// prunes). Nothing in the current codebase creates these anymore, so a PC that upgraded
+// from that older build is left with an ever-growing pile of untracked 400 MB .db files.
+// Folded into the same human-in-the-loop cleanup so the existing Settings cleanup button
+// also clears this legacy debt — never deleted automatically/silently.
+const LEGACY_PREUPGRADE_DB_RE = /^app-preupgrade-\d{4}-\d{2}-\d{2}-\d+\.db$/i;
+
 /**
- * Scan for pre-update rollback safety backups created by Updater.bat
+ * Scan for pre-update rollback safety backups created by Updater.bat (current dated-folder
+ * scheme) plus any leftover legacy flat app-preupgrade-*.db files from an older build.
  */
 export function getPreupdateBackupsInfo(): PreupdateBackupsSummary {
   const folders: PreupdateFolderInfo[] = [];
@@ -586,20 +595,22 @@ export function getPreupdateBackupsInfo(): PreupdateBackupsSummary {
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith('preupdate-')) {
-          const fullPath = path.join(dir, entry.name);
-          if (folders.some(f => f.fullPath === fullPath)) continue;
-          try {
-            const stats = fs.statSync(fullPath);
-            const sizeBytes = getDirectorySize(fullPath);
-            folders.push({
-              name: entry.name,
-              fullPath,
-              sizeBytes,
-              createdAt: stats.mtime.toISOString(),
-            });
-          } catch (_) {}
-        }
+        const isCurrentFolder = entry.isDirectory() && entry.name.startsWith('preupdate-');
+        const isLegacyFile = entry.isFile() && LEGACY_PREUPGRADE_DB_RE.test(entry.name);
+        if (!isCurrentFolder && !isLegacyFile) continue;
+
+        const fullPath = path.join(dir, entry.name);
+        if (folders.some(f => f.fullPath === fullPath)) continue;
+        try {
+          const stats = fs.statSync(fullPath);
+          const sizeBytes = isCurrentFolder ? getDirectorySize(fullPath) : stats.size;
+          folders.push({
+            name: entry.name,
+            fullPath,
+            sizeBytes,
+            createdAt: stats.mtime.toISOString(),
+          });
+        } catch (_) {}
       }
     } catch (_) {}
   }
@@ -631,17 +642,19 @@ export async function cleanOldPreupdateBackups(keepCount: number = 2): Promise<{
     const toDelete = info.folders.slice(keepCount);
     for (const folder of toDelete) {
       const safeName = path.basename(folder.fullPath);
-      if (!safeName.startsWith('preupdate-')) continue;
+      const isCurrentFolder = safeName.startsWith('preupdate-');
+      const isLegacyFile = LEGACY_PREUPGRADE_DB_RE.test(safeName);
+      if (!isCurrentFolder && !isLegacyFile) continue;
 
       try {
         if (fs.existsSync(folder.fullPath)) {
           fs.rmSync(folder.fullPath, { recursive: true, force: true });
           freedBytes += folder.sizeBytes;
           deletedCount++;
-          console.log(`[Backup] Pruned old pre-update backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
+          console.log(`[Backup] Pruned old ${isLegacyFile ? 'legacy pre-upgrade' : 'pre-update'} backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
         }
       } catch (err: any) {
-        console.error(`[Backup] Failed to remove preupdate folder ${safeName}:`, err?.message);
+        console.error(`[Backup] Failed to remove preupdate backup ${safeName}:`, err?.message);
       }
     }
   }

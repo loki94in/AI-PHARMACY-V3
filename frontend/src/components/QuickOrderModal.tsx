@@ -33,6 +33,7 @@ import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import {} from '../hooks/useApiQuery';
 import { useWaPhoneStatus } from '../hooks/useWaPhoneStatus';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../utils/phone';
 
 interface SuggestionMedicine {
   inventory_id?: number;
@@ -935,10 +936,16 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
       return;
     }
 
+    const cleanPh = sanitizePhoneInput(phone);
+    if (phone.trim() && !isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Customer phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error');
+      return;
+    }
+
     // Capture customer & priority details (Customer details optional / store default)
     const combinedName = combineSalutationAndName(salutation, customSalutation, requester);
     const customerName = combinedName || 'Store Inventory';
-    const customerPhone = phone.replace(/\D/g, '') || '';
+    const customerPhone = cleanPh || '';
     const orderPriority = priority;
     const advanceAmt = advancePayment !== '' ? Number(advancePayment) : 0;
 

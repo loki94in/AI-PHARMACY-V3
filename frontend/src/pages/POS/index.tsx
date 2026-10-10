@@ -2483,8 +2483,13 @@ const POS = () => {
 
   const handleSavePatientProfile = async () => {
     if (patientName.trim()) {
+      const cleanPh = sanitizePhoneInput(patientPhone);
+      if (patientPhone.trim() && !isValid10DigitPhone(cleanPh)) {
+        toastEvent.trigger('Please enter a valid 10-digit phone number (starting with 6, 7, 8, or 9).', 'error');
+        return;
+      }
       try {
-        await api.addPatient({ name: patientName.trim(), phone: patientPhone.trim() });
+        await api.addPatient({ name: patientName.trim(), phone: cleanPh });
       } catch {
         // Patient may already exist, ignore duplicate errors
       }
@@ -2492,7 +2497,7 @@ const POS = () => {
         await api.saveContact({
           name: patientName.trim(),
           type: 'customer',
-          phone: patientPhone.trim()
+          phone: cleanPh
         });
         window.dispatchEvent(new CustomEvent('phone-numbers-updated'));
         window.dispatchEvent(new CustomEvent('contacts-updated'));
@@ -3947,6 +3952,11 @@ const POS = () => {
   const handleRegisterDoctor = async () => {
     try {
       if (!newDoctorName) return;
+      const cleanDocPhone = sanitizePhoneInput(newDoctorPhone);
+      if (newDoctorPhone.trim() && cleanDocPhone.length !== 10) {
+        toastEvent.trigger('Doctor phone must be a 10-digit number', 'error');
+        return;
+      }
       const formattedName = newDoctorName.trim().toLowerCase().startsWith('dr.') ? newDoctorName.trim() : `Dr. ${newDoctorName.trim()}`;
       const docName = newDoctorSpecialty ? `${formattedName} (${newDoctorSpecialty.trim()})` : formattedName;
 
@@ -3955,7 +3965,7 @@ const POS = () => {
         res = await api.updateDoctor(editingDoctorId, {
           name: docName,
           specialization: newDoctorSpecialty || 'General',
-          phone: newDoctorPhone,
+          phone: cleanDocPhone || undefined,
           clinic_name: newDoctorClinic,
           reg_no: newDoctorRegNo
         });
@@ -3964,7 +3974,7 @@ const POS = () => {
         res = await api.addDoctor({
           name: docName,
           specialization: newDoctorSpecialty || 'General',
-          phone: newDoctorPhone,
+          phone: cleanDocPhone || undefined,
           clinic_name: newDoctorClinic,
           reg_no: newDoctorRegNo
         });
@@ -3975,7 +3985,7 @@ const POS = () => {
         await api.saveContact({
           name: docName,
           type: 'doctor',
-          phone: newDoctorPhone,
+          phone: cleanDocPhone || undefined,
           address: newDoctorClinic || undefined
         });
         window.dispatchEvent(new CustomEvent('phone-numbers-updated'));
@@ -6267,7 +6277,7 @@ const POS = () => {
         document.body
       )}
 
-      {/* Credit Phone Number Requirement Prompt Modal */}
+      {/* Credit / Incomplete Phone Number Prompt Modal */}
       <POSPhonePromptModal
         isOpen={showPhonePromptModal}
         onClose={() => setShowPhonePromptModal(false)}
@@ -6276,6 +6286,12 @@ const POS = () => {
         setPromptPhoneValue={setPromptPhoneValue}
         shakePromptPhone={shakePromptPhone}
         setShakePromptPhone={setShakePromptPhone}
+        isCreditSale={paymentMedium === 'CREDIT'}
+        onSkipPhone={() => {
+          setPatientPhone('');
+          setShowPhonePromptModal(false);
+          handleCompleteSale('', pendingDirectSaveRef.current);
+        }}
         onConfirm={(val) => {
           setPatientPhone(val);
           setShowPhonePromptModal(false);

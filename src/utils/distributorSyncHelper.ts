@@ -76,7 +76,8 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
     if (raw.includes('@') || raw.includes('<')) return '';
     let digits = raw.replace(/\D/g, '');
     if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
-    return digits.length === 10 ? digits : (digits ? digits : '');
+    if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+    return digits.length === 10 ? digits : '';
   };
 
   // 1. Check exact match in pharmarack_distributor_mappings
@@ -308,6 +309,12 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
     : '';
   if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
     cleanPhone = cleanPhone.slice(2);
+  } else if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) {
+    cleanPhone = cleanPhone.slice(1);
+  }
+
+  if (rawPhone && cleanPhone.length !== 10) {
+    throw new Error(`Invalid distributor phone number. Phone number must be exactly 10 digits (received ${cleanPhone.length} digits).`);
   }
 
   const cleanEmail = extractCleanEmail(params.email);

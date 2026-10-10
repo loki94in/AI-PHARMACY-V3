@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { broadcastContactDataChanged, updateSettingsCache } from '../../utils/settingsSync';
 import { useModalEscape, shortcutEvent } from '../../services/keyboardShortcuts';
 import { toastEvent } from '../../services/events';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
 import { Database, Trash2, Save, RefreshCw, Zap, Clock, RotateCcw, AlertTriangle, Send, Plus, CheckCircle2, MessageCircle, Mail, Stethoscope, Truck, Check, ShoppingCart, Phone, Bot, Sliders, ShieldCheck, Sparkles, UserCheck } from 'lucide-react';
 
@@ -123,6 +124,12 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
   };
 
   const handleSaveTriggers = async () => {
+    const cleanAlertPh = sanitizePhoneInput(formData.nonWaFallbackAlertPhone);
+    if (cleanAlertPh && !isValid10DigitPhone(cleanAlertPh)) {
+      toastEvent.trigger('Please enter a valid 10-digit Alert Phone number (starts with 6, 7, 8, or 9)', 'error');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload: Record<string, string> = {
@@ -176,7 +183,7 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
         // Non-WhatsApp patient fallback (v69)
         non_wa_fallback_enabled: formData.nonWaFallbackEnabled ? 'true' : 'false',
         non_wa_fallback_mode: formData.nonWaFallbackMode,
-        non_wa_fallback_alert_phone: formData.nonWaFallbackAlertPhone,
+        non_wa_fallback_alert_phone: cleanAlertPh,
         // Delivery Schedules
         pharmacy_delivery_schedules: JSON.stringify(formData.deliverySchedules),
       };
@@ -1088,8 +1095,9 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
               <input
                 id="non-wa-fallback-alert-phone"
                 type="tel"
+                maxLength={10}
                 value={formData.nonWaFallbackAlertPhone}
-                onChange={(e) => setFormData({ ...formData, nonWaFallbackAlertPhone: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, nonWaFallbackAlertPhone: sanitizePhoneInput(e.target.value) })}
                 placeholder="Owner WhatsApp number (e.g. 9876543210)"
                 className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary flex-1"
               />

@@ -18,6 +18,7 @@ import { InfiniteScrollStatus } from '../../components/InfiniteScrollStatus';
 import { exportToCSV, exportToPDF } from '../../utils/export';
 import { printCurrentBill } from '../../utils/printBill';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 
 interface SaleItem {
   id: number;
@@ -481,6 +482,12 @@ const Sells = () => {
     if (!editInvoice) return;
     if (editItems.length === 0) {
       toastEvent.trigger('Bill cannot be empty. Delete the entire bill instead.', 'error');
+      return;
+    }
+
+    const cleanPh = sanitizePhoneInput(editCustomerPhone);
+    if (editCustomerPhone.trim() && !isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Customer phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error');
       return;
     }
     setSaving(true);

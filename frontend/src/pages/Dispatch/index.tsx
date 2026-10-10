@@ -48,7 +48,7 @@ import {
 } from '../../utils/pageModuleCaches';
 import { broadcastContactDataChanged } from '../../utils/settingsSync';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
-import { sanitizePhoneInput } from '../../utils/phone';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { isOnlineOrder } from '../../utils/onlineOrders';
 import { toDateInputValue } from '../../utils/date';
 import { useModalEscape } from '../../services/keyboardShortcuts';
@@ -219,11 +219,16 @@ const Dispatch = () => {
       showNotif('Please enter distributor name', 'error');
       return;
     }
+    const cleanDistPhone = sanitizePhoneInput(manualDistributorPhone);
+    if (manualDistributorPhone.trim() && cleanDistPhone.length !== 10) {
+      showNotif('Distributor phone must be exactly 10 digits', 'error');
+      return;
+    }
     setSavingManualOrder(true);
     try {
       const res = await api.createManualDistributorOrderReminder({
         distributor_name: manualDistributorName.trim(),
-        distributor_phone: manualDistributorPhone.trim(),
+        distributor_phone: cleanDistPhone || undefined,
         delivery_boy_id: manualDeliveryBoyId || undefined
       });
       if (res && res.success) {
@@ -692,10 +697,16 @@ const Dispatch = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.patient_name.trim()) { showNotif('Patient name is required', 'error'); return; }
+    const cleanPatientPhone = sanitizePhoneInput(form.patient_phone);
+    if (form.patient_phone.trim() && !isValid10DigitPhone(cleanPatientPhone)) {
+      showNotif('Patient phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error');
+      return;
+    }
     setSaving(true);
     try {
       await api.createDispatchOrder({
         ...form,
+        patient_phone: cleanPatientPhone,
         delivery_boy_id: form.delivery_boy_id ? Number(form.delivery_boy_id) : null,
       });
       showNotif('Dispatch order created!');

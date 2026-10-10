@@ -29,6 +29,7 @@ import { resolveStoreId, storeContextService } from '../services/storeContextSer
 import { imageCompressionService } from '../services/imageCompressionService.js';
 import { invalidateInvestigationTimelineCache } from './investigation.js';
 import { isValidCustomerName } from '../utils/nameNormalizer.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 const router = express.Router();
 router.use(tenantAuthMiddleware);
@@ -364,6 +365,15 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Doctor name is required to save a bill.' });
     }
 
+    const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: true, requireMobile: true });
+    if (!phoneVal.isValid) {
+      return res.status(400).json({ error: phoneVal.error });
+    }
+    const cleanPhone = phoneVal.cleanPhone;
+    if (paymentMedium === 'CREDIT' && !cleanPhone) {
+      return res.status(400).json({ error: 'Valid 10-digit WhatsApp phone number is required for Credit bills.' });
+    }
+
     db = await dbManager.getConnection();
     const conn: Database = db;
 
@@ -377,20 +387,16 @@ router.post('/', async (req, res) => {
       if (!exists) customerId = null;
     }
 
-    if (!customerId && (String(patient_phone || '').trim() || String(patient_name || '').trim())) {
-      const rawPhone = (patient_phone || '').trim();
-      const digitsOnly = rawPhone.replace(/\D/g, '').slice(-10);
-      const cleanPhone = digitsOnly.length === 10 ? digitsOnly : rawPhone;
+    if (!customerId && (cleanPhone || String(patient_name || '').trim())) {
       const cleanName = (patient_name || 'Customer').trim();
-
       let existing = null;
 
-      // 1. Match by last 10 digits of phone if available
-      if (digitsOnly.length === 10) {
+      // 1. Match by 10 digits of phone if available
+      if (cleanPhone) {
         existing = await db.get(
           `SELECT id, name, phone FROM customers 
-           WHERE phone = ? OR phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-          [cleanPhone, rawPhone, `%${digitsOnly}`]
+           WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+          [cleanPhone, `%${cleanPhone}`]
         );
       }
 
@@ -404,7 +410,7 @@ router.post('/', async (req, res) => {
 
       if (existing) {
         customerId = existing.id;
-        if (cleanPhone && (!existing.phone || existing.phone.trim() === '' || existing.phone.length > 10)) {
+        if (cleanPhone && (!existing.phone || existing.phone.trim() === '' || existing.phone !== cleanPhone)) {
           await db.run('UPDATE customers SET phone = ? WHERE id = ?', [cleanPhone, customerId]);
         }
       } else if (cleanName && isValidCustomerName(cleanName)) {
@@ -742,7 +748,6 @@ router.post('/', async (req, res) => {
     }
 
     // Resolve refill cycle if this sale completes a pending refill or matches sold medicines for this customer
-    const cleanPhone = (patient_phone || '').replace(/\D/g, '');
     const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
     const soldMedicineIds = Array.from(new Set(Array.from(stockMap.values()).map((s: any) => s.medicine_id).filter(Boolean)));
 
@@ -2434,9 +2439,18 @@ router.post('/staged', async (req, res) => {
       });
     }
 
+    let cleanPhone = '';
+    if (patient_phone) {
+      const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: true, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      cleanPhone = phoneCheck.cleanPhone;
+    }
+
     const result = await db.run(
       `INSERT INTO staged_sales (patient_name, patient_phone, discount, sale_date, items_json) VALUES (?, ?, ?, ?, ?)`,
-      [patient_name, patient_phone || '', Number(discount), new Date().toISOString(), JSON.stringify(resolvedItems)]
+      [patient_name, cleanPhone, Number(discount), new Date().toISOString(), JSON.stringify(resolvedItems)]
     );
 
     // Broadcast SSE update
@@ -2631,6 +2645,13 @@ router.put('/:id', async (req, res) => {
     db = await dbManager.getConnection();
     const { id } = req.params;
     const { items, patient_name, patient_phone, discount = 0, paymentMedium, paymentStatus, doctor_id, doctor_name } = req.body;
+
+    if (patient_phone !== undefined && patient_phone !== null && String(patient_phone).trim() !== '') {
+      const editPhoneVal = validate10DigitPhone(patient_phone, { allowEmpty: true, requireMobile: true });
+      if (!editPhoneVal.isValid) {
+        return res.status(400).json({ error: editPhoneVal.error });
+      }
+    }
 
     await db.run('BEGIN TRANSACTION');
 
@@ -3090,12 +3111,21 @@ router.post('/staged/:id/approve', async (req, res) => {
     const finalPatientPhone = patient_phone !== undefined ? patient_phone : staged.patient_phone;
     const finalDiscount = discount !== undefined ? discount : staged.discount;
 
+    let validatedPhone = '';
+    if (finalPatientPhone) {
+      const phoneCheck = validate10DigitPhone(finalPatientPhone, { allowBlank: true, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      validatedPhone = phoneCheck.cleanPhone;
+    }
+
     await db.run('BEGIN TRANSACTION');
 
     // Resolve customer
     let customerId = null;
     if (finalPatientName) {
-      const cleanPhone = finalPatientPhone || '';
+      const cleanPhone = validatedPhone;
       const existing = await db.get('SELECT id FROM customers WHERE name = ? AND phone = ?', [finalPatientName, cleanPhone]);
       if (existing) {
         customerId = existing.id;

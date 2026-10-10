@@ -15,6 +15,7 @@ import { returnWindowService } from '../services/returnWindowService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { purgePendingCustomerReminders } from '../services/refillService.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 
@@ -101,7 +102,11 @@ router.post('/batch', async (req, res) => {
     const db = await dbManager.getConnection();
     await initOrdersTable(db);
     
-    const cleanPhone = phone ? String(phone).replace(/\D/g, '') : '';
+    const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+    if (!phoneVal.isValid) {
+      return res.status(400).json({ error: phoneVal.error });
+    }
+    const cleanPhone = phoneVal.cleanPhone;
     const cleanReqName = formatCustomerName(requester);
     const todayStr = new Date().toISOString();
     const insertedOrders: Array<{ id: number; product: string; qty: number }> = [];
@@ -272,7 +277,11 @@ router.post('/', async (req, res) => {
     const db = await dbManager.getConnection();
     await initOrdersTable(db);
     
-    const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
+    const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+    if (!phoneVal.isValid) {
+      return res.status(400).json({ error: phoneVal.error });
+    }
+    const cleanPhone = phoneVal.cleanPhone;
     
     // Auto-sync customer to CRM contacts table if phone is provided
     if (cleanPhone && cleanPhone.length >= 10) {
@@ -1327,9 +1336,14 @@ router.put('/:id', async (req, res) => {
     const newQty = qty !== undefined ? qty : existing.qty;
     const newProduct = product !== undefined ? product : existing.product;
     const newRequester = requester !== undefined ? requester : existing.requester;
-    // Same digit-clean rule as the POST routes: chat-id suffixes / formatting must never
-    // reach special_orders.phone. Missing key keeps the stored value; empty stays empty.
-    const newPhone = phone !== undefined ? String(phone).replace(/\D/g, '') : existing.phone;
+    let newPhone = existing.phone;
+    if (phone !== undefined) {
+      const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
+      newPhone = phoneVal.cleanPhone;
+    }
     const newDistributor = pharmarack_distributor !== undefined ? pharmarack_distributor : existing.pharmarack_distributor;
     const newRate = pharmarack_rate !== undefined ? pharmarack_rate : existing.pharmarack_rate;
     const newMrp = pharmarack_mrp !== undefined ? pharmarack_mrp : existing.pharmarack_mrp;

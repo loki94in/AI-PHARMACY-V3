@@ -22,6 +22,7 @@ import {
   processRefillCartItem, removeRefillCartLines, getDistributorPriorityList, saveDistributorPriority, REFILL_CART_COLUMNS, getMedicineLinks, saveMedicineLinks,
   getDistributorPurchaseRanks, sendRefillCartSummary
 } from '../services/refillCartService.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 // const __dirname = path.dirname(__filename);
@@ -213,6 +214,11 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'patient_name, patient_phone, and medicine_id are required' });
   }
 
+  const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+
   const targetStoreId = (req as any).tenant?.storeId || (store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req));
 
   let db;
@@ -226,7 +232,7 @@ router.post('/', async (req, res) => {
     const nextRefillStr = toLocalSqlDateTime(nextRefillDate);
 
     // Resolve or auto-create customer profile in customers table
-    const cleanPhone = (patient_phone || '').trim();
+    const cleanPhone = phoneVal.cleanPhone;
     const cleanName = formatCustomerName(patient_name);
     let cleanLang = (language || 'en').trim();
     let customerId = req.body.customer_id || null;
@@ -295,16 +301,21 @@ router.post('/', async (req, res) => {
 });
 
 // Update an existing patient's master profile / contact details (In-Place Cascade)
-router.put('/patient-profile', async (req, res) => {
+const handlePatientProfileUpdate = async (req: express.Request, res: express.Response) => {
   const { customer_id, original_phone, patient_name, patient_phone, language = 'en', next_refill_date } = req.body;
   if (!patient_name || !patient_phone) {
     return res.status(400).json({ error: 'Patient name and phone number are required' });
   }
 
+  const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+
   let db;
   try {
     db = await dbManager.getConnection();
-    const cleanPhone = String(patient_phone).trim();
+    const cleanPhone = phoneVal.cleanPhone;
     const origPhone = String(original_phone || cleanPhone).trim();
     const cleanName = String(patient_name).trim();
     const cleanLang = String(language || 'en').trim();
@@ -366,7 +377,10 @@ router.put('/patient-profile', async (req, res) => {
     console.error('Failed to update patient profile:', err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });
   }
-});
+};
+
+router.put('/patient-profile', handlePatientProfileUpdate);
+router.post(['/update-patient-profile', '/patient-profile'], handlePatientProfileUpdate);
 
 // Update an existing patient's refill prescription & medicines (Granular In-Place Sync)
 router.put('/patient-medicines', async (req, res) => {
@@ -375,13 +389,19 @@ router.put('/patient-medicines', async (req, res) => {
     return res.status(400).json({ error: 'patient_name, patient_phone, and valid medicines array are required' });
   }
 
+  const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: false, requireMobilePrefix: true });
+  if (!phoneCheck.isValid) {
+    return res.status(400).json({ error: phoneCheck.reason });
+  }
+
   let db;
   try {
     db = await dbManager.getConnection();
 
     const intervalDays = parseIntervalDays(refill_interval_days);
-    const cleanPhone = (patient_phone || '').trim();
-    const origPhone = (original_phone || cleanPhone).trim();
+    const cleanPhone = phoneCheck.cleanPhone;
+    const origPhoneCheck = validate10DigitPhone(original_phone || cleanPhone, { allowBlank: true });
+    const origPhone = origPhoneCheck.isValid && origPhoneCheck.cleanPhone ? origPhoneCheck.cleanPhone : cleanPhone;
     const cleanName = (patient_name || 'Customer').trim();
     const cleanLang = (language || 'en').trim();
 
@@ -558,7 +578,14 @@ router.put('/:id', async (req, res, next) => {
     }
 
     const updatedName = patient_name !== undefined ? patient_name : refill.patient_name;
-    const updatedPhone = patient_phone !== undefined ? patient_phone : refill.patient_phone;
+    let updatedPhone = refill.patient_phone;
+    if (patient_phone !== undefined) {
+      const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+      if (!phoneVal.isValid) {
+        return res.status(400).json({ error: phoneVal.error });
+      }
+      updatedPhone = phoneVal.cleanPhone;
+    }
     const updatedMedicineId = medicine_id !== undefined ? medicine_id : refill.medicine_id;
     const updatedInterval = refill_interval_days !== undefined ? parseIntervalDays(refill_interval_days) : refill.refill_interval_days;
     let updatedNextDate = next_refill_date !== undefined ? next_refill_date : refill.next_refill_date;

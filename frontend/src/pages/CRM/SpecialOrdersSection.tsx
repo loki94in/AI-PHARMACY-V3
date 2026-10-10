@@ -22,6 +22,7 @@ import { SpecialOrderArrivalModal } from '../../components/SpecialOrderArrivalMo
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { OrderModifyModal } from '../../components/OrderModifyModal';
 import { withSilentRetry, formatDate, type LocalApiError, type PharmarackSearchResult } from './crmTypes';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 
 interface SpecialOrderItem {
   id: number;
@@ -769,10 +770,11 @@ export const SpecialOrdersSection: React.FC = () => {
       toastEvent.trigger('Customer Name is required.', 'error', '/crm');
       return;
     }
-    if (!customerPhone || customerPhone.length < 8 || customerPhone.length > 15) {
+    const cleanPh = sanitizePhoneInput(customerPhone);
+    if (!cleanPh || !isValid10DigitPhone(cleanPh)) {
       setShakePhone(true);
       setTimeout(() => setShakePhone(false), 400);
-      toastEvent.trigger('Please enter a valid phone number (8–15 digits).', 'error', '/crm');
+      toastEvent.trigger('Please enter a valid 10-digit mobile number (starting with 6, 7, 8, or 9).', 'error', '/crm');
       return;
     }
     if (!qty || Number(qty) < 1) {
@@ -782,13 +784,13 @@ export const SpecialOrdersSection: React.FC = () => {
 
     setFormSubmitting(true);
     try {
-      if (Boolean(sendWhatsApp) && customerPhone) {
+      if (Boolean(sendWhatsApp) && cleanPh) {
         messageSendEvent.triggerSendProgress(customerName || 'Customer', `Booking confirmation for ${product.trim()}`, 10);
       }
       await api.createOrder({
         product: product.trim(),
         requester: customerName,
-        phone: customerPhone,
+        phone: cleanPh,
         qty: Number(qty) || 1,
         priority,
         status: 'Pending',
@@ -896,10 +898,11 @@ export const SpecialOrdersSection: React.FC = () => {
       toastEvent.trigger('Customer Name is required.', 'error', '/crm');
       return;
     }
-    if (!customerPhone || customerPhone.length < 8 || customerPhone.length > 15) {
+    const cleanPh = sanitizePhoneInput(customerPhone);
+    if (!cleanPh || !isValid10DigitPhone(cleanPh)) {
       setShakeEditPhone(true);
       setTimeout(() => setShakeEditPhone(false), 400);
-      toastEvent.trigger('Customer phone number must be 8–15 digits.', 'error', '/crm');
+      toastEvent.trigger('Customer phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error', '/crm');
       return;
     }
     if (!editQty || Number(editQty) < 1) {

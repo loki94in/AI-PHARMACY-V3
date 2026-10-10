@@ -21,6 +21,7 @@ import { useModalEscape } from '../services/keyboardShortcuts';
 import { api, apiClient } from '../services/api';
 import { toastEvent, specialOrdersEvent, refillEvent } from '../services/events';
 import { useWaPhoneStatus } from '../hooks/useWaPhoneStatus';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../utils/phone';
 
 export interface EditOrderItem {
   id: number;
@@ -161,11 +162,16 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
 
   const handleSave = async () => {
     if (!editGroup) return;
+    const cleanPh = sanitizePhoneInput(phone);
+    if (phone.trim() && (!cleanPh || !isValid10DigitPhone(cleanPh))) {
+      toastEvent.trigger('Please enter a valid 10-digit mobile number (starting with 6, 7, 8, or 9).', 'error');
+      return;
+    }
     setSaving(true);
 
     try {
       if (editGroup.type === 'special_request' || editGroup.type === 'website_order') {
-        const cleanPhone = phone.trim();
+        const cleanPhone = cleanPh;
         await Promise.all(
           items.map(item =>
             api.updateOrder(item.id, {

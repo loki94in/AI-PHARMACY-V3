@@ -9,6 +9,7 @@ import { toastEvent } from '../../services/events';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { MedicineVisualReferenceModal } from '../../components/MedicineVisualReferenceModal';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { withSilentRetry, formatTs, type LocalApiError } from './crmTypes';
 
 interface OcrParsedPayload {
@@ -127,9 +128,12 @@ export const WhatsAppSection: React.FC = () => {
   const [ocrResults, setOcrResults] = useState<Record<string, string>>({});
 
   const handleStartNewChat = (rawNumber: string) => {
-    let digits = rawNumber.replace(/\D/g, '');
-    if (!digits) return;
-    if (digits.length === 10) digits = `91${digits}`;
+    const cleanDigits = sanitizePhoneInput(rawNumber);
+    if (!cleanDigits || !isValid10DigitPhone(cleanDigits)) {
+      toastEvent.trigger('Please enter a valid 10-digit Indian mobile number (starts with 6–9).', 'error', '/crm');
+      return;
+    }
+    const digits = `91${cleanDigits}`;
     const chatId = `${digits}@c.us`;
     const newChatObj: WaChatItem = {
       id: chatId,

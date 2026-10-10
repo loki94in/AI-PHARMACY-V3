@@ -7,10 +7,7 @@ import { notificationService } from '../services/notificationService.js';
 import { syncTodayActiveDistributors, getTodayDistributorRemindersFast } from '../services/distributorDispatchReminderWorker.js';
 import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
-
-// const __filename = fileURLToPath(import.meta.url);
-
-
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 const router = express.Router();
 
@@ -64,12 +61,22 @@ router.post('/orders', async (req, res) => {
   const targetStoreId = store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req);
 
   if (!patient_name) return res.status(400).json({ error: 'patient_name is required' });
+
+  let cleanPatientPhone = '';
+  if (patient_phone) {
+    const phoneCheck = validate10DigitPhone(patient_phone, { allowBlank: true, requireMobilePrefix: true });
+    if (!phoneCheck.isValid) {
+      return res.status(400).json({ error: phoneCheck.reason });
+    }
+    cleanPatientPhone = phoneCheck.cleanPhone;
+  }
+
   try {
     const db = await dbManager.getConnection();
     const result = await db.run(
       `INSERT INTO dispatch_orders (store_id, patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [targetStoreId, patient_name, patient_phone || '', address || '', items || '', notes || '', delivery_boy_id || null, invoice_no || '']
+      [targetStoreId, patient_name, cleanPatientPhone, address || '', items || '', notes || '', delivery_boy_id || null, invoice_no || '']
     );
     const newOrder = await db.get(`
       SELECT d.*, db.name as delivery_boy_name FROM dispatch_orders d
@@ -516,8 +523,17 @@ router.post('/distributor-reminders/:id/send-now', async (req, res) => {
 
 // POST add manual phone call order reminder
 router.post('/distributor-reminders/manual-order', async (req, res) => {
-  const { distributor_name, distributor_phone, distributor_id, delivery_boy_id, date } = req.body;
+  const { distributor_id, distributor_name, distributor_phone, delivery_boy_id, date } = req.body;
   if (!distributor_name) return res.status(400).json({ error: 'distributor_name is required' });
+
+  let cleanDistPhone = '';
+  if (distributor_phone) {
+    const phoneCheck = validate10DigitPhone(distributor_phone, { allowBlank: true, requireMobilePrefix: false });
+    if (!phoneCheck.isValid) {
+      return res.status(400).json({ error: phoneCheck.reason });
+    }
+    cleanDistPhone = phoneCheck.cleanPhone;
+  }
 
   const targetDate = date || new Date().toISOString().split('T')[0];
 
@@ -541,14 +557,14 @@ router.post('/distributor-reminders/manual-order', async (req, res) => {
              delivery_boy_id = COALESCE(?, delivery_boy_id),
              order_source = 'phone_call'
          WHERE id = ?`,
-        [distributor_id || null, distributor_phone || '', distributor_phone || '', delivery_boy_id || null, existing.id]
+        [distributor_id || null, cleanDistPhone, cleanDistPhone, delivery_boy_id || null, existing.id]
       );
     } else {
       const result = await db.run(
         `INSERT INTO distributor_dispatch_reminders
          (distributor_id, distributor_name, distributor_phone, delivery_boy_id, date, status, auto_remind, order_source)
          VALUES (?, ?, ?, ?, ?, 'Pending', 1, 'phone_call')`,
-        [distributor_id || null, cleanName, distributor_phone || '', delivery_boy_id || null, targetDate]
+        [distributor_id || null, cleanName, cleanDistPhone, delivery_boy_id || null, targetDate]
       );
       reminderId = result.lastID;
     }

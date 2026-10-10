@@ -18,7 +18,7 @@ import { calculateSimilarity } from '../../utils/fuzzy';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { getTodayString, toDateInputValue } from '../../utils/date';
 import { toastEvent } from '../../services/events';
-import {} from '../../utils/phone';
+import { sanitizePhoneInput } from '../../utils/phone';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SaveBillSpecialPriceModal } from '../../components/SaveBillSpecialPriceModal';
 import { isValidDistributorName } from '../../utils/distributorValidator';
@@ -1675,7 +1675,13 @@ const Purchases: React.FC = () => {
 
   const saveDistributor = async () => {
     if (!newDistributor.name?.trim()) {
-      alert('Distributor name is required');
+      toastEvent.trigger('Distributor name is required', 'error');
+      return;
+    }
+
+    const cleanPh = sanitizePhoneInput(newDistributor.phone);
+    if (newDistributor.phone?.trim() && cleanPh.length !== 10) {
+      toastEvent.trigger('Distributor phone must be exactly 10 digits', 'error');
       return;
     }
 

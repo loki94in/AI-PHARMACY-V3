@@ -16,6 +16,7 @@ import {
 import { api, apiClient } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { formatCount } from '../../utils/currency';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 
 interface StagedSaleItem {
   inventory_id: number;
@@ -202,12 +203,19 @@ export default function PhoneSales() {
 
   const handleApprove = async () => {
     if (!selectedSale) return;
+
+    const cleanPh = sanitizePhoneInput(patientPhone);
+    if (patientPhone.trim() && !isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Patient phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error');
+      return;
+    }
+
     setSaving(true);
     try {
       const response = await api.approveStagedSale(selectedSale.id, {
         items: editingItems,
         patient_name: patientName.trim(),
-        patient_phone: patientPhone.trim(),
+        patient_phone: cleanPh || undefined,
         discount: Number(discount),
       });
 

@@ -8,6 +8,7 @@ import { syncTodayActiveDistributors } from '../services/distributorDispatchRemi
 import { isValidDistributorName } from '../utils/nameNormalizer.js';
 import { distributorRecommendationService } from '../services/distributorRecommendationService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 const router = express.Router();
 
@@ -42,12 +43,18 @@ const postDistributorsHandler = async (req: express.Request, res: express.Respon
   if (!distName) {
     return res.status(400).json({ error: 'Distributor name is required' });
   }
+
+  const phoneVal = validate10DigitPhone(phone || contact, { allowEmpty: true, requireMobile: false });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+
   try {
     const db = await dbManager.getConnection();
     const savedDistributor = await syncDistributorPhoneAcrossTables(db, {
       name: distName,
-      phone,
-      contact,
+      phone: phoneVal.cleanPhone || phone,
+      contact: phoneVal.cleanPhone || contact,
       email,
       address,
       gstin,
@@ -77,13 +84,18 @@ router.post('/', postDistributorsHandler);
 const putDistributorHandler = async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
   const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code, min_order_value, min_order_items } = req.body;
+  const phoneVal = validate10DigitPhone(phone || contact, { allowEmpty: true, requireMobile: false });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+
   try {
     const db = await dbManager.getConnection();
     const savedDistributor = await syncDistributorPhoneAcrossTables(db, {
       id: Number(id),
       name: name || store_name,
-      phone,
-      contact,
+      phone: phoneVal.cleanPhone || phone,
+      contact: phoneVal.cleanPhone || contact,
       email,
       address,
       gstin,

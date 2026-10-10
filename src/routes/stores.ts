@@ -2,6 +2,7 @@ import express from 'express';
 
 import { storeContextService } from '../services/storeContextService.js';
 import { eventService } from '../services/eventService.js';
+import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 const router = express.Router();
 
@@ -49,11 +50,20 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Store name is required' });
     }
 
+    let cleanPhone: string | undefined = undefined;
+    if (phone) {
+      const phoneCheck = validate10DigitPhone(phone, { allowBlank: true, requireMobilePrefix: false });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      cleanPhone = phoneCheck.cleanPhone;
+    }
+
     const newStore = await storeContextService.createStore({
       name: name.trim(),
       code: code ? String(code).trim() : undefined,
       address: address ? String(address).trim() : undefined,
-      phone: phone ? String(phone).trim() : undefined,
+      phone: cleanPhone,
       email: email ? String(email).trim() : undefined,
       is_central: Boolean(is_central)
     });
@@ -74,7 +84,16 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid store ID' });
     }
 
-    const updated = await storeContextService.updateStore(storeId, req.body);
+    const updatePayload = { ...req.body };
+    if (updatePayload.phone !== undefined && updatePayload.phone !== null) {
+      const phoneCheck = validate10DigitPhone(updatePayload.phone, { allowBlank: true, requireMobilePrefix: false });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      updatePayload.phone = phoneCheck.cleanPhone;
+    }
+
+    const updated = await storeContextService.updateStore(storeId, updatePayload);
     broadcastStoresChanged();
     res.json(updated);
   } catch (err: any) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiClient, api } from '../../services/api';
 import { toastEvent } from '../../services/events';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
 import { Building2, Save, RefreshCw, X, MapPin, Plus, CheckCircle2, MessageCircle, Mail, Store as StoreIcon, GitBranch, ArrowDownToLine, ArrowUpFromLine, Phone } from 'lucide-react';
 
@@ -45,8 +46,13 @@ export function MultiStoreTab() {
       toastEvent.trigger('Store name is required', 'error');
       return;
     }
+    const cleanPh = sanitizePhoneInput(newStore.phone);
+    if (cleanPh && !isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Please enter a valid 10-digit phone number (starts with 6, 7, 8, or 9)', 'error');
+      return;
+    }
     try {
-      await api.createStore(newStore);
+      await api.createStore({ ...newStore, phone: cleanPh });
       toastEvent.trigger(`Store "${newStore.name}" created successfully`, 'success');
       setShowAddModal(false);
       setNewStore({ name: '', code: '', address: '', phone: '', email: '', is_central: false });
@@ -261,9 +267,10 @@ export function MultiStoreTab() {
                   <label className="text-xs font-bold text-text">Phone / WhatsApp</label>
                   <input
                     type="text"
+                    maxLength={10}
                     placeholder="9876543210"
                     value={newStore.phone}
-                    onChange={(e) => setNewStore({ ...newStore, phone: e.target.value })}
+                    onChange={(e) => setNewStore({ ...newStore, phone: sanitizePhoneInput(e.target.value) })}
                     className="w-full mt-1 px-3 py-2 text-xs bg-bg2 border border-border rounded-xl text-text focus:outline-none focus:border-primary"
                   />
                 </div>

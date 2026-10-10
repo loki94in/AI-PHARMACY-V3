@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
+import { toastEvent } from '../../services/events';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 
 let cachedEnquiriesPatients: any[] | null = null;
 
@@ -132,10 +134,16 @@ export const EnquiriesSection: React.FC = () => {
     e.preventDefault();
     if (!formPatientName.trim() || !formMedName.trim()) return;
 
+    const cleanPh = sanitizePhoneInput(formPhone);
+    if (formPhone.trim() && !isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Patient phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error', '/crm');
+      return;
+    }
+
     try {
       await api.createEnquiry({
         patient_name: formPatientName.trim(),
-        patient_phone: formPhone.trim(),
+        patient_phone: cleanPh || undefined,
         medicine_name: formMedName.trim(),
         medicine_id: formMedId,
         dosage_group: formGroup,

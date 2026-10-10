@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
+import { sanitizePhoneInput, isValid10DigitPhone } from '../utils/phone';
 
 interface PortalAccount {
   id: number;
@@ -122,15 +123,16 @@ export function PortalAccountsManager() {
   // Generate / Create Account Handler
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.phone || formData.phone.replace(/\D/g, '').length < 10) {
-      toastEvent.trigger('Please enter a valid 10-digit mobile number', 'error');
+    const cleanPh = sanitizePhoneInput(formData.phone);
+    if (!cleanPh || !isValid10DigitPhone(cleanPh)) {
+      toastEvent.trigger('Please enter a valid 10-digit mobile number (starts with 6–9)', 'error');
       return;
     }
 
     setIsSubmitting(true);
     try {
       const res = await api.generatePortalAccount({
-        phone: formData.phone,
+        phone: cleanPh,
         name: formData.name || 'Customer',
         preferred_store_id: formData.preferred_store_id,
         custom_pin: formData.custom_pin || undefined,
