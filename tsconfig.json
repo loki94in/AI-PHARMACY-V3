@@ -11,7 +11,9 @@
     "rootDir": "./",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
   },
   "include": ["src/**/*"],
   "exclude": ["tests/**/*", "frontend/**/*", "website/**/*", "node_modules"]
