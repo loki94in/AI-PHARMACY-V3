@@ -5919,6 +5919,7 @@ function isRefillConfirmationResponse(text) {
   const cleaned = text.trim();
   const lower = cleaned.toLowerCase().replace(/[.,!?;:()_~#*`]/g, " ").replace(/\s+/g, " ").trim();
   const confirmationTokens = [
+    "1",
     "refill",
     "yes",
     "confirm",
@@ -5948,7 +5949,7 @@ function isRefillConfirmationResponse(text) {
     "pack kar do",
     "pack kardo"
   ];
-  if (confirmationTokens.some((t) => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
+  if (lower === "1" || lower === "1." || confirmationTokens.some((t) => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
     return true;
   }
   const devanagariTokens = [
@@ -31048,6 +31049,518 @@ var init_refillOrderReconciler = __esm({
   }
 });
 
+// src/services/refillCartService.ts
+var refillCartService_exports = {};
+__export(refillCartService_exports, {
+  REFILL_CART_COLUMNS: () => REFILL_CART_COLUMNS,
+  getDistributorPriorityList: () => getDistributorPriorityList,
+  getDistributorPurchaseRanks: () => getDistributorPurchaseRanks,
+  getMedicineLinks: () => getMedicineLinks,
+  orderByPriority: () => orderByPriority,
+  processRefillCartItem: () => processRefillCartItem,
+  removeRefillCartLines: () => removeRefillCartLines,
+  saveDistributorPriority: () => saveDistributorPriority,
+  saveMedicineLinks: () => saveMedicineLinks,
+  sendRefillCartSummary: () => sendRefillCartSummary
+});
+function flattenCart(cart) {
+  const lines = [];
+  for (const d of cart.distributors || []) {
+    for (const it of d.items || []) {
+      lines.push({
+        storeId: Number(it.storeId || d.storeId || 0),
+        storeName: String(d.storeName || ""),
+        productCode: String(it.productCode || ""),
+        productName: String(it.productName || ""),
+        qty: Number(it.qty) || 0,
+        raw: it
+      });
+    }
+  }
+  return lines;
+}
+async function getMedicineLinks(medicineId) {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all(
+    `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+     FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id`,
+    [medicineId]
+  );
+  return rows.map((r) => ({
+    storeId: Number(r.store_id),
+    storeName: String(r.store_name),
+    productCode: String(r.product_code),
+    productId: r.product_id,
+    productName: r.product_name || "",
+    packaging: r.packaging || "",
+    company: r.company || "",
+    mapped: r.mapped !== 0
+  }));
+}
+async function saveMedicineLinks(medicineId, picks) {
+  const clean2 = picks.filter(isValidPick);
+  if (clean2.length !== picks.length) {
+    throw Object.assign(new Error("Each linked product needs a Pharmarack distributor and product code."), { httpStatus: 400 });
+  }
+  const db2 = await dbManager.getConnection();
+  const med = await db2.get("SELECT id FROM medicines WHERE id = ?", [medicineId]);
+  if (!med) throw Object.assign(new Error("Medicine not found"), { httpStatus: 404 });
+  await db2.run("BEGIN");
+  try {
+    await db2.run("DELETE FROM medicine_distributor_links WHERE medicine_id = ?", [medicineId]);
+    for (let i = 0; i < clean2.length; i++) {
+      const p = clean2[i];
+      await db2.run(
+        `INSERT OR REPLACE INTO medicine_distributor_links
+           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          medicineId,
+          Number(p.storeId),
+          String(p.storeName).trim(),
+          String(p.productCode).trim(),
+          p.productId != null ? String(p.productId) : null,
+          p.productName || null,
+          p.packaging || null,
+          p.company || null,
+          p.mapped === false ? 0 : 1,
+          i
+        ]
+      );
+    }
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK").catch(() => {
+    });
+    throw err;
+  }
+  return clean2.length;
+}
+async function loadPriorityMap() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all("SELECT name_key, priority FROM distributor_priority");
+  return new Map(rows.map((r) => [String(r.name_key), Number(r.priority)]));
+}
+function orderByPriority(items, storeNameOf, prio) {
+  const rank = (i) => prio.get(nameKey(storeNameOf(i)));
+  return items.map((it, idx) => ({ it, idx, r: rank(it) })).sort((a, b) => (a.r ?? Infinity) - (b.r ?? Infinity) || a.idx - b.idx).map((x) => x.it);
+}
+async function getDistributorPriorityList() {
+  const db2 = await dbManager.getConnection();
+  const found = /* @__PURE__ */ new Map();
+  const add = (name, linked) => {
+    const storeName = String(name || "").trim();
+    const key = nameKey(storeName);
+    if (!key) return;
+    const cur = found.get(key);
+    if (cur) cur.linkedMedicines += linked;
+    else found.set(key, { storeName, ranked: false, linkedMedicines: linked });
+  };
+  const saved = await db2.all("SELECT name_key, store_name, priority FROM distributor_priority ORDER BY priority");
+  const links = await db2.all("SELECT store_name FROM medicine_distributor_links WHERE mapped != 0");
+  const maps = await db2.all("SELECT store_name FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL");
+  const ranked = [];
+  for (const r of saved) {
+    const row = { storeName: String(r.store_name), ranked: true, linkedMedicines: 0 };
+    found.set(String(r.name_key), row);
+    ranked.push(row);
+  }
+  for (const l of links) add(l.store_name, 1);
+  for (const m of maps) add(m.store_name, 0);
+  const rest = [...found.values()].filter((v) => !v.ranked).sort((a, b) => b.linkedMedicines - a.linkedMedicines || a.storeName.localeCompare(b.storeName));
+  return [...ranked, ...rest];
+}
+async function saveDistributorPriority(storeNames) {
+  const seen = /* @__PURE__ */ new Set();
+  const clean2 = storeNames.map((n) => String(n || "").trim()).filter((n) => {
+    const k = nameKey(n);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const prioMap = /* @__PURE__ */ new Map();
+  for (let i = 0; i < clean2.length; i++) {
+    prioMap.set(nameKey(clean2[i]), i);
+  }
+  const db2 = await dbManager.getConnection();
+  await db2.run("BEGIN");
+  try {
+    await db2.run("DELETE FROM distributor_priority");
+    for (let i = 0; i < clean2.length; i++) {
+      await db2.run("INSERT INTO distributor_priority (name_key, store_name, priority) VALUES (?, ?, ?)", [nameKey(clean2[i]), clean2[i], i]);
+    }
+    const allLinks = await db2.all("SELECT id, medicine_id, store_name, pick_order FROM medicine_distributor_links");
+    if (allLinks.length > 0) {
+      const byMed = /* @__PURE__ */ new Map();
+      for (const link of allLinks) {
+        const medId = Number(link.medicine_id);
+        const arr = byMed.get(medId) || [];
+        arr.push(link);
+        byMed.set(medId, arr);
+      }
+      for (const links of byMed.values()) {
+        links.sort((a, b) => {
+          const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+          const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+          if (rA !== rB) return rA - rB;
+          return (Number(a.pick_order) || 0) - (Number(b.pick_order) || 0) || Number(a.id) - Number(b.id);
+        });
+        for (let newOrder = 0; newOrder < links.length; newOrder++) {
+          if (links[newOrder].pick_order !== newOrder) {
+            await db2.run("UPDATE medicine_distributor_links SET pick_order = ? WHERE id = ?", [newOrder, links[newOrder].id]);
+          }
+        }
+      }
+    }
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK").catch(() => {
+    });
+    throw err;
+  }
+  return clean2.length;
+}
+function cartErrorMessage(err) {
+  if (err?.code === "NEED_LOGIN") return "Pharmarack is not logged in. Log in from the Live Cart page, then retry.";
+  if (err?.code === "SESSION_EXPIRED") return "Pharmarack session expired. Re-login, then retry.";
+  return `Could not read the Pharmarack live cart (${err?.message || "network error"}). Retry.`;
+}
+async function processRefillCartItem(refillId, opts = {}) {
+  const db2 = await dbManager.getConnection();
+  const refill = await db2.get(
+    `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
+            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name
+     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+     WHERE pr.id = ?`,
+    [refillId]
+  );
+  if (!refill) throw Object.assign(new Error("Refill not found"), { httpStatus: 404 });
+  const medicineName = String(refill.medicine_name || "");
+  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
+  const base = { refillId, medicineName, qty, linked: [], candidates: [] };
+  const fail = (message, extra = {}) => ({ ...base, ...extra, status: "failed", message });
+  if (refill.is_active === 0 || ["canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
+    return fail("This refill is paused or cancelled.");
+  }
+  if (Array.isArray(opts.pick) && opts.pick.length > 0) {
+    const picks = opts.pick.filter(isValidPick);
+    if (picks.length === 0) return fail("Tick a distributor product from the list.");
+    const prioMap2 = await loadPriorityMap();
+    const orderedPicks = orderByPriority(picks, (p) => p.storeName, prioMap2);
+    await saveMedicineLinks(refill.medicine_id, orderedPicks);
+  }
+  const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+  let lines;
+  try {
+    lines = flattenCart(await pr.loadLiveCartCore());
+  } catch (err) {
+    return fail(cartErrorMessage(err));
+  }
+  const prioMap = await loadPriorityMap();
+  const rawLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
+  const links = [...rawLinks].sort((a, b) => {
+    const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
+    const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;
+    if (poA !== poB) return poA - poB;
+    const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+    const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+    return rA - rB;
+  });
+  const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
+  if (mine) {
+    return {
+      ...base,
+      status: "in_cart",
+      message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
+      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty }
+    };
+  }
+  let hit;
+  for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
+  if (!hit) {
+    const want = norm(medicineName);
+    hit = lines.find((l) => want && norm(l.productName) === want);
+  }
+  if (hit) {
+    const total = hit.qty + qty;
+    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total };
+    if (opts.dryRun) {
+      return { ...base, status: "ready", message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
+    }
+    const raw = hit.raw || {};
+    const inc = await pr.addItemsToPharmarackCart([{
+      productId: raw.productId,
+      storeId: hit.storeId,
+      productCode: hit.productCode,
+      productName: hit.productName,
+      storeName: hit.storeName,
+      company: raw.company || void 0,
+      rate: raw.ptr != null ? Number(raw.ptr) : void 0,
+      mrp: raw.mrp != null ? Number(raw.mrp) : void 0,
+      scheme: raw.scheme || void 0,
+      packaging: raw.packaging || void 0,
+      mapped: true,
+      qty: total
+    }]);
+    if (!inc.success || inc.offline) {
+      return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || "offline"}`);
+    }
+    pr.invalidatePharmarackCartCache();
+    let after;
+    for (let attempt = 0; attempt < 2 && !(after && after.qty === total); attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      try {
+        after = findLine(flattenCart(await pr.loadLiveCartCore()), hit.storeId, hit.productCode);
+      } catch (_) {
+      }
+    }
+    if (!after || after.qty !== total) {
+      return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
+    }
+    await db2.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
+    );
+    return {
+      ...base,
+      status: "added",
+      message: `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`,
+      line: { storeName: after.storeName, productName: after.productName, qty: total }
+    };
+  }
+  const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "";
+  const outcome = await pr.performPharmarackSearch(medicineName, null, false);
+  if (outcome.status === "need_login") return fail(cartErrorMessage({ code: "NEED_LOGIN" }));
+  if (outcome.status === "connection_error") return fail("Pharmarack search did not answer (network). Retry.");
+  const items = outcome.items.filter(isLive);
+  const findItem = (l) => items.find((i) => Number(i.storeId) === Number(l.store_id) && String(i.productCode) === String(l.product_code));
+  for (const l of links.filter((l2) => !findItem(l2)).slice(0, 3)) {
+    const o = await pr.performPharmarackSearch(l.product_name || medicineName, Number(l.store_id), l.mapped !== 0);
+    if (o.status === "ok") items.push(...o.items.filter(isLive));
+  }
+  const linkedKeys = new Set(links.map((l) => `${l.store_id}|${l.product_code}`));
+  const seen = /* @__PURE__ */ new Set();
+  const candidates = [];
+  for (const i of items) {
+    const key = `${Number(i.storeId)}|${String(i.productCode)}`;
+    if (seen.has(key) || i.mapped === false) continue;
+    seen.add(key);
+    candidates.push({
+      storeId: Number(i.storeId),
+      storeName: String(i.distributor || ""),
+      productCode: String(i.productCode),
+      productId: i.productId ?? null,
+      productName: String(i.name || ""),
+      packaging: String(i.packaging || ""),
+      company: String(i.company || ""),
+      mapped: i.mapped !== false,
+      rate: i.rate != null ? Number(i.rate) : null,
+      mrp: i.mrp != null ? Number(i.mrp) : null,
+      scheme: String(i.scheme || ""),
+      stock: String(i.stock ?? ""),
+      inStock: pr.isItemInStock(i.stock),
+      inCart: !!findLine(lines, i.storeId, i.productCode),
+      linked: linkedKeys.has(key)
+    });
+    if (candidates.length >= 30) break;
+  }
+  if (links.length === 0) {
+    return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor linked to this medicine yet. Link one to add it." } : { ...base, status: "not_found", message: "No mapped Pharmarack distributor found for this name. Link it by searching another spelling." };
+  }
+  const linkedState = links.map((l) => {
+    const item = findItem(l);
+    return { link: l, item, inStock: !!item && pr.isItemInStock(item.stock) };
+  });
+  const linked = linkedState.map((s) => ({
+    storeName: String(s.link.store_name),
+    productName: String(s.link.product_name || ""),
+    stock: s.item ? String(s.item.stock ?? "") : "not listed now",
+    inStock: s.inStock
+  }));
+  const available = linkedState.filter((s) => s.inStock);
+  if (available.length === 0) {
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "linked_oos",
+      message: `Out of stock at ${linked.map((l) => l.storeName).join(", ")}. Link another distributor.`
+    };
+  }
+  const chosen = available[0];
+  const it = chosen.item;
+  if (opts.dryRun) {
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "ready",
+      message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? "?"}). Press Add.`,
+      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ""), qty }
+    };
+  }
+  const addFailures = [];
+  for (const cand of available) {
+    const candItem = cand.item;
+    const addRes = await pr.addItemsToPharmarackCart([{
+      productId: candItem.productId,
+      storeId: Number(candItem.storeId),
+      productCode: String(candItem.productCode),
+      productName: String(candItem.name || cand.link.product_name || medicineName),
+      storeName: String(candItem.distributor || cand.link.store_name),
+      company: candItem.company || void 0,
+      rate: candItem.rate != null ? Number(candItem.rate) : void 0,
+      mrp: candItem.mrp != null ? Number(candItem.mrp) : void 0,
+      scheme: candItem.scheme || void 0,
+      packaging: candItem.packaging || void 0,
+      mapped: candItem.mapped !== false,
+      qty
+    }]);
+    if (!addRes.success || addRes.offline) {
+      addFailures.push(`${cand.link.store_name} (${addRes.details || addRes.error || addRes.message || "offline"})`);
+      continue;
+    }
+    pr.invalidatePharmarackCartCache();
+    let added;
+    for (let attempt = 0; attempt < 2 && !added; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      try {
+        added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
+      } catch (_) {
+      }
+    }
+    if (!added) {
+      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
+      continue;
+    }
+    await db2.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
+    );
+    await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [cand.link.id]);
+    const firstLink = linkedState[0];
+    const skipped = linkedState.filter((s) => s !== cand && !s.inStock).map((s) => String(s.link.store_name));
+    const failedBefore = available.slice(0, available.indexOf(cand)).filter((s) => s !== cand && s.inStock).map((s) => String(s.link.store_name));
+    const noteParts = [...skipped.map((n) => `${n} was out of stock`), ...failedBefore.map((n) => `${n} did not accept it`)];
+    const note = noteParts.length > 0 ? ` (${noteParts.join("; ")})` : firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "added",
+      message: `Added ${qty} to ${added.storeName}${note}.`,
+      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
+    };
+  }
+  return fail(`Pharmarack did not accept the item at ${available.map((s) => String(s.link.store_name)).join(", ")}: ${addFailures.join("; ") || "no confirmation"}`, { linked, candidates });
+}
+async function getDistributorPurchaseRanks() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all(
+    `SELECT d.name, COUNT(p.id) AS purchases FROM distributors d JOIN purchases p ON p.distributor_id = d.id
+     GROUP BY d.id ORDER BY purchases DESC LIMIT 300`
+  );
+  return rows.map((r) => ({ name: String(r.name || ""), purchases: Number(r.purchases) || 0 })).filter((r) => r.name);
+}
+async function sendRefillCartSummary(patientName, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return { queued: false, reason: "Nothing to report." };
+  const db2 = await dbManager.getConnection();
+  const { resolveAdminWhatsappNumber: resolveAdminWhatsappNumber2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+  const owner = await resolveAdminWhatsappNumber2(db2);
+  if (!owner) return { queued: false, reason: "Owner WhatsApp number is not set in Settings." };
+  const ids = rows.map((r) => Number(r.refillId)).filter((n) => n > 0);
+  const saved = /* @__PURE__ */ new Map();
+  if (ids.length > 0) {
+    const dbRows = await db2.all(
+      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => "?").join(",")})`,
+      ids
+    );
+    for (const r of dbRows) saved.set(Number(r.id), r);
+  }
+  const byStore = /* @__PURE__ */ new Map();
+  const needs = [];
+  for (const r of rows) {
+    const name = String(r.medicineName || "Medicine");
+    const db_ = saved.get(Number(r.refillId));
+    const confirmed = r.status === "added" && db_?.cart_product_code;
+    if (confirmed || r.status === "in_cart") {
+      const store = String((confirmed ? r.storeName || db_.cart_store_name : r.storeName) || "Distributor").trim();
+      const qty = r.qty ?? (confirmed ? db_.cart_qty : void 0);
+      const line = `\u2022 ${name} \xD7 ${qty ?? "?"}${r.status === "in_cart" ? " (already in cart)" : ""}`;
+      byStore.set(store, [...byStore.get(store) || [], line]);
+    } else {
+      needs.push(`\u2022 ${name} \u2014 ${r.message || r.status}`);
+    }
+  }
+  const parts = [`\u{1F6D2} *Refill cart \u2014 ${patientName || "Patient"}*`];
+  for (const [store, lines] of byStore) parts.push(`
+*${store}*
+${lines.join("\n")}`);
+  if (needs.length) parts.push(`
+\u26A0\uFE0F *Failed to add (${needs.length})*
+${needs.join("\n")}
+Open CRM \u2192 Refills to fix.`);
+  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+  await whatsappQueueWorker2.enqueue(owner, parts.join("\n"), "refill_cart_summary", "Admin / Store Owner");
+  return { queued: true };
+}
+function removeRefillCartLines(rows, clearRows) {
+  const tracked = (rows || []).filter((r) => r && r.cart_product_code && Number(r.cart_store_id) > 0);
+  if (tracked.length === 0) return;
+  setImmediate(async () => {
+    const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+    const db2 = await dbManager.getConnection();
+    for (const r of tracked) {
+      const name = String(r.cart_product_name || "medicine");
+      const store = String(r.cart_store_name || "distributor");
+      let type = "error";
+      let message;
+      try {
+        const adj = await pr.adjustSpecialOrderInLiveCart({
+          product: name,
+          qty: Number(r.cart_qty) || 1,
+          productCode: String(r.cart_product_code),
+          storeId: Number(r.cart_store_id),
+          distributor: store,
+          exactOnly: true
+        });
+        if (adj.action === "removed") {
+          type = "success";
+          message = `Refill cancelled: removed "${name}" from the ${store} cart.`;
+        } else if (adj.action === "adjusted") {
+          type = "info";
+          message = `Refill cancelled: "${name}" in the ${store} cart reduced from ${adj.previousQty} to ${adj.remainingQty}.`;
+        } else if (adj.message === "Item not found in current live cart" || adj.message === "Live cart is empty") {
+          type = "info";
+          message = `Refill cancelled: "${name}" is no longer in the live cart (already ordered or removed).`;
+        } else {
+          message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${adj.message || "unknown error"}). Remove it in Live Cart.`;
+        }
+      } catch (err) {
+        message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${err?.message || "error"}). Remove it in Live Cart.`;
+      }
+      if (clearRows && type !== "error") {
+        await db2.run("UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?", [r.id]).catch(() => {
+        });
+      }
+      eventService.broadcast("toast_alert", { type, message, link: "/crm?tab=refills" });
+    }
+  });
+}
+var norm, isValidPick, nameKey, findLine, REFILL_CART_COLUMNS;
+var init_refillCartService = __esm({
+  "src/services/refillCartService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    isValidPick = (p) => Number(p?.storeId) > 0 && String(p?.productCode || "").trim() !== "" && String(p?.storeName || "").trim() !== "";
+    nameKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    findLine = (lines, storeId, code) => lines.find((l) => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ""));
+    REFILL_CART_COLUMNS = "id, cart_store_id, cart_store_name, cart_product_code, cart_product_name, cart_qty";
+  }
+});
+
 // src/services/shortageReminderService.ts
 var shortageReminderService_exports = {};
 __export(shortageReminderService_exports, {
@@ -35363,6 +35876,41 @@ ${stepPrompt}${languageFooter(chatLang)}`;
           } catch (recErr) {
             console.warn("[Intent Service] Reconciler upsert note on refill confirm:", recErr);
           }
+          const cartSummaryRows = [];
+          try {
+            const { processRefillCartItem: processRefillCartItem2, sendRefillCartSummary: sendRefillCartSummary2 } = await Promise.resolve().then(() => (init_refillCartService(), refillCartService_exports));
+            for (const r of pendingRefills) {
+              const reqQty = Math.max(1, Number(r.quantity_needed || 1));
+              try {
+                const cartRes = await processRefillCartItem2(r.id, { qty: reqQty, dryRun: false });
+                cartSummaryRows.push({
+                  refillId: r.id,
+                  medicineName: r.medicine_name,
+                  status: cartRes.status,
+                  storeName: cartRes.line?.storeName,
+                  qty: cartRes.qty,
+                  message: cartRes.message
+                });
+              } catch (itemErr) {
+                console.warn(`[Intent Service] processRefillCartItem error for refill ${r.id}:`, itemErr);
+                cartSummaryRows.push({
+                  refillId: r.id,
+                  medicineName: r.medicine_name,
+                  status: "failed",
+                  message: itemErr?.message || "Cart processing error"
+                });
+              }
+            }
+            if (cartSummaryRows.length > 0) {
+              await sendRefillCartSummary2(primaryRefill.patient_name, cartSummaryRows).catch((e) => {
+                console.warn("[Intent Service] sendRefillCartSummary error:", e);
+              });
+              eventService.broadcast("live_cart_updated", { at: Date.now(), source: "whatsapp_refill_confirm" });
+              eventService.broadcast("refill_updated", { at: Date.now(), confirmed_id: primaryRefill.id });
+            }
+          } catch (cartErr) {
+            console.warn("[Intent Service] Live Cart auto-add note on refill confirm:", cartErr);
+          }
           if (!isManualSession) {
             try {
               const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName2, getStorePhone: getStorePhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
@@ -35370,17 +35918,23 @@ ${stepPrompt}${languageFooter(chatLang)}`;
               const storeName = await getStoreMedicalName2(db3);
               const storePhone = await getStorePhone2(db3);
               const hoursNotice = await getStoreHoursNotice(db3);
+              const deliveryNotice = await getDynamicDeliveryNotice(db3);
               const phoneSuffix = storePhone ? `
 \u{1F4DE} ${storePhone}` : "";
               const medListText = pendingRefills.length === 1 ? `*${primaryRefill.medicine_name}*` : pendingRefills.map((r) => `\u2022 ${r.medicine_name}`).join("\n");
+              const open12 = formatTime12h(sched.openTime || "09:00");
+              const close12 = formatTime12h(sched.closeTime || "22:00");
+              const offDay = sched.weeklyOff ? ` | Weekly Off: ${sched.weeklyOff}` : "";
               const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
 
 Thank you ${primaryRefill.patient_name}! Your regular prescription for:
 ${medListText}
 has been confirmed.
 
-\u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}${hoursNotice ? `
-${hoursNotice.trim()}` : ""}
+\u{1F552} *Store Hours:* ${open12} \u2013 ${close12}${offDay}${hoursNotice ? `
+${hoursNotice.trim()}` : ""}${deliveryNotice ? `
+${deliveryNotice.trim()}` : ""}
+
 Our team will keep your medicines ready for collection.${phoneSuffix}`;
               const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
               await whatsappQueueWorker2.enqueue(
@@ -47331,6 +47885,7 @@ __export(refillService_exports, {
   checkAllRefills: () => checkAllRefills,
   cleanupStagedRefillNotifications: () => cleanupStagedRefillNotifications,
   createQuickBillForRefill: () => createQuickBillForRefill,
+  dispatchDueRefillReminders: () => dispatchDueRefillReminders,
   isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed,
   notifyAdminStagedReminders: () => notifyAdminStagedReminders,
   purgePendingCustomerReminders: () => purgePendingCustomerReminders,
@@ -47339,6 +47894,15 @@ __export(refillService_exports, {
   triggerPendingRefillsForMedicine: () => triggerPendingRefillsForMedicine,
   triggerPendingSpecialOrdersForMedicineName: () => triggerPendingSpecialOrdersForMedicineName
 });
+function formatTime12h2(timeStr) {
+  if (!timeStr) return "";
+  const [hStr, mStr] = timeStr.split(":");
+  let h = parseInt(hStr, 10);
+  const m = mStr || "00";
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
 async function checkAllRefills(db2) {
   try {
     await db2.run(`UPDATE patient_refills SET is_ready = 0, hold_for_stock = 0 WHERE is_active = 0`);
@@ -47578,6 +48142,27 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   const items = Array.from(seenMeds.values());
   const refillIds = readyRefills.map((r) => r.id);
   const anyReady = readyRefills.some((r) => r.is_ready === 1 || r.quick_bill_id);
+  let timingInfo = "";
+  let hoursPill = "";
+  try {
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const sched = await getPharmacyOperatingSchedule2(db2);
+    const open12 = formatTime12h2(sched.openTime || "09:00");
+    const close12 = formatTime12h2(sched.closeTime || "22:00");
+    hoursPill = `
+*(Store open ${open12} \u2013 ${close12})*`;
+    const now = /* @__PURE__ */ new Date();
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const dueDayName = dayNames[(now.getDay() + 1) % 7];
+    const isOffDayUpcoming = Boolean(sched.weeklyOff && (dueDayName.toLowerCase() === sched.weeklyOff.toLowerCase() || dayNames[now.getDay()].toLowerCase() === sched.weeklyOff.toLowerCase()));
+    timingInfo = `
+\u{1F552} *Store Hours:* ${open12} to ${close12}`;
+    if (isOffDayUpcoming) {
+      timingInfo += `
+\u26A0\uFE0F *Notice:* Our pharmacy will remain closed on ${sched.weeklyOff}. Please collect before closure!`;
+    }
+  } catch (_) {
+  }
   let msg;
   if (anyReady) {
     if (items.length === 1) {
@@ -47588,7 +48173,7 @@ Your packed prescription is waiting and ready for collection at our pharmacy:
 
 \u2022 *${items[0].medicine_name}* (Qty: ${items[0].quantity})
 
-\u{1F4CD} *Pickup Location:* ${storeLabel}
+\u{1F4CD} *Pickup Location:* ${storeLabel}${timingInfo}
 \u{1F449} *Please collect your medicine at your earliest convenience.*`;
     } else {
       const medList = items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
@@ -47599,7 +48184,7 @@ Your packed prescription is waiting and ready for collection at our pharmacy:
 
 ${medList}
 
-\u{1F4CD} *Pickup Location:* ${storeLabel}
+\u{1F4CD} *Pickup Location:* ${storeLabel}${timingInfo}
 \u{1F449} *Please collect your medicine at your earliest convenience.*`;
     }
   } else {
@@ -47609,8 +48194,8 @@ ${medList}
 Dear ${patientName},
 Your regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.
 
-You may collect from ${storeLabel}.
-\u{1F449} *Reply "REFILL" or "YES" to confirm.*`;
+You may collect from ${storeLabel}.${timingInfo}
+\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
     } else {
       const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
       msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
@@ -47620,8 +48205,8 @@ Your regular prescription is due for refill:
 
 ${medList}
 
-You may collect from ${storeLabel}.
-\u{1F449} *Reply "REFILL" or "YES" to confirm.*`;
+You may collect from ${storeLabel}.${timingInfo}
+\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
     }
   }
   const needsLangBanner = await isFirstContactOrUnconfirmed(db2, patientPhone);
@@ -48301,6 +48886,98 @@ async function isFirstContactOrUnconfirmed(db2, phone) {
     return true;
   } catch (_) {
     return false;
+  }
+}
+async function dispatchDueRefillReminders(db2) {
+  try {
+    const enabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
+    if (enabledRow?.value === "false") {
+      return { dispatched: 0, skipped: 0, reason: "disabled" };
+    }
+    const modeRow = await db2.get("SELECT value FROM app_settings WHERE key = 'default_refill_reminder_mode'");
+    if (modeRow?.value !== "auto") {
+      return { dispatched: 0, skipped: 0, reason: "mode_manual" };
+    }
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const sched = await getPharmacyOperatingSchedule2(db2);
+    const now = /* @__PURE__ */ new Date();
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const currentDay = dayNames[now.getDay()];
+    if ((sched.weeklyOff || "").toLowerCase() === currentDay.toLowerCase()) {
+      return { dispatched: 0, skipped: 0, reason: "store_closed_weekly_off" };
+    }
+    const staged = await db2.all(
+      `SELECT id, recipient_name, recipient_phone, message, reference_id, type 
+       FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') 
+         AND status = 'staged' 
+         AND needs_confirmation = 1 
+       LIMIT 50`
+    );
+    if (!staged || staged.length === 0) {
+      return { dispatched: 0, skipped: 0, reason: "none_staged" };
+    }
+    const { normalizeWhatsAppPhone: normalizeWhatsAppPhone2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+    let dispatched = 0;
+    let skipped = 0;
+    for (const notif of staged) {
+      const cleanPhone = normalizeWhatsAppPhone2(String(notif.recipient_phone || ""));
+      if (!cleanPhone || cleanPhone.length < 10) {
+        skipped++;
+        continue;
+      }
+      const recentSend = await db2.get(
+        `SELECT id FROM whatsapp_send_queue 
+         WHERE number LIKE ? AND type IN ('refill_collection', 'refill_reminder') 
+           AND created_at > datetime('now', '-24 hours') 
+         LIMIT 1`,
+        [`%${cleanPhone.slice(-10)}%`]
+      );
+      if (recentSend) {
+        skipped++;
+        continue;
+      }
+      const queueId = await whatsappQueueWorker2.enqueue(
+        cleanPhone,
+        notif.message,
+        notif.type || "refill_reminder",
+        notif.recipient_name || void 0,
+        void 0,
+        void 0,
+        void 0,
+        { skipDedupe: false }
+      );
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'queued', needs_confirmation = 0 
+         WHERE id = ?`,
+        [notif.id]
+      );
+      if (notif.reference_id) {
+        const refIds = String(notif.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
+        if (refIds.length > 0) {
+          const placeholders = refIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE patient_refills 
+             SET reminder_status = 'QUEUED', status = 'notified', reminder_job_id = ? 
+             WHERE id IN (${placeholders})`,
+            [queueId, ...refIds]
+          ).catch(() => {
+          });
+        }
+      }
+      dispatched++;
+    }
+    if (dispatched > 0) {
+      eventService2.broadcast("automation_hub_updated", { type: "auto_dispatched", count: dispatched });
+      eventService2.broadcast("refill_updated", { type: "auto_dispatched", count: dispatched });
+    }
+    return { dispatched, skipped };
+  } catch (err) {
+    console.error("[RefillService] dispatchDueRefillReminders error:", err);
+    return { dispatched: 0, skipped: 0, reason: String(err) };
   }
 }
 var init_refillService = __esm({
@@ -56074,7 +56751,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.67";
+    APP_VERSION = "0.1.68";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -69956,9 +70633,10 @@ var init_triggerSchedulerService = __esm({
                   const mode = await getBackendFetchMode("bg.dailyScans", "off");
                   if (mode === "off" || mode === "manual" && activityTracker.isIdle()) return;
                   console.log(`[Trigger: Daily Check] Running daily check scheduled at ${timeStr}...`);
-                  const { checkAllRefills: checkAllRefills2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
+                  const { checkAllRefills: checkAllRefills2, dispatchDueRefillReminders: dispatchDueRefillReminders2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
                   const { checkOverdueCreditNotes: checkOverdueCreditNotes2 } = await Promise.resolve().then(() => (init_creditNoteService(), creditNoteService_exports));
                   await checkAllRefills2(database);
+                  await dispatchDueRefillReminders2(database);
                   await checkOverdueCreditNotes2(database);
                   try {
                     const { nonWaFallbackService: nonWaFallbackService2 } = await Promise.resolve().then(() => (init_nonWaFallbackService(), nonWaFallbackService_exports));
@@ -70313,9 +70991,10 @@ var init_triggerSchedulerService = __esm({
             await createBackup2("Manual Run Now");
             return { success: true, message: "Database backup executed successfully." };
           } else if (triggerId === "daily_check") {
-            const { checkAllRefills: checkAllRefills2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
+            const { checkAllRefills: checkAllRefills2, dispatchDueRefillReminders: dispatchDueRefillReminders2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
             const { checkOverdueCreditNotes: checkOverdueCreditNotes2 } = await Promise.resolve().then(() => (init_creditNoteService(), creditNoteService_exports));
             await checkAllRefills2(database);
+            await dispatchDueRefillReminders2(database);
             await checkOverdueCreditNotes2(database);
             return { success: true, message: "Daily operational scan executed successfully." };
           } else if (triggerId === "expiry_scan") {
@@ -73922,478 +74601,6 @@ var init_telegramPrescription = __esm({
   }
 });
 
-// src/services/refillCartService.ts
-function flattenCart(cart) {
-  const lines = [];
-  for (const d of cart.distributors || []) {
-    for (const it of d.items || []) {
-      lines.push({
-        storeId: Number(it.storeId || d.storeId || 0),
-        storeName: String(d.storeName || ""),
-        productCode: String(it.productCode || ""),
-        productName: String(it.productName || ""),
-        qty: Number(it.qty) || 0,
-        raw: it
-      });
-    }
-  }
-  return lines;
-}
-async function getMedicineLinks(medicineId) {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all(
-    `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
-     FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id`,
-    [medicineId]
-  );
-  return rows.map((r) => ({
-    storeId: Number(r.store_id),
-    storeName: String(r.store_name),
-    productCode: String(r.product_code),
-    productId: r.product_id,
-    productName: r.product_name || "",
-    packaging: r.packaging || "",
-    company: r.company || "",
-    mapped: r.mapped !== 0
-  }));
-}
-async function saveMedicineLinks(medicineId, picks) {
-  const clean2 = picks.filter(isValidPick);
-  if (clean2.length !== picks.length) {
-    throw Object.assign(new Error("Each linked product needs a Pharmarack distributor and product code."), { httpStatus: 400 });
-  }
-  const db2 = await dbManager.getConnection();
-  const med = await db2.get("SELECT id FROM medicines WHERE id = ?", [medicineId]);
-  if (!med) throw Object.assign(new Error("Medicine not found"), { httpStatus: 404 });
-  await db2.run("BEGIN");
-  try {
-    await db2.run("DELETE FROM medicine_distributor_links WHERE medicine_id = ?", [medicineId]);
-    for (let i = 0; i < clean2.length; i++) {
-      const p = clean2[i];
-      await db2.run(
-        `INSERT OR REPLACE INTO medicine_distributor_links
-           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-        [
-          medicineId,
-          Number(p.storeId),
-          String(p.storeName).trim(),
-          String(p.productCode).trim(),
-          p.productId != null ? String(p.productId) : null,
-          p.productName || null,
-          p.packaging || null,
-          p.company || null,
-          p.mapped === false ? 0 : 1,
-          i
-        ]
-      );
-    }
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK").catch(() => {
-    });
-    throw err;
-  }
-  return clean2.length;
-}
-async function loadPriorityMap() {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all("SELECT name_key, priority FROM distributor_priority");
-  return new Map(rows.map((r) => [String(r.name_key), Number(r.priority)]));
-}
-function orderByPriority(items, storeNameOf, prio) {
-  const rank = (i) => prio.get(nameKey(storeNameOf(i)));
-  return items.map((it, idx) => ({ it, idx, r: rank(it) })).sort((a, b) => (a.r ?? Infinity) - (b.r ?? Infinity) || a.idx - b.idx).map((x) => x.it);
-}
-async function getDistributorPriorityList() {
-  const db2 = await dbManager.getConnection();
-  const found = /* @__PURE__ */ new Map();
-  const add = (name, linked) => {
-    const storeName = String(name || "").trim();
-    const key = nameKey(storeName);
-    if (!key) return;
-    const cur = found.get(key);
-    if (cur) cur.linkedMedicines += linked;
-    else found.set(key, { storeName, ranked: false, linkedMedicines: linked });
-  };
-  const saved = await db2.all("SELECT name_key, store_name, priority FROM distributor_priority ORDER BY priority");
-  const links = await db2.all("SELECT store_name FROM medicine_distributor_links WHERE mapped != 0");
-  const maps = await db2.all("SELECT store_name FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL");
-  const ranked = [];
-  for (const r of saved) {
-    const row = { storeName: String(r.store_name), ranked: true, linkedMedicines: 0 };
-    found.set(String(r.name_key), row);
-    ranked.push(row);
-  }
-  for (const l of links) add(l.store_name, 1);
-  for (const m of maps) add(m.store_name, 0);
-  const rest = [...found.values()].filter((v) => !v.ranked).sort((a, b) => b.linkedMedicines - a.linkedMedicines || a.storeName.localeCompare(b.storeName));
-  return [...ranked, ...rest];
-}
-async function saveDistributorPriority(storeNames) {
-  const seen = /* @__PURE__ */ new Set();
-  const clean2 = storeNames.map((n) => String(n || "").trim()).filter((n) => {
-    const k = nameKey(n);
-    if (!k || seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  const db2 = await dbManager.getConnection();
-  await db2.run("BEGIN");
-  try {
-    await db2.run("DELETE FROM distributor_priority");
-    for (let i = 0; i < clean2.length; i++) {
-      await db2.run("INSERT INTO distributor_priority (name_key, store_name, priority) VALUES (?, ?, ?)", [nameKey(clean2[i]), clean2[i], i]);
-    }
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK").catch(() => {
-    });
-    throw err;
-  }
-  return clean2.length;
-}
-function cartErrorMessage(err) {
-  if (err?.code === "NEED_LOGIN") return "Pharmarack is not logged in. Log in from the Live Cart page, then retry.";
-  if (err?.code === "SESSION_EXPIRED") return "Pharmarack session expired. Re-login, then retry.";
-  return `Could not read the Pharmarack live cart (${err?.message || "network error"}). Retry.`;
-}
-async function processRefillCartItem(refillId, opts = {}) {
-  const db2 = await dbManager.getConnection();
-  const refill = await db2.get(
-    `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
-            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name
-     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
-     WHERE pr.id = ?`,
-    [refillId]
-  );
-  if (!refill) throw Object.assign(new Error("Refill not found"), { httpStatus: 404 });
-  const medicineName = String(refill.medicine_name || "");
-  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
-  const base = { refillId, medicineName, qty, linked: [], candidates: [] };
-  const fail = (message, extra = {}) => ({ ...base, ...extra, status: "failed", message });
-  if (refill.is_active === 0 || ["canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
-    return fail("This refill is paused or cancelled.");
-  }
-  if (Array.isArray(opts.pick) && opts.pick.length > 0) {
-    const picks = opts.pick.filter(isValidPick);
-    if (picks.length === 0) return fail("Tick a distributor product from the list.");
-    const prioMap2 = await loadPriorityMap();
-    const orderedPicks = orderByPriority(picks, (p) => p.storeName, prioMap2);
-    await saveMedicineLinks(refill.medicine_id, orderedPicks);
-  }
-  const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-  let lines;
-  try {
-    lines = flattenCart(await pr.loadLiveCartCore());
-  } catch (err) {
-    return fail(cartErrorMessage(err));
-  }
-  const prioMap = await loadPriorityMap();
-  const rawLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
-  const links = [...rawLinks].sort((a, b) => {
-    const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
-    const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;
-    if (poA !== poB) return poA - poB;
-    const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
-    const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
-    return rA - rB;
-  });
-  const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
-  if (mine) {
-    return {
-      ...base,
-      status: "in_cart",
-      message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
-      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty }
-    };
-  }
-  let hit;
-  for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
-  if (!hit) {
-    const want = norm(medicineName);
-    hit = lines.find((l) => want && norm(l.productName) === want);
-  }
-  if (hit) {
-    const total = hit.qty + qty;
-    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total };
-    if (opts.dryRun) {
-      return { ...base, status: "ready", message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
-    }
-    const raw = hit.raw || {};
-    const inc = await pr.addItemsToPharmarackCart([{
-      productId: raw.productId,
-      storeId: hit.storeId,
-      productCode: hit.productCode,
-      productName: hit.productName,
-      storeName: hit.storeName,
-      company: raw.company || void 0,
-      rate: raw.ptr != null ? Number(raw.ptr) : void 0,
-      mrp: raw.mrp != null ? Number(raw.mrp) : void 0,
-      scheme: raw.scheme || void 0,
-      packaging: raw.packaging || void 0,
-      mapped: true,
-      qty: total
-    }]);
-    if (!inc.success || inc.offline) {
-      return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || "offline"}`);
-    }
-    pr.invalidatePharmarackCartCache();
-    let after;
-    for (let attempt = 0; attempt < 2 && !(after && after.qty === total); attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
-      try {
-        after = findLine(flattenCart(await pr.loadLiveCartCore()), hit.storeId, hit.productCode);
-      } catch (_) {
-      }
-    }
-    if (!after || after.qty !== total) {
-      return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
-    }
-    await db2.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
-      [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
-    );
-    return {
-      ...base,
-      status: "added",
-      message: `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`,
-      line: { storeName: after.storeName, productName: after.productName, qty: total }
-    };
-  }
-  const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "";
-  const outcome = await pr.performPharmarackSearch(medicineName, null, false);
-  if (outcome.status === "need_login") return fail(cartErrorMessage({ code: "NEED_LOGIN" }));
-  if (outcome.status === "connection_error") return fail("Pharmarack search did not answer (network). Retry.");
-  const items = outcome.items.filter(isLive);
-  const findItem = (l) => items.find((i) => Number(i.storeId) === Number(l.store_id) && String(i.productCode) === String(l.product_code));
-  for (const l of links.filter((l2) => !findItem(l2)).slice(0, 3)) {
-    const o = await pr.performPharmarackSearch(l.product_name || medicineName, Number(l.store_id), l.mapped !== 0);
-    if (o.status === "ok") items.push(...o.items.filter(isLive));
-  }
-  const linkedKeys = new Set(links.map((l) => `${l.store_id}|${l.product_code}`));
-  const seen = /* @__PURE__ */ new Set();
-  const candidates = [];
-  for (const i of items) {
-    const key = `${Number(i.storeId)}|${String(i.productCode)}`;
-    if (seen.has(key) || i.mapped === false) continue;
-    seen.add(key);
-    candidates.push({
-      storeId: Number(i.storeId),
-      storeName: String(i.distributor || ""),
-      productCode: String(i.productCode),
-      productId: i.productId ?? null,
-      productName: String(i.name || ""),
-      packaging: String(i.packaging || ""),
-      company: String(i.company || ""),
-      mapped: i.mapped !== false,
-      rate: i.rate != null ? Number(i.rate) : null,
-      mrp: i.mrp != null ? Number(i.mrp) : null,
-      scheme: String(i.scheme || ""),
-      stock: String(i.stock ?? ""),
-      inStock: pr.isItemInStock(i.stock),
-      inCart: !!findLine(lines, i.storeId, i.productCode),
-      linked: linkedKeys.has(key)
-    });
-    if (candidates.length >= 30) break;
-  }
-  if (links.length === 0) {
-    return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor linked to this medicine yet. Link one to add it." } : { ...base, status: "not_found", message: "No mapped Pharmarack distributor found for this name. Link it by searching another spelling." };
-  }
-  const linkedState = links.map((l) => {
-    const item = findItem(l);
-    return { link: l, item, inStock: !!item && pr.isItemInStock(item.stock) };
-  });
-  const linked = linkedState.map((s) => ({
-    storeName: String(s.link.store_name),
-    productName: String(s.link.product_name || ""),
-    stock: s.item ? String(s.item.stock ?? "") : "not listed now",
-    inStock: s.inStock
-  }));
-  const available = linkedState.filter((s) => s.inStock);
-  if (available.length === 0) {
-    return {
-      ...base,
-      linked,
-      candidates,
-      status: "linked_oos",
-      message: `Out of stock at ${linked.map((l) => l.storeName).join(", ")}. Link another distributor.`
-    };
-  }
-  const chosen = available[0];
-  const it = chosen.item;
-  if (opts.dryRun) {
-    return {
-      ...base,
-      linked,
-      candidates,
-      status: "ready",
-      message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? "?"}). Press Add.`,
-      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ""), qty }
-    };
-  }
-  const addFailures = [];
-  for (const cand of available) {
-    const candItem = cand.item;
-    const addRes = await pr.addItemsToPharmarackCart([{
-      productId: candItem.productId,
-      storeId: Number(candItem.storeId),
-      productCode: String(candItem.productCode),
-      productName: String(candItem.name || cand.link.product_name || medicineName),
-      storeName: String(candItem.distributor || cand.link.store_name),
-      company: candItem.company || void 0,
-      rate: candItem.rate != null ? Number(candItem.rate) : void 0,
-      mrp: candItem.mrp != null ? Number(candItem.mrp) : void 0,
-      scheme: candItem.scheme || void 0,
-      packaging: candItem.packaging || void 0,
-      mapped: candItem.mapped !== false,
-      qty
-    }]);
-    if (!addRes.success || addRes.offline) {
-      addFailures.push(`${cand.link.store_name} (${addRes.details || addRes.error || addRes.message || "offline"})`);
-      continue;
-    }
-    pr.invalidatePharmarackCartCache();
-    let added;
-    for (let attempt = 0; attempt < 2 && !added; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
-      try {
-        added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
-      } catch (_) {
-      }
-    }
-    if (!added) {
-      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
-      continue;
-    }
-    await db2.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
-      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
-    );
-    await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [cand.link.id]);
-    const firstLink = linkedState[0];
-    const skipped = linkedState.filter((s) => s !== cand && !s.inStock).map((s) => String(s.link.store_name));
-    const failedBefore = available.slice(0, available.indexOf(cand)).filter((s) => s !== cand && s.inStock).map((s) => String(s.link.store_name));
-    const noteParts = [...skipped.map((n) => `${n} was out of stock`), ...failedBefore.map((n) => `${n} did not accept it`)];
-    const note = noteParts.length > 0 ? ` (${noteParts.join("; ")})` : firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
-    return {
-      ...base,
-      linked,
-      candidates,
-      status: "added",
-      message: `Added ${qty} to ${added.storeName}${note}.`,
-      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
-    };
-  }
-  return fail(`Pharmarack did not accept the item at ${available.map((s) => String(s.link.store_name)).join(", ")}: ${addFailures.join("; ") || "no confirmation"}`, { linked, candidates });
-}
-async function getDistributorPurchaseRanks() {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all(
-    `SELECT d.name, COUNT(p.id) AS purchases FROM distributors d JOIN purchases p ON p.distributor_id = d.id
-     GROUP BY d.id ORDER BY purchases DESC LIMIT 300`
-  );
-  return rows.map((r) => ({ name: String(r.name || ""), purchases: Number(r.purchases) || 0 })).filter((r) => r.name);
-}
-async function sendRefillCartSummary(patientName, rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return { queued: false, reason: "Nothing to report." };
-  const db2 = await dbManager.getConnection();
-  const { resolveAdminWhatsappNumber: resolveAdminWhatsappNumber2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
-  const owner = await resolveAdminWhatsappNumber2(db2);
-  if (!owner) return { queued: false, reason: "Owner WhatsApp number is not set in Settings." };
-  const ids = rows.map((r) => Number(r.refillId)).filter((n) => n > 0);
-  const saved = /* @__PURE__ */ new Map();
-  if (ids.length > 0) {
-    const dbRows = await db2.all(
-      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => "?").join(",")})`,
-      ids
-    );
-    for (const r of dbRows) saved.set(Number(r.id), r);
-  }
-  const byStore = /* @__PURE__ */ new Map();
-  const needs = [];
-  for (const r of rows) {
-    const name = String(r.medicineName || "Medicine");
-    const db_ = saved.get(Number(r.refillId));
-    const confirmed = r.status === "added" && db_?.cart_product_code;
-    if (confirmed || r.status === "in_cart") {
-      const store = String((confirmed ? r.storeName || db_.cart_store_name : r.storeName) || "Distributor").trim();
-      const qty = r.qty ?? (confirmed ? db_.cart_qty : void 0);
-      const line = `\u2022 ${name} \xD7 ${qty ?? "?"}${r.status === "in_cart" ? " (already in cart)" : ""}`;
-      byStore.set(store, [...byStore.get(store) || [], line]);
-    } else {
-      needs.push(`\u2022 ${name} \u2014 ${r.message || r.status}`);
-    }
-  }
-  const parts = [`\u{1F6D2} *Refill cart \u2014 ${patientName || "Patient"}*`];
-  for (const [store, lines] of byStore) parts.push(`
-*${store}*
-${lines.join("\n")}`);
-  if (needs.length) parts.push(`
-\u26A0\uFE0F *Failed to add (${needs.length})*
-${needs.join("\n")}
-Open CRM \u2192 Refills to fix.`);
-  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-  await whatsappQueueWorker2.enqueue(owner, parts.join("\n"), "refill_cart_summary", "Admin / Store Owner");
-  return { queued: true };
-}
-function removeRefillCartLines(rows, clearRows) {
-  const tracked = (rows || []).filter((r) => r && r.cart_product_code && Number(r.cart_store_id) > 0);
-  if (tracked.length === 0) return;
-  setImmediate(async () => {
-    const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-    const db2 = await dbManager.getConnection();
-    for (const r of tracked) {
-      const name = String(r.cart_product_name || "medicine");
-      const store = String(r.cart_store_name || "distributor");
-      let type = "error";
-      let message;
-      try {
-        const adj = await pr.adjustSpecialOrderInLiveCart({
-          product: name,
-          qty: Number(r.cart_qty) || 1,
-          productCode: String(r.cart_product_code),
-          storeId: Number(r.cart_store_id),
-          distributor: store,
-          exactOnly: true
-        });
-        if (adj.action === "removed") {
-          type = "success";
-          message = `Refill cancelled: removed "${name}" from the ${store} cart.`;
-        } else if (adj.action === "adjusted") {
-          type = "info";
-          message = `Refill cancelled: "${name}" in the ${store} cart reduced from ${adj.previousQty} to ${adj.remainingQty}.`;
-        } else if (adj.message === "Item not found in current live cart" || adj.message === "Live cart is empty") {
-          type = "info";
-          message = `Refill cancelled: "${name}" is no longer in the live cart (already ordered or removed).`;
-        } else {
-          message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${adj.message || "unknown error"}). Remove it in Live Cart.`;
-        }
-      } catch (err) {
-        message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${err?.message || "error"}). Remove it in Live Cart.`;
-      }
-      if (clearRows && type !== "error") {
-        await db2.run("UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?", [r.id]).catch(() => {
-        });
-      }
-      eventService.broadcast("toast_alert", { type, message, link: "/crm?tab=refills" });
-    }
-  });
-}
-var norm, isValidPick, nameKey, findLine, REFILL_CART_COLUMNS;
-var init_refillCartService = __esm({
-  "src/services/refillCartService.ts"() {
-    "use strict";
-    init_connection();
-    init_eventService();
-    norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    isValidPick = (p) => Number(p?.storeId) > 0 && String(p?.productCode || "").trim() !== "" && String(p?.storeName || "").trim() !== "";
-    nameKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    findLine = (lines, storeId, code) => lines.find((l) => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ""));
-    REFILL_CART_COLUMNS = "id, cart_store_id, cart_store_name, cart_product_code, cart_product_name, cart_qty";
-  }
-});
-
 // src/services/billDistributorLinkService.ts
 var billDistributorLinkService_exports = {};
 __export(billDistributorLinkService_exports, {
@@ -74865,11 +75072,22 @@ function parseIntervalDays(val) {
   if (typeof val === "number") return val;
   return 30;
 }
+function formatTime12h3(timeStr) {
+  if (!timeStr) return "";
+  const [hStr, mStr] = timeStr.split(":");
+  let h = parseInt(hStr, 10);
+  const m = mStr || "00";
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
 function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en", dueDateStr, scheduleOpts, opts) {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || "en").toLowerCase();
-  const openT = scheduleOpts?.openTime || "09:00";
-  const closeT = scheduleOpts?.closeTime || "22:00";
+  const rawOpen = scheduleOpts?.openTime || "09:00";
+  const rawClose = scheduleOpts?.closeTime || "22:00";
+  const openT = formatTime12h3(rawOpen);
+  const closeT = formatTime12h3(rawClose);
   const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
   let message = "";
@@ -74887,7 +75105,7 @@ function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en
     const cta = `
 
 \u2753 \u0915\u094D\u092F\u093E \u0906\u092A \u0926\u0935\u093E\u0908 \u0924\u0948\u092F\u093E\u0930 \u0915\u0930\u0935\u093E\u0928\u093E \u091A\u093E\u0939\u0924\u0947 \u0939\u0948\u0902?
-\u{1F449} *\u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0947 \u0932\u093F\u090F "REFILL" \u092F\u093E "\u0939\u093E\u0901" \u0932\u093F\u0916\u0915\u0930 \u0909\u0924\u094D\u0924\u0930 \u0926\u0947\u0902\u0964*`;
+\u{1F449} *\u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0947 \u0932\u093F\u090F "1" \u092F\u093E "REFILL" \u0932\u093F\u0916\u0915\u0930 \u0909\u0924\u094D\u0924\u0930 \u0926\u0947\u0902\u0964*`;
     message = `\u{1F514} *\u0926\u0935\u093E\u0908 \u0930\u093F\u092B\u093C\u093F\u0932 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${pharmacyName}*
 
 \u0928\u092E\u0938\u094D\u0924\u0947 ${pName},
@@ -74908,7 +75126,7 @@ ${medList}${dueSuffix}${timingSection}${cta}`;
     const cta = `
 
 \u2753 \u0924\u0941\u092E\u094D\u0939\u093E\u0932\u093E \u0939\u0940 \u0914\u0937\u0927\u0947 \u0924\u092F\u093E\u0930 \u0939\u0935\u0940 \u0906\u0939\u0947\u0924 \u0915\u093E?
-\u{1F449} *\u0928\u093F\u0936\u094D\u091A\u093F\u0924\u0940\u0938\u093E\u0920\u0940 "REFILL" \u0915\u093F\u0902\u0935\u093E "\u0939\u094B" \u0932\u093F\u0939\u0942\u0928 \u0909\u0924\u094D\u0924\u0930 \u0926\u094D\u092F\u093E\u0964*`;
+\u{1F449} *\u0928\u093F\u0936\u094D\u091A\u093F\u0924\u0940\u0938\u093E\u0920\u0940 "1" \u0915\u093F\u0902\u0935\u093E "REFILL" \u0932\u093F\u0939\u0942\u0928 \u0909\u0924\u094D\u0924\u0930 \u0926\u094D\u092F\u093E\u0964*`;
     message = `\u{1F514} *\u0914\u0937\u0927 \u0930\u093F\u092B\u093F\u0932 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${pharmacyName}*
 
 \u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${pName},
@@ -74929,8 +75147,8 @@ Due Date: ${dueDateStr}` : "";
     const cta = `
 
 \u2753 Would you like us to prepare your regular medicines?
-\u{1F449} *Reply "REFILL" or "YES" to confirm.*
-*(Store open ${openT} - ${closeT})*`;
+\u{1F449} *Reply "1" or "REFILL" to confirm.*
+*(Store open ${openT} \u2013 ${closeT})*`;
     message = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${pharmacyName}*
 
 Dear ${pName},
@@ -74946,8 +75164,10 @@ ${medList}${dueSuffix}${timingSection}${cta}`;
 function buildRefillCollectionMessage(patientName, items, pharmacyName, lang = "en", scheduleOpts, opts) {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || "en").toLowerCase();
-  const openT = scheduleOpts?.openTime || "09:00";
-  const closeT = scheduleOpts?.closeTime || "22:00";
+  const rawOpen = scheduleOpts?.openTime || "09:00";
+  const rawClose = scheduleOpts?.closeTime || "22:00";
+  const openT = formatTime12h3(rawOpen);
+  const closeT = formatTime12h3(rawClose);
   const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
   let message = "";
@@ -75488,6 +75708,22 @@ var init_refills = __esm({
             const key = Number(lr.medicine_id);
             linksByMedicine.set(key, [...linksByMedicine.get(key) || [], String(lr.store_name)]);
           }
+        }
+        try {
+          const prioRows = await db2.all("SELECT name_key, priority FROM distributor_priority");
+          if (prioRows && prioRows.length > 0) {
+            const prioMap = new Map(prioRows.map((p) => [String(p.name_key), Number(p.priority)]));
+            for (const [key, dists] of linksByMedicine.entries()) {
+              dists.sort((a, b) => {
+                const kA = a.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const kB = b.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const rA = prioMap.get(kA) ?? Infinity;
+                const rB = prioMap.get(kB) ?? Infinity;
+                return rA - rB;
+              });
+            }
+          }
+        } catch (_) {
         }
         const { getCachedCartLines: getCachedCartLines2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
         const cachedCartLines = getCachedCartLines2();

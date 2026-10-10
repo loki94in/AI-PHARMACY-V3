@@ -1334,27 +1334,19 @@ export const QuickAssistSidebar = memo(({
                                     handleMarkRefillGroupReady(group);
                                   }}
                                   className="flex-1 h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                  title={`Send collection reminder WhatsApp to ${group.patient_name} (due date + store hours auto from Settings)`}
+                                  title={`Mark refills ready and send collection reminder to ${group.patient_name}`}
                                 >
                                   {isMarkingReady ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
-                                  <span className="truncate">Send Reminder</span>
+                                  <span className="truncate">Mark Ready</span>
                                 </button>
                                 <button
                                   type="button"
                                   onClick={openPos}
-                                  className="h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer shrink-0"
-                                  title={`Load ${group.patient_name}'s refill items into POS for billing`}
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                                  title={`Load ${group.patient_name}'s refill items into POS for billing (disarms auto-reminders)`}
                                 >
                                   <Receipt size={11} className="shrink-0" />
-                                  <span>POS</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={openEdit}
-                                  className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
-                                  title={`Edit refill details for ${group.patient_name}`}
-                                >
-                                  <Edit3 size={11} className="shrink-0" />
+                                  <span className="truncate">POS</span>
                                 </button>
                               </>
                             );
@@ -1379,7 +1371,7 @@ export const QuickAssistSidebar = memo(({
                                 type="button"
                                 onClick={openPos}
                                 className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                title={`Load ${group.patient_name}'s refill items into POS for billing`}
+                                title={`Load ${group.patient_name}'s refill items into POS for billing (disarms auto-reminders)`}
                               >
                                 <Receipt size={11} className="shrink-0" />
                                 <span className="truncate">POS</span>
@@ -1561,13 +1553,13 @@ export const QuickAssistSidebar = memo(({
                               title="Mark order as Ready and queue arrival WhatsApp"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
-                              <span className="truncate">Ready</span>
+                              <span className="truncate">Mark Ready</span>
                             </button>
                             <button
                               disabled={isProcessing}
                               onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                              className="flex-1 h-6.5 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                              title="Mark order as Completed and open POS prefilled"
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Open POS to bill this order (disarms auto-reminders)"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
@@ -1578,17 +1570,17 @@ export const QuickAssistSidebar = memo(({
                             <button
                               disabled={isProcessing}
                               onClick={() => handleUpdateGroupStatus(group, 'Ordered')}
-                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
                               title="Mark online order as Ordered"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCheck size={11} className="shrink-0" />}
-                              <span className="truncate">Ordered</span>
+                              <span className="truncate">Make Order</span>
                             </button>
                             <button
                               disabled={isProcessing}
                               onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                              className="flex-1 h-6.5 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                              title="Mark order as Completed and open POS prefilled"
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Open POS to bill this order"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
@@ -1824,13 +1816,13 @@ export const QuickAssistSidebar = memo(({
                               title="Mark all requests as Ready and queue arrival WhatsApp"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
-                              <span className="truncate">Ready</span>
+                              <span className="truncate">Mark Ready</span>
                             </button>
                             <button
                               disabled={isProcessing}
                               onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                              className="flex-1 h-6.5 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                              title="Mark all requests as Completed and open POS prefilled"
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Open POS to bill this customer (disarms auto-reminders)"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
@@ -1841,17 +1833,17 @@ export const QuickAssistSidebar = memo(({
                             <button
                               disabled={isProcessing}
                               onClick={() => handleUpdateGroupStatus(group, 'Ordered')}
-                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
                               title="Mark all requests as Ordered"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCheck size={11} className="shrink-0" />}
-                              <span className="truncate">Ordered</span>
+                              <span className="truncate">Make Order</span>
                             </button>
                             <button
                               disabled={isProcessing}
                               onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
-                              className="flex-1 h-6.5 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                              title="Mark all requests as Completed and open POS prefilled"
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Open POS to bill this customer"
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>

@@ -1708,13 +1708,12 @@ export const RefillsSection: React.FC = () => {
                             onClick={() => handleMarkReadyPatient(selectedPatient)}
                             disabled={markingReady}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                            title="Send collection reminder WhatsApp (due date + store hours auto from Settings)"
+                            title="Mark refills ready and send collection reminder"
                           >
                             <Send size={12} className={markingReady ? 'animate-pulse' : ''} />
-                            <span>{markingReady ? 'Sending…' : 'Send Reminder'}</span>
+                            <span>{markingReady ? 'Sending…' : 'Mark Ready'}</span>
                           </button>
                           {posBtn}
-                          {editBtn}
                         </>
                       );
                     }

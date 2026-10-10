@@ -1,73 +1,63 @@
-# Implementation Plan: Dynamic Operating Hours & Market Cutoffs in Refill Messaging
+# Unified Quick Assist & Refill Workflow: Order Progression, Persistent Visibility & POS Disarm
 
-> **User Request & Requirements:**
-> - Make refill messages dynamically aware of actual store operating hours (formatted clearly in 12-hour AM/PM format, not rigid/military '9-10').
-> - Automatically detect and notify customers if the store is currently closed, on weekly off, or if the wholesale distributor market / cutoff has passed for placing orders.
-> - Include expected fulfillment/procurement delivery windows (`getDynamicDeliveryNotice`) in customer confirmation messages so expectations are clear when orders are placed after-hours or on weekends/holidays.
-
----
-
-## 1. Root Cause & Architectural Strategy
-
-1. **Refill Confirmation Acknowledgment Missing Market Notice**:
-   - In `src/services/whatsappIntentService.ts` (lines 4800–4825), the confirmation message prints raw `sched.openTime to sched.closeTime` (e.g. `09:00 to 22:00`).
-   - It did not incorporate `getDynamicDeliveryNotice(db)`, which calculates whether the wholesale market cutoff has passed (e.g. after-hours order or Sunday market closure) and computes the exact expected delivery date and slot via `orderScheduleService.ts`.
-
-2. **24-Hour Military Time Format in Refill Reminders**:
-   - In `src/routes/refills.ts:buildRefillReminderMessage`, hours are displayed as `09:00 to 22:00` and `(Store open 09:00 - 22:00)`.
-   - We will format operating hours using user-friendly 12-hour format with AM/PM (e.g. `9:00 AM to 10:00 PM`) and include weekly off details.
-
-3. **Staged Refill Notification Incomplete Context**:
-   - In `src/services/refillService.ts:syncStagedRefillNotificationForPatient`, reminders did not load the store's operating schedule or check for upcoming weekly off days.
-   - We will fetch `getPharmacyOperatingSchedule(db)` to embed dynamic store hours and upcoming closure notices directly into staged reminders.
+## Overview
+This plan implements the complete unified order workflow across Quick Assist, CRM Refills, and Special/Online orders:
+1. **Initial State (Pending / New):**
+   - Refills: `[Add to Cart]` + `[Edit]`
+   - Special Orders / Online Orders: `[Make Order]` + `[Edit]`
+2. **Ordered State:**
+   - Both switch to exactly two buttons: `[Mark Ready]` and `[POS]`
+3. **Ready State (Persistent Visibility & Auto-Reminder):**
+   - Clicking `[Mark Ready]` marks the item ready and arms `auto_remind = 1` for sending collection reminders.
+   - The order **stays visible** in Quick Assist and CRM Refills until the user clicks `[POS]`.
+4. **POS Click (Instant Disarm & Clearance):**
+   - When the user clicks `[POS]`, the app immediately calls `/sales/counter-session` to:
+     - Disarm `auto_remind = 0`
+     - Purge and cancel any pending / queued collection reminders
+     - Remove the order from the pending reminder/action queue, even before the bill is saved!
 
 ---
 
-## 2. Proposed Changes
+## Changes by Subsystem
 
-### Backend
+### 1. Refill & Order Settled Logic (`frontend/src/utils/refillSettled.ts`)
+- Modify `isRefillSettled` and `isOrderItemSettled` so that an item is only considered settled from the pending action list once POS billing / counter session has been engaged or the order is fulfilled/completed.
+- Ensure ready orders stay visible in Quick Assist until POS is clicked.
 
-#### 1. `src/services/whatsappIntentService.ts`
-- In the refill confirmation acknowledgment section:
-  - Format `sched.openTime` and `sched.closeTime` using `formatTime12h` (e.g. `9:00 AM to 10:00 PM`).
-  - Append `sched.weeklyOff` (if configured) so customers know regular weekly off days.
-  - Call `await getDynamicDeliveryNotice(db)` and append the dynamic expected delivery / market closure notice to the acknowledgment message.
+### 2. Quick Assist Panel (`frontend/src/components/QuickAssistSidebar.tsx`)
+- Standardize button progression:
+  - **Refills:**
+    - `upcoming`: `[Add to Cart]` + `[Edit]` (or `[Already Added]` if external)
+    - `ordered`: `[Mark Ready]` + `[POS]`
+    - `ready`: Keep visible! Show `[Re-Send Reminder]` + `[POS]`
+  - **Special Orders & Online Orders:**
+    - `Pending`: `[Make Order]` + `[Edit]` (plus cancel)
+    - `Ordered`: `[Mark Ready]` + `[POS]`
+    - `Ready`: Keep visible! Show `[Resend]` + `[POS]`
+- Update `openPos` handler across all order types:
+  - Immediately disarms `auto_remind` on backend via `/sales/counter-session`
+  - Optimistically marks the order/refill as POS-engaged in the sidebar so it stops background reminder loops immediately.
 
-#### 2. `src/routes/refills.ts`
-- In `buildRefillReminderMessage`:
-  - Format `openT` and `closeT` through `formatTime12h` so reminder messages display `9:00 AM to 10:00 PM` instead of `09:00 to 22:00`.
-  - Update English, Hindi, and Marathi templates to display clean, localized 12-hour store hours.
+### 3. CRM Refills Section (`frontend/src/pages/CRM/RefillsSection.tsx`)
+- Prevent hiding patients who are in 'Ready' status from the Overdue / Due Soon action tabs until POS is clicked or sale is made.
+- Standardize the buttons: `[Add to Cart]`, then `[Mark Ready]` + `[POS]`.
 
-#### 3. `src/services/refillService.ts`
-- In `syncStagedRefillNotificationForPatient`:
-  - Load `getPharmacyOperatingSchedule(db)`.
-  - Check upcoming weekly off days (`isOffDayUpcoming`).
-  - Include dynamic store hours and weekly off alert in staged reminder messages.
-
----
-
-## 3. Verification Plan
-
-### Automated Verification
-- Run `npm run guardrails` (`tsc --noEmit` and performance checks).
-- Run `node scripts/quick-update.mjs` (knowledge graph sync).
-
-### Functional & Scenario Verification
-1. **Refill Confirmation Acknowledgment**:
-   - Verify acknowledgment contains clean 12-hour operating hours (e.g. `9:00 AM to 10:00 PM`).
-   - Verify post-cutoff / closed market notice is appended when ordering outside market hours.
-2. **Reminder Message Formatting**:
-   - Verify `buildRefillReminderMessage` outputs 12-hour store hours.
-   - Verify weekly off notice appears if next day / due day is an off day.
+### 4. Backend Disarm & Counter Session Safety (`src/routes/sales.ts`)
+- Ensure `/sales/counter-session` and POS bill save immediately mark `auto_remind = 0`, clear collection queues, and broadcast update events.
 
 ---
 
-## 4. Completed Tasks
-- [x] Task 1: Add dynamic delivery notice and 12-hour store hours to refill confirmation acknowledgment in `whatsappIntentService.ts`
-  - *Completed*: Updated `whatsappIntentService.ts` to format operating hours in 12-hour AM/PM format (e.g. `9:00 AM – 10:00 PM`), append weekly off, and attach `getDynamicDeliveryNotice(db)` so customers receive expected delivery slots or post-cutoff/market closure notifications.
-- [x] Task 2: Format operating hours as 12-hour AM/PM in `buildRefillReminderMessage` in `src/routes/refills.ts`
-  - *Completed*: Added `formatTime12h` in `src/routes/refills.ts` to convert `09:00 - 22:00` into `9:00 AM – 10:00 PM` across English, Hindi, and Marathi reminder and collection templates.
-- [x] Task 3: Embed dynamic store hours & weekly off awareness into `syncStagedRefillNotificationForPatient` in `src/services/refillService.ts`
-  - *Completed*: In `src/services/refillService.ts`, dynamically load `getPharmacyOperatingSchedule(db)`, calculate upcoming weekly off closures, and embed formatted 12-hour hours and off-day warnings in staged messages.
-- [x] Task 4: Run `npm run guardrails` and update knowledge graph with `quick-update.mjs`
-  - *Completed*: Verified with `npm run guardrails` (`tsc --noEmit` passed clean, 0 violations). Synced knowledge graph with `node scripts/quick-update.mjs` (1173 nodes, 782 edges updated).
+## Verification Plan
+1. Check TypeScript compilation (`tsc --noEmit`).
+2. Run automated guardrails (`npm run guardrails`).
+3. Update Auto-Knowledge Graph (`node scripts/quick-update.mjs`).
+4. Verify UI button progression and POS disarm flow.
+
+---
+
+## Completion Checklist
+- [x] Task 1: Update `refillSettled.ts` to keep Ready items visible until POS engagement.
+- [x] Task 2: Standardize button states and POS disarm in `QuickAssistSidebar.tsx`.
+- [x] Task 3: Update `RefillsSection.tsx` so Ready patients stay visible with POS button.
+- [x] Task 4: Verify backend disarm on POS click in `sales.ts`.
+- [x] Task 5: Run guardrails and update knowledge graph.
