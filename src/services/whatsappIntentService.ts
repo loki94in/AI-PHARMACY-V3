@@ -4515,6 +4515,13 @@ export async function handleInbound(msg: any): Promise<void> {
 
     const db = await dbManager.getConnection();
 
+    // 0. AI Bot Master Toggle Check
+    const botToggleRow = await db.get("SELECT value FROM app_settings WHERE key = 'wa_bot_enabled'");
+    if (botToggleRow?.value === 'false') {
+      console.log(`[Intent Service] AI Auto-Reply Bot is disabled in Settings. Skipping reply for ${chatId}.`);
+      return;
+    }
+
     // 1-lang. Resolve existing chat language & detect new language
     let chatLang: SupportedLanguage = 'en';
     const cleanDigitsForLang = (phone || '').replace(/\D/g, '').slice(-10);

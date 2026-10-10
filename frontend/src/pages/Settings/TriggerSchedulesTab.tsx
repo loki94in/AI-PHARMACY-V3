@@ -5,7 +5,7 @@ import { broadcastContactDataChanged, updateSettingsCache } from '../../utils/se
 import { useModalEscape, shortcutEvent } from '../../services/keyboardShortcuts';
 import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
-import { Database, Trash2, Save, RefreshCw, Zap, Clock, RotateCcw, AlertTriangle, Send, Plus, CheckCircle2, MessageCircle, Mail, Stethoscope, Truck, Check, ShoppingCart, Phone } from 'lucide-react';
+import { Database, Trash2, Save, RefreshCw, Zap, Clock, RotateCcw, AlertTriangle, Send, Plus, CheckCircle2, MessageCircle, Mail, Stethoscope, Truck, Check, ShoppingCart, Phone, Bot, Sliders, ShieldCheck, Sparkles, UserCheck } from 'lucide-react';
 
 export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Record<string, string>; refetchSettings: () => void }) {
   const [formData, setFormData] = useState({
@@ -45,12 +45,22 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
     triggerWhatsappQueueEnabled: rawSettings.trigger_whatsapp_queue_enabled !== 'false',
     triggerWhatsappQueueIntervalSec: rawSettings.trigger_whatsapp_queue_interval_sec || '30',
 
-    // 7b. WhatsApp Smart Auto-Reply Timing
-    waBotColdDelayMin: rawSettings.wa_bot_cold_delay_min_sec || '35',
-    waBotColdDelayMax: rawSettings.wa_bot_cold_delay_max_sec || '60',
-    waBotWarmDelayMin: rawSettings.wa_bot_warm_delay_min_sec || '10',
-    waBotWarmDelayMax: rawSettings.wa_bot_warm_delay_max_sec || '17',
+    // 7b. WhatsApp AI Bot & Auto-Reply Manager
+    waBotEnabled: rawSettings.wa_bot_enabled !== 'false',
+    waBotSpeedMode: rawSettings.wa_bot_speed_mode || 'fast',
+    waBotColdDelayMin: rawSettings.wa_bot_cold_delay_min_sec || '5',
+    waBotColdDelayMax: rawSettings.wa_bot_cold_delay_max_sec || '10',
+    waBotWarmDelayMin: rawSettings.wa_bot_warm_delay_min_sec || '3',
+    waBotWarmDelayMax: rawSettings.wa_bot_warm_delay_max_sec || '5',
     waBotWarmWindowMin: rawSettings.wa_bot_warm_window_minutes || '20',
+    waBotMessageBundlingSec: rawSettings.wa_bot_message_bundling_sec || '3',
+    waBotHumanReviewMode: rawSettings.wa_bot_human_review_mode === 'true',
+    waBotTakeoverResumeMin: rawSettings.wa_bot_takeover_resume_min || '15',
+    waBotIdleGreetingEnabled: rawSettings.wa_bot_idle_greeting_enabled === 'true',
+    waBotIdleGreetingText: rawSettings.wa_bot_idle_greeting_text || '',
+    waBotAfterHoursEnabled: rawSettings.wa_bot_after_hours_enabled !== 'false',
+    waBotAfterHoursText: rawSettings.wa_bot_after_hours_text || '',
+    whatsappIdleSleepMin: rawSettings.whatsapp_idle_sleep_min || '0',
 
     // 8. Email PDF Invoice Poller
     triggerEmailPollerEnabled: rawSettings.trigger_email_poller_enabled !== 'false',
@@ -137,12 +147,22 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
         trigger_pharmarack_refresh_interval_min: formData.triggerPharmarackRefreshIntervalMin,
         trigger_whatsapp_queue_enabled: formData.triggerWhatsappQueueEnabled ? 'true' : 'false',
         trigger_whatsapp_queue_interval_sec: formData.triggerWhatsappQueueIntervalSec,
-        // Smart auto-reply timing
+        // 7b. WhatsApp AI Bot & Auto-Reply Manager
+        wa_bot_enabled: formData.waBotEnabled ? 'true' : 'false',
+        wa_bot_speed_mode: formData.waBotSpeedMode,
         wa_bot_cold_delay_min_sec: formData.waBotColdDelayMin,
         wa_bot_cold_delay_max_sec: formData.waBotColdDelayMax,
         wa_bot_warm_delay_min_sec: formData.waBotWarmDelayMin,
         wa_bot_warm_delay_max_sec: formData.waBotWarmDelayMax,
         wa_bot_warm_window_minutes: formData.waBotWarmWindowMin,
+        wa_bot_message_bundling_sec: formData.waBotMessageBundlingSec,
+        wa_bot_human_review_mode: formData.waBotHumanReviewMode ? 'true' : 'false',
+        wa_bot_takeover_resume_min: formData.waBotTakeoverResumeMin,
+        wa_bot_idle_greeting_enabled: formData.waBotIdleGreetingEnabled ? 'true' : 'false',
+        wa_bot_idle_greeting_text: formData.waBotIdleGreetingText,
+        wa_bot_after_hours_enabled: formData.waBotAfterHoursEnabled ? 'true' : 'false',
+        wa_bot_after_hours_text: formData.waBotAfterHoursText,
+        whatsapp_idle_sleep_min: formData.whatsappIdleSleepMin,
         trigger_email_poller_enabled: formData.triggerEmailPollerEnabled ? 'true' : 'false',
         trigger_email_poller_interval_min: formData.triggerEmailPollerIntervalMin,
         trigger_doctor_report_enabled: formData.triggerDoctorReportEnabled ? 'true' : 'false',
@@ -520,58 +540,373 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
           </div>
         </div>
 
-        {/* Auto-Reply Timing Card */}
-        <div className="p-4 rounded-2xl bg-bg3/30 border border-border space-y-3">
-          <div className="flex items-center gap-2 mb-1">
-            <MessageCircle size={16} className="text-emerald-400" />
-            <span className="text-xs font-bold text-text">🤖 Auto-Reply Timing</span>
+        {/* 🤖 WhatsApp AI Bot & Auto-Reply Manager (Full-Width Card) */}
+        <div className="col-span-1 md:col-span-2 p-5 rounded-2xl bg-bg3/30 border border-border space-y-5">
+          {/* Header & Master Toggle */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <Bot size={20} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-text">🤖 WhatsApp AI Bot & Auto-Reply Control Center</h3>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    formData.waBotEnabled
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  }`}>
+                    {formData.waBotEnabled ? 'AI Bot Active' : 'AI Bot Paused'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted mt-0.5">
+                  Full manual control over response speed, idle states, 24/7 background listener, and human takeover safeguards.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-text">Master Bot Switch:</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.waBotEnabled}
+                  onChange={(e) => setFormData({ ...formData, waBotEnabled: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-bg3 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+              </label>
+            </div>
           </div>
-          <p className="text-[11px] text-muted">Controls how long the bot waits before replying. Cold = new/inactive customer. Warm = active chat within the warm window.</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-text">Cold Min (sec)</label>
-              <input
-                type="number" min="5" max="300"
-                value={formData.waBotColdDelayMin}
-                onChange={(e) => setFormData({ ...formData, waBotColdDelayMin: e.target.value })}
-                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-              />
+
+          {/* Quick Speed Presets Bar */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-text flex items-center gap-1.5">
+              <Zap size={14} className="text-amber-400" />
+              <span>Response Speed Preset</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({
+                    ...formData,
+                    waBotSpeedMode: 'fast',
+                    waBotColdDelayMin: '5',
+                    waBotColdDelayMax: '10',
+                    waBotWarmDelayMin: '3',
+                    waBotWarmDelayMax: '5'
+                  });
+                }}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  formData.waBotSpeedMode === 'fast'
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-text ring-1 ring-emerald-500/30'
+                    : 'bg-bg2/50 border-border text-muted hover:border-border/80'
+                }`}
+              >
+                <div className="text-xs font-bold text-text flex items-center justify-between">
+                  <span>⚡ Fast Human</span>
+                  {formData.waBotSpeedMode === 'fast' && <Check size={12} className="text-emerald-400" />}
+                </div>
+                <div className="text-[10px] text-muted mt-0.5">5–10s Idle / 3–5s Active (Recommended)</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({
+                    ...formData,
+                    waBotSpeedMode: 'instant',
+                    waBotColdDelayMin: '1',
+                    waBotColdDelayMax: '3',
+                    waBotWarmDelayMin: '1',
+                    waBotWarmDelayMax: '2'
+                  });
+                }}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  formData.waBotSpeedMode === 'instant'
+                    ? 'bg-primary/15 border-primary/40 text-text ring-1 ring-primary/30'
+                    : 'bg-bg2/50 border-border text-muted hover:border-border/80'
+                }`}
+              >
+                <div className="text-xs font-bold text-text flex items-center justify-between">
+                  <span>🚀 Instant Mode</span>
+                  {formData.waBotSpeedMode === 'instant' && <Check size={12} className="text-primary" />}
+                </div>
+                <div className="text-[10px] text-muted mt-0.5">1–3s Immediate reply</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({
+                    ...formData,
+                    waBotSpeedMode: 'safe',
+                    waBotColdDelayMin: '20',
+                    waBotColdDelayMax: '45',
+                    waBotWarmDelayMin: '10',
+                    waBotWarmDelayMax: '17'
+                  });
+                }}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  formData.waBotSpeedMode === 'safe'
+                    ? 'bg-sky-500/15 border-sky-500/40 text-text ring-1 ring-sky-500/30'
+                    : 'bg-bg2/50 border-border text-muted hover:border-border/80'
+                }`}
+              >
+                <div className="text-xs font-bold text-text flex items-center justify-between">
+                  <span>🛡️ Safe Human-Paced</span>
+                  {formData.waBotSpeedMode === 'safe' && <Check size={12} className="text-sky-400" />}
+                </div>
+                <div className="text-[10px] text-muted mt-0.5">20–45s Idle / 10–17s Active</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, waBotSpeedMode: 'custom' })}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  formData.waBotSpeedMode === 'custom'
+                    ? 'bg-purple-500/15 border-purple-500/40 text-text ring-1 ring-purple-500/30'
+                    : 'bg-bg2/50 border-border text-muted hover:border-border/80'
+                }`}
+              >
+                <div className="text-xs font-bold text-text flex items-center justify-between">
+                  <span>🛠️ Custom Sliders</span>
+                  {formData.waBotSpeedMode === 'custom' && <Check size={12} className="text-purple-400" />}
+                </div>
+                <div className="text-[10px] text-muted mt-0.5">Manual Min/Max control</div>
+              </button>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-text">Cold Max (sec)</label>
-              <input
-                type="number" min="5" max="300"
-                value={formData.waBotColdDelayMax}
-                onChange={(e) => setFormData({ ...formData, waBotColdDelayMax: e.target.value })}
-                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-              />
+          </div>
+
+          {/* Granular Delay Settings: Idle vs Continuous */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Box 1: Idle Reply (Cold) */}
+            <div className="p-4 rounded-xl bg-bg2/40 border border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Clock size={15} className="text-amber-400" />
+                <span className="text-xs font-bold text-text">⏳ Idle Reply Timing (Cold Conversation)</span>
+              </div>
+              <p className="text-[11px] text-muted">
+                Applied when a customer writes after a quiet period or is brand new.
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-semibold text-text">Min Delay (sec)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="180"
+                    value={formData.waBotColdDelayMin}
+                    onChange={(e) => setFormData({ ...formData, waBotColdDelayMin: e.target.value, waBotSpeedMode: 'custom' })}
+                    className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold text-text">Max Delay (sec)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="300"
+                    value={formData.waBotColdDelayMax}
+                    onChange={(e) => setFormData({ ...formData, waBotColdDelayMax: e.target.value, waBotSpeedMode: 'custom' })}
+                    className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-semibold text-text">Idle Threshold (minutes)</label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="1440"
+                    value={formData.waBotWarmWindowMin}
+                    onChange={(e) => setFormData({ ...formData, waBotWarmWindowMin: e.target.value })}
+                    className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  />
+                  <span className="text-[10px] text-muted mt-0.5 block">Chat is considered idle if quiet for &gt; this many minutes (default 20 min).</span>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-text">Warm Min (sec)</label>
-              <input
-                type="number" min="1" max="120"
-                value={formData.waBotWarmDelayMin}
-                onChange={(e) => setFormData({ ...formData, waBotWarmDelayMin: e.target.value })}
-                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-              />
+
+            {/* Box 2: Continuous Reply (Warm) */}
+            <div className="p-4 rounded-xl bg-bg2/40 border border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <MessageCircle size={15} className="text-emerald-400" />
+                <span className="text-xs font-bold text-text">💬 Continuous Reply Timing (Active Chat)</span>
+              </div>
+              <p className="text-[11px] text-muted">
+                Applied during an ongoing conversation within the active idle threshold.
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-semibold text-text">Min Delay (sec)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={formData.waBotWarmDelayMin}
+                    onChange={(e) => setFormData({ ...formData, waBotWarmDelayMin: e.target.value, waBotSpeedMode: 'custom' })}
+                    className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold text-text">Max Delay (sec)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="120"
+                    value={formData.waBotWarmDelayMax}
+                    onChange={(e) => setFormData({ ...formData, waBotWarmDelayMax: e.target.value, waBotSpeedMode: 'custom' })}
+                    className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-semibold text-text">Message Bundling Window (sec)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="15"
+                    value={formData.waBotMessageBundlingSec}
+                    onChange={(e) => setFormData({ ...formData, waBotMessageBundlingSec: e.target.value })}
+                    className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+                  />
+                  <span className="text-[10px] text-muted mt-0.5 block">Combines multiple rapid messages from the same customer into 1 unified reply.</span>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-text">Warm Max (sec)</label>
-              <input
-                type="number" min="1" max="120"
-                value={formData.waBotWarmDelayMax}
-                onChange={(e) => setFormData({ ...formData, waBotWarmDelayMax: e.target.value })}
-                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-              />
+          </div>
+
+          {/* 24/7 Always-Awake Inbound Listener & Human Safeguards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            {/* Listener Mode */}
+            <div className="p-4 rounded-xl bg-bg2/40 border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap size={15} className="text-cyan-400" />
+                  <span className="text-xs font-bold text-text">24/7 Background Listener (Prevents Teardown)</span>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  formData.whatsappIdleSleepMin === '0'
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                }`}>
+                  {formData.whatsappIdleSleepMin === '0' ? '24/7 Always Awake' : `Sleeps after ${formData.whatsappIdleSleepMin}m`}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted">
+                Keeps WhatsApp headless browser resident so messages sent after 20+ min of idle are never missed.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, whatsappIdleSleepMin: '0' })}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                    formData.whatsappIdleSleepMin === '0'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : 'bg-bg text-muted border-border hover:border-border/80'
+                  }`}
+                >
+                  24/7 Always Awake (0 min sleep)
+                </button>
+                <div className="flex items-center gap-1.5 text-xs text-muted">
+                  <span>or sleep after</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="480"
+                    value={formData.whatsappIdleSleepMin}
+                    onChange={(e) => setFormData({ ...formData, whatsappIdleSleepMin: e.target.value })}
+                    className="w-16 px-2 py-1 text-xs bg-bg border border-border rounded-lg text-text text-center focus:outline-none focus:border-primary"
+                  />
+                  <span>min</span>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-col gap-1 col-span-2">
-              <label className="text-[11px] font-semibold text-text">Warm Window (minutes) — active convo threshold</label>
-              <input
-                type="number" min="5" max="120"
-                value={formData.waBotWarmWindowMin}
-                onChange={(e) => setFormData({ ...formData, waBotWarmWindowMin: e.target.value })}
-                className="w-full px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-              />
+
+            {/* Human-in-the-Loop Safeguard */}
+            <div className="p-4 rounded-xl bg-bg2/40 border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <UserCheck size={15} className="text-purple-400" />
+                  <span className="text-xs font-bold text-text">Human-in-the-Loop & Takeover Safeguards</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted">
+                Pharmacist manual takeover pauses the bot when counter staff starts chatting.
+              </p>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-text">Human Takeover Silence Timeout:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="5"
+                      max="120"
+                      value={formData.waBotTakeoverResumeMin}
+                      onChange={(e) => setFormData({ ...formData, waBotTakeoverResumeMin: e.target.value })}
+                      className="w-16 px-2 py-1 text-xs bg-bg border border-border rounded-lg text-text text-center focus:outline-none focus:border-primary"
+                    />
+                    <span className="text-xs text-muted">minutes</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-muted block">AI bot resumes automatic standby after pharmacist is silent for this long.</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Custom Templates Section */}
+          <div className="p-4 rounded-xl bg-bg2/40 border border-border space-y-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={15} className="text-amber-400" />
+              <span className="text-xs font-bold text-text">Custom Message Templates & After-Hours</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Idle Re-Engagement Greeting */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-text">Idle Re-Engagement Greeting:</label>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.waBotIdleGreetingEnabled}
+                      onChange={(e) => setFormData({ ...formData, waBotIdleGreetingEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-8 h-4 bg-bg3 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary"></div>
+                  </label>
+                </div>
+                <textarea
+                  rows={2}
+                  value={formData.waBotIdleGreetingText}
+                  onChange={(e) => setFormData({ ...formData, waBotIdleGreetingText: e.target.value })}
+                  placeholder="Optional custom welcome line sent when replying after long idle period (leave blank for standard greeting)..."
+                  className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary resize-none"
+                />
+              </div>
+
+              {/* After-Hours Message */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-text">Store-Closed / After-Hours Auto-Reply:</label>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.waBotAfterHoursEnabled}
+                      onChange={(e) => setFormData({ ...formData, waBotAfterHoursEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-8 h-4 bg-bg3 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary"></div>
+                  </label>
+                </div>
+                <textarea
+                  rows={2}
+                  value={formData.waBotAfterHoursText}
+                  onChange={(e) => setFormData({ ...formData, waBotAfterHoursText: e.target.value })}
+                  placeholder="Custom message sent outside operating hours (e.g. 'We are currently closed. We will process your order first thing at 9:00 AM!')..."
+                  className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary resize-none"
+                />
+              </div>
             </div>
           </div>
         </div>

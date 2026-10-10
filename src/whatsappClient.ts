@@ -1399,7 +1399,9 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
         const isFromMe = !!msg.fromMe;
         const nowMs = Date.now();
-        const manualTimeoutMs = 5 * 60 * 1000;
+        const takeoverSettingRow = await db.get("SELECT value FROM app_settings WHERE key = 'wa_bot_takeover_resume_min'").catch(() => null);
+        const takeoverMinutes = takeoverSettingRow?.value ? Math.max(1, parseInt(takeoverSettingRow.value, 10)) : 15;
+        const manualTimeoutMs = (isNaN(takeoverMinutes) ? 15 : takeoverMinutes) * 60 * 1000;
 
         // Fetch existing session state to evaluate Human Takeover
         const existingChatRow = await db.get(

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * waSmartReplyScheduler.ts
  * T4: WhatsApp Smart Reply Scheduler - human-like tiered delays, dedup, and read-gate.
  *
@@ -38,37 +38,82 @@ class WaSmartReplyScheduler {
   }
 
   private async loadSettings(): Promise<{
+    botEnabled: boolean;
+    speedMode: string;
     coldMin: number; coldMax: number;
     warmMin: number; warmMax: number;
     warmWindowMs: number;
+    bundlingMs: number;
+    humanReviewMode: boolean;
   }> {
     try {
       const db = await dbManager.getConnection();
       const keys = [
+        'wa_bot_enabled',
+        'wa_bot_speed_mode',
         'wa_bot_cold_delay_min_sec',
         'wa_bot_cold_delay_max_sec',
         'wa_bot_warm_delay_min_sec',
         'wa_bot_warm_delay_max_sec',
         'wa_bot_warm_window_minutes',
+        'wa_bot_message_bundling_sec',
+        'wa_bot_human_review_mode',
       ];
       const rows: { key: string; value: string }[] = await db.all(
         `SELECT key, value FROM app_settings WHERE key IN (${keys.map(() => '?').join(',')})`,
         keys
       );
-      const map = new Map(rows.map((r: { key: string; value: string }) => [r.key, Number(r.value)]));
-      const coldMin = map.get('wa_bot_cold_delay_min_sec') || WaSmartReplyScheduler.DEFAULT_COLD_MIN;
-      const coldMax = map.get('wa_bot_cold_delay_max_sec') || WaSmartReplyScheduler.DEFAULT_COLD_MAX;
-      const warmMin = map.get('wa_bot_warm_delay_min_sec') || WaSmartReplyScheduler.DEFAULT_WARM_MIN;
-      const warmMax = map.get('wa_bot_warm_delay_max_sec') || WaSmartReplyScheduler.DEFAULT_WARM_MAX;
-      const warmWindowMin = map.get('wa_bot_warm_window_minutes') || WaSmartReplyScheduler.DEFAULT_WARM_WINDOW_MIN;
-      return { coldMin, coldMax, warmMin, warmMax, warmWindowMs: warmWindowMin * 60 * 1000 };
+      const strMap = new Map(rows.map((r: { key: string; value: string }) => [r.key, r.value]));
+      const botEnabled = strMap.get('wa_bot_enabled') !== 'false';
+      const speedMode = strMap.get('wa_bot_speed_mode') || 'fast';
+      const humanReviewMode = strMap.get('wa_bot_human_review_mode') === 'true';
+
+      let coldMin = Number(strMap.get('wa_bot_cold_delay_min_sec')) || 5;
+      let coldMax = Number(strMap.get('wa_bot_cold_delay_max_sec')) || 10;
+      let warmMin = Number(strMap.get('wa_bot_warm_delay_min_sec')) || 3;
+      let warmMax = Number(strMap.get('wa_bot_warm_delay_max_sec')) || 5;
+      const warmWindowMin = Number(strMap.get('wa_bot_warm_window_minutes')) || 20;
+      const bundlingSec = Number(strMap.get('wa_bot_message_bundling_sec')) || 3;
+
+      if (speedMode === 'instant') {
+        coldMin = 1;
+        coldMax = 3;
+        warmMin = 1;
+        warmMax = 2;
+      } else if (speedMode === 'fast') {
+        coldMin = Math.min(coldMin, 5);
+        coldMax = Math.min(coldMax, 10);
+        warmMin = Math.min(warmMin, 3);
+        warmMax = Math.min(warmMax, 5);
+      } else if (speedMode === 'safe') {
+        coldMin = 20;
+        coldMax = 45;
+        warmMin = 10;
+        warmMax = 17;
+      }
+
+      return {
+        botEnabled,
+        speedMode,
+        coldMin,
+        coldMax,
+        warmMin,
+        warmMax,
+        warmWindowMs: warmWindowMin * 60 * 1000,
+        bundlingMs: bundlingSec * 1000,
+        humanReviewMode,
+      };
     } catch {
       return {
-        coldMin: WaSmartReplyScheduler.DEFAULT_COLD_MIN,
-        coldMax: WaSmartReplyScheduler.DEFAULT_COLD_MAX,
-        warmMin: WaSmartReplyScheduler.DEFAULT_WARM_MIN,
-        warmMax: WaSmartReplyScheduler.DEFAULT_WARM_MAX,
-        warmWindowMs: WaSmartReplyScheduler.DEFAULT_WARM_WINDOW_MIN * 60 * 1000,
+        botEnabled: true,
+        speedMode: 'fast',
+        coldMin: 5,
+        coldMax: 10,
+        warmMin: 3,
+        warmMax: 5,
+        warmWindowMs: 20 * 60 * 1000,
+        bundlingMs: 3000,
+        humanReviewMode: false,
       };
     }
   }
@@ -125,22 +170,26 @@ class WaSmartReplyScheduler {
 
     (async () => {
       try {
+        const settings = await this.loadSettings();
+        if (!settings.botEnabled) {
+          console.log(`[SmartReplyScheduler] AI Auto-Reply Bot is paused/disabled in Settings. Skipping reply for ${phoneKey}.`);
+          return;
+        }
+
         if (await this.isAlreadyReadByPharmacist(chatId)) {
           console.log(`[SmartReplyScheduler] Suppressed reply for ${phoneKey} - already read by pharmacist.`);
           return;
         }
 
-        const { coldMin, coldMax, warmMin, warmMax, warmWindowMs } = await this.loadSettings();
-
         let delayMs: number;
         if (opts?.forceCold) {
-          delayMs = WaSmartReplyScheduler.randMs(coldMin, coldMax);
+          delayMs = WaSmartReplyScheduler.randMs(settings.coldMin, settings.coldMax);
         } else {
-          const warm = await this.isWarmConvo(chatId, warmWindowMs);
+          const warm = await this.isWarmConvo(chatId, settings.warmWindowMs);
           delayMs = warm
-            ? WaSmartReplyScheduler.randMs(warmMin, warmMax)
-            : WaSmartReplyScheduler.randMs(coldMin, coldMax);
-          console.log(`[SmartReplyScheduler] Scheduling reply for ${phoneKey} in ${Math.round(delayMs / 1000)}s (${warm ? 'warm' : 'cold'} window).`);
+            ? WaSmartReplyScheduler.randMs(settings.warmMin, settings.warmMax)
+            : WaSmartReplyScheduler.randMs(settings.coldMin, settings.coldMax);
+          console.log(`[SmartReplyScheduler] Scheduling reply for ${phoneKey} in ${Math.round(delayMs / 1000)}s (${warm ? 'warm/continuous' : 'cold/idle'} window, mode=${settings.speedMode}).`);
         }
 
         const timer = setTimeout(async () => {

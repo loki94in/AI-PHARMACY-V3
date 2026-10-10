@@ -752,6 +752,20 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'"); // ponytail: force always-on so AI Bot never misses inbound messages
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('daily_briefing_template', 'detailed')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_speed_mode', 'fast')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_min_sec', '5')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_max_sec', '10')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_min_sec', '3')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_max_sec', '5')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_window_minutes', '20')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_message_bundling_sec', '3')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_human_review_mode', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_takeover_resume_min', '15')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
 
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
     try {
@@ -3780,6 +3794,20 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
     await db.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'"); // ponytail: force always-on so AI Bot never misses inbound messages
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('automation_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_speed_mode', 'fast')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_min_sec', '5')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_cold_delay_max_sec', '10')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_min_sec', '3')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_delay_max_sec', '5')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_warm_window_minutes', '20')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_message_bundling_sec', '3')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_human_review_mode', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_takeover_resume_min', '15')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
 
     // WhatsApp Admin Auto-Escalation defaults
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
