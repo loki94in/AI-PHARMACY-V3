@@ -89,6 +89,7 @@ console.log('[build-sea] ✓ Electron app and resources staged in dist/resources
 // Automatically check for Inno Setup compiler (ISCC.exe) and compile installer if installed
 const isccCandidates = [
   'iscc',
+  path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Inno Setup 6', 'ISCC.exe'),
   'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
   'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
   'C:\\Program Files\\Inno Setup 7\\ISCC.exe'

@@ -1,63 +1,47 @@
-# Unified Quick Assist & Refill Workflow: Order Progression, Persistent Visibility & POS Disarm
+# Environment Setup Implementation Plan: Node.js LTS & Python 3.12
 
-## Overview
-This plan implements the complete unified order workflow across Quick Assist, CRM Refills, and Special/Online orders:
-1. **Initial State (Pending / New):**
-   - Refills: `[Add to Cart]` + `[Edit]`
-   - Special Orders / Online Orders: `[Make Order]` + `[Edit]`
-2. **Ordered State:**
-   - Both switch to exactly two buttons: `[Mark Ready]` and `[POS]`
-3. **Ready State (Persistent Visibility & Auto-Reminder):**
-   - Clicking `[Mark Ready]` marks the item ready and arms `auto_remind = 1` for sending collection reminders.
-   - The order **stays visible** in Quick Assist and CRM Refills until the user clicks `[POS]`.
-4. **POS Click (Instant Disarm & Clearance):**
-   - When the user clicks `[POS]`, the app immediately calls `/sales/counter-session` to:
-     - Disarm `auto_remind = 0`
-     - Purge and cancel any pending / queued collection reminders
-     - Remove the order from the pending reminder/action queue, even before the bill is saved!
+## Context & Root Cause Analysis
+The developer machine underwent cleanup where previously installed software was uninstalled.
+- `node` & `npm` were unrecognized because the previous NVM installation (`C:\Users\ratna\AppData\Local\nvm\v24.16.0`) was removed, leaving broken symlinks in PATH.
+- `python` was unrecognized / broken because previous Python 3.12/3.14 installs were uninstalled, breaking execution aliases.
+- This project (`AI PHARMACY v2`) requires:
+  1. **Node.js LTS** (Node 24.20.0 with npm 11.19.0) for the Express backend, React/Vite frontend, background workers, and scripts.
+  2. **Python 3.12 (64-bit)** for `scispacy` & `spacy` biomedical text processing in `python/scan_nlp/` and `python_scripts/extract_medicine.py` (Python 3.13+ is unsupported by `scispacy 0.5.4` wheels).
 
 ---
 
-## Changes by Subsystem
+## Execution Plan & Completed Steps
 
-### 1. Refill & Order Settled Logic (`frontend/src/utils/refillSettled.ts`)
-- Modify `isRefillSettled` and `isOrderItemSettled` so that an item is only considered settled from the pending action list once POS billing / counter session has been engaged or the order is fulfilled/completed.
-- Ensure ready orders stay visible in Quick Assist until POS is clicked.
+### Step 1: Automated Package Installation via winget
+- Installed Node.js LTS (v24.20.0, npm 11.19.0) via `winget install --id OpenJS.NodeJS.LTS`.
+- Installed Python 3.12 (v3.12.10 64-bit) via `winget install --id Python.Python.3.12`.
 
-### 2. Quick Assist Panel (`frontend/src/components/QuickAssistSidebar.tsx`)
-- Standardize button progression:
-  - **Refills:**
-    - `upcoming`: `[Add to Cart]` + `[Edit]` (or `[Already Added]` if external)
-    - `ordered`: `[Mark Ready]` + `[POS]`
-    - `ready`: Keep visible! Show `[Re-Send Reminder]` + `[POS]`
-  - **Special Orders & Online Orders:**
-    - `Pending`: `[Make Order]` + `[Edit]` (plus cancel)
-    - `Ordered`: `[Mark Ready]` + `[POS]`
-    - `Ready`: Keep visible! Show `[Resend]` + `[POS]`
-- Update `openPos` handler across all order types:
-  - Immediately disarms `auto_remind` on backend via `/sales/counter-session`
-  - Optimistically marks the order/refill as POS-engaged in the sidebar so it stops background reminder loops immediately.
+### Step 2: Session PATH Refresh & Stale Environment Cleanup
+- Cleaned up obsolete / broken paths from User PATH (including dead `C:\nvm4w\nodejs` junction, non-existent Python 3.14 paths, and dead nvm folders).
+- Configured Python 3.12 (`C:\Users\ratna\AppData\Local\Programs\Python\Python312` & `Scripts`) and Node.js (`C:\Program Files\nodejs`) in User and process PATH.
+- Installed required VC++ 140 runtime libraries for C-extensions (`numpy_ops`).
 
-### 3. CRM Refills Section (`frontend/src/pages/CRM/RefillsSection.tsx`)
-- Prevent hiding patients who are in 'Ready' status from the Overdue / Due Soon action tabs until POS is clicked or sale is made.
-- Standardize the buttons: `[Add to Cart]`, then `[Mark Ready]` + `[POS]`.
+### Step 3: Verification of Core Toolchains
+- `node -v` -> `v24.20.0`
+- `npm -v` -> `11.19.0`
+- `python --version` -> `Python 3.12.10`
 
-### 4. Backend Disarm & Counter Session Safety (`src/routes/sales.ts`)
-- Ensure `/sales/counter-session` and POS bill save immediately mark `auto_remind = 0`, clear collection queues, and broadcast update events.
+### Step 4: Python SciSpaCy NLP Environment Setup
+- Recreated virtual environment in `python/scan_nlp/.venv` using Python 3.12.
+- Installed `spacy` (v3.7.5), `scispacy` (v0.6.2), `en_core_sci_sm` (v0.5.4), `en_ner_bc5cdr_md` (v0.5.4), and `click`.
+- Linked `python_scripts/.venv` to the working Python 3.12 virtual environment.
+- Verified `extract_medicine.py` and model loading run with zero errors.
 
----
-
-## Verification Plan
-1. Check TypeScript compilation (`tsc --noEmit`).
-2. Run automated guardrails (`npm run guardrails`).
-3. Update Auto-Knowledge Graph (`node scripts/quick-update.mjs`).
-4. Verify UI button progression and POS disarm flow.
+### Step 5: Project Dependency & Guardrails Verification
+- Verified `npx tsc --noEmit` passes with 0 type errors.
+- Verified `npm run guardrails` passes.
+- Updated auto-knowledge graph via `node scripts/quick-update.mjs`.
 
 ---
 
-## Completion Checklist
-- [x] Task 1: Update `refillSettled.ts` to keep Ready items visible until POS engagement.
-- [x] Task 2: Standardize button states and POS disarm in `QuickAssistSidebar.tsx`.
-- [x] Task 3: Update `RefillsSection.tsx` so Ready patients stay visible with POS button.
-- [x] Task 4: Verify backend disarm on POS click in `sales.ts`.
-- [x] Task 5: Run guardrails and update knowledge graph.
+## Tasks & Completion Checklist
+- [x] Task 1: Install Node.js LTS via winget — Completed (Node.js v24.20.0 installed via winget).
+- [x] Task 2: Install Python 3.12 via winget — Completed (Python 3.12.10 installed via winget).
+- [x] Task 3: Refresh session PATH and verify `node`, `npm`, `python` binaries — Completed (Removed broken junctions & paths; verified all 3 runtimes).
+- [x] Task 4: Configure Python virtual environment and install `scispacy` dependencies — Completed (Rebuilt `.venv`, installed spacy + scispacy models + VC runtime libraries, verified `extract_medicine.py`).
+- [x] Task 5: Verify project health, run guardrails, and update knowledge graph — Completed (tsc --noEmit, guardrails, and quick-update passed).
