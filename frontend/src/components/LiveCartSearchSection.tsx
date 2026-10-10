@@ -373,7 +373,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
         if (isSelectingRef.current) return;
         setSuggestions(mergedList);
         setShowSuggestions(mergedList.length > 0);
-        setActiveSuggestionIndex(mergedList.length > 0 ? 0 : -1);
+        setActiveSuggestionIndex(prev => (prev >= 0 && prev < mergedList.length ? prev : (mergedList.length > 0 ? 0 : -1)));
       } catch (err) {
         console.error('Error searching Pharmarack catalog:', err);
       } finally {
@@ -381,7 +381,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
           setSearchLoading(false);
         }
       }
-    }, 150); // Snappy 150ms debounce
+    }, 120); // Snappy 120ms debounce for near-instant typing feedback
 
     return () => {
       clearTimeout(delayDebounce);

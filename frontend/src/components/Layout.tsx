@@ -3174,6 +3174,14 @@ export const Layout = ({
     };
   }, []);
 
+  // Pre-warm the LiveCartAddModal chunk on idle so shortcut Alt+L opens in 0ms without chunk parse wait
+  useEffect(() => {
+    const idleTimer = window.setTimeout(() => {
+      void import('./LiveCartAddModal');
+    }, 1200);
+    return () => window.clearTimeout(idleTimer);
+  }, []);
+
   // Listen to global keyboard shortcuts for modals (G2)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

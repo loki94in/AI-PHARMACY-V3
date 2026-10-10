@@ -983,16 +983,20 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       setSkippedItemKeys(new Set(freshSkipped));
 
       const hasCache = cachedCartDistributors.length > 0;
-      // Fetch consolidated live cart summary immediately without 350ms delay
+      // Fetch consolidated live cart summary immediately (silent if cached data already exists)
       fetchLiveCartSummary(hasCache);
       checkSession();
 
-      // Also run secondary background refills & recon concurrently immediately
-      Promise.allSettled([
-        fetchPendingRefills(),
-        fetchReconOrders(),
-        fetchIgnoredWords()
-      ]);
+      // Stagger secondary background lists so the UI thread & search input have 100% immediate responsiveness
+      const staggerTimer = setTimeout(() => {
+        Promise.allSettled([
+          fetchPendingRefills(),
+          fetchReconOrders(),
+          fetchIgnoredWords()
+        ]);
+      }, 400);
+
+      return () => clearTimeout(staggerTimer);
     }
   }, [isOpen, checkSession]);
 
