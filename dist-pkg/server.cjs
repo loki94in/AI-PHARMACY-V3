@@ -1312,22 +1312,43 @@ var init_lazyPuppeteer = __esm({
 
 // src/utils/chromeBrowser.ts
 function findChromePath(options) {
-  const paths = [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    process.env.LOCALAPPDATA ? import_path4.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null
-  ];
-  if (options?.includeEdge) {
-    paths.push(
-      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-      process.env.PROGRAMFILES ? import_path4.default.join(process.env.PROGRAMFILES, "Microsoft\\Edge\\Application\\msedge.exe") : null,
-      process.env.LOCALAPPDATA ? import_path4.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
-    );
+  const baseDirs = [
+    process.env.PROGRAMFILES,
+    process.env["ProgramFiles(x86)"],
+    process.env.PROGRAMW6432,
+    process.env.LOCALAPPDATA,
+    "C:\\Program Files",
+    "C:\\Program Files (x86)"
+  ].filter(Boolean);
+  const paths = [];
+  for (const dir of baseDirs) {
+    paths.push(import_path4.default.join(dir, "Google", "Chrome", "Application", "chrome.exe"));
   }
-  for (const p of paths.filter(Boolean)) {
-    if (import_fs4.default.existsSync(p)) {
-      return p;
+  if (options?.includeEdge) {
+    for (const dir of baseDirs) {
+      paths.push(import_path4.default.join(dir, "Microsoft", "Edge", "Application", "msedge.exe"));
+    }
+  }
+  for (const p of paths) {
+    try {
+      if (import_fs4.default.existsSync(p)) {
+        return p;
+      }
+    } catch (_) {
+    }
+  }
+  if (process.platform === "win32") {
+    try {
+      const out = (0, import_child_process.execSync)("where chrome.exe", { stdio: ["ignore", "pipe", "ignore"], timeout: 1e3 }).toString().trim().split(/\r?\n/)[0];
+      if (out && import_fs4.default.existsSync(out)) return out;
+    } catch (_) {
+    }
+    if (options?.includeEdge) {
+      try {
+        const out = (0, import_child_process.execSync)("where msedge.exe", { stdio: ["ignore", "pipe", "ignore"], timeout: 1e3 }).toString().trim().split(/\r?\n/)[0];
+        if (out && import_fs4.default.existsSync(out)) return out;
+      } catch (_) {
+      }
     }
   }
   return null;
@@ -14584,18 +14605,30 @@ async function checkAndSendAfternoonDeliveryBoyReminder() {
     const now = /* @__PURE__ */ new Date();
     const currentH = now.getHours();
     const currentM = now.getMinutes();
-    const isTargetHour = currentH === (targetH || 14);
-    const isWithinMinutes = currentM >= (targetM || 0) && currentM <= (targetM || 0) + 15;
-    if (!isTargetHour || !isWithinMinutes) {
+    const isDue = currentH * 60 + currentM >= (targetH || 14) * 60 + (targetM || 0);
+    if (!isDue) {
       return;
     }
     const alreadySent = await db2.get(
-      `SELECT id FROM automation_notifications 
-       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ? AND status = 'sent'
+      `SELECT id FROM automation_notifications
+       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ?
        LIMIT 1`,
       [todayStr2]
     );
     if (alreadySent) {
+      return;
+    }
+    const anyOrderToday = await db2.get(
+      `SELECT id FROM distributor_dispatch_reminders
+       WHERE date = ? AND status NOT IN ('No Order Today', 'Skipped (PC Offline)') LIMIT 1`,
+      [todayStr2]
+    );
+    const anyPlacedOrderToday = anyOrderToday ? null : await db2.get(
+      `SELECT 1 AS x FROM pharmarack_placed_orders
+       WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ? LIMIT 1`,
+      [todayStr2, todayStr2]
+    ).catch(() => null);
+    if (!anyOrderToday && !anyPlacedOrderToday) {
       return;
     }
     console.log(`[DistributorReminderWorker] Triggering scheduled afternoon Delivery Boy consolidated dispatch at ${targetTime}...`);
@@ -29053,44 +29086,78 @@ var init_pharmarack = __esm({
             "--disable-sync",
             "--mute-audio",
             "https://retailers.pharmarack.com/loginotp"
-          ], { detached: false, stdio: "ignore" });
+          ], { detached: false, stdio: "ignore", windowsHide: false });
+          let pollTimer = null;
+          let tokenCaptured = false;
+          const saveTokenAndBroadcast = async (token, source) => {
+            if (tokenCaptured) return;
+            tokenCaptured = true;
+            console.log(`[LoginWindow] Successfully captured token (${source}):`, token.substring(0, 15) + "...");
+            try {
+              const db2 = await dbManager.getConnection();
+              await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
+              await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+              await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+              Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.ensureCatalogSyncCron()).catch(() => {
+              });
+            } catch (dbErr) {
+              console.error("[LoginWindow] Failed to persist token:", dbErr.message);
+            }
+            tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
+            });
+            try {
+              const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+              eventService2.broadcast("pharmarack_session_refreshed", {
+                status: "success",
+                message: "Pharmarack B2B account linked successfully!"
+              });
+            } catch (_) {
+            }
+          };
+          pollTimer = setInterval(async () => {
+            if (tokenCaptured) {
+              if (pollTimer) clearInterval(pollTimer);
+              return;
+            }
+            try {
+              const token = extractTokenFromProfile(mainProfilePath);
+              if (token) {
+                if (pollTimer) clearInterval(pollTimer);
+                await saveTokenAndBroadcast(token, "active-poll");
+              }
+            } catch (_) {
+            }
+          }, 2e3);
           chromeProc.on("error", (e) => {
+            if (pollTimer) clearInterval(pollTimer);
             console.warn("[LoginWindow] Chrome spawn error:", e.message);
             tokenRefreshScheduler.isLoginWindowActive = false;
           });
           chromeProc.on("exit", async () => {
-            console.log("[LoginWindow] Chrome login window closed. Extracting session token...");
+            if (pollTimer) clearInterval(pollTimer);
+            console.log("[LoginWindow] Chrome login window closed. Checking session token...");
             tokenRefreshScheduler.isLoginWindowActive = false;
             await new Promise((r) => setTimeout(r, 1200));
-            let token = extractTokenFromProfile(mainProfilePath);
-            if (token) {
-              console.log("[LoginWindow] Successfully captured token from profile storage:", token.substring(0, 15) + "...");
-              try {
-                const db2 = await dbManager.getConnection();
-                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
-                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
-                Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.ensureCatalogSyncCron()).catch(() => {
-                });
-              } catch (dbErr) {
-                console.error("[LoginWindow] Failed to persist token:", dbErr.message);
+            if (!tokenCaptured) {
+              let token = extractTokenFromProfile(mainProfilePath);
+              if (token) {
+                await saveTokenAndBroadcast(token, "exit-scan");
+              } else {
+                console.log("[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...");
+                token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
+                if (token) {
+                  await saveTokenAndBroadcast(token, "executeRefresh-fallback");
+                } else {
+                  try {
+                    const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+                    eventService2.broadcast("pharmarack_session_refreshed", {
+                      status: "failed",
+                      error: "Login window closed without capturing token"
+                    });
+                  } catch (_) {
+                  }
+                }
               }
-            } else {
-              console.log("[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...");
-              token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
-            }
-            await tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
-            });
-            try {
-              const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
-              const db2 = await dbManager.getConnection();
-              const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-              const hasToken = !!tokenRow?.value;
-              eventService2.broadcast("pharmarack_session_refreshed", {
-                status: hasToken ? "success" : "failed",
-                error: hasToken ? null : "Login window closed without capturing token"
-              });
-            } catch (_) {
             }
             console.log("[LoginWindow] Pharmarack login window session ended.");
           });
@@ -29099,6 +29166,28 @@ var init_pharmarack = __esm({
           tokenRefreshScheduler.isLoginWindowActive = false;
         }
       })();
+    });
+    router.post("/logout", async (_req, res) => {
+      try {
+        console.log("[Pharmarack] User requested complete clean & logout. Purging session data...");
+        invalidatePharmarackCartCache();
+        await tokenRefreshScheduler.clearSession();
+        try {
+          const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+          eventService2.broadcast("pharmarack_session_refreshed", {
+            status: "logged_out",
+            message: "Pharmarack session cleared and logged out successfully."
+          });
+        } catch (_) {
+        }
+        res.json({
+          success: true,
+          message: "Pharmarack session and profile data cleared successfully."
+        });
+      } catch (err) {
+        console.error("[Pharmarack] Logout error:", err);
+        res.status(500).json({ error: err.message || "Failed to clean Pharmarack session" });
+      }
     });
     serverCartCache = null;
     userCartProbeCache = null;
@@ -29984,7 +30073,7 @@ var init_pharmarack = __esm({
               }
             }
             const catRow = await db2.get(
-              `SELECT store_id, store_name, product_code, product_id, product_name, CAST(availability AS INTEGER) as avail, distributor_price
+              `SELECT store_id, store_name, product_name, CAST(availability AS INTEGER) as avail, distributor_price
            FROM distributor_catalog
            WHERE product_name LIKE ?
              ${matchedStoreId ? "AND store_id = ?" : ""}
@@ -29999,9 +30088,6 @@ var init_pharmarack = __esm({
               if (isCloseMatch) {
                 if (!matchedStoreId && catRow.store_id) matchedStoreId = Number(catRow.store_id);
                 if (catRow.store_name) matchedStoreName = catRow.store_name;
-                if (!matchedProductCode && catRow.product_code) matchedProductCode = catRow.product_code;
-                if (!matchedProductId && catRow.product_id) matchedProductId = Number(catRow.product_id);
-                if (matchedProductCode && matchedProductId) isMapped = true;
               }
               avail = Number(catRow.avail || 0);
             }
@@ -42332,12 +42418,12 @@ async function killOrphanChromeProcesses(keyword = "pharmarack_profile") {
     const resolvedPath = import_path23.default.isAbsolute(keyword) ? keyword : import_path23.default.join(getAppDataDir(), "data", keyword);
     const filterPattern = resolvedPath.replace(/\\/g, "%").replace(/\//g, "%");
     const execResult = await execAsync(
-      `wmic process where "name='chrome.exe' and CommandLine like '%${filterPattern}%'" get ProcessId`,
-      { timeout: 3e3 }
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe') and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
+      { timeout: 4e3 }
     ).catch(async () => {
       return await execAsync(
-        `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name='chrome.exe' and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
-        { timeout: 4e3 }
+        `wmic process where "(name='chrome.exe' or name='msedge.exe') and CommandLine like '%${filterPattern}%'" get ProcessId`,
+        { timeout: 3e3 }
       ).catch(() => ({ stdout: "" }));
     });
     const stdout = execResult.stdout || "";
@@ -42421,7 +42507,8 @@ function extractTokenFromProfile(profilePath) {
                 const parts = m.split(".");
                 const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
                 const exp = (payload.exp || 0) * 1e3;
-                if (exp > Date.now() && payload.role === "Retailer") {
+                const role = String(payload.role || "").toLowerCase();
+                if (exp > Date.now() && (!payload.role || role === "retailer" || payload.retailerId || payload.userId)) {
                   if (exp > latestExp) {
                     latestExp = exp;
                     bestToken = m;
@@ -42538,6 +42625,34 @@ var init_tokenRefreshScheduler = __esm({
       }
       async triggerImmediateCheck(triggerType = "manual_reauth") {
         return this.refreshIfNeeded(triggerType);
+      }
+      async clearSession() {
+        console.log("[TokenRefreshScheduler] Complete clean / logout requested. Purging Pharmarack profile and locks...");
+        this.isLoginWindowActive = false;
+        this.isRefreshing = false;
+        this.refreshPromise = null;
+        this.heartbeatInFlight = false;
+        this.lastCapturedAt = null;
+        this.lastError = null;
+        await killOrphanChromeProcesses("pharmarack_profile");
+        cleanTempProfileFolders();
+        const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        try {
+          if (import_fs24.default.existsSync(mainProfilePath)) {
+            import_fs24.default.rmSync(mainProfilePath, { recursive: true, force: true });
+            console.log("[TokenRefreshScheduler] Main profile directory removed:", mainProfilePath);
+          }
+        } catch (err) {
+          console.warn("[TokenRefreshScheduler] Error removing main profile directory:", err.message);
+        }
+        try {
+          const db2 = await dbManager.getConnection();
+          await db2.run("DELETE FROM app_settings WHERE key = 'pharmarack_session_token'");
+          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'disconnected')");
+          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+        } catch (dbErr) {
+          console.warn("[TokenRefreshScheduler] Error clearing DB session settings:", dbErr.message);
+        }
       }
       async start() {
         if (process.env.DISABLE_BACKGROUND_WORKERS === "true") {
@@ -42778,9 +42893,9 @@ var init_tokenRefreshScheduler = __esm({
         return this.refreshPromise;
       }
       async executeRefreshInternal() {
-        const chromePath = findChromePath();
+        const chromePath = findChromePath({ includeEdge: true });
         if (!chromePath) {
-          console.error("[TokenRefreshScheduler] Chrome path not found.");
+          console.error("[TokenRefreshScheduler] Chrome or Chromium browser path not found.");
           return null;
         }
         const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
@@ -55098,7 +55213,9 @@ var init_connection = __esm({
             const { phase, priority } = txPhase(sql);
             const trimmed = sql.trim().toUpperCase().replace(/;+$/, "");
             if (phase === "begin") {
-              if (self.isTxLocked && self.txDepth > 0) {
+              const callerCtx = requestTxStorage.getStore();
+              const foreignRequestOwnsTx = Boolean(callerCtx && self.txOwner && callerCtx !== self.txOwner);
+              if (self.isTxLocked && self.txDepth > 0 && !foreignRequestOwnsTx) {
                 self.txDepth++;
                 return await originalRun(`SAVEPOINT sp_${self.txDepth}`);
               }
@@ -57054,7 +57171,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.76";
+    APP_VERSION = "0.1.77";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -73119,6 +73236,34 @@ var init_dispatch = __esm({
           [reminderId]
         );
         res.status(201).json({ success: true, reminder: newReminder });
+        if (newReminder && targetDate === (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA")) {
+          (async () => {
+            try {
+              const [globalAuto, afternoonOn, listSent] = await Promise.all([
+                db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
+                db2.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'"),
+                db2.get(
+                  `SELECT id FROM automation_notifications
+               WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ?
+                 AND status IN ('sent', 'pending', 'sending', 'queued') LIMIT 1`,
+                  [targetDate]
+                )
+              ]);
+              if (globalAuto && globalAuto.value !== "true") return;
+              if (afternoonOn?.value !== "true" || !listSent) return;
+              const alreadyNamed = await db2.get(
+                `SELECT id FROM automation_notifications
+             WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ?
+               AND message LIKE ? LIMIT 1`,
+                [targetDate, `%*${cleanName}*%`]
+              );
+              if (alreadyNamed) return;
+              await notificationService.sendConsolidatedDeliveryBoyDispatch([newReminder]);
+            } catch (e) {
+              console.warn("[Dispatch] Late phone-order delivery boy update failed:", e?.message || e);
+            }
+          })();
+        }
       } catch (error) {
         console.error("Manual order creation error:", error);
         res.status(500).json({ error: "Failed to create manual phone call order reminder" });
