@@ -53,6 +53,8 @@ interface LocalPharmarackSearchItem {
 export interface LiveCartSearchSectionProps {
   initialValue?: string;
   externalQuery?: string;
+  /** Bump to empty the search box (after an add / cancelled selection). 0 = never cleared. */
+  clearToken?: number;
   qty: number;
   sessionStatus: 'active' | 'restoring' | 'disconnected';
   cartDistributors: Array<{
@@ -113,6 +115,7 @@ const getStockTier = (stockStr: string | undefined | null): number => {
 export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React.memo(({
   initialValue = '',
   externalQuery,
+  clearToken = 0,
   qty,
   sessionStatus,
   cartDistributors,
@@ -162,6 +165,19 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       }, 30);
     }
   }, [externalQuery, inputRef]);
+
+  // Parent finished an add (or cancelled the pick): empty the box so the next search starts clean.
+  useEffect(() => {
+    if (clearToken === 0) return;
+    if (searchAbortControllerRef.current) searchAbortControllerRef.current.abort();
+    ignoreNextSearchRef.current = false;
+    isSelectingRef.current = false;
+    setProduct('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setActiveSuggestionIndex(-1);
+    setSearchLoading(false);
+  }, [clearToken]);
 
   // Click outside to dismiss suggestions
   useEffect(() => {

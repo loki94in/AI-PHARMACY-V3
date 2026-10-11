@@ -11,6 +11,7 @@ import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 
 import { getConfiguredPharmacyName, getPharmacyOperatingSchedule } from '../services/storeSettingsService.js';
+import { getRefillScheduleOpts } from '../utils/closureNotice.js';
 import { eventService } from '../services/eventService.js';
 import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
@@ -94,7 +95,7 @@ export function buildRefillReminderMessage(
   pharmacyName: string,
   lang: string = 'en',
   dueDateStr?: string,
-  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean },
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; closedLabel?: string },
   opts?: { includeLanguageBanner?: boolean }
 ): string {
   const pName = formatCustomerName(patientName);
@@ -104,7 +105,8 @@ export function buildRefillReminderMessage(
   const rawClose = scheduleOpts?.closeTime || '22:00';
   const openT = formatTime12h(rawOpen);
   const closeT = formatTime12h(rawClose);
-  const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
+  // closedLabel names the real closed day (weekly off, holiday, market closure); weeklyOff is the fallback.
+  const weeklyOff = scheduleOpts?.closedLabel || scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
 
   let message = '';
@@ -155,7 +157,7 @@ export function buildRefillCollectionMessage(
   items: Array<{ medicine_name?: string; quantity_needed?: number }>,
   pharmacyName: string,
   lang: string = 'en',
-  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean },
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; closedLabel?: string },
   opts?: { includeLanguageBanner?: boolean }
 ): string {
   const pName = formatCustomerName(patientName);
@@ -165,7 +167,8 @@ export function buildRefillCollectionMessage(
   const rawClose = scheduleOpts?.closeTime || '22:00';
   const openT = formatTime12h(rawOpen);
   const closeT = formatTime12h(rawClose);
-  const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
+  // closedLabel names the real closed day (weekly off, holiday, market closure); weeklyOff is the fallback.
+  const weeklyOff = scheduleOpts?.closedLabel || scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
 
   let message = '';
@@ -1855,10 +1858,7 @@ router.post('/:id/send', async (req, res) => {
 
     const sched = await getPharmacyOperatingSchedule(db);
     const nextRefillDateObj = refill.next_refill_date ? new Date(refill.next_refill_date) : new Date();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dueDayName = dayNames[nextRefillDateObj.getDay()];
-    const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
-      (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
+    const refillSchedOpts = await getRefillScheduleOpts(db, sched, nextRefillDateObj);
 
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
@@ -1868,7 +1868,7 @@ router.post('/:id/send', async (req, res) => {
       medicalName,
       lang,
       undefined,
-      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+      refillSchedOpts,
       { includeLanguageBanner: includeLangBanner }
     );
 
@@ -2007,10 +2007,7 @@ router.post('/send-grouped', async (req, res) => {
 
     const sched = await getPharmacyOperatingSchedule(db);
     const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : new Date();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dueDayName = dayNames[earliestDue.getDay()];
-    const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
-      (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
+    const refillSchedOpts = await getRefillScheduleOpts(db, sched, earliestDue);
 
     const anyReady = unsentRows.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
     const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
@@ -2022,7 +2019,7 @@ router.post('/send-grouped', async (req, res) => {
           unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         )
       : buildRefillReminderMessage(
@@ -2031,7 +2028,7 @@ router.post('/send-grouped', async (req, res) => {
           medicalName,
           lang,
           undefined,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         );
 
@@ -2147,9 +2144,7 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
     const sched = await getPharmacyOperatingSchedule(db);
     const tomorrowDate = new Date();
     tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const tomorrowDayName = dayNames[tomorrowDate.getDay()];
-    const isOffDayUpcoming = tomorrowDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase();
+    const refillSchedOpts = await getRefillScheduleOpts(db, sched, tomorrowDate);
 
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
@@ -2159,7 +2154,7 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
       medicalName,
       lang,
       tomorrowDateStr,
-      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+      refillSchedOpts,
       { includeLanguageBanner: includeLangBanner }
     );
 
@@ -2259,10 +2254,7 @@ router.post('/send-reminder-now', async (req, res) => {
 
     const sched = await getPharmacyOperatingSchedule(db);
     const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : new Date();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dueDayName = dayNames[earliestDue.getDay()];
-    const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
-      (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
+    const refillSchedOpts = await getRefillScheduleOpts(db, sched, earliestDue);
 
     const anyReady = unsentRows.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
     const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
@@ -2274,7 +2266,7 @@ router.post('/send-reminder-now', async (req, res) => {
           unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         )
       : buildRefillReminderMessage(
@@ -2283,7 +2275,7 @@ router.post('/send-reminder-now', async (req, res) => {
           medicalName,
           lang,
           refillDate,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         );
 
@@ -2707,12 +2699,7 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
     const medicalName = (await getConfiguredPharmacyName(db)) || 'Pharmacy';
     const sched = await getPharmacyOperatingSchedule(db);
 
-    const schedOpts = {
-      openTime: sched.openTime,
-      closeTime: sched.closeTime,
-      weeklyOff: sched.weeklyOff,
-      isOffDayUpcoming: false
-    };
+    const schedOpts = await getRefillScheduleOpts(db, sched);
 
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
     const msg = buildRefillCollectionMessage(
@@ -2823,12 +2810,7 @@ router.post('/:id/mark-ready', async (req, res) => {
     const medicalName = (await getConfiguredPharmacyName(db)) || 'Pharmacy';
     const sched = await getPharmacyOperatingSchedule(db);
 
-    const schedOpts = {
-      openTime: sched.openTime,
-      closeTime: sched.closeTime,
-      weeklyOff: sched.weeklyOff,
-      isOffDayUpcoming: false
-    };
+    const schedOpts = await getRefillScheduleOpts(db, sched);
 
     let whatsappQueued = false;
     let queueId: number | null = null;

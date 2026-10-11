@@ -164,25 +164,9 @@ export async function checkAllRefills(db: Database): Promise<void> {
 
           outOfStockRefills.push(refill);
 
-          // Silent API post to add to Pharmarack cart if session is active
-          try {
-            const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-            if (tokenRow?.value) {
-              const port = process.env.PORT || 3000;
-              fetch(`http://localhost:${port}/api/pharmarack/cart/add`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  items: [{
-                    name: refill.medicine_name,
-                    qty: Number(refill.quantity_needed || refill.quantity || 3)
-                  }]
-                })
-              }).catch(e => console.error('Failed to auto-add to Pharmarack cart:', e));
-            }
-          } catch (e) {
-            console.error('Fetch post error:', e);
-          }
+          // No cart write here: a refill goes into the Pharmarack live cart only after the patient
+          // confirms (WhatsApp reply) or the pharmacist clicks it in CRM. The special order above and
+          // the Telegram report are the only effects of an unconfirmed due refill.
         }
       }
     }
@@ -303,17 +287,13 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     const open12 = formatTime12h(sched.openTime || '09:00');
     const close12 = formatTime12h(sched.closeTime || '22:00');
     hoursPill = `\n*(Store open ${open12} – ${close12})*`;
-    const now = new Date();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dueDayName = dayNames[(now.getDay() + 1) % 7];
-    const isOffDayUpcoming = Boolean(sched.weeklyOff && (
-      dueDayName.toLowerCase() === sched.weeklyOff.toLowerCase() ||
-      dayNames[now.getDay()].toLowerCase() === sched.weeklyOff.toLowerCase()
-    ));
+    // Full closed-day check (weekly off, holidays, custom closed dates, market closure) for today/tomorrow.
+    const { getRefillScheduleOpts } = await import('../utils/closureNotice.js');
+    const closure = await getRefillScheduleOpts(db, sched);
 
     timingInfo = `\n🕒 *Store Hours:* ${open12} to ${close12}`;
-    if (isOffDayUpcoming) {
-      timingInfo += `\n⚠️ *Notice:* Our pharmacy will remain closed on ${sched.weeklyOff}. Please collect before closure!`;
+    if (closure.isOffDayUpcoming) {
+      timingInfo += `\n⚠️ *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
     }
   } catch (_) {}
 

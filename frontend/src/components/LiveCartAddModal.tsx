@@ -340,6 +340,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   // Input fields
   const [product, setProduct] = useState(initialSearch || '');
   const [externalSearchQuery, setExternalSearchQuery] = useState<string | undefined>(initialSearch);
+  // The search box owns its text (LiveCartSearchSection); bumping this empties it.
+  const [searchClearToken, setSearchClearToken] = useState(0);
   const [qty, setQty] = useState(initialQty || 1);
   const [qtyDraft, setQtyDraft] = useState<string | null>(null);
   
@@ -1248,6 +1250,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
     // Reset form and keep open so the user can search the next medicine
     setProduct('');
+    setExternalSearchQuery(undefined);
+    setSearchClearToken(t => t + 1);
     setQty(1);
     setPendingTargetQty(null);
     setActiveSourceOrderId(undefined);
@@ -2172,6 +2176,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                 <LiveCartSearchSection
                   initialValue={initialSearch}
                   externalQuery={externalSearchQuery}
+                  clearToken={searchClearToken}
                   qty={qty}
                   sessionStatus={sessionStatus}
                   cartDistributors={cartDistributors}
@@ -2231,6 +2236,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                           setSelectedCompany('');
                           setSelectedPackaging('');
                           setProduct('');
+                          setSearchClearToken(t => t + 1);
                           setSelectedMedicineName('');
                           setTimeout(() => productInputRef.current?.focus(), 50);
                         }}
@@ -2248,7 +2254,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                 {/* Quantity Selector */}
                 <div>
                   <label className="block text-[11px] font-bold text-muted uppercase tracking-wider mb-1.5">Quantity</label>
-                  <div className="flex items-center justify-between bg-bg3 border border-border rounded-xl h-9 px-1.5 max-w-[150px]">
+                  <div className="flex items-center justify-between bg-bg3 border border-border rounded-xl h-9 px-1.5 max-w-[150px] transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/25">
                     <button
                       type="button"
                       onClick={() => setQty(prev => Math.max(1, prev - 1))}
@@ -2270,7 +2276,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                         if (n >= 1) setQty(n);
                       }}
                       onBlur={() => setQtyDraft(null)}
-                      className="w-full bg-transparent text-center text-sm font-bold outline-none text-text focus:ring-0 border-0 p-0"
+                      className="bare-field w-full bg-transparent text-center text-sm font-bold outline-none text-text focus:ring-0 border-0 p-0"
                       required
                     />
                     <button

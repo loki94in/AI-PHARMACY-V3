@@ -550,6 +550,18 @@ input[type="date"]:focus {
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25) !important;
 }
 
+/* Opt-out for inputs that live INSIDE a styled wrapper (e.g. the quantity stepper pill): the global
+   rules above would give them 44px min-height, padding and their own green box, which sticks out of
+   the pill. The wrapper shows the focus ring via focus-within instead. Specificity is raised on
+   purpose to beat the :not()-chained global selectors. */
+html body input[type="text"].bare-field.bare-field.bare-field.bare-field,
+html body input[type="text"].bare-field.bare-field.bare-field.bare-field:focus {
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  line-height: inherit !important;
+}
+
 /* ═══════════════════════════════════════════
    POS SCANNER & CHECKOUT ANIMATIONS
    ═══════════════════════════════════════════ */

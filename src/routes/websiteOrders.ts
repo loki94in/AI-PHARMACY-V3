@@ -8,6 +8,7 @@ import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { getStoreMedicalName, getStorePhone, getStoreGoogleMapsUrl } from '../services/storeSettingsService.js';
+import { getShopTimingNote } from '../utils/closureNotice.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
@@ -1089,6 +1090,7 @@ router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
           readyMsg += `\n🗺️ Navigation Link: ${mapUrl}`;
         }
         readyMsg += `\n\nThank you for your payment.`;
+        readyMsg += await getShopTimingNote(db, 'en', 'pickup');
         await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, 'order_ready_notification', order.requester);
       } catch (_) {}
     }

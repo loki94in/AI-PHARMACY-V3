@@ -496,26 +496,15 @@ function formatTime12h(timeStr: string): string {
 
 async function getStoreHoursNotice(db: any): Promise<string> {
   try {
-    const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
-    const sched = await getPharmacyOperatingSchedule(db);
-    const nowIst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-    const curMinutes = nowIst.getHours() * 60 + nowIst.getMinutes();
-    const [openH, openM] = (sched.openTime || '09:00').split(':').map(Number);
-    const [closeH, closeM] = (sched.closeTime || '22:00').split(':').map(Number);
-    const openMinutes = (openH || 9) * 60 + (openM || 0);
-    const closeMinutes = (closeH || 22) * 60 + (closeM || 0);
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const currentDayName = days[nowIst.getDay()];
-    const isWeeklyOff = Boolean(sched.weeklyOff && sched.weeklyOff.toLowerCase() === currentDayName.toLowerCase());
-    const isOutsideHours = isWeeklyOff || curMinutes < openMinutes || curMinutes >= closeMinutes;
-
-    if (isOutsideHours) {
-      const open12 = formatTime12h(sched.openTime || '09:00');
-      const close12 = formatTime12h(sched.closeTime || '22:00');
-      if (isWeeklyOff) {
-        return `\n\n🕒 *Note:* Today is our weekly off (Regular hours: ${open12} - ${close12}).\n✅ *You can still send your request or prescription now!* Our team will prepare it on our next working day at ${open12}.`;
-      }
-      return `\n\n🕒 *Note:* Our pharmacy is currently closed (Store hours: ${open12} - ${close12}).\n✅ *You can still send your request or prescription now!* Our team will prepare it when we open tomorrow at ${open12}.`;
+    // Full closed-day check (weekly off, Sunday policy, holidays, custom closed dates, market closure)
+    // and the real reopening day, not a hard-coded "tomorrow".
+    const { getShopTimingNow } = await import('../utils/closureNotice.js');
+    const info = await getShopTimingNow(db);
+    if (info) {
+      const why = info.reason ? ` (${info.reason})` : '';
+      const state = info.closedToday ? `Our pharmacy is closed today${why}` : 'Our pharmacy is currently closed';
+      const when = info.reopenLabel === 'today' ? `today at ${info.openTime12}` : `${info.reopenLabel} at ${info.openTime12}`;
+      return `\n\n🕒 *Note:* ${state} (Regular hours: ${info.openTime12} - ${info.closeTime12}).\n✅ *You can still send your request or prescription now!* Our team will prepare it when we reopen ${when}.`;
     }
   } catch (_) {}
   return '';

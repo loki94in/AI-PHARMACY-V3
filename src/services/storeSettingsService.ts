@@ -1,5 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
+import { getShopTimingNote } from '../utils/closureNotice.js';
 
 /**
  * Resolves the user-configured pharmacy name from app_settings.
@@ -305,7 +306,7 @@ export async function buildOrderReadyNotificationMessage(
       msg += `📞 सहायता के लिए, हमें ${phone} पर कॉल करें।\n\n`;
     }
     msg += `${storeName} को चुनने के लिए धन्यवाद!`;
-    return msg.trim();
+    return (msg.trim() + await getShopTimingNote(dbInstance, 'hi', 'pickup'));
   }
 
   if (lang === 'mr') {
@@ -319,7 +320,7 @@ export async function buildOrderReadyNotificationMessage(
       msg += `📞 मदतीसाठी, आम्हाला ${phone} वर कॉल करा.\n\n`;
     }
     msg += `${storeName} ची निवड केल्याबद्दल धन्यवाद!`;
-    return msg.trim();
+    return (msg.trim() + await getShopTimingNote(dbInstance, 'mr', 'pickup'));
   }
 
   let msg = `Hi ${name}, 👋\n\nGreat news! 🎉 Your requested medicine is now ready for pickup at ${storeName}.\n\nYour Order:\n• ${productName} × ${qty || 1}\n\n`;
@@ -334,7 +335,7 @@ export async function buildOrderReadyNotificationMessage(
   }
   
   msg += `Thank you for choosing ${storeName}!`;
-  return msg.trim();
+  return (msg.trim() + await getShopTimingNote(dbInstance, 'en', 'pickup'));
 }
 
 export interface MultiOrderItemArrival {
@@ -391,7 +392,7 @@ export async function buildMultiOrderNotificationMessage(
 
     if (phone) msg += `\n\n📞 सहायता के लिए कॉल करें: ${phone}`;
     msg += `\n\n${storeName} को चुनने के लिए धन्यवाद!`;
-    return msg;
+    return msg + (arrivedItems.length > 0 ? await getShopTimingNote(dbInstance, 'hi', 'pickup') : '');
   }
 
   // Default English (also covers other locales cleanly)
@@ -421,7 +422,7 @@ export async function buildMultiOrderNotificationMessage(
 
   if (phone) msg += `\n\n📞 For questions or home delivery, call: ${phone}`;
   msg += `\n\nThank you for choosing ${storeName}!`;
-  return msg;
+  return msg + (arrivedItems.length > 0 ? await getShopTimingNote(dbInstance, 'en', 'pickup') : '');
 }
 
 /**
