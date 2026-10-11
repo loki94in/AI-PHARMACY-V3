@@ -313,6 +313,13 @@ router.post('/send', async (req, res) => {
   }
 
   try {
+    // A manual reply from the pharmacist lifts any bot silence on this number.
+    if (!type || type === 'manual_chat') {
+      try {
+        const { clearBotSilence } = await import('../services/waBotSilence.js');
+        await clearBotSilence(await dbManager.getConnection(), String(number));
+      } catch (_) { /* non-fatal */ }
+    }
     const queueId = await whatsappQueueWorker.enqueue(
       number,
       message || '',

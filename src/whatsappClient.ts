@@ -302,6 +302,10 @@ const SYNC_RETRY_COOLDOWN_MS = 30_000;
 // Timestamp (ms) of the last failed initialization — prevents rapid retry storms on locked/broken profiles
 let lastInitFailureAt: number = 0;
 const INIT_FAILURE_COOLDOWN_MS = 60_000;
+// Circuit breaker: after this many CONSECUTIVE failed launches the app stops spawning Chrome
+// on its own (boot restore, queue worker, send auto-init) until the user clicks Connect.
+let consecutiveInitFailures: number = 0;
+const MAX_AUTO_INIT_FAILURES = 3;
 
 // ── Idle sleep (RAM diet, owner decision 2026-08) ─────────────────────────────
 // The resident headless Chrome is the app's single biggest steady-state RAM
@@ -1197,6 +1201,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
     client.on('ready', async () => {
       console.log('WhatsApp Client is ready!');
       lastInitFailureAt = 0;
+      consecutiveInitFailures = 0;
       clearInitWatchdog();
       if (qrTimeout) clearTimeout(qrTimeout);
       if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
@@ -1615,6 +1620,11 @@ export async function initClient(options: { forceQr?: boolean; manual?: boolean;
   // Failure backoff: if a previous init attempt failed recently, suppress automatic retries during the cooldown
   if (forceQr || isManual) {
     lastInitFailureAt = 0; // Explicit user connection resets cooldown
+    consecutiveInitFailures = 0;
+  } else if (consecutiveInitFailures >= MAX_AUTO_INIT_FAILURES) {
+    console.warn(`[WhatsApp] Auto-start stopped after ${consecutiveInitFailures} failed launches. Waiting for manual Connect.`);
+    setLifecycleProgress('failed', 0, 'WhatsApp failed to start several times. Auto-start stopped — click Connect in Settings.', 'AUTO_START_STOPPED');
+    return null;
   } else if (lastInitFailureAt > 0 && (Date.now() - lastInitFailureAt) < INIT_FAILURE_COOLDOWN_MS) {
     const remainingSec = Math.ceil((INIT_FAILURE_COOLDOWN_MS - (Date.now() - lastInitFailureAt)) / 1000);
     console.log(`[WhatsApp] Init deferred (${remainingSec}s cooldown remaining after previous failure).`);
@@ -1670,6 +1680,7 @@ export async function initClient(options: { forceQr?: boolean; manual?: boolean;
       }
     } catch (err: any) {
       lastInitFailureAt = Date.now();
+      consecutiveInitFailures++;
       initializing = false;
       isReady = false;
       clientInstance = null;

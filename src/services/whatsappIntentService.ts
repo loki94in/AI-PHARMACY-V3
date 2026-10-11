@@ -567,6 +567,31 @@ async function getDynamicDeliveryNotice(db: any): Promise<string> {
  * Send medicine ordering guidance prompt to customer if they sent conversational chat or greeting with no medicine name.
  * Debounced per customer phone (maximum once per 12 hours) to prevent spam.
  */
+/**
+ * Circuit breaker for menu / "reply 1-3" prompts (see waBotSilence.ts). Returns false when the
+ * number has ignored MAX_BOT_PROMPTS prompts and is now silenced: caller must NOT send the prompt.
+ * A no-response silence still tells the owner once, like the old 2-strike escalation did.
+ */
+async function allowBotPrompt(db: any, cleanDigits: string, phone: string): Promise<boolean> {
+  const { registerBotPrompt } = await import('./waBotSilence.js');
+  const decision = await registerBotPrompt(db, cleanDigits);
+  if (decision === 'send') return true;
+  console.log(`[Intent Service] Bot silenced for ${cleanDigits} (${decision}) after repeated unanswered prompts.`);
+  if (decision === 'silenced_no_response') {
+    try {
+      const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+      if (adminWhatsapp) {
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(
+          adminWhatsapp,
+          `⚠️ *Bot Escalation — Customer Needs Help*\n\n👤 +91 ${cleanDigits}\n\n_The bot sent this number several menus with no reply to any option, so it has stopped answering for 24 h. Reply in the WhatsApp chat if it is a real customer._`,
+          'admin_escalation', 'Owner');
+      }
+    } catch (_) {}
+  }
+  return false;
+}
+
 async function maybeSendGuidancePrompt(phone: string, customerName: string, db: any, originalMessage?: string): Promise<void> {
   const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
@@ -576,6 +601,7 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
     const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
 
     const trimmedOriginal = (originalMessage || '').trim();
+
     const echoLine = trimmedOriginal
       ? `We received your message: "${trimmedOriginal.slice(0, 200)}"\n\n`
       : '';
@@ -607,6 +633,8 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
       console.log(`[Intent Service] Suppressed duplicate guidance prompt for ${cleanDigits} (within 20m burst window).`);
       return;
     }
+
+    if (!(await allowBotPrompt(db, cleanDigits, phone))) return;
 
     await db.run(
       `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
@@ -2025,6 +2053,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         hoursLine: hoursLineForWelcome
       }) + languageFooter(stepLang);
 
+      if (!(await allowBotPrompt(db, cleanDigits, phone))) return true;
+
       await db.run(
         `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
         [cleanDigits]
@@ -2097,6 +2127,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isOne   = /^1$/.test(picked);
       const isTwo   = /^2$/.test(picked);
       const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
+      if (isOne || isTwo || isThree) {
+        const { resetBotStrikes } = await import('./waBotSilence.js');
+        await resetBotStrikes(db, String(pending.phone || cleanDigits));
+      }
 
       if (isOne) {
         // Single medicine — advance to awaiting_medicine
@@ -2281,6 +2315,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       //   Strike 1 → gentle personalized question
       //   Strike 2 → silence bot, escalate to pharmacist counter
       const currentCount = Number(pending.unrecognized_count || 0);
+      if (!(await allowBotPrompt(db, (cleanDigits || String(pending.phone || '')), phone))) {
+        await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
+        return true;
+      }
       if (currentCount < 1) {
         // Strike 1: gentle question
         await db.run(
@@ -4655,6 +4693,16 @@ export async function handleInbound(msg: any): Promise<void> {
       return;
     }
 
+    // 1b-silence. Number that ignored the bot's menus repeatedly: no replies, no search, no cards.
+    // The message itself is already stored in the inbox; the pharmacist can still answer by hand.
+    {
+      const { isBotSilenced } = await import('./waBotSilence.js');
+      if (await isBotSilenced(db, phone || chatId)) {
+        console.log(`[Intent Service] Ignored message from silenced number ${phone || chatId}.`);
+        return;
+      }
+    }
+
     // 1b. PROMOTIONAL & BROADCAST FILTER
     // Reject marketing schemes, B2B broadcasts, festive deals, groups, and spam before doing any work
     if (chatId.includes('g.us') || isPromotionalOrBroadcastMessage(body)) {
@@ -4906,6 +4954,8 @@ export async function handleInbound(msg: any): Promise<void> {
         hoursNotice,
         hoursLine: hoursLineForGreet
       }) + languageFooter(chatLang);
+
+      if (!(await allowBotPrompt(db, cleanDigits, phone))) return;
 
       await db.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
@@ -5469,6 +5519,12 @@ export async function handleInbound(msg: any): Promise<void> {
           }
         }
         return;
+      }
+
+      // A real medicine request: this number is a genuine customer, forget unanswered menus.
+      if (phone) {
+        const { resetBotStrikes } = await import('./waBotSilence.js');
+        await resetBotStrikes(db, phone);
       }
 
       const textForm = detectDosageForm(body);

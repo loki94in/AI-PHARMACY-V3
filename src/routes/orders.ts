@@ -2028,6 +2028,13 @@ router.post('/:id/fulfill', async (req, res) => {
     await db.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1 WHERE id = ?", id);
 
     // Clean up all staged notifications and arrival alerts for this special order
+    // (pending queue items first, so the optional receipt enqueued below is not removed)
+    await cancelPendingWhatsAppForOrder(db, order);
+    await purgePendingCustomerReminders(db, {
+      phone: order.phone,
+      specialOrderIds: [Number(id)],
+      medicineNames: [order.product].filter(Boolean) as string[]
+    });
     await db.run(
       `UPDATE automation_notifications 
        SET lifecycle_status = 'sent', status = 'sent_manually' 

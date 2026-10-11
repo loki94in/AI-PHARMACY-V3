@@ -1172,10 +1172,23 @@ router.post('/', async (req, res) => {
         const rawOoId = req.body.online_order_id || req.body.onlineOrderId;
         if (rawOoId && !isNaN(Number(rawOoId))) explicitOrderIds.push(Number(rawOoId));
 
+        // A fulfilled order must leave no staged/pending messages or stale cards behind.
+        const closeOutFulfilledOrder = async (ordId: number) => {
+          const so = await db!.get(`SELECT phone, product FROM special_orders WHERE id = ?`, [ordId]).catch(() => null);
+          await purgePendingCustomerReminders(db!, {
+            phone: so?.phone,
+            specialOrderIds: [ordId],
+            medicineNames: so?.product ? [String(so.product)] : []
+          });
+          await db!.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {});
+          eventService.broadcast('order_updated', { at: Date.now(), orderId: ordId, action: 'fulfilled_pos' });
+          eventService.broadcast('special_orders_updated', { at: Date.now(), orderId: ordId });
+        };
+
         for (const ordId of explicitOrderIds) {
           try {
             await db!.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [ordId]);
-            await db!.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {});
+            await closeOutFulfilledOrder(ordId);
             consumedOrderIds.add(ordId);
           } catch (e) {
             console.warn(`[Sales explicit order] Failed to mark order #${ordId} fulfilled:`, e);
@@ -1205,7 +1218,7 @@ router.post('/', async (req, res) => {
             consumedOrderIds.add(best.order.order_id);
             try {
               await db!.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [best.order.order_id]);
-              await db!.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(best.order.order_id)]).catch(() => {});
+              await closeOutFulfilledOrder(best.order.order_id);
             } catch (specErr) {
               console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
             }
