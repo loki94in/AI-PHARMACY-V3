@@ -15627,8 +15627,8 @@ ${mrpLine}
     }
     distMessages.push({ distName, message: msg.trim() });
     const cleanP = String(distPhone).replace(/\D/g, "");
-    const last10 = cleanP.slice(-10);
-    const displayPhoneNoGap = last10.length === 10 ? `+91 ${last10.slice(0, 5)} ${last10.slice(5)}` : distPhone || "N/A";
+    const last102 = cleanP.slice(-10);
+    const displayPhoneNoGap = last102.length === 10 ? `+91 ${last102.slice(0, 5)} ${last102.slice(5)}` : distPhone || "N/A";
     let tag = "";
     if (isLate) {
       const prevSent = await db2.get(
@@ -31203,6 +31203,116 @@ var init_scanGateAlgorithms = __esm({
   }
 });
 
+// src/services/waBotSilence.ts
+var waBotSilence_exports = {};
+__export(waBotSilence_exports, {
+  MAX_BOT_PROMPTS: () => MAX_BOT_PROMPTS,
+  clearBotSilence: () => clearBotSilence,
+  ensureBotSilenceTable: () => ensureBotSilenceTable,
+  isBotSilenced: () => isBotSilenced,
+  registerBotPrompt: () => registerBotPrompt,
+  resetBotStrikes: () => resetBotStrikes
+});
+async function ensureBotSilenceTable(db2) {
+  await db2.run(`CREATE TABLE IF NOT EXISTS wa_bot_silenced (
+    phone TEXT PRIMARY KEY,
+    strikes INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    silenced_until TEXT,
+    silenced INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+}
+async function isBotSilenced(db2, phone) {
+  const p = last10(phone);
+  if (p.length < 10) return false;
+  await ensureBotSilenceTable(db2);
+  const row = await db2.get(
+    `SELECT silenced, silenced_until, (silenced_until IS NOT NULL AND silenced_until <= datetime('now')) AS expired
+       FROM wa_bot_silenced WHERE phone = ?`,
+    [p]
+  );
+  if (!row || !row.silenced) return false;
+  if (row.expired) {
+    await db2.run(`DELETE FROM wa_bot_silenced WHERE phone = ?`, [p]);
+    return false;
+  }
+  return true;
+}
+async function resetBotStrikes(db2, phone) {
+  const p = last10(phone);
+  if (p.length < 10) return;
+  await ensureBotSilenceTable(db2);
+  await db2.run(`DELETE FROM wa_bot_silenced WHERE phone = ? AND silenced = 0`, [p]);
+}
+async function clearBotSilence(db2, phone) {
+  const p = last10(phone);
+  if (p.length < 10) return;
+  await ensureBotSilenceTable(db2);
+  await db2.run(`DELETE FROM wa_bot_silenced WHERE phone = ?`, [p]);
+}
+async function recentInboundLooksPromotional(db2, p) {
+  let rows = [];
+  try {
+    rows = await db2.all(
+      `SELECT body FROM whatsapp_messages
+        WHERE from_me = 0 AND chat_id LIKE ?
+        ORDER BY timestamp DESC LIMIT 10`,
+      [`%${p}%`]
+    );
+  } catch {
+    return false;
+  }
+  return rows.some((r) => {
+    const text = String(r?.body || "");
+    if (isPromotionalOrBroadcastMessage(text)) return true;
+    return text.toLowerCase().split(/[^a-z0-9]+/).some((t) => PROMO_WORDS.has(t) && MARKETING_NOISE_WORDS.has(t));
+  });
+}
+async function registerBotPrompt(db2, phone) {
+  const p = last10(phone);
+  if (p.length < 10) return "send";
+  await ensureBotSilenceTable(db2);
+  const row = await db2.get(`SELECT strikes FROM wa_bot_silenced WHERE phone = ?`, [p]);
+  const strikes = Number(row?.strikes || 0);
+  if (strikes >= MAX_BOT_PROMPTS) {
+    const promo = await recentInboundLooksPromotional(db2, p);
+    if (promo) {
+      await db2.run(
+        `INSERT INTO wa_bot_silenced (phone, strikes, reason, silenced_until, silenced, updated_at)
+         VALUES (?, ?, 'promo', NULL, 1, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET reason='promo', silenced_until=NULL, silenced=1, updated_at=CURRENT_TIMESTAMP`,
+        [p, strikes]
+      );
+      return "silenced_promo";
+    }
+    await db2.run(
+      `INSERT INTO wa_bot_silenced (phone, strikes, reason, silenced_until, silenced, updated_at)
+       VALUES (?, ?, 'no_response', datetime('now', ?), 1, CURRENT_TIMESTAMP)
+       ON CONFLICT(phone) DO UPDATE SET reason='no_response', silenced_until=datetime('now', ?), silenced=1, updated_at=CURRENT_TIMESTAMP`,
+      [p, strikes, `+${NO_RESPONSE_SILENCE_HOURS} hours`, `+${NO_RESPONSE_SILENCE_HOURS} hours`]
+    );
+    return "silenced_no_response";
+  }
+  await db2.run(
+    `INSERT INTO wa_bot_silenced (phone, strikes, silenced, updated_at) VALUES (?, 1, 0, CURRENT_TIMESTAMP)
+     ON CONFLICT(phone) DO UPDATE SET strikes = strikes + 1, updated_at = CURRENT_TIMESTAMP`,
+    [p]
+  );
+  return "send";
+}
+var MAX_BOT_PROMPTS, NO_RESPONSE_SILENCE_HOURS, PROMO_WORDS, last10;
+var init_waBotSilence = __esm({
+  "src/services/waBotSilence.ts"() {
+    "use strict";
+    init_intentKeywords();
+    MAX_BOT_PROMPTS = 4;
+    NO_RESPONSE_SILENCE_HOURS = 24;
+    PROMO_WORDS = /* @__PURE__ */ new Set(["offer", "offers", "deal", "deals", "discount", "discounts", "cashback", "scheme", "schemes", "coupon", "coupons", "voucher", "vouchers", "bumper", "dhamaka"]);
+    last10 = (phone) => (phone || "").replace(/\D/g, "").slice(-10);
+  }
+});
+
 // src/services/refillOrderReconciler.ts
 var refillOrderReconciler_exports = {};
 __export(refillOrderReconciler_exports, {
@@ -31227,7 +31337,7 @@ var init_refillOrderReconciler = __esm({
         const db2 = params.dbInstance || await dbManager.getConnection();
         const rawPhone = params.phone || "";
         const cleanDigits = normalizeWhatsAppPhone(rawPhone);
-        const last10 = cleanDigits.slice(-10);
+        const last102 = cleanDigits.slice(-10);
         const targetStoreId = params.store_id || 1;
         const source = params.source || "refill";
         const priority = params.priority || (source === "refill" ? "High" : "Normal");
@@ -31242,10 +31352,10 @@ var init_refillOrderReconciler = __esm({
             customerId = null;
           }
         }
-        if (!customerId && last10.length >= 10) {
+        if (!customerId && last102.length >= 10) {
           const existingByPhone = await db2.get(
             "SELECT id, name FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1",
-            [`%${last10}`, `%${cleanDigits}%`]
+            [`%${last102}`, `%${cleanDigits}%`]
           ).catch(() => null);
           if (existingByPhone) {
             customerId = existingByPhone.id;
@@ -31280,7 +31390,7 @@ var init_refillOrderReconciler = __esm({
              OR created_at > datetime('now', '-15 minutes')
            )
          ORDER BY id DESC LIMIT 1`,
-            [`%${last10}`, `%${cleanDigits}%`, prodName]
+            [`%${last102}`, `%${cleanDigits}%`, prodName]
           );
           if (existingOrder) {
             console.log(`[RefillOrderReconciler] Found existing active special order #${existingOrder.id} for ${prodName} (${cleanDigits}). Idempotent reuse.`);
@@ -32501,6 +32611,32 @@ async function getDynamicDeliveryNotice(db2) {
     return "";
   }
 }
+async function allowBotPrompt(db2, cleanDigits, phone) {
+  const { registerBotPrompt: registerBotPrompt2 } = await Promise.resolve().then(() => (init_waBotSilence(), waBotSilence_exports));
+  const decision = await registerBotPrompt2(db2, cleanDigits);
+  if (decision === "send") return true;
+  console.log(`[Intent Service] Bot silenced for ${cleanDigits} (${decision}) after repeated unanswered prompts.`);
+  if (decision === "silenced_no_response") {
+    try {
+      const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+      if (adminWhatsapp) {
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(
+          adminWhatsapp,
+          `\u26A0\uFE0F *Bot Escalation \u2014 Customer Needs Help*
+
+\u{1F464} +91 ${cleanDigits}
+
+_The bot sent this number several menus with no reply to any option, so it has stopped answering for 24 h. Reply in the WhatsApp chat if it is a real customer._`,
+          "admin_escalation",
+          "Owner"
+        );
+      }
+    } catch (_) {
+    }
+  }
+  return false;
+}
 async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage) {
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
@@ -32536,6 +32672,7 @@ async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage
       console.log(`[Intent Service] Suppressed duplicate guidance prompt for ${cleanDigits} (within 20m burst window).`);
       return;
     }
+    if (!await allowBotPrompt(db2, cleanDigits, phone)) return;
     await db2.run(
       `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
        VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)
@@ -32660,8 +32797,8 @@ async function lookupCustomer(phone, chatId) {
 }
 async function getCustomerHistory(customer) {
   const db2 = await dbManager.getConnection();
-  const last10 = (customer.phone || "").replace(/\D/g, "").slice(-10);
-  if (!last10) return [];
+  const last102 = (customer.phone || "").replace(/\D/g, "").slice(-10);
+  if (!last102) return [];
   const combinedMeds = /* @__PURE__ */ new Map();
   try {
     const refillRows = await db2.all(
@@ -32670,7 +32807,7 @@ async function getCustomerHistory(customer) {
        FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
        WHERE pr.patient_phone LIKE ?
        ORDER BY pr.last_refill_date DESC LIMIT 15`,
-      [`%${last10}`]
+      [`%${last102}`]
     );
     for (const r of refillRows) {
       const key = (r.medicine_name || "").toLowerCase().trim();
@@ -32688,7 +32825,7 @@ async function getCustomerHistory(customer) {
        FROM special_orders so
        WHERE so.phone LIKE ? AND so.product IS NOT NULL AND TRIM(so.product) != ''
        ORDER BY so.id DESC LIMIT 15`,
-      [`%${last10}`]
+      [`%${last102}`]
     );
     for (const s of soRows) {
       const key = (s.medicine_name || "").toLowerCase().trim();
@@ -32709,7 +32846,7 @@ async function getCustomerHistory(customer) {
        JOIN medicines m ON m.id = im.medicine_id
        WHERE (si.customer_phone_snapshot LIKE ? OR si.customer_id = ?)
        ORDER BY si.id DESC LIMIT 10`,
-      [`%${last10}`, customer.id || 0]
+      [`%${last102}`, customer.id || 0]
     );
     for (const sl of saleRows) {
       const key = (sl.medicine_name || "").toLowerCase().trim();
@@ -33776,6 +33913,7 @@ Would you like us to check availability & book this for you?
         hoursNotice,
         hoursLine: hoursLineForWelcome
       }) + languageFooter(stepLang);
+      if (!await allowBotPrompt(db2, cleanDigits, phone)) return true;
       await db2.run(
         `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
         [cleanDigits]
@@ -33832,6 +33970,10 @@ Would you like us to check availability & book this for you?
       const isOne = /^1$/.test(picked);
       const isTwo = /^2$/.test(picked);
       const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
+      if (isOne || isTwo || isThree) {
+        const { resetBotStrikes: resetBotStrikes2 } = await Promise.resolve().then(() => (init_waBotSilence(), waBotSilence_exports));
+        await resetBotStrikes2(db2, String(pending2.phone || cleanDigits));
+      }
       if (isOne) {
         await db2.run(
           `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
@@ -33853,10 +33995,10 @@ Would you like us to check availability & book this for you?
         return true;
       }
       if (isThree) {
-        const last10 = cleanDigits;
+        const last102 = cleanDigits;
         let refillRows = [];
         try {
-          refillRows = await getCustomerHistory({ id: customer?.id || 0, phone: last10 });
+          refillRows = await getCustomerHistory({ id: customer?.id || 0, phone: last102 });
         } catch (_) {
         }
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
@@ -33988,6 +34130,10 @@ Example: *Dolo 650 - 2 strips*`;
         return checkMedicineClarificationResponse(phone, picked, customer, chatId);
       }
       const currentCount = Number(pending2.unrecognized_count || 0);
+      if (!await allowBotPrompt(db2, cleanDigits || String(pending2.phone || ""), phone)) {
+        await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+        return true;
+      }
       if (currentCount < 1) {
         await db2.run(
           `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
@@ -36129,6 +36275,13 @@ ${stepPrompt}${languageFooter(chatLang)}`;
     if (await isDistributorOrInternal(phone || chatId, db2)) {
       return;
     }
+    {
+      const { isBotSilenced: isBotSilenced2 } = await Promise.resolve().then(() => (init_waBotSilence(), waBotSilence_exports));
+      if (await isBotSilenced2(db2, phone || chatId)) {
+        console.log(`[Intent Service] Ignored message from silenced number ${phone || chatId}.`);
+        return;
+      }
+    }
     if (chatId.includes("g.us") || isPromotionalOrBroadcastMessage(body)) {
       console.log(`[Intent Service] Discarded promotional/group broadcast message from ${phone || chatId}: "${body.slice(0, 80).replace(/\r?\n/g, " ")}..."`);
       return;
@@ -36343,6 +36496,7 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         hoursNotice,
         hoursLine: hoursLineForGreet
       }) + languageFooter(chatLang);
+      if (!await allowBotPrompt(db2, cleanDigits, phone)) return;
       await db2.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
          VALUES (?, '', ?, 'awaiting_order_type', ?, ?, CURRENT_TIMESTAMP)`,
@@ -36816,6 +36970,10 @@ We received your photo, but the image is taking longer to process.
           }
         }
         return;
+      }
+      if (phone) {
+        const { resetBotStrikes: resetBotStrikes2 } = await Promise.resolve().then(() => (init_waBotSilence(), waBotSilence_exports));
+        await resetBotStrikes2(db2, phone);
       }
       const textForm = detectDosageForm(body);
       if (candidates.some((c) => c.fromScispacy)) {
@@ -37345,8 +37503,8 @@ async function handleOcrComplete(data) {
   }
   try {
     const cleanDigits = String(phone || chatId || "").replace(/\D/g, "");
-    const last10 = cleanDigits.slice(-10);
-    if (last10.length >= 7) {
+    const last102 = cleanDigits.slice(-10);
+    if (last102.length >= 7) {
       const db2 = await dbManager.getConnection();
       const pendingOrder = await db2.get(
         `SELECT id, total_amount, requester, phone, customer_id, payment_status, status
@@ -37355,7 +37513,7 @@ async function handleOcrComplete(data) {
            AND (phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?)
          ORDER BY id DESC
          LIMIT 1`,
-        [`%${last10}`]
+        [`%${last102}`]
       );
       if (pendingOrder) {
         const ocrText = String(ocrResult.text || "");
@@ -43393,8 +43551,8 @@ var init_whatsappDeliveryRegister = __esm({
           return 0;
         }
         const cleanDigits = normalizeWhatsAppPhone(phone || "");
-        const last10 = cleanDigits.slice(-10);
-        if (!last10 || last10.length < 7) {
+        const last102 = cleanDigits.slice(-10);
+        if (!last102 || last102.length < 7) {
           console.warn("[DeliveryRegister] Cannot record message for invalid phone:", phone);
           return 0;
         }
@@ -43408,7 +43566,7 @@ var init_whatsappDeliveryRegister = __esm({
             `INSERT INTO whatsapp_sent_register 
          (phone, phone_last10, message, message_hash, type, target_name, reference_id, wa_message_id, sent_at, delivery_status, metadata)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'delivered', ?)`,
-            [cleanDigits, last10, message || "", msgHash, type || "general", targetName || null, referenceId ? String(referenceId) : null, waMessageId || null, now, metaStr]
+            [cleanDigits, last102, message || "", msgHash, type || "general", targetName || null, referenceId ? String(referenceId) : null, waMessageId || null, now, metaStr]
           );
           return res.lastID || 0;
         } catch (err) {
@@ -43422,8 +43580,8 @@ var init_whatsappDeliveryRegister = __esm({
        */
       async isAlreadyDelivered(phone, message, withinHours = 48) {
         const cleanDigits = normalizeWhatsAppPhone(phone || "");
-        const last10 = cleanDigits.slice(-10);
-        if (!last10 || last10.length < 7) {
+        const last102 = cleanDigits.slice(-10);
+        if (!last102 || last102.length < 7) {
           return { delivered: false };
         }
         const msgHash = String(hashMessageBody(message || ""));
@@ -43438,7 +43596,7 @@ var init_whatsappDeliveryRegister = __esm({
            AND message_hash = ?
            AND sent_at >= ?
          ORDER BY sent_at DESC LIMIT 1`,
-            [last10, `%${last10}%`, msgHash, cutoffTs]
+            [last102, `%${last102}%`, msgHash, cutoffTs]
           );
           if (record) {
             const trimmedSrc = (message || "").trim();
@@ -43462,7 +43620,7 @@ var init_whatsappDeliveryRegister = __esm({
            AND (chat_id LIKE ? OR chat_id LIKE ?)
            AND timestamp >= ?
          ORDER BY timestamp DESC LIMIT 20`,
-            [`%${last10}%`, `%${cleanDigits}%`, cutoffSeconds]
+            [`%${last102}%`, `%${cleanDigits}%`, cutoffSeconds]
           );
           const targetHashNum = Number(msgHash);
           const targetLen = (message || "").trim().length;
@@ -44632,6 +44790,7 @@ function launchClientInstance(forceQr) {
     client.on("ready", async () => {
       console.log("WhatsApp Client is ready!");
       lastInitFailureAt = 0;
+      consecutiveInitFailures = 0;
       clearInitWatchdog();
       if (qrTimeout) clearTimeout(qrTimeout);
       if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
@@ -44982,6 +45141,11 @@ async function initClient(options = {}) {
   }
   if (forceQr || isManual) {
     lastInitFailureAt = 0;
+    consecutiveInitFailures = 0;
+  } else if (consecutiveInitFailures >= MAX_AUTO_INIT_FAILURES) {
+    console.warn(`[WhatsApp] Auto-start stopped after ${consecutiveInitFailures} failed launches. Waiting for manual Connect.`);
+    setLifecycleProgress("failed", 0, "WhatsApp failed to start several times. Auto-start stopped \u2014 click Connect in Settings.", "AUTO_START_STOPPED");
+    return null;
   } else if (lastInitFailureAt > 0 && Date.now() - lastInitFailureAt < INIT_FAILURE_COOLDOWN_MS) {
     const remainingSec = Math.ceil((INIT_FAILURE_COOLDOWN_MS - (Date.now() - lastInitFailureAt)) / 1e3);
     console.log(`[WhatsApp] Init deferred (${remainingSec}s cooldown remaining after previous failure).`);
@@ -45023,6 +45187,7 @@ async function initClient(options = {}) {
       }
     } catch (err) {
       lastInitFailureAt = Date.now();
+      consecutiveInitFailures++;
       initializing = false;
       isReady = false;
       clientInstance = null;
@@ -45209,13 +45374,13 @@ async function sendMessage(to, mediaPath, caption, file) {
         let knownChatId = null;
         let knownCustomerName = "";
         try {
-          const last10 = cleanPhone.slice(-10);
+          const last102 = cleanPhone.slice(-10);
           const chatRow = await db2.get(
             `SELECT id, name FROM whatsapp_chats 
              WHERE (resolved_number LIKE ? OR id LIKE ?) 
               ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC 
               LIMIT 1`,
-            [`%${last10}%`, `%${last10}%`]
+            [`%${last102}%`, `%${last102}%`]
           );
           if (chatRow?.id) {
             knownChatId = chatRow.id;
@@ -45226,7 +45391,7 @@ async function sendMessage(to, mediaPath, caption, file) {
           if (!knownCustomerName) {
             const custRow = await db2.get(
               `SELECT name FROM customers WHERE phone LIKE ? LIMIT 1`,
-              [`%${last10}%`]
+              [`%${last102}%`]
             );
             if (custRow?.name) knownCustomerName = custRow.name;
           }
@@ -45712,9 +45877,9 @@ async function getChats() {
     for (const r of resultRows) {
       const rawNum = r.resolvedNumber || (r.id ? r.id.split("@")[0] : "");
       const digits = rawNum.replace(/\D/g, "");
-      const last10 = digits.length >= 10 ? digits.slice(-10) : "";
-      if (last10) {
-        const likePattern = `%${last10}%`;
+      const last102 = digits.length >= 10 ? digits.slice(-10) : "";
+      if (last102) {
+        const likePattern = `%${last102}%`;
         const cust = await db2.get('SELECT name FROM customers WHERE phone LIKE ? AND name IS NOT NULL AND name != "" LIMIT 1', [likePattern]);
         if (cust?.name) {
           r.name = cust.name;
@@ -45749,7 +45914,7 @@ async function getChats() {
         }
         const dist = await db2.get(
           'SELECT name FROM distributors WHERE (phone LIKE ? OR phone = ?) AND name IS NOT NULL AND name != "" LIMIT 1',
-          [likePattern, last10]
+          [likePattern, last102]
         );
         if (dist?.name) {
           r.name = dist.name;
@@ -46160,7 +46325,7 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_fs25, import_path24, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
+var import_fs25, import_path24, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
@@ -46208,6 +46373,8 @@ var init_whatsappClient = __esm({
     SYNC_RETRY_COOLDOWN_MS = 3e4;
     lastInitFailureAt = 0;
     INIT_FAILURE_COOLDOWN_MS = 6e4;
+    consecutiveInitFailures = 0;
+    MAX_AUTO_INIT_FAILURES = 3;
     waSleepTimer = null;
     lastWaActivityAt = Date.now();
     isSleeping = false;
@@ -46671,8 +46838,8 @@ var init_whatsappQueueWorker = __esm({
       /** Check outbox and permanent delivery register for a verified outbound message */
       async hasRecentOutboxMatch(db2, phone, message) {
         const cleanDigits = normalizeWhatsAppPhone(phone);
-        const last10 = cleanDigits.slice(-10);
-        if (!last10 || last10.length < 7) return false;
+        const last102 = cleanDigits.slice(-10);
+        if (!last102 || last102.length < 7) return false;
         const regCheck = await whatsappDeliveryRegister.isAlreadyDelivered(phone, message, 48);
         if (regCheck.delivered) return true;
         const minTs = Math.floor((Date.now() - 48 * 60 * 60 * 1e3) / 1e3);
@@ -46687,7 +46854,7 @@ var init_whatsappQueueWorker = __esm({
          AND timestamp >= ?
        ORDER BY timestamp DESC
        LIMIT 10`,
-          [`%${last10}%`, `%${cleanDigits}%`, minTs]
+          [`%${last102}%`, `%${cleanDigits}%`, minTs]
         );
         for (const row of rows || []) {
           const body = String(row.body || "").trim();
@@ -46746,16 +46913,16 @@ var init_whatsappQueueWorker = __esm({
         let resolvedTargetName = targetName?.trim() || "";
         if (!resolvedTargetName && cleanPhone.length >= 7) {
           try {
-            const last10 = cleanPhone.slice(-10);
-            const distRow = await db2.get("SELECT store_name FROM pharmarack_distributors WHERE REPLACE(REPLACE(phone, '+', ''), ' ', '') LIKE ? LIMIT 1", [`%${last10}%`]);
+            const last102 = cleanPhone.slice(-10);
+            const distRow = await db2.get("SELECT store_name FROM pharmarack_distributors WHERE REPLACE(REPLACE(phone, '+', ''), ' ', '') LIKE ? LIMIT 1", [`%${last102}%`]);
             if (distRow?.store_name) {
               resolvedTargetName = distRow.store_name;
             } else {
-              const boyRow = await db2.get("SELECT name FROM delivery_boys WHERE REPLACE(REPLACE(whatsapp_number, '+', ''), ' ', '') LIKE ? LIMIT 1", [`%${last10}%`]);
+              const boyRow = await db2.get("SELECT name FROM delivery_boys WHERE REPLACE(REPLACE(whatsapp_number, '+', ''), ' ', '') LIKE ? LIMIT 1", [`%${last102}%`]);
               if (boyRow?.name) {
                 resolvedTargetName = boyRow.name;
               } else {
-                const chatRow = await db2.get("SELECT name FROM whatsapp_chats WHERE id LIKE ? OR resolved_number LIKE ? LIMIT 1", [`%${last10}%`, `%${last10}%`]);
+                const chatRow = await db2.get("SELECT name FROM whatsapp_chats WHERE id LIKE ? OR resolved_number LIKE ? LIMIT 1", [`%${last102}%`, `%${last102}%`]);
                 if (chatRow?.name) {
                   resolvedTargetName = chatRow.name;
                 }
@@ -47281,7 +47448,7 @@ var init_whatsappQueueWorker = __esm({
               if (!isSent) {
                 throw new Error("WhatsApp message could not be sent (client not ready or disconnected)");
               }
-              const last10 = item.number.replace(/\D/g, "").slice(-10);
+              const last102 = item.number.replace(/\D/g, "").slice(-10);
               const minTs = Math.floor((Date.now() - 12e4) / 1e3);
               const outboxRecord = await db2.get(
                 `SELECT id FROM whatsapp_messages 
@@ -47289,7 +47456,7 @@ var init_whatsappQueueWorker = __esm({
                AND (chat_id LIKE ? OR chat_id LIKE ?)
                AND timestamp >= ? 
              LIMIT 1`,
-                [`%${last10}%`, `%${item.number}%`, minTs]
+                [`%${last102}%`, `%${item.number}%`, minTs]
               );
               if (!outboxRecord && !sendResult.suppressed) {
                 console.warn(`[WhatsAppQueueWorker] Outbox verification note for #${item.id} (${item.number}): message sent via sendMessage, recorded in outbound history.`);
@@ -47304,7 +47471,7 @@ var init_whatsappQueueWorker = __esm({
              SET status = 'sent', error_message = NULL, acknowledged = 1, resolved_at = ?
              WHERE reference_id = ? OR reference_id = ? OR reference_id = ?
                 OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending', 'failed'))`,
-                [Date.now(), `queue-${item.id}`, `queue_${item.id}`, String(item.id), `%${last10}%`]
+                [Date.now(), `queue-${item.id}`, `queue_${item.id}`, String(item.id), `%${last102}%`]
               ).catch(() => {
               });
               if (item.type === "pharmarack_distributor_order") {
@@ -48790,7 +48957,7 @@ async function purgePendingCustomerReminders(db2, options) {
   let purgedNotificationsCount = 0;
   try {
     const rawPhone = (options.phone || "").replace(/\D/g, "");
-    const last10 = rawPhone.length >= 7 ? rawPhone.slice(-10) : "";
+    const last102 = rawPhone.length >= 7 ? rawPhone.slice(-10) : "";
     const refillIdStrs = (options.refillIds || []).map((id) => String(id).trim()).filter(Boolean);
     const orderIdStrs = (options.specialOrderIds || []).map((id) => String(id).trim()).filter(Boolean);
     const medNames = (options.medicineNames || []).map((m) => m.trim().toLowerCase()).filter(Boolean);
@@ -48805,13 +48972,13 @@ async function purgePendingCustomerReminders(db2, options) {
       "admin_shortage_reminder"
     ];
     const waTypePlaceholders = waTypes.map(() => "?").join(",");
-    if (last10) {
+    if (last102) {
       const pendingItems = await db2.all(
         `SELECT id, message FROM whatsapp_send_queue 
          WHERE status IN ('pending', 'failed_offline') 
            AND type IN (${waTypePlaceholders})
            AND number LIKE ?`,
-        [...waTypes, `%${last10}%`]
+        [...waTypes, `%${last102}%`]
       ).catch(() => []);
       const idsToDelete = [];
       for (const item of pendingItems || []) {
@@ -48847,14 +49014,14 @@ async function purgePendingCustomerReminders(db2, options) {
       ).catch(() => {
       });
     }
-    if (last10 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
+    if (last102 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
       await db2.run(
         `UPDATE automation_notifications 
          SET status = 'cancelled', lifecycle_status = 'cancelled' 
          WHERE recipient_phone LIKE ? 
            AND status = 'staged' 
            AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
-        [`%${last10}%`]
+        [`%${last102}%`]
       ).catch(() => {
       });
     }
@@ -57171,7 +57338,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.78";
+    APP_VERSION = "0.1.79";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -58231,7 +58398,7 @@ var init_creditReminderService = __esm({
         if (!cleanPhone || cleanPhone.length < 10) {
           return { success: false, reason: "Invalid WhatsApp phone number" };
         }
-        const last10 = cleanPhone.slice(-10);
+        const last102 = cleanPhone.slice(-10);
         if (!options?.skipDedupe) {
           const recentReminder = await db2.get(
             `SELECT id, created_at FROM automation_notifications 
@@ -58239,7 +58406,7 @@ var init_creditReminderService = __esm({
            AND (recipient_phone LIKE ? OR recipient_phone LIKE ?)
            AND created_at > datetime('now', '-24 hours')
          ORDER BY id DESC LIMIT 1`,
-            [`%${last10}`, `%${cleanPhone}%`]
+            [`%${last102}`, `%${cleanPhone}%`]
           );
           if (recentReminder) {
             console.log(`[CreditReminderService] Skipped reminder for ${cleanPhone} (already notified in last 24h, notification ID #${recentReminder.id}).`);
@@ -74113,6 +74280,13 @@ var init_messaging = __esm({
         return res.status(400).json({ error: "number and either message or file are required" });
       }
       try {
+        if (!type || type === "manual_chat") {
+          try {
+            const { clearBotSilence: clearBotSilence2 } = await Promise.resolve().then(() => (init_waBotSilence(), waBotSilence_exports));
+            await clearBotSilence2(await dbManager.getConnection(), String(number));
+          } catch (_) {
+          }
+        }
         const queueId = await whatsappQueueWorker.enqueue(
           number,
           message || "",
@@ -77909,7 +78083,7 @@ ${summaryLines}
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        const last10 = cleanPhone.slice(-10);
+        const last102 = cleanPhone.slice(-10);
         const refills = await db2.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, pr.quantity_needed, pr.language,
              m.name as medicine_name
@@ -77919,12 +78093,12 @@ ${summaryLines}
         AND pr.is_active = 1
         AND pr.status NOT IN ('completed', 'canceled')
       ORDER BY pr.id ASC
-    `, [`%${last10}`, `%${cleanPhone}`]);
+    `, [`%${last102}`, `%${cleanPhone}`]);
         if (refills.length === 0) {
           return res.status(404).json({ error: "No active refills found for this patient" });
         }
         const patientName = refills[0].patient_name || "Customer";
-        const custRow = await db2.get("SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1", [`%${last10}`, `%${cleanPhone}`]);
+        const custRow = await db2.get("SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1", [`%${last102}`, `%${cleanPhone}`]);
         const lang = refills[0].language || custRow?.language || "en";
         const medicalName = await getConfiguredPharmacyName(db2) || "Pharmacy";
         const sched = await getPharmacyOperatingSchedule(db2);
@@ -77954,7 +78128,7 @@ ${summaryLines}
          AND status NOT IN ('cancelled', 'failed_perm')
          AND created_at >= ?
        ORDER BY created_at DESC LIMIT 1`,
-          [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+          [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
         );
         let queueId = null;
         let whatsappQueued = false;
@@ -78020,9 +78194,9 @@ ${summaryLines}
           return res.status(404).json({ error: "Refill not found" });
         }
         const cleanPhone = normalizeWhatsAppPhone(refill.patient_phone);
-        const last10 = cleanPhone ? cleanPhone.slice(-10) : "";
+        const last102 = cleanPhone ? cleanPhone.slice(-10) : "";
         const patientName = refill.patient_name || "Customer";
-        const custRow = cleanPhone ? await db2.get("SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1", [`%${last10}`, `%${cleanPhone}`]) : null;
+        const custRow = cleanPhone ? await db2.get("SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1", [`%${last102}`, `%${cleanPhone}`]) : null;
         const lang = refill.language || custRow?.language || "en";
         const medicalName = await getConfiguredPharmacyName(db2) || "Pharmacy";
         const sched = await getPharmacyOperatingSchedule(db2);
@@ -78053,7 +78227,7 @@ ${summaryLines}
            AND status NOT IN ('cancelled', 'failed_perm')
            AND created_at >= ?
          ORDER BY created_at DESC LIMIT 1`,
-            [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+            [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
           );
           if (!recentQueue) {
             queueId = await whatsappQueueWorker.enqueue(
@@ -85096,17 +85270,17 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
       }
       let custId = customerId || verified?.customerId || 0;
       const targetPhone = phone || verified?.phone || "";
-      const last10 = targetPhone.slice(-10);
+      const last102 = targetPhone.slice(-10);
       try {
         const db2 = await dbManager.getConnection();
-        if (!custId && last10) {
+        if (!custId && last102) {
           const cust = await db2.get(
             `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-            [targetPhone, `%${last10}`]
+            [targetPhone, `%${last102}`]
           );
           if (cust) custId = cust.id;
         }
-        if (!custId && !last10) {
+        if (!custId && !last102) {
           return res.status(400).json({ error: "customer_id or phone is required" });
         }
         const itemsMap = /* @__PURE__ */ new Map();
@@ -85121,7 +85295,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
          LEFT JOIN stores s ON s.id = pr.store_id
          WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
          ORDER BY pr.id DESC LIMIT 20`,
-            [custId || -1, `%${last10}%`]
+            [custId || -1, `%${last102}%`]
           );
           for (const r of refills) {
             const key = (r.medicine_name || "").toLowerCase().trim();
@@ -85141,7 +85315,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
          FROM special_orders so
          WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.product IS NOT NULL AND TRIM(so.product) != ''
          ORDER BY so.id DESC LIMIT 20`,
-            [custId || -1, `%${last10}%`]
+            [custId || -1, `%${last102}%`]
           );
           for (const s of specialOrders) {
             const key = (s.medicine_name || "").toLowerCase().trim();
@@ -85162,7 +85336,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
          JOIN medicines m ON m.id = im.medicine_id
          WHERE (si.customer_id = ? OR si.customer_phone_snapshot LIKE ?)
          ORDER BY si.id DESC LIMIT 20`,
-            [custId || -1, `%${last10}%`]
+            [custId || -1, `%${last102}%`]
           );
           for (const sl of sales) {
             const key = (sl.medicine_name || "").toLowerCase().trim();
@@ -88629,11 +88803,22 @@ var init_sales = __esm({
             if (rawSoId && !isNaN(Number(rawSoId))) explicitOrderIds.push(Number(rawSoId));
             const rawOoId = req.body.online_order_id || req.body.onlineOrderId;
             if (rawOoId && !isNaN(Number(rawOoId))) explicitOrderIds.push(Number(rawOoId));
+            const closeOutFulfilledOrder = async (ordId) => {
+              const so = await db2.get(`SELECT phone, product FROM special_orders WHERE id = ?`, [ordId]).catch(() => null);
+              await purgePendingCustomerReminders(db2, {
+                phone: so?.phone,
+                specialOrderIds: [ordId],
+                medicineNames: so?.product ? [String(so.product)] : []
+              });
+              await db2.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {
+              });
+              eventService.broadcast("order_updated", { at: Date.now(), orderId: ordId, action: "fulfilled_pos" });
+              eventService.broadcast("special_orders_updated", { at: Date.now(), orderId: ordId });
+            };
             for (const ordId of explicitOrderIds) {
               try {
                 await db2.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [ordId]);
-                await db2.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {
-                });
+                await closeOutFulfilledOrder(ordId);
                 consumedOrderIds.add(ordId);
               } catch (e) {
                 console.warn(`[Sales explicit order] Failed to mark order #${ordId} fulfilled:`, e);
@@ -88662,8 +88847,7 @@ var init_sales = __esm({
                 consumedOrderIds.add(best.order.order_id);
                 try {
                   await db2.run(`UPDATE special_orders SET status = 'Fulfilled', auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?`, [best.order.order_id]);
-                  await db2.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(best.order.order_id)]).catch(() => {
-                  });
+                  await closeOutFulfilledOrder(best.order.order_id);
                 } catch (specErr) {
                   console.warn(`[Special Order bg] Failed to mark order #${best.order.order_id} fulfilled:`, specErr);
                 }
@@ -96164,7 +96348,7 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const cleanPhone = String(order.phone || "").replace(/\D/g, "");
   if (!cleanPhone) return false;
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-  const last10 = cleanPhone.slice(-10);
+  const last102 = cleanPhone.slice(-10);
   const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
   const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
   const lang = custRow?.language || "en";
@@ -96178,7 +96362,7 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
          AND status NOT IN ('cancelled', 'failed_perm')
          AND created_at >= ?
        ORDER BY created_at DESC LIMIT 1`,
-      [`%${last10}%`, `%${formattedPhone}%`, msg, sixtyMinutesAgoMs]
+      [`%${last102}%`, `%${formattedPhone}%`, msg, sixtyMinutesAgoMs]
     );
     if (recentQueue) {
       console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same medicine already queued within 60m, queue ID: ${recentQueue.id}).`);
@@ -96220,15 +96404,15 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
 }
 async function cancelPendingWhatsAppForOrder(db2, order) {
   const cleanPhone = order.phone ? order.phone.replace(/\D/g, "") : "";
-  const last10 = cleanPhone.slice(-10);
+  const last102 = cleanPhone.slice(-10);
   const reqName = (order.requester || "").trim();
   const prodName = (order.product || "").trim();
   try {
     const matchConditions = [];
     const matchArgs = [];
-    if (last10 && last10.length >= 7) {
+    if (last102 && last102.length >= 7) {
       matchConditions.push("number LIKE ?");
-      matchArgs.push(`%${last10}%`);
+      matchArgs.push(`%${last102}%`);
     }
     if (reqName) {
       matchConditions.push("target_name = ?");
@@ -96619,7 +96803,7 @@ var init_orders = __esm({
         if (!rawPhone || rawPhone.length < 7) {
           return res.json({ recentlyNotified: false });
         }
-        const last10 = rawPhone.slice(-10);
+        const last102 = rawPhone.slice(-10);
         const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
         const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
         const db2 = await dbManager.getConnection();
@@ -96630,7 +96814,7 @@ var init_orders = __esm({
          AND status NOT IN ('cancelled', 'failed_perm')
          AND created_at >= ?
        ORDER BY created_at DESC LIMIT 1`,
-          [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+          [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
         );
         if (recent) {
           const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recent.created_at)) / 6e4));
@@ -96697,7 +96881,7 @@ var init_orders = __esm({
           return res.status(400).json({ error: "Customer phone number is missing" });
         }
         const formattedPhone = firstPhone.length === 10 ? `91${firstPhone}` : firstPhone;
-        const last10 = firstPhone.slice(-10);
+        const last102 = firstPhone.slice(-10);
         const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
         if (!force_resend) {
           const recentQueue = await db2.get(
@@ -96707,7 +96891,7 @@ var init_orders = __esm({
            AND status NOT IN ('cancelled', 'failed_perm')
            AND created_at >= ?
          ORDER BY created_at DESC LIMIT 1`,
-            [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+            [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
           );
           if (recentQueue) {
             const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recentQueue.created_at)) / 6e4));
@@ -97856,12 +98040,12 @@ We are preparing your order. Thank you!
             } else if (existing.phone && (existing.product || existing.medicine_name)) {
               const medName = existing.product || existing.medicine_name || "";
               const cleanPhone = (existing.phone || "").replace(/\D/g, "");
-              const last10 = cleanPhone.slice(-10);
+              const last102 = cleanPhone.slice(-10);
               await db2.run(
                 `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP 
              WHERE (patient_phone = ? OR patient_phone LIKE ?) 
                AND medicine_id IN (SELECT id FROM medicines WHERE name = ? OR name LIKE ?)`,
-                [existing.phone, `%${last10}%`, medName, `%${medName}%`]
+                [existing.phone, `%${last102}%`, medName, `%${medName}%`]
               );
             }
             eventService.broadcast("refill_updated", { action: "cancel", fromOrderId: Number(id) });
@@ -97930,6 +98114,12 @@ We are preparing your order. Thank you!
           return res.status(404).json({ error: "Order not found" });
         }
         await db2.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1 WHERE id = ?", id);
+        await cancelPendingWhatsAppForOrder(db2, order);
+        await purgePendingCustomerReminders(db2, {
+          phone: order.phone,
+          specialOrderIds: [Number(id)],
+          medicineNames: [order.product].filter(Boolean)
+        });
         await db2.run(
           `UPDATE automation_notifications 
        SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -103331,8 +103521,8 @@ ${order.items || "Standard Pharmacy Order"}
 `;
           group.orders.forEach((o, idx) => {
             const cleanP = normalizeWhatsAppPhone(o.phone || "");
-            const last10 = cleanP.slice(-10);
-            const phoneFormatted = last10.length === 10 ? `+91 ${last10.slice(0, 5)} ${last10.slice(5)}` : o.phone || "N/A";
+            const last102 = cleanP.slice(-10);
+            const phoneFormatted = last102.length === 10 ? `+91 ${last102.slice(0, 5)} ${last102.slice(5)}` : o.phone || "N/A";
             summaryMsg += `${idx + 1}. *${o.storeName}* (${o.items?.length || 0} items)
     \u{1F4DE} Contact: ${phoneFormatted}
 `;
