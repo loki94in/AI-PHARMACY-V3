@@ -6,7 +6,7 @@ import { broadcastContactDataChanged, updateSettingsCache } from '../../utils/se
 import { useModalEscape, shortcutEvent } from '../../services/keyboardShortcuts';
 import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
-import { Save, RefreshCw, Zap, RotateCcw, AlertTriangle, Send, CheckCircle2, MessageCircle, Mail, Smartphone, Check, Eye, CreditCard, ShoppingCart, Layers, Sparkles, ExternalLink, Globe, Copy, Phone, Cloud } from 'lucide-react';
+import { Save, RefreshCw, Zap, RotateCcw, AlertTriangle, Send, CheckCircle2, MessageCircle, Mail, Smartphone, Check, Eye, CreditCard, ShoppingCart, Layers, Sparkles, ExternalLink, Globe, Copy, Phone, Cloud, LogOut } from 'lucide-react';
 
 export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }: { rawSettings: Record<string, string>; refetchSettings: () => void; isVisible: boolean }) {
   const [waPreferredSystem, setWaPreferredSystem] = useState(rawSettings.whatsapp_preferred_system || 'web');
@@ -545,6 +545,33 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
     }
   };
 
+  const [pharmarackLoggingOut, setPharmarackLoggingOut] = useState(false);
+  const [confirmPharmarackLogout, setConfirmPharmarackLogout] = useState(false);
+
+  const handleLogoutPharmarack = async () => {
+    if (!confirmPharmarackLogout) {
+      setConfirmPharmarackLogout(true);
+      setTimeout(() => setConfirmPharmarackLogout(false), 6000);
+      return;
+    }
+    setPharmarackLoggingOut(true);
+    setConfirmPharmarackLogout(false);
+    try {
+      const res = await api.logoutPharmarack();
+      if (res?.success) {
+        toastEvent.trigger('Pharmarack session and profile data cleared successfully', 'success');
+        refetchSettings();
+      } else {
+        toastEvent.trigger(res?.message || 'Failed to clean Pharmarack session', 'error');
+      }
+    } catch (err) {
+      const e = err as LocalApiError;
+      toastEvent.trigger('Pharmarack logout error: ' + (e?.response?.data?.error || e.message), 'error');
+    } finally {
+      setPharmarackLoggingOut(false);
+    }
+  };
+
   const handleReorderWindowChange = async (months: string) => {
     setReorderWindowMonths(months);
     try {
@@ -968,7 +995,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
             <div>
               <label className="block text-xs font-semibold text-text mb-1">Pharmarack Login Username / Phone</label>
               <input
@@ -1010,6 +1037,22 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
               >
                 <Smartphone size={14} />
                 <span>Open Login (OTP)</span>
+              </button>
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={handleLogoutPharmarack}
+                disabled={pharmarackLoggingOut}
+                className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 border font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs disabled:opacity-50 ${
+                  confirmPharmarackLogout
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30 animate-pulse'
+                    : 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border-red-500/30'
+                }`}
+                title="Completely purge Pharmarack session tokens, browser profile locks, and cached data"
+              >
+                <LogOut size={14} className={pharmarackLoggingOut ? 'animate-spin' : ''} />
+                <span>{confirmPharmarackLogout ? 'Confirm Clean?' : 'Clean & Logout'}</span>
               </button>
             </div>
           </div>

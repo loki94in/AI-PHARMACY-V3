@@ -22,12 +22,12 @@ export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_pr
     const filterPattern = resolvedPath.replace(/\\/g, '%').replace(/\//g, '%');
 
     const execResult = await execAsync(
-      `wmic process where "name='chrome.exe' and CommandLine like '%${filterPattern}%'" get ProcessId`,
-      { timeout: 3000 }
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe') and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
+      { timeout: 4000 }
     ).catch(async () => {
       return await execAsync(
-        `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name='chrome.exe' and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
-        { timeout: 4000 }
+        `wmic process where "(name='chrome.exe' or name='msedge.exe') and CommandLine like '%${filterPattern}%'" get ProcessId`,
+        { timeout: 3000 }
       ).catch(() => ({ stdout: '' }));
     });
 
@@ -124,7 +124,8 @@ export function extractTokenFromProfile(profilePath: string): string | null {
                 const parts = m.split('.');
                 const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
                 const exp = (payload.exp || 0) * 1000;
-                if (exp > Date.now() && payload.role === 'Retailer') {
+                const role = String(payload.role || '').toLowerCase();
+                if (exp > Date.now() && (!payload.role || role === 'retailer' || payload.retailerId || payload.userId)) {
                   if (exp > latestExp) {
                     latestExp = exp;
                     bestToken = m;
@@ -236,6 +237,43 @@ export class TokenRefreshScheduler {
 
   public async triggerImmediateCheck(triggerType: 'background_random' | 'manual_reauth' | 'monthly_autosync' | 'boot' = 'manual_reauth') {
     return this.refreshIfNeeded(triggerType);
+  }
+
+  public async clearSession(): Promise<void> {
+    console.log('[TokenRefreshScheduler] Complete clean / logout requested. Purging Pharmarack profile and locks...');
+    this.isLoginWindowActive = false;
+    this.isRefreshing = false;
+    this.refreshPromise = null;
+    this.heartbeatInFlight = false;
+    this.lastCapturedAt = null;
+    this.lastError = null;
+
+    // 1. Kill any processes holding locks on pharmarack_profile
+    await killOrphanChromeProcesses('pharmarack_profile');
+
+    // 2. Clear temp profile directories
+    cleanTempProfileFolders();
+
+    // 3. Completely delete main profile directory
+    const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
+    try {
+      if (fs.existsSync(mainProfilePath)) {
+        fs.rmSync(mainProfilePath, { recursive: true, force: true });
+        console.log('[TokenRefreshScheduler] Main profile directory removed:', mainProfilePath);
+      }
+    } catch (err: any) {
+      console.warn('[TokenRefreshScheduler] Error removing main profile directory:', err.message);
+    }
+
+    // 4. Clear SQLite app_settings for Pharmarack
+    try {
+      const db = await dbManager.getConnection();
+      await db.run("DELETE FROM app_settings WHERE key = 'pharmarack_session_token'");
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'disconnected')");
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+    } catch (dbErr: any) {
+      console.warn('[TokenRefreshScheduler] Error clearing DB session settings:', dbErr.message);
+    }
   }
 
   public async start() {
@@ -518,9 +556,9 @@ export class TokenRefreshScheduler {
     // even when the user is idle — its whole purpose is keeping the Pharmarack
     // session alive overnight so no morning OTP re-login is needed.
 
-    const chromePath = findChromePath();
+    const chromePath = findChromePath({ includeEdge: true });
     if (!chromePath) {
-      console.error('[TokenRefreshScheduler] Chrome path not found.');
+      console.error('[TokenRefreshScheduler] Chrome or Chromium browser path not found.');
       return null;
     }
 

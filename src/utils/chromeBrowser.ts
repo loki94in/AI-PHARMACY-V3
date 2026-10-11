@@ -19,26 +19,56 @@ import { getAppDataDir } from '../config/index.js';
  * lookup semantics.
  */
 export function findChromePath(options?: { includeEdge?: boolean }): string | null {
-  const paths: (string | null)[] = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : null
-  ];
+  const baseDirs = [
+    process.env.PROGRAMFILES,
+    process.env['ProgramFiles(x86)'],
+    process.env.PROGRAMW6432,
+    process.env.LOCALAPPDATA,
+    'C:\\Program Files',
+    'C:\\Program Files (x86)'
+  ].filter(Boolean) as string[];
+
+  const paths: string[] = [];
+
+  for (const dir of baseDirs) {
+    paths.push(path.join(dir, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+  }
 
   if (options?.includeEdge) {
-    paths.push(
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Microsoft\\Edge\\Application\\msedge.exe') : null,
-      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft\\Edge\\Application\\msedge.exe') : null
-    );
-  }
-
-  for (const p of paths.filter(Boolean) as string[]) {
-    if (fs.existsSync(p)) {
-      return p;
+    for (const dir of baseDirs) {
+      paths.push(path.join(dir, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
     }
   }
+
+  for (const p of paths) {
+    try {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    } catch (_) {}
+  }
+
+  // Windows CLI search fallback using where.exe
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync('where chrome.exe', { stdio: ['ignore', 'pipe', 'ignore'], timeout: 1000 })
+        .toString()
+        .trim()
+        .split(/\r?\n/)[0];
+      if (out && fs.existsSync(out)) return out;
+    } catch (_) {}
+
+    if (options?.includeEdge) {
+      try {
+        const out = execSync('where msedge.exe', { stdio: ['ignore', 'pipe', 'ignore'], timeout: 1000 })
+          .toString()
+          .trim()
+          .split(/\r?\n/)[0];
+        if (out && fs.existsSync(out)) return out;
+      } catch (_) {}
+    }
+  }
+
   return null;
 }
 

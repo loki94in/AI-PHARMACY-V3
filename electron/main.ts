@@ -62,19 +62,29 @@ if (!gotTheLock) {
 
 /** Clean leftover browser profile locks so Chromium / Puppeteer never launch locked */
 function cleanAllSessionLocks(targetDir: string): void {
-  const sessionLocks = [
-    path.join(targetDir, '.wwebjs_auth', 'session', 'devtoolsactiveport'),
-    path.join(targetDir, '.wwebjs_auth', 'session', 'Default', 'devtoolsactiveport'),
-    path.join(targetDir, '.wwebjs_auth', 'session', 'lockfile'),
-    path.join(targetDir, '.wwebjs_auth', 'session', 'SingletonLock'),
-    path.join(targetDir, 'data', 'pharmarack_profile', 'SingletonLock'),
-    path.join(targetDir, 'data', 'pharmarack_profile', 'lockfile'),
-    path.join(targetDir, 'data', 'pharmarack_profile', 'devtoolsactiveport'),
-  ];
-  for (const lock of sessionLocks) {
-    try {
-      if (fs.existsSync(lock)) fs.unlinkSync(lock);
-    } catch (_) {}
+  const dirs = [targetDir];
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    const userAppDir = path.join(process.env.LOCALAPPDATA, 'AI Pharmacy OS');
+    if (userAppDir.toLowerCase() !== targetDir.toLowerCase()) {
+      dirs.push(userAppDir);
+    }
+  }
+
+  for (const dir of dirs) {
+    const sessionLocks = [
+      path.join(dir, '.wwebjs_auth', 'session', 'devtoolsactiveport'),
+      path.join(dir, '.wwebjs_auth', 'session', 'Default', 'devtoolsactiveport'),
+      path.join(dir, '.wwebjs_auth', 'session', 'lockfile'),
+      path.join(dir, '.wwebjs_auth', 'session', 'SingletonLock'),
+      path.join(dir, 'data', 'pharmarack_profile', 'SingletonLock'),
+      path.join(dir, 'data', 'pharmarack_profile', 'lockfile'),
+      path.join(dir, 'data', 'pharmarack_profile', 'devtoolsactiveport'),
+    ];
+    for (const lock of sessionLocks) {
+      try {
+        if (fs.existsSync(lock)) fs.unlinkSync(lock);
+      } catch (_) {}
+    }
   }
 }
 

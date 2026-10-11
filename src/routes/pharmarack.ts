@@ -691,7 +691,7 @@ router.post('/login-window', async (_req, res) => {
       cleanProfileLockFiles(mainProfilePath);
 
       // Spawn Chrome directly — opens instantly, no Puppeteer init overhead.
-      // Token is captured automatically on Chrome close.
+      // Active token polling captures login in real-time while window is open.
       console.log('[LoginWindow] Spawning Chrome natively from:', chromePath);
       const { spawn: spawnProc } = await import('child_process');
       const chromeProc = spawnProc(chromePath, [
@@ -707,50 +707,86 @@ router.post('/login-window', async (_req, res) => {
         '--disable-sync',
         '--mute-audio',
         'https://retailers.pharmarack.com/loginotp'
-      ], { detached: false, stdio: 'ignore' });
+      ], { detached: false, stdio: 'ignore', windowsHide: false });
+
+      let pollTimer: NodeJS.Timeout | null = null;
+      let tokenCaptured = false;
+
+      const saveTokenAndBroadcast = async (token: string, source: string) => {
+        if (tokenCaptured) return;
+        tokenCaptured = true;
+        console.log(`[LoginWindow] Successfully captured token (${source}):`, token.substring(0, 15) + '...');
+        try {
+          const db = await dbManager.getConnection();
+          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
+          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+          import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
+        } catch (dbErr: any) {
+          console.error('[LoginWindow] Failed to persist token:', dbErr.message);
+        }
+
+        // Run heartbeat probe to verify live connection and warm up cart
+        tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => {});
+
+        // Broadcast session state so UI updates in real-time without needing to close window
+        try {
+          const { eventService } = await import('../services/eventService.js');
+          eventService.broadcast('pharmarack_session_refreshed', {
+            status: 'success',
+            message: 'Pharmarack B2B account linked successfully!'
+          });
+        } catch (_) {}
+      };
+
+      // Poll profile LevelDB storage every 2 seconds while Chrome is active
+      pollTimer = setInterval(async () => {
+        if (tokenCaptured) {
+          if (pollTimer) clearInterval(pollTimer);
+          return;
+        }
+        try {
+          const token = extractTokenFromProfile(mainProfilePath);
+          if (token) {
+            if (pollTimer) clearInterval(pollTimer);
+            await saveTokenAndBroadcast(token, 'active-poll');
+          }
+        } catch (_) {}
+      }, 2000);
 
       chromeProc.on('error', (e: Error) => {
+        if (pollTimer) clearInterval(pollTimer);
         console.warn('[LoginWindow] Chrome spawn error:', e.message);
         tokenRefreshScheduler.isLoginWindowActive = false;
       });
 
       chromeProc.on('exit', async () => {
-        console.log('[LoginWindow] Chrome login window closed. Extracting session token...');
+        if (pollTimer) clearInterval(pollTimer);
+        console.log('[LoginWindow] Chrome login window closed. Checking session token...');
         tokenRefreshScheduler.isLoginWindowActive = false;
-        // Give Chrome a moment to flush cookies/localStorage to disk before reading
+        // Give Chrome a moment to flush cookies/localStorage to disk before final read
         await new Promise(r => setTimeout(r, 1200));
 
-        let token = extractTokenFromProfile(mainProfilePath);
-        if (token) {
-          console.log('[LoginWindow] Successfully captured token from profile storage:', token.substring(0, 15) + '...');
-          try {
-            const db = await dbManager.getConnection();
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
-            import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
-          } catch (dbErr: any) {
-            console.error('[LoginWindow] Failed to persist token:', dbErr.message);
+        if (!tokenCaptured) {
+          let token = extractTokenFromProfile(mainProfilePath);
+          if (token) {
+            await saveTokenAndBroadcast(token, 'exit-scan');
+          } else {
+            console.log('[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...');
+            token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
+            if (token) {
+              await saveTokenAndBroadcast(token, 'executeRefresh-fallback');
+            } else {
+              try {
+                const { eventService } = await import('../services/eventService.js');
+                eventService.broadcast('pharmarack_session_refreshed', {
+                  status: 'failed',
+                  error: 'Login window closed without capturing token'
+                });
+              } catch (_) {}
+            }
           }
-        } else {
-          console.log('[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...');
-          token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
         }
-
-        // Run heartbeat probe to verify live connection and warm up cart
-        await tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => {});
-
-        // Broadcast session state so UI updates without polling
-        try {
-          const { eventService } = await import('../services/eventService.js');
-          const db2 = await dbManager.getConnection();
-          const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-          const hasToken = !!(tokenRow?.value);
-          eventService.broadcast('pharmarack_session_refreshed', {
-            status: hasToken ? 'success' : 'failed',
-            error: hasToken ? null : 'Login window closed without capturing token'
-          });
-        } catch (_) {}
 
         console.log('[LoginWindow] Pharmarack login window session ended.');
       });
@@ -760,6 +796,32 @@ router.post('/login-window', async (_req, res) => {
       tokenRefreshScheduler.isLoginWindowActive = false;
     }
   })();
+});
+
+// Logout and complete clean reset of Pharmarack session, locks, and cache
+router.post('/logout', async (_req, res) => {
+  try {
+    console.log('[Pharmarack] User requested complete clean & logout. Purging session data...');
+    invalidatePharmarackCartCache();
+    await tokenRefreshScheduler.clearSession();
+
+    // Broadcast session state so entire UI reflects logged out status
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('pharmarack_session_refreshed', {
+        status: 'logged_out',
+        message: 'Pharmarack session cleared and logged out successfully.'
+      });
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      message: 'Pharmarack session and profile data cleared successfully.'
+    });
+  } catch (err: any) {
+    console.error('[Pharmarack] Logout error:', err);
+    res.status(500).json({ error: err.message || 'Failed to clean Pharmarack session' });
+  }
 });
 
 

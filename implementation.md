@@ -1,81 +1,128 @@
-# Full-App 22+ Pages Universal 10-Digit Phone Enforcement Plan
+# Pharmarack Installed App Login & Complete Clean Logout Implementation Plan
 
 ## Overview
-A comprehensive, zero-bypass enforcement of strict 10-digit phone numbers across the entire application (CRM subtabs, POS, PhoneSales, Sells, Dispatch, CustomerPortal, Quick Assist, and Settings). Any phone number entered or saved anywhere in the system is guaranteed to be exactly 10 digits (starting with [6-9] for mobile/WhatsApp recipients, or 10 digits for distributors/landlines). Walk-in sales without phone numbers remain supported.
+This plan resolves all issues preventing Pharmarack from functioning properly in the installed Electron/Windows application, eliminates the "unable to login / stuck popup" syndrome by adding real-time token synchronization while the login window is open, and adds a dedicated **Complete Clean & Logout** operation in Settings (External Integrations tab).
 
 ---
 
-## Audit Findings & Gaps Identified & Fixed
+## User Design Decisions
+1. **Login Window Behavior**: Keep the login window open and update AI Pharmacy OS in real-time when authentication succeeds, letting the user close the window manually when they are ready.
+2. **Logout UI Location**: Dedicated "Complete Clean & Logout" button in Settings -> External Integrations (Pharmarack B2B Live Ordering section).
 
-### 1. CRM Page (`frontend/src/pages/CRM/`)
-- [x] **Refills Section (`RefillsSection.tsx`)**: "Register / Edit Refill" modal (`handleSaveRefill`) validates `addPatientPhone` using `isValid10DigitPhone`. Backend `patient-medicines` (`src/routes/refills.ts`) validates phone using `validate10DigitPhone(patient_phone, { allowBlank: false, requireMobilePrefix: true })`.
-- [x] **Special Orders Section (`SpecialOrdersSection.tsx`)**: The Edit Order modal (`handleSaveEdit`) enforces `isValid10DigitPhone(cleanPh)` (replaced legacy 8-15 digit check).
-- [x] **Enquiries Section (`EnquiriesSection.tsx` & `src/routes/enquiries.ts`)**: "New Enquiry" modal validates phone with `isValid10DigitPhone`. Backend `POST /api/enquiries` validates with `validate10DigitPhone`.
-- [x] **WhatsApp Section (`WhatsAppSection.tsx`)**: "New Chat" modal (`handleStartNewChat`) validates 10 digits starting with [6-9] before generating `@c.us` IDs.
-- [x] **Doctors Profile (`src/routes/crm.ts`)**: `POST /doctors` and `PUT /doctors/:id` validate contact numbers with `validate10DigitPhone(contact_number, { allowBlank: true, requireMobilePrefix: false })`.
+---
 
-### 2. Sells & Invoice Edit (`frontend/src/pages/Sells/index.tsx`)
-- [x] In `handleUpdateInvoice`, `editCustomerPhone` is validated with `isValid10DigitPhone` before submission. If invalid or short, displays error toast and blocks save.
+## Root Causes Identified in Installed App
 
-### 3. Phone Sales & Staged Billing (`frontend/src/pages/PhoneSales/index.tsx` & `src/routes/sales.ts`)
-- [x] In `handleApprove`, `patientPhone` is validated before calling `api.approveStagedSale`.
-- [x] In `src/routes/sales.ts` (`POST /staged`, `POST /staged/:id/approve`), validates `patient_phone` using `validate10DigitPhone`.
+1. **Window Visibility Inheritance Bug in Installed App**:
+   - In `electron/main.ts`, the backend child process is spawned with `windowsHide: true`.
+   - In `src/routes/pharmarack.ts`, Chrome was spawned without `{ windowsHide: false }`. On Windows, child processes inherit the hidden window state, causing the Chrome login window to either launch hidden or fail to acquire foreground focus.
+   - Fixed by explicitly passing `{ detached: false, stdio: 'ignore', windowsHide: false }`.
 
-### 4. Dispatch System (`frontend/src/pages/Dispatch/index.tsx` & `src/routes/dispatch.ts`)
-- [x] In `handleCreateManualOrder` & `handleSubmit`, validates `patient_phone` and `manualDistributorPhone` with `isValid10DigitPhone`.
-- [x] In `src/routes/dispatch.ts` (`POST /orders`, `POST /distributor-reminders/manual-order`), validates phones with `validate10DigitPhone`.
+2. **The "Wait-for-Exit" Token Extraction Trap**:
+   - In `src/routes/pharmarack.ts`, token extraction only triggered upon `chromeProc.on('exit')`.
+   - When users logged in with OTP in Chrome, they switched back to the installed app, which remained in "Session Expired" state.
+   - Retrying within the app was blocked because `tokenRefreshScheduler.isLoginWindowActive` was locked.
+   - Fixed by introducing active real-time token polling (every 2s) while the login window is open. As soon as the JWT is written to LevelDB, the token is saved, the live session verified, and the UI updated via SSE.
 
-### 5. Quick Assist & Modals (`frontend/src/components/`)
-- [x] `QuickOrderModal.tsx`: In `handleFormSubmit`, validates `phone` with `isValid10DigitPhone`. If invalid, blocks submission and triggers phone shake alert.
-- [x] `StagedReviewModal.tsx`: Validates `patientPhone` before approving staged orders.
-- [x] `POS/index.tsx`: In `handleRegisterDoctor`, validates `newDoctorPhone` with `isValid10DigitPhone`.
-- [x] `Purchases/index.tsx`: In `saveDistributor`, validates `newDistributor.phone` with `isValid10DigitPhone`.
-- [x] `PortalAccountsManager.tsx`: In `handleCreateAccount`, validates `formData.phone` with `isValid10DigitPhone`.
+3. **Missing Microsoft Edge & Universal Windows Path Resolution**:
+   - `tokenRefreshScheduler.ts` line 521 called `findChromePath()` without `{ includeEdge: true }`. On Windows machines without standalone Google Chrome (only Microsoft Edge installed), headless background refreshes failed unconditionally.
+   - `src/utils/chromeBrowser.ts` lacked standard environment variables (`%ProgramFiles%`, `%ProgramFiles(x86)%`, `%PROGRAMW6432%`, `%LOCALAPPDATA%`) and 32/64-bit cross-directory resolution.
+   - `killOrphanChromeProcesses` relied on deprecated `wmic` (removed in Windows 11 24H2) and only checked `chrome.exe`, ignoring `msedge.exe`.
+   - Fixed by including Edge across all refresh and kill routines, using PowerShell `Get-CimInstance` directly.
 
-### 6. Customer Portal (`CustomerPortal/index.tsx`, `customerPortal.ts`)
-- [x] In `CustomerPortal/index.tsx` (`handleRegister`), replaced loose check with `isValid10DigitPhone(cleanP)`.
-- [x] In `src/routes/customerPortal.ts` (`POST /auth/register`, `POST /accounts/generate`), enforces `validate10DigitPhone`.
+4. **Overly Restrictive JWT Role Check**:
+   - `extractTokenFromProfile` checked `payload.role === 'Retailer'`. If upstream Pharmarack sent lowercase `retailer` or alternative sub-roles, valid tokens were dropped.
+   - Fixed with case-insensitive check `(!payload.role || String(payload.role).toLowerCase() === 'retailer')`.
 
-### 7. Settings (`Settings/MultiStoreTab.tsx`, `Settings/TriggerSchedulesTab.tsx`, `src/routes/settings.ts`, `src/routes/stores.ts`)
-- [x] In `MultiStoreTab.tsx`, sanitizes and validates `newStore.phone` with `isValid10DigitPhone` and `maxLength={10}`.
-- [x] In `src/routes/stores.ts`, validates store phone in POST and PUT with `validate10DigitPhone`.
-- [x] In `TriggerSchedulesTab.tsx`, validates `nonWaFallbackAlertPhone` before saving and sets `maxLength={10}`.
-- [x] In `src/routes/settings.ts`, validates all incoming phone keys (`shop_phone`, `pharmacy_phone`, `owner_whatsapp_number`, `non_wa_fallback_alert_phone`) with `validate10DigitPhone`.
+5. **No "Complete Clean / Logout" Capability**:
+   - When profile data became corrupted, locks were stuck, or accounts were switched, there was no way to reset.
+   - Fixed by creating `POST /pharmarack/logout` and the Settings UI button.
+
+---
+
+## Detailed Step-by-Step Implementation Plan
+
+### Step 1: Core Chromium & Process Utilities (`src/utils/chromeBrowser.ts`)
+- Enhance `findChromePath`:
+  - Check dynamic environment variables (`LOCALAPPDATA`, `PROGRAMFILES`, `ProgramFiles(x86)`, `PROGRAMW6432`).
+  - Check standard paths for Google Chrome and Microsoft Edge.
+  - Add fallback to `where.exe chrome` and `where.exe msedge`.
+- Enhance `killOrphanChromeProcesses` in `src/services/tokenRefreshScheduler.ts`:
+  - Kill both `chrome.exe` and `msedge.exe` matching the profile keyword.
+  - Use fast PowerShell `Get-CimInstance` command, bypassing deprecated `wmic`.
+
+### Step 2: Real-Time Token Monitoring & Clean Logout Endpoint (`src/routes/pharmarack.ts` & `src/services/tokenRefreshScheduler.ts`)
+- Update `tokenRefreshScheduler.ts`:
+  - Enable `{ includeEdge: true }` in `executeRefreshInternal()`.
+  - Loosen JWT role matching in `extractTokenFromProfile()`.
+  - Add `clearSession()` method to `tokenRefreshScheduler` that:
+    - Kills processes holding locks on `pharmarack_profile` and temp profile dirs.
+    - Resets `isRefreshing = false`, `isLoginWindowActive = false`, `heartbeatInFlight = false`, `consecutiveHeartbeat401s = 0`.
+    - Recursively removes `pharmarack_profile` and `pharmarack_profile_temp_*` folders.
+- Update `src/routes/pharmarack.ts`:
+  - In `POST /pharmarack/login-window`:
+    - Set `{ detached: false, stdio: 'ignore', windowsHide: false }` on process spawn.
+    - Start an active polling interval (every 2 seconds) to inspect the profile for a newly written token while Chrome is open.
+    - When a valid token is found:
+      - Persist token, set `pharmarack_session_status = 'active'`, `pharmarack_mode = 'Live'`.
+      - Trigger session heartbeat to verify connection.
+      - Broadcast SSE `pharmarack_session_refreshed` with `{ status: 'success' }` so the UI instantly updates without needing the user to close Chrome.
+    - Clean up interval on `exit` or on success.
+  - Implement `POST /pharmarack/logout`:
+    - Call `tokenRefreshScheduler.clearSession()`.
+    - Delete `pharmarack_session_token` and set `pharmarack_session_status = 'disconnected'` in SQLite `app_settings`.
+    - Invalidate in-memory cart cache (`serverCartCache = null`).
+    - Broadcast SSE `pharmarack_session_refreshed` with `{ status: 'logged_out', message: 'Pharmarack session cleared' }`.
+    - Return `{ success: true, message: 'Pharmarack session cleared and logged out successfully.' }`.
+
+### Step 3: Electron Lock Sanitation (`electron/main.ts`)
+- In `cleanAllSessionLocks()`, also resolve `getAppDataDir()` or check `%LOCALAPPDATA%\AI Pharmacy OS\data\pharmarack_profile` to ensure locks are cleanly stripped upon startup regardless of installation directory.
+
+### Step 4: Frontend Settings UI & API Client (`frontend/src/`)
+- In `frontend/src/services/api.ts`:
+  - Add `clearPharmarackSession: () => apiClient.post('/pharmarack/logout').then(res => res.data)`.
+- In `frontend/src/pages/Settings/IntegrationsCredentialsTab.tsx`:
+  - Add "Clear & Logout" button next to "Refresh Session" and "Open Login (OTP)".
+  - When clicked, prompt user confirmation dialog ("Are you sure you want to completely clear the Pharmarack session and cached data?").
+  - On confirm, call `api.clearPharmarackSession()`, trigger success toast, and refresh settings.
+
+### Step 5: Verification & Safety Guardrails
+- Run `npm run guardrails` to guarantee 0 TypeScript/performance violations.
+- Run `node scripts/quick-update.mjs` to update the knowledge graph.
 
 ---
 
 ## Progress Tracking
 
-- [x] Task 1: Audit all remaining phone inputs across all 22+ pages (Completed)
-- [x] Task 2: Implement Phase 1: CRM sub-tabs (Refills, Special Orders Edit, Enquiries, WhatsApp, Doctors) (Completed)
-- [x] Task 3: Implement Phase 2: Sells invoice edit, PhoneSales staged sales, and Dispatch orders (Completed)
-- [x] Task 4: Implement Phase 3: Quick Assist (QuickOrderModal, StagedReviewModal, POSDoctorModal, Purchases, Portal, Settings) (Completed)
-- [x] Task 5: Run Guardrails (`npm run guardrails`) & Knowledge Graph Update (`node scripts/quick-update.mjs`) (Completed)
+- [x] Task 1: Update browser path discovery and Windows process killing in `chromeBrowser.ts` and `tokenRefreshScheduler.ts` (Completed)
+- [x] Task 2: Implement real-time token polling and spawn visibility flags in `src/routes/pharmarack.ts` (Completed)
+- [x] Task 3: Implement `clearSession()` in `tokenRefreshScheduler.ts` and `POST /pharmarack/logout` in `src/routes/pharmarack.ts` (Completed)
+- [x] Task 4: Align session lock cleaning in `electron/main.ts` (Completed)
+- [x] Task 5: Add `logoutPharmarack` API and UI button in `IntegrationsCredentialsTab.tsx` (Completed)
+- [x] Task 6: Run Guardrails (`npm run guardrails`) & Knowledge Graph Update (`node scripts/quick-update.mjs`) (Completed)
 
 ---
 
 ## Completed Tasks Summary
 
-1. **Universal Shared Utilities**:
-   - Backend: `src/utils/phoneValidation.ts` provides `normalizePhoneDigits(input)` and `validate10DigitPhone(input, options)` with support for `allowEmpty`/`allowBlank`, `requireMobile`/`requireMobilePrefix`, and returns `{ isValid, cleanPhone, error, reason }`.
-   - Frontend: `frontend/src/utils/phone.ts` provides `sanitizePhoneInput(val)` and `isValid10DigitPhone(val)` enforcing exactly 10 digits starting with `[6-9]`.
+1. **Browser Path Discovery & Process Termination**:
+   - `src/utils/chromeBrowser.ts`: `findChromePath` now searches dynamic Windows environment variables (`%PROGRAMFILES%`, `%ProgramFiles(x86)%`, `%PROGRAMW6432%`, `%LOCALAPPDATA%`), checks standard Chrome and Edge locations, and falls back to `where.exe chrome.exe` / `where.exe msedge.exe`.
+   - `src/services/tokenRefreshScheduler.ts`: `killOrphanChromeProcesses` terminates both `chrome.exe` and `msedge.exe` holding locks on profile directories using fast PowerShell `Get-CimInstance` without hanging on Windows 11.
+   - `tokenRefreshScheduler.ts`: `executeRefreshInternal` now uses `findChromePath({ includeEdge: true })` and `extractTokenFromProfile` supports case-insensitive retailer role matching.
 
-2. **Full Frontend Form Protection**:
-   - All customer/patient entry points enforce 10 digits starting with `[6-9]`.
-   - Distributor/store entry points enforce 10 digits.
-   - Form submit handlers reject invalid numbers with immediate toast errors and block backend calls.
-   - POS checkout preserves walk-in orders (empty phone) while strictly locking any entered phone to 10 digits.
+2. **Real-Time Login Window Synchronization**:
+   - `src/routes/pharmarack.ts`: Chrome/Edge is spawned with `{ detached: false, stdio: 'ignore', windowsHide: false }` to prevent hidden window inheritance from Electron.
+   - Active polling runs every 2s while Chrome is open, capturing the JWT token the instant login is complete in LevelDB. The token is stored, session verified, and UI updated in real-time via SSE while the window remains open for the user to close manually.
 
-3. **Backend API Gateways Locked**:
-   - `src/routes/refills.ts` (`PUT /patient-medicines`)
-   - `src/routes/crm.ts` (`POST /doctors`, `PUT /doctors/:id`)
-   - `src/routes/enquiries.ts` (`POST /api/enquiries`)
-   - `src/routes/sales.ts` (`POST /staged`, `POST /staged/:id/approve`)
-   - `src/routes/dispatch.ts` (`POST /orders`, `POST /distributor-reminders/manual-order`)
-   - `src/routes/customerPortal.ts` (`POST /accounts/generate`, `POST /auth/register`)
-   - `src/routes/stores.ts` (`POST /api/stores`, `PUT /api/stores/:id`)
-   - `src/routes/settings.ts` (`POST /settings`, `POST /settings/save-single`, `POST /settings/save`)
+3. **Complete Clean & Logout Capability**:
+   - `src/services/tokenRefreshScheduler.ts`: Added `clearSession()` method to kill lock-holding processes, delete `pharmarack_profile` and temp directories, and reset SQLite session keys.
+   - `src/routes/pharmarack.ts`: Added `POST /pharmarack/logout` to invalidate in-memory cart caches, invoke `clearSession()`, and broadcast SSE `pharmarack_session_refreshed { status: 'logged_out' }`.
+   - `frontend/src/services/api.ts`: Added `logoutPharmarack()`.
+   - `frontend/src/pages/Settings/IntegrationsCredentialsTab.tsx`: Added responsive "Clean & Logout" button with two-step inline confirmation, safe from Guardrail F9 native dialog restrictions.
 
-4. **Performance & Architecture Verification**:
-   - Guardrails (`npm run guardrails`): PASSED (TypeScript compilation OK, Database Schema & Integrity OK, 0 violations).
-   - Knowledge Graph (`node scripts/quick-update.mjs`): PASSED (1175 nodes, 797 edges, 10 layers).
+4. **Electron Lock Sanitation**:
+   - `electron/main.ts`: `cleanAllSessionLocks` now purges session and devtools locks from both `targetDir` and `%LOCALAPPDATA%\AI Pharmacy OS` on startup.
+
+5. **Verification**:
+   - `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) PASSED with 0 errors, all performance guardrails PASSED.
+   - `node scripts/quick-update.mjs`: Knowledge Graph updated in 3.2s (1175 nodes, 797 edges, 10 layers).
