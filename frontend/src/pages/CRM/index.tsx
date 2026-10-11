@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import {
   Users, Repeat2, Phone, MessageSquare, ClipboardList,
   Globe, Bell, MessageCircle,
@@ -38,11 +39,19 @@ const CRM: React.FC = () => {
   const activeTab = searchParams.get('tab') || 'refills';
 
   const setTab = (key: string) => setSearchParams({ tab: key });
+  const isPageActive = usePageActive();
 
   useEffect(() => {
-    // Proactively pre-warm WhatsApp client for instant customer message & payment reminder dispatch
+    // Proactively pre-warm WhatsApp client for instant customer message & payment reminder dispatch.
+    // Re-pinged every 10 min while this page is the visible one so a long idle gap (which can let the
+    // resident WhatsApp client sleep) never leaves the NEXT click (e.g. Notify Arrival) waiting on a cold wake.
+    if (!isPageActive) return;
     api.prewarmWhatsApp().catch(() => {});
-  }, []);
+    const interval = setInterval(() => {
+      api.prewarmWhatsApp().catch(() => {});
+    }, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isPageActive]);
 
   return (
     <div className="flex flex-col h-full gap-4">

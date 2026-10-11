@@ -578,6 +578,38 @@ router.post('/distributor-reminders/manual-order', async (req, res) => {
     );
 
     res.status(201).json({ success: true, reminder: newReminder });
+
+    // Phone order added after today's delivery-boy list already went out: send the updated list for just
+    // this distributor. Before that list is due, the scheduled run already picks this row up.
+    if (newReminder && targetDate === new Date().toLocaleDateString('en-CA')) {
+      (async () => {
+        try {
+          const [globalAuto, afternoonOn, listSent] = await Promise.all([
+            db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
+            db.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'"),
+            db.get(
+              `SELECT id FROM automation_notifications
+               WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ?
+                 AND status IN ('sent', 'pending', 'sending', 'queued') LIMIT 1`,
+              [targetDate]
+            )
+          ]);
+          if (globalAuto && globalAuto.value !== 'true') return;
+          if (afternoonOn?.value !== 'true' || !listSent) return;
+          // Never repeat: skip if any delivery-boy message today already names this distributor.
+          const alreadyNamed = await db.get(
+            `SELECT id FROM automation_notifications
+             WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ?
+               AND message LIKE ? LIMIT 1`,
+            [targetDate, `%*${cleanName}*%`]
+          );
+          if (alreadyNamed) return;
+          await notificationService.sendConsolidatedDeliveryBoyDispatch([newReminder]);
+        } catch (e: any) {
+          console.warn('[Dispatch] Late phone-order delivery boy update failed:', e?.message || e);
+        }
+      })();
+    }
   } catch (error: any) {
     console.error('Manual order creation error:', error);
     res.status(500).json({ error: 'Failed to create manual phone call order reminder' });

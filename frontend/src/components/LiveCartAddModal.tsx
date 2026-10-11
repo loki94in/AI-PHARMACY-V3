@@ -1147,8 +1147,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         fetchPendingRefills().catch(() => {});
       }
 
-      // Auto-clear the settled chip after brief confirmation
-      window.setTimeout(() => dismissPendingAdd(record.id), 4000);
+      // Stays visible as "last medicine added" until the NEXT add replaces it (owner preference,
+      // 2026-10-11) — no auto-clear timer here anymore.
     } catch (cartErr: unknown) {
       console.error('Failed to add live cart item:', cartErr);
       const apiErr = cartErr as LocalApiError;
@@ -1232,8 +1232,11 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       sourceOrderId: activeSourceOrderId,
       hadSourceRefill: activeSourceRefillId !== undefined
     };
+    // "Last medicine added" chip: drop the previously SETTLED ("added") chip so the newest add
+    // replaces it in place, instead of auto-hiding after a few seconds. Failed chips are kept
+    // (not silently dropped) until the user retries or dismisses them.
     setPendingAdds(prev => {
-      const next = [...prev, record].slice(-2);
+      const next = [...prev.filter(p => p.status !== 'added'), record].slice(-2);
       syncPendingAddsCache(next);
       return next;
     });

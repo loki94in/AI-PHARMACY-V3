@@ -50,6 +50,7 @@ export default function LiveCart() {
   const [itemEdits, setItemEdits] = useState<Record<number, {
     selectedBatchId?: number;
     confirmedQty?: number;
+    confirmedQtyDraft?: string;
     replaceMedicineQuery?: string;
     replaceMedicineResults?: any[];
     replaceMedicineId?: number;
@@ -413,9 +414,22 @@ export default function LiveCart() {
                                 >
                                   <Minus size={11} />
                                 </button>
-                                <span className="text-sm font-bold text-text w-8 text-center">
-                                  {edit.confirmedQty ?? item.requested_qty}
-                                </span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={edit.confirmedQtyDraft ?? String(edit.confirmedQty ?? item.requested_qty)}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const digits = e.target.value.replace(/\D/g, '').slice(0, 5);
+                                    const n = parseInt(digits, 10);
+                                    setItemEdit(item.id, {
+                                      confirmedQtyDraft: digits,
+                                      ...(n >= 1 ? { confirmedQty: n } : {})
+                                    });
+                                  }}
+                                  onBlur={() => setItemEdit(item.id, { confirmedQtyDraft: undefined })}
+                                  className="text-sm font-bold text-text w-10 text-center bg-bg border border-border rounded-lg h-6 outline-none focus:border-primary"
+                                />
                                 <button
                                   onClick={() => setItemEdit(item.id, { confirmedQty: (edit.confirmedQty ?? item.requested_qty) + 1 })}
                                   className="w-6 h-6 rounded-lg bg-bg border border-border flex items-center justify-center text-text hover:bg-bg3"

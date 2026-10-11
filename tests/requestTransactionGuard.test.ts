@@ -38,6 +38,15 @@ describe('Request transaction guard', () => {
       await db.run("INSERT INTO app_settings (key, value) VALUES ('good_row', 'y')");
       res.json({ ok: true });
     });
+    // Slow transactional route: two of these overlap in time.
+    app.post('/slow-tx/:n', async (req, res) => {
+      const db = await dbManager.getConnection();
+      await db.run('BEGIN IMMEDIATE TRANSACTION');
+      await db.run("INSERT INTO app_settings (key, value) VALUES (?, 'v')", [`slow_${req.params.n}`]);
+      await new Promise(r => setTimeout(r, req.params.n === '1' ? 20 : 150));
+      await db.run('COMMIT');
+      res.json({ ok: true });
+    });
     // A correct transactional route.
     app.post('/tx', async (_req, res) => {
       const db = await dbManager.getConnection();
@@ -50,6 +59,25 @@ describe('Request transaction guard', () => {
 
   afterAll(() => {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+  });
+
+  // Two overlapping requests used to share one transaction (the second as a savepoint), the first
+  // COMMIT only released the savepoint, cleanup rolled everything back, and the second COMMIT threw
+  // "cannot commit - no transaction is active". Each request must now get its own turn.
+  test('overlapping transactional requests both commit and both rows are saved', async () => {
+    const [a, b] = await Promise.all([
+      request(app).post('/slow-tx/1'),
+      request(app).post('/slow-tx/2')
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+
+    const { open } = await import('sqlite');
+    const sqlite3 = await import('sqlite3');
+    const other = await open({ filename: dbPath, driver: sqlite3.default.Database });
+    const rows = await other.all("SELECT key FROM app_settings WHERE key IN ('slow_1', 'slow_2') ORDER BY key");
+    await other.close();
+    expect(rows.map((r: { key: string }) => r.key)).toEqual(['slow_1', 'slow_2']);
   });
 
   test('an orphaned transaction is rolled back when its request answers; later writes are kept', async () => {

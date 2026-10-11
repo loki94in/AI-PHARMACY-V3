@@ -1101,23 +1101,38 @@ export async function checkAndSendAfternoonDeliveryBoyReminder() {
     const currentH = now.getHours();
     const currentM = now.getMinutes();
 
-    // Check if current time is within 15 minutes of the target afternoon time (e.g., 14:00 - 14:15)
-    const isTargetHour = currentH === (targetH || 14);
-    const isWithinMinutes = currentM >= (targetM || 0) && currentM <= ((targetM || 0) + 15);
-
-    if (!isTargetHour || !isWithinMinutes) {
+    // Due from the target time until end of day, so an app opened after the 15-minute window
+    // (PC was off at 14:00) still sends today's list once instead of silently missing it.
+    const isDue = (currentH * 60 + currentM) >= ((targetH || 14) * 60 + (targetM || 0));
+    if (!isDue) {
       return;
     }
 
-    // 2. Deduplicate: check if already sent today
+    // 2. One list per day, whatever its status (even failed): the scheduled run never retries,
+    // so a failing send can never become a message every minute. The pharmacist can re-send by hand.
     const alreadySent = await db.get(
-      `SELECT id FROM automation_notifications 
-       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ? AND status = 'sent'
+      `SELECT id FROM automation_notifications
+       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ?
        LIMIT 1`,
       [todayStr]
     );
 
     if (alreadySent) {
+      return;
+    }
+
+    // Cheap pre-check so a late-day tick with nothing ordered costs one query, not a full sync.
+    const anyOrderToday = await db.get(
+      `SELECT id FROM distributor_dispatch_reminders
+       WHERE date = ? AND status NOT IN ('No Order Today', 'Skipped (PC Offline)') LIMIT 1`,
+      [todayStr]
+    );
+    const anyPlacedOrderToday = anyOrderToday ? null : await db.get(
+      `SELECT 1 AS x FROM pharmarack_placed_orders
+       WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ? LIMIT 1`,
+      [todayStr, todayStr]
+    ).catch(() => null);
+    if (!anyOrderToday && !anyPlacedOrderToday) {
       return;
     }
 

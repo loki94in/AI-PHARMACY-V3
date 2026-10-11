@@ -70,6 +70,9 @@ const ALLOW = {
     'frontend/src/components/dispatchwhatsappprogresscard.tsx',
     // 60s visibility-gated customer session duration heartbeat while active in portal
     'frontend/src/pages/customerportal/index.tsx',
+    // 10-min usePageActive()-gated WhatsApp prewarm re-ping, only while CRM is the visible page —
+    // keeps the resident WhatsApp client awake so Notify Arrival / refill reminders never hit a cold wake.
+    'frontend/src/pages/crm/index.tsx',
   ],
   directSendWorkers: ['src/services/whatsappqueueworker.ts'], // flushes USER-clicked queue items only
   // Pill toggle thumbs (after:bg-white / after:border-gray-300) are structurally white by design —

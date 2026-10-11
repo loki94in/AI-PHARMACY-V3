@@ -400,7 +400,12 @@ class DatabaseManager {
         const trimmed = sql.trim().toUpperCase().replace(/;+$/, '');
 
         if (phase === 'begin') {
-          if (self.isTxLocked && self.txDepth > 0) {
+          // A DIFFERENT HTTP request must wait for its own turn, never join this request's transaction as
+          // a savepoint: the shared depth counter then mixed up the two COMMITs, the orphan cleanup rolled
+          // both back, and the second save failed with "cannot commit - no transaction is active".
+          const callerCtx = requestTxStorage.getStore();
+          const foreignRequestOwnsTx = Boolean(callerCtx && self.txOwner && callerCtx !== self.txOwner);
+          if (self.isTxLocked && self.txDepth > 0 && !foreignRequestOwnsTx) {
             // Nested transaction inside an already locked transaction context (use SQLite savepoints)
             self.txDepth++;
             return await originalRun(`SAVEPOINT sp_${self.txDepth}`);

@@ -3680,7 +3680,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
 
         // 3. Try to find catalog mapping for this medicine (strict name verification)
         const catRow = await db.get(
-          `SELECT store_id, store_name, product_code, product_id, product_name, CAST(availability AS INTEGER) as avail, distributor_price
+          `SELECT store_id, store_name, product_name, CAST(availability AS INTEGER) as avail, distributor_price
            FROM distributor_catalog
            WHERE product_name LIKE ?
              ${matchedStoreId ? 'AND store_id = ?' : ''}
@@ -3696,9 +3696,6 @@ router.get('/purchase-reorder-history', async (req, res) => {
           if (isCloseMatch) {
             if (!matchedStoreId && catRow.store_id) matchedStoreId = Number(catRow.store_id);
             if (catRow.store_name) matchedStoreName = catRow.store_name;
-            if (!matchedProductCode && catRow.product_code) matchedProductCode = catRow.product_code;
-            if (!matchedProductId && catRow.product_id) matchedProductId = Number(catRow.product_id);
-            if (matchedProductCode && matchedProductId) isMapped = true;
           }
           avail = Number(catRow.avail || 0);
         }
