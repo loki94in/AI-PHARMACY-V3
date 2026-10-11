@@ -1427,8 +1427,8 @@ router.post('/:id/fulfill', async (req, res) => {
     const interval = refill.refill_interval_days || 30;
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + interval);
-    const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
-    const cycleDueDate = refill.next_refill_date || new Date().toISOString().slice(0, 10);
+    const nextDateStr = toLocalSqlDateTime(nextDate);
+    const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
     const fulfilledQty = Number(refill.quantity_needed || 3);
 
     // 1. Record persistent fulfillment occurrence in refill_fulfillments table
@@ -1482,8 +1482,13 @@ router.post('/:id/fulfill', async (req, res) => {
       medicineNames: refill.medicine_name ? [refill.medicine_name] : undefined
     });
 
-    // Re-run checking engine to process the next cycle or sibling refills
-    await checkAllRefills(db);
+    // Re-run checking engine in background (non-blocking)
+    setImmediate(() => {
+      checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after fulfill:', e));
+    });
+
+    eventService.broadcast('refill_updated', { at: Date.now(), refillId: Number(id), fulfilled: true });
+    eventService.broadcast('app-refills-updated', { at: Date.now() });
 
     res.json({
       success: true,
@@ -1497,15 +1502,16 @@ router.post('/:id/fulfill', async (req, res) => {
 });
 
 // Fulfill all due medicines for an entire patient schedule (e.g. from Quick Assist or CRM)
-router.post('/patient/:phone/fulfill-all', async (req, res) => {
-  const phone = (req.params.phone || req.body.patient_phone || '').trim();
+router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-all'], async (req, res) => {
+  const rawPhone = (req.params.phone || req.body.patient_phone || req.body.phone || '').trim();
+  const cleanPhone = rawPhone.replace(/\D/g, '');
   const customerId = req.body.customer_id ? parseInt(req.body.customer_id, 10) : null;
   const requestedRefillIds: number[] = Array.isArray(req.body.refill_ids)
     ? req.body.refill_ids.map(Number).filter((n: number) => !isNaN(n))
     : [];
   const fulfilledVia = req.body.fulfilled_via || 'crm_complete';
 
-  if (!phone && !customerId && requestedRefillIds.length === 0) {
+  if (!rawPhone && !customerId && requestedRefillIds.length === 0) {
     return res.status(400).json({ error: 'Patient phone, customer ID, or refill IDs required' });
   }
 
@@ -1523,13 +1529,17 @@ router.post('/patient/:phone/fulfill-all', async (req, res) => {
         requestedRefillIds
       );
     } else {
+      const phonePattern = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
       activeRefills = await db.all(
         `SELECT pr.*, m.name as medicine_name 
          FROM patient_refills pr 
          LEFT JOIN medicines m ON pr.medicine_id = m.id 
-         WHERE (pr.patient_phone = ? OR (pr.customer_id IS NOT NULL AND pr.customer_id = ?)) 
-           AND pr.is_active = 1`,
-        [phone, customerId]
+         WHERE (
+           pr.patient_phone = ? 
+           OR (length(?) >= 7 AND replace(replace(pr.patient_phone, ' ', ''), '-', '') LIKE ?)
+           OR (pr.customer_id IS NOT NULL AND pr.customer_id = ?)
+         ) AND pr.is_active = 1`,
+        [rawPhone, cleanPhone, phonePattern, customerId]
       );
     }
 
@@ -1543,8 +1553,8 @@ router.post('/patient/:phone/fulfill-all', async (req, res) => {
       const interval = refill.refill_interval_days || 30;
       const nextDate = new Date();
       nextDate.setDate(nextDate.getDate() + interval);
-      const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
-      const cycleDueDate = refill.next_refill_date || new Date().toISOString().slice(0, 10);
+      const nextDateStr = toLocalSqlDateTime(nextDate);
+      const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
       const fulfilledQty = Number(refill.quantity_needed || 3);
 
       await db.run(
@@ -1595,12 +1605,18 @@ router.post('/patient/:phone/fulfill-all', async (req, res) => {
 
     // Purge pending WhatsApp queue items and clean up staged notifications
     await purgePendingCustomerReminders(db, {
-      phone,
+      phone: rawPhone || undefined,
       refillIds: fulfilledIds,
       customerId
     });
 
-    await checkAllRefills(db);
+    // Respond immediately - checkAllRefills is a full-table scan, run in the background
+    setImmediate(() => {
+      checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after fulfill-all:', e));
+    });
+
+    eventService.broadcast('refill_updated', { at: Date.now(), fulfilled: true, count: fulfilledCount });
+    eventService.broadcast('app-refills-updated', { at: Date.now() });
 
     res.json({
       success: true,

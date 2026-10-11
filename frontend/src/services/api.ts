@@ -1840,8 +1840,11 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; cart_store_name?: string }>(`/refills/${id}/status`, { status: 'ordered', ...options }).then(res => res.data),
   getRefillsPanel: () => apiClient.get('/refills/panel').then(res => res.data),
   toggleRefillOverride: (id: number) => apiClient.post(`/refills/${id}/toggle-override`).then(res => res.data),
-  fulfillAllRefills: (phone: string, data?: { refill_ids?: number[]; customer_id?: number | null; fulfilled_via?: string }) =>
-    apiClient.post<{ success: boolean; fulfilledCount: number; message: string }>(`/refills/patient/${encodeURIComponent(phone)}/fulfill-all`, data || {}).then(res => res.data),
+  fulfillAllRefills: (phone: string, data?: { refill_ids?: number[]; customer_id?: number | null; fulfilled_via?: string; patient_phone?: string }) => {
+    const cleanPhone = (phone || data?.patient_phone || '').trim();
+    const endpoint = cleanPhone ? `/refills/patient/${encodeURIComponent(cleanPhone)}/fulfill-all` : '/refills/fulfill-all';
+    return apiClient.post<{ success: boolean; fulfilledCount: number; message: string }>(endpoint, { patient_phone: cleanPhone, ...(data || {}) }).then(res => res.data);
+  },
   fulfillRefill: (id: number, data?: { fulfilled_via?: string }) =>
     apiClient.post<{ success: boolean; message: string; next_refill_date: string }>(`/refills/${id}/fulfill`, data || {}).then(res => res.data),
   sendTomorrowReminder: (patientPhone: string) => apiClient.post<{ success: boolean; queueId?: number; message: string }>('/refills/send-tomorrow-reminder', { patient_phone: patientPhone }).then(res => res.data),

@@ -78,6 +78,15 @@ export const QuickAssistSidebar = memo(({
   const [markingOrderedRefillIds, setMarkingOrderedRefillIds] = useState<Set<number>>(new Set());
   const [processingOrderIds, setProcessingOrderIds] = useState<Set<number>>(new Set());
   const [optimisticHiddenOrderIds, setOptimisticHiddenOrderIds] = useState<Set<number>>(new Set());
+  const [optimisticHiddenRefillKeys, setOptimisticHiddenRefillKeys] = useState<Set<string>>(new Set());
+
+  // Reactive subscription to refill refresh events so Quick Assist stays synchronized
+  useEffect(() => {
+    return refillEvent.subscribeRefresh(() => {
+      onActionComplete();
+    });
+  }, [onActionComplete]);
+
   const [arrivalModalGroup, setArrivalModalGroup] = useState<{
     requester: string;
     phone?: string;
@@ -349,10 +358,19 @@ export const QuickAssistSidebar = memo(({
   }) => {
     if (fulfillingRefillKeys.has(group.key)) return;
     setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
+    // Optimistically hide from Quick Assist immediately
+    setOptimisticHiddenRefillKeys(prev => {
+      const next = new Set(prev);
+      next.add(group.key);
+      if (group.patient_phone) next.add(group.patient_phone);
+      return next;
+    });
+
     try {
       const res = await api.fulfillAllRefills(group.patient_phone, {
         refill_ids: group.medicines.map(m => m.id),
-        fulfilled_via: 'quick_assist_complete'
+        fulfilled_via: 'quick_assist_complete',
+        patient_phone: group.patient_phone
       });
       toastEvent.trigger(res?.message || `Refill cycle for ${group.patient_name} fulfilled and advanced!`, 'success');
       refillEvent.triggerRefresh();
@@ -361,6 +379,13 @@ export const QuickAssistSidebar = memo(({
     } catch (err: unknown) {
       console.error('Failed to fulfill refill group:', err);
       toastEvent.trigger('Failed to fulfill refill cycle', 'error');
+      // Rollback optimistic hide on failure
+      setOptimisticHiddenRefillKeys(prev => {
+        const next = new Set(prev);
+        next.delete(group.key);
+        if (group.patient_phone) next.delete(group.patient_phone);
+        return next;
+      });
     } finally {
       setFulfillingRefillKeys(prev => {
         const next = new Set(prev);
@@ -737,8 +762,8 @@ export const QuickAssistSidebar = memo(({
     // 3-button workflow: settled (ordered + reminded) patients STAY visible as
     // Stage-C [Re-Send Reminder] [POS] until POS fulfillment removes them via
     // status completed/fulfilled. Do not re-add the settled filter here.
-    return list;
-  }, [actionableRefills]);
+    return list.filter(g => !optimisticHiddenRefillKeys.has(g.key) && (!g.patient_phone || !optimisticHiddenRefillKeys.has(g.patient_phone)));
+  }, [actionableRefills, optimisticHiddenRefillKeys]);
 
   // Distinguish Online Orders (website + WhatsApp) from Local In-Store Special Requests
   const isWebsiteOrder = isOnlineOrder;

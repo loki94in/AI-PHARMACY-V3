@@ -711,7 +711,7 @@ router.post('/', async (req, res) => {
             const nextDate = new Date();
             const rDays = Number(refillDays || 30);
             nextDate.setDate(nextDate.getDate() + rDays);
-            const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
+            const nextDateStr = toLocalSqlDateTime(nextDate);
 
             const existingSchedule = await db.get(
               `SELECT id FROM patient_refills 
@@ -748,8 +748,10 @@ router.post('/', async (req, res) => {
     }
 
     // Resolve refill cycle if this sale completes a pending refill or matches sold medicines for this customer
-    const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
-    const soldMedicineIds = Array.from(new Set(Array.from(stockMap.values()).map((s: any) => s.medicine_id).filter(Boolean)));
+    const phoneQuery = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
+    const itemMedicineIds = items.map((i: any) => Number(i.medicine_id || i.medicineId)).filter(Boolean);
+    const soldMedicineIds = Array.from(new Set([...Array.from(stockMap.values()).map((s: any) => s.medicine_id), ...itemMedicineIds].filter(Boolean)));
+    const soldMedicineNames = items.map((i: any) => (i.medicine_name || i.name || '').trim().toLowerCase()).filter(Boolean);
 
     const explicitRefillIds: number[] = [];
     if (req.body.refillId) explicitRefillIds.push(Number(req.body.refillId));
@@ -765,11 +767,11 @@ router.post('/', async (req, res) => {
          WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
         explicitRefillIds
       );
-    } else if (cleanPhone.length >= 10 || customerId) {
+    } else if (cleanPhone.length >= 7 || customerId) {
       matchingRefills = await db.all(
         `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
          LEFT JOIN medicines m ON pr.medicine_id = m.id
-         WHERE (pr.customer_id = ? OR (pr.patient_phone IS NOT NULL AND length(pr.patient_phone) >= 10 AND replace(pr.patient_phone, ' ', '') LIKE ?))
+         WHERE (pr.customer_id = ? OR (pr.patient_phone IS NOT NULL AND length(pr.patient_phone) >= 7 AND replace(replace(pr.patient_phone, ' ', ''), '-', '') LIKE ?))
            AND pr.is_active = 1`,
         [customerId || -1, phoneQuery]
       );
@@ -777,8 +779,11 @@ router.post('/', async (req, res) => {
 
     if (Array.isArray(matchingRefills) && matchingRefills.length > 0) {
       for (const refill of matchingRefills) {
-        // Match either by explicit refill ID, or if the sold items contain this refill's medicine
-        const isMedicineSold = soldMedicineIds.includes(refill.medicine_id) || explicitRefillIds.includes(refill.id);
+        // Match either by explicit refill ID, or if the sold items contain this refill's medicine (by ID or name)
+        const refillNameLower = (refill.medicine_name || '').trim().toLowerCase();
+        const isMedicineSold = soldMedicineIds.includes(refill.medicine_id) || 
+          explicitRefillIds.includes(refill.id) ||
+          (refillNameLower && soldMedicineNames.includes(refillNameLower));
         if (!isMedicineSold && explicitRefillIds.length === 0) {
           continue; // Don't fulfill unrelated medicines in a partial purchase
         }

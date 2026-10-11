@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback, useD
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
@@ -88,6 +88,35 @@ function POSWaToggleButton({
     </button>
   );
 }
+
+/** Compact Refill schedule ON/OFF toggle for POS toolbar */
+function POSRefillToggleButton({
+  refillEnabled,
+  setRefillEnabled,
+  refillDays,
+}: {
+  refillEnabled: boolean;
+  setRefillEnabled: (v: boolean) => void;
+  refillDays: number;
+  setRefillDays?: (v: number) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => setRefillEnabled(!refillEnabled)}
+      className={`h-9 px-2.5 rounded-xl border text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
+        refillEnabled
+          ? 'bg-purple-600/15 border-purple-500/40 text-purple-400 hover:bg-purple-600/25'
+          : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
+      }`}
+      title={refillEnabled ? `Refill Auto-Scheduling: ON (${refillDays} days). Click to disable.` : 'Click to enable next-month refill auto-scheduling for this customer'}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${refillEnabled ? 'bg-purple-400 animate-pulse' : 'bg-muted/40'}`} />
+      <span>Refill:{refillEnabled ? `${refillDays}d` : 'OFF'}</span>
+    </button>
+  );
+}
+
 
 const parsePackSizeFromPackaging = (packaging: string | null | undefined): number | null => {
   if (!packaging) return null;
@@ -2313,7 +2342,7 @@ const POS = () => {
             ? panelData.find(group => group.patient_name?.toLowerCase().trim() === cleanPName.toLowerCase())
             : undefined);
         if (match && match.medicines && match.medicines.length > 0) {
-          const med = match.medicines.find(m => m.is_ready === 1 || m.stock_verified_override === 1);
+          const med = match.medicines.find(m => m.is_ready === 1 || m.stock_verified_override === 1) || match.medicines[0];
           if (med && med.id !== dismissedRefillId) {
             setMatchedRefill({
               id: med.id,
@@ -2470,6 +2499,16 @@ const POS = () => {
         }
         if (matchedRefill.id) {
           setActiveRefillId(matchedRefill.id);
+        }
+        setRefillEnabled(true);
+        if (Array.isArray(matchedRefill.medicines) && matchedRefill.medicines.length > 0) {
+          pendingRefillIdsRef.current = matchedRefill.medicines
+            .map(m => Number(m.id || (m as any).medicine_id || (m as any).medicineId))
+            .filter((n): n is number => !isNaN(n) && n > 0);
+          const rDays = (matchedRefill.medicines[0] as any)?.refill_interval_days;
+          if (rDays) setRefillDays(Number(rDays));
+        } else if (matchedRefill.id) {
+          pendingRefillIdsRef.current = [Number(matchedRefill.id)];
         }
 
         toastEvent.trigger(`Added ${newItems.length} refill item line(s) to POS cart`, 'success', '/pos');
@@ -4165,7 +4204,7 @@ const POS = () => {
 
           {/* Top Control Ribbon: Patient, WhatsApp, Doctor, Date, Tabs */}
           <div className="glass-panel p-2.5 bg-glass-bg border-glass-border shrink-0 relative z-40 shadow-sm rounded-2xl w-full min-w-0 flex flex-col gap-2">
-            {selectedCustomerId && matchedRefill && (
+            {matchedRefill && (
               <div className="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-300 text-sm font-semibold flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 shadow-sm animate-fade-in">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="h-2 w-2 rounded-full bg-violet-400 animate-pulse shrink-0" />
@@ -4413,6 +4452,11 @@ const POS = () => {
                     phone={patientPhone}
                     sendWhatsApp={sendWhatsApp}
                     setSendWhatsApp={setSendWhatsApp}
+                  />
+                  <POSRefillToggleButton
+                    refillEnabled={refillEnabled}
+                    setRefillEnabled={setRefillEnabled}
+                    refillDays={refillDays}
                   />
                 </div>
               </div>
