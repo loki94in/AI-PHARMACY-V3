@@ -57171,7 +57171,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.77";
+    APP_VERSION = "0.1.78";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -76829,8 +76829,8 @@ var init_refills = __esm({
         const interval = refill.refill_interval_days || 30;
         const nextDate = /* @__PURE__ */ new Date();
         nextDate.setDate(nextDate.getDate() + interval);
-        const nextDateStr = nextDate.toISOString().slice(0, 19).replace("T", " ");
-        const cycleDueDate = refill.next_refill_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const nextDateStr = toLocalSqlDateTime(nextDate);
+        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
         const fulfilledQty = Number(refill.quantity_needed || 3);
         await db2.run(
           `INSERT INTO refill_fulfillments (
@@ -76877,7 +76877,11 @@ var init_refills = __esm({
           customerId: refill.customer_id,
           medicineNames: refill.medicine_name ? [refill.medicine_name] : void 0
         });
-        await checkAllRefills(db2);
+        setImmediate(() => {
+          checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after fulfill:", e));
+        });
+        eventService.broadcast("refill_updated", { at: Date.now(), refillId: Number(id), fulfilled: true });
+        eventService.broadcast("app-refills-updated", { at: Date.now() });
         res.json({
           success: true,
           message: `Refill for ${refill.medicine_name || "Medicine"} marked as fulfilled and advanced to ${nextDateStr.slice(0, 10)}.`,
@@ -76888,12 +76892,13 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/patient/:phone/fulfill-all", async (req, res) => {
-      const phone = (req.params.phone || req.body.patient_phone || "").trim();
+    router19.post(["/patient/:phone/fulfill-all", "/patient/fulfill-all", "/fulfill-all"], async (req, res) => {
+      const rawPhone = (req.params.phone || req.body.patient_phone || req.body.phone || "").trim();
+      const cleanPhone = rawPhone.replace(/\D/g, "");
       const customerId = req.body.customer_id ? parseInt(req.body.customer_id, 10) : null;
       const requestedRefillIds = Array.isArray(req.body.refill_ids) ? req.body.refill_ids.map(Number).filter((n) => !isNaN(n)) : [];
       const fulfilledVia = req.body.fulfilled_via || "crm_complete";
-      if (!phone && !customerId && requestedRefillIds.length === 0) {
+      if (!rawPhone && !customerId && requestedRefillIds.length === 0) {
         return res.status(400).json({ error: "Patient phone, customer ID, or refill IDs required" });
       }
       let db2;
@@ -76910,13 +76915,17 @@ var init_refills = __esm({
             requestedRefillIds
           );
         } else {
+          const phonePattern = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : "NON_EXISTENT";
           activeRefills = await db2.all(
             `SELECT pr.*, m.name as medicine_name 
          FROM patient_refills pr 
          LEFT JOIN medicines m ON pr.medicine_id = m.id 
-         WHERE (pr.patient_phone = ? OR (pr.customer_id IS NOT NULL AND pr.customer_id = ?)) 
-           AND pr.is_active = 1`,
-            [phone, customerId]
+         WHERE (
+           pr.patient_phone = ? 
+           OR (length(?) >= 7 AND replace(replace(pr.patient_phone, ' ', ''), '-', '') LIKE ?)
+           OR (pr.customer_id IS NOT NULL AND pr.customer_id = ?)
+         ) AND pr.is_active = 1`,
+            [rawPhone, cleanPhone, phonePattern, customerId]
           );
         }
         if (!activeRefills || activeRefills.length === 0) {
@@ -76928,8 +76937,8 @@ var init_refills = __esm({
           const interval = refill.refill_interval_days || 30;
           const nextDate = /* @__PURE__ */ new Date();
           nextDate.setDate(nextDate.getDate() + interval);
-          const nextDateStr = nextDate.toISOString().slice(0, 19).replace("T", " ");
-          const cycleDueDate = refill.next_refill_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+          const nextDateStr = toLocalSqlDateTime(nextDate);
+          const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
           const fulfilledQty = Number(refill.quantity_needed || 3);
           await db2.run(
             `INSERT INTO refill_fulfillments (
@@ -76975,11 +76984,15 @@ var init_refills = __esm({
           fulfilledIds.push(refill.id);
         }
         await purgePendingCustomerReminders(db2, {
-          phone,
+          phone: rawPhone || void 0,
           refillIds: fulfilledIds,
           customerId
         });
-        await checkAllRefills(db2);
+        setImmediate(() => {
+          checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after fulfill-all:", e));
+        });
+        eventService.broadcast("refill_updated", { at: Date.now(), fulfilled: true, count: fulfilledCount });
+        eventService.broadcast("app-refills-updated", { at: Date.now() });
         res.json({
           success: true,
           fulfilledCount,
@@ -88205,7 +88218,7 @@ var init_sales = __esm({
                 const nextDate = /* @__PURE__ */ new Date();
                 const rDays = Number(refillDays || 30);
                 nextDate.setDate(nextDate.getDate() + rDays);
-                const nextDateStr = nextDate.toISOString().slice(0, 19).replace("T", " ");
+                const nextDateStr = toLocalSqlDateTime(nextDate);
                 const existingSchedule = await db2.get(
                   `SELECT id FROM patient_refills 
                WHERE medicine_id = ? AND ((customer_id IS NOT NULL AND customer_id = ?) OR (patient_phone IS NOT NULL AND length(patient_phone) >= 10 AND replace(patient_phone, ' ', '') LIKE ?))
@@ -88237,8 +88250,10 @@ var init_sales = __esm({
           await updateInventoryStmt.finalize().catch(() => {
           });
         }
-        const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : "NON_EXISTENT";
-        const soldMedicineIds = Array.from(new Set(Array.from(stockMap.values()).map((s) => s.medicine_id).filter(Boolean)));
+        const phoneQuery = cleanPhone.length >= 7 ? `%${cleanPhone.slice(-10)}%` : "NON_EXISTENT";
+        const itemMedicineIds = items.map((i) => Number(i.medicine_id || i.medicineId)).filter(Boolean);
+        const soldMedicineIds = Array.from(new Set([...Array.from(stockMap.values()).map((s) => s.medicine_id), ...itemMedicineIds].filter(Boolean)));
+        const soldMedicineNames = items.map((i) => (i.medicine_name || i.name || "").trim().toLowerCase()).filter(Boolean);
         const explicitRefillIds = [];
         if (req.body.refillId) explicitRefillIds.push(Number(req.body.refillId));
         if (Array.isArray(req.body.refillIds)) explicitRefillIds.push(...req.body.refillIds.map(Number));
@@ -88252,18 +88267,19 @@ var init_sales = __esm({
          WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
             explicitRefillIds
           );
-        } else if (cleanPhone.length >= 10 || customerId) {
+        } else if (cleanPhone.length >= 7 || customerId) {
           matchingRefills = await db2.all(
             `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
          LEFT JOIN medicines m ON pr.medicine_id = m.id
-         WHERE (pr.customer_id = ? OR (pr.patient_phone IS NOT NULL AND length(pr.patient_phone) >= 10 AND replace(pr.patient_phone, ' ', '') LIKE ?))
+         WHERE (pr.customer_id = ? OR (pr.patient_phone IS NOT NULL AND length(pr.patient_phone) >= 7 AND replace(replace(pr.patient_phone, ' ', ''), '-', '') LIKE ?))
            AND pr.is_active = 1`,
             [customerId || -1, phoneQuery]
           );
         }
         if (Array.isArray(matchingRefills) && matchingRefills.length > 0) {
           for (const refill of matchingRefills) {
-            const isMedicineSold = soldMedicineIds.includes(refill.medicine_id) || explicitRefillIds.includes(refill.id);
+            const refillNameLower = (refill.medicine_name || "").trim().toLowerCase();
+            const isMedicineSold = soldMedicineIds.includes(refill.medicine_id) || explicitRefillIds.includes(refill.id) || refillNameLower && soldMedicineNames.includes(refillNameLower);
             if (!isMedicineSold && explicitRefillIds.length === 0) {
               continue;
             }
