@@ -328,6 +328,293 @@ var init_nameFormatter = __esm({
   }
 });
 
+// src/utils/pharmacyCalendar.ts
+function formatDateYMD(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+async function isClosedDay(dateOrYmd, storeId = 1, dbInstance) {
+  const db2 = dbInstance || await dbManager.getConnection();
+  let targetDate;
+  let ymd;
+  if (typeof dateOrYmd === "string") {
+    ymd = dateOrYmd.slice(0, 10);
+    const [y, m, d] = ymd.split("-").map(Number);
+    targetDate = new Date(y, m - 1, d, 12, 0, 0);
+  } else {
+    targetDate = new Date(dateOrYmd);
+    ymd = formatDateYMD(targetDate);
+  }
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayName = dayNames[targetDate.getDay()];
+  const isSunday = targetDate.getDay() === 0;
+  const settingsRows = await db2.all(
+    `SELECT key, value FROM app_settings 
+     WHERE key IN (
+       'pharmacy_weekly_off', 'weekly_off', 'sunday_orders_enabled', 'sunday_delivery', 
+       'holiday_delivery', 'pharmacy_closed_dates', 'pharmarack_paused_dispatch_dates',
+       'pharmacy_market_closure_config'
+     )`
+  ).catch(() => []);
+  const settingsMap = new Map(settingsRows.map((r) => [String(r.key), String(r.value)]));
+  const weeklyOff = (settingsMap.get("pharmacy_weekly_off") || settingsMap.get("weekly_off") || "monday").toLowerCase().trim();
+  const sundayAllowed = settingsMap.get("sunday_orders_enabled") === "true" || settingsMap.get("sunday_delivery") === "true";
+  const holidayDelivery = settingsMap.get("holiday_delivery") === "true";
+  let isWeeklyOff = false;
+  if (dayName === weeklyOff) {
+    isWeeklyOff = true;
+  } else if (isSunday && !sundayAllowed) {
+    isWeeklyOff = true;
+  }
+  let isCustomClosed = false;
+  try {
+    const rawClosed = settingsMap.get("pharmacy_closed_dates");
+    if (rawClosed) {
+      const parsed = JSON.parse(rawClosed);
+      if (Array.isArray(parsed) && parsed.includes(ymd)) {
+        isCustomClosed = true;
+      }
+    }
+  } catch (_) {
+  }
+  let isPausedDispatch = false;
+  try {
+    const rawPaused = settingsMap.get("pharmarack_paused_dispatch_dates");
+    if (rawPaused) {
+      const parsed = JSON.parse(rawPaused);
+      if (Array.isArray(parsed) && parsed.includes(ymd)) {
+        isPausedDispatch = true;
+      }
+    }
+  } catch (_) {
+  }
+  let isMarketClosed = false;
+  let closureReason;
+  try {
+    const rawMarket = settingsMap.get("pharmacy_market_closure_config");
+    if (rawMarket) {
+      const parsed = JSON.parse(rawMarket);
+      if (parsed && parsed.enabled && parsed.startDate) {
+        const start = parsed.startDate.slice(0, 10);
+        const end = (parsed.endDate || parsed.startDate).slice(0, 10);
+        if (ymd >= start && ymd <= end) {
+          isMarketClosed = true;
+          closureReason = parsed.reason || (parsed.type === "pharmacy_closed" ? "Pharmacy Closed" : "Market Closed");
+        }
+      }
+    }
+  } catch (_) {
+  }
+  let holidayRow = null;
+  try {
+    holidayRow = await db2.get(
+      `SELECT holiday_name, name, is_closed FROM pharmacy_holidays 
+       WHERE (store_id = ? OR store_id = 1) AND holiday_date = ? LIMIT 1`,
+      [storeId, ymd]
+    );
+  } catch (_) {
+  }
+  const isHolidayClosed = Boolean(
+    holidayRow && (Number(holidayRow.is_closed) === 1 || holidayRow.is_closed === true) && !holidayDelivery
+  );
+  const isClosed = isWeeklyOff || isHolidayClosed || isCustomClosed || isPausedDispatch || isMarketClosed;
+  let reason;
+  if (isHolidayClosed) {
+    reason = `Pharmacy closed for ${holidayRow?.holiday_name || holidayRow?.name || "Public Holiday"}`;
+  } else if (isMarketClosed) {
+    reason = `Closed: ${closureReason || "Wholesale Market Closure"}`;
+  } else if (isCustomClosed) {
+    reason = `Pharmacy marked closed on ${ymd}`;
+  } else if (isPausedDispatch) {
+    reason = `Pharmarack distributor dispatch paused on ${ymd}`;
+  } else if (isWeeklyOff) {
+    reason = isSunday ? "Pharmacy closed on Sundays" : `Pharmacy closed on weekly off (${weeklyOff})`;
+  }
+  return {
+    isClosed,
+    isWeeklyOff,
+    isHolidayClosed,
+    reason
+  };
+}
+async function effectiveNoticeDays(noticeDays, dateYmd, storeId = 1, dbInstance) {
+  const check = await isClosedDay(dateYmd, storeId, dbInstance);
+  return check.isClosed ? noticeDays + 1 : noticeDays;
+}
+async function advanceToNextOpenDay(startDate, options) {
+  const storeId = options?.storeId || 1;
+  const db2 = options?.dbInstance || await dbManager.getConnection();
+  const advanceAtLeastOne = options?.advanceAtLeastOneDay ?? false;
+  let targetDate = new Date(startDate);
+  let daysAdvanced = 0;
+  let isSundayShift = false;
+  let isHolidayShift = false;
+  let primaryShiftReason;
+  if (advanceAtLeastOne) {
+    targetDate.setDate(targetDate.getDate() + 1);
+    daysAdvanced++;
+  }
+  while (daysAdvanced < 14) {
+    const ymd = formatDateYMD(targetDate);
+    const check = await isClosedDay(ymd, storeId, db2);
+    if (check.isClosed) {
+      if (check.isWeeklyOff) isSundayShift = true;
+      if (check.isHolidayClosed) isHolidayShift = true;
+      if (!primaryShiftReason && check.reason) {
+        primaryShiftReason = check.reason;
+      }
+      targetDate.setDate(targetDate.getDate() + 1);
+      daysAdvanced++;
+      continue;
+    }
+    break;
+  }
+  return {
+    targetDate,
+    daysAdvanced,
+    isSundayShift,
+    isHolidayShift,
+    shiftReason: primaryShiftReason,
+    ymd: formatDateYMD(targetDate)
+  };
+}
+var init_pharmacyCalendar = __esm({
+  "src/utils/pharmacyCalendar.ts"() {
+    "use strict";
+    init_connection();
+  }
+});
+
+// src/utils/closureNotice.ts
+var closureNotice_exports = {};
+__export(closureNotice_exports, {
+  buildShopTimingNote: () => buildShopTimingNote,
+  formatDayLabel: () => formatDayLabel,
+  formatTime12h: () => formatTime12h,
+  getRefillScheduleOpts: () => getRefillScheduleOpts,
+  getShopTimingNote: () => getShopTimingNote,
+  getShopTimingNow: () => getShopTimingNow
+});
+function formatTime12h(time24) {
+  const [hh, mm] = String(time24 || "09:00").split(":");
+  let h = parseInt(hh, 10);
+  if (isNaN(h)) h = 9;
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${(mm || "00").padStart(2, "0")} ${ampm}`;
+}
+function formatDayLabel(d) {
+  return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+}
+async function readHours(db2) {
+  const rows = await db2.all(`SELECT key, value FROM app_settings WHERE key IN ('pharmacy_open_time','pharmacy_close_time')`).catch(() => []);
+  const m = new Map((rows || []).map((r) => [String(r.key), String(r.value)]));
+  return { open: m.get("pharmacy_open_time") || "09:00", close: m.get("pharmacy_close_time") || "22:00" };
+}
+function relativeLabel(target, now) {
+  const t = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
+  const n = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const days = Math.round((t - n) / 864e5);
+  if (days <= 0) return "today";
+  if (days === 1) return `tomorrow (${formatDayLabel(target)})`;
+  return formatDayLabel(target);
+}
+async function getShopTimingNow(dbInstance) {
+  const db2 = dbInstance || await dbManager.getConnection();
+  const now = istNow();
+  const { open: open6, close } = await readHours(db2);
+  const [oh, om] = open6.split(":").map(Number);
+  const [ch, cm] = close.split(":").map(Number);
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const openMin = (oh || 9) * 60 + (om || 0);
+  const closeMin = (ch || 22) * 60 + (cm || 0);
+  const today = await isClosedDay(now, 1, db2);
+  const base = { openTime12: formatTime12h(open6), closeTime12: formatTime12h(close) };
+  if (today.isClosed) {
+    const next = await advanceToNextOpenDay(now, { dbInstance: db2, advanceAtLeastOneDay: true });
+    return { ...base, closedToday: true, reason: today.isWeeklyOff ? void 0 : today.reason, reopenLabel: relativeLabel(next.targetDate, now) };
+  }
+  if (cur < openMin) return { ...base, closedToday: false, reopenLabel: "today" };
+  if (cur >= closeMin) {
+    const next = await advanceToNextOpenDay(now, { dbInstance: db2, advanceAtLeastOneDay: true });
+    return { ...base, closedToday: false, reopenLabel: relativeLabel(next.targetDate, now) };
+  }
+  return null;
+}
+function buildShopTimingNote(info, lang = "en", kind = "booking") {
+  if (!info) return "";
+  const why = info.reason ? ` (${info.reason})` : "";
+  const l = (lang || "en").toLowerCase();
+  if (l === "hi") {
+    const state2 = info.closedToday ? `\u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 \u0906\u091C \u092C\u0902\u0926 \u0939\u0948${why}\u0964` : "\u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 \u0905\u092D\u0940 \u092C\u0902\u0926 \u0939\u0948\u0964";
+    const when2 = info.reopenLabel === "today" ? `\u0939\u092E \u0906\u091C ${info.openTime12} \u092A\u0930 \u0916\u0941\u0932\u0947\u0902\u0917\u0947\u0964` : `\u0939\u092E ${info.reopenLabel} \u0915\u094B ${info.openTime12} \u092A\u0930 \u092B\u093F\u0930 \u0916\u0941\u0932\u0947\u0902\u0917\u0947\u0964`;
+    const tail2 = kind === "pickup" ? " \u0915\u0943\u092A\u092F\u093E \u0924\u092C \u0926\u0935\u093E\u0908 \u0932\u0947 \u091C\u093E\u090F\u0902\u0964" : " \u0906\u092A\u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u0938\u0941\u0930\u0915\u094D\u0937\u093F\u0924 \u0926\u0930\u094D\u091C \u0939\u0948\u0964";
+    return `
+
+\u{1F552} *\u0938\u0942\u091A\u0928\u093E:* ${state2} ${when2}${tail2}`;
+  }
+  if (l === "mr") {
+    const state2 = info.closedToday ? `\u0906\u092E\u091A\u0947 \u0926\u0941\u0915\u093E\u0928 \u0906\u091C \u092C\u0902\u0926 \u0906\u0939\u0947${why}.` : "\u0906\u092E\u091A\u0947 \u0926\u0941\u0915\u093E\u0928 \u0938\u0927\u094D\u092F\u093E \u092C\u0902\u0926 \u0906\u0939\u0947.";
+    const when2 = info.reopenLabel === "today" ? `\u0906\u092E\u094D\u0939\u0940 \u0906\u091C ${info.openTime12} \u0935\u093E\u091C\u0924\u093E \u0909\u0918\u0921\u0942.` : `\u0906\u092E\u094D\u0939\u0940 ${info.reopenLabel} \u0930\u094B\u091C\u0940 ${info.openTime12} \u0935\u093E\u091C\u0924\u093E \u092A\u0941\u0928\u094D\u0939\u093E \u0909\u0918\u0921\u0942.`;
+    const tail2 = kind === "pickup" ? " \u0915\u0943\u092A\u092F\u093E \u0924\u0947\u0935\u094D\u0939\u093E \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E." : " \u0906\u092A\u0932\u0940 \u0911\u0930\u094D\u0921\u0930 \u0938\u0941\u0930\u0915\u094D\u0937\u093F\u0924 \u0928\u094B\u0902\u0926\u0935\u0932\u0940 \u0906\u0939\u0947.";
+    return `
+
+\u{1F552} *\u0938\u0942\u091A\u0928\u093E:* ${state2} ${when2}${tail2}`;
+  }
+  const state = info.closedToday ? `Our pharmacy is closed today${why}.` : "Our pharmacy is closed right now.";
+  const when = info.reopenLabel === "today" ? `We open today at ${info.openTime12}.` : `We reopen ${info.reopenLabel} at ${info.openTime12}.`;
+  const tail = kind === "pickup" ? " Please collect your medicine then." : " Your request is safely booked.";
+  return `
+
+\u{1F552} *Note:* ${state} ${when}${tail}`;
+}
+async function getShopTimingNote(dbInstance, lang = "en", kind = "booking") {
+  try {
+    return buildShopTimingNote(await getShopTimingNow(dbInstance), lang, kind);
+  } catch {
+    return "";
+  }
+}
+async function getRefillScheduleOpts(dbInstance, sched, dueDate) {
+  const opts = { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming: false };
+  try {
+    const db2 = dbInstance || await dbManager.getConnection();
+    const now = istNow();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const candidates = [now, tomorrow];
+    if (dueDate) {
+      const d = typeof dueDate === "string" ? /* @__PURE__ */ new Date(dueDate.slice(0, 10) + "T12:00:00") : new Date(dueDate);
+      if (!isNaN(d.getTime())) candidates.push(d);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    for (const c of candidates) {
+      const key = c.toDateString();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const chk = await isClosedDay(c, 1, db2);
+      if (chk.isClosed) {
+        opts.isOffDayUpcoming = true;
+        opts.closedLabel = `${formatDayLabel(c)}${chk.isWeeklyOff || !chk.reason ? "" : ` (${chk.reason})`}`;
+        break;
+      }
+    }
+  } catch {
+  }
+  return opts;
+}
+var istNow;
+var init_closureNotice = __esm({
+  "src/utils/closureNotice.ts"() {
+    "use strict";
+    init_connection();
+    init_pharmacyCalendar();
+    istNow = () => new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  }
+});
+
 // src/services/storeSettingsService.ts
 var storeSettingsService_exports = {};
 __export(storeSettingsService_exports, {
@@ -592,7 +879,7 @@ async function buildOrderReadyNotificationMessage(requesterName, productName, qt
 `;
     }
     msg2 += `${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
-    return msg2.trim();
+    return msg2.trim() + await getShopTimingNote(dbInstance, "hi", "pickup");
   }
   if (lang === "mr") {
     let msg2 = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${name}, \u{1F44B}
@@ -618,7 +905,7 @@ async function buildOrderReadyNotificationMessage(requesterName, productName, qt
 `;
     }
     msg2 += `${storeName} \u091A\u0940 \u0928\u093F\u0935\u0921 \u0915\u0947\u0932\u094D\u092F\u093E\u092C\u0926\u094D\u0926\u0932 \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
-    return msg2.trim();
+    return msg2.trim() + await getShopTimingNote(dbInstance, "mr", "pickup");
   }
   let msg = `Hi ${name}, \u{1F44B}
 
@@ -643,7 +930,7 @@ Your Order:
 `;
   }
   msg += `Thank you for choosing ${storeName}!`;
-  return msg.trim();
+  return msg.trim() + await getShopTimingNote(dbInstance, "en", "pickup");
 }
 async function buildMultiOrderNotificationMessage(requesterName, items, dbInstance, lang = "en") {
   const storeName = await getStoreMedicalName(dbInstance);
@@ -707,7 +994,7 @@ async function buildMultiOrderNotificationMessage(requesterName, items, dbInstan
     msg2 += `
 
 ${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
-    return msg2;
+    return msg2 + (arrivedItems.length > 0 ? await getShopTimingNote(dbInstance, "hi", "pickup") : "");
   }
   let msg = `Hi ${name}, \u{1F44B}
 
@@ -762,7 +1049,7 @@ We are actively arranging them and will notify you immediately once received.`;
   msg += `
 
 Thank you for choosing ${storeName}!`;
-  return msg;
+  return msg + (arrivedItems.length > 0 ? await getShopTimingNote(dbInstance, "en", "pickup") : "");
 }
 async function getPharmacyOperatingSchedule(dbInstance) {
   try {
@@ -862,6 +1149,7 @@ var init_storeSettingsService = __esm({
     "use strict";
     init_connection();
     init_nameFormatter();
+    init_closureNotice();
   }
 });
 
@@ -26247,165 +26535,6 @@ var init_stockCalculatorWorker = __esm({
   }
 });
 
-// src/utils/pharmacyCalendar.ts
-function formatDateYMD(dateObj) {
-  const y = dateObj.getFullYear();
-  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
-  const d = String(dateObj.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-async function isClosedDay(dateOrYmd, storeId = 1, dbInstance) {
-  const db2 = dbInstance || await dbManager.getConnection();
-  let targetDate;
-  let ymd;
-  if (typeof dateOrYmd === "string") {
-    ymd = dateOrYmd.slice(0, 10);
-    const [y, m, d] = ymd.split("-").map(Number);
-    targetDate = new Date(y, m - 1, d, 12, 0, 0);
-  } else {
-    targetDate = new Date(dateOrYmd);
-    ymd = formatDateYMD(targetDate);
-  }
-  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  const dayName = dayNames[targetDate.getDay()];
-  const isSunday = targetDate.getDay() === 0;
-  const settingsRows = await db2.all(
-    `SELECT key, value FROM app_settings 
-     WHERE key IN (
-       'pharmacy_weekly_off', 'weekly_off', 'sunday_orders_enabled', 'sunday_delivery', 
-       'holiday_delivery', 'pharmacy_closed_dates', 'pharmarack_paused_dispatch_dates',
-       'pharmacy_market_closure_config'
-     )`
-  ).catch(() => []);
-  const settingsMap = new Map(settingsRows.map((r) => [String(r.key), String(r.value)]));
-  const weeklyOff = (settingsMap.get("pharmacy_weekly_off") || settingsMap.get("weekly_off") || "monday").toLowerCase().trim();
-  const sundayAllowed = settingsMap.get("sunday_orders_enabled") === "true" || settingsMap.get("sunday_delivery") === "true";
-  const holidayDelivery = settingsMap.get("holiday_delivery") === "true";
-  let isWeeklyOff = false;
-  if (dayName === weeklyOff) {
-    isWeeklyOff = true;
-  } else if (isSunday && !sundayAllowed) {
-    isWeeklyOff = true;
-  }
-  let isCustomClosed = false;
-  try {
-    const rawClosed = settingsMap.get("pharmacy_closed_dates");
-    if (rawClosed) {
-      const parsed = JSON.parse(rawClosed);
-      if (Array.isArray(parsed) && parsed.includes(ymd)) {
-        isCustomClosed = true;
-      }
-    }
-  } catch (_) {
-  }
-  let isPausedDispatch = false;
-  try {
-    const rawPaused = settingsMap.get("pharmarack_paused_dispatch_dates");
-    if (rawPaused) {
-      const parsed = JSON.parse(rawPaused);
-      if (Array.isArray(parsed) && parsed.includes(ymd)) {
-        isPausedDispatch = true;
-      }
-    }
-  } catch (_) {
-  }
-  let isMarketClosed = false;
-  let closureReason;
-  try {
-    const rawMarket = settingsMap.get("pharmacy_market_closure_config");
-    if (rawMarket) {
-      const parsed = JSON.parse(rawMarket);
-      if (parsed && parsed.enabled && parsed.startDate) {
-        const start = parsed.startDate.slice(0, 10);
-        const end = (parsed.endDate || parsed.startDate).slice(0, 10);
-        if (ymd >= start && ymd <= end) {
-          isMarketClosed = true;
-          closureReason = parsed.reason || (parsed.type === "pharmacy_closed" ? "Pharmacy Closed" : "Market Closed");
-        }
-      }
-    }
-  } catch (_) {
-  }
-  let holidayRow = null;
-  try {
-    holidayRow = await db2.get(
-      `SELECT holiday_name, name, is_closed FROM pharmacy_holidays 
-       WHERE (store_id = ? OR store_id = 1) AND holiday_date = ? LIMIT 1`,
-      [storeId, ymd]
-    );
-  } catch (_) {
-  }
-  const isHolidayClosed = Boolean(
-    holidayRow && (Number(holidayRow.is_closed) === 1 || holidayRow.is_closed === true) && !holidayDelivery
-  );
-  const isClosed = isWeeklyOff || isHolidayClosed || isCustomClosed || isPausedDispatch || isMarketClosed;
-  let reason;
-  if (isHolidayClosed) {
-    reason = `Pharmacy closed for ${holidayRow?.holiday_name || holidayRow?.name || "Public Holiday"}`;
-  } else if (isMarketClosed) {
-    reason = `Closed: ${closureReason || "Wholesale Market Closure"}`;
-  } else if (isCustomClosed) {
-    reason = `Pharmacy marked closed on ${ymd}`;
-  } else if (isPausedDispatch) {
-    reason = `Pharmarack distributor dispatch paused on ${ymd}`;
-  } else if (isWeeklyOff) {
-    reason = isSunday ? "Pharmacy closed on Sundays" : `Pharmacy closed on weekly off (${weeklyOff})`;
-  }
-  return {
-    isClosed,
-    isWeeklyOff,
-    isHolidayClosed,
-    reason
-  };
-}
-async function effectiveNoticeDays(noticeDays, dateYmd, storeId = 1, dbInstance) {
-  const check = await isClosedDay(dateYmd, storeId, dbInstance);
-  return check.isClosed ? noticeDays + 1 : noticeDays;
-}
-async function advanceToNextOpenDay(startDate, options) {
-  const storeId = options?.storeId || 1;
-  const db2 = options?.dbInstance || await dbManager.getConnection();
-  const advanceAtLeastOne = options?.advanceAtLeastOneDay ?? false;
-  let targetDate = new Date(startDate);
-  let daysAdvanced = 0;
-  let isSundayShift = false;
-  let isHolidayShift = false;
-  let primaryShiftReason;
-  if (advanceAtLeastOne) {
-    targetDate.setDate(targetDate.getDate() + 1);
-    daysAdvanced++;
-  }
-  while (daysAdvanced < 14) {
-    const ymd = formatDateYMD(targetDate);
-    const check = await isClosedDay(ymd, storeId, db2);
-    if (check.isClosed) {
-      if (check.isWeeklyOff) isSundayShift = true;
-      if (check.isHolidayClosed) isHolidayShift = true;
-      if (!primaryShiftReason && check.reason) {
-        primaryShiftReason = check.reason;
-      }
-      targetDate.setDate(targetDate.getDate() + 1);
-      daysAdvanced++;
-      continue;
-    }
-    break;
-  }
-  return {
-    targetDate,
-    daysAdvanced,
-    isSundayShift,
-    isHolidayShift,
-    shiftReason: primaryShiftReason,
-    ymd: formatDateYMD(targetDate)
-  };
-}
-var init_pharmacyCalendar = __esm({
-  "src/utils/pharmacyCalendar.ts"() {
-    "use strict";
-    init_connection();
-  }
-});
-
 // src/services/orderScheduleService.ts
 var orderScheduleService_exports = {};
 __export(orderScheduleService_exports, {
@@ -32534,7 +32663,7 @@ function sortAndFilterByRequestedStrength(items, query) {
   scored.sort((a, b) => b.score - a.score);
   return scored.map((s) => s.item);
 }
-function formatTime12h(timeStr) {
+function formatTime12h2(timeStr) {
   if (!timeStr) return "";
   const [hStr, mStr] = timeStr.split(":");
   let h = parseInt(hStr, 10);
@@ -32545,31 +32674,16 @@ function formatTime12h(timeStr) {
 }
 async function getStoreHoursNotice(db2) {
   try {
-    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const sched = await getPharmacyOperatingSchedule2(db2);
-    const nowIst = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    const curMinutes = nowIst.getHours() * 60 + nowIst.getMinutes();
-    const [openH, openM] = (sched.openTime || "09:00").split(":").map(Number);
-    const [closeH, closeM] = (sched.closeTime || "22:00").split(":").map(Number);
-    const openMinutes = (openH || 9) * 60 + (openM || 0);
-    const closeMinutes = (closeH || 22) * 60 + (closeM || 0);
-    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const currentDayName = days[nowIst.getDay()];
-    const isWeeklyOff = Boolean(sched.weeklyOff && sched.weeklyOff.toLowerCase() === currentDayName.toLowerCase());
-    const isOutsideHours = isWeeklyOff || curMinutes < openMinutes || curMinutes >= closeMinutes;
-    if (isOutsideHours) {
-      const open12 = formatTime12h(sched.openTime || "09:00");
-      const close12 = formatTime12h(sched.closeTime || "22:00");
-      if (isWeeklyOff) {
-        return `
-
-\u{1F552} *Note:* Today is our weekly off (Regular hours: ${open12} - ${close12}).
-\u2705 *You can still send your request or prescription now!* Our team will prepare it on our next working day at ${open12}.`;
-      }
+    const { getShopTimingNow: getShopTimingNow2 } = await Promise.resolve().then(() => (init_closureNotice(), closureNotice_exports));
+    const info = await getShopTimingNow2(db2);
+    if (info) {
+      const why = info.reason ? ` (${info.reason})` : "";
+      const state = info.closedToday ? `Our pharmacy is closed today${why}` : "Our pharmacy is currently closed";
+      const when = info.reopenLabel === "today" ? `today at ${info.openTime12}` : `${info.reopenLabel} at ${info.openTime12}`;
       return `
 
-\u{1F552} *Note:* Our pharmacy is currently closed (Store hours: ${open12} - ${close12}).
-\u2705 *You can still send your request or prescription now!* Our team will prepare it when we open tomorrow at ${open12}.`;
+\u{1F552} *Note:* ${state} (Regular hours: ${info.openTime12} - ${info.closeTime12}).
+\u2705 *You can still send your request or prescription now!* Our team will prepare it when we reopen ${when}.`;
     }
   } catch (_) {
   }
@@ -36419,8 +36533,8 @@ ${stepPrompt}${languageFooter(chatLang)}`;
               const phoneSuffix = storePhone ? `
 \u{1F4DE} ${storePhone}` : "";
               const medListText = pendingRefills.length === 1 ? `*${primaryRefill.medicine_name}*` : pendingRefills.map((r) => `\u2022 ${r.medicine_name}`).join("\n");
-              const open12 = formatTime12h(sched.openTime || "09:00");
-              const close12 = formatTime12h(sched.closeTime || "22:00");
+              const open12 = formatTime12h2(sched.openTime || "09:00");
+              const close12 = formatTime12h2(sched.closeTime || "22:00");
               const offDay = sched.weeklyOff ? ` | Weekly Off: ${sched.weeklyOff}` : "";
               const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
 
@@ -48478,7 +48592,7 @@ __export(refillService_exports, {
   triggerPendingRefillsForMedicine: () => triggerPendingRefillsForMedicine,
   triggerPendingSpecialOrdersForMedicineName: () => triggerPendingSpecialOrdersForMedicineName
 });
-function formatTime12h2(timeStr) {
+function formatTime12h3(timeStr) {
   if (!timeStr) return "";
   const [hStr, mStr] = timeStr.split(":");
   let h = parseInt(hStr, 10);
@@ -48611,24 +48725,6 @@ async function checkAllRefills(db2) {
             [refill.id]
           );
           outOfStockRefills.push(refill);
-          try {
-            const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-            if (tokenRow?.value) {
-              const port = process.env.PORT || 3e3;
-              fetch(`http://localhost:${port}/api/pharmarack/cart/add`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  items: [{
-                    name: refill.medicine_name,
-                    qty: Number(refill.quantity_needed || refill.quantity || 3)
-                  }]
-                })
-              }).catch((e) => console.error("Failed to auto-add to Pharmarack cart:", e));
-            }
-          } catch (e) {
-            console.error("Fetch post error:", e);
-          }
         }
       }
     }
@@ -48732,19 +48828,17 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   try {
     const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
     const sched = await getPharmacyOperatingSchedule2(db2);
-    const open12 = formatTime12h2(sched.openTime || "09:00");
-    const close12 = formatTime12h2(sched.closeTime || "22:00");
+    const open12 = formatTime12h3(sched.openTime || "09:00");
+    const close12 = formatTime12h3(sched.closeTime || "22:00");
     hoursPill = `
 *(Store open ${open12} \u2013 ${close12})*`;
-    const now = /* @__PURE__ */ new Date();
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const dueDayName = dayNames[(now.getDay() + 1) % 7];
-    const isOffDayUpcoming = Boolean(sched.weeklyOff && (dueDayName.toLowerCase() === sched.weeklyOff.toLowerCase() || dayNames[now.getDay()].toLowerCase() === sched.weeklyOff.toLowerCase()));
+    const { getRefillScheduleOpts: getRefillScheduleOpts2 } = await Promise.resolve().then(() => (init_closureNotice(), closureNotice_exports));
+    const closure = await getRefillScheduleOpts2(db2, sched);
     timingInfo = `
 \u{1F552} *Store Hours:* ${open12} to ${close12}`;
-    if (isOffDayUpcoming) {
+    if (closure.isOffDayUpcoming) {
       timingInfo += `
-\u26A0\uFE0F *Notice:* Our pharmacy will remain closed on ${sched.weeklyOff}. Please collect before closure!`;
+\u26A0\uFE0F *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
     }
   } catch (_) {
   }
@@ -57338,7 +57432,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.79";
+    APP_VERSION = "0.1.80";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -75783,7 +75877,7 @@ function parseIntervalDays(val) {
   if (typeof val === "number") return val;
   return 30;
 }
-function formatTime12h3(timeStr) {
+function formatTime12h4(timeStr) {
   if (!timeStr) return "";
   const [hStr, mStr] = timeStr.split(":");
   let h = parseInt(hStr, 10);
@@ -75797,9 +75891,9 @@ function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en
   const cleanLang = (lang || "en").toLowerCase();
   const rawOpen = scheduleOpts?.openTime || "09:00";
   const rawClose = scheduleOpts?.closeTime || "22:00";
-  const openT = formatTime12h3(rawOpen);
-  const closeT = formatTime12h3(rawClose);
-  const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
+  const openT = formatTime12h4(rawOpen);
+  const closeT = formatTime12h4(rawClose);
+  const weeklyOff = scheduleOpts?.closedLabel || scheduleOpts?.weeklyOff || "Monday";
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
   let message = "";
   if (cleanLang === "hi") {
@@ -75877,9 +75971,9 @@ function buildRefillCollectionMessage(patientName, items, pharmacyName, lang = "
   const cleanLang = (lang || "en").toLowerCase();
   const rawOpen = scheduleOpts?.openTime || "09:00";
   const rawClose = scheduleOpts?.closeTime || "22:00";
-  const openT = formatTime12h3(rawOpen);
-  const closeT = formatTime12h3(rawClose);
-  const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
+  const openT = formatTime12h4(rawOpen);
+  const closeT = formatTime12h4(rawClose);
+  const weeklyOff = scheduleOpts?.closedLabel || scheduleOpts?.weeklyOff || "Monday";
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
   let message = "";
   if (cleanLang === "hi") {
@@ -75953,6 +76047,7 @@ var init_refills = __esm({
     init_whatsappQueueWorker();
     init_pdfInvoiceService();
     init_storeSettingsService();
+    init_closureNotice();
     init_eventService();
     init_config();
     init_nameFormatter();
@@ -77378,9 +77473,7 @@ var init_refills = __esm({
         }
         const sched = await getPharmacyOperatingSchedule(db2);
         const nextRefillDateObj = refill.next_refill_date ? new Date(refill.next_refill_date) : /* @__PURE__ */ new Date();
-        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-        const dueDayName = dayNames[nextRefillDateObj.getDay()];
-        const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
+        const refillSchedOpts = await getRefillScheduleOpts(db2, sched, nextRefillDateObj);
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
         const msg = buildRefillReminderMessage(
           patientName,
@@ -77388,7 +77481,7 @@ var init_refills = __esm({
           medicalName,
           lang,
           void 0,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         );
         let pdfPath = void 0;
@@ -77509,9 +77602,7 @@ var init_refills = __esm({
         }
         const sched = await getPharmacyOperatingSchedule(db2);
         const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : /* @__PURE__ */ new Date();
-        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-        const dueDayName = dayNames[earliestDue.getDay()];
-        const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
+        const refillSchedOpts = await getRefillScheduleOpts(db2, sched, earliestDue);
         const anyReady = unsentRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
         const notifType = anyReady ? "refill_collection" : "refill_reminder";
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
@@ -77520,7 +77611,7 @@ var init_refills = __esm({
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         ) : buildRefillReminderMessage(
           patientName,
@@ -77528,7 +77619,7 @@ var init_refills = __esm({
           medicalName,
           lang,
           void 0,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         );
         const queueId = await whatsappQueueWorker.enqueue(
@@ -77623,9 +77714,7 @@ var init_refills = __esm({
         const sched = await getPharmacyOperatingSchedule(db2);
         const tomorrowDate = /* @__PURE__ */ new Date();
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-        const tomorrowDayName = dayNames[tomorrowDate.getDay()];
-        const isOffDayUpcoming = tomorrowDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
+        const refillSchedOpts = await getRefillScheduleOpts(db2, sched, tomorrowDate);
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
         const msg = buildRefillReminderMessage(
           patientName,
@@ -77633,7 +77722,7 @@ var init_refills = __esm({
           medicalName,
           lang,
           tomorrowDateStr,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         );
         const queueId = await whatsappQueueWorker.enqueue(
@@ -77714,9 +77803,7 @@ var init_refills = __esm({
         }
         const sched = await getPharmacyOperatingSchedule(db2);
         const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : /* @__PURE__ */ new Date();
-        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-        const dueDayName = dayNames[earliestDue.getDay()];
-        const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
+        const refillSchedOpts = await getRefillScheduleOpts(db2, sched, earliestDue);
         const anyReady = unsentRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
         const notifType = anyReady ? "refill_collection" : "refill_reminder";
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
@@ -77725,7 +77812,7 @@ var init_refills = __esm({
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         ) : buildRefillReminderMessage(
           patientName,
@@ -77733,7 +77820,7 @@ var init_refills = __esm({
           medicalName,
           lang,
           refillDate,
-          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming },
+          refillSchedOpts,
           { includeLanguageBanner: includeLangBanner }
         );
         const queueId = await whatsappQueueWorker.enqueue(
@@ -78102,12 +78189,7 @@ ${summaryLines}
         const lang = refills[0].language || custRow?.language || "en";
         const medicalName = await getConfiguredPharmacyName(db2) || "Pharmacy";
         const sched = await getPharmacyOperatingSchedule(db2);
-        const schedOpts = {
-          openTime: sched.openTime,
-          closeTime: sched.closeTime,
-          weeklyOff: sched.weeklyOff,
-          isOffDayUpcoming: false
-        };
+        const schedOpts = await getRefillScheduleOpts(db2, sched);
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
         const msg = buildRefillCollectionMessage(
           patientName,
@@ -78200,12 +78282,7 @@ ${summaryLines}
         const lang = refill.language || custRow?.language || "en";
         const medicalName = await getConfiguredPharmacyName(db2) || "Pharmacy";
         const sched = await getPharmacyOperatingSchedule(db2);
-        const schedOpts = {
-          openTime: sched.openTime,
-          closeTime: sched.closeTime,
-          weeklyOff: sched.weeklyOff,
-          isOffDayUpcoming: false
-        };
+        const schedOpts = await getRefillScheduleOpts(db2, sched);
         let whatsappQueued = false;
         let queueId = null;
         if (cleanPhone && cleanPhone.length >= 10) {
@@ -81610,6 +81687,7 @@ var init_websiteOrders = __esm({
     init_nameFormatter();
     init_whatsappQueueWorker();
     init_storeSettingsService();
+    init_closureNotice();
     init_paymentQrService();
     init_productNormalizer();
     init_orderScheduleService();
@@ -82566,6 +82644,7 @@ Thank you!
             readyMsg += `
 
 Thank you for your payment.`;
+            readyMsg += await getShopTimingNote(db2, "en", "pickup");
             await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, "order_ready_notification", order.requester);
           } catch (_) {
           }
@@ -96455,6 +96534,7 @@ var init_orders = __esm({
     import_fs59 = __toESM(require("fs"), 1);
     init_whatsappClient();
     init_storeSettingsService();
+    init_closureNotice();
     init_whatsappQueueWorker();
     init_pdfInvoiceService();
     init_eventService();
@@ -96618,6 +96698,7 @@ var init_orders = __esm({
           } else {
             msg = `Hi ${cleanReqName}, your order for ${itemsListStr}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
           }
+          msg += await getShopTimingNote(db2, lang, "booking");
           try {
             await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order_batch", cleanReqName);
             console.log(`Consolidated special order confirmation WhatsApp queued for ${cleanReqName} (${insertedOrders.length} items)`);
@@ -96750,6 +96831,7 @@ var init_orders = __esm({
           } else {
             msg = `Hi ${cleanReqName}, your order for ${medName}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
           }
+          msg += await getShopTimingNote(db2, lang, "booking");
           try {
             await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order", cleanReqName);
             console.log(`Special order confirmation WhatsApp queued for ${cleanReqName}`);

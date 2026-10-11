@@ -1381,6 +1381,8 @@ const Topbar = memo(({
   automationHubHeadline = 'idle',
   onMenuClick,
   compactCacheLoaded = false,
+  databaseReady = true,
+  refillsReady = true,
 }: {
   notifications: AppNotification[];
   hasUnread: boolean;
@@ -1395,6 +1397,8 @@ const Topbar = memo(({
   automationHubHeadline?: 'sending' | 'failed' | 'idle';
   onMenuClick?: () => void;
   compactCacheLoaded?: boolean;
+  databaseReady?: boolean;
+  refillsReady?: boolean;
 }) => {
   const navigate = useNavigate();
   const [showPanel, setShowPanel] = useState(false);
@@ -1673,6 +1677,89 @@ const Topbar = memo(({
     };
   }, [fetchServicesStatus, fetchWhatsAppQueueStatus, compactCacheLoaded]);
 
+  // ── Startup progress ("what is working now") ───────────────────────────────
+  // Shown in the same header ticker as Backup / Catalog sync while the app boots, so staff know a
+  // slow WhatsApp or Pharmarack right after launch is normal. Read-only: it never starts or wakes
+  // anything. Only REAL signals count: DB schema ready, refills list loaded, WhatsApp readiness,
+  // Pharmarack session + live cart loaded. Services that were never set up are left out (no
+  // permanent "waiting"), and after the first all-ready moment the item never comes back.
+  const [startupCartLoaded, setStartupCartLoaded] = useState(false);
+  const [startupGaveUp, setStartupGaveUp] = useState(false);
+  const [startupPhase, setStartupPhase] = useState<'running' | 'flash' | 'done'>('running');
+  const sawStartupWaitRef = useRef(false);
+
+  const startupServices = useMemo(() => {
+    type Svc = { label: string; state: 'ready' | 'wait' | 'attention' };
+    const list: Svc[] = [
+      { label: 'Database', state: databaseReady ? 'ready' : 'wait' },
+      { label: 'Refills', state: refillsReady ? 'ready' : 'wait' }
+    ];
+    if (!servicesStatus) {
+      list.push({ label: 'WhatsApp', state: 'wait' }, { label: 'Pharmarack', state: 'wait' });
+      return list;
+    }
+    const wa = servicesStatus.whatsapp;
+    const waSession = waReadiness?.hasSavedSession ?? wa?.readiness?.hasSavedSession ?? false;
+    if (wa?.connected || wa?.sleeping || waReadiness?.isReady || waReadiness?.isSleeping) {
+      list.push({ label: 'WhatsApp', state: 'ready' });
+    } else if (wa?.initializing || waReadiness?.isInitializing) {
+      list.push({ label: 'WhatsApp', state: 'wait' });
+    } else if (waSession) {
+      list.push({ label: 'WhatsApp', state: waReadiness?.lastError ? 'attention' : 'wait' });
+    } // never connected: not part of startup
+    const ph = servicesStatus.pharmarack;
+    if (ph?.connected) {
+      list.push({ label: 'Pharmarack', state: !ph.isRefreshing && startupCartLoaded ? 'ready' : 'wait' });
+    } else if (ph?.lastError) {
+      list.push({ label: 'Pharmarack', state: 'attention' });
+    } // not logged in and no error: never set up
+    return list;
+  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded]);
+
+  const startupReady = startupServices.every(s => s.state === 'ready');
+  const startupAttention = startupServices.some(s => s.state === 'attention');
+
+  // Safety net only: after 3 min the wording changes to "taking longer"; the item keeps updating.
+  useEffect(() => {
+    const t = setTimeout(() => setStartupGaveUp(true), 180_000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Bounded startup poll (chained timeout, visible tab only, stops at first all-ready): the boot
+  // cart warm-up has no push event of its own.
+  useEffect(() => {
+    if (!compactCacheLoaded || startupPhase !== 'running' || startupReady) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = Date.now() + 600_000; // hard stop: 10 min after boot (5 s steps, 15 s once "taking longer")
+    const tick = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === 'visible') {
+        await fetchServicesStatus();
+        try {
+          const s = await api.getStartupSyncStatus();
+          if (!cancelled && s.cartLoaded) setStartupCartLoaded(true);
+        } catch (_) { /* keep waiting */ }
+      }
+      if (!cancelled && Date.now() < deadline) timer = setTimeout(tick, startupGaveUp ? 15000 : 5000);
+    };
+    timer = setTimeout(tick, 3000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [compactCacheLoaded, startupPhase, startupReady, startupGaveUp, fetchServicesStatus]);
+
+  // running → flash ("All services ready", 4 s) → done (never shown again this session)
+  useEffect(() => {
+    if (startupPhase !== 'running') return;
+    if (!startupReady) { sawStartupWaitRef.current = true; return; }
+    setStartupPhase(sawStartupWaitRef.current ? 'flash' : 'done');
+  }, [startupReady, startupPhase]);
+
+  useEffect(() => {
+    if (startupPhase !== 'flash') return;
+    const t = setTimeout(() => setStartupPhase('done'), 4000);
+    return () => clearTimeout(t);
+  }, [startupPhase]);
+
   // WhatsApp queue status: event-driven. Poll ONLY while the queue is actively
   // sending (3s) AND the window is visible; hidden windows pause polling and
   // refresh once on return-to-visible plus via queue events / focus / SSE.
@@ -1866,6 +1953,30 @@ const Topbar = memo(({
       });
     }
 
+    // 0.05. Startup progress: what is working now (Database / Refills / WhatsApp / Pharmarack)
+    if (startupPhase !== 'done') {
+      const mark = (s: 'ready' | 'wait' | 'attention') => (s === 'ready' ? '✅' : s === 'attention' ? '⚠️' : '⏳');
+      const readyCount = startupServices.filter(s => s.state === 'ready').length;
+      const isFlash = startupPhase === 'flash';
+      const slow = startupGaveUp && !startupReady;
+      items.push({
+        id: 'startup-services',
+        type: 'notification',
+        title: isFlash
+          ? '✅ All services ready'
+          : `${slow ? 'Taking longer than usual' : 'Starting up'} — ${startupServices.map(s => `${mark(s.state)} ${s.label}`).join(' · ')}`,
+        subtitle: slow
+          ? 'Pharmarack shows saved results and WhatsApp sends once connected. No action needed unless a ⚠️ appears.'
+          : 'The app is usable now. WhatsApp and Pharmarack connect in the background.',
+        progress: isFlash ? 100 : Math.round((readyCount / Math.max(1, startupServices.length)) * 100),
+        badge: isFlash ? 'Ready' : startupAttention || slow ? 'Check' : 'Starting',
+        color: isFlash ? 'emerald' : startupAttention || slow ? 'amber' : 'sky',
+        icon: isFlash
+          ? <Check size={12} className="text-emerald-400 shrink-0" />
+          : <RefreshCw size={12} className={`${startupAttention || slow ? 'text-amber-400' : 'text-sky-400'} animate-spin shrink-0`} />
+      });
+    }
+
     // 0.1. Active Manual/Automated Message Send (10s Animation)
     if (activeSendMeta) {
       items.push({
@@ -1975,7 +2086,7 @@ const Topbar = memo(({
 
 
     return items;
-  }, [activeCartJob, activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate]);
+  }, [activeCartJob, activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate, startupPhase, startupServices, startupReady, startupAttention, startupGaveUp]);
 
 
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -2984,7 +3095,7 @@ export const Layout = ({
     { staleTime: 30000, enabled: compactCacheLoaded }
   );
 
-  const { data: refillsList = NO_REFILLS, refetch: refetchRefills } = useApiQuery<Refill[]>(
+  const { data: refillsList = NO_REFILLS, refetch: refetchRefills, isSuccess: refillsReady } = useApiQuery<Refill[]>(
     'refills',
     async () => {
       const data = await api.getRefills();
@@ -3382,6 +3493,8 @@ export const Layout = ({
           automationHubHeadline={automationHubHeadline}
           onMenuClick={openMobileNav}
           compactCacheLoaded={compactCacheLoaded}
+          databaseReady={isSystemReady}
+          refillsReady={refillsReady}
         />
         <div className="flex-1 flex flex-row overflow-hidden relative min-h-0">
           <main className={`flex-1 flex flex-col min-h-0 ${isPortalPage ? 'overflow-y-auto p-0' : isFitPage ? 'overflow-hidden p-3 pt-1.5 pb-3' : 'overflow-y-auto p-4 pt-3 pb-4'} relative transition-all duration-200`}>

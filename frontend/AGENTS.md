@@ -41,6 +41,12 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 - Never re-add `backdrop-filter` to sticky headers or a hover translate/`transition-all` to `.glass-panel`: both were CPU repaints on every scroll frame.
 - Attention animations are finite (bug P2-57): `index.css` caps `animate-pulse` / `animate-ping` / `animate-bounce` at 3 cycles, because an endless one keeps the CPU redrawing at idle. Never override that with `infinite` or add new endless keyframe animations; only `animate-spin` loaders stay endless. To re-draw attention, re-apply the class (re-mount or toggle it) instead.
 
+## Startup Progress in the Header Ticker (added 2026-10-11)
+
+- `Topbar` (components/Layout.tsx) shows ONE extra item in the same `activeHeaderItems` ticker as Backup / Catalog sync: "Starting up — ✅ Database · ✅ Refills · ⏳ WhatsApp · ⏳ Pharmarack" with a progress bar, then "✅ All services ready" for 4 s, then it never returns this session (`startupPhase` running → flash → done). Runtime disconnects later are the footer/status indicators' job, not this item.
+- Only REAL signals: Database = `/health/ready` (`isSystemReady`), Refills = the `refills` query succeeded, WhatsApp = services-status/readiness (ready or sleeping), Pharmarack = session connected AND the boot live cart loaded (`api.getStartupSyncStatus().cartLoaded`). A service that was never set up (no saved WhatsApp session, no Pharmarack session and no error) is left out so it can't show "waiting" forever; a real error shows ⚠️ amber. After 3 min the wording becomes "Taking longer than usual".
+- Display only: it never starts, wakes or reconnects WhatsApp/Pharmarack. The only polling is a bounded chained timeout (5 s, 15 s after 3 min, hard stop at 10 min, visible tab only, ends at first all-ready); do not widen it or turn it into an interval. The older 46 s / 110 s "cart sync pending" toast is unchanged.
+
 ## Lint Debt Policy (added 2026-08)
 
 - Phase-1 rule categories (unused-vars, prefer-const, no-useless-assignment, no-useless-escape, no-empty) are **zero-tolerance**: `eslint.config.js` allows `allowEmptyCatch` and `^_`-prefixed ignored bindings by convention; never reintroduce raw violations. New code must not add `any` types (Phase-2 target) and must follow the Single Global SSE Connection + react-query-first fetch rules above (Phase-4 migration target).
