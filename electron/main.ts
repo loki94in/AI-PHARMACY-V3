@@ -40,7 +40,7 @@ if (process.platform === 'win32') {
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5175;
 const BACKEND_URL = `http://127.0.0.1:${PORT}`;
-const HEALTH_URL = `${BACKEND_URL}/api/health`;
+const HEALTH_URL = `${BACKEND_URL}/api/health/ready`;
 
 let backendProcess: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -119,7 +119,9 @@ const SPLASH_URL = 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!docty
 body{display:flex;align-items:center;justify-content:center}.box{text-align:center}
 .spin{width:28px;height:28px;margin:0 auto 14px;border:3px solid #334155;border-top-color:#38bdf8;border-radius:50%;animation:s .9s linear infinite}
 @keyframes s{to{transform:rotate(360deg)}}h1{margin:0 0 6px;font-size:18px;color:#38bdf8;font-weight:600}p{margin:0;font-size:13px;color:#94a3b8}</style></head>
-<body><div class="box"><div class="spin"></div><h1>AI Pharmacy OS</h1><p>Starting…</p></div></body></html>`);
+<body><div class="box"><div class="spin"></div><h1>AI Pharmacy OS</h1><p id="msg">Starting…</p></div>
+<script>setTimeout(function(){var m=document.getElementById('msg');if(m)m.innerText='Preparing database…';},4000);</script>
+</body></html>`);
 
 let backendReady = false;
 
@@ -137,15 +139,15 @@ app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('use-gl', 'swiftshader');
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 
-/** Poll the health endpoint until the backend is ready (max 30s) */
-function waitForBackend(timeoutMs = 30_000): Promise<void> {
+/** Poll the health endpoint until the backend and DB schema are fully ready (max 90s) */
+function waitForBackend(timeoutMs = 90_000): Promise<void> {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     function probe() {
       http
         .get(HEALTH_URL, (res) => {
           res.resume(); // drain
-          if (res.statusCode && res.statusCode < 500) {
+          if (res.statusCode && res.statusCode === 200) {
             resolve();
           } else {
             retry();
@@ -158,7 +160,7 @@ function waitForBackend(timeoutMs = 30_000): Promise<void> {
         reject(new Error(`Backend did not start within ${timeoutMs}ms`));
         return;
       }
-      setTimeout(probe, 50); // a local probe costs nothing; 250 ms added up to a quarter second of blank wait
+      setTimeout(probe, 100);
     }
     probe();
   });
