@@ -27476,6 +27476,16 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       body: JSON.stringify(buildPayload(primaryKeyword)),
       signal: AbortSignal.timeout(searchCold ? 12e3 : 8e3)
     }).catch(() => null);
+    if (response && (response.status === 401 || response.status === 403)) {
+      tokenRefreshScheduler.executeRefresh().catch(() => {
+      });
+      const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
+      if (offline2.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, offline2);
+        return { status: "ok", items: offline2 };
+      }
+      return { status: "need_login", isRefreshing: true };
+    }
     let data = response && response.ok ? await response.json().catch(() => null) : null;
     if (data) lastSearchOkAt = Date.now();
     if (response && (!data || !Array.isArray(data.data) || data.data.length === 0)) {
@@ -29112,7 +29122,11 @@ var init_pharmarack = __esm({
       }
       const outcome = await performPharmarackSearch(qRaw, storeId, isMapped);
       if (outcome.status === "need_login") {
-        return res.status(401).json({ error: "Need to login", code: "NEED_LOGIN" });
+        return res.status(401).json({
+          error: "Pharmarack session expired or restoring",
+          code: "NEED_LOGIN",
+          isRefreshing: outcome.isRefreshing || false
+        });
       }
       if (outcome.status === "connection_error") {
         return res.status(503).json({ error: "Connection error, please check internet or reconnect", code: "CONNECTION_ERROR" });
@@ -57459,7 +57473,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.82";
+    APP_VERSION = "0.1.83";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -79842,10 +79856,18 @@ var init_serviceStatus = __esm({
     router22.get("/services-status", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
-        const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-        const token = tokenRow?.value || "";
+        const prRows = await db2.all(
+          "SELECT key, value FROM app_settings WHERE key IN ('pharmarack_session_token', 'pharmarack_session_status')"
+        );
+        const prMap = {};
+        for (const r of prRows) prMap[r.key] = r.value;
+        const token = prMap["pharmarack_session_token"] || "";
+        const sessionStatus = prMap["pharmarack_session_status"] || "disconnected";
         const schedulerStatus = tokenRefreshScheduler.getStatus();
-        const pharmarackConnected = !!token && token.length > 20;
+        const isProbedAlive = schedulerStatus.lastHeartbeatAt !== null || sessionStatus === "active";
+        const isExplicitlyExpired = sessionStatus === "expired" || sessionStatus === "disconnected";
+        const pharmarackConnected = !!token && token.length > 20 && isProbedAlive && !isExplicitlyExpired && !schedulerStatus.isRefreshing;
+        const pharmarackVerifying = schedulerStatus.isRefreshing || !!token && token.length > 20 && !isProbedAlive && !isExplicitlyExpired;
         const waStatus = await getWhatsAppStatus();
         const { checkConnectivity: checkConnectivity2 } = await Promise.resolve().then(() => (init_networkDetector(), networkDetector_exports));
         const internetConnected = await checkConnectivity2();
@@ -79870,10 +79892,13 @@ var init_serviceStatus = __esm({
             },
             pharmarack: {
               connected: pharmarackConnected,
+              isVerifying: pharmarackVerifying,
               hasToken: !!token,
               isRefreshing: schedulerStatus.isRefreshing,
               lastCapturedAt: schedulerStatus.lastCapturedAt,
+              lastHeartbeatAt: schedulerStatus.lastHeartbeatAt,
               lastError: schedulerStatus.lastError,
+              sessionStatus,
               mode: "Live"
             },
             whatsapp: {
@@ -106070,7 +106095,33 @@ var init_server = __esm({
         console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
         setTimeout(() => {
           Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
-        }, 3e4);
+        }, 600);
+        setTimeout(async () => {
+          if (process.env.DISABLE_BACKGROUND_WORKERS === "true") return;
+          try {
+            const { isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2, initClient: initClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+            if (await isWhatsAppAutoConnectAllowed2()) {
+              console.log("[Boot:Phase2] Saved WhatsApp session found \u2014 performing 1-time boot session restore...");
+              (async () => {
+                const wa = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                  try {
+                    await wa.initClient({ isBoot: true });
+                    if ((await wa.getWhatsAppStatus()).isReady) return;
+                  } catch (err) {
+                    console.warn(`[Boot:Phase2] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
+                  }
+                  if (attempt < 3) await new Promise((r) => setTimeout(r, 6e4));
+                  if ((await wa.getWhatsAppStatus()).isReady) return;
+                }
+              })();
+            } else {
+              console.log("[Boot:Phase2] No saved WhatsApp session or disconnected \u2014 auto-stopping WhatsApp at boot. Connect manually in UI.");
+            }
+          } catch (err) {
+            console.warn("[Boot:Phase2] WhatsApp boot check error:", err);
+          }
+        }, 1500);
         Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then(async (m) => {
           m.autoUpdateService.start();
           const failMsg = await m.autoUpdateService.checkFailedUpdate();
@@ -106257,32 +106308,6 @@ var init_server = __esm({
               console.error("[Boot:Phase4] Failed to initialize Telegram Bot:", err);
             }
           }, 8e3);
-          setTimeout(async () => {
-            if (process.env.DISABLE_BACKGROUND_WORKERS === "true") return;
-            try {
-              const { isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2, initClient: initClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-              if (await isWhatsAppAutoConnectAllowed2()) {
-                console.log("[Boot:Phase4] Saved WhatsApp session found \u2014 performing 1-time boot session restore...");
-                (async () => {
-                  const wa = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-                  for (let attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                      await wa.initClient({ isBoot: true });
-                      if ((await wa.getWhatsAppStatus()).isReady) return;
-                    } catch (err) {
-                      console.warn(`[Boot:Phase4] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
-                    }
-                    if (attempt < 3) await new Promise((r) => setTimeout(r, 6e4));
-                    if ((await wa.getWhatsAppStatus()).isReady) return;
-                  }
-                })();
-              } else {
-                console.log("[Boot:Phase4] No saved WhatsApp session or disconnected \u2014 auto-stopping WhatsApp at boot. Connect manually in UI.");
-              }
-            } catch (err) {
-              console.warn("[Boot:Phase4] WhatsApp boot check error:", err);
-            }
-          }, 37e3);
           Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => {
             m.tokenRefreshScheduler.onFirstRefreshComplete(() => {
               Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports)).then((mod) => mod.warmupStartupCart()).catch((err) => console.warn("[Boot] Cart warm-up failed:", err?.message || err));
