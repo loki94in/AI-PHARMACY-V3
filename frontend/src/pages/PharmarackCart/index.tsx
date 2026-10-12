@@ -4518,7 +4518,7 @@ export default function PharmarackCart() {
                             <div key={`all-refill-${refill.id}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                               <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                  <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name, reorderSearchQuery)}</span>
+                                  <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name || '', reorderSearchQuery)}</span>
                                   <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
                                     Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
                                   </span>
@@ -4788,7 +4788,7 @@ export default function PharmarackCart() {
                       <div key={refill.id} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name, reorderSearchQuery)}</span>
+                            <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name || '', reorderSearchQuery)}</span>
                             <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
                               Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
                             </span>

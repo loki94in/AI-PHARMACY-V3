@@ -82,6 +82,7 @@ export interface SpecialOrder {
   product: string;
   requester: string;
   phone: string;
+  customer_id?: number | null;
   qty: number;
   priority: string;
   status: string;

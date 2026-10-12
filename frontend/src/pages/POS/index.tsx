@@ -362,6 +362,7 @@ interface PosPrefill {
   patientPhone?: string;
   advancePayment?: number | string;
   specialOrderId?: number;
+  specialOrderIds?: number[];
   customerId?: number;
   selectedCustomerId?: number;
   refillPatient?: boolean;
