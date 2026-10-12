@@ -35,4 +35,14 @@ When launching a newly installed packaged build (`PharmacyOS.exe`), cold boot wa
 - [x] Task 1: Update `electron/main.ts` (`HEALTH_URL = /api/health/ready`, `timeoutMs = 90_000`, splash timer).
 - [x] Task 2: Synchronize `data/app.db` schema version to 75.
 - [x] Task 3: Verify performance guardrails (`npm run guardrails`) and update knowledge graph (`node scripts/quick-update.mjs`).
-- [/] Task 4: Execute release command (`npm run release`) and confirm release package.
+- [x] Task 4: Execute release command (`npm run release`) and confirm release package.
+
+---
+
+## 4. Release Verification & Artifacts
+- **Release Version**: `v0.1.85`
+- **Rollout Target**: `ALL` (Production)
+- **Standalone Installer**: `dist/installer/AI-Pharmacy-OS-Portable-Setup-v0.1.85.exe`
+- **Update Package**: `dist/installer/AI-Pharmacy-OS-Update-v0.1.85.zip`
+- **SHA-256**: `8d201d80370c83f34f3b4d293a4c66cda0cee9d1c518b64493084d488aa22fce`
+- **Outcome**: Packaged app will cold-boot with schema v75 pre-stamped, wait on splash screen until `/api/health/ready` returns 200 (with 90s timeout), eliminating all 503 errors and startup timeouts.
