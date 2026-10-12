@@ -665,9 +665,10 @@ export class OrderScheduleService {
       source: 'special_order' | 'refill' | 'online_order';
       status: string;
     }) => {
-      // Check snooze
+      // Check snooze (supports both composite "source_id" and raw "id" keys)
       const snoozeKey = `${item.source}_${item.id}`;
-      if (snoozedMap[snoozeKey] && snoozedMap[snoozeKey] > nowMs) {
+      const rawIdKey = String(item.id);
+      if ((snoozedMap[snoozeKey] && snoozedMap[snoozeKey] > nowMs) || (snoozedMap[rawIdKey] && snoozedMap[rawIdKey] > nowMs)) {
         return; // Snoozed
       }
 

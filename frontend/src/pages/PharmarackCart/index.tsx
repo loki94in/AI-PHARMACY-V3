@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star } from 'lucide-react';
 import { formatDisplayDate } from '../../utils/date';
@@ -208,9 +208,11 @@ function getDistributorShortfallFillers(
   if (maxAmt > 0 && currentTotal >= maxAmt) return [];
 
   const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
 
   // Set of medicines already present in the live cart for this distributor
   const inCartNames = new Set((dist.items || []).map(i => norm(i.productName)).filter(Boolean));
+  const inCartCleanNames = new Set((dist.items || []).map(i => cleanMedKey(i.productName)).filter(Boolean));
   const inCartCodes = new Set((dist.items || []).map(i => norm(i.productCode)).filter(Boolean));
 
   const isAlreadyInCart = (r: ReorderRecentItem) => {
@@ -218,8 +220,15 @@ function getDistributorShortfallFillers(
     const rKey = norm(r.medicineName);
     if (!rKey) return false;
     if (inCartNames.has(rKey)) return true;
+    const rClean = cleanMedKey(r.medicineName);
+    if (rClean && inCartCleanNames.has(rClean)) return true;
     for (const cn of inCartNames) {
-      if (cn && (cn.includes(rKey) || rKey.includes(cn)) && Math.min(cn.length, rKey.length) >= 5) {
+      if (cn && (cn.includes(rKey) || rKey.includes(cn)) && Math.min(cn.length, rKey.length) >= 4) {
+        return true;
+      }
+    }
+    for (const cn of inCartCleanNames) {
+      if (cn && rClean && (cn.includes(rClean) || rClean.includes(cn)) && Math.min(cn.length, rClean.length) >= 4) {
         return true;
       }
     }
@@ -941,7 +950,10 @@ export default function PharmarackCart() {
           ptr: it.ptr,
           mrp: it.mrp,
           packaging: it.packaging,
-          lastOrderedDate: it.lastOrderDate,
+          lastOrderedDate: it.lastOrderDate || '',
+          lastQty: 1,
+          lastDistributorName: '',
+          manufacturer: it.company || '',
           mapped: true
         }));
         setDistributorProductsMap(prev => ({ ...prev, [storeId]: mapped }));
@@ -1004,8 +1016,25 @@ export default function PharmarackCart() {
     });
   };
 
-  // Shortages Hub Subtab State
-  const [shortagesSubTab, setShortagesSubTab] = useState<'requests' | 'refills' | 'sales_suggestions' | 'ordered_recently' | 'past_purchases'>('requests');
+  // Helper to highlight matched query text in medicine names
+  const highlightMatch = (text: string, query: string): React.ReactNode => {
+    if (!query || !query.trim() || !text) return text;
+    const q = query.trim();
+    const lowerText = text.toLowerCase();
+    const lowerQuery = q.toLowerCase();
+    const idx = lowerText.indexOf(lowerQuery);
+    if (idx === -1) return text;
+    return (
+      <span>
+        {text.slice(0, idx)}
+        <mark className="bg-amber-400/35 text-amber-300 font-black rounded px-0.5">{text.slice(idx, idx + q.length)}</mark>
+        {text.slice(idx + q.length)}
+      </span>
+    );
+  };
+
+  // Shortages Hub Subtab State (includes 'all_matches' for unified search across all 5 categories)
+  const [shortagesSubTab, setShortagesSubTab] = useState<'all_matches' | 'requests' | 'refills' | 'sales_suggestions' | 'ordered_recently' | 'past_purchases'>('requests');
 
   // Latest sent order history map by store ID / store name
   const [latestSentMap, setLatestSentMap] = useState<Record<string, LocalSentMapEntry>>({});
@@ -1073,9 +1102,9 @@ export default function PharmarackCart() {
     const placedDate = new Date(placedTimestamp);
     const now = new Date();
 
-    // Check past orders within the last 3 days only (72 hours)
-    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-    if (now.getTime() - placedTimestamp > THREE_DAYS_MS) {
+    // Check past orders within the last 1 day only (24 hours)
+    const ONE_DAY_MS = 1 * 24 * 60 * 60 * 1000;
+    if (now.getTime() - placedTimestamp > ONE_DAY_MS) {
       return { isPastOrdered: false, placedAt: 0, placedDateStr: '', isToday: false, isYesterday: false };
     }
 
@@ -1119,9 +1148,13 @@ export default function PharmarackCart() {
 
     const pastInfo = getPastOrderedInfo(item, dist);
     if (pastInfo.isPastOrdered) {
-      // Already sent — whether today or on an earlier day — excluded by default so a later
-      // "Send All" only dispatches genuinely new items instead of resending the old ones too.
-      return false;
+      // If already sent TODAY, exclude by default so duplicate orders are avoided
+      if (pastInfo.isToday) {
+        return false;
+      }
+      // Previous order (ordered 1 day ago / yesterday): DO NOT unselect.
+      // Keep selected by default so user can review the highlighted alert and untick if desired.
+      return true;
     }
     return true; // Fresh medicine, never sent — included by default
   };
@@ -2081,6 +2114,24 @@ export default function PharmarackCart() {
     const match = getOrderCartMatch(order);
     return match ? match.item : null;
   };
+
+  const isMedicineInAnyCart = React.useCallback((medName?: string): boolean => {
+    if (!medName) return false;
+    const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+    const targetKey = cleanMedKey(medName);
+    if (!targetKey) return false;
+    for (const d of distributors) {
+      for (const item of (d.items || [])) {
+        const itemKey = cleanMedKey(item.productName);
+        if (itemKey === targetKey) return true;
+        if (targetKey.length >= 4 && itemKey.length >= 4 && (itemKey.includes(targetKey) || targetKey.includes(itemKey))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, [distributors]);
 
   // Single source of truth for the "Req"/"Refills" tab badge counts, so they match what
   // the "Show Added" toggle actually leaves visible in the list below instead of the raw,
@@ -3525,13 +3576,36 @@ export default function PharmarackCart() {
       return;
     }
 
-    if (!item.productCode && !item.productId) {
-      // Unlinked item: prompt user to pick or link exact pack in modal
-      if (item.medicineId) {
-        setLinkModalTarget({ medicineId: item.medicineId, medicineName: medName, storeId: Number(storeId) || undefined, storeName });
-      } else {
-        liveCartAddEvent.triggerOpen(medName, targetQty);
+    let productCode = item.productCode || '';
+    let productId = item.productId || 0;
+    let packaging = item.packaging || '';
+    let company = item.manufacturer || '';
+    let rate = item.ptr || item.lastRate || 0;
+    let mrp = item.mrp || 0;
+
+    // Auto-resolve product details from store-scoped distributorProductsMap if missing
+    if ((!productCode || !productId) && storeId) {
+      const storeProducts = distributorProductsMap[storeId] || [];
+      const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+      const targetClean = cleanMedKey(medName);
+      const match = storeProducts.find(p => {
+        const pClean = cleanMedKey(p.medicineName);
+        return pClean === targetClean || (targetClean.length >= 4 && pClean.length >= 4 && (pClean.includes(targetClean) || targetClean.includes(pClean)));
+      });
+      if (match) {
+        productCode = match.productCode || productCode;
+        productId = Number(match.productId) || productId;
+        packaging = packaging || match.packaging || '';
+        company = company || match.manufacturer || '';
+        rate = rate || match.ptr || 0;
+        mrp = mrp || match.mrp || 0;
       }
+    }
+
+    if (!productCode && !productId) {
+      // If still missing, open the fast live cart picker rather than the manual link modal
+      liveCartAddEvent.triggerOpen(medName, targetQty);
       return;
     }
 
@@ -3539,18 +3613,18 @@ export default function PharmarackCart() {
     beginHighPriorityAction();
     try {
       const payload = [{
-        productId: item.productId || 0,
+        productId: productId || 0,
         storeId: Number(storeId) || 0,
         qty: targetQty,
-        productCode: item.productCode || '',
+        productCode: productCode || '',
         productName: medName,
-        company: item.manufacturer || '',
-        packaging: item.packaging || '',
-        rate: item.ptr || item.lastRate || 0,
-        mrp: item.mrp || 0,
+        company: company || '',
+        packaging: packaging || '',
+        rate: rate || 0,
+        mrp: mrp || 0,
         storeName: storeName,
         stock: (item as any).stock != null && Number((item as any).stock) > 0 ? Number((item as any).stock) : 100,
-        mapped: item.mapped ?? Boolean(item.productId),
+        mapped: item.mapped ?? Boolean(productId),
         medicineId: item.medicineId || undefined
       }];
 
@@ -4236,11 +4310,25 @@ export default function PharmarackCart() {
             </div>
 
             {/* Sub-Tabs Selector */}
-            <div className="flex items-center gap-1.5 bg-bg p-1 rounded-xl border border-glass-border">
+            <div className="flex items-center gap-1.5 bg-bg p-1 rounded-xl border border-glass-border overflow-x-auto">
+              {reorderSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setShortagesSubTab('all_matches')}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'all_matches'
+                    ? 'bg-amber-500/20 text-amber-400 font-black shadow-xs border border-amber-500/30'
+                    : 'text-muted hover:text-text hover:bg-bg3'
+                    }`}
+                >
+                  <Search size={12} />
+                  <span>All Matches ({totalReorderMatchesCount})</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setShortagesSubTab('requests')}
-                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'requests'
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'requests'
                   ? 'bg-bg2 text-primary font-black shadow-xs border border-border'
                   : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
@@ -4252,7 +4340,7 @@ export default function PharmarackCart() {
               <button
                 type="button"
                 onClick={() => setShortagesSubTab('refills')}
-                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'refills'
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'refills'
                   ? 'bg-bg2 text-primary font-black shadow-xs border border-border'
                   : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
@@ -4264,7 +4352,7 @@ export default function PharmarackCart() {
               <button
                 type="button"
                 onClick={() => setShortagesSubTab('sales_suggestions')}
-                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'sales_suggestions'
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'sales_suggestions'
                   ? 'bg-emerald-500/20 text-emerald-400 font-black shadow-xs border border-emerald-500/30'
                   : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
@@ -4276,7 +4364,7 @@ export default function PharmarackCart() {
               <button
                 type="button"
                 onClick={() => setShortagesSubTab('ordered_recently')}
-                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'ordered_recently'
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'ordered_recently'
                   ? 'bg-violet-500/20 text-violet-400 font-black shadow-xs border border-violet-500/30'
                   : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
@@ -4288,7 +4376,7 @@ export default function PharmarackCart() {
               <button
                 type="button"
                 onClick={() => setShortagesSubTab('past_purchases')}
-                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${shortagesSubTab === 'past_purchases'
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'past_purchases'
                   ? 'bg-sky-500/20 text-sky-400 font-black shadow-xs border border-sky-500/30'
                   : 'text-muted hover:text-text hover:bg-bg3'
                   }`}
@@ -4306,14 +4394,27 @@ export default function PharmarackCart() {
               <input
                 type="text"
                 value={reorderSearchQuery}
-                onChange={(e) => setReorderSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setReorderSearchQuery(val);
+                  if (val.trim()) {
+                    setShortagesSubTab('all_matches');
+                  } else if (shortagesSubTab === 'all_matches') {
+                    setShortagesSubTab('requests');
+                  }
+                }}
                 placeholder="Search by Medicine Name, Distributor, or Past Order ID / Invoice..."
                 className="w-full pl-9 pr-8 py-2 rounded-xl bg-bg/80 border border-glass-border text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary/50 transition-all font-medium"
               />
               {reorderSearchQuery && (
                 <button
                   type="button"
-                  onClick={() => setReorderSearchQuery('')}
+                  onClick={() => {
+                    setReorderSearchQuery('');
+                    if (shortagesSubTab === 'all_matches') {
+                      setShortagesSubTab('requests');
+                    }
+                  }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-1 cursor-pointer"
                   title="Clear search"
                 >
@@ -4333,6 +4434,299 @@ export default function PharmarackCart() {
 
           {/* SubTab Content */}
           <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+            {/* All Matches Unified Search View */}
+            {shortagesSubTab === 'all_matches' && (
+              totalReorderMatchesCount === 0 ? (
+                <div className="text-center py-16 flex flex-col items-center justify-center gap-2">
+                  <AlertCircle size={32} className="text-muted/60" />
+                  <p className="text-sm font-bold text-text">No medicines found matching "{reorderSearchQuery}"</p>
+                  <p className="text-xs text-muted max-w-md">
+                    Searched across Special Requests, Refills Due, Sales Restock, Recent Orders, and Past Purchase Bills. No matching records found.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReorderSearchQuery('');
+                      setShortagesSubTab('requests');
+                    }}
+                    className="mt-2 px-3.5 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-xs font-bold text-text cursor-pointer transition-all active:scale-95"
+                  >
+                    Clear Search
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Category 1: Special Shortage Requests */}
+                  {filteredPendingOrders.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 pb-1.5 border-b border-amber-500/20">
+                        <Clock size={14} className="text-amber-400" />
+                        <span className="text-xs font-black text-amber-400 uppercase tracking-wider">
+                          Special Requests ({filteredPendingOrders.length})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredPendingOrders.map((order) => {
+                          const inCart = Boolean(getOrderItemInCart(order));
+                          return (
+                            <div key={`all-order-${order.id}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-extrabold text-xs text-text">{highlightMatch(order.product, reorderSearchQuery)}</span>
+                                  <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'}`}>
+                                    {order.priority || 'Normal'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-muted space-y-1">
+                                  <div>Customer: <strong className="text-text">{order.requester}</strong> ({order.phone})</div>
+                                  <div>Required Qty: <strong className="text-primary font-mono">{order.qty || 1}</strong></div>
+                                  {order.advance_payment ? <div>Advance Paid: <strong className="text-emerald-400 font-mono">₹{order.advance_payment}</strong></div> : null}
+                                  {order.pharmarack_distributor && <div>Assigned Dist: <strong className="text-text">{order.pharmarack_distributor}</strong></div>}
+                                </div>
+                              </div>
+                              <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => !inCart && liveCartAddEvent.triggerOpen(order.product, order.qty, order.id)}
+                                  disabled={inCart}
+                                  className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
+                                >
+                                  {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
+                                  <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category 2: Refills Due */}
+                  {filteredPendingRefills.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 pb-1.5 border-b border-sky-500/20">
+                        <ShoppingCart size={14} className="text-sky-400" />
+                        <span className="text-xs font-black text-sky-400 uppercase tracking-wider">
+                          Refills Due ({filteredPendingRefills.length})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredPendingRefills.map((refill) => {
+                          const inCart = Boolean(getRefillItemInCart(refill));
+                          return (
+                            <div key={`all-refill-${refill.id}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name, reorderSearchQuery)}</span>
+                                  <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
+                                    Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
+                                  </span>
+                                </div>
+                                <div className="text-sm text-muted space-y-1">
+                                  <div>Patient: <strong className="text-text">{refill.patient_name}</strong> ({refill.patient_phone})</div>
+                                  <div>Needed: <strong className="text-primary font-mono">{refill.quantity_needed || 1}</strong> | In Stock: <strong className="text-text font-mono">{refill.in_stock_qty || 0}</strong></div>
+                                </div>
+                              </div>
+                              <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => !inCart && liveCartAddEvent.triggerOpen(refill.medicine_name, refill.quantity_needed || 1)}
+                                  disabled={inCart}
+                                  className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
+                                >
+                                  {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
+                                  <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category 3: Sales Restock Suggestions */}
+                  {filteredReorderSuggestions.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 pb-1.5 border-b border-emerald-500/20">
+                        <TrendingUp size={14} className="text-emerald-400" />
+                        <span className="text-xs font-black text-emerald-400 uppercase tracking-wider">
+                          Sales Restock Suggestions ({filteredReorderSuggestions.length})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredReorderSuggestions.map((sug) => (
+                          <div key={`all-sug-${sug.medicineId}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="font-extrabold text-xs text-text truncate">{highlightMatch(sug.medicineName, reorderSearchQuery)}</span>
+                                  {sug.packaging && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
+                                      {sug.packaging}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                                  {sug.isHotMover ? '🔥 Hot Mover' : '⚠️ Low Stock'}
+                                </span>
+                              </div>
+                              <div className="text-xs text-muted space-y-1">
+                                <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
+                                <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
+                              </div>
+                            </div>
+                            <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
+                              <div className="text-xs font-bold text-muted">
+                                Need: <strong className="text-emerald-400 font-mono text-xs">{sug.suggestedQty}</strong> qty
+                              </div>
+                              {(() => {
+                                const inCart = isMedicineInAnyCart(sug.medicineName);
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => !inCart && liveCartAddEvent.triggerOpen(sug.medicineName, sug.suggestedQty)}
+                                    disabled={inCart}
+                                    className={`py-1 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all whitespace-nowrap ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95 cursor-pointer shadow-xs'}`}
+                                  >
+                                    {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <Plus size={13} />}
+                                    <span>{inCart ? '✓ In Live Cart' : `+ Add (${sug.suggestedQty})`}</span>
+                                  </button>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category 4: Ordered Recently */}
+                  {filteredReorderRecentItems.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 pb-1.5 border-b border-violet-500/20">
+                        <RotateCw size={14} className="text-violet-400" />
+                        <span className="text-xs font-black text-violet-400 uppercase tracking-wider">
+                          Ordered Recently ({filteredReorderRecentItems.length})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredReorderRecentItems.map((item, idx) => {
+                          const itemKey = `all-recent-${item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                          const rawKey = `${item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                          const itemQty = getReorderItemQty(rawKey, 1);
+                          return (
+                            <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                              <div className="space-y-2.5">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
+                                      {highlightMatch(item.medicineName, reorderSearchQuery)}
+                                    </div>
+                                    {item.packaging && (
+                                      <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
+                                        {item.packaging}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {item.receiptStatus === 'RECEIVED' ? (
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0 flex items-center gap-1">
+                                      <CheckCircle2 size={10} /> Received
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1">
+                                      <Clock size={10} /> In-Transit
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <Store size={12} className="text-violet-400 shrink-0" />
+                                    <span className="truncate">Supplied by: <strong className="text-text font-bold">{item.storeName || item.lastDistributorName || 'Distributor'}</strong></span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted font-bold">Qty: {itemQty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
+                                  disabled={readdingSentItems}
+                                  className="py-1.5 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
+                                >
+                                  <ShoppingCart size={12} />
+                                  <span>Reorder</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category 5: Past Purchase Bills */}
+                  {filteredPurchaseHistoryItems.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 pb-1.5 border-b border-sky-500/20">
+                        <BookOpen size={14} className="text-sky-400" />
+                        <span className="text-xs font-black text-sky-400 uppercase tracking-wider">
+                          Past Purchase Bills ({filteredPurchaseHistoryItems.length})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredPurchaseHistoryItems.map((item, idx) => {
+                          const itemKey = `all-purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                          const rawKey = `purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                          const itemQty = getReorderItemQty(rawKey, 1);
+                          return (
+                            <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                              <div className="space-y-2.5">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
+                                      {highlightMatch(item.medicineName, reorderSearchQuery)}
+                                    </div>
+                                    {item.manufacturer && (
+                                      <p className="text-[10px] text-muted truncate mt-0.5">{item.manufacturer}</p>
+                                    )}
+                                  </div>
+                                  {item.billCount && (
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1">
+                                      <Star size={9} className="fill-amber-400" /> ×{item.billCount} bills
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <Store size={12} className="text-sky-400 shrink-0" />
+                                    <span className="truncate">Distributor: <strong className="text-text font-bold">{item.lastDistributorName || item.storeName || 'Distributor'}</strong></span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted font-bold">Qty: {itemQty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
+                                  disabled={readdingSentItems}
+                                  className="py-1.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
+                                >
+                                  <ShoppingCart size={12} />
+                                  <span>Add to Cart</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+
             {/* Special Shortage Requests */}
             {shortagesSubTab === 'requests' && (
               filteredPendingOrders.length === 0 ? (
@@ -4347,7 +4741,7 @@ export default function PharmarackCart() {
                       <div key={order.id} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-xs text-text">{order.product}</span>
+                            <span className="font-extrabold text-xs text-text">{highlightMatch(order.product, reorderSearchQuery)}</span>
                             <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'
                               }`}>
                               {order.priority || 'Normal'}
@@ -4365,12 +4759,12 @@ export default function PharmarackCart() {
                         <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => liveCartAddEvent.triggerOpen(order.product, order.qty, order.id)}
-                            className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-primary text-white hover:bg-primary/80'
-                              }`}
+                            onClick={() => !inCart && liveCartAddEvent.triggerOpen(order.product, order.qty, order.id)}
+                            disabled={inCart}
+                            className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
                           >
-                            <ShoppingCart size={14} />
-                            <span>{inCart ? 'In Cart' : 'Add to Cart'}</span>
+                            {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
+                            <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
                           </button>
                         </div>
                       </div>
@@ -4394,7 +4788,7 @@ export default function PharmarackCart() {
                       <div key={refill.id} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-sm text-text">{refill.medicine_name}</span>
+                            <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name, reorderSearchQuery)}</span>
                             <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
                               Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
                             </span>
@@ -4409,12 +4803,12 @@ export default function PharmarackCart() {
                         <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => liveCartAddEvent.triggerOpen(refill.medicine_name, refill.quantity_needed || 1)}
-                            className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-primary text-white hover:bg-primary/80'
-                              }`}
+                            onClick={() => !inCart && liveCartAddEvent.triggerOpen(refill.medicine_name, refill.quantity_needed || 1)}
+                            disabled={inCart}
+                            className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
                           >
-                            <ShoppingCart size={14} />
-                            <span>{inCart ? 'In Cart' : 'Add to Cart'}</span>
+                            {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
+                            <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
                           </button>
                         </div>
                       </div>
@@ -4437,7 +4831,7 @@ export default function PharmarackCart() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="font-extrabold text-xs text-text truncate">{sug.medicineName}</span>
+                            <span className="font-extrabold text-xs text-text truncate">{highlightMatch(sug.medicineName, reorderSearchQuery)}</span>
                             {sug.packaging && (
                               <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
                                 {sug.packaging}
@@ -4481,14 +4875,20 @@ export default function PharmarackCart() {
                             <option value="permanent">Permanently</option>
                           </select>
 
-                          <button
-                            type="button"
-                            onClick={() => liveCartAddEvent.triggerOpen(sug.medicineName, sug.suggestedQty)}
-                            className="py-1 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
-                          >
-                            <Plus size={13} />
-                            <span>+ Add ({sug.suggestedQty})</span>
-                          </button>
+                          {(() => {
+                            const inCart = isMedicineInAnyCart(sug.medicineName);
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => !inCart && liveCartAddEvent.triggerOpen(sug.medicineName, sug.suggestedQty)}
+                                disabled={inCart}
+                                className={`py-1 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all whitespace-nowrap ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95 cursor-pointer shadow-xs'}`}
+                              >
+                                {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <Plus size={13} />}
+                                <span>{inCart ? '✓ In Live Cart' : `+ Add (${sug.suggestedQty})`}</span>
+                              </button>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -4521,7 +4921,7 @@ export default function PharmarackCart() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
-                                {item.medicineName}
+                                {highlightMatch(item.medicineName, reorderSearchQuery)}
                               </div>
                               {item.packaging && (
                                 <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
@@ -4638,16 +5038,21 @@ export default function PharmarackCart() {
 
                           {/* Action Buttons */}
                           <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
-                              disabled={readdingSentItems}
-                              className="flex-1 py-1.5 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
-                              title={`Reorder from ${item.storeName || item.lastDistributorName}`}
-                            >
-                              <ShoppingCart size={12} />
-                              <span className="truncate">Reorder (x{itemQty})</span>
-                            </button>
+                            {(() => {
+                              const inCart = isMedicineInAnyCart(item.medicineName);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
+                                  disabled={readdingSentItems || inCart}
+                                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-purple-600 hover:bg-purple-700 text-white active:scale-95 cursor-pointer disabled:opacity-50'}`}
+                                  title={inCart ? `${item.medicineName} is already in the live cart` : `Reorder from ${item.storeName || item.lastDistributorName}`}
+                                >
+                                  {inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
+                                  <span className="truncate">{inCart ? '✓ In Live Cart' : `Reorder (x{itemQty})`}</span>
+                                </button>
+                              );
+                            })()}
 
                             {isDiffDistributor && highestStock && (
                               <button
@@ -4703,7 +5108,7 @@ export default function PharmarackCart() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
-                                {item.medicineName}
+                                {highlightMatch(item.medicineName, reorderSearchQuery)}
                               </div>
                               {item.manufacturer && (
                                 <p className="text-[10px] text-muted truncate mt-0.5">
@@ -4760,16 +5165,21 @@ export default function PharmarackCart() {
 
                           {/* Action Buttons */}
                           <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
-                              disabled={readdingSentItems}
-                              className="flex-1 py-1.5 px-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
-                              title={`Add to live cart of ${item.storeName || item.lastDistributorName}`}
-                            >
-                              <ShoppingCart size={12} />
-                              <span className="truncate">Add to Cart (x{itemQty})</span>
-                            </button>
+                            {(() => {
+                              const inCart = isMedicineInAnyCart(item.medicineName);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
+                                  disabled={readdingSentItems || inCart}
+                                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-sky-600 hover:bg-sky-500 text-white active:scale-95 cursor-pointer disabled:opacity-50'}`}
+                                  title={inCart ? `${item.medicineName} is already in the live cart` : `Add to live cart of ${item.storeName || item.lastDistributorName}`}
+                                >
+                                  {inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
+                                  <span className="truncate">{inCart ? '✓ In Live Cart' : `Add to Cart (x${itemQty})`}</span>
+                                </button>
+                              );
+                            })()}
 
                             <button
                               type="button"
@@ -5347,12 +5757,12 @@ export default function PharmarackCart() {
                               <Clock size={14} className="text-amber-400 shrink-0" />
                               <div className="flex flex-col min-w-0">
                                 <span className="text-[11px] font-extrabold text-amber-400 leading-tight">
-                                  Previous Order — {totalCount} {totalCount === 1 ? 'Medicine' : 'Medicines'} to Reorder
+                                  Previous Order — 1 Day Ago ({totalCount} {totalCount === 1 ? 'Medicine' : 'Medicines'} to Reorder)
                                 </span>
                                 <span className="text-[10px] text-muted">
                                   {noneChecked
                                     ? 'None selected — tick checkboxes to include in today\'s order'
-                                    : `${checkedCount} of ${totalCount} selected for reorder`}
+                                    : `${checkedCount} of ${totalCount} selected in today's order — untick any you do not want to reorder`}
                                 </span>
                               </div>
                             </div>
@@ -5713,7 +6123,7 @@ export default function PharmarackCart() {
                                 ))}
                                 {(() => {
                                   const distItems = distributorProductsMap[dist.storeId] || [];
-                                  const fillers = getDistributorShortfallFillers(dist, distItems.length > 0 ? distItems : purchaseHistoryItems, reorderRecentItems, skippedFillerKeys[dist.storeId], distributorMappings, isItemIncludedInDispatch);
+                                  const fillers = getDistributorShortfallFillers(dist, [...distItems, ...purchaseHistoryItems], reorderRecentItems, skippedFillerKeys[dist.storeId], distributorMappings, isItemIncludedInDispatch);
                                   if (fillers.length === 0) return null;
                                   const sum = fillers.reduce((s, f) => s + f.amount, 0);
                                   const skippedCount = skippedFillerKeys[dist.storeId]?.size || 0;
@@ -5795,14 +6205,6 @@ export default function PharmarackCart() {
                                               >
                                                 <RotateCcw size={11} />
                                               </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => liveCartAddEvent.triggerOpen(item.medicineName, qty)}
-                                                className="p-1 rounded-md bg-bg hover:bg-bg3 border border-glass-border text-muted hover:text-text transition-all active:scale-95 cursor-pointer"
-                                                title="Search / pick specific pack in modal"
-                                              >
-                                                <Search size={11} />
-                                              </button>
                                             </div>
                                           </div>
                                         ))}
@@ -5883,7 +6285,7 @@ export default function PharmarackCart() {
                                             {isYesterdayOrPast && (
                                               <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0 select-none flex items-center gap-1" title={`Ordered previously on ${pastInfo.placedDateStr}. Check box to include in today's order.`}>
                                                 <Clock size={9} />
-                                                <span>⚡ {pastInfo.isYesterday ? 'ORDERED YESTERDAY' : `ORDERED ON ${pastInfo.placedDateStr.toUpperCase()}`}</span>
+                                                <span>⚡ {pastInfo.isYesterday ? 'ORDERED 1 DAY AGO (YESTERDAY)' : `ORDERED 1 DAY AGO (${pastInfo.placedDateStr.toUpperCase()})`}</span>
                                               </span>
                                             )}
                                             {!isIncluded && (

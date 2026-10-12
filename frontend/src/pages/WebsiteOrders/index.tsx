@@ -279,6 +279,27 @@ export default function WebsiteOrders() {
     }
   };
 
+  const handleMarkComplete = async (orderId: number) => {
+    // Optimistic sub-10ms UI update
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Fulfilled', delivery_status: 'delivered' } : o));
+    cachedOrders = cachedOrders.map(o => o.id === orderId ? { ...o, status: 'Fulfilled', delivery_status: 'delivered' } : o);
+    toastEvent.trigger(`Order #${orderId} marked as Completed & reminders stopped`, 'success');
+
+    try {
+      setActionInProgress(orderId);
+      await api.updateOrdersBatchStatus([orderId], 'Completed');
+      window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+      fetchOrders(true);
+    } catch (err: any) {
+      setOrders(prevOrders);
+      cachedOrders = prevOrders;
+      toastEvent.trigger(err.response?.data?.error || 'Failed to mark order as completed', 'error');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const handleToggleSourcing = async (orderId: number, medName: string) => {
     if (expandedSourcingId === orderId) {
       setExpandedSourcingId(null);
@@ -471,9 +492,9 @@ export default function WebsiteOrders() {
   // KPI Calculations
   const metrics = useMemo(() => {
     const total = orders.length;
-    const pending = orders.filter(o => o.status === 'Pending' || o.status === 'Ordered' || o.delivery_status === 'pending').length;
-    const ready = orders.filter(o => o.status === 'Ready' || o.delivery_status === 'dispatched').length;
-    const delivered = orders.filter(o => o.delivery_status === 'delivered').length;
+    const pending = orders.filter(o => (o.status === 'Pending' || o.status === 'Ordered' || o.delivery_status === 'pending') && o.status !== 'Fulfilled' && o.delivery_status !== 'delivered').length;
+    const ready = orders.filter(o => (o.status === 'Ready' || o.delivery_status === 'dispatched') && o.status !== 'Fulfilled' && o.delivery_status !== 'delivered').length;
+    const delivered = orders.filter(o => o.delivery_status === 'delivered' || o.status === 'Fulfilled').length;
     const returns = orders.filter(o => o.return_status === 'requested' || o.return_status === 'eligible' || o.return_override_by).length;
     const cancelled = orders.filter(o => o.status === 'Cancelled').length;
 
@@ -495,9 +516,9 @@ export default function WebsiteOrders() {
       if (!matchesSearch) return false;
 
       // Status matching
-      if (statusFilter === 'pending') return (order.status === 'Pending' || order.status === 'Ordered') && order.delivery_status !== 'delivered';
-      if (statusFilter === 'ready') return order.status === 'Ready' || order.delivery_status === 'dispatched';
-      if (statusFilter === 'delivered') return order.delivery_status === 'delivered';
+      if (statusFilter === 'pending') return (order.status === 'Pending' || order.status === 'Ordered') && order.delivery_status !== 'delivered' && order.status !== 'Fulfilled';
+      if (statusFilter === 'ready') return (order.status === 'Ready' || order.delivery_status === 'dispatched') && order.status !== 'Fulfilled' && order.delivery_status !== 'delivered';
+      if (statusFilter === 'delivered') return order.delivery_status === 'delivered' || order.status === 'Fulfilled';
       if (statusFilter === 'returns') return order.return_status === 'requested' || order.return_status === 'expired' || order.return_override_by;
       if (statusFilter === 'cancelled') return order.status === 'Cancelled';
 
@@ -1379,6 +1400,20 @@ export default function WebsiteOrders() {
                       <Edit3 size={12} className="text-primary" />
                       <span>Modify Items</span>
                     </button>
+
+                    {/* Mark Completed button */}
+                    {order.status !== 'Fulfilled' && order.status !== 'Cancelled' && (
+                      <button
+                        type="button"
+                        disabled={actionInProgress === order.id}
+                        onClick={() => handleMarkComplete(order.id)}
+                        className="py-1.5 px-2.5 bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[11px] font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Mark order as Completed permanently & stop all reminders (skips POS)"
+                      >
+                        <CheckCircle2 size={12} />
+                        <span>{actionInProgress === order.id ? 'Completing…' : 'Complete'}</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"

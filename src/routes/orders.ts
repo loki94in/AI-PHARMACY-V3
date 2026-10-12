@@ -111,6 +111,21 @@ router.post('/batch', async (req, res) => {
     const cleanReqName = formatCustomerName(requester);
     const todayStr = new Date().toISOString();
     const insertedOrders: Array<{ id: number; product: string; qty: number }> = [];
+    const batchCustomerId = req.body.customer_id ? Number(req.body.customer_id) : null;
+
+    // Auto-sync customer to CRM contacts table if phone is provided
+    if (cleanPhone && cleanPhone.length >= 10) {
+      try {
+        if (batchCustomerId) {
+          await db.run('UPDATE customers SET name = ?, phone = ? WHERE id = ?', [cleanReqName, cleanPhone, batchCustomerId]);
+        } else {
+          const existingCust = await db.get('SELECT id, name FROM customers WHERE phone = ?', [cleanPhone]);
+          if (!existingCust) {
+            await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [cleanReqName, cleanPhone]);
+          }
+        }
+      } catch (_) {}
+    }
 
     // Calculate fulfilment schedule via OrderScheduleService
     const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(new Date(), targetStoreId);
@@ -143,14 +158,15 @@ router.post('/batch', async (req, res) => {
 
         const result = await db.run(
           `INSERT INTO special_orders (
-            store_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
+            store_id, customer_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
             pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
             scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
             cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
             schedule_calculated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             targetStoreId,
+            batchCustomerId,
             resolvedMedicineId,
             medName,
             medName,
@@ -285,12 +301,18 @@ router.post('/', async (req, res) => {
     }
     const cleanPhone = phoneVal.cleanPhone;
     
+    const singleCustomerId = req.body.customer_id ? Number(req.body.customer_id) : null;
+
     // Auto-sync customer to CRM contacts table if phone is provided
     if (cleanPhone && cleanPhone.length >= 10) {
       try {
-        const existingCust = await db.get('SELECT id, name FROM customers WHERE phone = ?', [cleanPhone]);
-        if (!existingCust) {
-          await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [requester.trim(), cleanPhone]);
+        if (singleCustomerId) {
+          await db.run('UPDATE customers SET name = ?, phone = ? WHERE id = ?', [requester.trim(), cleanPhone, singleCustomerId]);
+        } else {
+          const existingCust = await db.get('SELECT id, name FROM customers WHERE phone = ?', [cleanPhone]);
+          if (!existingCust) {
+            await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [requester.trim(), cleanPhone]);
+          }
         }
       } catch (_) {}
     }
@@ -307,15 +329,16 @@ router.post('/', async (req, res) => {
     const initialStatus = status || 'Pending';
     const result = await db.run(
       `INSERT INTO special_orders (
-        store_id, product, requester, phone, qty, priority, status, date, notified,
+        store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
         pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
         customer_order_source, prescription_url, product_image_url, notes, notification_count,
         scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
         cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
         schedule_calculated_at, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         targetStoreId,
+        singleCustomerId,
         medName,
         requester.trim(),
         cleanPhone,
@@ -1381,7 +1404,7 @@ router.put('/:id', async (req, res) => {
     }
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
     const newAutoRemind = (newStatus === 'Fulfilled' || newStatus === 'Cancelled') ? 0 : (newStatus === 'Ready' ? 1 : (existing.auto_remind ?? 0));
-    const lastRemindAt = (newStatus === 'Ready' || whatsappQueued) ? new Date().toISOString() : existing.last_collection_reminder_at;
+    const lastRemindAt = (newStatus === 'Ready' || whatsappQueued) ? new Date().toISOString() : ((newStatus === 'Fulfilled' || newStatus === 'Cancelled') ? null : existing.last_collection_reminder_at);
 
     await db.run(
       `UPDATE special_orders
@@ -1393,6 +1416,14 @@ router.put('/:id', async (req, res) => {
        WHERE id = ?`,
       [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, newAutoRemind, lastRemindAt, id]
     );
+
+    // Sync updated phone / name to CRM customers table for future orders
+    const targetCustId = existing.customer_id || (req.body.customer_id ? Number(req.body.customer_id) : null);
+    if (targetCustId && (phone !== undefined || requester !== undefined)) {
+      try {
+        await db.run('UPDATE customers SET name = ?, phone = ? WHERE id = ?', [newRequester, newPhone, targetCustId]);
+      } catch (_) {}
+    }
 
     // Auto-send payment QR when distributor is newly assigned via the CRM UI
     // Condition: distributor was not set before AND is now set (first-time assignment)
@@ -1596,7 +1627,7 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
     const newNotified = (status === 'Fulfilled' || whatsappQueued) ? 1 : existing.notified;
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
     const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (status === 'Ready' ? 1 : (existing.auto_remind ?? 0));
-    const lastRemindAt = (status === 'Ready' || whatsappQueued) ? new Date().toISOString() : existing.last_collection_reminder_at;
+    const lastRemindAt = (status === 'Ready' || whatsappQueued) ? new Date().toISOString() : ((status === 'Fulfilled' || status === 'Cancelled') ? null : existing.last_collection_reminder_at);
     await db.run(
       'UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?',
       [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
@@ -1706,14 +1737,14 @@ const handleBatchStatusUpdate = async (req: express.Request, res: express.Respon
     if (status === 'Fulfilled') {
       await db.run(
         `UPDATE special_orders 
-         SET status = ?, notified = 1, auto_remind = 0 
+         SET status = ?, notified = 1, auto_remind = 0, last_collection_reminder_at = NULL 
          WHERE id IN (${placeholders})`,
         [status, ...orderIds]
       );
     } else if (status === 'Cancelled') {
       await db.run(
         `UPDATE special_orders 
-         SET status = ?, auto_remind = 0 
+         SET status = ?, auto_remind = 0, last_collection_reminder_at = NULL 
          WHERE id IN (${placeholders})`,
         [status, ...orderIds]
       );
@@ -2175,7 +2206,7 @@ router.post('/:id/fulfill', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    await db.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1 WHERE id = ?", id);
+    await db.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1, auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?", id);
 
     // Clean up all staged notifications and arrival alerts for this special order
     // (pending queue items first, so the optional receipt enqueued below is not removed)
@@ -2385,6 +2416,9 @@ router.post('/incomplete-24h-action', async (req, res) => {
 
       for (const id of ids) {
         snoozedMap[id] = snoozeUntil;
+        snoozedMap[`special_order_${id}`] = snoozeUntil;
+        snoozedMap[`refill_${id}`] = snoozeUntil;
+        snoozedMap[`online_order_${id}`] = snoozeUntil;
       }
 
       await db.run(

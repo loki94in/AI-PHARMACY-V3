@@ -64,6 +64,8 @@ export const RefillsSection: React.FC = () => {
   // ── Add / Edit Refill modal state ──────────────────────────────────────────
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPatient, setEditingPatient] = useState<RefillPatient | null>(null);
+  const [selectedRefillCustomerId, setSelectedRefillCustomerId] = useState<number | null>(null);
+  const [originalSelectedPhone, setOriginalSelectedPhone] = useState<string>('');
   const [refillSalutation, setRefillSalutation] = useState('Mr.');
   const [refillCustomSalutation, setRefillCustomSalutation] = useState('');
   const [addPatientName, setAddPatientName] = useState('');
@@ -1041,9 +1043,10 @@ export const RefillsSection: React.FC = () => {
     const intervalDays = getEffectiveIntervalDays();
     setSubmitting(true);
     try {
+      const resolvedCustId = editingPatient?.customer_id || selectedRefillCustomerId;
       await apiClient.put('/refills/patient-medicines', {
-        customer_id: editingPatient?.customer_id,
-        original_phone: editingPatient?.patient_phone || addPatientPhone.trim(),
+        customer_id: resolvedCustId,
+        original_phone: editingPatient?.patient_phone || originalSelectedPhone || addPatientPhone.trim(),
         patient_name: fullPatientName,
         patient_phone: addPatientPhone.trim(),
         language: addLanguage,
@@ -1061,10 +1064,19 @@ export const RefillsSection: React.FC = () => {
         '/crm'
       );
 
+      // Permanently update or register customer in CRM so updated number is used for future orders
+      try {
+        if (resolvedCustId) {
+          await api.updatePatient(resolvedCustId, { name: fullPatientName, phone: cleanPh });
+        } else if (cleanPh) {
+          await api.addPatient({ name: fullPatientName, phone: cleanPh });
+        }
+      } catch (_) {}
+
       // Persist reminder mode preference for this patient
       await apiClient.put('/refills/patient-reminder-mode', {
         patient_phone: addPatientPhone.trim(),
-        customer_id: editingPatient?.customer_id,
+        customer_id: resolvedCustId,
         reminder_mode: addReminderMode
       }).catch(() => {});
 
@@ -1072,6 +1084,8 @@ export const RefillsSection: React.FC = () => {
       setHasRefillDraft(false);
       setShowAddModal(false);
       setEditingPatient(null);
+      setSelectedRefillCustomerId(null);
+      setOriginalSelectedPhone('');
       setRefillSalutation('Mr.');
       setRefillCustomSalutation('');
       setAddPatientName('');
@@ -2413,7 +2427,19 @@ export const RefillsSection: React.FC = () => {
                         setRefillSalutation(sal);
                         if (custom !== undefined) setRefillCustomSalutation(custom);
                       }}
-                      onNameChange={(val) => setAddPatientName(val)}
+                      onNameChange={(val) => {
+                        if (!editingPatient) setSelectedRefillCustomerId(null);
+                        setAddPatientName(val);
+                      }}
+                      enablePatientAutocomplete={!editingPatient}
+                      onSelectPatient={(patient) => {
+                        setSelectedRefillCustomerId(patient.id);
+                        setOriginalSelectedPhone(patient.phone || '');
+                        if (patient.phone) setAddPatientPhone(patient.phone);
+                        if (patient.language && (patient.language === 'en' || patient.language === 'hi' || patient.language === 'mr')) {
+                          setAddLanguage(patient.language as 'en' | 'hi' | 'mr');
+                        }
+                      }}
                       placeholder="Patient Full Name *"
                       required={true}
                     />

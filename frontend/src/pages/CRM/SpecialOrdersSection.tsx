@@ -7,7 +7,7 @@ import {
   Repeat2, MessageCircle, Check, Copy,
   X, Plus, Trash2, ChevronDown,
   ChevronUp, ClipboardList, ShoppingCart, AlertTriangle,
-  Pencil, Edit3, RotateCcw, QrCode
+  Pencil, Edit3, RotateCcw, QrCode, Package
 } from 'lucide-react';
 import { apiClient, api } from '../../services/api';
 import { toastEvent, specialOrdersEvent, messageSendEvent, whatsappQueueEvent } from '../../services/events';
@@ -95,6 +95,14 @@ export const SpecialOrdersSection: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [modifyingOrder, setModifyingOrder] = useState<any | null>(null);
   const [restoringId, setRestoringId] = useState<number | null>(null);
+  const [expandedMultiOrders, setExpandedMultiOrders] = useState<Record<string, boolean>>({});
+
+  const toggleMultiOrder = (groupKey: string) => {
+    setExpandedMultiOrders(prev => ({
+      ...prev,
+      [groupKey]: !prev[groupKey]
+    }));
+  };
 
   interface CartAdjustmentNotice {
     productName: string;
@@ -167,6 +175,7 @@ export const SpecialOrdersSection: React.FC = () => {
   const [orderCustomSalutation, setOrderCustomSalutation] = useState('');
   const [requester, setRequester] = useState('');
   const [phone, setPhone] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [qty, setQty] = useState<number | ''>(1);
   const [advancePayment, setAdvancePayment] = useState<number | ''>('');
   const [priority, setPriority] = useState('Normal');
@@ -185,6 +194,7 @@ export const SpecialOrdersSection: React.FC = () => {
 
   // Edit Request Form State
   const [editingOrder, setEditingOrder] = useState<SpecialOrderItem | null>(null);
+  const [editCustomerId, setEditCustomerId] = useState<number | null>(null);
   const [editProduct, setEditProduct] = useState('');
   const [editSalutation, setEditSalutation] = useState('Mr.');
   const [editCustomSalutation, setEditCustomSalutation] = useState('');
@@ -604,6 +614,64 @@ export const SpecialOrdersSection: React.FC = () => {
     }
   };
 
+  const handleSellAllSpecialOrders = (ordersList: SpecialOrderItem[]) => {
+    if (!ordersList || ordersList.length === 0) return;
+    const first = ordersList[0];
+    const totalAdv = ordersList.reduce((sum, o) => sum + (o.advance_payment ? Number(o.advance_payment) : 0), 0);
+    const prefill = {
+      patientName: first.requester,
+      patientPhone: first.phone,
+      specialOrderId: first.id,
+      specialOrderIds: ordersList.map(o => o.id),
+      advancePayment: totalAdv,
+      medicines: ordersList.map(o => ({ medicineName: o.product, quantity_needed: o.qty }))
+    };
+    api.notifyCounterSession({
+      phone: first.phone || '',
+      specialOrderId: first.id,
+      specialOrderIds: ordersList.map(o => o.id)
+    });
+    toastEvent.trigger(`Transferring ${ordersList.length} special request items to POS for ${first.requester}...`, 'info', '/pos');
+    navigate('/pos', { state: { prefill } });
+  };
+
+  const handleAddAllSpecialOrdersToCart = async (ordersList: SpecialOrderItem[]) => {
+    if (!ordersList || ordersList.length === 0) return;
+    const unadded = ordersList.filter(o => o.status !== 'Ordered' && o.status !== 'Ready' && o.status !== 'Arrived');
+    const itemsToAdd = unadded.length > 0 ? unadded : ordersList;
+
+    setAddingCartId(itemsToAdd[0].id);
+    try {
+      const payload = itemsToAdd.map(order => ({
+        productId: order.pharmarack_product_id || 0,
+        productCode: order.pharmarack_product_code || undefined,
+        storeId: order.pharmarack_store_id || 0,
+        qty: order.qty || 1,
+        productName: order.pharmarack_product_name || order.product,
+        storeName: order.pharmarack_distributor || undefined,
+        rate: order.pharmarack_rate || undefined,
+        mrp: order.pharmarack_mrp || undefined,
+        scheme: order.pharmarack_scheme || undefined,
+        mapped: order.pharmarack_mapped === 1
+      }));
+      const res = await api.addPharmarackCart(payload);
+      if (res && res.success) {
+        toastEvent.trigger(`Added ${itemsToAdd.length} item(s) to Pharmarack cart!`, 'success', '/crm');
+        for (const o of itemsToAdd) {
+          await api.updateOrder(o.id, { status: 'Ordered' }).catch(() => {});
+        }
+        await loadOrders();
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      } else {
+        toastEvent.trigger(res?.error || 'Failed to add items to cart', 'error', '/crm');
+      }
+    } catch (err) {
+      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to add items to cart', 'error', '/crm');
+    } finally {
+      setAddingCartId(null);
+    }
+  };
+
   const handleDeleteOrder = async (id: number, product: string) => {
     setDeletingId(id);
 
@@ -791,6 +859,7 @@ export const SpecialOrdersSection: React.FC = () => {
         product: product.trim(),
         requester: customerName,
         phone: cleanPh,
+        customer_id: selectedCustomerId || undefined,
         qty: Number(qty) || 1,
         priority,
         status: 'Pending',
@@ -807,6 +876,15 @@ export const SpecialOrdersSection: React.FC = () => {
         pharmarack_product_name: product.trim() || undefined,
         advance_payment: advancePayment !== '' ? Number(advancePayment) : 0
       });
+
+      // Permanently update or register customer in CRM so updated number is used for future orders
+      try {
+        if (selectedCustomerId) {
+          await api.updatePatient(selectedCustomerId, { name: customerName, phone: cleanPh });
+        } else if (cleanPh) {
+          await api.addPatient({ name: customerName, phone: cleanPh });
+        }
+      } catch (_) {}
 
       // Auto sync to Pharmarack Cart
       try {
@@ -831,6 +909,7 @@ export const SpecialOrdersSection: React.FC = () => {
       localStorage.removeItem('crm_special_order_draft');
       setHasSpecialOrderDraft(false);
       setShowAddModal(false);
+      setSelectedCustomerId(null);
       setProduct('');
       setOrderSalutation('Mr.');
       setOrderCustomSalutation('');
@@ -865,6 +944,7 @@ export const SpecialOrdersSection: React.FC = () => {
 
   const handleOpenEditModal = (order: SpecialOrderItem) => {
     setEditingOrder(order);
+    setEditCustomerId(order.customer_id || null);
     setEditProduct(order.product || '');
     const parsed = parseSalutationAndName(order.requester || '');
     setEditSalutation(parsed.salutation);
@@ -912,6 +992,13 @@ export const SpecialOrdersSection: React.FC = () => {
 
     setEditFormSubmitting(true);
     try {
+      const targetCustId = editCustomerId || editingOrder.customer_id;
+      if (targetCustId) {
+        try {
+          await api.updatePatient(targetCustId, { name: customerName, phone: cleanPh });
+        } catch (_) {}
+      }
+
       const res = await api.updateOrder(editingOrder.id, {
         product: editProduct.trim(),
         requester: customerName,
@@ -960,6 +1047,7 @@ export const SpecialOrdersSection: React.FC = () => {
       }
       setShowEditModal(false);
       setEditingOrder(null);
+      setEditCustomerId(null);
       await loadOrders();
       specialOrdersEvent.triggerUpdated();
       whatsappQueueEvent.triggerUpdated();
@@ -1297,6 +1385,164 @@ export const SpecialOrdersSection: React.FC = () => {
     );
   };
 
+  const renderMultiOrderMasterCard = (group: {
+    key: string;
+    requester: string;
+    phone: string;
+    orders: SpecialOrderItem[];
+    activeOrders: SpecialOrderItem[];
+    pastOrders: SpecialOrderItem[];
+    activeCount: number;
+    arrivedCount: number;
+    totalAdvance: number;
+  }) => {
+    const isMultiExpanded = expandedMultiOrders[group.key] ?? false;
+    const hasArrived = group.arrivedCount > 0;
+    const allOrdered = group.activeOrders.every(o => o.status === 'Ordered' || o.status === 'Ready' || o.status === 'Arrived');
+    const allReady = group.activeOrders.every(o => o.status === 'Ready' || o.status === 'Arrived');
+    const isAddingBatch = addingCartId !== null && group.activeOrders.some(o => o.id === addingCartId);
+
+    return (
+      <div className="bg-bg2/90 rounded-2xl border border-primary/25 shadow-sm overflow-hidden p-3.5 space-y-3 transition-all">
+        {/* Top Header Row: Summary Badges & Consolidated Actions */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-primary/10 border border-primary/25 text-primary font-bold text-xs">
+              <Package size={14} />
+              <span>{group.activeOrders.length} Medicines Booked</span>
+            </div>
+
+            {group.totalAdvance > 0 && (
+              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-extrabold flex items-center gap-1">
+                ✨ Total Advance: ₹{group.totalAdvance.toFixed(2)}
+              </span>
+            )}
+
+            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
+              allReady
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                : hasArrived
+                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                : allOrdered
+                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40'
+                : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+            }`}>
+              {allReady ? 'All Items Ready' : hasArrived ? `${group.arrivedCount}/${group.activeOrders.length} Ready` : allOrdered ? 'All In Cart / Ordered' : 'Pending Request'}
+            </span>
+          </div>
+
+          {/* Consolidated Action Toolbar */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Sell All in POS */}
+            <button
+              type="button"
+              onClick={() => handleSellAllSpecialOrders(group.activeOrders)}
+              className="px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+              title="Transfer all requested medicines and advance payment to POS"
+            >
+              <ShoppingCart size={13} />
+              <span>Sell All in POS</span>
+            </button>
+
+            {/* Add All to Live Cart */}
+            <button
+              type="button"
+              onClick={() => handleAddAllSpecialOrdersToCart(group.activeOrders)}
+              disabled={isAddingBatch || allOrdered}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                allOrdered
+                  ? 'bg-bg3 border border-border text-muted cursor-default'
+                  : 'bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-400 active:scale-95'
+              }`}
+              title={allOrdered ? 'All items are already ordered' : 'Add all pending medicines to active Pharmarack cart'}
+            >
+              {isAddingBatch ? (
+                <RefreshCw size={13} className="animate-spin text-sky-400" />
+              ) : (
+                <Plus size={13} />
+              )}
+              <span>{allOrdered ? '✓ All In Cart' : 'Add All to Cart'}</span>
+            </button>
+
+            {/* Consolidated Notify Arrival */}
+            {group.activeOrders.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setArrivalModalData({
+                    customerName: group.requester,
+                    customerPhone: group.phone,
+                    orders: group.activeOrders.map(o => ({
+                      id: o.id,
+                      product: o.product,
+                      qty: o.qty,
+                      status: o.status
+                    }))
+                  });
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                title="Send 1 consolidated WhatsApp message for all medicines"
+              >
+                <MessageCircle size={13} />
+                <span>Notify Arrival</span>
+              </button>
+            )}
+
+            {/* Expand / Collapse Details Toggle */}
+            <button
+              type="button"
+              onClick={() => toggleMultiOrder(group.key)}
+              className="px-2.5 py-1.5 rounded-xl bg-bg3 hover:bg-bg border border-border text-muted hover:text-text text-xs font-semibold transition-all cursor-pointer flex items-center gap-1"
+              title="Toggle individual medicine details"
+            >
+              <span>{isMultiExpanded ? 'Hide Details' : 'View Details'}</span>
+              {isMultiExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Medicine Scannable Pills Bar */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40">
+          <span className="text-[10px] font-bold text-muted uppercase tracking-wider flex items-center gap-1 mr-1">
+            Booked Items:
+          </span>
+          {group.activeOrders.map(order => (
+            <div
+              key={order.id}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-bg border border-border text-xs text-text shadow-xs"
+            >
+              <span className="font-bold text-text">💊 {order.product}</span>
+              <span className="text-primary font-mono text-[11px] font-bold">Qty: {order.qty}</span>
+              {order.pharmarack_rate ? (
+                <span className="text-green-400 font-mono text-[10px]">₹{order.pharmarack_rate}</span>
+              ) : null}
+              <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-bold uppercase ${
+                order.status === 'Ready' || order.status === 'Arrived'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : order.status === 'Ordered'
+                  ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
+                  : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+              }`}>
+                {order.status}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Expanded Individual Order Cards for Item-level edits/cancels */}
+        {isMultiExpanded && (
+          <div className="pt-2 border-t border-border/40 space-y-2 animate-fade-in">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
+              <span>Item-Level Details & Actions</span>
+              <div className="flex-1 h-px bg-border/40" />
+            </div>
+            {group.activeOrders.map(order => renderOrderCard(order))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full gap-3 overflow-hidden">
       {/* Top Controls & Action Bar */}
@@ -1534,8 +1780,10 @@ export const SpecialOrdersSection: React.FC = () => {
                 {/* Customer Orders Body */}
                 {isExpanded && (
                   <div className="p-3 space-y-2">
-                    {/* Active Orders First */}
-                    {group.activeOrders.map(order => renderOrderCard(order))}
+                    {/* Active Orders: if >1 render unified Master Card, otherwise render single card */}
+                    {group.activeOrders.length > 1
+                      ? renderMultiOrderMasterCard(group)
+                      : group.activeOrders.map(order => renderOrderCard(order))}
 
                     {/* Past Fulfilled / Cancelled Orders (Tucked Inside If Any) */}
                     {group.pastOrders.length > 0 && (
@@ -1753,7 +2001,16 @@ export const SpecialOrdersSection: React.FC = () => {
                       setOrderSalutation(sal);
                       if (custom !== undefined) setOrderCustomSalutation(custom);
                     }}
-                    onNameChange={(val) => setRequester(val)}
+                    onNameChange={(val) => {
+                      setSelectedCustomerId(null);
+                      setRequester(val);
+                    }}
+                    enablePatientAutocomplete={true}
+                    onSelectPatient={(patient) => {
+                      setSelectedCustomerId(patient.id);
+                      if (patient.phone) setPhone(patient.phone);
+                      if (patient.language) setLanguage(patient.language);
+                    }}
                     placeholder="Customer Name"
                   />
                 </div>
@@ -1996,6 +2253,12 @@ export const SpecialOrdersSection: React.FC = () => {
                       if (custom !== undefined) setEditCustomSalutation(custom);
                     }}
                     onNameChange={(val) => setEditRequester(val)}
+                    enablePatientAutocomplete={true}
+                    onSelectPatient={(patient) => {
+                      setEditCustomerId(patient.id);
+                      if (patient.phone) setEditPhone(patient.phone);
+                      if (patient.language) setEditLanguage(patient.language);
+                    }}
                     placeholder="Customer Name"
                   />
                 </div>

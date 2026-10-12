@@ -1570,7 +1570,8 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
 
       // If medicineId missing, resolve from medicines table
       if (!medId && prodName) {
-        const cleanName = prodName.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        let cleanName = prodName.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+        cleanName = cleanName.replace(/\s+\d+('?s|x\d+)?$/i, '').trim();
         const mRow = await db.get(
           `SELECT id FROM medicines 
            WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) OR LOWER(TRIM(name)) = LOWER(TRIM(?))
@@ -2103,6 +2104,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
     return { success: true, message: 'Successfully added to Pharmarack cart!', mode: 'Live' };
   } else {
     if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+      void autoSaveMedicineDistributorLinks(items);
       return {
         success: true,
         offline: true,
@@ -3519,9 +3521,9 @@ router.post('/sync-historical-orders', async (req, res) => {
 router.get('/sent-orders/latest-map', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
-    // Only check past orders placed within the last 3 days (72 hours)
-    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-    const cutoff = Date.now() - THREE_DAYS_MS;
+    // Only check past orders placed within the last 1 day (24 hours)
+    const ONE_DAY_MS = 1 * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - ONE_DAY_MS;
     const rows = await db.all(
       `SELECT * FROM pharmarack_placed_orders 
        WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? 
@@ -3603,11 +3605,14 @@ router.get('/distributor-medicines/:storeId', async (req, res) => {
     const db = await dbManager.getConnection();
 
     const rows = await db.all(
-      `SELECT store_id, product_code, product_id, product_name, packaging, company,
-              ptr, mrp, last_ordered_at, last_order_date, source
-       FROM pharmarack_distributor_products
-       WHERE store_id = ?
-       ORDER BY last_ordered_at DESC, product_name ASC
+      `SELECT p.store_id, p.product_code, p.product_id, p.product_name, p.packaging, p.company,
+              p.ptr, p.mrp, p.last_ordered_at, p.last_order_date, p.source,
+              COALESCE(l.medicine_id, 0) AS medicine_id
+       FROM pharmarack_distributor_products p
+       LEFT JOIN medicine_distributor_links l 
+         ON l.store_id = p.store_id AND l.product_code = p.product_code
+       WHERE p.store_id = ?
+       ORDER BY p.last_ordered_at DESC, p.product_name ASC
        LIMIT ?`,
       [storeId, limit]
     );
@@ -3623,7 +3628,9 @@ router.get('/distributor-medicines/:storeId', async (req, res) => {
       mrp: Number(r.mrp || 0),
       lastOrderedAt: r.last_ordered_at,
       lastOrderDate: r.last_order_date,
-      source: r.source
+      source: r.source,
+      medicineId: r.medicine_id || undefined,
+      mapped: true
     }));
 
     res.json({ success: true, storeId, total: items.length, items });

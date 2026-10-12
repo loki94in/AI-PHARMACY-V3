@@ -1,8 +1,21 @@
-import React from 'react';
-import { User } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { User, Loader2 } from 'lucide-react';
+import { api } from '../services/api';
 
 export const SALUTATION_OPTIONS = ['Mr.', 'Mrs.', 'Miss', 'Dr.', 'Other'] as const;
 export type SalutationType = typeof SALUTATION_OPTIONS[number];
+
+export interface PatientSuggestionItem {
+  id: number;
+  name: string;
+  phone?: string;
+  active_refill?: number;
+  purchase_count?: number;
+  last_sale_date?: string;
+  language?: string;
+  credit_balance?: number;
+  credit_enabled?: number;
+}
 
 /**
  * Combines salutation (and optional custom salutation) with an uppercase customer/patient name.
@@ -81,6 +94,8 @@ interface SalutationNameInputProps {
   containerClassName?: string;
   label?: string;
   showIcon?: boolean;
+  enablePatientAutocomplete?: boolean;
+  onSelectPatient?: (patient: PatientSuggestionItem) => void;
 }
 
 export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
@@ -97,8 +112,58 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
   containerClassName = '',
   label,
   showIcon = true,
+  enablePatientAutocomplete = false,
+  onSelectPatient,
 }) => {
   const isOther = salutation === 'Other' || (!SALUTATION_OPTIONS.includes(salutation as any) && Boolean(salutation));
+
+  const [suggestions, setSuggestions] = useState<PatientSuggestionItem[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [isFuzzyMatch, setIsFuzzyMatch] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const justSelectedRef = useRef(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Debounced patient autocomplete lookup
+  useEffect(() => {
+    if (!enablePatientAutocomplete) return;
+    if (justSelectedRef.current) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const query = name.trim();
+    if (query.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsLoading(true);
+        const data = await api.getPatients({ q: query, limit: 8 });
+        const list = Array.isArray(data) ? data : ((data as any)?.suggestions || []);
+        const isFuzzy = !Array.isArray(data) && Boolean((data as any)?.isSuggestion);
+
+        if (!justSelectedRef.current && name.trim() === query) {
+          setSuggestions(list as PatientSuggestionItem[]);
+          setIsFuzzyMatch(isFuzzy);
+          setShowSuggestions(list.length > 0);
+          setHighlightIndex(-1);
+        }
+      } catch {
+        // silent fetch error fallback
+      } finally {
+        setIsLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [name, enablePatientAutocomplete]);
 
   const handleSalChange = (newSal: string) => {
     if (newSal === 'Other') {
@@ -113,8 +178,19 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
   };
 
   const handleNameInput = (val: string) => {
+    justSelectedRef.current = false;
     // Strictly force UPPERCASE for all customer/patient names
     onNameChange(val.toUpperCase());
+  };
+
+  const handleSelectSuggestion = (patient: PatientSuggestionItem) => {
+    justSelectedRef.current = true;
+    setShowSuggestions(false);
+    setHighlightIndex(-1);
+    const parsed = parseSalutationAndName(patient.name);
+    onSalutationChange(parsed.salutation, parsed.customSalutation);
+    onNameChange(parsed.name);
+    onSelectPatient?.(patient);
   };
 
   return (
@@ -156,14 +232,44 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
 
         {/* Uppercase Name Input */}
         <div className="relative flex-1">
-          {showIcon && (
+          {showIcon && !isLoading && (
             <User size={14} className="absolute left-3 top-3 text-muted pointer-events-none" />
+          )}
+          {isLoading && (
+            <Loader2 size={14} className="absolute left-3 top-3 text-primary animate-spin pointer-events-none" />
           )}
           <input
             id={id}
             type="text"
             value={name}
             onChange={(e) => handleNameInput(e.target.value)}
+            onFocus={() => {
+              if (enablePatientAutocomplete && !justSelectedRef.current && suggestions.length > 0) {
+                setShowSuggestions(true);
+              }
+            }}
+            onBlur={() => {
+              setTimeout(() => setShowSuggestions(false), 200);
+            }}
+            onKeyDown={(e) => {
+              if (enablePatientAutocomplete && showSuggestions && suggestions.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setHighlightIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setHighlightIndex((i) => Math.max(i - 1, 0));
+                } else if (e.key === 'Escape') {
+                  setShowSuggestions(false);
+                  setHighlightIndex(-1);
+                } else if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+                  if (highlightIndex >= 0 && highlightIndex < suggestions.length) {
+                    e.preventDefault();
+                    handleSelectSuggestion(suggestions[highlightIndex]);
+                  }
+                }
+              }
+            }}
             placeholder={placeholder.toUpperCase()}
             required={required}
             disabled={disabled}
@@ -172,6 +278,60 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
               showIcon ? 'pl-8' : ''
             } ${inputClassName}`}
           />
+
+          {/* Autocomplete Suggestions Dropdown */}
+          {enablePatientAutocomplete && showSuggestions && suggestions.length > 0 && (
+            <div
+              ref={dropdownRef}
+              className="absolute left-0 right-0 top-full z-dropdown mt-1.5 bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.16)] overflow-hidden max-h-52 flex flex-col animate-fade-in"
+            >
+              {isFuzzyMatch && (
+                <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-[11px] font-bold border-b border-amber-500/20 flex items-center gap-1.5 shrink-0 select-none">
+                  <span>🔍</span> Suggested patients:
+                </div>
+              )}
+              <div className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
+                {suggestions.map((p, idx) => {
+                  const isHighlighted = idx === highlightIndex;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSelectSuggestion(p);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                        isHighlighted
+                          ? 'bg-primary/20 text-text font-bold border-l-4 border-primary ring-1 ring-primary/40'
+                          : 'text-text hover:bg-primary/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-semibold truncate">{p.name}</span>
+                        {p.active_refill === 1 && (
+                          <span
+                            className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-400 text-[10px] font-bold"
+                            title="Active Refill Schedule"
+                          >
+                            🔁 Refill
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 font-mono text-[11px] text-muted">
+                        {p.phone && <span className="text-text font-semibold">{p.phone}</span>}
+                        {isHighlighted && (
+                          <span className="text-[10px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-xs">
+                            ↵ Enter
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

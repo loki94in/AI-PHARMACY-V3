@@ -340,9 +340,10 @@ router.post('/notifications/group/snooze', async (req, res) => {
 
   try {
     const db = await dbManager.getConnection();
-    const snoozeUntilDate = new Date();
-    snoozeUntilDate.setDate(snoozeUntilDate.getDate() + snoozeDays);
-    const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const snoozeUntilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + snoozeDays);
+    const snoozedUntilStr = `${snoozeUntilDate.getFullYear()}-${pad(snoozeUntilDate.getMonth() + 1)}-${pad(snoozeUntilDate.getDate())}`;
 
     for (const notifId of ids) {
       const existing = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [notifId]);
@@ -363,8 +364,8 @@ router.post('/notifications/group/snooze', async (req, res) => {
         for (const refId of refIds) {
           await db.run(
             `UPDATE patient_refills 
-             SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
-                 reminder_status = 'NOT_SENT'
+             SET next_refill_date = DATE('now', 'localtime', ?),
+                 reminder_status = 'SNOOZED'
              WHERE id = ?`,
             [`+${snoozeDays} day`, refId]
           ).catch(() => {});
@@ -394,9 +395,15 @@ router.post('/notifications/snooze-patient', async (req, res) => {
 
   try {
     const db = await dbManager.getConnection();
-    const snoozeUntilDate = new Date();
-    snoozeUntilDate.setDate(snoozeUntilDate.getDate() + snoozeDays);
-    const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const snoozeUntilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + snoozeDays);
+    const snoozedUntilStr = `${snoozeUntilDate.getFullYear()}-${pad(snoozeUntilDate.getMonth() + 1)}-${pad(snoozeUntilDate.getDate())}`;
+
+    const rawPhone = String(patient_phone || '').trim();
+    const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+    const rawName = String(patient_name || '').trim();
+    const cleanName = rawName.replace(/^(mr|mrs|ms|dr|master|shri|smt)\.?\s+/i, '').trim();
 
     // Update notifications
     await db.run(
@@ -405,22 +412,41 @@ router.post('/notifications/snooze-patient', async (req, res) => {
            lifecycle_status = 'snoozed',
            snoozed_until = ?,
            error_message = ? 
-       WHERE (recipient_phone = ? OR recipient_name = ?) AND status IN ('staged', 'snoozed')`,
-      [snoozedUntilStr, `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`, patient_phone || '', patient_name || '']
+       WHERE (
+         (recipient_phone LIKE '%' || ? AND ? != '')
+         OR recipient_name = ?
+         OR (recipient_name LIKE '%' || ? AND ? != '')
+       ) AND status IN ('staged', 'snoozed')`,
+      [
+        snoozedUntilStr,
+        `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`,
+        cleanPhone, cleanPhone,
+        rawName,
+        cleanName, cleanName
+      ]
     );
 
     // Shift next_refill_date on patient_refills
     await db.run(
       `UPDATE patient_refills 
-       SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
-           reminder_status = 'NOT_SENT'
-       WHERE (patient_phone = ? OR patient_name = ?) AND is_active = 1`,
-      [`+${snoozeDays} day`, patient_phone || '', patient_name || '']
+       SET next_refill_date = DATE('now', 'localtime', ?),
+           reminder_status = 'SNOOZED'
+       WHERE (
+         (patient_phone LIKE '%' || ? AND ? != '')
+         OR patient_name = ?
+         OR (patient_name LIKE '%' || ? AND ? != '')
+       ) AND is_active = 1`,
+      [
+        `+${snoozeDays} day`,
+        cleanPhone, cleanPhone,
+        rawName,
+        cleanName, cleanName
+      ]
     );
 
     const { eventService } = await import('../services/eventService.js');
-    eventService.broadcast('automation_hub_updated', { type: 'patient_snoozed', patient_phone });
-    eventService.broadcast('refill_updated', { type: 'patient_snoozed', patient_phone });
+    eventService.broadcast('automation_hub_updated', { type: 'patient_snoozed', patient_phone: cleanPhone || rawPhone });
+    eventService.broadcast('refill_updated', { type: 'patient_snoozed', patient_phone: cleanPhone || rawPhone });
 
     res.json({ success: true, message: `Refill reminder snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
   } catch (err: any) {

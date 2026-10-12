@@ -486,6 +486,37 @@ export const QuickAssistSidebar = memo(({
     }
   };
 
+  const handleCompleteOrderItem = async (
+    item: { id: number; product: string },
+    group: { requester: string }
+  ) => {
+    setProcessingOrderIds(prev => new Set(prev).add(item.id));
+    setOptimisticHiddenOrderIds(prev => new Set(prev).add(item.id));
+    try {
+      await api.updateOrdersBatchStatus([item.id], 'Completed');
+      toastEvent.trigger(`Marked "${item.product}" for "${group.requester}" as Completed!`, 'success');
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      specialOrdersEvent.triggerUpdated();
+      window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+      onActionComplete();
+    } catch (err: unknown) {
+      console.error('Failed to complete order item:', err);
+      const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to complete order item';
+      toastEvent.trigger(errMsg.includes('timeout') ? 'Server was busy, please retry in a moment' : errMsg, 'error');
+      setOptimisticHiddenOrderIds(prev => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    } finally {
+      setProcessingOrderIds(prev => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }
+  };
+
   const [sendingNotifKeys, setSendingNotifKeys] = useState<Set<string>>(new Set());
 
   const handleSendStagedNotificationGroup = async (group: {
@@ -1609,9 +1640,28 @@ export const QuickAssistSidebar = memo(({
                               <Package size={10} className="text-cyan-400 shrink-0" />
                               <span className="font-medium text-text truncate text-[11px]">{item.product}</span>
                             </div>
-                            <span className="px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 text-[9px] font-mono font-bold shrink-0">
-                              x{item.qty}
-                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 text-[9px] font-mono font-bold shrink-0">
+                                x{item.qty}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={processingOrderIds.has(item.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCompleteOrderItem(item, group);
+                                }}
+                                className="h-5 px-1.5 rounded bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer disabled:opacity-50 shrink-0"
+                                title={`Mark "${item.product}" as Completed & stop reminders`}
+                              >
+                                {processingOrderIds.has(item.id) ? (
+                                  <Loader2 size={8} className="animate-spin shrink-0" />
+                                ) : (
+                                  <CheckCircle2 size={9} className="shrink-0" />
+                                )}
+                                <span>Complete</span>
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1646,6 +1696,19 @@ export const QuickAssistSidebar = memo(({
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
                             </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Completed');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Mark order as Completed & permanently stop all collection reminders (skips POS)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span>Complete</span>
+                            </button>
                           </>
                         ) : group.overallStatus === 'Ordered' ? (
                           <>
@@ -1667,6 +1730,19 @@ export const QuickAssistSidebar = memo(({
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
                             </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Completed');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Mark order as Completed & permanently stop all collection reminders (skips POS)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span>Complete</span>
+                            </button>
                           </>
                         ) : (
                           <>
@@ -1687,6 +1763,19 @@ export const QuickAssistSidebar = memo(({
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Completed');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Mark order as Completed & permanently stop all collection reminders (skips POS)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span>Complete</span>
                             </button>
                           </>
                         )}
@@ -1872,9 +1961,28 @@ export const QuickAssistSidebar = memo(({
                               <Package size={10} className="text-amber-500 shrink-0" />
                               <span className="font-medium text-text truncate text-[11px]">{item.product}</span>
                             </div>
-                            <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/20 text-[9px] font-mono font-bold shrink-0">
-                              x{item.qty}
-                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/20 text-[9px] font-mono font-bold shrink-0">
+                                x{item.qty}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={processingOrderIds.has(item.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCompleteOrderItem(item, group);
+                                }}
+                                className="h-5 px-1.5 rounded bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer disabled:opacity-50 shrink-0"
+                                title={`Mark "${item.product}" as Completed & stop reminders`}
+                              >
+                                {processingOrderIds.has(item.id) ? (
+                                  <Loader2 size={8} className="animate-spin shrink-0" />
+                                ) : (
+                                  <CheckCircle2 size={9} className="shrink-0" />
+                                )}
+                                <span>Complete</span>
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1909,6 +2017,19 @@ export const QuickAssistSidebar = memo(({
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
                             </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Completed');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Mark all requests as Completed & permanently stop all collection reminders (skips POS)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span>Complete</span>
+                            </button>
                           </>
                         ) : group.overallStatus === 'Ordered' ? (
                           <>
@@ -1930,6 +2051,19 @@ export const QuickAssistSidebar = memo(({
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
                             </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Completed');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Mark all requests as Completed & permanently stop all collection reminders (skips POS)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span>Complete</span>
+                            </button>
                           </>
                         ) : (
                           <>
@@ -1950,6 +2084,19 @@ export const QuickAssistSidebar = memo(({
                             >
                               {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
                               <span className="truncate">POS</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Completed');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Mark all requests as Completed & permanently stop all collection reminders (skips POS)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span>Complete</span>
                             </button>
                           </>
                         )}

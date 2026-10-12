@@ -1213,6 +1213,7 @@ const POS = () => {
   const pendingOnlineOrderIdRef = useRef<number | null>(null);
   // Special order ID for linking POS sale to special order fulfilment & auto_remind cancellation
   const pendingSpecialOrderIdRef = useRef<number | null>(null);
+  const pendingSpecialOrderIdsRef = useRef<number[]>([]);
   const pendingDirectSaveRef = useRef<boolean>(false);
   const [doctor, setDoctor] = useState(() => editSaleFromState?.doctor_name || initialActiveTab.doctor || '');
   const [isDoctorDropdownOpen, setIsDoctorDropdownOpen] = useState(false);
@@ -1466,6 +1467,9 @@ const POS = () => {
       if (prefill.specialOrderId) {
         pendingSpecialOrderIdRef.current = Number(prefill.specialOrderId);
       }
+      if (Array.isArray(prefill.specialOrderIds) && prefill.specialOrderIds.length > 0) {
+        pendingSpecialOrderIdsRef.current = prefill.specialOrderIds.map(Number).filter(Boolean);
+      }
       if (name) {
         const parsed = parseSalutationAndName(name);
         setPatientSalutation(parsed.salutation);
@@ -1499,7 +1503,8 @@ const POS = () => {
         customerId: prefCustId || prefCId ? Number(prefCustId || prefCId) : null,
         refillId: refillId ? Number(refillId) : null,
         refillIds: Array.isArray(prefill.refillIds) ? prefill.refillIds.map(Number).filter(Boolean) : undefined,
-        specialOrderId: prefill.specialOrderId ? Number(prefill.specialOrderId) : null
+        specialOrderId: prefill.specialOrderId ? Number(prefill.specialOrderId) : null,
+        specialOrderIds: Array.isArray(prefill.specialOrderIds) ? prefill.specialOrderIds.map(Number).filter(Boolean) : undefined
       });
 
       const fetchAndAdd = async () => {
@@ -3785,11 +3790,13 @@ const POS = () => {
         refill_ids: pendingRefillIdsRef.current.length > 0 ? [...pendingRefillIdsRef.current] : undefined,
         online_order_id: pendingOnlineOrderIdRef.current || undefined,
         special_order_id: pendingSpecialOrderIdRef.current || undefined,
+        special_order_ids: pendingSpecialOrderIdsRef.current.length > 0 ? [...pendingSpecialOrderIdsRef.current] : undefined,
         editingInvoiceId: editingInvoiceId || undefined
       };
       writeRef(pendingRefillIdsRef, []);
       writeRef(pendingOnlineOrderIdRef, null);
       writeRef(pendingSpecialOrderIdRef, null);
+      writeRef(pendingSpecialOrderIdsRef, []);
 
       // Verification Layer Check: Pre-save validation
       try {
@@ -3921,6 +3928,7 @@ const POS = () => {
       pendingRefillIdsRef.current = [];
       pendingOnlineOrderIdRef.current = null;
       pendingSpecialOrderIdRef.current = null;
+      pendingSpecialOrderIdsRef.current = [];
       setSearchTerm('');
       setSearchResults([]);
       updateCart([makeEmptyCartRow()]);
