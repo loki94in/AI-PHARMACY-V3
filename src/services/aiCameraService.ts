@@ -1400,7 +1400,10 @@ If PACKAGING, return ONLY valid JSON matching:
    * Designed for batch use (e.g., PDF page OCR in catalog worker).
    */
   async extractTextFromImage(imageBuffer: Buffer): Promise<{ text: string; confidence: number }> {
+    // Yield to the event loop so concurrent counter requests (fulfillments, POS) are never starved
+    await new Promise(r => setImmediate(r));
     const processedBuffer = await this.preprocess(imageBuffer);
+    await new Promise(r => setImmediate(r));
 
     const isONNXAvailable = await onnxOcrService.checkAvailability();
     if (isONNXAvailable) {
@@ -1413,6 +1416,8 @@ If PACKAGING, return ONLY valid JSON matching:
         console.error('[AI Camera] ONNX OCR failed for image, falling back to Tesseract:', err);
       }
     }
+
+    await new Promise(r => setImmediate(r));
 
     // Tesseract fallback
     if (!this.initialized) {

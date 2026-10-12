@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P2-87 — Quick Assist order fulfillment & refill cycle 15000ms timeout in installed app
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the installed desktop application (`PharmacyOS.exe` / `PharmacyBackend.exe`), fulfilling orders or refill cycles in the Quick Assist Sidebar failed and displayed a red error toast: `timeout of 15000ms exceeded`. Reported 2026-10-12. |
+| **Root cause** | (1) `QuickAssistSidebar.tsx` used `Promise.all(group.items.map(i => apiClient.post('/orders/' + i.id + '/status', ...)))` to update multi-item groups, generating concurrent HTTP write requests that contended for SQLite single-connection locks. (2) `POST /orders/:id/status` performed synchronous live cart adjustments (`adjustSpecialOrderInLiveCart`) with a 1500ms race timeout per item before returning the HTTP response. (3) Status `'Completed'` was not normalized to `'Fulfilled'` in all paths, preventing clean reminder cancellation. (4) Axios `timeout: 15000` was exceeded under concurrent load. (5) Background multi-page PDF invoice OCR in `emailService`/`aiCameraService` ran synchronous CPU loops without yielding ticks to the Node event loop. |
+| **How it was fixed** | (1) Added `POST /api/orders/batch-status` and `PUT /api/orders/batch-status` to execute atomic batch status updates in a single SQL query and one-pass reminder purge. (2) Replaced `Promise.all` in `QuickAssistSidebar.tsx` with a single call to `api.updateOrdersBatchStatus`. (3) Deferred live cart adjustments (`adjustSpecialOrderInLiveCart`) to background `setImmediate` in both single and batch order status routes so HTTP responses return in <50ms. (4) Configured dedicated `{ timeout: 45000 }` on `fulfillAllRefills`, `fulfillRefill`, `fulfillSpecialOrder`, `updateOrderStatus`, and `updateOrdersBatchStatus`. (5) Wrapped `refills.ts` fulfill-all inserts and updates in an atomic SQLite transaction (`BEGIN TRANSACTION` ... `COMMIT`). (6) Added `setImmediate` event-loop yields in `aiCameraService.ts` and `emailService.ts` to prevent counter request starvation. |
+| **Priority** | P2 |
+| **What not to touch** | POS billing flow, SQLite schema migration paths, and WhatsApp queue processing contracts. |
+| **Verified by** | `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` (built in 41.45s, 0 errors); knowledge graph synchronized via `node scripts/quick-update.mjs`. |
+
+### [Fixed] P2-86 — Installed app startup cycle hanging & headless Chromium sandbox flags in packaged environment
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the installed desktop application (`PharmacyOS.exe` / `PharmacyBackend.exe`), the app failed to complete the startup progress cycle in the header ticker, getting stuck on `Starting up — ⏳ WhatsApp · ⏳ Pharmarack` and later `Taking longer than usual`, never reaching `✅ All services ready`. Reported 2026-10-12. |
+| **Root cause** | (1) `src/whatsappClient.ts` used a divergent hardcoded list of browser paths that missed 64-bit Edge and lacked CLI fallbacks (`findChromePath`). (2) Both `whatsappClient.ts` and `tokenRefreshScheduler.ts` launched Chromium without `--no-sandbox` and `--disable-setuid-sandbox`, causing child-process launch crashes or 60s watchdog timeouts under packaged Electron execution. (3) `warmupStartupCart()` never marked sync settled when encountering auth errors or offline status, keeping `startupSyncCoordinator` and `Layout.tsx` in an infinite `wait` state. |
+| **How it was fixed** | (1) Exported `getCommonHeadlessChromiumArgs` from `src/utils/chromeBrowser.ts` and unified browser detection across WhatsApp and Pharmarack. (2) Added `--no-sandbox` and `--disable-setuid-sandbox` to all background Chromium launches. (3) Added `warmUpSettled` and `lastError` tracking in `StartupSyncCoordinator` and `src/routes/pharmarack.ts`. (4) In `Layout.tsx`, updated the startup progress tracker to handle warm-up settlement and timeout, allowing honest transitions to `ready` or `attention` and cleanly finalizing the startup cycle. |
+| **Priority** | P2 |
+| **What not to touch** | Session persistence and cart sync deduplication pipelines. |
+| **Verified by** | `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` (built in 40.44s, 0 errors); `npm test -- tests/billDates.test.ts` (3/3 pass); knowledge graph synchronized via `node scripts/quick-update.mjs`. |
+
 ### [Fixed] P2-85 — CRM Refills/Special Orders cancellation cascades & Pharmarack Cart deficit shortfall deduplication & distributor linking
 
 | Field | Content |

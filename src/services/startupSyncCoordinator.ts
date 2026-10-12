@@ -10,6 +10,8 @@
 class StartupSyncCoordinator {
   private cartLoaded: boolean = false;
   private syncPending: boolean = true;
+  private warmUpSettled: boolean = false;
+  private lastError: string | null = null;
   private startupTime: number = Date.now();
   private maxTimeoutMs: number = 15000;
   private resolveCallbacks: Array<() => void> = [];
@@ -20,6 +22,7 @@ class StartupSyncCoordinator {
     this.timeoutHandle = setTimeout(() => {
       if (this.syncPending && !this.cartLoaded) {
         console.log('[StartupSyncCoordinator] 15s startup window elapsed. Releasing background scanners.');
+        this.warmUpSettled = true;
         this.releaseWaiters();
       }
     }, this.maxTimeoutMs);
@@ -32,7 +35,20 @@ class StartupSyncCoordinator {
     if (!this.cartLoaded) {
       this.cartLoaded = true;
       this.syncPending = false;
+      this.warmUpSettled = true;
+      this.lastError = null;
       console.log(`[StartupSyncCoordinator] Pharmarack cart loaded successfully in ${Date.now() - this.startupTime}ms. Releasing scanners.`);
+      this.releaseWaiters();
+    }
+  }
+
+  /**
+   * Called when boot live-cart warm-up settles with an error, offline state, or skip.
+   */
+  public markWarmUpSettled(error?: string | null): void {
+    this.warmUpSettled = true;
+    if (error) this.lastError = error;
+    if (this.syncPending && !this.cartLoaded) {
       this.releaseWaiters();
     }
   }
@@ -87,14 +103,16 @@ class StartupSyncCoordinator {
   /**
    * Get current sync status for UI alerting.
    */
-  public getStatus(): { cartLoaded: boolean; syncPending: boolean; elapsedMs: number; timedOut: boolean } {
+  public getStatus(): { cartLoaded: boolean; syncPending: boolean; elapsedMs: number; timedOut: boolean; warmUpSettled: boolean; lastError: string | null } {
     const elapsed = Date.now() - this.startupTime;
     const timedOut = !this.cartLoaded && elapsed >= this.maxTimeoutMs;
     return {
       cartLoaded: this.cartLoaded,
       syncPending: this.syncPending && !timedOut,
       elapsedMs: elapsed,
-      timedOut
+      timedOut,
+      warmUpSettled: this.warmUpSettled || this.cartLoaded || timedOut,
+      lastError: this.lastError
     };
   }
 }

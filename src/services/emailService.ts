@@ -1602,6 +1602,7 @@ export class EmailService {
             const { Jimp } = await import('jimp');
 
             for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+              await new Promise(r => setImmediate(r));
               const page = await pdfDoc.getPage(pageNum);
               const viewport = page.getViewport({ scale: 2.0 });
               const width = Math.floor(viewport.width);

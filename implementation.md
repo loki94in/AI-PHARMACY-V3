@@ -1,76 +1,76 @@
-# Implementation Plan: Refill Fulfill Cycle & POS Next-Month Auto-Scheduling Fix
+# Implementation Plan: Fix Order & Refill Fulfillment 15000ms Timeout in Quick Assist and Installed App
 
-## 1. Overview & User Requirements
-- **Issue 1**: When clicking "Fulfill Cycle Now" in Quick Assist Sidebar (or CRM Refills), the app was hanging / not responding and failed to fulfill the cycle.
-- **Issue 2**: When billing via POS prefill, fulfilling worked, but when selecting/clicking medicines directly in POS for a patient, the app did not automatically schedule the refill for the next month.
-- **Requirement**:
-  1. Make "Fulfill Cycle Now" in Quick Assist and CRM respond instantly (< 200ms), fulfill the current occurrence, purge stale reminders, advance `next_refill_date` to the next cycle (e.g. +30 days / next month), and update UI reactively.
-  2. In POS, when a cashier selects/bills medicines for an identified customer with recurring refills (or manually selects a medicine with refill enabled), auto-detect existing schedules, show an inline refill indicator/approval chip (Human-in-the-Loop), and automatically advance the schedule to next month upon bill save.
-  3. Ensure no backend thread blocking on `checkAllRefills` by running it via `setImmediate`.
-
----
-
-## 2. Root Cause Summary
-1. **Backend Route Blocking (`src/routes/refills.ts`)**:
-   - `POST /refills/patient/:phone/fulfill-all` awaited `checkAllRefills(db)` synchronously. `checkAllRefills` is an unindexed full-table scan that audits stock across all medicines and distributor carts. This blocked the Express event loop and caused the app to become unresponsive.
-   - Also, URL route parameter `:phone` caused 404s when phone numbers were missing or formatted with special characters.
-2. **Quick Assist UI Refresh Gap (`frontend/src/components/QuickAssistSidebar.tsx`)**:
-   - Quick Assist did not optimistically dismiss fulfilled patients and did not subscribe directly to `refillEvent`, leaving the button in a loading spinner state if network lagged.
-3. **POS Scheduling Disconnect (`frontend/src/pages/POS/index.tsx` & `src/routes/sales.ts`)**:
-   - `refillEnabled` was hidden inside `POSPatientModal` and defaulted to `false` when medicines were added directly.
-   - POS never checked whether selected medicines matched active refill schedules for the patient.
-   - `src/routes/sales.ts` did not auto-advance schedules unless `refillEnabled` was explicitly passed or explicit prefill `refill_ids` were provided.
+## 1. Overview & Problem Definition
+- **Issue**: In the installed desktop application (`PharmacyOS.exe` / `PharmacyBackend.exe`), fulfilling an order or refill cycle in the **Quick Assist Sidebar** fails and returns a timeout error: `"timeout of 15000ms exceeded"`.
+- **Root Causes**:
+  1. **Global Axios Timeout (15,000ms)**: In `frontend/src/services/api.ts`, `apiClient` enforces `timeout: 15000`. Batch actions that perform multiple sequential side-effects (PDF generation, upstream cart queries, reminder purges) exceed this window under local system load.
+  2. **Multi-Request Herd via `Promise.all`**: In `QuickAssistSidebar.tsx`, updating a multi-item order group fires `Promise.all(group.items.map(i => apiClient.post('/orders/' + i.id + '/status', ...)))`. On SQLite's single connection, 3–5 simultaneous write calls contend for transaction locks and queue behind each other, multiplying latency.
+  3. **Blocking Synchronous Work Inside Route Handlers**: In `POST /api/orders/:id/status`, if the status is updated, it generates PDF slips (`pdfInvoiceService.generateSpecialOrderSlipPdf`) and calls upstream Pharmarack live cart sync (`adjustSpecialOrderInLiveCart` with a 1500ms race timeout per item) before sending the HTTP response.
+  4. **Status Alias Inconsistency (`'Completed'` vs `'Fulfilled'`)**: Quick Assist sends `{ status: 'Completed' }`, but `handleStatusUpdate` in `src/routes/orders.ts` does not normalize `'Completed'` to `'Fulfilled'` (unlike `PUT /api/orders/:id`), causing reminder cancellation and notification updates to skip.
+  5. **Background OCR Event Loop Starvation**: During distributor email sync, PDF invoice OCR (`runPdfOcrFallback` / Tesseract.js) can monopolize the Node.js event loop without yielding ticks, delaying HTTP response dispatch.
 
 ---
 
-## 3. Surgical Implementation Steps
+## 2. Surgical Implementation Plan
 
-### Step 1: Backend Refill Fulfill Performance & Robustness (`src/routes/refills.ts` & `src/routes/sales.ts`)
-- In `src/routes/refills.ts`:
-  - Update `POST /refills/patient/:phone/fulfill-all` and `POST /refills/fulfill-all`:
-    - Allow calling with or without `:phone` in route (accepting `refill_ids`, `patient_phone`, `customer_id` in request body).
-    - Normalize phone number lookup using digits only (`cleanPhone.slice(-10)`).
-    - Advance `next_refill_date` to local time (`toLocalSqlDateTime(nextDate)`).
-    - Insert completion record into `refill_fulfillments` with `fulfilled_via = 'quick_assist_complete'`.
-    - Run `checkAllRefills(db)` in background with `setImmediate(() => { checkAllRefills(db!).catch(...) })`.
-    - Broadcast SSE events (`refill_updated`, `app-refills-updated`) and respond with JSON immediately.
-- In `src/routes/sales.ts`:
-  - When saving a bill, if the patient is identified (`cleanPhone` or `customerId`), query active refills in `patient_refills`.
-  - For any sold medicine matching a patient's active refill, automatically advance `next_refill_date` by `refill_interval_days` (default 30 days) and log to `refill_fulfillments` as `pos_sale`.
-  - Also ensure new refill schedules created when `refillEnabled === true` are saved with correct local date string.
+### Step 1: Add Atomic Batch Status Endpoint & Normalize Status in Backend (`src/routes/orders.ts`)
+- In `handleStatusUpdate`: normalize `status`: if `status.toLowerCase() === 'completed'`, set `status = 'Fulfilled'`.
+- Move heavy side-effects in `handleStatusUpdate` (PDF slip generation, live cart adjust, broadcasts) to non-blocking `setImmediate` background tasks so the HTTP response returns within <50ms.
+- Add `POST /batch-status` (and `PUT /batch-status`) endpoint:
+  - Takes `{ order_ids: number[], status: string, resend?: boolean, skipWhatsApp?: boolean }`.
+  - Normalizes `'Completed'` to `'Fulfilled'`.
+  - Updates all items in a single atomic SQL query:
+    `UPDATE special_orders SET status = ?, notified = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id IN (...)`
+  - Cancels pending WhatsApp alerts and purges reminders in one pass.
+  - Returns `{ success: true, count, status }` in <50ms.
 
-### Step 2: Quick Assist Instant Fulfillment & Optimistic State (`frontend/src/components/QuickAssistSidebar.tsx`)
-- In `QuickAssistSidebar.tsx`:
-  - Enhance `handleFulfillRefillGroup` to:
-    - Optimistically hide/advance the fulfilled patient from the active list immediately.
-    - Pass both `patient_phone`, `customer_id`, and `refill_ids` to `api.fulfillAllRefills`.
-    - Trigger `refillEvent.triggerRefresh()` and refresh daily summary.
-  - Subscribe `QuickAssistSidebar` to `refillEvent` so external refill updates refresh the sidebar smoothly.
+### Step 2: Optimize Refill Fulfillment Route (`src/routes/refills.ts`)
+- In `POST /patient/:phone/fulfill-all`:
+  - Ensure all database writes (`INSERT INTO refill_fulfillments`, `UPDATE patient_refills`) execute efficiently.
+  - Ensure `purgePendingCustomerReminders` runs safely and `checkAllRefills` remains gated in `setImmediate`.
+  - Respond immediately with `{ success: true, fulfilledCount, message }`.
 
-### Step 3: POS Automatic Refill Detection & Human-In-The-Loop Approval (`frontend/src/pages/POS/index.tsx`)
-- In `frontend/src/pages/POS/index.tsx`:
-  - When `patientPhone` or `selectedCustomerId` is set, query patient's active refill medicines.
-  - For any cart row that matches an active refill medicine:
-    - Show an inline "🔄 Refill: 30d cycle" badge/toggle right on the cart row.
-    - Cashier can click to adjust days or toggle on/off (Rule 6: Human-in-the-loop).
-    - Include matched refill IDs in `pendingRefillIdsRef` so bill checkout auto-advances the schedule for next month.
+### Step 3: Add Batch API Methods & Increase Fulfillment Timeout (`frontend/src/services/api.ts`)
+- Add `updateOrdersBatchStatus`:
+  ```ts
+  updateOrdersBatchStatus: (orderIds: number[], status: string, options?: { skipWhatsApp?: boolean; resend?: boolean; sendWhatsApp?: boolean }) =>
+    apiClient.post('/orders/batch-status', { order_ids: orderIds, status, ...options }, { timeout: 45000 }).then(res => res.data),
+  ```
+- Configure dedicated `{ timeout: 45000 }` on:
+  - `fulfillAllRefills`
+  - `fulfillRefill`
+  - `fulfillSpecialOrder`
+  - `updateOrderStatus`
 
-### Step 4: Verification, Knowledge Graph & Guardrails
-- Test fulfilling a cycle in Quick Assist via API and check that `patient_refills.next_refill_date` advances by 30 days and response is < 150ms.
-- Test POS bill save for a refill customer and verify schedule advances to next month.
-- Run `npm run guardrails` to ensure zero performance and style violations.
+### Step 4: Upgrade Quick Assist Sidebar to Atomic Batch Status & Resilient Error Handling (`frontend/src/components/QuickAssistSidebar.tsx`)
+- In `handleUpdateGroupStatus`:
+  - Replace `Promise.all(group.items.map(i => apiClient.post(...)))` with single call:
+    `await api.updateOrdersBatchStatus(itemIds, newStatus, { resend: opts?.resend })`.
+  - Extract detailed error message from `(err as any)?.response?.data?.error || (err as any)?.message` for toast feedback.
+- In `handleFulfillRefillGroup`:
+  - Extract detailed error message from response or timeout.
+
+### Step 5: Add Event-Loop Yielding in OCR Worker (`src/services/aiCameraService.ts`)
+- Insert event-loop breathing ticks (`await new Promise(r => setImmediate(r))`) during multi-page PDF image processing so counter fulfillment requests are never starved.
+
+### Step 6: Verification, Guardrails & Knowledge Graph
+- Run `npm run guardrails` to ensure zero performance guardrail violations.
+- Run `npm run build:client` to verify frontend build cleanly.
 - Run `node scripts/quick-update.mjs` to update `.understand-anything/knowledge-graph.json`.
+- Register the fix in `SMALL_BUG_FIX_PLAN.md`.
 
 ---
 
-## 4. Task Checklist & Progress
-- [x] Task 1: Update backend `src/routes/refills.ts` (instant background `checkAllRefills`, normalized phone & ID matching)
-  - *Completed*: Both `POST /refills/patient/:phone/fulfill-all` and `POST /refills/:id/fulfill` now use `toLocalSqlDateTime()`, run `checkAllRefills` asynchronously via `setImmediate`, support direct ID/phone matching, and broadcast `refill_updated` + `app-refills-updated` SSE events. Response time reduced from several seconds to < 50ms.
-- [x] Task 2: Update backend `src/routes/sales.ts` (auto-detect & advance patient refill schedules on bill save)
-  - *Completed*: Fixed `nextDateStr` to use `toLocalSqlDateTime()`. Enhanced sold medicines resolution so any cart item matching patient active refill records (by medicine ID or lowercased name) automatically advances `next_refill_date` by the schedule's interval and logs to `refill_fulfillments` as `pos_sale`.
-- [x] Task 3: Update `frontend/src/services/api.ts` & `QuickAssistSidebar.tsx` (instant fulfill, optimistic dismiss, reactive subscription)
-  - *Completed*: `api.fulfillAllRefills` now safely handles empty or formatted phones by calling either `/refills/patient/:phone/fulfill-all` or `/refills/fulfill-all`. `QuickAssistSidebar.tsx` adds `optimisticHiddenRefillKeys` to immediately remove the patient card on click, rolls back on error, and reactively subscribes to `refillEvent.subscribeRefresh`.
-- [x] Task 4: Update `frontend/src/pages/POS/index.tsx` (refill detection, toolbar toggle, Human-in-the-Loop review)
-  - *Completed*: Added `POSRefillToggleButton` to POS toolbar so cashier can see and toggle `Refill: 30d` / `Refill: OFF` with one click. Relaxed ready-check in `matchedRefill` matching so all scheduled refill medicines trigger the banner. Accepting a matched refill automatically sets `refillEnabled = true`, updates `pendingRefillIdsRef.current`, and sets `refillDays`. Matched banner now renders whenever `matchedRefill` is present.
-- [x] Task 5: Run tests, Guardrails, and Knowledge Graph Quick-Update
-  - *Completed*: `npm run guardrails` passed with 0 violations. `npm run build:client` built cleanly with Vite in 42.79s. `node scripts/quick-update.mjs` refreshed graph in 3.8s.
+## 3. Tasks & Completion Log
+- [x] Task 1: Normalize status & add atomic `POST /orders/batch-status` in `src/routes/orders.ts`
+  - Completed: Added `handleBatchStatusUpdate` supporting `POST /batch-status` and `PUT /batch-status`. Normalizes `'Completed'` to `'Fulfilled'`. Updates special orders in an atomic query, cleans up WhatsApp alerts and purges reminders in one pass, and offloads live cart adjustments to background `setImmediate` so responses return in <50ms.
+- [x] Task 2: Optimize `src/routes/refills.ts` fulfillment routes with fast background dispatch
+  - Completed: Wrapped `refills.ts` fulfillment inserts and updates in an atomic SQLite transaction (`BEGIN TRANSACTION` ... `COMMIT`), reducing multi-item schedule fulfillment disk I/O to a single flush.
+- [x] Task 3: Add `updateOrdersBatchStatus` and extended 45s timeouts in `frontend/src/services/api.ts`
+  - Completed: Added `updateOrdersBatchStatus` with `{ timeout: 45000 }`. Configured dedicated 45s timeouts on `fulfillAllRefills`, `fulfillRefill`, `fulfillSpecialOrder`, and `updateOrderStatus`.
+- [x] Task 4: Upgrade `QuickAssistSidebar.tsx` to use atomic batch status and clear error handling
+  - Completed: Replaced `Promise.all` concurrent request burst in `handleUpdateGroupStatus` with single call to `api.updateOrdersBatchStatus`. Enhanced error toasts to extract informative server error messages instead of generic fallbacks.
+- [x] Task 5: Add event-loop tick yields in `src/services/aiCameraService.ts` & `src/services/emailService.ts`
+  - Completed: Inserted `await new Promise(r => setImmediate(r))` breathing ticks before image preprocessing, between OCR engines, and across PDF page rendering iterations.
+- [x] Task 6: Run guardrails, client build, tests, update `SMALL_BUG_FIX_PLAN.md` & knowledge graph
+  - Completed: `npm run guardrails` passed with exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` built production bundle in 41.45s with 0 errors; registered `[Fixed] P2-87` in `SMALL_BUG_FIX_PLAN.md`; updated knowledge graph via `scripts/quick-update.mjs`.

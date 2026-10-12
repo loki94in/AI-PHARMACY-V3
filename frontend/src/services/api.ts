@@ -1480,7 +1480,7 @@ export const api = {
     storeName?: string;
   }) => apiClient.post('/pharmarack/delete-cart-item', data).then(res => res.data),
   getPharmarackCart: () => apiClient.get('/pharmarack/cart').then(res => res.data),
-  getStartupSyncStatus: () => apiClient.get<{ success: boolean; cartLoaded: boolean; syncPending: boolean; elapsedMs: number; timedOut: boolean }>('/pharmarack/startup-sync-status').then(res => res.data),
+  getStartupSyncStatus: () => apiClient.get<{ success: boolean; cartLoaded: boolean; syncPending: boolean; elapsedMs: number; timedOut: boolean; warmUpSettled?: boolean; lastError?: string | null }>('/pharmarack/startup-sync-status').then(res => res.data),
   sendManualCartNotification: (data: { storeId: number; storeName: string; deliveryPersons: readonly unknown[]; items: readonly unknown[] }) =>
     apiClient.post('/pharmarack/cart/notify-manual', data).then(res => res.data),
   getPharmarackDistributors: () => apiClient.get('/pharmarack/distributors').then(res => res.data),
@@ -1664,7 +1664,17 @@ export const api = {
   createBatchOrders: (data: { items: readonly unknown[]; requester: string; phone: string; priority?: string; advance_payment?: number; customer_id?: number; language?: string; sendWhatsApp?: boolean }) =>
     apiClient.post('/orders/batch', data).then(res => res.data),
   updateOrder: (id: number, data: Partial<SpecialOrder> & { skipWhatsApp?: boolean; sendWhatsApp?: boolean }) => apiClient.put<{ success: boolean; message: string; whatsapp_queued?: boolean; cartAdjustment?: any; payment_qr_sent?: boolean }>(`/orders/${id}`, data).then(res => res.data),
-  updateOrderStatus: (id: number, status: string, options?: { skipWhatsApp?: boolean; resend?: boolean; sendWhatsApp?: boolean }) => apiClient.post(`/orders/${id}/status`, { status, ...options }).then(res => res.data),
+  updateOrderStatus: (id: number, status: string, options?: { skipWhatsApp?: boolean; resend?: boolean; sendWhatsApp?: boolean }) => apiClient.post(`/orders/${id}/status`, { status, ...options }, { timeout: 45000 }).then(res => res.data),
+  updateOrdersBatchStatus: (
+    orderIds: number[],
+    status: string,
+    options?: { skipWhatsApp?: boolean; resend?: boolean; sendWhatsApp?: boolean }
+  ) =>
+    apiClient.post<{ success: boolean; message: string; count: number; status: string; whatsapp_queued?: boolean; queued_count?: number }>(
+      '/orders/batch-status',
+      { order_ids: orderIds, status, ...options },
+      { timeout: 45000 }
+    ).then(res => res.data),
   deleteOrder: (id: number) => apiClient.delete<{ success: boolean; message: string; cartAdjustment?: any }>(`/orders/${id}`).then(res => res.data),
   checkArrivalRecentlyNotified: (phone: string) =>
     apiClient.get<{ recentlyNotified: boolean; minutesAgo?: number; queueId?: number; status?: string }>('/orders/check-arrival-notified', { params: { phone } }).then(res => res.data),
@@ -1678,7 +1688,7 @@ export const api = {
   }) => apiClient.post('/orders/batch-notify-arrival', data).then(res => res.data),
   resendSpecialOrderBooking: (id: number) => apiClient.post(`/orders/${id}/resend-booking`).then(res => res.data),
   fulfillSpecialOrder: (id: number, data?: { invoiceNo?: string; grandTotal?: number }) =>
-    apiClient.post(`/orders/${id}/fulfill`, data || {}).then(res => res.data),
+    apiClient.post(`/orders/${id}/fulfill`, data || {}, { timeout: 45000 }).then(res => res.data),
   convertToRefill: (orderId: number, refillIntervalDays: number) =>
     apiClient.post('/orders/convert-to-refill', { orderId, refillIntervalDays }).then(res => res.data),
   getSpecialOrderPaymentQr: (id: number) =>
@@ -1843,10 +1853,10 @@ export const api = {
   fulfillAllRefills: (phone: string, data?: { refill_ids?: number[]; customer_id?: number | null; fulfilled_via?: string; patient_phone?: string }) => {
     const cleanPhone = (phone || data?.patient_phone || '').trim();
     const endpoint = cleanPhone ? `/refills/patient/${encodeURIComponent(cleanPhone)}/fulfill-all` : '/refills/fulfill-all';
-    return apiClient.post<{ success: boolean; fulfilledCount: number; message: string }>(endpoint, { patient_phone: cleanPhone, ...(data || {}) }).then(res => res.data);
+    return apiClient.post<{ success: boolean; fulfilledCount: number; message: string }>(endpoint, { patient_phone: cleanPhone, ...(data || {}) }, { timeout: 45000 }).then(res => res.data);
   },
   fulfillRefill: (id: number, data?: { fulfilled_via?: string }) =>
-    apiClient.post<{ success: boolean; message: string; next_refill_date: string }>(`/refills/${id}/fulfill`, data || {}).then(res => res.data),
+    apiClient.post<{ success: boolean; message: string; next_refill_date: string }>(`/refills/${id}/fulfill`, data || {}, { timeout: 45000 }).then(res => res.data),
   sendTomorrowReminder: (patientPhone: string) => apiClient.post<{ success: boolean; queueId?: number; message: string }>('/refills/send-tomorrow-reminder', { patient_phone: patientPhone }).then(res => res.data),
   toggleRefillAutoRemind: (id: number, auto_remind: boolean | number) =>
     apiClient.post<{ success: boolean; id: number; auto_remind: number }>(`/refills/${id}/auto-remind`, { auto_remind: auto_remind ? 1 : 0 }).then(res => res.data),

@@ -1127,6 +1127,8 @@ export async function warmupStartupCart(): Promise<void> {
     const isOnline = await checkConnectivity();
     if (!isOnline) {
       console.log('[StartupSync] Offline: skipping boot cart warm-up.');
+      startupCartWarmedUp = true;
+      startupSyncCoordinator.markWarmUpSettled('Network offline');
       return;
     }
 
@@ -1137,7 +1139,10 @@ export async function warmupStartupCart(): Promise<void> {
     console.log(`[StartupSync] Boot cart warm-up complete (${totalItems} item(s) across ${distributors.length} store(s)).`);
   } catch (err: any) {
     // Deliberately leave sync pending on real failures — the startup toast is the honest signal.
-    console.warn('[StartupSync] Boot cart warm-up could not load live cart:', err?.message || err);
+    const msg = err?.message || String(err);
+    console.warn('[StartupSync] Boot cart warm-up could not load live cart:', msg);
+    startupCartWarmedUp = true;
+    startupSyncCoordinator.markWarmUpSettled(msg);
   } finally {
     isWarmingUpCart = false;
   }

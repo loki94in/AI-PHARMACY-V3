@@ -72,6 +72,38 @@ export function findChromePath(options?: { includeEdge?: boolean }): string | nu
   return null;
 }
 
+/**
+ * Hardened Chromium command-line flags for headless background services (WhatsApp, Pharmarack).
+ * Ensures smooth child-process execution without crashing in packaged desktop environments
+ * (Electron child processes, Windows service tokens, AppData).
+ */
+export function getCommonHeadlessChromiumArgs(additionalArgs: string[] = []): string[] {
+  const defaultArgs = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-session-crashed-bubble',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-extensions',
+    '--disable-default-apps',
+    '--disable-component-update',
+    '--disable-background-networking',
+    '--mute-audio',
+    '--renderer-process-limit=1'
+  ];
+
+  const combined = [...defaultArgs];
+  for (const arg of additionalArgs) {
+    if (!combined.includes(arg)) {
+      combined.push(arg);
+    }
+  }
+  return combined;
+}
+
 /** Directory entries skipped when cloning a Chrome profile (caches + lock files). */
 const PROFILE_SKIP_NAMES = new Set([
   'cache',

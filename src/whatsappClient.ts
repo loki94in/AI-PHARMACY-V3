@@ -9,6 +9,7 @@ import { dbManager } from './database/connection.js';
 import { config as appConfig, getAppDataDir, isPackagedApp } from './config/index.js';
 import { whatsappBusinessService } from './services/whatsappBusinessService.js';
 import { cleanProfileLockFiles } from './services/tokenRefreshScheduler.js';
+import { findChromePath, getCommonHeadlessChromiumArgs } from './utils/chromeBrowser.js';
 
 type WAClient = WAWebJS.Client;
 
@@ -1057,35 +1058,18 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
 /** Internal helper to instantiate WAClient and bind event listeners */
 function launchClientInstance(forceQr: boolean): Promise<WAClient> {
   return loadWwebjs().then(({ Client, LocalAuth }) => new Promise<WAClient>((resolve, reject) => {
-    let execPath = '';
-    const paths = [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : null,
-      process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google\\Chrome\\Application\\chrome.exe') : null,
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft\\Edge\\Application\\msedge.exe') : null
-    ].filter(Boolean) as string[];
-    for (const p of paths) {
-      if (fs.existsSync(p)) {
-        execPath = p;
-        break;
-      }
+    const execPath = findChromePath({ includeEdge: true });
+    if (!execPath) {
+      const err = new Error('Chrome or Edge browser executable not found. Please ensure Google Chrome or Microsoft Edge is installed.');
+      console.error('[WhatsApp]', err.message);
+      setLifecycleProgress('failed', 0, err.message, 'BROWSER_NOT_FOUND');
+      reject(err);
+      return;
     }
 
-    const puppeteerArgs = [
-      '--disable-dev-shm-usage',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-session-crashed-bubble',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--disable-component-update',
-      '--disable-background-networking',
-      '--renderer-process-limit=1',
+    const puppeteerArgs = getCommonHeadlessChromiumArgs([
       '--js-flags=--max-old-space-size=256'
-    ];
+    ]);
 
     // Ensure session directory is free of leftover lockfiles before Puppeteer launch
     const sessionDir = path.join(WWEBJS_AUTH_DIR, 'session');
@@ -1094,9 +1078,11 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
-      puppeteer: execPath
-        ? { executablePath: execPath, headless: true, args: puppeteerArgs }
-        : { headless: true, args: puppeteerArgs }
+      puppeteer: {
+        executablePath: execPath,
+        headless: true,
+        args: puppeteerArgs
+      }
     });
     activeClient = client;
 
@@ -1117,7 +1103,9 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       isReady = false;
       activeClient = null;
       client.destroy().catch(() => {});
-      reject(new Error('WhatsApp client initialization timed out (60s) — Chrome/Edge may be missing or unresponsive.'));
+      const watchdogErr = 'WhatsApp client initialization timed out (60s) — Chrome/Edge may be missing or unresponsive.';
+      setLifecycleProgress('failed', 0, watchdogErr, watchdogErr);
+      reject(new Error(watchdogErr));
     }, 60_000);
     const clearInitWatchdog = () => clearTimeout(initWatchdog);
 

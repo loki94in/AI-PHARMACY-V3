@@ -7,7 +7,7 @@ import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { dbManager } from '../database/connection.js';
 import { getAppDataDir } from '../config/index.js';
 // import { activityTracker } from '../utils/activityTracker.js';
-import { findChromePath, copyProfileFolder } from '../utils/chromeBrowser.js';
+import { findChromePath, copyProfileFolder, getCommonHeadlessChromiumArgs } from '../utils/chromeBrowser.js';
 
 const execAsync = promisify(exec);
 // const __filename = fileURLToPath(import.meta.url);
@@ -597,18 +597,11 @@ export class TokenRefreshScheduler {
           executablePath: chromePath,
           headless: true,
           userDataDir: mainProfilePath,
-          args: [
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--disable-dev-shm-usage',
-            '--disable-extensions',
-            '--disable-default-apps',
-            '--no-first-run',
-            '--mute-audio',
+          args: getCommonHeadlessChromiumArgs([
             '--no-zygote',
             '--js-flags=--max-old-space-size=128',
             '--window-position=-10000,-10000'
-          ]
+          ])
         });
       } catch (launchErr: any) {
         console.log('[TokenRefreshScheduler] Main profile is locked. Copying to temp profile...', launchErr.message);
@@ -620,18 +613,11 @@ export class TokenRefreshScheduler {
           executablePath: chromePath,
           headless: true,
           userDataDir: tempProfilePath,
-          args: [
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--disable-dev-shm-usage',
-            '--disable-extensions',
-            '--disable-default-apps',
-            '--no-first-run',
-            '--mute-audio',
+          args: getCommonHeadlessChromiumArgs([
             '--no-zygote',
             '--js-flags=--max-old-space-size=128',
             '--window-position=-10000,-10000'
-          ]
+          ])
         });
         tempProfilePathToDelete = tempProfilePath;
       }

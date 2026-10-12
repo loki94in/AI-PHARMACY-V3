@@ -25,7 +25,7 @@ import { validate10DigitPhone } from '../utils/phoneValidation.js';
 const router = express.Router();
 
 // P1 push event: special-order UI updates with sub-2ms delta streaming
-const broadcastOrdersChanged = (delta?: { action: string; orderId: number; patch?: any }) => {
+const broadcastOrdersChanged = (delta?: { action: string; orderId?: number; orderIds?: number[]; patch?: any }) => {
   try {
     if (delta) {
       eventService.broadcast('order_delta', delta);
@@ -1526,30 +1526,29 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    let cartAdjustment: any = null;
+    // Asynchronously adjust live cart in background so response is immediate (<50ms)
     if (newStatus === 'Cancelled' || newStatus === 'Ready') {
-      try {
-        const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
-        cartAdjustment = await Promise.race([
-          adjustSpecialOrderInLiveCart({
+      setImmediate(async () => {
+        try {
+          const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+          await adjustSpecialOrderInLiveCart({
             product: newProduct || existing.product,
             qty: newQty || existing.qty,
             distributor: newDistributor || existing.pharmarack_distributor,
             productCode: newProductCode || existing.pharmarack_product_code,
             storeId: newStoreId || existing.pharmarack_store_id
-          }),
-          new Promise(r => setTimeout(() => r(null), 1500))
-        ]);
-        eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
-        eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
-        eventService.broadcast('refresh-special-orders', { at: Date.now(), id: Number(id) });
-      } catch (cartErr) {
-        console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
-      }
+          });
+          eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
+          eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+          eventService.broadcast('refresh-special-orders', { at: Date.now(), id: Number(id) });
+        } catch (cartErr) {
+          console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
+        }
+      });
     }
 
     broadcastOrdersChanged();
-    res.json({ success: true, message: 'Order updated successfully', whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, payment_qr_sent: paymentQrSent });
+    res.json({ success: true, message: 'Order updated successfully', whatsapp_queued: whatsappQueued, notification_count: newCount, payment_qr_sent: paymentQrSent });
   } catch (err) {
     console.error('Update order error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -1564,7 +1563,7 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
     return res.status(400).json({ error: 'status is required' });
   }
 
-  if (status === 'Completed' || status === 'completed') {
+  if (typeof status === 'string' && (status.trim().toLowerCase() === 'completed' || status.trim().toLowerCase() === 'fulfilled')) {
     status = 'Fulfilled';
   }
 
@@ -1621,36 +1620,184 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
       ).catch(() => {});
     }
 
-    let cartAdjustment: any = null;
+    // Live cart adjustment runs in background setImmediate so HTTP response returns in <50ms
     if (status === 'Cancelled' || status === 'Ready') {
-      try {
-        const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
-        cartAdjustment = await Promise.race([
-          adjustSpecialOrderInLiveCart({
+      setImmediate(async () => {
+        try {
+          const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+          await adjustSpecialOrderInLiveCart({
             product: existing.product,
             qty: existing.qty,
             distributor: existing.pharmarack_distributor,
             productCode: existing.pharmarack_product_code,
             storeId: existing.pharmarack_store_id
-          }),
-          new Promise(r => setTimeout(() => r(null), 1500))
-        ]);
-        eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
-        eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
-        eventService.broadcast('refresh-special-orders', { at: Date.now(), id: Number(id) });
-      } catch (cartErr) {
-        console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
-      }
+          });
+          eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
+          eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+          eventService.broadcast('refresh-special-orders', { at: Date.now(), id: Number(id) });
+        } catch (cartErr) {
+          console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
+        }
+      });
     }
 
     broadcastOrdersChanged({ action: 'update_status', orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
-    res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, auto_remind: newAutoRemind });
+    res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, auto_remind: newAutoRemind });
   } catch (err: any) {
     console.error('Update order status error:', err);
     res.status(500).json({ error: 'Internal server error: ' + (err?.message || '') });
   }
 };
 
+// Batch update order status (supports POST /batch-status and PUT /batch-status)
+const handleBatchStatusUpdate = async (req: express.Request, res: express.Response) => {
+  const rawIds = req.body?.order_ids || req.body?.ids;
+  let { status, resend, skipWhatsApp, sendWhatsApp } = req.body;
+  if (!rawIds || !Array.isArray(rawIds) || rawIds.length === 0) {
+    return res.status(400).json({ error: 'order_ids array is required' });
+  }
+  if (!status) {
+    return res.status(400).json({ error: 'status is required' });
+  }
+
+  if (typeof status === 'string' && (status.trim().toLowerCase() === 'completed' || status.trim().toLowerCase() === 'fulfilled')) {
+    status = 'Fulfilled';
+  }
+
+  const orderIds: number[] = rawIds.map(Number).filter((n: number) => !isNaN(n));
+  if (orderIds.length === 0) {
+    return res.status(400).json({ error: 'Valid numeric order_ids required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    await initOrdersTable(db);
+
+    const placeholders = orderIds.map(() => '?').join(',');
+    const orders = await db.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, orderIds);
+    if (!orders || orders.length === 0) {
+      return res.status(404).json({ error: 'No matching orders found' });
+    }
+
+    const isResend = Boolean(resend);
+    const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
+    let totalWaQueued = 0;
+
+    if (status === 'Ready' && !shouldSkipWa) {
+      for (const ord of orders) {
+        if (Number(ord.notified) !== 1 || isResend) {
+          try {
+            const queued = await enqueueArrivalWhatsApp(
+              db,
+              ord,
+              { skipDedupe: isResend || Number(ord.notified) === 1, skipWhatsApp: shouldSkipWa }
+            );
+            if (queued) totalWaQueued++;
+          } catch (waErr: any) {
+            console.error('[Orders] Failed to queue arrival WhatsApp on batch status Ready:', waErr?.message || waErr);
+          }
+        }
+      }
+    }
+
+    const newAutoRemind = (status === 'Fulfilled' || status === 'Cancelled') ? 0 : (status === 'Ready' ? 1 : null);
+    const lastRemindAt = status === 'Ready' ? new Date().toISOString() : null;
+
+    if (status === 'Fulfilled') {
+      await db.run(
+        `UPDATE special_orders 
+         SET status = ?, notified = 1, auto_remind = 0 
+         WHERE id IN (${placeholders})`,
+        [status, ...orderIds]
+      );
+    } else if (status === 'Cancelled') {
+      await db.run(
+        `UPDATE special_orders 
+         SET status = ?, auto_remind = 0 
+         WHERE id IN (${placeholders})`,
+        [status, ...orderIds]
+      );
+    } else if (status === 'Ready') {
+      await db.run(
+        `UPDATE special_orders 
+         SET status = ?, auto_remind = 1, last_collection_reminder_at = ? 
+         WHERE id IN (${placeholders})`,
+        [status, lastRemindAt, ...orderIds]
+      );
+    } else {
+      await db.run(
+        `UPDATE special_orders 
+         SET status = ? 
+         WHERE id IN (${placeholders})`,
+        [status, ...orderIds]
+      );
+    }
+
+    if (status === 'Cancelled' || status === 'Fulfilled') {
+      for (const ord of orders) {
+        await cancelPendingWhatsAppForOrder(db, ord);
+        await purgePendingCustomerReminders(db, {
+          phone: ord.phone,
+          specialOrderIds: [Number(ord.id)],
+          medicineNames: ord.product ? [ord.product] : undefined
+        });
+      }
+    }
+
+    if (status === 'Fulfilled') {
+      const strIds = orderIds.map(String);
+      const strPlaceholders = strIds.map(() => '?').join(',');
+      await db.run(
+        `UPDATE automation_notifications 
+         SET lifecycle_status = 'sent', status = 'sent_manually' 
+         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id IN (${strPlaceholders}))
+           AND reference_id IN (${strPlaceholders})`,
+        [...strIds, ...strIds]
+      ).catch(() => {});
+    }
+
+    if (status === 'Cancelled' || status === 'Ready') {
+      setImmediate(async () => {
+        try {
+          const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+          for (const ord of orders) {
+            try {
+              await adjustSpecialOrderInLiveCart({
+                product: ord.product,
+                qty: ord.qty,
+                distributor: ord.pharmarack_distributor,
+                productCode: ord.pharmarack_product_code,
+                storeId: ord.pharmarack_store_id
+              });
+            } catch (_) {}
+          }
+          eventService.broadcast('pharmarack_cart_changed', { at: Date.now(), reason: `special_order_batch_${status.toLowerCase()}`, ids: orderIds });
+          eventService.broadcast('refresh-pharmarack-cart', { at: Date.now() });
+          eventService.broadcast('refresh-special-orders', { at: Date.now() });
+        } catch (bgErr) {
+          console.warn('[Orders] Background batch live cart adjustment note:', bgErr);
+        }
+      });
+    }
+
+    broadcastOrdersChanged({ action: 'batch_update_status', orderIds, patch: { status, auto_remind: newAutoRemind } });
+
+    res.json({
+      success: true,
+      message: `Successfully updated ${orderIds.length} orders to ${status}`,
+      count: orderIds.length,
+      status,
+      whatsapp_queued: totalWaQueued > 0,
+      queued_count: totalWaQueued
+    });
+  } catch (err: any) {
+    console.error('Batch update order status error:', err);
+    res.status(500).json({ error: 'Internal server error: ' + (err?.message || '') });
+  }
+};
+
+router.post('/batch-status', handleBatchStatusUpdate);
+router.put('/batch-status', handleBatchStatusUpdate);
 router.post('/:id/status', handleStatusUpdate);
 router.put('/:id/status', handleStatusUpdate);
 

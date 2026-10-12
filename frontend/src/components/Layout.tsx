@@ -1684,6 +1684,8 @@ const Topbar = memo(({
   // Pharmarack session + live cart loaded. Services that were never set up are left out (no
   // permanent "waiting"), and after the first all-ready moment the item never comes back.
   const [startupCartLoaded, setStartupCartLoaded] = useState(false);
+  const [startupCartSettled, setStartupCartSettled] = useState(false);
+  const [startupCartError, setStartupCartError] = useState<string | null>(null);
   const [startupGaveUp, setStartupGaveUp] = useState(false);
   const [startupPhase, setStartupPhase] = useState<'running' | 'flash' | 'done'>('running');
   const sawStartupWaitRef = useRef(false);
@@ -1703,21 +1705,28 @@ const Topbar = memo(({
     if (wa?.connected || wa?.sleeping || waReadiness?.isReady || waReadiness?.isSleeping) {
       list.push({ label: 'WhatsApp', state: 'ready' });
     } else if (wa?.initializing || waReadiness?.isInitializing) {
-      list.push({ label: 'WhatsApp', state: 'wait' });
+      list.push({ label: 'WhatsApp', state: startupGaveUp ? 'attention' : 'wait' });
     } else if (waSession) {
-      list.push({ label: 'WhatsApp', state: waReadiness?.lastError ? 'attention' : 'wait' });
+      list.push({ label: 'WhatsApp', state: (waReadiness?.lastError || startupGaveUp) ? 'attention' : 'wait' });
     } // never connected: not part of startup
     const ph = servicesStatus.pharmarack;
     if (ph?.connected) {
-      list.push({ label: 'Pharmarack', state: !ph.isRefreshing && startupCartLoaded ? 'ready' : 'wait' });
-    } else if (ph?.lastError) {
+      if (startupCartLoaded) {
+        list.push({ label: 'Pharmarack', state: 'ready' });
+      } else if (startupCartSettled || startupGaveUp) {
+        list.push({ label: 'Pharmarack', state: (startupCartError || ph.lastError) ? 'attention' : 'ready' });
+      } else {
+        list.push({ label: 'Pharmarack', state: !ph.isRefreshing ? 'ready' : 'wait' });
+      }
+    } else if (ph?.lastError || startupCartError) {
       list.push({ label: 'Pharmarack', state: 'attention' });
     } // not logged in and no error: never set up
     return list;
-  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded]);
+  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded, startupCartSettled, startupCartError, startupGaveUp]);
 
   const startupReady = startupServices.every(s => s.state === 'ready');
   const startupAttention = startupServices.some(s => s.state === 'attention');
+  const startupSettled = startupServices.every(s => s.state === 'ready' || s.state === 'attention');
 
   // Safety net only: after 3 min the wording changes to "taking longer"; the item keeps updating.
   useEffect(() => {
@@ -1738,7 +1747,13 @@ const Topbar = memo(({
         await fetchServicesStatus();
         try {
           const s = await api.getStartupSyncStatus();
-          if (!cancelled && s.cartLoaded) setStartupCartLoaded(true);
+          if (!cancelled) {
+            if (s.cartLoaded) setStartupCartLoaded(true);
+            if (s.warmUpSettled || s.timedOut) {
+              setStartupCartSettled(true);
+              if (s.lastError) setStartupCartError((s as any).lastError);
+            }
+          }
         } catch (_) { /* keep waiting */ }
       }
       if (!cancelled && Date.now() < deadline) timer = setTimeout(tick, startupGaveUp ? 15000 : 5000);
@@ -1750,9 +1765,16 @@ const Topbar = memo(({
   // running → flash ("All services ready", 4 s) → done (never shown again this session)
   useEffect(() => {
     if (startupPhase !== 'running') return;
-    if (!startupReady) { sawStartupWaitRef.current = true; return; }
+    if (!startupReady) {
+      sawStartupWaitRef.current = true;
+      if (startupSettled && startupAttention && startupGaveUp) {
+        const t = setTimeout(() => setStartupPhase('done'), 20_000);
+        return () => clearTimeout(t);
+      }
+      return;
+    }
     setStartupPhase(sawStartupWaitRef.current ? 'flash' : 'done');
-  }, [startupReady, startupPhase]);
+  }, [startupReady, startupPhase, startupSettled, startupAttention, startupGaveUp]);
 
   useEffect(() => {
     if (startupPhase !== 'flash') return;

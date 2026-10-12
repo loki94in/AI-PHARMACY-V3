@@ -378,7 +378,8 @@ export const QuickAssistSidebar = memo(({
       onActionComplete();
     } catch (err: unknown) {
       console.error('Failed to fulfill refill group:', err);
-      toastEvent.trigger('Failed to fulfill refill cycle', 'error');
+      const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to fulfill refill cycle';
+      toastEvent.trigger(errMsg.includes('timeout') ? 'Fulfillment request timed out, checking sync...' : errMsg, 'error');
       // Rollback optimistic hide on failure
       setOptimisticHiddenRefillKeys(prev => {
         const next = new Set(prev);
@@ -424,8 +425,8 @@ export const QuickAssistSidebar = memo(({
     }
 
     try {
-      const results = await Promise.all(group.items.map(i => apiClient.post(`/orders/${i.id}/status`, { status: newStatus, resend: opts?.resend })));
-      const queuedCount = results.filter(r => r?.data?.whatsapp_queued).length;
+      const batchRes = await api.updateOrdersBatchStatus(itemIds, newStatus, { resend: opts?.resend });
+      const queuedCount = batchRes?.whatsapp_queued ? (batchRes?.queued_count || 1) : 0;
       if (newStatus === 'Completed' || newStatus === 'Fulfilled') {
         toastEvent.trigger(`Marked ${group.items.length} request(s) for "${group.requester}" as Completed!`, 'success');
         if (opts?.navigateToPos) {
@@ -469,7 +470,8 @@ export const QuickAssistSidebar = memo(({
       onActionComplete();
     } catch (err: unknown) {
       console.error(`Failed to update group status to ${newStatus}:`, err);
-      toastEvent.trigger('Failed to update request status', 'error');
+      const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to update request status';
+      toastEvent.trigger(errMsg.includes('timeout') ? 'Server was busy, please retry in a moment' : errMsg, 'error');
       setOptimisticHiddenOrderIds(prev => {
         const next = new Set(prev);
         itemIds.forEach(id => next.delete(id));

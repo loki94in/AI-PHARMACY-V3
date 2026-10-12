@@ -1552,58 +1552,65 @@ router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-al
 
     let fulfilledCount = 0;
     const fulfilledIds: number[] = [];
-    for (const refill of activeRefills) {
-      const interval = refill.refill_interval_days || 30;
-      const nextDate = new Date();
-      nextDate.setDate(nextDate.getDate() + interval);
-      const nextDateStr = toLocalSqlDateTime(nextDate);
-      const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
-      const fulfilledQty = Number(refill.quantity_needed || 3);
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const refill of activeRefills) {
+        const interval = refill.refill_interval_days || 30;
+        const nextDate = new Date();
+        nextDate.setDate(nextDate.getDate() + interval);
+        const nextDateStr = toLocalSqlDateTime(nextDate);
+        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+        const fulfilledQty = Number(refill.quantity_needed || 3);
 
-      await db.run(
-        `INSERT INTO refill_fulfillments (
-          refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-          quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)`,
-        [
-          refill.id,
-          refill.customer_id,
-          refill.patient_name,
-          refill.patient_phone,
-          refill.medicine_id,
-          refill.medicine_name || 'Prescribed Medicine',
-          fulfilledQty,
-          cycleDueDate,
-          nextDateStr,
-          fulfilledVia
-        ]
-      );
+        await db.run(
+          `INSERT INTO refill_fulfillments (
+            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+            quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)`,
+          [
+            refill.id,
+            refill.customer_id,
+            refill.patient_name,
+            refill.patient_phone,
+            refill.medicine_id,
+            refill.medicine_name || 'Prescribed Medicine',
+            fulfilledQty,
+            cycleDueDate,
+            nextDateStr,
+            fulfilledVia
+          ]
+        );
 
-      await db.run(
-        `UPDATE patient_refills 
-         SET last_refill_date = datetime('now'),
-             next_refill_date = ?,
-             stock_verified_override = 0,
-             ordering_triggered = 0,
-             cart_product_code = NULL,
-             is_ready = 0,
-             hold_for_stock = 0,
-             acknowledged = 0,
-             quick_bill_id = NULL,
-             status = 'pending',
-             reminder_status = 'NOT_SENT',
-             reminder_sent_at = NULL,
-             reminder_job_id = NULL,
-             reminder_occurrence_date = NULL,
-             auto_remind = 0,
-             last_collection_reminder_at = NULL,
-             collection_reminder_count = 0
-         WHERE id = ?`,
-        [nextDateStr, refill.id]
-      );
+        await db.run(
+          `UPDATE patient_refills 
+           SET last_refill_date = datetime('now'),
+               next_refill_date = ?,
+               stock_verified_override = 0,
+               ordering_triggered = 0,
+               cart_product_code = NULL,
+               is_ready = 0,
+               hold_for_stock = 0,
+               acknowledged = 0,
+               quick_bill_id = NULL,
+               status = 'pending',
+               reminder_status = 'NOT_SENT',
+               reminder_sent_at = NULL,
+               reminder_job_id = NULL,
+               reminder_occurrence_date = NULL,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
+               collection_reminder_count = 0
+           WHERE id = ?`,
+          [nextDateStr, refill.id]
+        );
 
-      fulfilledCount++;
-      fulfilledIds.push(refill.id);
+        fulfilledCount++;
+        fulfilledIds.push(refill.id);
+      }
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK').catch(() => {});
+      throw txErr;
     }
 
     // Purge pending WhatsApp queue items and clean up staged notifications
