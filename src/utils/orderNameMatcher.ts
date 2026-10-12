@@ -29,7 +29,7 @@ function normalizeToken(w: string): string {
   return w.replace(/^(\d+)(mg|mcg|ml|gm|g|iu)$/, '$1');
 }
 
-function getCoreMedicineTokens(str: string): Set<string> {
+export function getCoreMedicineTokens(str: string): Set<string> {
   const words = normalizeStr(str)
     .split(' ')
     .filter(w => w.length > 0)

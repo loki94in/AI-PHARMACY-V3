@@ -1112,6 +1112,27 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
   );
 
   const totalItems = distributors.reduce((s: number, d: any) => s + d.items.length, 0);
+
+  // Background auto-ingest live cart medicines into store-scoped product registry
+  try {
+    const allCartItems: any[] = [];
+    distributors.forEach((d: any) => {
+      if (Array.isArray(d.items)) {
+        d.items.forEach((it: any) => {
+          allCartItems.push({
+            ...it,
+            storeId: it.storeId || d.storeId,
+            storeName: it.storeName || d.storeName
+          });
+        });
+      }
+    });
+    if (allCartItems.length > 0) {
+      void upsertDistributorProducts(allCartItems, undefined, undefined, 'live_cart');
+      void autoSaveMedicineDistributorLinks(allCartItems);
+    }
+  } catch (_) { /* non-fatal cart background ingest */ }
+
   return { distributors, totalItems };
 }
 
@@ -1472,12 +1493,70 @@ export async function rankSpecialOrderDistributorCandidates(
 }
 
 /**
+ * Ingest and deduplicate distributor products into `pharmarack_distributor_products`.
+ * Strictly keyed on (store_id, product_code). Updates latest rate, mrp, and order date without duplicating.
+ */
+export async function upsertDistributorProducts(
+  items: any[],
+  defaultStoreId?: number,
+  defaultStoreName?: string,
+  source = 'order',
+  orderDate?: string
+): Promise<void> {
+  if (!items || !Array.isArray(items) || items.length === 0) return;
+  try {
+    const db = await dbManager.getConnection();
+    const now = Date.now();
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const todayStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    for (const item of items) {
+      const storeId = Number(item.storeId || item.StoreId || defaultStoreId || 0);
+      const productCode = String(item.productCode || item.ProductCode || item.product_code || '').trim();
+      const productName = String(item.productName || item.product || item.name || item.ProductName || '').trim();
+      if (!storeId || !productCode || !productName) continue;
+
+      const rawProdId = item.productId || item.ProductId || item.PrProductId || item.product_id || '';
+      const prodId = String(rawProdId).trim();
+      const packaging = String(item.packaging || item.Packing || item.CasePacking || item.Packaging || '').trim();
+      const company = String(item.company || item.Company || '').trim();
+      const ptr = Number(item.ptr || item.PTR || item.rate || item.HiddenPTR || item.NetRate || 0);
+      const mrp = Number(item.mrp || item.MRP || 0);
+      const orderDateStr = orderDate || (item.createdDate ? String(item.createdDate).slice(0, 10) : todayStr);
+
+      await db.run(
+        `INSERT INTO pharmarack_distributor_products
+           (store_id, product_code, product_id, product_name, packaging, company, ptr, mrp, last_ordered_at, last_order_date, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(store_id, product_code) DO UPDATE SET
+           product_id = CASE WHEN excluded.product_id != '' THEN excluded.product_id ELSE pharmarack_distributor_products.product_id END,
+           product_name = excluded.product_name,
+           packaging = CASE WHEN excluded.packaging != '' THEN excluded.packaging ELSE pharmarack_distributor_products.packaging END,
+           company = CASE WHEN excluded.company != '' THEN excluded.company ELSE pharmarack_distributor_products.company END,
+           ptr = CASE WHEN excluded.ptr > 0 THEN excluded.ptr ELSE pharmarack_distributor_products.ptr END,
+           mrp = CASE WHEN excluded.mrp > 0 THEN excluded.mrp ELSE pharmarack_distributor_products.mrp END,
+           last_ordered_at = MAX(COALESCE(pharmarack_distributor_products.last_ordered_at, 0), excluded.last_ordered_at),
+           last_order_date = COALESCE(excluded.last_order_date, pharmarack_distributor_products.last_order_date),
+           source = excluded.source,
+           updated_at = CURRENT_TIMESTAMP`,
+        [storeId, productCode, prodId, productName, packaging, company, ptr, mrp, now, orderDateStr, source]
+      ).catch((e: any) => console.warn('[DistributorProducts] Upsert error:', e?.message));
+    }
+  } catch (err) {
+    console.warn('[DistributorProducts] Failed to upsert products:', err);
+  }
+}
+
+/**
  * Auto-persist verified medicine-distributor link to SQLite (medicine_distributor_links).
- * Ensures (medicine_id, store_id) has the latest verified product_code, product_id, and packaging
- * without duplicating records.
+ * Also ingests into store-scoped `pharmarack_distributor_products` registry.
  */
 export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<void> {
   if (!items || !Array.isArray(items) || items.length === 0) return;
+  // Always register in store-scoped distributor products
+  void upsertDistributorProducts(items);
+
   try {
     const db = await dbManager.getConnection();
     for (const item of items) {
@@ -1489,7 +1568,7 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
       let medId = Number(item.medicineId || item.medicine_id || 0);
       const prodName = String(item.productName || item.product || item.name || '').trim();
 
-      // If medicineId missing, resolve from medicines table by name
+      // If medicineId missing, resolve from medicines table
       if (!medId && prodName) {
         const cleanName = prodName.replace(/\s*\([^)]*\)\s*$/, '').trim();
         const mRow = await db.get(
@@ -1500,6 +1579,20 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
         );
         if (mRow?.id) {
           medId = Number(mRow.id);
+        } else {
+          // Token-based matching without packaging stop words
+          const { getCoreMedicineTokens } = await import('../utils/orderNameMatcher.js');
+          const tokens = Array.from(getCoreMedicineTokens(cleanName)).slice(0, 3);
+          if (tokens.length >= 2) {
+            const pattern = `%${tokens.join('%')}%`;
+            const cand = await db.get(
+              `SELECT id, name FROM medicines WHERE LOWER(name) LIKE ? ORDER BY id ASC LIMIT 1`,
+              [pattern.toLowerCase()]
+            );
+            if (cand?.id) {
+              medId = Number(cand.id);
+            }
+          }
         }
       }
 
@@ -2675,7 +2768,7 @@ router.get('/sync-orders/audit', async (req, res) => {
 
 // Manual notification trigger
 router.post('/cart/notify-manual', async (req, res) => {
-  const { storeId, storeName, deliveryPersons, items, skipDistributor } = req.body;
+  const { storeId, storeName, deliveryPersons, items, skipDistributor, orderNo, order_no } = req.body;
   if (!storeName || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Missing distributor info or items list' });
   }
@@ -2686,7 +2779,7 @@ router.post('/cart/notify-manual', async (req, res) => {
       Number(storeId),
       items,
       deliveryPersons || [],
-      { skipDistributor: !!skipDistributor }
+      { skipDistributor: !!skipDistributor, orderNo: orderNo || order_no }
     );
     if (result.ok) {
       res.json({ success: true, message: 'Notifications processed successfully via WhatsApp!', sentCount: result.sentCount, suppressedCount: result.suppressedCount });
@@ -3268,14 +3361,18 @@ router.post('/logout', async (_req, res) => {
 
 /**
  * GET /api/pharmarack/sent-orders/dates
- * Returns a distinct list of all historical dates (order_date) where orders were sent.
+ * Returns a distinct list of all historical dates (order_date) where orders were sent or synced from Pharmarack.
  */
 router.get('/sent-orders/dates', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
-    const rows = await db.all(
-      'SELECT DISTINCT order_date FROM pharmarack_placed_orders WHERE order_date IS NOT NULL AND order_date <> "" ORDER BY order_date DESC'
-    );
+    const rows = await db.all(`
+      SELECT DISTINCT order_date FROM (
+        SELECT order_date FROM pharmarack_placed_orders WHERE order_date IS NOT NULL AND order_date <> ""
+        UNION
+        SELECT order_date FROM pharmarack_synced_orders WHERE order_date IS NOT NULL AND order_date <> ""
+      ) ORDER BY order_date DESC
+    `);
     const dates = rows.map(r => r.order_date);
     res.json({ success: true, dates });
   } catch (err: any) {
@@ -3310,7 +3407,7 @@ router.post('/order-check', async (req, res) => {
  * GET /api/pharmarack/sent-orders
  * Query param: ?date=YYYY-MM-DD
  * Returns orders placed on the specified date, or today's if unspecified.
- * Never silently substitutes a different (older) date — an empty date has zero orders, full stop.
+ * Merges both in-app placed orders and externally synced orders.
  */
 router.get('/sent-orders', async (req, res) => {
   try {
@@ -3318,7 +3415,9 @@ router.get('/sent-orders', async (req, res) => {
     let targetDate = (req.query.date as string || '').trim();
 
     if (!targetDate) {
-      targetDate = new Date().toISOString().split('T')[0];
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      targetDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     }
 
     const rows = await db.all(
@@ -3328,38 +3427,88 @@ router.get('/sent-orders', async (req, res) => {
 
     // Real Pharmarack order numbers noticed by the order sync, grouped by distributor (read-only).
     const syncedByStore = new Map<string, string[]>();
+    const syncedOrdersList: any[] = [];
     try {
-      const synced = await db.all('SELECT order_no, store_name FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at', [targetDate]);
+      const synced = await db.all('SELECT * FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at', [targetDate]);
       for (const o of synced) {
         const k = String(o.store_name || '').toLowerCase().trim();
         syncedByStore.set(k, [...(syncedByStore.get(k) || []), String(o.order_no)]);
+        syncedOrdersList.push(o);
       }
-    } catch (_) { /* table is optional: no order numbers then */ }
+    } catch (_) { /* table is optional */ }
 
+    const existingOrderNos = new Set(rows.map(r => String(r.order_no || '')).filter(Boolean));
     const parsedOrders = rows.map(r => {
       let items = [];
       let deliveryPersons = [];
       try { items = JSON.parse(r.items_json || '[]'); } catch (_) {}
       try { deliveryPersons = JSON.parse(r.delivery_persons_json || '[]'); } catch (_) {}
 
+      const storeNos = syncedByStore.get(String(r.store_name || '').toLowerCase().trim()) || [];
+      const orderNos = Array.from(new Set([
+        ...(r.order_no ? [String(r.order_no)] : []),
+        ...storeNos
+      ]));
+
       return {
         id: r.id,
         order_date: r.order_date,
         store_id: r.store_id,
         store_name: r.store_name,
-        pharmarack_order_nos: syncedByStore.get(String(r.store_name || '').toLowerCase().trim()) || [],
+        order_no: r.order_no || (orderNos[0] || null),
+        pharmarack_order_nos: orderNos,
         items,
         delivery_persons: deliveryPersons,
         placed_at: r.placed_at,
         batch_sent: r.batch_sent === 1,
-        batch_sent_at: r.batch_sent_at
+        batch_sent_at: r.batch_sent_at,
+        source: r.order_no ? 'pharmarack' : 'in_app'
       };
     });
+
+    // Surface externally synced orders that lack placed_order entry
+    for (const s of syncedOrdersList) {
+      if (s.order_no && !existingOrderNos.has(String(s.order_no))) {
+        const alreadyCovered = parsedOrders.some(p => String(p.store_name || '').toLowerCase().trim() === String(s.store_name || '').toLowerCase().trim());
+        if (!alreadyCovered) {
+          parsedOrders.push({
+            id: s.pharmarack_order_id || Date.now(),
+            order_date: s.order_date,
+            store_id: s.store_id,
+            store_name: s.store_name,
+            order_no: s.order_no,
+            pharmarack_order_nos: [String(s.order_no)],
+            items: [],
+            delivery_persons: [],
+            placed_at: s.first_seen_at || Date.now(),
+            batch_sent: false,
+            batch_sent_at: null,
+            source: 'pharmarack_external'
+          });
+        }
+      }
+    }
 
     res.json({ success: true, date: targetDate, is_recent_fallback: false, orders: parsedOrders });
   } catch (err: any) {
     console.error('Error fetching Pharmarack sent orders:', err);
     res.status(500).json({ error: 'Failed to fetch sent orders: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/pharmarack/sync-historical-orders
+ * Syncs the past N days of external orders from Pharmarack DisplayOrders into Sent Orders & products store.
+ */
+router.post('/sync-historical-orders', async (req, res) => {
+  try {
+    const days = parseInt(req.body?.days as string, 10) || 30;
+    const { syncHistoricalPharmarackOrders } = await import('../services/pharmarackOrderSyncService.js');
+    const result = await syncHistoricalPharmarackOrders(days);
+    res.json({ success: result.ok, ...result });
+  } catch (err: any) {
+    console.error('Error triggering historical order sync:', err);
+    res.status(500).json({ success: false, error: 'Historical order sync failed: ' + err.message });
   }
 });
 
@@ -3436,6 +3585,51 @@ router.get('/sent-orders/latest-map', async (_req, res) => {
   } catch (err: any) {
     console.error('Error fetching Pharmarack latest sent map:', err);
     res.status(500).json({ error: 'Failed to fetch latest sent map: ' + err.message });
+  }
+});
+
+/**
+ * GET /api/pharmarack/distributor-medicines/:storeId
+ * Returns up to 300 deduplicated unique medicines for the specified distributor,
+ * strictly anchored to (store_id, product_code).
+ */
+router.get('/distributor-medicines/:storeId', async (req, res) => {
+  try {
+    const storeId = parseInt(req.params.storeId, 10);
+    if (!storeId || isNaN(storeId)) {
+      return res.status(400).json({ success: false, error: 'Valid storeId required' });
+    }
+    const limit = Math.min(300, Math.max(1, parseInt(req.query.limit as string, 10) || 300));
+    const db = await dbManager.getConnection();
+
+    const rows = await db.all(
+      `SELECT store_id, product_code, product_id, product_name, packaging, company,
+              ptr, mrp, last_ordered_at, last_order_date, source
+       FROM pharmarack_distributor_products
+       WHERE store_id = ?
+       ORDER BY last_ordered_at DESC, product_name ASC
+       LIMIT ?`,
+      [storeId, limit]
+    );
+
+    const items = rows.map((r: any) => ({
+      storeId: r.store_id,
+      productCode: r.product_code,
+      productId: r.product_id,
+      productName: r.product_name,
+      packaging: r.packaging || '',
+      company: r.company || '',
+      ptr: Number(r.ptr || 0),
+      mrp: Number(r.mrp || 0),
+      lastOrderedAt: r.last_ordered_at,
+      lastOrderDate: r.last_order_date,
+      source: r.source
+    }));
+
+    res.json({ success: true, storeId, total: items.length, items });
+  } catch (err: any) {
+    console.error('Error fetching distributor medicines:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch distributor medicines: ' + err.message });
   }
 });
 
@@ -3871,7 +4065,7 @@ router.get('/order-by-id/:orderId', async (req, res) => {
  */
 router.post('/log-placed-order', async (req, res) => {
   try {
-    const { store_id, store_name, items, delivery_persons } = req.body;
+    const { store_id, store_name, items, delivery_persons, order_no, delivery_boy_id, delivery_boy_notified } = req.body;
     if (!store_name || !items) {
       return res.status(400).json({ error: 'store_name and items are required' });
     }
@@ -3879,9 +4073,38 @@ router.post('/log-placed-order', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const placedAt = Date.now();
 
+    // Check if morning batch has already run today
+    const { hasSentTodaysBatch } = await import('../services/pharmarackDailyDispatchService.js');
+    const isLate = await hasSentTodaysBatch(db);
+    let boyNotified = Number(delivery_boy_notified || 0);
+    let boyNotifiedAt: number | null = boyNotified ? placedAt : null;
+
+    if (isLate && !boyNotified) {
+      // Post-morning order placed: notify the delivery boy directly with itemized pickup alert
+      let targetBoy = delivery_persons?.[0];
+      if (!targetBoy && delivery_boy_id) {
+        const bRow = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ?', [delivery_boy_id]);
+        if (bRow) targetBoy = { id: bRow.id, name: bRow.name, phone: bRow.whatsapp_number };
+      }
+      const distContact = await resolveDistributorContact(db, store_name);
+      const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
+        storeName: store_name,
+        storePhone: distContact.distributor_phone,
+        orderNo: order_no,
+        items: items || [],
+        deliveryBoy: targetBoy,
+        distributorId: store_id || distContact.distributor_id
+      });
+      if (boyRes.ok) {
+        boyNotified = 1;
+        boyNotifiedAt = Date.now();
+      }
+    }
+
     await db.run(
-      `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+      `INSERT INTO pharmarack_placed_orders 
+         (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at, order_no, delivery_boy_notified, delivery_boy_notified_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
       [
         today,
         store_id || null,
@@ -3889,7 +4112,10 @@ router.post('/log-placed-order', async (req, res) => {
         JSON.stringify(items),
         delivery_persons ? JSON.stringify(delivery_persons) : null,
         placedAt,
-        placedAt
+        placedAt,
+        order_no || null,
+        boyNotified,
+        boyNotifiedAt
       ]
     );
 

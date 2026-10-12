@@ -1108,6 +1108,12 @@ async function setupCrons(db: any) {
     } catch (iaErr) {
       console.warn('[Boot] ImageArchiveService initialization skipped:', iaErr);
     }
+    // Check for any unnotified orders placed while PC was off or during previous session
+    setTimeout(() => {
+      import('./services/pharmarackOrderSyncService.js')
+        .then(m => m.recoverTodayUnnotifiedOrders())
+        .catch(err => console.warn('[Boot] Unnotified order recovery warning:', err?.message || err));
+    }, 5000);
   } catch (err) {
     bootWorkerFailures++;
     console.warn('[Boot] WhatsApp intent service registration skipped:', err);

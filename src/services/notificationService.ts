@@ -443,9 +443,12 @@ export class NotificationService {
     storeId: number,
     items: any[],
     deliveryPersons?: any[],
-    options?: { skipDistributor?: boolean }
+    options?: { skipDistributor?: boolean; orderNo?: string }
   ): Promise<CartOrderNotifyResult> {
     let db = null;
+    let rawPhone = '';
+    const resolvedDeliveryBoys: { name: string; phone: string }[] = [];
+    let syncedOrderNo: string | undefined = options?.orderNo;
     try {
       db = await dbManager.getConnection();
 
@@ -461,14 +464,13 @@ export class NotificationService {
         [`%${storeName}%`, storeName]
       );
 
-      let rawPhone = distributor?.phone || '';
+      rawPhone = distributor?.phone || '';
       if (!rawPhone.trim()) {
         console.warn(`[CartOrderNotif] Distributor ${storeName} has no phone number in database.`);
       }
 
       // 2. Resolve delivery boy(s) contact details
       let deliveryBoysText = '';
-      const resolvedDeliveryBoys: { name: string; phone: string }[] = [];
 
       if (deliveryPersons && deliveryPersons.length > 0) {
         for (const boy of deliveryPersons) {
@@ -569,22 +571,24 @@ export class NotificationService {
 
       // Look up ALL of today's synced Pharmarack order numbers for this distributor
       // (same-day re-order before dispatch must list #old + #new in one reminder).
-      let syncedOrderNo: string | undefined;
-      try {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const now = new Date();
-        const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-        const syncedRows = await db.all(
-          `SELECT order_no FROM pharmarack_synced_orders
-           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
-           ORDER BY first_seen_at ASC`,
-          [todayLocal, storeName]
-        );
-        const allNos = (syncedRows || []).map((r: any) => String(r?.order_no || '').trim()).filter(Boolean);
-        if (allNos.length > 0) {
-          syncedOrderNo = allNos.join(', ');
-        }
-      } catch (_) {}
+      let syncedOrderNo: string | undefined = options?.orderNo;
+      if (!syncedOrderNo) {
+        try {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const now = new Date();
+          const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+          const syncedRows = await db.all(
+            `SELECT order_no FROM pharmarack_synced_orders
+             WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
+             ORDER BY first_seen_at ASC`,
+            [todayLocal, storeName]
+          );
+          const allNos = (syncedRows || []).map((r: any) => String(r?.order_no || '').trim()).filter(Boolean);
+          if (allNos.length > 0) {
+            syncedOrderNo = allNos.join(', ');
+          }
+        } catch (_) {}
+      }
 
       const message = buildStandardDistributorOrderMessage({
         distributorName: storeName,
@@ -667,12 +671,39 @@ export class NotificationService {
       console.error('[CartOrderNotif] Error sending cart order notifications:', err);
       return { ok: false, sentCount: 0, suppressedCount: 0 };
     } finally {
-      // Record this order and trigger 1-minute debounced delivery boy summary dispatch
+      // Record this order and trigger debounced or immediate delivery boy notification
       try {
         const batchDb = await dbManager.getConnection();
+        const effectiveOrderNo = options?.orderNo || syncedOrderNo;
         await recordPlacedOrder(batchDb, storeName, storeId, items || [], deliveryPersons || []);
+
+        // If today's morning batch was already sent, immediately notify the assigned delivery boy directly
+        const { hasSentTodaysBatch } = await import('./pharmarackDailyDispatchService.js');
+        const hasSentMorning = await hasSentTodaysBatch(batchDb);
+        if (hasSentMorning) {
+          const boyRes = await this.notifyDeliveryBoyNewOrder({
+            storeName,
+            storePhone: rawPhone,
+            orderNo: effectiveOrderNo,
+            items: items || [],
+            deliveryBoy: resolvedDeliveryBoys?.[0],
+            distributorId: storeId
+          });
+          if (boyRes.ok) {
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const now = new Date();
+            const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            await batchDb.run(
+              `UPDATE pharmarack_placed_orders 
+               SET delivery_boy_notified = 1, delivery_boy_notified_at = ?, order_no = COALESCE(order_no, ?) 
+               WHERE store_name = ? AND order_date = ? 
+               ORDER BY id DESC LIMIT 1`,
+              [Date.now(), effectiveOrderNo || null, storeName, todayLocal]
+            );
+          }
+        }
       } catch (recErr) {
-        console.warn('[CartOrderNotif] Failed to record order for daily batch:', recErr);
+        console.warn('[CartOrderNotif] Failed to record order or notify delivery boy:', recErr);
       }
     }
   }
@@ -1219,6 +1250,132 @@ export class NotificationService {
     } catch (err: any) {
       console.error('[DistributorReminderWorker] Failed to send missing phones admin alert:', err.message);
       return false;
+    }
+  }
+
+  /**
+   * Send dedicated, itemized WhatsApp alert to Delivery Boy when a new order is placed
+   * (e.g. after morning dispatch or during outage recovery).
+   * Strictly deduplicated: checks if this Order # was already queued/sent to this delivery boy.
+   */
+  async notifyDeliveryBoyNewOrder(opts: {
+    storeName: string;
+    storePhone?: string;
+    orderNo?: string;
+    items: Array<{ productName?: string; name?: string; qty?: number; Quantity?: number; packaging?: string; packing?: string }>;
+    deliveryBoy?: { id?: number; name?: string; phone?: string; whatsapp_number?: string };
+    distributorId?: number | null;
+  }): Promise<{ ok: boolean; queueId?: number }> {
+    try {
+      const db = await dbManager.getConnection();
+      const store = await this.getStoreSettings(db);
+
+      // 1. Resolve Delivery Boy
+      let boyName = opts.deliveryBoy?.name;
+      let rawBoyPhone = opts.deliveryBoy?.phone || opts.deliveryBoy?.whatsapp_number;
+      let boyId = opts.deliveryBoy?.id;
+
+      if (!rawBoyPhone) {
+        if (opts.distributorId) {
+          const distRow = await db.get('SELECT delivery_boy_id FROM distributors WHERE id = ?', [opts.distributorId]);
+          if (distRow?.delivery_boy_id) boyId = distRow.delivery_boy_id;
+        }
+        if (boyId) {
+          const boyRow = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1', [boyId]);
+          if (boyRow) {
+            boyName = boyRow.name;
+            rawBoyPhone = boyRow.whatsapp_number;
+          }
+        }
+      }
+
+      if (!rawBoyPhone) {
+        const firstActive = await db.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' LIMIT 1");
+        if (firstActive) {
+          boyId = firstActive.id;
+          boyName = firstActive.name;
+          rawBoyPhone = firstActive.whatsapp_number;
+        }
+      }
+
+      if (!rawBoyPhone) {
+        const adminSetting = await db.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
+        if (adminSetting?.value) {
+          boyName = 'Admin / Store Owner';
+          rawBoyPhone = adminSetting.value;
+        }
+      }
+
+      const boyPhoneClean = (rawBoyPhone || '').replace(/\D/g, '').slice(-10);
+      if (boyPhoneClean.length !== 10) {
+        console.warn(`[DeliveryBoyNewOrder] No valid 10-digit phone number found for delivery boy (got "${rawBoyPhone}").`);
+        return { ok: false };
+      }
+
+      // 2. Format message
+      const distPhoneDisplay = opts.storePhone ? formatDisplayPhone(opts.storePhone) : 'N/A';
+      const orderNoText = opts.orderNo ? `#${opts.orderNo}` : 'New Order';
+
+      let msg = `🏥 *${store.storeName}*\n`;
+      msg += `📦 *NEW ORDER PLACED (PICKUP ALERT)*\n\n`;
+      msg += `🏬 *Distributor:* ${opts.storeName}\n`;
+      msg += `📞 *Distributor Contact:* ${distPhoneDisplay}\n`;
+      msg += `📋 *Order # / PO ID:* *${orderNoText}*\n`;
+      if (boyName && boyName !== 'Delivery Staff') {
+        msg += `👤 *Assigned Collector:* ${boyName}\n`;
+      }
+      msg += `\n📦 *Medicines to Collect:*\n`;
+
+      const lines = opts.items || [];
+      if (lines.length > 0) {
+        lines.forEach((it, idx) => {
+          const name = it.productName || it.name || 'Medicine';
+          const qty = it.qty || it.Quantity || 1;
+          const pack = it.packaging || it.packing ? ` (${it.packaging || it.packing})` : '';
+          msg += `${idx + 1}. *${name}* — Qty: *${qty}*${pack}\n`;
+        });
+      } else {
+        msg += `   (Items logged under PO ${orderNoText})\n`;
+      }
+      msg += `\n📊 *Total Items:* ${lines.length}\n`;
+      msg += `📝 *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
+
+      // 3. Deduplication check: do not double-send same order to same delivery boy in last 6 hours
+      const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
+      const refId = opts.orderNo ? `order_${opts.orderNo}_boy_${boyPhoneClean}` : `order_pickup_${opts.storeName}_${Date.now()}`;
+
+      const alreadyQueued = await db.get(
+        `SELECT id FROM whatsapp_send_queue
+         WHERE number = ? AND type = 'delivery_boy_new_order'
+           AND message LIKE ?
+           AND created_at >= ? AND status != 'cancelled'
+         LIMIT 1`,
+        [boyPhoneClean, `%${orderNoText}%`, sixHoursAgo]
+      );
+
+      if (alreadyQueued) {
+        console.log(`[DeliveryBoyNewOrder] Order ${orderNoText} already queued for ${boyName} (#${alreadyQueued.id}). Skipping duplicate.`);
+        return { ok: true, queueId: alreadyQueued.id };
+      }
+
+      const queueId = await whatsappQueueWorker.enqueue(
+        boyPhoneClean,
+        msg,
+        'delivery_boy_new_order',
+        boyName || 'Delivery Staff'
+      );
+
+      await db.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        ['delivery_boy_new_order', boyName, boyPhoneClean, msg, queueId ? 'pending' : 'failed', refId]
+      );
+
+      console.log(`[DeliveryBoyNewOrder] Enqueued new order pickup notification for ${boyName} (${boyPhoneClean}) [Order ${orderNoText}]`);
+      return { ok: Boolean(queueId), queueId };
+    } catch (err: any) {
+      console.error('[DeliveryBoyNewOrder] Error sending delivery boy new order notification:', err);
+      return { ok: false };
     }
   }
 }

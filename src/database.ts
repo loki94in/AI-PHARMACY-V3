@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 75;
+const CURRENT_SCHEMA_VERSION = 76;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -473,17 +473,58 @@ async function ensureRefillCartLinkSchema(db: any) {
       order_date TEXT NOT NULL,
       first_seen_at INTEGER NOT NULL,
       announced_at INTEGER,
-      announce_result TEXT
+      announce_result TEXT,
+      delivery_boy_notified_at INTEGER,
+      delivery_boy_id INTEGER
     )
   `);
   await db.run('CREATE INDEX IF NOT EXISTS idx_pharmarack_synced_orders_date ON pharmarack_synced_orders (order_date, store_name)');
+  await ensureColumns(db, 'pharmarack_synced_orders', {
+    delivery_boy_notified_at: 'INTEGER DEFAULT NULL',
+    delivery_boy_id: 'INTEGER DEFAULT NULL'
+  });
+  await ensureColumns(db, 'pharmarack_placed_orders', {
+    order_no: 'TEXT DEFAULT NULL',
+    delivery_boy_notified: 'INTEGER DEFAULT 0',
+    delivery_boy_notified_at: 'INTEGER DEFAULT NULL',
+    distributor_notified: 'INTEGER DEFAULT 0',
+    distributor_notified_at: 'INTEGER DEFAULT NULL'
+  });
   await ensureColumns(db, 'patient_refills', {
     cart_store_id: 'INTEGER DEFAULT NULL',
     cart_store_name: 'TEXT DEFAULT NULL',
     cart_product_code: 'TEXT DEFAULT NULL',
     cart_product_name: 'TEXT DEFAULT NULL',
-    cart_qty: 'INTEGER DEFAULT NULL',
+    cart_qty: 'INTEGER DEFAULT NULL'
   });
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pharmarack_distributor_products (
+      store_id INTEGER NOT NULL,
+      product_code TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      packaging TEXT,
+      company TEXT,
+      ptr REAL DEFAULT 0,
+      mrp REAL DEFAULT 0,
+      last_ordered_at INTEGER,
+      last_order_date TEXT,
+      source TEXT DEFAULT 'order',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (store_id, product_code)
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pharmarack_dist_prod_store ON pharmarack_distributor_products (store_id, last_ordered_at DESC)');
+  try {
+    await db.run(`
+      INSERT OR IGNORE INTO pharmarack_distributor_products
+        (store_id, product_code, product_id, product_name, packaging, company, ptr, mrp, last_ordered_at, source, created_at, updated_at)
+      SELECT store_id, product_code, COALESCE(product_id, ''), product_name, packaging, company, 0, 0, strftime('%s', updated_at) * 1000, 'link', created_at, updated_at
+      FROM medicine_distributor_links
+      WHERE store_id IS NOT NULL AND product_code IS NOT NULL AND product_code != ''
+    `);
+  } catch (_) { /* non-fatal backfill */ }
 }
 
 /**
@@ -3783,7 +3824,12 @@ export async function ensureSchema(dbPath: string) {
       delivery_persons_json TEXT,               -- [{name, code}]
       placed_at             INTEGER NOT NULL,   -- unix ms
       batch_sent            INTEGER DEFAULT 0,  -- 0=pending, 1=included in batch
-      batch_sent_at         INTEGER             -- unix ms when batch sent it
+      batch_sent_at         INTEGER,            -- unix ms when batch sent it
+      order_no              TEXT DEFAULT NULL,
+      delivery_boy_notified INTEGER DEFAULT 0,
+      delivery_boy_notified_at INTEGER DEFAULT NULL,
+      distributor_notified  INTEGER DEFAULT 0,
+      distributor_notified_at INTEGER DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_pharmarack_placed_orders_date ON pharmarack_placed_orders (order_date, batch_sent);
     CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id);

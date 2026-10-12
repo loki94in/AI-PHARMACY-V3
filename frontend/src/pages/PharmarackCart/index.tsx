@@ -235,7 +235,12 @@ function getDistributorShortfallFillers(
       if (!isDistributorCandidateMatch(r, dist, distributorMappings)) return false;
       if (isAlreadyInCart(r)) return false;
 
-      const mKey = r.medicineId ? `id_${r.medicineId}` : `name_${norm(r.medicineName)}`;
+      // User constraint: Never automatch unlinked medicines. Suggestions for this distributor
+      // must strictly carry verified productCode and (productId or mapped: true).
+      const hasVerifiedProduct = Boolean(r.productCode && (r.productId || r.mapped));
+      if (!hasVerifiedProduct) return false;
+
+      const mKey = r.productCode ? `code_${dist.storeId}_${r.productCode}` : (r.medicineId ? `id_${r.medicineId}` : `name_${norm(r.medicineName)}`);
       if (seenMeds.has(mKey)) return false;
       if (skippedKeys && skippedKeys.has(norm(r.medicineName))) return false;
       seenMeds.add(mKey);
@@ -381,6 +386,7 @@ interface LocalSentOrder {
   placed_at?: number;
   batch_sent?: boolean;
   batch_sent_at?: number | null;
+  source?: string;
 }
 
 type LocalSentMapEntry = { storeId: number | null; storeName: string; placedAt: number; items: LocalSentOrderItem[] };
@@ -912,6 +918,66 @@ export default function PharmarackCart() {
       console.warn('Failed to load purchase reorder history:', err);
     } finally {
       setPurchaseHistoryLoading(false);
+    }
+  };
+
+  // Verified deduplicated medicines per distributor (up to 300 items)
+  const [distributorProductsMap, setDistributorProductsMap] = useState<Record<number, ReorderRecentItem[]>>({});
+  const [syncingExternalOrders, setSyncingExternalOrders] = useState<boolean>(false);
+  const fetchedDistributorStoreIdsRef = useRef<Set<number>>(new Set());
+
+  const fetchDistributorProducts = useCallback(async (storeId: number) => {
+    if (!storeId || fetchedDistributorStoreIdsRef.current.has(storeId)) return;
+    fetchedDistributorStoreIdsRef.current.add(storeId);
+    try {
+      const res = await api.getDistributorMedicines(storeId, 300);
+      if (res && res.success && Array.isArray(res.items)) {
+        const mapped: ReorderRecentItem[] = res.items.map(it => ({
+          medicineName: it.productName,
+          storeId: it.storeId,
+          storeName: '',
+          productCode: it.productCode,
+          productId: it.productId ? Number(it.productId) : undefined,
+          ptr: it.ptr,
+          mrp: it.mrp,
+          packaging: it.packaging,
+          lastOrderedDate: it.lastOrderDate,
+          mapped: true
+        }));
+        setDistributorProductsMap(prev => ({ ...prev, [storeId]: mapped }));
+      }
+    } catch (err) {
+      fetchedDistributorStoreIdsRef.current.delete(storeId);
+      console.warn(`Failed to load distributor medicines for store ${storeId}:`, err);
+    }
+  }, []);
+
+  useEffect(() => {
+    distributors.forEach(d => {
+      if (d.storeId && !fetchedDistributorStoreIdsRef.current.has(d.storeId)) {
+        fetchDistributorProducts(d.storeId);
+      }
+    });
+  }, [distributors, fetchDistributorProducts]);
+
+  const handleSyncExternalOrders = async () => {
+    if (syncingExternalOrders) return;
+    setSyncingExternalOrders(true);
+    try {
+      toastEvent.trigger('Syncing orders from Pharmarack portal...', 'info');
+      const res = await api.syncHistoricalOrders(30);
+      if (res && res.success) {
+        toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.imported} new imported.`, 'success');
+        const datesRes = await api.getPharmarackSentDates();
+        if (datesRes?.dates) setSentDates(datesRes.dates);
+        if (selectedSentDate) loadSentOrdersForDate(selectedSentDate);
+      } else {
+        toastEvent.trigger(res?.error || 'Failed to sync orders from Pharmarack', 'error');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.message || 'Sync failed', 'error');
+    } finally {
+      setSyncingExternalOrders(false);
     }
   };
 
@@ -2407,7 +2473,8 @@ export default function PharmarackCart() {
             storeName: dist.storeName,
             deliveryPersons: effectiveDeliveryPersons,
             items: itemsToOrder,
-            skipDistributor: true
+            skipDistributor: true,
+            orderNo: customOrderNo
           });
         } catch (distErr) {
           console.warn('Could not notify delivery boys via backend route:', distErr);
@@ -2421,7 +2488,10 @@ export default function PharmarackCart() {
           store_id: dist.storeId,
           store_name: dist.storeName,
           items: itemsToLog,
-          delivery_persons: effectiveDeliveryPersons
+          delivery_persons: effectiveDeliveryPersons,
+          order_no: customOrderNo || null,
+          delivery_boy_id: resolvedBoy ? (resolvedBoy as any).id : null,
+          delivery_boy_notified: targetMode === 'both' ? 1 : 0
         });
         setHasUnreadSentHistory(true);
         specialOrdersEvent.triggerUpdated();
@@ -2466,7 +2536,8 @@ export default function PharmarackCart() {
           store_id: dist.storeId,
           store_name: dist.storeName,
           items: itemsToLog,
-          delivery_persons: dist.deliveryPersons
+          delivery_persons: dist.deliveryPersons,
+          order_no: customOrderNo || null
         });
         setHasUnreadSentHistory(true);
         specialOrdersEvent.triggerUpdated();
@@ -4008,28 +4079,40 @@ export default function PharmarackCart() {
                 </p>
               </div>
 
-              {selectedSentDate && (
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
-                    {sentOrders.length} Order{sentOrders.length !== 1 ? 's' : ''} Sent
-                  </span>
-                  {sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0) > 0 && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSyncExternalOrders}
+                  disabled={syncingExternalOrders}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-glass-bg border border-glass-border text-text text-xs font-bold shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  title="Sync official Pharmarack portal/app orders and auto-learn distributor products"
+                >
+                  <RotateCw size={12} className={syncingExternalOrders ? "animate-spin text-primary" : "text-muted"} />
+                  <span>{syncingExternalOrders ? 'Syncing...' : 'Sync Pharmarack'}</span>
+                </button>
+                {selectedSentDate && (
+                  <>
                     <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
-                      {sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0)} PO ID{sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0) !== 1 ? 's' : ''}
+                      {sentOrders.length} Order{sentOrders.length !== 1 ? 's' : ''} Sent
                     </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={openSentPopup}
-                    disabled={sentSelectedCount === 0 || readdingSentItems}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    title="Tick medicines below, then press Re-order to review and add them to the live cart"
-                  >
-                    <RotateCw size={12} />
-                    <span>Re-order{sentSelectedCount > 0 ? ` (${sentSelectedCount})` : ''}</span>
-                  </button>
-                </div>
-              )}
+                    {sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0) > 0 && (
+                      <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
+                        {sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0)} PO ID{sentOrders.reduce((n, o) => n + (Array.isArray(o.pharmarack_order_nos) ? o.pharmarack_order_nos.length : 0), 0) !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={openSentPopup}
+                      disabled={sentSelectedCount === 0 || readdingSentItems}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      title="Tick medicines below, then press Re-order to review and add them to the live cart"
+                    >
+                      <RotateCw size={12} />
+                      <span>Re-order{sentSelectedCount > 0 ? ` (${sentSelectedCount})` : ''}</span>
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Orders Grid / Cards */}
@@ -4060,6 +4143,15 @@ export default function PharmarackCart() {
                             ))}
                           </div>
                           <div className="flex items-center gap-2">
+                            {order.source === 'pharmarack_sync' ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 font-mono" title="Order synced from official Pharmarack portal/app">
+                                Pharmarack Web/App
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono" title="Order placed from this app">
+                                In-App Sent
+                              </span>
+                            )}
                             <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${order.batch_sent ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
                               {order.batch_sent ? '● Sent' : '○ Pending'}
                             </span>
@@ -5620,7 +5712,8 @@ export default function PharmarackCart() {
                                   </p>
                                 ))}
                                 {(() => {
-                                  const fillers = getDistributorShortfallFillers(dist, purchaseHistoryItems, reorderRecentItems, skippedFillerKeys[dist.storeId], distributorMappings, isItemIncludedInDispatch);
+                                  const distItems = distributorProductsMap[dist.storeId] || [];
+                                  const fillers = getDistributorShortfallFillers(dist, distItems.length > 0 ? distItems : purchaseHistoryItems, reorderRecentItems, skippedFillerKeys[dist.storeId], distributorMappings, isItemIncludedInDispatch);
                                   if (fillers.length === 0) return null;
                                   const sum = fillers.reduce((s, f) => s + f.amount, 0);
                                   const skippedCount = skippedFillerKeys[dist.storeId]?.size || 0;
@@ -5660,30 +5753,13 @@ export default function PharmarackCart() {
                                                 <span
                                                   className="font-bold text-text truncate cursor-pointer hover:text-primary transition-colors"
                                                   title={`${item.medicineName} — Click to add`}
-                                                  onClick={() => {
-                                                    if (!item.productCode && !item.productId) {
-                                                      setLinkModalTarget({ medicineId: item.medicineId || 0, medicineName: item.medicineName, storeId: dist.storeId, storeName: dist.storeName });
-                                                    } else {
-                                                      handleReorderDirect(item, qty, dist.storeId, dist.storeName);
-                                                    }
-                                                  }}
+                                                  onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
                                                 >
                                                   {item.medicineName}
                                                 </span>
-                                                {item.mapped || (item.productCode && item.productId) ? (
-                                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0" title="Verified link for this distributor">
-                                                    ✓ Linked
-                                                  </span>
-                                                ) : (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => setLinkModalTarget({ medicineId: item.medicineId || 0, medicineName: item.medicineName, storeId: dist.storeId, storeName: dist.storeName })}
-                                                    className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 border border-sky-500/30 font-mono shrink-0 cursor-pointer"
-                                                    title="Link this medicine to distributor catalog"
-                                                  >
-                                                    Link
-                                                  </button>
-                                                )}
+                                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0" title="Verified link for this distributor">
+                                                  ✓ Verified
+                                                </span>
                                                 {item.billCount && item.billCount > 1 ? (
                                                   <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-0.5" title={`Purchased in ${item.billCount} bills`}>
                                                     <Star size={8} className="fill-amber-400" /> ×{item.billCount}
@@ -5702,33 +5778,15 @@ export default function PharmarackCart() {
                                             </div>
 
                                             <div className="flex items-center gap-1 shrink-0">
-                                              {item.mapped || (item.productCode && item.productId) ? (
-                                                <button
-                                                  type="button"
-                                                  disabled={readdingSentItems}
-                                                  onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
-                                                  className="px-2.5 py-1 rounded-md bg-primary hover:bg-primary/90 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
-                                                  title={`Add ${item.medicineName} (x${qty}) directly to cart`}
-                                                >
-                                                  + Add (x{qty})
-                                                </button>
-                                              ) : (
-                                                <button
-                                                  type="button"
-                                                  disabled={readdingSentItems}
-                                                  onClick={() => {
-                                                    if (item.medicineId) {
-                                                      setLinkModalTarget({ medicineId: item.medicineId, medicineName: item.medicineName, storeId: dist.storeId, storeName: dist.storeName });
-                                                    } else {
-                                                      liveCartAddEvent.triggerOpen(item.medicineName, qty);
-                                                    }
-                                                  }}
-                                                  className="px-2.5 py-1 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
-                                                  title={`Link ${item.medicineName} with ${dist.storeName} catalog to add to cart`}
-                                                >
-                                                  Link & Add
-                                                </button>
-                                              )}
+                                              <button
+                                                type="button"
+                                                disabled={readdingSentItems}
+                                                onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
+                                                className="px-2.5 py-1 rounded-md bg-primary hover:bg-primary/90 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
+                                                title={`Add ${item.medicineName} (x${qty}) directly to cart`}
+                                              >
+                                                + Add (x{qty})
+                                              </button>
                                               <button
                                                 type="button"
                                                 onClick={() => handleSkipFiller(dist.storeId, item.medicineName)}

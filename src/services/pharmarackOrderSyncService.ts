@@ -177,13 +177,25 @@ async function fillOrderLines(db: any, token: string, orders: any[], todayIso: s
     let existing: any[] = [];
     try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { /* treat as empty */ }
     if (existing.length > 0) continue; // the app's own Send All lines are never overwritten
-    const lines: Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number }> = [];
+    const lines: Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> = [];
     for (const o of list) {
       const got = await fetchOrderLines(db, token, Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null, String(o.OrderNo));
       if (got) lines.push(...got);
     }
     if (lines.length === 0) continue;
-    await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
+    if (existing.length === 0) {
+      await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
+    }
+    // Auto-ingest lines into store-scoped distributor products
+    try {
+      const storeId = Number(list[0]?.storeId || list[0]?.StoreId || 0);
+      const storeName = String(list[0]?.StoreName || '').trim();
+      const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
+      if (storeId > 0) {
+        await upsertDistributorProducts(lines, storeId, storeName, 'synced_order', todayIso);
+        void autoSaveMedicineDistributorLinks(lines.map(l => ({ ...l, storeId, storeName })));
+      }
+    } catch (_) { /* non-fatal product ingest */ }
   }
 }
 
@@ -279,9 +291,9 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     );
     if (!logged) {
       await db.run(
-        `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-         VALUES (?, ?, ?, '[]', NULL, ?, 0, NULL)`,
-        [today.iso, storeId, storeName, Date.now()] // placed_at = when the app noticed it
+        `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+         VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+        [today.iso, storeId, storeName, orderNo, Date.now()] // placed_at = when the app noticed it
       );
     }
     fresh.push({ orderNo, storeName, amount, appAlreadySent: Boolean(logged) });
@@ -385,7 +397,66 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     }
   }
 
-  // 3. Delivery boys: send updated consolidated pickup list to assigned delivery staff for today's direct orders
+  // 3. Delivery boys: notify assigned delivery staff of newly placed orders with medicine items
+  for (const f of fresh) {
+    try {
+      const alreadyNotifiedBoy = await db.get(
+        `SELECT delivery_boy_notified_at FROM pharmarack_synced_orders WHERE order_no = ? AND delivery_boy_notified_at IS NOT NULL`,
+        [f.orderNo]
+      );
+      if (alreadyNotifiedBoy) continue;
+
+      // Find order row in pharmarack_placed_orders to get items
+      const placedRow = await db.get(
+        `SELECT items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
+        [today.iso, f.storeName]
+      );
+      let orderItems: any[] = [];
+      try { orderItems = JSON.parse(placedRow?.items_json || '[]'); } catch (_) {}
+
+      // If items empty, try fetching live order lines
+      if (orderItems.length === 0 && token) {
+        const matchingOrder = (orders as any[]).find((o: any) => String(o?.OrderNo).trim() === f.orderNo);
+        if (matchingOrder && matchingOrder.OrderId) {
+          const lines = await fetchOrderLines(db, token, Number(matchingOrder.OrderId), f.orderNo);
+          if (lines && lines.length > 0) orderItems = lines;
+        }
+      }
+
+      // Resolve distributor contact and assigned delivery boy
+      const { resolveDistributorContact } = await import('../utils/distributorSyncHelper.js');
+      const contact = await resolveDistributorContact(db, f.storeName);
+      let targetBoy: any = null;
+      if (contact.delivery_boy_id) {
+        const b = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1', [contact.delivery_boy_id]);
+        if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
+      }
+
+      const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
+        storeName: f.storeName,
+        storePhone: contact.distributor_phone,
+        orderNo: f.orderNo,
+        items: orderItems,
+        deliveryBoy: targetBoy,
+        distributorId: contact.distributor_id
+      });
+
+      if (boyRes.ok) {
+        await db.run(
+          `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
+          [Date.now(), targetBoy?.id || null, f.orderNo]
+        );
+        await db.run(
+          `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+          [Date.now(), today.iso, f.storeName]
+        );
+      }
+    } catch (boyErr: any) {
+      console.warn(`[PharmarackOrderSync] Failed to notify delivery boy for order ${f.orderNo}:`, boyErr?.message || boyErr);
+    }
+  }
+
+  // 4. Also keep consolidated delivery boy dispatch updated if reminders changed
   if (directOrderRemindersToNotifyBoy.length > 0) {
     try {
       await notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy);
@@ -400,6 +471,138 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'pharmarack_order_sync', count: fresh.length });
   } catch (_) {}
 
+  return result;
+}
+
+/**
+ * Outage & Startup Recovery:
+ * Scans today's orders (both in `pharmarack_synced_orders` and `pharmarack_placed_orders`).
+ * Directly checks if any order was not notified to the distributor or delivery boy.
+ * Strictly sends ONLY the newly placed, un-notified orders. Never sends duplicate messages.
+ */
+export async function recoverTodayUnnotifiedOrders(): Promise<{ unnotifiedOrders: number; notifiedBoys: number; notifiedDistributors: number }> {
+  const result = { unnotifiedOrders: 0, notifiedBoys: 0, notifiedDistributors: 0 };
+  try {
+    const db = await dbManager.getConnection();
+    const today = localToday();
+
+    // 1. Fetch all orders for today where either distributor or delivery boy has not been notified
+    const unnotifiedSynced = await db.all(
+      `SELECT order_no, store_name, store_id, order_amount, announced_at, delivery_boy_notified_at
+       FROM pharmarack_synced_orders
+       WHERE order_date = ? AND (announced_at IS NULL OR delivery_boy_notified_at IS NULL)`,
+      [today.iso]
+    );
+
+    const unnotifiedPlaced = await db.all(
+      `SELECT id, order_no, store_name, store_id, items_json, delivery_boy_notified
+       FROM pharmarack_placed_orders
+       WHERE order_date = ? AND (delivery_boy_notified = 0 OR delivery_boy_notified IS NULL)`,
+      [today.iso]
+    );
+
+    result.unnotifiedOrders = unnotifiedSynced.length + unnotifiedPlaced.length;
+    if (result.unnotifiedOrders === 0) {
+      console.log('[OrderRecovery] Zero unnotified orders for today. No recovery messages needed.');
+      return result;
+    }
+
+    console.log(`[OrderRecovery] Found ${result.unnotifiedOrders} unnotified order record(s) on recovery check. Processing...`);
+
+    const { resolveDistributorContact } = await import('../utils/distributorSyncHelper.js');
+
+    // 2. Recover delivery boy notifications for placed orders
+    for (const po of unnotifiedPlaced) {
+      try {
+        let items = [];
+        try { items = JSON.parse(po.items_json || '[]'); } catch (_) {}
+        const contact = await resolveDistributorContact(db, po.store_name);
+
+        let targetBoy: any = null;
+        if (contact.delivery_boy_id) {
+          const b = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1', [contact.delivery_boy_id]);
+          if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
+        }
+
+        const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
+          storeName: po.store_name,
+          storePhone: contact.distributor_phone,
+          orderNo: po.order_no || undefined,
+          items,
+          deliveryBoy: targetBoy,
+          distributorId: po.store_id || contact.distributor_id
+        });
+
+        if (boyRes.ok) {
+          await db.run(
+            `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE id = ?`,
+            [Date.now(), po.id]
+          );
+          result.notifiedBoys++;
+        }
+      } catch (err: any) {
+        console.warn(`[OrderRecovery] Failed to recover delivery boy for placed order #${po.id}:`, err?.message || err);
+      }
+    }
+
+    // 3. Recover unnotified synced orders from Pharmarack portal
+    for (const so of unnotifiedSynced) {
+      try {
+        const contact = await resolveDistributorContact(db, so.store_name);
+
+        // A. If distributor was not announced, send single follow-up with order #
+        if (!so.announced_at) {
+          const { syncTodayActiveDistributors } = await import('./distributorDispatchReminderWorker.js');
+          const reminders = await syncTodayActiveDistributors();
+          const row = reminders.find((r: any) => String(r.distributor_name || '').toLowerCase().trim() === String(so.store_name).toLowerCase().trim());
+          if (row && row.id && row.id < 800000) {
+            const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos: [so.order_no] });
+            if (sent) {
+              await db.run('UPDATE pharmarack_synced_orders SET announced_at = ?, announce_result = ? WHERE order_no = ?', [Date.now(), 'recovered_on_boot', so.order_no]);
+              result.notifiedDistributors++;
+            }
+          }
+        }
+
+        // B. If delivery boy was not notified, fetch items and send
+        if (!so.delivery_boy_notified_at) {
+          const placedRow = await db.get(
+            `SELECT items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
+            [today.iso, so.store_name]
+          );
+          let items: any[] = [];
+          try { items = JSON.parse(placedRow?.items_json || '[]'); } catch (_) {}
+
+          let targetBoy: any = null;
+          if (contact.delivery_boy_id) {
+            const b = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1', [contact.delivery_boy_id]);
+            if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
+          }
+
+          const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
+            storeName: so.store_name,
+            storePhone: contact.distributor_phone,
+            orderNo: so.order_no,
+            items,
+            deliveryBoy: targetBoy,
+            distributorId: so.store_id || contact.distributor_id
+          });
+
+          if (boyRes.ok) {
+            await db.run(
+              `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
+              [Date.now(), targetBoy?.id || null, so.order_no]
+            );
+            result.notifiedBoys++;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[OrderRecovery] Failed to recover synced order #${so.order_no}:`, err?.message || err);
+      }
+    }
+  } catch (err: any) {
+    console.error('[OrderRecovery] Error recovering unnotified orders:', err);
+  }
   return result;
 }
 
@@ -510,3 +713,122 @@ export function syncPharmarackOrders(force = false): Promise<PharmarackOrderSync
     .finally(() => { inFlight = null; });
   return inFlight;
 }
+
+/**
+ * Historical order sync: fetches the past `days` (up to 30) of orders from Pharmarack DisplayOrders.
+ * Ingests external orders into `pharmarack_synced_orders`, `pharmarack_placed_orders`, and `pharmarack_distributor_products`.
+ */
+export async function syncHistoricalPharmarackOrders(days = 30): Promise<{ ok: boolean; fetched: number; imported: number; error?: string }> {
+  try {
+    const db = await dbManager.getConnection();
+    const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
+    const token = tokenRow?.value || '';
+    if (!token) return { ok: false, fetched: 0, imported: 0, error: 'No Pharmarack session token' };
+
+    const safeDays = Math.min(60, Math.max(1, days));
+    const now = new Date();
+    const past = new Date(Date.now() - safeDays * 86400000);
+    const p = (n: number) => String(n).padStart(2, '0');
+    const toDdmmyy = `${p(now.getDate())}/${p(now.getMonth() + 1)}/${String(now.getFullYear()).slice(-2)}`;
+    const fromDdmmyy = `${p(past.getDate())}/${p(past.getMonth() + 1)}/${String(past.getFullYear()).slice(-2)}`;
+
+    const res = await fetch(ORDER_LIST_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'devicetype': 'web',
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://retailers.pharmarack.com/',
+        'Origin': 'https://retailers.pharmarack.com'
+      },
+      body: JSON.stringify({
+        searchtext: '',
+        fromdate: fromDdmmyy,
+        todate: toDdmmyy,
+        Operation: 'view',
+        status: '1,2,3',
+        pageNo: 1,
+        pageSize: 200,
+        isMapped: true
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!res.ok) return { ok: false, fetched: 0, imported: 0, error: `DisplayOrders HTTP ${res.status}` };
+    const json: any = await res.json();
+    const orders: any[] = Array.isArray(json?.data) ? json.data : [];
+
+    let importedCount = 0;
+    const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
+
+    for (const o of orders) {
+      const orderNo = String(o?.OrderNo ?? '').trim();
+      const storeName = String(o?.StoreName ?? '').trim();
+      if (!orderNo || !storeName) continue;
+      const orderDate = orderDayIso(o?.OrderDate);
+      if (!orderDate) continue;
+
+      const amountNum = parseFloat(String(o?.OrderAmount ?? ''));
+      const amount = Number.isFinite(amountNum) ? amountNum : null;
+      const storeId = Number.isFinite(Number(o?.storeId)) ? Number(o.storeId) : (Number.isFinite(Number(o?.StoreId)) ? Number(o.StoreId) : null);
+      const orderId = Number.isFinite(Number(o?.OrderId)) ? Number(o.OrderId) : null;
+
+      await db.run(
+        `INSERT OR IGNORE INTO pharmarack_synced_orders
+           (order_no, pharmarack_order_id, store_id, store_name, order_amount, order_date, first_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [orderNo, orderId, storeId, storeName, amount, orderDate, Date.now()]
+      );
+
+      // Check if row in pharmarack_placed_orders exists for this order
+      let placedRow = await db.get(
+        `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+        [orderNo]
+      );
+      if (!placedRow) {
+        placedRow = await db.get(
+          `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
+          [orderDate, storeName]
+        );
+      }
+
+      let lines: any[] = [];
+      if (!placedRow || !placedRow.items_json || placedRow.items_json === '[]') {
+        const fetchedLines = await fetchOrderLines(db, token, orderId, orderNo);
+        if (fetchedLines && fetchedLines.length > 0) {
+          lines = fetchedLines;
+        }
+      } else {
+        try { lines = JSON.parse(placedRow.items_json); } catch (_) {}
+      }
+
+      if (!placedRow) {
+        await db.run(
+          `INSERT INTO pharmarack_placed_orders
+             (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, 0, NULL)`,
+          [orderDate, storeId, storeName, orderNo, JSON.stringify(lines), Date.now()]
+        );
+        importedCount++;
+      } else if (lines.length > 0 && (!placedRow.items_json || placedRow.items_json === '[]')) {
+        await db.run(
+          `UPDATE pharmarack_placed_orders SET items_json = ?, order_no = COALESCE(order_no, ?) WHERE id = ?`,
+          [JSON.stringify(lines), orderNo, placedRow.id]
+        );
+      }
+
+      if (lines.length > 0 && storeId) {
+        await upsertDistributorProducts(lines, storeId, storeName, 'synced_order', orderDate);
+        void autoSaveMedicineDistributorLinks(lines.map(l => ({ ...l, storeId, storeName })));
+      }
+    }
+
+    return { ok: true, fetched: orders.length, imported: importedCount };
+  } catch (err: any) {
+    console.error('Historical order sync failed:', err);
+    return { ok: false, fetched: 0, imported: 0, error: err?.message || String(err) };
+  }
+}
+

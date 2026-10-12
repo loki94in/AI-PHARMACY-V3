@@ -456,8 +456,8 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
   if (orderIds.length > 0) {
     const placeholders = orderIds.map(() => '?').join(',');
     await db.run(
-      `UPDATE pharmarack_placed_orders SET batch_sent = 1, batch_sent_at = ? WHERE id IN (${placeholders})`,
-      [now, ...orderIds]
+      `UPDATE pharmarack_placed_orders SET batch_sent = 1, batch_sent_at = ?, delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE id IN (${placeholders})`,
+      [now, now, ...orderIds]
     );
   }
 

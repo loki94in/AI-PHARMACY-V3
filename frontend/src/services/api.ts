@@ -1940,7 +1940,7 @@ export const api = {
   getPharmarackSentOrders: (date?: string) => apiClient.get<{ success: boolean; date: string; orders: PharmarackSentOrder[] }>('/pharmarack/sent-orders', { params: { date } }).then(res => res.data),
   checkPharmarackOrder: (distributor: string, lines: Array<{ name: string; mrp?: number }>) => apiClient.post<PharmarackOrderCheck>('/pharmarack/order-check', { distributor, lines }).then(res => res.data),
   getPharmarackLatestSentMap: () => apiClient.get<{ success: boolean; sentMap: Record<string, PharmarackLatestSentMapEntry> }>('/pharmarack/sent-orders/latest-map').then(res => res.data),
-  logPharmarackPlacedOrder: (data: { store_id?: number | null; store_name: string; items: readonly unknown[]; delivery_persons?: readonly unknown[] }) => apiClient.post('/pharmarack/log-placed-order', data).then(res => res.data),
+  logPharmarackPlacedOrder: (data: { store_id?: number | null; store_name: string; items: readonly unknown[]; delivery_persons?: readonly unknown[]; order_no?: string | null; delivery_boy_id?: number | null; delivery_boy_notified?: number }) => apiClient.post('/pharmarack/log-placed-order', data).then(res => res.data),
 
   // System Services Live Health Status
   getServicesStatus: () => apiClient.get<{
@@ -2065,6 +2065,12 @@ export const api = {
 
   getPurchaseReorderHistory: (params?: { months?: number; distributor_id?: number; store_id?: number; q?: string; limit?: number }) =>
     apiClient.get<{ success: boolean; items: ReorderRecentItem[] }>('/pharmarack/purchase-reorder-history', { params: params || {} }).then(res => res.data),
+
+  getDistributorMedicines: (storeId: number, limit?: number) =>
+    apiClient.get<{ success: boolean; storeId: number; total: number; items: any[] }>(`/pharmarack/distributor-medicines/${storeId}`, { params: limit ? { limit } : {} }).then(res => res.data),
+
+  syncHistoricalOrders: (days?: number) =>
+    apiClient.post<{ success: boolean; fetched: number; imported: number; error?: string }>('/pharmarack/sync-historical-orders', { days: days || 30 }).then(res => res.data),
 
   getPharmarackOrderById: (orderId: number | string) =>
     apiClient.get<{ success: boolean; order: any }>(`/pharmarack/order-by-id/${orderId}`).then(res => res.data),
