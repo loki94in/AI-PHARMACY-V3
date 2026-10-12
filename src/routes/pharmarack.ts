@@ -291,7 +291,7 @@ let lastSearchOkAt = 0;
 
 export type PharmarackSearchOutcome =
   | { status: 'ok'; items: any[] }
-  | { status: 'need_login' }
+  | { status: 'need_login'; isRefreshing?: boolean }
   | { status: 'connection_error' };
 
 // Shared search core — used by both the request path and background stale
@@ -347,6 +347,17 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       body: JSON.stringify(buildPayload(primaryKeyword)),
       signal: AbortSignal.timeout(searchCold ? 12000 : 8000)
     }).catch(() => null);
+
+    // If API returned 401/403, session is expired or restoring — do not treat as "0 items found from distributors"
+    if (response && (response.status === 401 || response.status === 403)) {
+      tokenRefreshScheduler.executeRefresh().catch(() => {});
+      const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
+      if (offline.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, offline);
+        return { status: 'ok', items: offline };
+      }
+      return { status: 'need_login', isRefreshing: true };
+    }
 
     let data: any = response && response.ok ? await response.json().catch(() => null) : null;
     if (data) lastSearchOkAt = Date.now();
@@ -525,7 +536,11 @@ router.get('/search', async (req, res) => {
 
   const outcome = await performPharmarackSearch(qRaw, storeId, isMapped);
   if (outcome.status === 'need_login') {
-    return res.status(401).json({ error: 'Need to login', code: 'NEED_LOGIN' });
+    return res.status(401).json({
+      error: 'Pharmarack session expired or restoring',
+      code: 'NEED_LOGIN',
+      isRefreshing: outcome.isRefreshing || false
+    });
   }
   if (outcome.status === 'connection_error') {
     return res.status(503).json({ error: 'Connection error, please check internet or reconnect', code: 'CONNECTION_ERROR' });

@@ -1641,6 +1641,31 @@ function findChromePath(options) {
   }
   return null;
 }
+function getCommonHeadlessChromiumArgs(additionalArgs = []) {
+  const defaultArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-default-apps",
+    "--disable-component-update",
+    "--disable-background-networking",
+    "--mute-audio",
+    "--renderer-process-limit=1"
+  ];
+  const combined = [...defaultArgs];
+  for (const arg of additionalArgs) {
+    if (!combined.includes(arg)) {
+      combined.push(arg);
+    }
+  }
+  return combined;
+}
 async function copyProfileFolder(src, dest, logPrefix = "[ChromeProfile]") {
   if (!import_fs4.default.existsSync(src)) return;
   await import_fs4.default.promises.mkdir(dest, { recursive: true });
@@ -15026,6 +15051,8 @@ var init_startupSyncCoordinator = __esm({
     StartupSyncCoordinator = class {
       cartLoaded = false;
       syncPending = true;
+      warmUpSettled = false;
+      lastError = null;
       startupTime = Date.now();
       maxTimeoutMs = 15e3;
       resolveCallbacks = [];
@@ -15034,6 +15061,7 @@ var init_startupSyncCoordinator = __esm({
         this.timeoutHandle = setTimeout(() => {
           if (this.syncPending && !this.cartLoaded) {
             console.log("[StartupSyncCoordinator] 15s startup window elapsed. Releasing background scanners.");
+            this.warmUpSettled = true;
             this.releaseWaiters();
           }
         }, this.maxTimeoutMs);
@@ -15045,7 +15073,19 @@ var init_startupSyncCoordinator = __esm({
         if (!this.cartLoaded) {
           this.cartLoaded = true;
           this.syncPending = false;
+          this.warmUpSettled = true;
+          this.lastError = null;
           console.log(`[StartupSyncCoordinator] Pharmarack cart loaded successfully in ${Date.now() - this.startupTime}ms. Releasing scanners.`);
+          this.releaseWaiters();
+        }
+      }
+      /**
+       * Called when boot live-cart warm-up settles with an error, offline state, or skip.
+       */
+      markWarmUpSettled(error) {
+        this.warmUpSettled = true;
+        if (error) this.lastError = error;
+        if (this.syncPending && !this.cartLoaded) {
           this.releaseWaiters();
         }
       }
@@ -15100,7 +15140,9 @@ var init_startupSyncCoordinator = __esm({
           cartLoaded: this.cartLoaded,
           syncPending: this.syncPending && !timedOut,
           elapsedMs: elapsed,
-          timedOut
+          timedOut,
+          warmUpSettled: this.warmUpSettled || this.cartLoaded || timedOut,
+          lastError: this.lastError
         };
       }
     };
@@ -24567,6 +24609,7 @@ AI Pharmacy Team`
                 let ocrText = "";
                 const { Jimp: Jimp10 } = await import("jimp");
                 for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+                  await new Promise((r) => setImmediate(r));
                   const page = await pdfDoc.getPage(pageNum);
                   const viewport = page.getViewport({ scale: 2 });
                   const width = Math.floor(viewport.width);
@@ -27786,6 +27829,8 @@ async function warmupStartupCart() {
     const isOnline = await checkConnectivity2();
     if (!isOnline) {
       console.log("[StartupSync] Offline: skipping boot cart warm-up.");
+      startupCartWarmedUp = true;
+      startupSyncCoordinator.markWarmUpSettled("Network offline");
       return;
     }
     const { distributors, totalItems } = await loadLiveCartCore();
@@ -27794,7 +27839,10 @@ async function warmupStartupCart() {
     startupSyncCoordinator.markCartLoaded();
     console.log(`[StartupSync] Boot cart warm-up complete (${totalItems} item(s) across ${distributors.length} store(s)).`);
   } catch (err) {
-    console.warn("[StartupSync] Boot cart warm-up could not load live cart:", err?.message || err);
+    const msg = err?.message || String(err);
+    console.warn("[StartupSync] Boot cart warm-up could not load live cart:", msg);
+    startupCartWarmedUp = true;
+    startupSyncCoordinator.markWarmUpSettled(msg);
   } finally {
     isWarmingUpCart = false;
   }
@@ -40242,7 +40290,9 @@ var init_aiCameraService = __esm({
        * Designed for batch use (e.g., PDF page OCR in catalog worker).
        */
       async extractTextFromImage(imageBuffer) {
+        await new Promise((r) => setImmediate(r));
         const processedBuffer = await this.preprocess(imageBuffer);
+        await new Promise((r) => setImmediate(r));
         const isONNXAvailable = await onnxOcrService.checkAvailability();
         if (isONNXAvailable) {
           try {
@@ -40254,6 +40304,7 @@ var init_aiCameraService = __esm({
             console.error("[AI Camera] ONNX OCR failed for image, falling back to Tesseract:", err);
           }
         }
+        await new Promise((r) => setImmediate(r));
         if (!this.initialized) {
           await this.initialize();
         }
@@ -43202,18 +43253,11 @@ var init_tokenRefreshScheduler = __esm({
               executablePath: chromePath,
               headless: true,
               userDataDir: mainProfilePath,
-              args: [
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--disable-dev-shm-usage",
-                "--disable-extensions",
-                "--disable-default-apps",
-                "--no-first-run",
-                "--mute-audio",
+              args: getCommonHeadlessChromiumArgs([
                 "--no-zygote",
                 "--js-flags=--max-old-space-size=128",
                 "--window-position=-10000,-10000"
-              ]
+              ])
             });
           } catch (launchErr) {
             console.log("[TokenRefreshScheduler] Main profile is locked. Copying to temp profile...", launchErr.message);
@@ -43225,18 +43269,11 @@ var init_tokenRefreshScheduler = __esm({
               executablePath: chromePath,
               headless: true,
               userDataDir: tempProfilePath,
-              args: [
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--disable-dev-shm-usage",
-                "--disable-extensions",
-                "--disable-default-apps",
-                "--no-first-run",
-                "--mute-audio",
+              args: getCommonHeadlessChromiumArgs([
                 "--no-zygote",
                 "--js-flags=--max-old-space-size=128",
                 "--window-position=-10000,-10000"
-              ]
+              ])
             });
             tempProfilePathToDelete = tempProfilePath;
           }
@@ -44782,40 +44819,27 @@ async function patchWWebJSInternals(pupPage) {
 }
 function launchClientInstance(forceQr) {
   return loadWwebjs().then(({ Client, LocalAuth }) => new Promise((resolve, reject) => {
-    let execPath = "";
-    const paths = [
-      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-      process.env.LOCALAPPDATA ? import_path24.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
-      process.env.PROGRAMFILES ? import_path24.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
-      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      process.env.LOCALAPPDATA ? import_path24.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
-    ].filter(Boolean);
-    for (const p of paths) {
-      if (import_fs25.default.existsSync(p)) {
-        execPath = p;
-        break;
-      }
+    const execPath = findChromePath({ includeEdge: true });
+    if (!execPath) {
+      const err = new Error("Chrome or Edge browser executable not found. Please ensure Google Chrome or Microsoft Edge is installed.");
+      console.error("[WhatsApp]", err.message);
+      setLifecycleProgress("failed", 0, err.message, "BROWSER_NOT_FOUND");
+      reject(err);
+      return;
     }
-    const puppeteerArgs = [
-      "--disable-dev-shm-usage",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-session-crashed-bubble",
-      "--disable-gpu",
-      "--disable-extensions",
-      "--disable-component-update",
-      "--disable-background-networking",
-      "--renderer-process-limit=1",
+    const puppeteerArgs = getCommonHeadlessChromiumArgs([
       "--js-flags=--max-old-space-size=256"
-    ];
+    ]);
     const sessionDir = import_path24.default.join(WWEBJS_AUTH_DIR, "session");
     cleanProfileLockFiles(sessionDir);
     cleanProfileLockFiles(import_path24.default.join(sessionDir, "Default"));
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
-      puppeteer: execPath ? { executablePath: execPath, headless: true, args: puppeteerArgs } : { headless: true, args: puppeteerArgs }
+      puppeteer: {
+        executablePath: execPath,
+        headless: true,
+        args: puppeteerArgs
+      }
     });
     activeClient = client;
     let qrCount = 0;
@@ -44828,7 +44852,9 @@ function launchClientInstance(forceQr) {
       activeClient = null;
       client.destroy().catch(() => {
       });
-      reject(new Error("WhatsApp client initialization timed out (60s) \u2014 Chrome/Edge may be missing or unresponsive."));
+      const watchdogErr = "WhatsApp client initialization timed out (60s) \u2014 Chrome/Edge may be missing or unresponsive.";
+      setLifecycleProgress("failed", 0, watchdogErr, watchdogErr);
+      reject(new Error(watchdogErr));
     }, 6e4);
     const clearInitWatchdog = () => clearTimeout(initWatchdog);
     client.on("qr", async (qr) => {
@@ -46452,6 +46478,7 @@ var init_whatsappClient = __esm({
     init_config();
     init_whatsappBusinessService();
     init_tokenRefreshScheduler();
+    init_chromeBrowser();
     wwebjsPromise = null;
     execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
     UPLOADS_DIR = import_path24.default.resolve(getAppDataDir(), "uploads");
@@ -57432,7 +57459,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.81";
+    APP_VERSION = "0.1.82";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -77202,55 +77229,63 @@ var init_refills = __esm({
         }
         let fulfilledCount = 0;
         const fulfilledIds = [];
-        for (const refill of activeRefills) {
-          const interval = refill.refill_interval_days || 30;
-          const nextDate = /* @__PURE__ */ new Date();
-          nextDate.setDate(nextDate.getDate() + interval);
-          const nextDateStr = toLocalSqlDateTime(nextDate);
-          const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
-          const fulfilledQty = Number(refill.quantity_needed || 3);
-          await db2.run(
-            `INSERT INTO refill_fulfillments (
-          refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-          quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)`,
-            [
-              refill.id,
-              refill.customer_id,
-              refill.patient_name,
-              refill.patient_phone,
-              refill.medicine_id,
-              refill.medicine_name || "Prescribed Medicine",
-              fulfilledQty,
-              cycleDueDate,
-              nextDateStr,
-              fulfilledVia
-            ]
-          );
-          await db2.run(
-            `UPDATE patient_refills 
-         SET last_refill_date = datetime('now'),
-             next_refill_date = ?,
-             stock_verified_override = 0,
-             ordering_triggered = 0,
-             cart_product_code = NULL,
-             is_ready = 0,
-             hold_for_stock = 0,
-             acknowledged = 0,
-             quick_bill_id = NULL,
-             status = 'pending',
-             reminder_status = 'NOT_SENT',
-             reminder_sent_at = NULL,
-             reminder_job_id = NULL,
-             reminder_occurrence_date = NULL,
-             auto_remind = 0,
-             last_collection_reminder_at = NULL,
-             collection_reminder_count = 0
-         WHERE id = ?`,
-            [nextDateStr, refill.id]
-          );
-          fulfilledCount++;
-          fulfilledIds.push(refill.id);
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const refill of activeRefills) {
+            const interval = refill.refill_interval_days || 30;
+            const nextDate = /* @__PURE__ */ new Date();
+            nextDate.setDate(nextDate.getDate() + interval);
+            const nextDateStr = toLocalSqlDateTime(nextDate);
+            const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+            const fulfilledQty = Number(refill.quantity_needed || 3);
+            await db2.run(
+              `INSERT INTO refill_fulfillments (
+            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+            quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)`,
+              [
+                refill.id,
+                refill.customer_id,
+                refill.patient_name,
+                refill.patient_phone,
+                refill.medicine_id,
+                refill.medicine_name || "Prescribed Medicine",
+                fulfilledQty,
+                cycleDueDate,
+                nextDateStr,
+                fulfilledVia
+              ]
+            );
+            await db2.run(
+              `UPDATE patient_refills 
+           SET last_refill_date = datetime('now'),
+               next_refill_date = ?,
+               stock_verified_override = 0,
+               ordering_triggered = 0,
+               cart_product_code = NULL,
+               is_ready = 0,
+               hold_for_stock = 0,
+               acknowledged = 0,
+               quick_bill_id = NULL,
+               status = 'pending',
+               reminder_status = 'NOT_SENT',
+               reminder_sent_at = NULL,
+               reminder_job_id = NULL,
+               reminder_occurrence_date = NULL,
+               auto_remind = 0,
+               last_collection_reminder_at = NULL,
+               collection_reminder_count = 0
+           WHERE id = ?`,
+              [nextDateStr, refill.id]
+            );
+            fulfilledCount++;
+            fulfilledIds.push(refill.id);
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK").catch(() => {
+          });
+          throw txErr;
         }
         await purgePendingCustomerReminders(db2, {
           phone: rawPhone || void 0,
@@ -96524,7 +96559,7 @@ async function cancelPendingWhatsAppForOrder(db2, order) {
   } catch (_) {
   }
 }
-var import_express42, import_path54, import_fs59, router40, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
+var import_express42, import_path54, import_fs59, router40, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, handleBatchStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
@@ -97759,29 +97794,27 @@ ${upiUri}
             }
           }
         }
-        let cartAdjustment = null;
         if (newStatus === "Cancelled" || newStatus === "Ready") {
-          try {
-            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-            cartAdjustment = await Promise.race([
-              adjustSpecialOrderInLiveCart2({
+          setImmediate(async () => {
+            try {
+              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+              await adjustSpecialOrderInLiveCart2({
                 product: newProduct || existing.product,
                 qty: newQty || existing.qty,
                 distributor: newDistributor || existing.pharmarack_distributor,
                 productCode: newProductCode || existing.pharmarack_product_code,
                 storeId: newStoreId || existing.pharmarack_store_id
-              }),
-              new Promise((r) => setTimeout(() => r(null), 1500))
-            ]);
-            eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
-            eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
-            eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
-          } catch (cartErr) {
-            console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
-          }
+              });
+              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
+              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+              eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
+            } catch (cartErr) {
+              console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
+            }
+          });
         }
         broadcastOrdersChanged2();
-        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, payment_qr_sent: paymentQrSent });
+        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, payment_qr_sent: paymentQrSent });
       } catch (err) {
         console.error("Update order error:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -97793,7 +97826,7 @@ ${upiUri}
       if (!status) {
         return res.status(400).json({ error: "status is required" });
       }
-      if (status === "Completed" || status === "completed") {
+      if (typeof status === "string" && (status.trim().toLowerCase() === "completed" || status.trim().toLowerCase() === "fulfilled")) {
         status = "Fulfilled";
       }
       try {
@@ -97843,34 +97876,168 @@ ${upiUri}
           ).catch(() => {
           });
         }
-        let cartAdjustment = null;
         if (status === "Cancelled" || status === "Ready") {
-          try {
-            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-            cartAdjustment = await Promise.race([
-              adjustSpecialOrderInLiveCart2({
+          setImmediate(async () => {
+            try {
+              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+              await adjustSpecialOrderInLiveCart2({
                 product: existing.product,
                 qty: existing.qty,
                 distributor: existing.pharmarack_distributor,
                 productCode: existing.pharmarack_product_code,
                 storeId: existing.pharmarack_store_id
-              }),
-              new Promise((r) => setTimeout(() => r(null), 1500))
-            ]);
-            eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
-            eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
-            eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
-          } catch (cartErr) {
-            console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
-          }
+              });
+              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
+              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+              eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
+            } catch (cartErr) {
+              console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
+            }
+          });
         }
         broadcastOrdersChanged2({ action: "update_status", orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
-        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, auto_remind: newAutoRemind });
+        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, auto_remind: newAutoRemind });
       } catch (err) {
         console.error("Update order status error:", err);
         res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
       }
     };
+    handleBatchStatusUpdate = async (req, res) => {
+      const rawIds = req.body?.order_ids || req.body?.ids;
+      let { status, resend, skipWhatsApp, sendWhatsApp } = req.body;
+      if (!rawIds || !Array.isArray(rawIds) || rawIds.length === 0) {
+        return res.status(400).json({ error: "order_ids array is required" });
+      }
+      if (!status) {
+        return res.status(400).json({ error: "status is required" });
+      }
+      if (typeof status === "string" && (status.trim().toLowerCase() === "completed" || status.trim().toLowerCase() === "fulfilled")) {
+        status = "Fulfilled";
+      }
+      const orderIds = rawIds.map(Number).filter((n) => !isNaN(n));
+      if (orderIds.length === 0) {
+        return res.status(400).json({ error: "Valid numeric order_ids required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const placeholders = orderIds.map(() => "?").join(",");
+        const orders = await db2.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, orderIds);
+        if (!orders || orders.length === 0) {
+          return res.status(404).json({ error: "No matching orders found" });
+        }
+        const isResend = Boolean(resend);
+        const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
+        let totalWaQueued = 0;
+        if (status === "Ready" && !shouldSkipWa) {
+          for (const ord of orders) {
+            if (Number(ord.notified) !== 1 || isResend) {
+              try {
+                const queued = await enqueueArrivalWhatsApp(
+                  db2,
+                  ord,
+                  { skipDedupe: isResend || Number(ord.notified) === 1, skipWhatsApp: shouldSkipWa }
+                );
+                if (queued) totalWaQueued++;
+              } catch (waErr) {
+                console.error("[Orders] Failed to queue arrival WhatsApp on batch status Ready:", waErr?.message || waErr);
+              }
+            }
+          }
+        }
+        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : status === "Ready" ? 1 : null;
+        const lastRemindAt = status === "Ready" ? (/* @__PURE__ */ new Date()).toISOString() : null;
+        if (status === "Fulfilled") {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ?, notified = 1, auto_remind = 0 
+         WHERE id IN (${placeholders})`,
+            [status, ...orderIds]
+          );
+        } else if (status === "Cancelled") {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ?, auto_remind = 0 
+         WHERE id IN (${placeholders})`,
+            [status, ...orderIds]
+          );
+        } else if (status === "Ready") {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ?, auto_remind = 1, last_collection_reminder_at = ? 
+         WHERE id IN (${placeholders})`,
+            [status, lastRemindAt, ...orderIds]
+          );
+        } else {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ? 
+         WHERE id IN (${placeholders})`,
+            [status, ...orderIds]
+          );
+        }
+        if (status === "Cancelled" || status === "Fulfilled") {
+          for (const ord of orders) {
+            await cancelPendingWhatsAppForOrder(db2, ord);
+            await purgePendingCustomerReminders(db2, {
+              phone: ord.phone,
+              specialOrderIds: [Number(ord.id)],
+              medicineNames: ord.product ? [ord.product] : void 0
+            });
+          }
+        }
+        if (status === "Fulfilled") {
+          const strIds = orderIds.map(String);
+          const strPlaceholders = strIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE automation_notifications 
+         SET lifecycle_status = 'sent', status = 'sent_manually' 
+         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id IN (${strPlaceholders}))
+           AND reference_id IN (${strPlaceholders})`,
+            [...strIds, ...strIds]
+          ).catch(() => {
+          });
+        }
+        if (status === "Cancelled" || status === "Ready") {
+          setImmediate(async () => {
+            try {
+              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+              for (const ord of orders) {
+                try {
+                  await adjustSpecialOrderInLiveCart2({
+                    product: ord.product,
+                    qty: ord.qty,
+                    distributor: ord.pharmarack_distributor,
+                    productCode: ord.pharmarack_product_code,
+                    storeId: ord.pharmarack_store_id
+                  });
+                } catch (_) {
+                }
+              }
+              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_batch_${status.toLowerCase()}`, ids: orderIds });
+              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+              eventService.broadcast("refresh-special-orders", { at: Date.now() });
+            } catch (bgErr) {
+              console.warn("[Orders] Background batch live cart adjustment note:", bgErr);
+            }
+          });
+        }
+        broadcastOrdersChanged2({ action: "batch_update_status", orderIds, patch: { status, auto_remind: newAutoRemind } });
+        res.json({
+          success: true,
+          message: `Successfully updated ${orderIds.length} orders to ${status}`,
+          count: orderIds.length,
+          status,
+          whatsapp_queued: totalWaQueued > 0,
+          queued_count: totalWaQueued
+        });
+      } catch (err) {
+        console.error("Batch update order status error:", err);
+        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
+      }
+    };
+    router40.post("/batch-status", handleBatchStatusUpdate);
+    router40.put("/batch-status", handleBatchStatusUpdate);
     router40.post("/:id/status", handleStatusUpdate);
     router40.put("/:id/status", handleStatusUpdate);
     router40.post("/:id/auto-remind", async (req, res) => {

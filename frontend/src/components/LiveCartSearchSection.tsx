@@ -28,8 +28,8 @@ export interface SuggestionMedicine {
   cartTotalAmount?: number;
 }
 
-type LocalApiError = { response?: { data?: { error?: string; details?: string } }; message?: string };
-type LocalPrSearchFallback = { isError: boolean; message: string };
+type LocalApiError = { response?: { data?: { error?: string; details?: string; code?: string; isRefreshing?: boolean } }; message?: string };
+type LocalPrSearchFallback = { isError: boolean; message: string; isRefreshing?: boolean };
 type LocalPrSearchOutcome = LocalPharmarackSearchItem[] | LocalPrSearchFallback;
 
 interface LocalPharmarackSearchItem {
@@ -242,8 +242,13 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
         const prData = await api.searchPharmarack(cleanQuery, undefined, undefined, controller.signal).catch((err: unknown): LocalPrSearchOutcome | null => {
           if (controller.signal.aborted) return null;
           const apiErr = err as LocalApiError;
+          const code = apiErr?.response?.data?.code;
+          const isRefreshing = Boolean(apiErr?.response?.data?.isRefreshing);
+          if (code === 'NEED_LOGIN' && isRefreshing) {
+            return { isError: true, isRefreshing: true, message: 'Restoring Pharmarack session (ready in a few seconds)...' };
+          }
           const errMsg = apiErr?.response?.data?.error || 'Connection error, please check internet or reconnect';
-          return { isError: true, message: errMsg };
+          return { isError: true, isRefreshing: false, message: errMsg };
         }) as LocalPrSearchOutcome | null;
 
         if (searchAbortControllerRef.current !== controller || controller.signal.aborted || isSelectingRef.current) return;
@@ -365,8 +370,9 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
             });
           }
         } else if (prData && (prData as LocalPrSearchFallback).isError) {
+          const fallback = prData as LocalPrSearchFallback;
           mergedList.push({
-            medicine_name: `⚠️ ${(prData as LocalPrSearchFallback).message}`,
+            medicine_name: fallback.isRefreshing ? `🔄 ${fallback.message}` : `⚠️ ${fallback.message}`,
             isPharmarack: true,
             isErrorMessage: true
           });

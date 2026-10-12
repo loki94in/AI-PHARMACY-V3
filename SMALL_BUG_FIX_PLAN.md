@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P2-88 — Sequentialize cold-boot pipeline & honest buffer ceilings (40s WhatsApp / 70s Pharmarack)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | On cold boot, medicine searches (e.g. `fluka 150`) and "Add to Live Cart" returned 0 items with the error toast `No mapped distributor has product` for the first 1.0 to 1.5 minutes. The header progress bar showed a fake `All services ready` flash at T+2s and prematurely hid while services were still unverified. After ~1.5 minutes, searches suddenly started working fast (235ms). Reported 2026-10-12. |
+| **Root cause** | (1) `src/server.ts` had hardcoded `setTimeout(..., 30_000)` on `tokenRefreshScheduler.start()` and `setTimeout(..., 37_000 + 8_000 = 45_000)` on WhatsApp boot restore, artificially delaying verification by 30s and 45s. (2) `src/routes/serviceStatus.ts` marked `pharmarackConnected = true` solely because an old token string existed in SQLite (`token.length > 20`), without verifying with Pharmarack API. (3) `frontend/src/components/Layout.tsx` saw fake ready signals at T+1.5s, flashed "All services ready", and hid the progress bar. (4) Searches performed with the unverified/expired token received 401 Unauthorized, fell through to empty offline results, and falsely toasted `No mapped distributor has product`. |
+| **How it was fixed** | (1) In `src/server.ts`, moved Pharmarack REST probe to T+600ms (verifying active token in ~300ms) and WhatsApp restore to T+1500ms (protecting initial UI paint while eliminating the 45s delay). (2) In `src/routes/serviceStatus.ts`, required proven heartbeat (`lastHeartbeatAt !== null` or `sessionStatus === 'active'`) and not expired for `pharmarackConnected = true`. (3) In `src/routes/pharmarack.ts`, intercepted 401/403 responses to trigger background single-flight `executeRefresh()` and return `isRefreshing: true` instead of false empty results. (4) In `Layout.tsx`, added dedicated 40s (WhatsApp) and 70s (Pharmarack) buffer ceilings with dynamic early unlock (collapses as soon as verified). (5) In `LiveCartSearchSection.tsx`, formatted restoring sessions with `🔄 Restoring Pharmarack session (ready in a few seconds)...` and suppressed false "no distributor" toasts. |
+| **Priority** | P2 |
+| **What not to touch** | POS billing flow, SQLite schema migration paths, and No-GPU Electron rendering contract. |
+| **Verified by** | `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` (built in 42.71s, 0 errors); live search `fluka 150` returning 142 items in 235ms; knowledge graph synchronized via `node scripts/quick-update.mjs`. |
+
 ### [Fixed] P2-87 — Quick Assist order fulfillment & refill cycle 15000ms timeout in installed app
 
 | Field | Content |

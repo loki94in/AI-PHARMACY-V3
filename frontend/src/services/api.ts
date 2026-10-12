@@ -1948,7 +1948,17 @@ export const api = {
     timestamp: number;
     services: {
       internet: { connected: boolean };
-      pharmarack: { connected: boolean; hasToken: boolean; isRefreshing: boolean; lastCapturedAt: number | null; lastError: string | null; mode: string };
+      pharmarack: {
+        connected: boolean;
+        isVerifying?: boolean;
+        hasToken: boolean;
+        isRefreshing: boolean;
+        lastCapturedAt: number | null;
+        lastHeartbeatAt?: number | null;
+        lastError: string | null;
+        sessionStatus?: string;
+        mode: string;
+      };
       whatsapp: { connected: boolean; initializing: boolean; isSyncing: boolean; pendingQueueCount: number; hasQr: boolean; sleeping?: boolean; readiness?: WhatsAppReadinessState };
     };
   }>('/system/services-status').then(res => res.data),

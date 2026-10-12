@@ -11,11 +11,22 @@ router.get('/services-status', async (_req, res) => {
     const db = await dbManager.getConnection();
 
     // 1. Check Pharmarack Token status
-    const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-    const token = tokenRow?.value || '';
+    const prRows: Array<{ key: string; value: string }> = await db.all(
+      "SELECT key, value FROM app_settings WHERE key IN ('pharmarack_session_token', 'pharmarack_session_status')"
+    );
+    const prMap: Record<string, string> = {};
+    for (const r of prRows) prMap[r.key] = r.value;
+
+    const token = prMap['pharmarack_session_token'] || '';
+    const sessionStatus = prMap['pharmarack_session_status'] || 'disconnected';
     const schedulerStatus = tokenRefreshScheduler.getStatus();
 
-    const pharmarackConnected = !!token && token.length > 20;
+    // Truthful connected check: Token must exist AND not be explicitly expired,
+    // AND must have had a successful heartbeat OR verified active status.
+    const isProbedAlive = schedulerStatus.lastHeartbeatAt !== null || sessionStatus === 'active';
+    const isExplicitlyExpired = sessionStatus === 'expired' || sessionStatus === 'disconnected';
+    const pharmarackConnected = !!token && token.length > 20 && isProbedAlive && !isExplicitlyExpired && !schedulerStatus.isRefreshing;
+    const pharmarackVerifying = schedulerStatus.isRefreshing || (!!token && token.length > 20 && !isProbedAlive && !isExplicitlyExpired);
     
     // 2. Check WhatsApp status
     const waStatus = await getWhatsAppStatus();
@@ -48,10 +59,13 @@ router.get('/services-status', async (_req, res) => {
         },
         pharmarack: {
           connected: pharmarackConnected,
+          isVerifying: pharmarackVerifying,
           hasToken: !!token,
           isRefreshing: schedulerStatus.isRefreshing,
           lastCapturedAt: schedulerStatus.lastCapturedAt,
+          lastHeartbeatAt: schedulerStatus.lastHeartbeatAt,
           lastError: schedulerStatus.lastError,
+          sessionStatus,
           mode: 'Live'
         },
         whatsapp: {

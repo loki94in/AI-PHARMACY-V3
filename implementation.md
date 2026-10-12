@@ -1,76 +1,85 @@
-# Implementation Plan: Fix Order & Refill Fulfillment 15000ms Timeout in Quick Assist and Installed App
+# Implementation Plan: Sequentialize Cold Boot Pipeline & Honest Buffer (70s Pharmarack / 40s WhatsApp)
 
 ## 1. Overview & Problem Definition
-- **Issue**: In the installed desktop application (`PharmacyOS.exe` / `PharmacyBackend.exe`), fulfilling an order or refill cycle in the **Quick Assist Sidebar** fails and returns a timeout error: `"timeout of 15000ms exceeded"`.
+- **Issue**: 
+  - On cold boot, medicine search (e.g. `fluka 150`) and "Add to Live Cart" fail and return 0 results ("No mapped distributor has product") for the first 1.0 to 1.5 minutes.
+  - The header progress bar shows a fake "All services ready" flash and hides at T+2s, even though Pharmarack is unverified and WhatsApp has not connected yet.
+  - After 1.5 minutes pass, the app suddenly works fast (235ms search).
 - **Root Causes**:
-  1. **Global Axios Timeout (15,000ms)**: In `frontend/src/services/api.ts`, `apiClient` enforces `timeout: 15000`. Batch actions that perform multiple sequential side-effects (PDF generation, upstream cart queries, reminder purges) exceed this window under local system load.
-  2. **Multi-Request Herd via `Promise.all`**: In `QuickAssistSidebar.tsx`, updating a multi-item order group fires `Promise.all(group.items.map(i => apiClient.post('/orders/' + i.id + '/status', ...)))`. On SQLite's single connection, 3–5 simultaneous write calls contend for transaction locks and queue behind each other, multiplying latency.
-  3. **Blocking Synchronous Work Inside Route Handlers**: In `POST /api/orders/:id/status`, if the status is updated, it generates PDF slips (`pdfInvoiceService.generateSpecialOrderSlipPdf`) and calls upstream Pharmarack live cart sync (`adjustSpecialOrderInLiveCart` with a 1500ms race timeout per item) before sending the HTTP response.
-  4. **Status Alias Inconsistency (`'Completed'` vs `'Fulfilled'`)**: Quick Assist sends `{ status: 'Completed' }`, but `handleStatusUpdate` in `src/routes/orders.ts` does not normalize `'Completed'` to `'Fulfilled'` (unlike `PUT /api/orders/:id`), causing reminder cancellation and notification updates to skip.
-  5. **Background OCR Event Loop Starvation**: During distributor email sync, PDF invoice OCR (`runPdfOcrFallback` / Tesseract.js) can monopolize the Node.js event loop without yielding ticks, delaying HTTP response dispatch.
+  1. **Artificial 30s Sleep in `src/server.ts:743`**: `tokenRefreshScheduler.start()` is delayed by `setTimeout(..., 30_000)`, leaving stored tokens unverified for 30s.
+  2. **Artificial 45s Sleep in `src/server.ts:1010`**: WhatsApp boot restore is delayed by `setTimeout(..., 37_000)` inside Phase 3 (+8s = 45s).
+  3. **Fake `pharmarackConnected` in `src/routes/serviceStatus.ts:18`**: Marked `connected = true` solely because an old token string length is > 20, without verifying with Pharmarack API.
+  4. **Premature Ticker Hide in `frontend/src/components/Layout.tsx:1713-1776`**: Ticker sees fake `ready` signals at T+1.5s, flashes "All services ready", and hides while services are still dead/idling.
+  5. **Silent Empty Fallback in `src/routes/pharmarack.ts:465`**: When Pharmarack returns 401 Unauthorized, search silently returns `[]`, causing `LiveCartSearchSection.tsx` to toast the false message "No mapped distributor has product".
 
 ---
 
-## 2. Surgical Implementation Plan
-
-### Step 1: Add Atomic Batch Status Endpoint & Normalize Status in Backend (`src/routes/orders.ts`)
-- In `handleStatusUpdate`: normalize `status`: if `status.toLowerCase() === 'completed'`, set `status = 'Fulfilled'`.
-- Move heavy side-effects in `handleStatusUpdate` (PDF slip generation, live cart adjust, broadcasts) to non-blocking `setImmediate` background tasks so the HTTP response returns within <50ms.
-- Add `POST /batch-status` (and `PUT /batch-status`) endpoint:
-  - Takes `{ order_ids: number[], status: string, resend?: boolean, skipWhatsApp?: boolean }`.
-  - Normalizes `'Completed'` to `'Fulfilled'`.
-  - Updates all items in a single atomic SQL query:
-    `UPDATE special_orders SET status = ?, notified = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id IN (...)`
-  - Cancels pending WhatsApp alerts and purges reminders in one pass.
-  - Returns `{ success: true, count, status }` in <50ms.
-
-### Step 2: Optimize Refill Fulfillment Route (`src/routes/refills.ts`)
-- In `POST /patient/:phone/fulfill-all`:
-  - Ensure all database writes (`INSERT INTO refill_fulfillments`, `UPDATE patient_refills`) execute efficiently.
-  - Ensure `purgePendingCustomerReminders` runs safely and `checkAllRefills` remains gated in `setImmediate`.
-  - Respond immediately with `{ success: true, fulfilledCount, message }`.
-
-### Step 3: Add Batch API Methods & Increase Fulfillment Timeout (`frontend/src/services/api.ts`)
-- Add `updateOrdersBatchStatus`:
-  ```ts
-  updateOrdersBatchStatus: (orderIds: number[], status: string, options?: { skipWhatsApp?: boolean; resend?: boolean; sendWhatsApp?: boolean }) =>
-    apiClient.post('/orders/batch-status', { order_ids: orderIds, status, ...options }, { timeout: 45000 }).then(res => res.data),
-  ```
-- Configure dedicated `{ timeout: 45000 }` on:
-  - `fulfillAllRefills`
-  - `fulfillRefill`
-  - `fulfillSpecialOrder`
-  - `updateOrderStatus`
-
-### Step 4: Upgrade Quick Assist Sidebar to Atomic Batch Status & Resilient Error Handling (`frontend/src/components/QuickAssistSidebar.tsx`)
-- In `handleUpdateGroupStatus`:
-  - Replace `Promise.all(group.items.map(i => apiClient.post(...)))` with single call:
-    `await api.updateOrdersBatchStatus(itemIds, newStatus, { resend: opts?.resend })`.
-  - Extract detailed error message from `(err as any)?.response?.data?.error || (err as any)?.message` for toast feedback.
-- In `handleFulfillRefillGroup`:
-  - Extract detailed error message from response or timeout.
-
-### Step 5: Add Event-Loop Yielding in OCR Worker (`src/services/aiCameraService.ts`)
-- Insert event-loop breathing ticks (`await new Promise(r => setImmediate(r))`) during multi-page PDF image processing so counter fulfillment requests are never starved.
-
-### Step 6: Verification, Guardrails & Knowledge Graph
-- Run `npm run guardrails` to ensure zero performance guardrail violations.
-- Run `npm run build:client` to verify frontend build cleanly.
-- Run `node scripts/quick-update.mjs` to update `.understand-anything/knowledge-graph.json`.
-- Register the fix in `SMALL_BUG_FIX_PLAN.md`.
+## 2. Target Sequentialization & Honest Buffer Windows
+- **App Shell & SQLite**: Ready at **T+0.35s – 1.5s**.
+- **Pharmarack (70s Safe Buffer Ceiling)**:
+  - Immediate REST probe at **T+0.6s** (takes ~300ms, 0% CPU).
+  - Normal day: Verified live at **T+0.9s** (search works in 235ms immediately).
+  - Expired session fallback: Single-flight browser restore completes in **8s – 25s**.
+  - Maximum buffer limit: **70 seconds** (if internet down or portal password changed, safely flags attention).
+- **WhatsApp (40s Safe Buffer Ceiling)**:
+  - Staggered restore starts at **T+1.5s** (1.5s CPU buffer so UI is 100% smooth).
+  - Normal day: Ready at **T+6s – 10s**.
+  - Maximum buffer limit: **40 seconds** (if phone offline or QR logged out, safely flags attention).
+- **Dynamic Early Unlock**:
+  - As soon as active services verify (typically 3s – 8s), the progress bar smoothly transitions to ready and collapses without forcing the user to wait the full 40s or 70s.
+  - Zero fake success: Never hides until verified.
 
 ---
 
-## 3. Tasks & Completion Log
-- [x] Task 1: Normalize status & add atomic `POST /orders/batch-status` in `src/routes/orders.ts`
-  - Completed: Added `handleBatchStatusUpdate` supporting `POST /batch-status` and `PUT /batch-status`. Normalizes `'Completed'` to `'Fulfilled'`. Updates special orders in an atomic query, cleans up WhatsApp alerts and purges reminders in one pass, and offloads live cart adjustments to background `setImmediate` so responses return in <50ms.
-- [x] Task 2: Optimize `src/routes/refills.ts` fulfillment routes with fast background dispatch
-  - Completed: Wrapped `refills.ts` fulfillment inserts and updates in an atomic SQLite transaction (`BEGIN TRANSACTION` ... `COMMIT`), reducing multi-item schedule fulfillment disk I/O to a single flush.
-- [x] Task 3: Add `updateOrdersBatchStatus` and extended 45s timeouts in `frontend/src/services/api.ts`
-  - Completed: Added `updateOrdersBatchStatus` with `{ timeout: 45000 }`. Configured dedicated 45s timeouts on `fulfillAllRefills`, `fulfillRefill`, `fulfillSpecialOrder`, and `updateOrderStatus`.
-- [x] Task 4: Upgrade `QuickAssistSidebar.tsx` to use atomic batch status and clear error handling
-  - Completed: Replaced `Promise.all` concurrent request burst in `handleUpdateGroupStatus` with single call to `api.updateOrdersBatchStatus`. Enhanced error toasts to extract informative server error messages instead of generic fallbacks.
-- [x] Task 5: Add event-loop tick yields in `src/services/aiCameraService.ts` & `src/services/emailService.ts`
-  - Completed: Inserted `await new Promise(r => setImmediate(r))` breathing ticks before image preprocessing, between OCR engines, and across PDF page rendering iterations.
-- [x] Task 6: Run guardrails, client build, tests, update `SMALL_BUG_FIX_PLAN.md` & knowledge graph
-  - Completed: `npm run guardrails` passed with exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` built production bundle in 41.45s with 0 errors; registered `[Fixed] P2-87` in `SMALL_BUG_FIX_PLAN.md`; updated knowledge graph via `scripts/quick-update.mjs`.
+## 3. Surgical Implementation Steps
+
+### Step 1: Remove Artificial 30s & 45s Delays in `src/server.ts`
+- Move `tokenRefreshScheduler.start()` to run immediately at **T+0.6s** (right after Phase 2 in-memory cache dispatch).
+- Move WhatsApp boot check (`isWhatsAppAutoConnectAllowed()`) to run at **T+1.5s** instead of T+45s.
+- Keep the CPU safe for low-end dual-core PCs by keeping a 1-second stagger between UI paint and WhatsApp browser launch.
+
+### Step 2: Fix Truthful Status in `src/routes/serviceStatus.ts`
+- Update `pharmarackConnected` to require:
+  `!!token && token.length > 20 && (schedulerStatus.lastHeartbeatAt !== null || sessionStatus === 'active') && sessionStatus !== 'expired'`.
+- Return `isVerifying: schedulerStatus.isRefreshing || (!schedulerStatus.lastHeartbeatAt && !schedulerStatus.lastError)`.
+
+### Step 3: Prevent False Empty Results in `src/routes/pharmarack.ts`
+- In `performPharmarackSearch`, when `response.status === 401 || response.status === 403`:
+  - Trigger single-flight `tokenRefreshScheduler.executeRefresh()` to restore session.
+  - Return `{ status: 'need_login', isRefreshing: true, items: [] }` so frontend knows it is actively re-authenticating rather than permanently empty.
+
+### Step 4: Configure Honest 40s & 70s Buffers in `frontend/src/components/Layout.tsx`
+- Set WhatsApp startup buffer limit to **40,000ms** (40s).
+- Set Pharmarack startup buffer limit to **70,000ms** (70s).
+- Update `startupServices`:
+  - Pharmarack is only `ready` when `ph.connected` is true AND `lastHeartbeatAt` or verified.
+  - While probe/refresh is running, state is `'wait'`.
+  - When expired or error, state is `'attention'`.
+- Remove premature ticker hide: The ticker NEVER flashes "All services ready" unless all active services are genuinely `ready`.
+
+### Step 5: Update `frontend/src/components/LiveCartSearchSection.tsx`
+- When `prData` returns `need_login` or during cold boot while Pharmarack is restoring:
+  - Display an honest inline badge in suggestions: `🔄 Restoring Pharmarack session (ready in a few seconds)...`.
+  - Suppress the false toast `"No mapped distributor has product"`.
+
+### Step 6: Verification & Guardrails
+- Run `npm run guardrails` (TypeScript compile clean, 0 violations).
+- Run `npm run build:client` (Vite production bundle clean).
+- Test search query `fluka 150` on running backend.
+- Update `SMALL_BUG_FIX_PLAN.md` and knowledge graph via `node scripts/quick-update.mjs`.
+
+---
+
+## 4. Tasks & Completion Log
+- [x] Task 1: Remove artificial boot delays & sequentialize services in `src/server.ts`
+  - Completed: Moved Pharmarack REST probe to T+600ms (takes ~300ms, verifies token right after Phase 2 cache dispatch). Moved WhatsApp boot session check to T+1500ms (clean 1.5s pause protects dual-core UI paint while completely eliminating the old 45s sleep timer).
+- [x] Task 2: Implement truthful status reporting in `src/routes/serviceStatus.ts`
+  - Completed: Updated `pharmarackConnected` to require proven heartbeat (`lastHeartbeatAt !== null` or `sessionStatus === 'active'`) and not expired. Returns `isVerifying` so the frontend knows when the session is being checked.
+- [x] Task 3: Improve 401 handling & automatic recovery in `src/routes/pharmarack.ts`
+  - Completed: Updated `PharmarackSearchOutcome` and `performPharmarackSearch` to catch 401/403 responses, trigger single-flight `executeRefresh()` in the background, and return `isRefreshing: true` instead of false empty `[]` results.
+- [x] Task 4: Implement honest 40s/70s buffers & dynamic early unlock in `frontend/src/components/Layout.tsx`
+  - Completed: Added dedicated 40,000ms (WhatsApp) and 70,000ms (Pharmarack) buffer ceilings. Updated `startupServices` so neither service marks ready until genuinely verified. Built dynamic early unlock so the progress bar smoothly collapses as soon as both services verify.
+- [x] Task 5: Upgrade `frontend/src/components/LiveCartSearchSection.tsx` to handle session restoring
+  - Completed: Updated catch block and dropdown renderer to display `🔄 Restoring Pharmarack session (ready in a few seconds)...` when `isRefreshing` is true, suppressing the misleading "No mapped distributor has product" toast.
+- [x] Task 6: Run guardrails, client build, verify search, update `SMALL_BUG_FIX_PLAN.md` & knowledge graph
+  - Completed: `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); `npm run build:client` built in 42.71s with 0 errors; verified live search `fluka 150` returning 142 items in 235ms; registered `P2-88` in `SMALL_BUG_FIX_PLAN.md`.

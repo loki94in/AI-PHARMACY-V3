@@ -1534,7 +1534,17 @@ const Topbar = memo(({
   }, []);
 
   const [servicesStatus, setServicesStatus] = useState<{
-    pharmarack: { connected: boolean; isRefreshing: boolean; lastError: string | null };
+    pharmarack: {
+      connected: boolean;
+      hasToken?: boolean;
+      isVerifying?: boolean;
+      isRefreshing: boolean;
+      lastCapturedAt?: number | null;
+      lastHeartbeatAt?: number | null;
+      lastError: string | null;
+      sessionStatus?: string;
+      mode?: string;
+    };
     whatsapp: { connected: boolean; initializing: boolean; isSyncing: boolean; pendingQueueCount: number; sleeping?: boolean; readiness?: WhatsAppReadinessState };
     gaters?: { automation: boolean; whatsapp: boolean; telegram: boolean; email: boolean };
   } | null>(null);
@@ -1686,6 +1696,8 @@ const Topbar = memo(({
   const [startupCartLoaded, setStartupCartLoaded] = useState(false);
   const [startupCartSettled, setStartupCartSettled] = useState(false);
   const [startupCartError, setStartupCartError] = useState<string | null>(null);
+  const [waBufferExpired, setWaBufferExpired] = useState(false);
+  const [phBufferExpired, setPhBufferExpired] = useState(false);
   const [startupGaveUp, setStartupGaveUp] = useState(false);
   const [startupPhase, setStartupPhase] = useState<'running' | 'flash' | 'done'>('running');
   const sawStartupWaitRef = useRef(false);
@@ -1705,33 +1717,49 @@ const Topbar = memo(({
     if (wa?.connected || wa?.sleeping || waReadiness?.isReady || waReadiness?.isSleeping) {
       list.push({ label: 'WhatsApp', state: 'ready' });
     } else if (wa?.initializing || waReadiness?.isInitializing) {
-      list.push({ label: 'WhatsApp', state: startupGaveUp ? 'attention' : 'wait' });
+      list.push({ label: 'WhatsApp', state: (waBufferExpired || startupGaveUp) ? 'attention' : 'wait' });
     } else if (waSession) {
-      list.push({ label: 'WhatsApp', state: (waReadiness?.lastError || startupGaveUp) ? 'attention' : 'wait' });
+      list.push({ label: 'WhatsApp', state: (waReadiness?.lastError || waBufferExpired || startupGaveUp) ? 'attention' : 'wait' });
     } // never connected: not part of startup
+
     const ph = servicesStatus.pharmarack;
-    if (ph?.connected) {
-      if (startupCartLoaded) {
-        list.push({ label: 'Pharmarack', state: 'ready' });
-      } else if (startupCartSettled || startupGaveUp) {
-        list.push({ label: 'Pharmarack', state: (startupCartError || ph.lastError) ? 'attention' : 'ready' });
+    const phHasSetup = Boolean(ph?.hasToken || ph?.connected);
+    if (phHasSetup) {
+      if (ph?.connected) {
+        if (startupCartLoaded) {
+          list.push({ label: 'Pharmarack', state: 'ready' });
+        } else if (startupCartSettled || phBufferExpired || startupGaveUp) {
+          list.push({ label: 'Pharmarack', state: (startupCartError || ph.lastError) ? 'attention' : 'ready' });
+        } else {
+          list.push({ label: 'Pharmarack', state: !ph.isRefreshing ? 'ready' : 'wait' });
+        }
+      } else if (ph?.isVerifying || ph?.isRefreshing) {
+        list.push({ label: 'Pharmarack', state: (phBufferExpired || startupGaveUp) ? 'attention' : 'wait' });
+      } else if (ph?.lastError || startupCartError || ph?.sessionStatus === 'expired' || phBufferExpired || startupGaveUp) {
+        list.push({ label: 'Pharmarack', state: 'attention' });
       } else {
-        list.push({ label: 'Pharmarack', state: !ph.isRefreshing ? 'ready' : 'wait' });
+        list.push({ label: 'Pharmarack', state: 'wait' });
       }
     } else if (ph?.lastError || startupCartError) {
       list.push({ label: 'Pharmarack', state: 'attention' });
     } // not logged in and no error: never set up
     return list;
-  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded, startupCartSettled, startupCartError, startupGaveUp]);
+  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded, startupCartSettled, startupCartError, waBufferExpired, phBufferExpired, startupGaveUp]);
 
   const startupReady = startupServices.every(s => s.state === 'ready');
   const startupAttention = startupServices.some(s => s.state === 'attention');
   const startupSettled = startupServices.every(s => s.state === 'ready' || s.state === 'attention');
 
-  // Safety net only: after 3 min the wording changes to "taking longer"; the item keeps updating.
+  // Dedicated buffer ceilings: WhatsApp (40s buffer), Pharmarack (70s buffer), Overall safety (180s)
   useEffect(() => {
-    const t = setTimeout(() => setStartupGaveUp(true), 180_000);
-    return () => clearTimeout(t);
+    const tWa = setTimeout(() => setWaBufferExpired(true), 40_000);
+    const tPh = setTimeout(() => setPhBufferExpired(true), 70_000);
+    const tAll = setTimeout(() => setStartupGaveUp(true), 180_000);
+    return () => {
+      clearTimeout(tWa);
+      clearTimeout(tPh);
+      clearTimeout(tAll);
+    };
   }, []);
 
   // Bounded startup poll (chained timeout, visible tab only, stops at first all-ready): the boot
@@ -1980,7 +2008,7 @@ const Topbar = memo(({
       const mark = (s: 'ready' | 'wait' | 'attention') => (s === 'ready' ? '✅' : s === 'attention' ? '⚠️' : '⏳');
       const readyCount = startupServices.filter(s => s.state === 'ready').length;
       const isFlash = startupPhase === 'flash';
-      const slow = startupGaveUp && !startupReady;
+      const slow = (waBufferExpired || phBufferExpired || startupGaveUp) && !startupReady;
       items.push({
         id: 'startup-services',
         type: 'notification',

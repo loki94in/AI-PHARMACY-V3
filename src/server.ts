@@ -732,19 +732,44 @@ server.on('error', (err: any) => {
 
       console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
 
-      // Pharmarack session validation starts as soon as the DB is ready — the
-      // boot heartbeat probe (T≈now instead of T+2s) proves the stored token or
-      // begins the single-flight browser restore BEFORE a user's first search
-      // can hit a mid-typing 401. orderFulfillmentService stays on the T+2s
-      // stagger in Phase 4 below.
-      // Owner decision 2026-10-03 (i3 / 8 GB / no GPU): the app window must be usable within ~2 s, so
-      // Pharmarack (T+30 s) and WhatsApp (T+45 s) start AFTER the UI is up. Search before T+30 s serves the
-      // disk-persistent search cache; the heartbeat still proves the token before any real need.
+      // Pharmarack session validation starts at T+600ms — the cheap REST probe
+      // (~300ms) proves the stored token immediately, making medicine search
+      // live in < 1 second. If the token is dead, single-flight restore begins immediately.
       setTimeout(() => {
         import('./services/tokenRefreshScheduler.js')
           .then(m => m.tokenRefreshScheduler.start())
           .catch(err => console.warn('[Boot:Phase2] Pharmarack session heartbeat start failed:', err));
-      }, 30_000);
+      }, 600);
+
+      // WhatsApp client: Boot session check at T+1.5s (1.5s stagger protects dual-core i3 UI paint)
+      // Checks if an authenticated WhatsApp session exists on disk. If not configured or disconnected,
+      // it auto-stops immediately without launching Chrome or spamming checks.
+      setTimeout(async () => {
+        if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
+        try {
+          const { isWhatsAppAutoConnectAllowed, initClient } = await import('./whatsappClient.js');
+          if (await isWhatsAppAutoConnectAllowed()) {
+            console.log('[Boot:Phase2] Saved WhatsApp session found — performing 1-time boot session restore...');
+            (async () => {
+              const wa = await import('./whatsappClient.js');
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  await wa.initClient({ isBoot: true });
+                  if ((await wa.getWhatsAppStatus()).isReady) return;
+                } catch (err: any) {
+                  console.warn(`[Boot:Phase2] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
+                }
+                if (attempt < 3) await new Promise(r => setTimeout(r, 60_000));
+                if ((await wa.getWhatsAppStatus()).isReady) return;
+              }
+            })();
+          } else {
+            console.log('[Boot:Phase2] No saved WhatsApp session or disconnected — auto-stopping WhatsApp at boot. Connect manually in UI.');
+          }
+        } catch (err) {
+          console.warn('[Boot:Phase2] WhatsApp boot check error:', err);
+        }
+      }, 1500);
 
       // Auto-update scheduler: checks every 15 days (DB-gated, won't hammer on every boot)
       import('./services/autoUpdateService.js')
@@ -977,37 +1002,6 @@ server.on('error', (err: any) => {
           }
         }, 8000);
 
-        // WhatsApp client: Boot session check (Once only, no browser spam)
-        // Checks if an authenticated WhatsApp session exists on disk. If not configured or never connected,
-        // it auto-stops immediately without launching Chrome or spamming checks.
-        setTimeout(async () => {
-          if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
-          try {
-            const { isWhatsAppAutoConnectAllowed, initClient } = await import('./whatsappClient.js');
-            if (await isWhatsAppAutoConnectAllowed()) {
-              console.log('[Boot:Phase4] Saved WhatsApp session found — performing 1-time boot session restore...');
-              // Bounded retry (3 tries, 60 s apart): a failed boot restore otherwise left the
-              // inbound bot dead until a queue item or user click woke it.
-              (async () => {
-                const wa = await import('./whatsappClient.js');
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                  try {
-                    await wa.initClient({ isBoot: true });
-                    if ((await wa.getWhatsAppStatus()).isReady) return;
-                  } catch (err: any) {
-                    console.warn(`[Boot:Phase4] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
-                  }
-                  if (attempt < 3) await new Promise(r => setTimeout(r, 60_000));
-                  if ((await wa.getWhatsAppStatus()).isReady) return;
-                }
-              })();
-            } else {
-              console.log('[Boot:Phase4] No saved WhatsApp session or disconnected — auto-stopping WhatsApp at boot. Connect manually in UI.');
-            }
-          } catch (err) {
-            console.warn('[Boot:Phase4] WhatsApp boot check error:', err);
-          }
-        }, 37_000); // +8 s Phase 3 deferral = T+45 s after boot
 
         // Startup live-cart warm-up: resolves startupSyncCoordinator from real data at boot
         // instead of waiting for the first UI visit to GET /api/pharmarack/cart.
