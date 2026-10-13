@@ -5,6 +5,7 @@ import { formatDisplayDate } from '../../utils/date';
 import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult, type ReorderRecentItem } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
 import { findBestCartMatchForOrder } from '../../utils/orderFuzzyMatcher';
+import { isStrictSameProduct } from '../../utils/strictProductName';
 
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { sanitizePhoneInput } from '../../utils/phone';
@@ -458,6 +459,11 @@ interface LocalRefillPanelPatient {
 type LocalDeliveryBoyRow = { id?: number; name: string; whatsapp_number: string; is_active?: number };
 
 type LocalApiError = { response?: { data?: { error?: string } }; message?: string };
+type LocalLiveSearchRow = {
+  name?: string; shortName?: string; fullName?: string; packaging?: string; company?: string;
+  rate?: number | null; mrp?: number | null; productCode?: string; productId?: number; storeId?: number;
+  isOffline?: boolean; isLocalPharmacy?: boolean;
+};
 
 const CART_CACHE_STORAGE_KEY = 'pharmarack_cart_cache_v1';
 const MAX_PRICE_HISTORY_CACHE_ENTRIES = 200;
@@ -1023,14 +1029,30 @@ export default function PharmarackCart() {
     const lowerText = text.toLowerCase();
     const lowerQuery = q.toLowerCase();
     const idx = lowerText.indexOf(lowerQuery);
-    if (idx === -1) return text;
-    return (
-      <span>
-        {text.slice(0, idx)}
-        <mark className="bg-amber-400/35 text-amber-300 font-black rounded px-0.5">{text.slice(idx, idx + q.length)}</mark>
-        {text.slice(idx + q.length)}
-      </span>
-    );
+    if (idx !== -1) {
+      return (
+        <span>
+          {text.slice(0, idx)}
+          <mark className="bg-amber-400/35 text-amber-300 font-black rounded px-0.5">{text.slice(idx, idx + q.length)}</mark>
+          {text.slice(idx + q.length)}
+        </span>
+      );
+    }
+    // Word-prefix search ("muchatac ocea"): mark the start of each typed word.
+    const tokens = lowerQuery.split(/[^a-z0-9]+/).filter(Boolean).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (tokens.length === 0) return text;
+    const re = new RegExp(`\\b(${tokens.join('|')})`, 'gi');
+    const out: React.ReactNode[] = [];
+    let last = 0;
+    for (const m of text.matchAll(re)) {
+      const i = m.index ?? 0;
+      out.push(text.slice(last, i));
+      out.push(<mark key={i} className="bg-amber-400/35 text-amber-300 font-black rounded px-0.5">{m[0]}</mark>);
+      last = i + m[0].length;
+    }
+    if (out.length === 0) return text;
+    out.push(text.slice(last));
+    return <span>{out}</span>;
   };
 
   // Shortages Hub Subtab State (includes 'all_matches' for unified search across all 5 categories)
@@ -1788,15 +1810,22 @@ export default function PharmarackCart() {
     const rawTrim = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
 
     // 1. Check saved distributor mapping
-    const mapped = (activeMappings && (activeMappings[normName] || activeMappings[rawTrim])) || null;
-    if (mapped?.deliveryBoyId && activeBoys.some(b => b.id === mapped.deliveryBoyId)) {
-      return mapped.deliveryBoyId;
+    const cleanStoreNorm = dist.storeName ? dist.storeName.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const mapped = (activeMappings && (activeMappings[normName] || activeMappings[rawTrim] || activeMappings[cleanStoreNorm])) || null;
+    if (mapped?.deliveryBoyId !== undefined && mapped?.deliveryBoyId !== null) {
+      if (mapped.deliveryBoyId === 0) return 0;
+      if (activeBoys.some(b => b.id === mapped.deliveryBoyId)) {
+        return mapped.deliveryBoyId;
+      }
     }
 
     // 2. Check saved distributors list
     const savedMatch = findSavedDistributorMatch(dist.storeName);
-    if (savedMatch?.delivery_boy_id && activeBoys.some(b => b.id === savedMatch.delivery_boy_id)) {
-      return savedMatch.delivery_boy_id;
+    if (savedMatch?.delivery_boy_id !== undefined && savedMatch?.delivery_boy_id !== null) {
+      if (savedMatch.delivery_boy_id === 0) return 0;
+      if (activeBoys.some(b => b.id === savedMatch.delivery_boy_id)) {
+        return savedMatch.delivery_boy_id;
+      }
     }
 
     // 3. Check dist.deliveryPersons matched by name
@@ -1805,9 +1834,8 @@ export default function PharmarackCart() {
       if (match?.id) return match.id;
     }
 
-    // 4. Default to first active delivery boy with a phone
-    const defaultBoy = activeBoys.find(b => b.whatsapp_number && b.whatsapp_number.trim().length > 0) || activeBoys[0];
-    return defaultBoy?.id ?? null;
+    // 4. Do not silently pick a delivery boy - return null so the explicit badge prompts assignment
+    return null;
   };
 
   const getDistributorPhoneNumber = (dist: Distributor): string => {
@@ -2144,57 +2172,53 @@ export default function PharmarackCart() {
     return showAddedItems ? pendingRefills : pendingRefills.filter(refill => !getRefillItemInCart(refill));
   }, [pendingRefills, showAddedItems]);
 
+  // Reorder Hub search = the MEDICINE the user typed, nothing else. Every typed word must start a word of
+  // the medicine name ("muchatac ocea" -> MUCHATAC OCEAN ...); a contiguous substring still matches.
+  // Distributor / manufacturer / requester text no longer pulls in unrelated medicines. A digits-only
+  // query additionally matches a request / order id.
+  const reorderQueryNorm = React.useMemo(() => reorderSearchQuery.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(), [reorderSearchQuery]);
+  const reorderQueryTokens = React.useMemo(() => reorderQueryNorm.split(' ').filter(Boolean), [reorderQueryNorm]);
+  const queryIsIdOnly = /^\d+$/.test(reorderQueryNorm);
+  const medicineNameMatches = React.useCallback((name?: string | null): boolean => {
+    if (reorderQueryTokens.length === 0) return true;
+    const n = (name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!n) return false;
+    if (n.includes(reorderQueryNorm)) return true;
+    const words = n.split(' ');
+    return reorderQueryTokens.every(t => words.some(w => w.startsWith(t)));
+  }, [reorderQueryNorm, reorderQueryTokens]);
+
   const filteredPendingOrders = React.useMemo(() => {
-    if (!reorderSearchQuery.trim()) return visiblePendingOrders;
-    const q = reorderSearchQuery.toLowerCase().trim();
+    if (!reorderQueryNorm) return visiblePendingOrders;
     return visiblePendingOrders.filter(order =>
-      (order.product || '').toLowerCase().includes(q) ||
-      (order.requester || '').toLowerCase().includes(q) ||
-      (order.pharmarack_distributor || '').toLowerCase().includes(q) ||
-      String(order.id).includes(q)
+      medicineNameMatches(order.product) || (queryIsIdOnly && String(order.id) === reorderQueryNorm)
     );
-  }, [visiblePendingOrders, reorderSearchQuery]);
+  }, [visiblePendingOrders, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
 
   const filteredPendingRefills = React.useMemo(() => {
-    if (!reorderSearchQuery.trim()) return visiblePendingRefills;
-    const q = reorderSearchQuery.toLowerCase().trim();
+    if (!reorderQueryNorm) return visiblePendingRefills;
     return visiblePendingRefills.filter(refill =>
-      (refill.medicine_name || '').toLowerCase().includes(q) ||
-      (refill.patient_name || '').toLowerCase().includes(q) ||
-      String(refill.id).includes(q)
+      medicineNameMatches(refill.medicine_name) || (queryIsIdOnly && String(refill.id) === reorderQueryNorm)
     );
-  }, [visiblePendingRefills, reorderSearchQuery]);
+  }, [visiblePendingRefills, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
 
   const filteredReorderSuggestions = React.useMemo(() => {
-    if (!reorderSearchQuery.trim()) return reorderSuggestions;
-    const q = reorderSearchQuery.toLowerCase().trim();
-    return reorderSuggestions.filter(sug =>
-      (sug.medicineName || '').toLowerCase().includes(q) ||
-      String(sug.medicineId).includes(q)
-    );
-  }, [reorderSuggestions, reorderSearchQuery]);
+    if (!reorderQueryNorm) return reorderSuggestions;
+    return reorderSuggestions.filter(sug => medicineNameMatches(sug.medicineName));
+  }, [reorderSuggestions, reorderQueryNorm, medicineNameMatches]);
 
   const filteredReorderRecentItems = React.useMemo(() => {
-    if (!reorderSearchQuery.trim()) return reorderRecentItems;
-    const q = reorderSearchQuery.toLowerCase().trim();
+    if (!reorderQueryNorm) return reorderRecentItems;
     return reorderRecentItems.filter(item =>
-      (item.medicineName || '').toLowerCase().includes(q) ||
-      (item.lastDistributorName || item.storeName || '').toLowerCase().includes(q) ||
-      (item.highestStockDistributor?.storeName || '').toLowerCase().includes(q) ||
-      (item.receivedInvoiceNo || '').toLowerCase().includes(q) ||
-      String(item.orderId || '').includes(q)
+      medicineNameMatches(item.medicineName) ||
+      (queryIsIdOnly && (String(item.orderId || '') === reorderQueryNorm || (item.receivedInvoiceNo || '').toLowerCase().includes(reorderQueryNorm)))
     );
-  }, [reorderRecentItems, reorderSearchQuery]);
+  }, [reorderRecentItems, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
 
   const filteredPurchaseHistoryItems = React.useMemo(() => {
-    if (!reorderSearchQuery.trim()) return purchaseHistoryItems;
-    const q = reorderSearchQuery.toLowerCase().trim();
-    return purchaseHistoryItems.filter(item =>
-      (item.medicineName || '').toLowerCase().includes(q) ||
-      (item.lastDistributorName || item.storeName || '').toLowerCase().includes(q) ||
-      (item.manufacturer || '').toLowerCase().includes(q)
-    );
-  }, [purchaseHistoryItems, reorderSearchQuery]);
+    if (!reorderQueryNorm) return purchaseHistoryItems;
+    return purchaseHistoryItems.filter(item => medicineNameMatches(item.medicineName));
+  }, [purchaseHistoryItems, reorderQueryNorm, medicineNameMatches]);
 
   const totalReorderMatchesCount =
     filteredPendingOrders.length +
@@ -2322,16 +2346,7 @@ export default function PharmarackCart() {
       }
     }
 
-    // 2. Fallback to first registered active delivery boy in deliveryBoysList
-    if ((boyName === 'Not assigned yet' || boyPhone === 'N/A') && deliveryBoysList.length > 0) {
-      const activeBoy = deliveryBoysList.find(b => b.name && b.whatsapp_number && b.whatsapp_number.trim().length > 0) || deliveryBoysList[0];
-      if (activeBoy?.name) {
-        boyName = activeBoy.name;
-        boyPhone = formatPhone(activeBoy.whatsapp_number || '');
-      }
-    }
-
-    // 3. Fallback to Store Admin/Owner phone if no active delivery boy was found
+    // 2. Fallback to Store Admin/Owner phone if no active delivery boy was assigned
     if (boyName === 'Not assigned yet' || boyPhone === 'N/A') {
       if (storeInfo.adminPhone || storeInfo.phone) {
         boyName = 'Admin / Store Owner';
@@ -2698,9 +2713,16 @@ export default function PharmarackCart() {
 
         const effectiveBoyMap = customDeliveryBoys || selectedBatchDeliveryBoys;
         const assignedBoyId = effectiveBoyMap[dist.storeId];
-        const assignedBoy = assignedBoyId
-          ? (liveBoys.find(b => b.id === assignedBoyId) ?? null)
-          : null;
+        let assignedBoy: { id?: number; name: string; whatsapp_number: string } | null = null;
+        if (assignedBoyId === 0) {
+          assignedBoy = {
+            id: 0,
+            name: 'Admin / Store Owner',
+            whatsapp_number: storeInfo.adminPhone || storeInfo.phone || ''
+          };
+        } else if (assignedBoyId) {
+          assignedBoy = liveBoys.find(b => b.id === assignedBoyId) ?? null;
+        }
 
         // Persist distributor mapping choice if selected in batch modal so system remembers next time
         if (assignedBoyId !== undefined && assignedBoyId !== null) {
@@ -2839,12 +2861,13 @@ export default function PharmarackCart() {
     }
 
     const matchedDist = findSavedDistributorMatch(dist.storeName);
-    const currentBoyId = storedMap?.deliveryBoyId
-      || matchedDist?.delivery_boy_id
-      || (dist.deliveryPersons && dist.deliveryPersons.length > 0
-        ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id
-        : null)
-      || null;
+    const currentBoyId = (storedMap?.deliveryBoyId !== undefined && storedMap?.deliveryBoyId !== null)
+      ? storedMap.deliveryBoyId
+      : ((matchedDist?.delivery_boy_id !== undefined && matchedDist?.delivery_boy_id !== null)
+        ? matchedDist.delivery_boy_id
+        : (dist.deliveryPersons && dist.deliveryPersons.length > 0
+          ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id ?? null
+          : null));
     setModalDeliveryBoyId(currentBoyId);
   };
 
@@ -3583,16 +3606,10 @@ export default function PharmarackCart() {
     let rate = item.ptr || item.lastRate || 0;
     let mrp = item.mrp || 0;
 
-    // Auto-resolve product details from store-scoped distributorProductsMap if missing
+    // Resolve Pharmarack ids ONLY by strict same-product equality (Plus/DS/M/H variants never match).
     if ((!productCode || !productId) && storeId) {
       const storeProducts = distributorProductsMap[storeId] || [];
-      const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
-      const targetClean = cleanMedKey(medName);
-      const match = storeProducts.find(p => {
-        const pClean = cleanMedKey(p.medicineName);
-        return pClean === targetClean || (targetClean.length >= 4 && pClean.length >= 4 && (pClean.includes(targetClean) || targetClean.includes(pClean)));
-      });
+      const match = storeProducts.find(p => isStrictSameProduct(p.medicineName, medName));
       if (match) {
         productCode = match.productCode || productCode;
         productId = Number(match.productId) || productId;
@@ -3603,15 +3620,32 @@ export default function PharmarackCart() {
       }
     }
 
-    if (!productCode && !productId) {
-      // If still missing, open the fast live cart picker rather than the manual link modal
-      liveCartAddEvent.triggerOpen(medName, targetQty);
-      return;
-    }
-
     setReaddingSentItems(true);
     beginHighPriorityAction();
     try {
+      // Still no ids: ONE live search scoped to THIS distributor; auto-add only when exactly one of
+      // its products is the same medicine. Otherwise the picker opens limited to this store.
+      if ((!productCode || !productId) && storeId) {
+        const live = await api.searchPharmarack(medName, storeId).catch(() => null);
+        const hits = (Array.isArray(live) ? live : []).filter((r: LocalLiveSearchRow) =>
+          !r.isOffline && !r.isLocalPharmacy && r.productCode && r.productId &&
+          Number(r.storeId) === Number(storeId) && isStrictSameProduct(r.fullName || r.shortName || r.name, medName));
+        if (hits.length === 1) {
+          const h = hits[0];
+          productCode = String(h.productCode);
+          productId = Number(h.productId) || 0;
+          packaging = packaging || h.packaging || '';
+          company = company || h.company || '';
+          rate = h.rate ?? rate;
+          mrp = h.mrp ?? mrp;
+        }
+      }
+
+      if (!productCode || !productId) {
+        liveCartAddEvent.triggerOpen(medName, targetQty, undefined, undefined, storeId ? Number(storeId) : undefined);
+        return;
+      }
+
       const payload = [{
         productId: productId || 0,
         storeId: Number(storeId) || 0,
@@ -3620,16 +3654,27 @@ export default function PharmarackCart() {
         productName: medName,
         company: company || '',
         packaging: packaging || '',
-        rate: rate || 0,
-        mrp: mrp || 0,
+        rate: rate || undefined,
+        mrp: mrp || undefined,
         storeName: storeName,
-        stock: (item as any).stock != null && Number((item as any).stock) > 0 ? Number((item as any).stock) : 100,
-        mapped: item.mapped ?? Boolean(productId),
+        mapped: item.mapped ?? true,
         medicineId: item.medicineId || undefined
       }];
 
       const res = await api.addPharmarackCart(payload);
       if (res && res.success) {
+        // Verify the line really is in THIS distributor's live cart before claiming success.
+        const cart = await api.getPharmarackCart().catch(() => null);
+        if (cart && Array.isArray(cart.distributors)) {
+          const dist = cart.distributors.find((d: { storeId?: number }) => Number(d.storeId) === Number(storeId));
+          const present = (dist?.items || []).some((it: { productCode?: string; productName?: string }) =>
+            (it.productCode && String(it.productCode) === String(productCode)) || isStrictSameProduct(it.productName, medName));
+          if (!present) {
+            toastEvent.trigger(`${medName} was not confirmed in ${storeName}'s live cart. Please check the cart before ordering.`, 'error');
+            window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+            return;
+          }
+        }
         setDistributors(prev => {
           let updated = prev;
           for (const it of payload) {
@@ -4403,7 +4448,7 @@ export default function PharmarackCart() {
                     setShortagesSubTab('requests');
                   }
                 }}
-                placeholder="Search by Medicine Name, Distributor, or Past Order ID / Invoice..."
+                placeholder="Search by medicine name (or a request / order number)..."
                 className="w-full pl-9 pr-8 py-2 rounded-xl bg-bg/80 border border-glass-border text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary/50 transition-all font-medium"
               />
               {reorderSearchQuery && (
@@ -5950,14 +5995,49 @@ export default function PharmarackCart() {
                                   </button>
                                 );
                               })()}
+
+                              {/* Delivery Staff Badge & Assignment trigger */}
+                              {(() => {
+                                const boyId = resolveInitialDeliveryBoyId(dist);
+                                let boyName: string | null = null;
+                                let boyPhone: string | null = null;
+
+                                if (boyId === 0) {
+                                  boyName = 'Admin / Store Owner';
+                                  boyPhone = storeInfo.adminPhone || storeInfo.phone || null;
+                                } else if (boyId) {
+                                  const found = deliveryBoysList.find(b => b.id === boyId);
+                                  if (found) {
+                                    boyName = found.name;
+                                    boyPhone = found.whatsapp_number ? found.whatsapp_number.replace(/\D/g, '').slice(-10) : null;
+                                  }
+                                }
+
+                                const isAssigned = Boolean(boyName);
+
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditModal(dist)}
+                                    className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-md border transition-all active:scale-95 cursor-pointer ${
+                                      isAssigned
+                                        ? 'bg-bg2 text-text border-border hover:bg-bg3'
+                                        : 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30 font-extrabold shadow-sm'
+                                    }`}
+                                    title={isAssigned ? 'Assigned delivery staff — click to change' : 'Missing delivery staff — click to assign'}
+                                  >
+                                    <Truck size={12} className={isAssigned ? 'text-primary' : 'text-amber-400'} />
+                                    <span>
+                                      {isAssigned
+                                        ? `${boyName}${boyPhone ? ` (${boyPhone})` : ''}`
+                                        : '⚠️ Missing Delivery Staff — Click to Assign'}
+                                    </span>
+                                    <Edit2 size={11} className="opacity-70" />
+                                  </button>
+                                );
+                              })()}
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
-                              {dist.deliveryPersons.length > 0 && (
-                                <span className="text-[10px] text-muted flex items-center gap-1">
-                                  <Truck size={11} />
-                                  {dist.deliveryPersons[0].name}
-                                </span>
-                              )}
                               {(() => {
                                 const totalCount = dist.items.length;
                                 const includedCount = dist.items.filter(i => isItemIncludedInDispatch(i, dist)).length;
@@ -6645,28 +6725,35 @@ export default function PharmarackCart() {
               </div>
 
               {/* Default Delivery Person Input */}
-              {deliveryBoysList.length > 0 && (
-                <div>
-                  <label className="block text-xs font-bold text-muted mb-1.5">
-                    Default Delivery Person
-                  </label>
-                  <select
-                    value={modalDeliveryBoyId || ''}
-                    onChange={(e) => setModalDeliveryBoyId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full bg-bg border border-glass-border rounded-xl px-3 py-2 text-xs text-text focus:outline-none focus:border-emerald-500 font-medium cursor-pointer"
-                  >
-                    <option value="">👤 Unassigned / Admin Fallback</option>
-                    {deliveryBoysList.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-muted mt-1 font-medium">
-                    Pre-selected automatically when dispatching batch orders to this distributor.
-                  </p>
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-bold text-muted mb-1.5">
+                  Default Delivery Person
+                </label>
+                <select
+                  value={modalDeliveryBoyId !== null && modalDeliveryBoyId !== undefined ? String(modalDeliveryBoyId) : ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') setModalDeliveryBoyId(null);
+                    else setModalDeliveryBoyId(Number(val));
+                  }}
+                  className={`w-full border rounded-xl px-3 py-2 text-xs font-medium cursor-pointer transition-all focus:outline-none ${
+                    modalDeliveryBoyId === null || modalDeliveryBoyId === undefined
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 font-bold focus:border-amber-500'
+                      : 'bg-bg border-glass-border text-text focus:border-emerald-500'
+                  }`}
+                >
+                  <option value="">⚠️ Select Delivery Staff (Required)</option>
+                  <option value="0">👤 Admin / Store Owner (Store Contact)</option>
+                  {deliveryBoysList.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      🚚 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted mt-1 font-medium">
+                  Pre-selected automatically when dispatching batch orders to this distributor.
+                </p>
+              </div>
             </div>
 
             {/* Modal Actions */}

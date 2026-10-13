@@ -74,19 +74,20 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
                 onChange={(e) => setBulkApplyDeliveryBoyId(e.target.value)}
                 className="text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-primary transition-all cursor-pointer"
               >
-                <option value="">-- Choose Delivery Person --</option>
+                <option value="">-- Choose Delivery Staff --</option>
+                <option value="0">👤 Admin / Store Owner (Store Contact)</option>
                 {deliveryBoysList.map((b) => (
                   <option key={b.id} value={b.id}>
-                    👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                    🚚 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
                   </option>
                 ))}
               </select>
               <button
                 type="button"
-                disabled={!bulkApplyDeliveryBoyId}
+                disabled={bulkApplyDeliveryBoyId === ''}
                 onClick={() => {
+                  if (bulkApplyDeliveryBoyId === '') return;
                   const boyId = Number(bulkApplyDeliveryBoyId);
-                  if (!boyId) return;
                   setSelectedBatchDeliveryBoys((prev) => {
                     const next = { ...prev };
                     batchSummaryList.forEach((item) => {
@@ -179,20 +180,26 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
                       </td>
                       <td className="py-2 px-3.5 min-w-[190px]">
                         <select
-                          value={selectedBatchDeliveryBoys[item.storeId] ?? ''}
+                          value={selectedBatchDeliveryBoys[item.storeId] !== null && selectedBatchDeliveryBoys[item.storeId] !== undefined ? String(selectedBatchDeliveryBoys[item.storeId]) : ''}
                           onChange={(e) => {
-                            const val = e.target.value ? Number(e.target.value) : null;
+                            const val = e.target.value;
+                            const num = val === '' ? null : Number(val);
                             setSelectedBatchDeliveryBoys((prev) => ({
                               ...prev,
-                              [item.storeId]: val,
+                              [item.storeId]: num,
                             }));
                           }}
-                          className="w-full text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
+                          className={`w-full text-xs px-2.5 py-1.5 rounded-xl border font-medium focus:outline-none transition-all cursor-pointer ${
+                            selectedBatchDeliveryBoys[item.storeId] === null || selectedBatchDeliveryBoys[item.storeId] === undefined
+                              ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 font-bold focus:border-amber-500'
+                              : 'bg-bg border-glass-border text-text focus:border-emerald-500'
+                          }`}
                         >
-                          <option value="">👤 Unassigned / Admin Fallback</option>
+                          <option value="">⚠️ Missing Delivery Staff</option>
+                          <option value="0">👤 Admin / Store Owner (Store Contact)</option>
                           {deliveryBoysList.map((b) => (
                             <option key={b.id} value={b.id}>
-                              👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                              🚚 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
                             </option>
                           ))}
                         </select>

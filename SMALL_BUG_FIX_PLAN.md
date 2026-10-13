@@ -7,6 +7,10 @@
 
 ## Fixed
 
+### [Fixed] P2-89 — Reorder Hub "Add to Cart" opened a global popup, added the wrong medicine, and morning briefing could be lost
+- Cause: purchase bills carry local ids only, so unlinked medicines fell to a global picker; auto-resolve used loose `includes()` matching (base vs Plus/DS/M variants); payload invented `stock: 100`/`rate 0`. Morning briefing stamped "sent today" even when queued while WhatsApp was still restoring.
+- Fix: `frontend/src/utils/strictProductName.ts` (exact same-product only) in `handleReorderDirect`; one store-scoped live search auto-adds only on a single exact hit, otherwise the picker opens restricted to that store (`restrictStoreId` through `liveCartAddEvent` → Layout → LiveCartAddModal → LiveCartSearchSection); add is verified against the live cart; offline/local rows never listed; offline-fallback `mrp*0.8` rate removed. `sendMorningBriefingWhenWhatsAppReady` stamps the day only after a ready-state enqueue.
+
 ### [Fixed] P2-88 — Sequentialize cold-boot pipeline & honest buffer ceilings (40s WhatsApp / 70s Pharmarack)
 
 | Field | Content |

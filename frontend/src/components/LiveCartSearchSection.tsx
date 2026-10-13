@@ -53,6 +53,8 @@ interface LocalPharmarackSearchItem {
 export interface LiveCartSearchSectionProps {
   initialValue?: string;
   externalQuery?: string;
+  /** When set, only products of this Pharmarack store are listed. */
+  restrictStoreId?: number;
   /** Bump to empty the search box (after an add / cancelled selection). 0 = never cleared. */
   clearToken?: number;
   qty: number;
@@ -115,6 +117,7 @@ const getStockTier = (stockStr: string | undefined | null): number => {
 export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React.memo(({
   initialValue = '',
   externalQuery,
+  restrictStoreId,
   clearToken = 0,
   qty,
   sessionStatus,
@@ -218,7 +221,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       return;
     }
 
-    const cacheKey = cleanQuery.toLowerCase();
+    const cacheKey = `${restrictStoreId ?? ''}|${cleanQuery.toLowerCase()}`;
     const cachedResults = clientSearchCache.get(cacheKey);
     if (cachedResults && cachedResults.length > 0) {
       setSuggestions(cachedResults);
@@ -239,7 +242,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       }
 
       try {
-        const prData = await api.searchPharmarack(cleanQuery, undefined, undefined, controller.signal).catch((err: unknown): LocalPrSearchOutcome | null => {
+        const prData = await api.searchPharmarack(cleanQuery, restrictStoreId, undefined, controller.signal).catch((err: unknown): LocalPrSearchOutcome | null => {
           if (controller.signal.aborted) return null;
           const apiErr = err as LocalApiError;
           const code = apiErr?.response?.data?.code;
@@ -271,6 +274,11 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
           });
 
           prData.forEach((item) => {
+            // Strict contract: Live Cart must ONLY show live Pharmarack distributor items, never local pharmacy stock
+            if ((item as any).isLocalPharmacy) return;
+            // Opened from one distributor's card: never offer another store's product.
+            if (restrictStoreId && Number(item.storeId) !== Number(restrictStoreId)) return;
+
             const displayName = item.shortName || item.name;
             const cartInfo = (item.storeId && activeCartMap.get(String(item.storeId))) ||
                              (item.distributor && activeCartMap.get(item.distributor.toLowerCase().trim()));
@@ -408,7 +416,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
     return () => {
       clearTimeout(delayDebounce);
     };
-  }, [product, cartDistributors, lastAddedDistributor]);
+  }, [product, cartDistributors, lastAddedDistributor, restrictStoreId]);
 
   const handleProductChange = (val: string) => {
     isSelectingRef.current = false;

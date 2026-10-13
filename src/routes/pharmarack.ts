@@ -159,10 +159,10 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
       }
     } catch (_) {}
 
-    // 2. Query local pharmacy purchase history & local medicines
+    // 2. Query local pharmacy purchase history & local medicines ONLY if explicitly requested
     const db = await dbManager.getConnection();
     const settings = await getPharmarackSettings();
-    const isCombineEnabled = settings['combine_pharmarack_pharmacy_search'] !== 'false';
+    const isCombineEnabled = settings['combine_pharmarack_pharmacy_search'] === 'true';
 
     if (isCombineEnabled) {
       try {
@@ -286,6 +286,18 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
 }
 
 import { activityTracker } from '../utils/activityTracker.js';
+import { getCoreMedicineTokens } from '../utils/orderNameMatcher.js';
+
+/**
+ * Strict same-product test (cart add + link saving): identical core tokens once packaging words and
+ * glued strength units are ignored. Any extra token on one side (Plus/DS/H/M/Forte...) = different product.
+ * Replaces the old substring/`includes` and first-3-tokens LIKE matches that attached the wrong medicine.
+ */
+function sameProductName(a: unknown, b: unknown): boolean {
+  const ta = [...getCoreMedicineTokens(String(a || ''))].sort().join(' ');
+  const tb = [...getCoreMedicineTokens(String(b || ''))].sort().join(' ');
+  return ta.length > 0 && ta === tb;
+}
 
 let lastSearchOkAt = 0;
 
@@ -311,7 +323,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         searchCache.set(qRaw, storeId, isMapped, offline);
         return { status: 'ok', items: offline };
       }
-      if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+      if (settings['combine_pharmarack_pharmacy_search'] === 'true') {
         return { status: 'ok', items: [] };
       }
       return { status: 'need_login' };
@@ -646,12 +658,19 @@ router.post('/distributor-mappings', async (req, res) => {
 
   try {
     const db = await dbManager.getConnection();
+    const resolvedBoyId = delivery_boy_id !== undefined
+      ? (delivery_boy_id !== null && delivery_boy_id !== '' ? Number(delivery_boy_id) : null)
+      : undefined;
+
     await syncDistributorPhoneAcrossTables(db, {
       id: distributor_id ? Number(distributor_id) : undefined,
       store_name,
       phone: phoneVal.cleanPhone || phone,
-      delivery_boy_id: delivery_boy_id !== undefined ? (delivery_boy_id ? Number(delivery_boy_id) : null) : undefined
+      delivery_boy_id: resolvedBoyId
     });
+
+    eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'mapping_update', store_name });
+    eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
 
     res.json({ success: true, message: 'Store mapping saved successfully' });
   } catch (error: any) {
@@ -1581,18 +1600,16 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
         if (mRow?.id) {
           medId = Number(mRow.id);
         } else {
-          // Token-based matching without packaging stop words
-          const { getCoreMedicineTokens } = await import('../utils/orderNameMatcher.js');
-          const tokens = Array.from(getCoreMedicineTokens(cleanName)).slice(0, 3);
-          if (tokens.length >= 2) {
-            const pattern = `%${tokens.join('%')}%`;
-            const cand = await db.get(
-              `SELECT id, name FROM medicines WHERE LOWER(name) LIKE ? ORDER BY id ASC LIMIT 1`,
-              [pattern.toLowerCase()]
+          // Strict only: the master medicine whose core tokens EQUAL the product's, and only when exactly
+          // one such medicine exists. No first-3-tokens LIKE / LIMIT 1 guess (it linked base to Plus/DS).
+          const firstTok = [...getCoreMedicineTokens(cleanName)][0];
+          if (firstTok && firstTok.length >= 3) {
+            const cands = await db.all(
+              `SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 200`,
+              [`${firstTok}%`]
             );
-            if (cand?.id) {
-              medId = Number(cand.id);
-            }
+            const exact = cands.filter((c: any) => sameProductName(c.name, cleanName));
+            if (exact.length === 1) medId = Number(exact[0].id);
           }
         }
       }
@@ -1735,15 +1752,8 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
               [medId, cleanStoreName]
             );
           }
-          if (!linkRow) {
-            linkRow = await db.get(
-              `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
-               FROM medicine_distributor_links
-               WHERE medicine_id = ?
-               ORDER BY pick_order, id LIMIT 1`,
-              [medId]
-            );
-          }
+          // No "any distributor" fallback: a link from another store would pair this store with a
+          // foreign product code. Without a link at THIS store the live search below resolves it.
         }
 
         if (linkRow) {
@@ -1758,21 +1768,20 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         }
 
         // 2. Check pharmarack_placed_orders for previous orders of this medicine
-        if ((!item.productId || Number(item.productId) === 0) && prodName) {
+        // Past orders: ONLY this store's own orders and ONLY the exact same product (never another store's ids).
+        if ((!item.productId || Number(item.productId) === 0) && prodName && targetStoreId > 0) {
           const poRows = await db.all(
             `SELECT store_id, store_name, items_json
              FROM pharmarack_placed_orders
-             WHERE (${targetStoreId > 0 ? 'store_id = ? OR ' : ''} items_json LIKE ?)
-             ORDER BY id DESC LIMIT 5`,
-            targetStoreId > 0 ? [targetStoreId, `%${prodName}%`] : [`%${prodName}%`]
+             WHERE store_id = ?
+             ORDER BY id DESC LIMIT 20`,
+            [targetStoreId]
           );
           for (const poRow of poRows) {
             try {
               const lines = JSON.parse(poRow.items_json || '[]');
-              const matchedLine = lines.find((l: any) => {
-                const ln = String(l.productName || l.product || l.name || '').toLowerCase();
-                return ln.includes(prodName.toLowerCase()) || prodName.toLowerCase().includes(ln);
-              });
+              const matchedLine = lines.find((l: any) =>
+                sameProductName(l.productName || l.product || l.name, prodName));
               if (matchedLine && (matchedLine.productId || matchedLine.product_id)) {
                 if (!item.storeId || Number(item.storeId) === 0) item.storeId = Number(poRow.store_id || 0);
                 if (!item.storeName && poRow.store_name) item.storeName = poRow.store_name;
@@ -1798,27 +1807,19 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         const cleanStoreName = String(item.storeName || '').trim();
         const prodName = (item.productName || item.product || item.name || '').trim();
         if (prodName) {
-          let soRow = null;
-          if (cleanStoreName) {
-            soRow = await db.get(
-              `SELECT pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
+          // Same store only (id or exact name) and the exact same product — no storeless / LIKE matching.
+          let soRow: any = null;
+          const wantStoreId = Number(item.storeId) || 0;
+          if (wantStoreId > 0 || cleanStoreName) {
+            const cands = await db.all(
+              `SELECT product, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
                FROM special_orders
-               WHERE (LOWER(product) = LOWER(?) OR LOWER(product) LIKE LOWER(?))
-                 AND (LOWER(pharmarack_distributor) = LOWER(?) OR LOWER(pharmarack_distributor) LIKE LOWER(?))
-                 AND pharmarack_product_id > 0
-               ORDER BY id DESC LIMIT 1`,
-              [prodName, `%${prodName}%`, cleanStoreName, `%${cleanStoreName}%`]
+               WHERE pharmarack_product_id > 0
+                 AND ${wantStoreId > 0 ? 'pharmarack_store_id = ?' : 'LOWER(TRIM(pharmarack_distributor)) = LOWER(TRIM(?))'}
+               ORDER BY id DESC LIMIT 50`,
+              [wantStoreId > 0 ? wantStoreId : cleanStoreName]
             );
-          }
-          if (!soRow) {
-            soRow = await db.get(
-              `SELECT pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
-               FROM special_orders
-               WHERE (LOWER(product) = LOWER(?) OR LOWER(product) LIKE LOWER(?))
-                 AND pharmarack_product_id > 0
-               ORDER BY id DESC LIMIT 1`,
-              [prodName, `%${prodName}%`]
-            );
+            soRow = cands.find((c: any) => sameProductName(c.product, prodName) || sameProductName(c.pharmarack_product_name, prodName)) || null;
           }
           if (soRow) {
             if (!item.storeId || Number(item.storeId) === 0) {
@@ -1910,11 +1911,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
             const searchData: any = await searchRes.json().catch(() => null);
             if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
               const isTargetingSpecificStore = Number(item.storeId) > 0 || Boolean(wantStore);
-              const normKeyword = cleanKeyword.toLowerCase().replace(/[^a-z0-9]/g, '');
-              const isNameMatch = (p: any) => {
-                const pn = String(p.ProductName || p.ProductFullName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                return pn.includes(normKeyword) || normKeyword.includes(pn);
-              };
+              const isNameMatch = (p: any) => sameProductName(p.ProductName || p.ProductFullName, cleanKeyword);
 
               const matched = searchData.data.find((p: any) => 
                 (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
@@ -1947,10 +1944,12 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
 
   let cartSuccess = false;
   let lastError = '';
+  let failedItem: any = null;
 
   // Primary: Call the official AddUserProductCartDetail API
   try {
     for (const item of items) {
+      failedItem = item;
       if (!item.productCode) {
         lastError = `Medicine "${item.productName || 'unknown'}" is not linked or not available with distributor "${item.storeName || item.storeId}". Please link it before adding.`;
         cartSuccess = false;
@@ -2093,7 +2092,15 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   // If direct API call failed, do not block main thread with synchronous Puppeteer launches
   if (!cartSuccess) {
     console.warn('[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:', lastError);
-  } 
+    // The distributor itself says this product no longer exists: drop ONLY that dead link
+    // (exact store + product code) so it is never retried and re-forms from a fresh live search.
+    if (failedItem?.productCode && Number(failedItem.storeId) > 0 && /removed by the distributor/i.test(lastError)) {
+      try {
+        const db = await dbManager.getConnection();
+        await db.run('DELETE FROM medicine_distributor_links WHERE store_id = ? AND product_code = ?', [Number(failedItem.storeId), String(failedItem.productCode)]);
+      } catch (_) { /* best effort */ }
+    }
+  }
 
   if (cartSuccess) {
     void autoSaveMedicineDistributorLinks(items);
@@ -2103,14 +2110,8 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
     eventService.broadcast('pharmarack_cart_changed', { action: 'add', at: Date.now() });
     return { success: true, message: 'Successfully added to Pharmarack cart!', mode: 'Live' };
   } else {
-    if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
-      void autoSaveMedicineDistributorLinks(items);
-      return {
-        success: true,
-        offline: true,
-        message: 'Item saved to distributor cart (offline mode).'
-      };
-    }
+    // Truthful failure: a rejected/unreachable live add is NEVER reported as success and NEVER saves a
+    // medicine<->distributor link (that is how stale/wrong links used to be created).
     return { success: false, error: lastError || 'Failed to add items to actual Pharmarack cart', details: lastError };
   }
 }

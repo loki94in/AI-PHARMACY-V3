@@ -306,6 +306,8 @@ export interface LiveCartAddModalProps {
   initialQty?: number;
   sourceOrderId?: number;
   sourceRefillId?: number;
+  /** List only this Pharmarack store in the search dropdown. */
+  restrictStoreId?: number;
   onClose: () => void;
 }
 
@@ -314,6 +316,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   initialQty,
   sourceOrderId,
   sourceRefillId,
+  restrictStoreId,
   onClose
 }) => {
   const [isOpen, setIsOpen] = useState(true);
@@ -2176,6 +2179,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                 <LiveCartSearchSection
                   initialValue={initialSearch}
                   externalQuery={externalSearchQuery}
+                  restrictStoreId={restrictStoreId}
                   clearToken={searchClearToken}
                   qty={qty}
                   sessionStatus={sessionStatus}

@@ -1246,6 +1246,8 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
       // Trigger background queue worker with proper pacing and status tracking
       import('./services/whatsappQueueWorker.js').then(({ whatsappQueueWorker }) => {
+        whatsappQueueWorker.ensureLoopStarted();
+        whatsappQueueWorker.setPaused(false);
         whatsappQueueWorker.triggerProcessing();
       }).catch(err => {
         console.warn('[WhatsApp] Could not trigger queue worker on ready:', err);

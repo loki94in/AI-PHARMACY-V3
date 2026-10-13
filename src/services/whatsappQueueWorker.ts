@@ -702,16 +702,18 @@ class WhatsAppQueueWorker {
               "UPDATE automation_notifications SET status = 'sent', error_message = NULL WHERE reference_id = ? OR reference_id = ?",
               [`queue_${item.id}`, String(item.id)]
             ).catch(() => {});
-          } else if (isDistributorReminder) {
-            // SPEC REQUIREMENT: Scheduled distributor Dispatch Reminders MUST NEVER be silently converted to review_required or skipped_offline on startup!
-            // If legitimate and due/overdue for today, restore to pending/retryable so the single worker dispatches it.
+          } else if (isDistributorReminder || item.type === 'admin_morning_briefing') {
+            // SPEC REQUIREMENT: Scheduled distributor Dispatch Reminders & Admin Morning Briefings MUST NEVER be silently converted to review_required or skipped_offline on startup!
+            // If legitimate and due/overdue for today, restore to pending/retryable so the worker dispatches it.
             const wasDueDuringOutage = item.scheduled_at && this.detectedOutageInterval && 
               item.scheduled_at >= (this.detectedOutageInterval.start - 60000) && 
               item.scheduled_at <= (this.detectedOutageInterval.end + 60000);
             const isOverdueToday = item.scheduled_at && item.scheduled_at <= Date.now();
-            const reason = wasDueDuringOutage 
-              ? 'Recovered after PC/application outage during scheduled dispatch'
-              : (isOverdueToday ? 'Recovered overdue scheduled reminder after app restart' : 'Restored scheduled reminder');
+            const reason = item.type === 'admin_morning_briefing'
+              ? 'Morning briefing restored for immediate dispatch on startup'
+              : (wasDueDuringOutage 
+                ? 'Recovered after PC/application outage during scheduled dispatch'
+                : (isOverdueToday ? 'Recovered overdue scheduled reminder after app restart' : 'Restored scheduled reminder'));
             
             console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
             await db.run(

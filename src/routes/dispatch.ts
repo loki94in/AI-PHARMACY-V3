@@ -8,6 +8,7 @@ import { syncTodayActiveDistributors, getTodayDistributorRemindersFast } from '.
 import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 
 const router = express.Router();
 
@@ -247,10 +248,16 @@ router.put('/delivery-boys/:id', async (req, res) => {
       }
     }
 
+    const oldName = (existing.name || '').trim();
+    const oldPhone = existing.whatsapp_number ? String(existing.whatsapp_number).replace(/\D/g, '').slice(-10) : '';
+    const newName = (name !== undefined && name !== null ? String(name).trim() : existing.name) || '';
+    const newPhone = cleanPhone ? String(cleanPhone).replace(/\D/g, '').slice(-10) : '';
+    const boyId = Number(id);
+
     await db.run(
       `UPDATE delivery_boys SET name=?, whatsapp_number=?, telegram_chat_id=?, is_active=? WHERE id=?`,
       [
-        name !== undefined && name !== null ? String(name).trim() : existing.name,
+        newName,
         cleanPhone,
         telegram_chat_id !== undefined ? telegram_chat_id : existing.telegram_chat_id,
         is_active !== undefined ? is_active : existing.is_active,
@@ -266,7 +273,89 @@ router.put('/delivery-boys/:id', async (req, res) => {
       } catch (_) {}
     }
 
-    res.json(updated);
+    // Reactive dispatch queue & reminder resync (Option A)
+    // Only pending/scheduled items are updated — sent history is strictly skipped
+    try {
+      const pendingQueueItems = await db.all(
+        `SELECT id, number, message, type, target_name 
+         FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'scheduled', 'processing')`
+      );
+
+      for (const item of (pendingQueueItems || [])) {
+        let itemChanged = false;
+        let nextNumber = item.number;
+        let nextMessage = item.message || '';
+        let nextTargetName = item.target_name || '';
+
+        const itemNum10 = String(item.number || '').replace(/\D/g, '').slice(-10);
+        const isBoyRecipient = item.type === 'delivery_boy_summary' || (oldPhone && itemNum10 === oldPhone);
+
+        // A. If message is addressed directly to this delivery staff
+        if (isBoyRecipient && newPhone) {
+          const formattedNewNum = item.number && item.number.startsWith('+91')
+            ? `+91${newPhone}`
+            : item.number && item.number.startsWith('91') && item.number.length === 12
+              ? `91${newPhone}`
+              : newPhone;
+          if (nextNumber !== formattedNewNum) {
+            nextNumber = formattedNewNum;
+            itemChanged = true;
+          }
+          if (oldName && nextTargetName.includes(oldName)) {
+            nextTargetName = nextTargetName.split(oldName).join(newName);
+            itemChanged = true;
+          } else if (item.type === 'delivery_boy_summary' && !nextTargetName.includes(newName)) {
+            nextTargetName = `Delivery Boy (${newName})`;
+            itemChanged = true;
+          }
+        }
+
+        // B. Update phone occurrences inside message body
+        if (oldPhone && newPhone && oldPhone !== newPhone) {
+          if (nextMessage.includes(oldPhone)) {
+            nextMessage = nextMessage
+              .split(`+91 ${oldPhone}`).join(`+91 ${newPhone}`)
+              .split(`+91${oldPhone}`).join(`+91${newPhone}`)
+              .split(`91${oldPhone}`).join(`91${newPhone}`)
+              .split(oldPhone).join(newPhone);
+            itemChanged = true;
+          }
+        }
+
+        // C. Update name occurrences inside message body
+        if (oldName && newName && oldName !== newName && nextMessage.includes(oldName)) {
+          nextMessage = nextMessage.split(oldName).join(newName);
+          itemChanged = true;
+        }
+
+        if (itemChanged) {
+          await db.run(
+            `UPDATE whatsapp_send_queue 
+             SET number = ?, message = ?, target_name = ? 
+             WHERE id = ?`,
+            [nextNumber, nextMessage, nextTargetName, item.id]
+          );
+        }
+      }
+
+      // Update today's distributor_dispatch_reminders where this delivery boy was assigned
+      const todayStr = toLocalSqlDateTime().slice(0, 10);
+      await db.run(
+        `UPDATE distributor_dispatch_reminders 
+         SET updated_at = CURRENT_TIMESTAMP 
+         WHERE delivery_boy_id = ? AND date = ?`,
+        [boyId, todayStr]
+      );
+    } catch (queueSyncErr) {
+      console.warn('[Dispatch] Error reactive queue resync on delivery boy edit:', queueSyncErr);
+    }
+
+    // Broadcast SSE push events so all kept-alive SPA tabs update in real time
+    eventService.broadcast('dispatch_updated', { boyId, updated: true });
+    eventService.broadcast('wa_queue_update', { boyId, updated: true });
+
+    res.json({ success: true, ...updated });
   } catch (error: any) {
     console.error('Update delivery boy error:', error);
     res.status(500).json({ error: error?.message || 'Failed to update delivery boy' });

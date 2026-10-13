@@ -13,6 +13,7 @@ import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialO
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
+import { RefillOrderModal } from './RefillOrderModal';
 import type { QuickAssistEditGroup } from './QuickAssistOrderEditModal';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { api, apiClient } from '../services/api';
@@ -93,6 +94,10 @@ export const QuickAssistSidebar = memo(({
     items: Array<{ id: number; product: string; qty: number }>;
   } | null>(null);
   const [editingGroup, setEditingGroup] = useState<QuickAssistEditGroup | null>(null);
+  const [refillOrderModalGroup, setRefillOrderModalGroup] = useState<{
+    patient_name: string;
+    medicines: Array<any>;
+  } | null>(null);
 
   // Expand / collapse state for grouped patients (collapsed by default)
   const [expandedRefillKeys, setExpandedRefillKeys] = useState<Set<string>>(new Set());
@@ -232,8 +237,8 @@ export const QuickAssistSidebar = memo(({
   };
 
   useOnClickOutside(sidebarRef, (event) => {
-    // Do not collapse sidebar if an edit or arrival modal or daily modal is currently open
-    if (arrivalModalGroup || editingGroup) {
+    // Do not collapse sidebar if an edit or arrival modal or daily modal or refill order modal is currently open
+    if (arrivalModalGroup || editingGroup || refillOrderModalGroup) {
       return;
     }
     const target = event.target as HTMLElement | null;
@@ -253,6 +258,7 @@ export const QuickAssistSidebar = memo(({
     if (!expanded) {
       setEditingGroup(null);
       setArrivalModalGroup(null);
+      setRefillOrderModalGroup(null);
       setExpandedRefillKeys(new Set());
       setExpandedWebsiteOrderKeys(new Set());
       setExpandedSpecialOrderKeys(new Set());
@@ -267,20 +273,17 @@ export const QuickAssistSidebar = memo(({
       medicine_id: number;
       medicine_name: string;
       quantity_needed: number;
-      cart_store_name?: string | null;
+      in_stock_qty?: number;
+      packaging?: string;
       status?: string;
+      is_active?: number;
+      cart_store_name?: string | null;
+      cart_qty?: number | null;
+      in_live_cart?: boolean;
+      linked_distributors?: string[];
     }>;
   }) => {
-    const unadded = group.medicines.filter(m => !m.cart_store_name && m.status !== 'ordered');
-    const itemsToOrder = unadded.length > 0 ? unadded : group.medicines;
-    const cartInputs = itemsToOrder.map(m => ({
-      refillId: m.id,
-      medicineId: m.medicine_id,
-      medicineName: m.medicine_name,
-      qty: Math.max(1, Number(m.quantity_needed || 3))
-    }));
-    startRefillCartJob(group.patient_name, cartInputs);
-    toastEvent.trigger(`Adding ${cartInputs.length} refill item(s) for ${group.patient_name} to Live Cart...`, 'info', '/pharmarack-cart');
+    setRefillOrderModalGroup(group);
   };
 
   const [markingReadyRefillPhones, setMarkingReadyRefillPhones] = useState<Set<string>>(new Set());
@@ -699,6 +702,11 @@ export const QuickAssistSidebar = memo(({
         cart_qty?: number | null;
         cart_product_code?: string | null;
         status?: string;
+        in_stock_qty?: number;
+        packaging?: string;
+        is_active?: number;
+        in_live_cart?: boolean;
+        linked_distributors?: string[];
       }>;
     }> = [];
 
@@ -762,6 +770,11 @@ export const QuickAssistSidebar = memo(({
         cart_qty: r.cart_qty || null,
         cart_product_code: r.cart_product_code || null,
         status: r.status,
+        in_stock_qty: Number(r.in_stock_qty || 0),
+        packaging: (r as any).packaging || '',
+        is_active: r.is_active ?? 1,
+        in_live_cart: Boolean(r.in_live_cart || r.cart_store_name),
+        linked_distributors: (r as any).linked_distributors || [],
       });
     }
 
@@ -1280,12 +1293,21 @@ export const QuickAssistSidebar = memo(({
                                       <span>In Cart</span>
                                     </span>
                                   ) : (
-                                    <span
-                                      className="h-5 px-1.5 rounded bg-bg2 text-muted border border-border text-[8px] font-bold flex items-center shrink-0"
-                                      title="Not yet ordered"
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setRefillOrderModalGroup({
+                                          patient_name: group.patient_name,
+                                          medicines: [med]
+                                        });
+                                      }}
+                                      className="h-5 px-1.5 rounded bg-primary hover:bg-primary/90 text-white text-[8px] font-bold flex items-center gap-0.5 shrink-0 transition-colors cursor-pointer shadow-xs"
+                                      title={`Review and order ${med.medicine_name} to Live Cart`}
                                     >
-                                      <span>Pending</span>
-                                    </span>
+                                      <ShoppingCart size={9} className="shrink-0" />
+                                      <span>+ Cart</span>
+                                    </button>
                                   )}
                                 </div>
                               </div>
@@ -2412,6 +2434,37 @@ export const QuickAssistSidebar = memo(({
               window.dispatchEvent(new CustomEvent('refresh-special-orders'));
               window.dispatchEvent(new CustomEvent('refresh-refills'));
               onActionComplete();
+            }}
+          />
+        )}
+        {refillOrderModalGroup && (
+          <RefillOrderModal
+            patientName={refillOrderModalGroup.patient_name}
+            medicines={refillOrderModalGroup.medicines.map((m: any) => ({
+              id: m.id,
+              medicine_id: m.medicine_id,
+              medicine_name: m.medicine_name,
+              quantity_needed: Number(m.quantity_needed || 3),
+              in_stock_qty: Number(m.in_stock_qty || 0),
+              packaging: m.packaging,
+              status: m.status || 'pending',
+              is_active: m.is_active ?? 1,
+              cart_store_name: m.cart_store_name,
+              cart_qty: m.cart_qty,
+              in_live_cart: Boolean(m.in_live_cart || m.cart_store_name),
+              linked_distributors: m.linked_distributors
+            }))}
+            onClose={() => setRefillOrderModalGroup(null)}
+            onConfirm={(selectedItems) => {
+              const patientName = refillOrderModalGroup.patient_name;
+              setRefillOrderModalGroup(null);
+              startRefillCartJob(patientName, selectedItems);
+              toastEvent.trigger(`Adding ${selectedItems.length} refill item(s) for ${patientName} to Live Cart...`, 'info', '/pharmarack-cart');
+            }}
+            onMedicineLinked={() => {
+              queryClient.invalidateQueries({ queryKey: ['refills'] });
+              refillEvent.triggerRefresh();
+              window.dispatchEvent(new CustomEvent('refresh-refills'));
             }}
           />
         )}

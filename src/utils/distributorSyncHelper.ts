@@ -83,7 +83,8 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   // 1. Check exact match in pharmarack_distributor_mappings
   try {
     const mapRow = await db.get(
-      `SELECT m.store_name, m.distributor_id, m.phone as map_phone, d.name as dist_name, d.phone as dist_phone, d.preferred_file_format
+      `SELECT m.store_name, m.distributor_id, m.phone as map_phone, m.delivery_boy_id as map_delivery_boy_id,
+              d.name as dist_name, d.phone as dist_phone, d.delivery_boy_id as dist_delivery_boy_id, d.preferred_file_format
        FROM pharmarack_distributor_mappings m
        LEFT JOIN distributors d ON m.distributor_id = d.id
        WHERE LOWER(TRIM(m.store_name)) = LOWER(TRIM(?))`,
@@ -96,6 +97,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
           distributor_id: mapRow.distributor_id || null,
           distributor_name: mapRow.dist_name || mapRow.store_name || rawName,
           distributor_phone: phone,
+          delivery_boy_id: mapRow.map_delivery_boy_id || mapRow.dist_delivery_boy_id || null,
           preferred_file_format: mapRow.preferred_file_format,
           source: 'mapping'
         };
@@ -106,7 +108,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   // 2. Check exact match in distributors table
   try {
     const distRow = await db.get(
-      `SELECT id, name, phone, contact, preferred_file_format FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))`,
+      `SELECT id, name, phone, contact, delivery_boy_id, preferred_file_format FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))`,
       [rawName]
     );
     if (distRow) {
@@ -116,6 +118,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
           distributor_id: distRow.id,
           distributor_name: distRow.name,
           distributor_phone: phone,
+          delivery_boy_id: distRow.delivery_boy_id || null,
           preferred_file_format: distRow.preferred_file_format,
           source: 'exact_master'
         };
@@ -126,7 +129,8 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   // 3. Check fuzzy / normalized match in pharmarack_distributor_mappings
   try {
     const allMappings = await db.all(
-      `SELECT m.store_name, m.distributor_id, m.phone as map_phone, d.name as dist_name, d.phone as dist_phone, d.preferred_file_format
+      `SELECT m.store_name, m.distributor_id, m.phone as map_phone, m.delivery_boy_id as map_delivery_boy_id,
+              d.name as dist_name, d.phone as dist_phone, d.delivery_boy_id as dist_delivery_boy_id, d.preferred_file_format
        FROM pharmarack_distributor_mappings m
        LEFT JOIN distributors d ON m.distributor_id = d.id`
     );
@@ -161,6 +165,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
             distributor_id: matched.distributor_id || null,
             distributor_name: matched.dist_name || matched.store_name || rawName,
             distributor_phone: phone,
+            delivery_boy_id: matched.map_delivery_boy_id || matched.dist_delivery_boy_id || null,
             preferred_file_format: matched.preferred_file_format,
             source: 'mapping'
           };
@@ -172,7 +177,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   // 4. Check fuzzy / normalized match in distributors table
   try {
     const allDistributors = await db.all(
-      `SELECT id, name, phone, contact, preferred_file_format FROM distributors`
+      `SELECT id, name, phone, contact, delivery_boy_id, preferred_file_format FROM distributors`
     );
     if (Array.isArray(allDistributors) && allDistributors.length > 0) {
       // Priority A: Exact stripped alphanumeric match
@@ -226,6 +231,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
             distributor_id: matched.id,
             distributor_name: matched.name,
             distributor_phone: phone,
+            delivery_boy_id: matched.delivery_boy_id || null,
             preferred_file_format: matched.preferred_file_format,
             source: 'fuzzy_master'
           };

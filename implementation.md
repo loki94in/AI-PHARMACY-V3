@@ -1,88 +1,92 @@
-# Implementation Plan: Manual Complete Button in Quick Assist for Special Orders
+# Implementation Plan: Delivery Staff Missing Badges, No Silent Fallback, and Reactive Dispatch Queue Resync
 
-## 1. Overview
-When a customer places a special order or medicine request, the pharmacy tracks it in Quick Assist and the CRM. When the medicine arrives and is marked `Ready`, the automated system sends collection reminders via WhatsApp.
-However, when the medicine is sold or dispensed:
-- If the automated bill detector fails to match the medicine in the bill (due to spelling variations, cash walk-in sale without phone number, or prior offline sale), the special order remains stuck in Quick Assist.
-- Currently, the only buttons in Quick Assist are `[Resend]` and `[POS]` (or `[Make Order]`/`[Mark Ready]`).
-- Clicking `[POS]` forcibly redirects the user to the POS billing page with prefill, which is unwanted if the medicine is already sold or dispensed.
-- The order remains active, causing `collectionReminderWorker` to send repeated reminder messages to the customer (spamming them).
-
-This task adds a manual **"Complete"** button directly in the Quick Assist sidebar for Special Requests (and Online Orders) both at the group level and per-item level, allowing the user to mark tasks as completed permanently with 1 click, instantly disarming all collection reminders and permanently hiding the task.
-
----
-
-## 2. Proposed Changes
-
-### Backend Hardening: `src/routes/orders.ts`
-- In `handleBatchStatusUpdate` (`POST /orders/batch-status`):
-  - When `status === 'Fulfilled'`, ensure `auto_remind = 0, last_collection_reminder_at = NULL` in the SQL update.
-- In `POST /orders/:id/fulfill`:
-  - Ensure `auto_remind = 0, last_collection_reminder_at = NULL` in the SQL update.
-- In `POST /orders/:id/status`:
-  - When `status === 'Fulfilled'`, set `last_collection_reminder_at = NULL` and `auto_remind = 0`.
-- In `PUT /orders/:id`:
-  - When `newStatus === 'Fulfilled'`, set `last_collection_reminder_at = NULL` and `auto_remind = 0`.
-
-### Frontend: `frontend/src/components/QuickAssistSidebar.tsx`
-- **Helper Function**:
-  - Add `handleCompleteOrderItem(item, group)` to support marking an individual medicine completed within a multi-item special order group.
-- **Group Action Bar (Tier 1 Buttons)**:
-  - Add a dedicated `[Complete]` button with `<CheckCircle2 size={11} />` alongside `[POS]` for all statuses (`Ready`, `Ordered`, `Pending`).
-  - Styled with semantic classes `bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30`.
-  - When clicked: Calls `handleUpdateGroupStatus(group, 'Completed')` without navigating to POS.
-  - Optimistically removes the group from Quick Assist instantly with zero delay/flicker.
-- **Itemized Medicine List (Unfolded View)**:
-  - When the special order card is expanded, provide a compact `[Complete]` button next to each medicine row.
-  - Allows completing one medicine while leaving other pending medicines in the group active if they haven't arrived/sold yet.
-- **Online / Website Orders**:
-  - Mirror the same `[Complete]` action button in `groupedWebsiteOrders` for parity.
+## 1. Overview & Objective
+Store owners require complete transparency and human-in-the-loop control over distributor delivery assignments and WhatsApp dispatch messages:
+1. **Live Cart Visibility**: Stop silent auto-selection of arbitrary delivery staff in the Live Cart. Display an explicit, prominent amber badge `[⚠️ Missing Delivery Staff — Click to Assign]` on each distributor cart section whenever no delivery staff has been assigned.
+2. **Delivery Staff Assignment**: Allow the store owner to click the badge to assign a registered delivery boy or explicitly pick "Admin / Store Owner".
+3. **Reactive Dispatch Queue Synchronization**: When a delivery staff member's phone number or name is edited in the app (in Dispatch, Staff directory, or Settings):
+   - Automatically update all **pending/unsent** messages in `whatsapp_send_queue` with the new number and updated text.
+   - Update today's `distributor_dispatch_reminders` records.
+   - **Skip already sent messages** (`status = 'sent'` or `delivered`) to prevent duplicate transmissions.
+   - Broadcast SSE events (`dispatch_updated`, `wa_queue_update`) so all kept-alive pages refresh live in real time.
+4. **Same-Day Re-Order Staff Propagation**: Fix the `COALESCE(delivery_boy_id, ?)` locking bug in `distributorDispatchReminderWorker.ts` so later re-orders on the same day adopt the updated delivery staff member instead of getting stuck on morning assignments.
 
 ---
 
-## 3. Step-by-Step Execution Plan
-
-### Step 1: Backend Hardening in `src/routes/orders.ts`
-- Ensure `last_collection_reminder_at = NULL` and `auto_remind = 0` across all fulfillment / completion paths in `src/routes/orders.ts`.
-
-### Step 2: Implement Complete Action & Buttons in `frontend/src/components/QuickAssistSidebar.tsx`
-- Add `handleCompleteOrderItem` for item-level completion.
-- Add group-level `[Complete]` button to Tier 1 action row for Special Requests (`Ready`, `Ordered`, `Pending`).
-- Add item-level `[Complete]` button to unfolded medicine list for Special Requests.
-- Add group-level `[Complete]` button to Tier 1 action row for Online Orders.
-
-### Step 3: Verification & Guardrails
-- Run `npm run guardrails` (`tsc --noEmit` and speed guardrails).
-- Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+## 2. User-Selected Requirements & Design Decisions
+- **Option A (Cart Badges)**: Prominent amber badge `[⚠️ Missing Delivery Staff — Click to Assign]` on each distributor card header. No silent auto-pick fallback. The user must explicitly pick a delivery boy or click "Use Admin / Store Owner".
+- **Option A (Queue Resync)**: Updating a delivery boy's phone number immediately and atomically updates all pending/unsent messages in `whatsapp_send_queue` and today's `distributor_dispatch_reminders`.
+- **Skip Sent Messages**: If a dispatch message was already sent (`status IN ('sent', 'delivered')`), do not resend or alter it. Only upcoming/pending messages (`status IN ('pending', 'scheduled', 'processing')`) receive the updated phone number and text.
+- **Live SSE Feedback**: Real-time push notification via `eventService.broadcast` so the dispatch table, queue indicator, and cart reflect the update instantly without page reloads.
 
 ---
 
-## 4. Implementation Checklist
+## 3. Subsystems & Detailed Changes
 
-- [x] Task 1: Backend: Guarantee `auto_remind = 0` and `last_collection_reminder_at = NULL` on all special order fulfill/complete routes in `src/routes/orders.ts`.
-- [x] Task 2: Frontend: Add `handleCompleteOrderItem` and group-level `[Complete]` button in Special Requests section in `QuickAssistSidebar.tsx`.
-- [x] Task 3: Frontend: Add item-level `[Complete]` button in unfolded medicine rows in `QuickAssistSidebar.tsx`.
-- [x] Task 4: Frontend: Add group-level `[Complete]` button in Online Orders section in `QuickAssistSidebar.tsx`.
-- [x] Task 5: Frontend: Add manual `[Complete]` button, metrics calculation, and filter handling to the dedicated Online Orders page in `WebsiteOrders/index.tsx`.
-- [x] Task 6: Verification: Run `npm run guardrails` and `node scripts/quick-update.mjs`.
+### A. Frontend: `frontend/src/pages/PharmarackCart/index.tsx`
+1. **Remove Silent Auto-Assignment**:
+   - In `resolveInitialDeliveryBoyId`, remove the automatic fallback to `activeBoys[0]`. If there is no mapped delivery boy, return `null`.
+2. **Distributor Header Delivery Staff Badge**:
+   - Alongside the distributor phone badge (`[Phone]`), render a prominent delivery staff badge:
+     - If assigned with a valid phone:
+       `[🚚 {boyName} (+91 XXXXX XXXXX)]` (styled with `bg-bg2 border-border`, clickable to reassign).
+     - If unassigned or phone missing:
+       `[⚠️ Missing Delivery Staff — Click to Assign]` (styled with `bg-amber-500/20 text-amber-400 border-amber-500/40 font-bold active:scale-95 cursor-pointer`).
+3. **Staff Selection Modal Integration**:
+   - Clicking the badge opens the assignment modal (or inline popover) listing all active delivery boys plus an explicit option `[👤 Admin / Store Owner]`.
+   - On selection, saves to `pharmarack_distributor_mappings` and updates state immediately.
+4. **Send All Guardrail**:
+   - When clicking "Send All via WhatsApp", if any distributor has missing delivery staff, prompt the user to resolve them or confirm Admin fallback before proceeding.
+
+### B. Backend: `src/routes/dispatch.ts`
+1. **Queue Resync in `PUT /api/dispatch/delivery-boys/:id`**:
+   - When a delivery boy's `whatsapp_number` or `name` is updated:
+     - Query `whatsapp_send_queue` for all pending messages (`status IN ('pending', 'scheduled')`).
+     - For queue items targeting this delivery boy (`type = 'delivery_boy_summary'` or recipient matching old phone):
+       - Update `number` to the new clean 10-digit/91-digit phone number.
+       - Replace occurrences of the old phone/name in `message`.
+     - For queue items sent to distributors (`type = 'distributor_dispatch_reminder'` or `distributor_cart_order`):
+       - Update the `{delivery_boy}` name and phone occurrences within `message`.
+     - In `distributor_dispatch_reminders`:
+       - Update `delivery_boy_id` and cached details for today's reminders.
+     - **Skip already sent rows**: Rows where `status IN ('sent', 'delivered')` remain untouched.
+2. **Broadcast SSE Events**:
+   - Call `eventService.broadcast('dispatch_updated', { boyId: id, updated: true })`.
+   - Call `eventService.broadcast('wa_queue_update', { boyId: id, updated: true })`.
+
+### C. Backend: `src/services/distributorDispatchReminderWorker.ts`
+1. **Fix `COALESCE` Locking on Same-Day Re-Orders**:
+   - In the update query for existing today's reminders (around line 420):
+     - Replace `delivery_boy_id = COALESCE(delivery_boy_id, ?)` with direct override if a non-null `boyContact.delivery_boy_id` or explicit mapping exists.
+2. **Bridge `pharmarack_distributor_mappings` & `distributors`**:
+   - In `resolveDeliveryBoyForDistributor`:
+     - Query `pharmarack_distributor_mappings.delivery_boy_id` by `store_name` before falling back to store default, ensuring Live Cart choices carry over into automated dispatch reminders.
+
+### D. Backend Helper: `src/utils/distributorSyncHelper.ts`
+1. **Add `delivery_boy_id` to `resolveDistributorContact`**:
+   - Include `delivery_boy_id` in the select queries for `pharmarack_distributor_mappings` and `distributors` table.
 
 ---
 
-## 5. Completed Tasks & Progress Report
-- **Task 1 Completed**: Hardened backend routes in [`src/routes/orders.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/orders.ts):
-  - In `handleBatchStatusUpdate`: `UPDATE special_orders SET status = ?, notified = 1, auto_remind = 0, last_collection_reminder_at = NULL WHERE id IN (...)` when `status === 'Fulfilled'`.
-  - In `POST /:id/fulfill`: Guaranteed `auto_remind = 0` and `last_collection_reminder_at = NULL`.
-  - In `POST /:id/status` and `PUT /:id`: When `newStatus === 'Fulfilled'`, guaranteed `last_collection_reminder_at = NULL` and `auto_remind = 0`.
-  - This ensures neither `collectionReminderWorker` nor any cron jobs can ever pick up a completed order for customer reminder messages.
-- **Task 2 Completed**: In [`frontend/src/components/QuickAssistSidebar.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickAssistSidebar.tsx):
-  - Added `handleCompleteOrderItem` to support completing specific individual items within a special order group.
-  - Added a dedicated `[Complete]` button (styled with emerald accents: `bg-emerald-600/15 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30` and `<CheckCircle2 size={11} />`) to the Tier 1 action row for Special Requests across `Ready`, `Ordered`, and `Pending` states.
-  - Clicking `[Complete]` immediately and optimistically hides the item/group from Quick Assist, marks the status as `Completed` via `api.updateOrdersBatchStatus`, cancels any pending WhatsApp reminders, stops future follow-ups, and does not navigate away to POS.
-- **Task 3 Completed**: In the unfolded/expanded medicine list for Special Requests in [`QuickAssistSidebar.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickAssistSidebar.tsx):
-  - Added an item-level `[Complete]` button next to each medicine row (`💊 Medicine Name xQty [Complete]`), allowing the user to mark individual medicines completed independently if only part of a multi-medicine order was dispensed.
-- **Task 4 Completed**: Mirrored both the group-level `[Complete]` button and item-level `[Complete]` button in the Online Orders section of [`QuickAssistSidebar.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickAssistSidebar.tsx) for full feature parity.
-- **Task 5 Completed**: In the dedicated Online Orders page ([`WebsiteOrders/index.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/WebsiteOrders/index.tsx)):
-  - Added `handleMarkComplete(orderId)` which optimistically updates state, sets `status = 'Fulfilled', delivery_status = 'delivered'`, and triggers batch completion.
-  - Added the `[Complete]` button with `<CheckCircle2 size={12} />` to each online order card's action row alongside `Modify Items` and `Fulfill in POS`.
-  - Updated KPI metrics and status filter tabs so completed online orders cleanly reflect under the `Delivered` tab and are excluded from `Pending`/`Ready` counts.
-- **Task 6 Completed**: Ran `npm run guardrails` (`tsc --noEmit` and speed guardrails passed with 0 errors). Ran `node scripts/quick-update.mjs` to synchronize the knowledge graph (1179 nodes, 798 edges).
+## 4. Verification Plan
+1. **Type Safety & Guardrails**:
+   - Run `npm run guardrails` (`node scripts/performance-guardrails.mjs` verifying clean `tsc --noEmit`, speed architecture, semantic colors, no mock data).
+2. **Knowledge Graph Update**:
+   - Run `node scripts/quick-update.mjs` to keep knowledge graph synchronized.
+3. **Functional Verification**:
+   - Open Live Cart: verify that distributors without assigned staff display the amber `[⚠️ Missing Delivery Staff — Click to Assign]` badge.
+   - Click badge: assign a delivery boy or "Admin / Store Owner" and verify persistence.
+   - Update a delivery boy's phone number in Dispatch Staff: verify that any pending queued dispatch messages are updated with the new number, already sent messages are skipped, and the UI updates live via SSE.
+   - Place a re-order for the same distributor: verify that the updated delivery boy is preserved.
+
+---
+
+## 5. Tasks Checklist & Progress Report
+- [x] Task 1: Frontend: Update `PharmarackCart/index.tsx` & `BatchDispatchModal.tsx` to remove silent delivery boy auto-pick and render `[⚠️ Missing Delivery Staff — Click to Assign]` amber badges on distributor card headers with explicit Admin/Owner selection.
+  - *Completed*: Removed silent fallback `activeBoys[0]` in `resolveInitialDeliveryBoyId`; rendered prominent amber badge `[⚠️ Missing Delivery Staff — Click to Assign]` alongside Phone badge on distributor card header; updated Edit modal and Batch modal to support explicit Admin / Store Owner (`0`) option alongside registered delivery staff.
+- [x] Task 2: Backend: Update `src/routes/dispatch.ts` (`PUT /delivery-boys/:id`) to reactively resync pending/unsent messages in `whatsapp_send_queue`, update today's `distributor_dispatch_reminders`, skip sent messages, and broadcast SSE.
+  - *Completed*: Updated `PUT /delivery-boys/:id` to scan pending/scheduled items in `whatsapp_send_queue`, update target numbers and messages with new phone/name, touch today's `distributor_dispatch_reminders`, strictly skip sent/delivered messages, and broadcast `dispatch_updated` and `wa_queue_update` SSE push events.
+- [x] Task 3: Backend: Update `src/services/distributorDispatchReminderWorker.ts`, `src/utils/distributorSyncHelper.ts`, and `src/routes/pharmarack.ts` to read `pharmarack_distributor_mappings.delivery_boy_id` and fix the same-day re-order `COALESCE` locking bug.
+  - *Completed*: Added `pharmarack_distributor_mappings.delivery_boy_id` check in `resolveDeliveryBoyForDistributor` and `resolveDistributorContact`; fixed `COALESCE(delivery_boy_id, ?)` to `CASE WHEN ? IS NOT NULL THEN ? ELSE delivery_boy_id END` in reminder worker to eliminate same-day re-order assignment lock; added SSE broadcast in `POST /distributor-mappings`.
+- [x] Task 4: Verification & Guardrails: Run `npm run guardrails` and `node scripts/quick-update.mjs`.
+  - *Completed*: `npm run guardrails` passed with exit code 0 (`tsc --noEmit` clean, zero violations, B4 date safety verified with `localTime.ts`); `node scripts/quick-update.mjs` ran cleanly in 4.9s.

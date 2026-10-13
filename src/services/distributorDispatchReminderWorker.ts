@@ -33,6 +33,26 @@ export async function resolveDeliveryBoyForDistributor(
   distributorName?: string
 ): Promise<{ delivery_boy_id: number | null; name: string | null; phone: string | null }> {
   try {
+    // 0. Check mapped delivery_boy_id in pharmarack_distributor_mappings table first
+    if (distributorName) {
+      try {
+        const mapRow = await db.get(
+          "SELECT delivery_boy_id FROM pharmarack_distributor_mappings WHERE LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1",
+          [distributorName]
+        );
+        if (mapRow?.delivery_boy_id) {
+          const boy = await db.get(
+            "SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1",
+            [mapRow.delivery_boy_id]
+          );
+          if (boy) {
+            const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+            return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
+          }
+        }
+      } catch (_) {}
+    }
+
     // 1. Check mapped delivery_boy_id in distributors table
     if (distributorId) {
       const distRow = await db.get("SELECT delivery_boy_id FROM distributors WHERE id = ?", [distributorId]);
@@ -415,15 +435,18 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
         // Keep distributor_phone, distributor_name, and delivery_boy_id in sync with master distributors directory
         const phoneToUpdate = activePhone || existing.distributor_phone || '';
         const idToUpdate = activeId || existing.distributor_id || null;
-        const boyToUpdate = existing.delivery_boy_id || boyContact.delivery_boy_id;
+        // Prioritize newly resolved boy from mapping/distributor directory if available, else retain existing
+        const boyToUpdate = boyContact.delivery_boy_id !== null && boyContact.delivery_boy_id !== undefined
+          ? boyContact.delivery_boy_id
+          : existing.delivery_boy_id;
         await db.run(
           `UPDATE distributor_dispatch_reminders 
            SET distributor_id = COALESCE(distributor_id, ?),
-               delivery_boy_id = COALESCE(delivery_boy_id, ?),
+               delivery_boy_id = CASE WHEN ? IS NOT NULL THEN ? ELSE delivery_boy_id END,
                distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
                distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
            WHERE id = ?`,
-          [idToUpdate, boyToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
+          [idToUpdate, boyToUpdate, boyToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
         );
       }
     }

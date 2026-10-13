@@ -49,13 +49,15 @@ export interface LiveCartAddEventDetail {
   qty?: number;
   sourceOrderId?: number;
   sourceRefillId?: number;
+  /** When set, the picker lists ONLY this Pharmarack store (e.g. Reorder Hub card of one distributor). */
+  restrictStoreId?: number;
 }
 
 export const liveCartAddEvent = {
-  triggerOpen: (search?: string, qty?: number, sourceOrderId?: number, sourceRefillId?: number) => {
+  triggerOpen: (search?: string, qty?: number, sourceOrderId?: number, sourceRefillId?: number, restrictStoreId?: number) => {
     window.dispatchEvent(
       new CustomEvent<LiveCartAddEventDetail>('app-open-live-cart-add', {
-        detail: { search, qty, sourceOrderId, sourceRefillId },
+        detail: { search, qty, sourceOrderId, sourceRefillId, restrictStoreId },
       })
     );
   },

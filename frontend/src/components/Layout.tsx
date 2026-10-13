@@ -1696,8 +1696,6 @@ const Topbar = memo(({
   const [startupCartLoaded, setStartupCartLoaded] = useState(false);
   const [startupCartSettled, setStartupCartSettled] = useState(false);
   const [startupCartError, setStartupCartError] = useState<string | null>(null);
-  const [waBufferExpired, setWaBufferExpired] = useState(false);
-  const [phBufferExpired, setPhBufferExpired] = useState(false);
   const [startupGaveUp, setStartupGaveUp] = useState(false);
   const [startupPhase, setStartupPhase] = useState<'running' | 'flash' | 'done'>('running');
   const sawStartupWaitRef = useRef(false);
@@ -1717,49 +1715,41 @@ const Topbar = memo(({
     if (wa?.connected || wa?.sleeping || waReadiness?.isReady || waReadiness?.isSleeping) {
       list.push({ label: 'WhatsApp', state: 'ready' });
     } else if (wa?.initializing || waReadiness?.isInitializing) {
-      list.push({ label: 'WhatsApp', state: (waBufferExpired || startupGaveUp) ? 'attention' : 'wait' });
+      list.push({ label: 'WhatsApp', state: startupGaveUp ? 'attention' : 'wait' });
     } else if (waSession) {
-      list.push({ label: 'WhatsApp', state: (waReadiness?.lastError || waBufferExpired || startupGaveUp) ? 'attention' : 'wait' });
+      list.push({ label: 'WhatsApp', state: (waReadiness?.lastError || startupGaveUp) ? 'attention' : 'wait' });
     } // never connected: not part of startup
 
     const ph = servicesStatus.pharmarack;
     const phHasSetup = Boolean(ph?.hasToken || ph?.connected);
     if (phHasSetup) {
-      if (ph?.connected) {
-        if (startupCartLoaded) {
-          list.push({ label: 'Pharmarack', state: 'ready' });
-        } else if (startupCartSettled || phBufferExpired || startupGaveUp) {
+      if (ph?.connected && !ph?.isRefreshing) {
+        if (startupCartLoaded || startupCartSettled) {
           list.push({ label: 'Pharmarack', state: (startupCartError || ph.lastError) ? 'attention' : 'ready' });
         } else {
-          list.push({ label: 'Pharmarack', state: !ph.isRefreshing ? 'ready' : 'wait' });
+          list.push({ label: 'Pharmarack', state: startupGaveUp ? 'ready' : 'wait' });
         }
       } else if (ph?.isVerifying || ph?.isRefreshing) {
-        list.push({ label: 'Pharmarack', state: (phBufferExpired || startupGaveUp) ? 'attention' : 'wait' });
-      } else if (ph?.lastError || startupCartError || ph?.sessionStatus === 'expired' || phBufferExpired || startupGaveUp) {
+        list.push({ label: 'Pharmarack', state: startupGaveUp ? 'attention' : 'wait' });
+      } else if (ph?.lastError || startupCartError || ph?.sessionStatus === 'expired') {
         list.push({ label: 'Pharmarack', state: 'attention' });
       } else {
-        list.push({ label: 'Pharmarack', state: 'wait' });
+        list.push({ label: 'Pharmarack', state: startupGaveUp ? 'attention' : 'wait' });
       }
     } else if (ph?.lastError || startupCartError) {
       list.push({ label: 'Pharmarack', state: 'attention' });
     } // not logged in and no error: never set up
     return list;
-  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded, startupCartSettled, startupCartError, waBufferExpired, phBufferExpired, startupGaveUp]);
+  }, [databaseReady, refillsReady, servicesStatus, waReadiness, startupCartLoaded, startupCartSettled, startupCartError, startupGaveUp]);
 
   const startupReady = startupServices.every(s => s.state === 'ready');
   const startupAttention = startupServices.some(s => s.state === 'attention');
   const startupSettled = startupServices.every(s => s.state === 'ready' || s.state === 'attention');
 
-  // Dedicated buffer ceilings: WhatsApp (40s buffer), Pharmarack (70s buffer), Overall safety (180s)
+  // Long-stop safety ceiling: only gives up after 10 minutes if external network is completely blocked
   useEffect(() => {
-    const tWa = setTimeout(() => setWaBufferExpired(true), 40_000);
-    const tPh = setTimeout(() => setPhBufferExpired(true), 70_000);
-    const tAll = setTimeout(() => setStartupGaveUp(true), 180_000);
-    return () => {
-      clearTimeout(tWa);
-      clearTimeout(tPh);
-      clearTimeout(tAll);
-    };
+    const tAll = setTimeout(() => setStartupGaveUp(true), 600_000);
+    return () => clearTimeout(tAll);
   }, []);
 
   // Bounded startup poll (chained timeout, visible tab only, stops at first all-ready): the boot
@@ -2008,22 +1998,24 @@ const Topbar = memo(({
       const mark = (s: 'ready' | 'wait' | 'attention') => (s === 'ready' ? '✅' : s === 'attention' ? '⚠️' : '⏳');
       const readyCount = startupServices.filter(s => s.state === 'ready').length;
       const isFlash = startupPhase === 'flash';
-      const slow = (waBufferExpired || phBufferExpired || startupGaveUp) && !startupReady;
+      const isWaiting = !startupReady && !isFlash;
       items.push({
         id: 'startup-services',
         type: 'notification',
         title: isFlash
           ? '✅ All services ready'
-          : `${slow ? 'Taking longer than usual' : 'Starting up'} — ${startupServices.map(s => `${mark(s.state)} ${s.label}`).join(' · ')}`,
-        subtitle: slow
-          ? 'Pharmarack shows saved results and WhatsApp sends once connected. No action needed unless a ⚠️ appears.'
-          : 'The app is usable now. WhatsApp and Pharmarack connect in the background.',
+          : `Starting up — ${startupServices.map(s => `${mark(s.state)} ${s.label}`).join(' · ')}`,
+        subtitle: isFlash
+          ? 'All systems fully connected & ready.'
+          : 'Pharmarack and WhatsApp are connecting in the background. Dropdowns and messaging activate automatically.',
         progress: isFlash ? 100 : Math.round((readyCount / Math.max(1, startupServices.length)) * 100),
-        badge: isFlash ? 'Ready' : startupAttention || slow ? 'Check' : 'Starting',
-        color: isFlash ? 'emerald' : startupAttention || slow ? 'amber' : 'sky',
+        badge: isFlash ? 'Ready' : startupAttention ? 'Check' : 'Starting',
+        color: isFlash ? 'emerald' : startupAttention ? 'amber' : 'sky',
+        action: isWaiting ? () => setStartupPhase('done') : undefined,
+        actionLabel: isWaiting ? 'Skip' : undefined,
         icon: isFlash
           ? <Check size={12} className="text-emerald-400 shrink-0" />
-          : <RefreshCw size={12} className={`${startupAttention || slow ? 'text-amber-400' : 'text-sky-400'} animate-spin shrink-0`} />
+          : <RefreshCw size={12} className={`${startupAttention ? 'text-amber-400' : 'text-sky-400'} animate-spin shrink-0`} />
       });
     }
 
@@ -2985,6 +2977,7 @@ export const Layout = ({
   const [showLiveCartAdd, setShowLiveCartAdd] = useState(false);
   const [liveCartAddSearch, setLiveCartAddSearch] = useState<string | undefined>(undefined);
   const [liveCartAddQty, setLiveCartAddQty] = useState<number | undefined>(undefined);
+  const [liveCartAddRestrictStoreId, setLiveCartAddRestrictStoreId] = useState<number | undefined>(undefined);
   const [liveCartAddSourceOrderId, setLiveCartAddSourceOrderId] = useState<number | undefined>(undefined);
   const [liveCartAddSourceRefillId, setLiveCartAddSourceRefillId] = useState<number | undefined>(undefined);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -3327,6 +3320,7 @@ export const Layout = ({
       setLiveCartAddQty(detail?.qty);
       setLiveCartAddSourceOrderId(detail?.sourceOrderId);
       setLiveCartAddSourceRefillId(detail?.sourceRefillId);
+      setLiveCartAddRestrictStoreId(detail?.restrictStoreId);
       setShowLiveCartAdd(true);
     });
     return () => {
@@ -3585,7 +3579,9 @@ export const Layout = ({
               initialQty={liveCartAddQty}
               sourceOrderId={liveCartAddSourceOrderId}
               sourceRefillId={liveCartAddSourceRefillId}
+              restrictStoreId={liveCartAddRestrictStoreId}
               onClose={() => {
+                setLiveCartAddRestrictStoreId(undefined);
                 setShowLiveCartAdd(false);
                 setLiveCartAddSearch(undefined);
                 setLiveCartAddQty(undefined);
