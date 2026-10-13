@@ -15,7 +15,7 @@ import { ensureCompactInventoryReady } from '../services/api';
 
 // SSE event type -> react-query cache keys to invalidate
 const SSE_QUERY_MAP: Record<string, string[][]> = {
-  sale_created: [['last-sale-invoice'], ['inventory-todays-receipts'],['dashboard'], ['reports'], ['sales'], ['invoices'], ['sells-list'], ['investigation-list']],
+  sale_created: [['last-sale-invoice'], ['inventory-todays-receipts'],['dashboard'], ['reports'], ['sales'], ['invoices'], ['sells-list'], ['investigation-list'], ['refills'], ['crm-refills']],
   invoice_saved: [['purchases'], ['purchase-history'], ['purchase-history-list'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports'], ['investigation-list'], ['schedule-drugs-list'], ['medicine-last-by-distributor'], ['inventory-todays-receipts'], ['distributor-frequent']],
   return_created: [['returns'], ['returns-history'], ['customer-returns'], ['customer-returns-history-list'], ['pending-returns'], ['inventory'], ['inventory-list'], ['dashboard'], ['reports']],
   inventory_changed: [['inventory'], ['inventory-list'], ['compact-inventory'], ['pos-inventory'], ['expiry'], ['schedule-drugs-list']],
@@ -49,7 +49,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   order_delta: ['app-order-delta', 'refresh-special-orders'],
   website_order_created: ['sse-website-order-created', 'refresh-special-orders'],
   customers_changed: ['app-customers-updated', 'refresh-special-orders'],
-  refill_updated: ['app-refills-updated'],
+  refill_updated: ['app-refills-updated', 'refresh-refills'],
   enquiry_updated: ['sse-enquiry-updated', 'app-enquiries-updated'],
   prescription_scan_complete: ['sse-prescription-scan-complete'],
   return_created: ['sse-return-created'],

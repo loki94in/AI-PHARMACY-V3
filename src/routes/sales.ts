@@ -874,6 +874,18 @@ router.post('/', async (req, res) => {
         refillIds: matchingRefills.map(r => r.id),
         customerId
       });
+
+      try {
+        eventService.broadcast('refill_updated', {
+          at: Date.now(),
+          invoice_id: invoiceId,
+          patient_phone,
+          customer_id: customerId,
+          fulfilled: true,
+          count: matchingRefills.length
+        });
+        eventService.broadcast('app-refills-updated', { at: Date.now() });
+      } catch (_) {}
     }
 
     // Resolve Special Orders if this sale matches an explicit special_order_id or customer items

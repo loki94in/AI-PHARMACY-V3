@@ -3163,6 +3163,19 @@ export const Layout = ({
       window.removeEventListener('app-special-orders-updated', handleRefresh);
     };
   }, [queryClient, refetchSpecialOrders]);
+
+  useEffect(() => {
+    const handleRefreshRefills = () => {
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      refetchRefills();
+    };
+    window.addEventListener('refresh-refills', handleRefreshRefills);
+    window.addEventListener('app-refills-updated', handleRefreshRefills);
+    return () => {
+      window.removeEventListener('refresh-refills', handleRefreshRefills);
+      window.removeEventListener('app-refills-updated', handleRefreshRefills);
+    };
+  }, [queryClient, refetchRefills]);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => {
     try {
       const stored = localStorage.getItem('quick_assist_sidebar_expanded') ?? localStorage.getItem('refill_sidebar_expanded');

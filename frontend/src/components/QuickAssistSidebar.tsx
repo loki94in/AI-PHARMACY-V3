@@ -1400,15 +1400,21 @@ export const QuickAssistSidebar = memo(({
                           const isFulfillingGroup = fulfillingRefillKeys.has(group.key);
                           const openPos = (e: React.MouseEvent) => {
                             e.stopPropagation();
-                            try {
-                              api.notifyCounterSession({
-                                phone: group.patient_phone || '',
-                                refillIds: group.medicines.map(m => m.id),
-                                autoFulfill: true
-                              });
+                            // Optimistically hide from Quick Assist immediately
+                            setOptimisticHiddenRefillKeys(prev => {
+                              const next = new Set(prev);
+                              next.add(group.key);
+                              if (group.patient_phone) next.add(group.patient_phone);
+                              return next;
+                            });
+                            api.notifyCounterSession({
+                              phone: group.patient_phone || '',
+                              refillIds: group.medicines.map(m => m.id),
+                              autoFulfill: true
+                            }).then(() => {
                               refillEvent.triggerRefresh();
                               onRefreshDailyLog();
-                            } catch (_) {}
+                            }).catch(() => {});
                             toastEvent.trigger(`Refills marked fulfilled & opening POS for "${group.patient_name}"...`, 'success', '/pos');
                             setExpanded(false);
                             navigate('/pos', {
