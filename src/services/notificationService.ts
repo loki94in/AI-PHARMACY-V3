@@ -875,12 +875,12 @@ export class NotificationService {
     reminderId: number,
     customMessage?: string,
     scheduledAt?: number,
-    // followUp: a NEW Pharmarack order was noticed after today's reminder already went out (or the
-    // distributor was already marked Dispatched). Bypasses the once-per-day / status guards and
-    // names only the new order number(s). orderNos is that explicit list.
-    opts?: { followUp?: boolean; orderNos?: string[] }
+    // followUp / isOrderAnnouncement: a Pharmarack order was newly noticed / placed.
+    // Names the new order number(s) and instructs distributor to dispatch ASAP.
+    opts?: { followUp?: boolean; orderNos?: string[]; isOrderAnnouncement?: boolean }
   ): Promise<boolean> {
     const followUp = Boolean(opts?.followUp);
+    const isOrderAnnouncement = Boolean(opts?.isOrderAnnouncement);
     try {
       const db = await dbManager.getConnection();
       const reminder = await db.get(
@@ -897,7 +897,7 @@ export class NotificationService {
       }
 
       // Safeguard: if distributor already dispatched, collected, or has no order, do not send reminder
-      if (reminder.status && reminder.status !== 'Pending' && !customMessage && !followUp) {
+      if (reminder.status && reminder.status !== 'Pending' && !customMessage && !followUp && !isOrderAnnouncement) {
         console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
         return false;
       }
@@ -923,7 +923,7 @@ export class NotificationService {
          LIMIT 1`,
         [reminder.distributor_name, `%${clean10Digits}%`, startOfDayMs]
       );
-      if (existingQueueItem && !customMessage && !followUp) {
+      if (existingQueueItem && !customMessage && !followUp && !isOrderAnnouncement) {
         console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
         return true;
       }
@@ -995,9 +995,9 @@ export class NotificationService {
             .replace(/\{store_name\}/g, storeName)
             .replace(/\{order_no\}/g, orderNoText);
           if (orderNoText && !hasOrderPlaceholder) {
-            message = `${followUp ? '🆕 New' : '📦'} Pharmarack order ${orderNoText}\n${message}`;
+            message = `${(followUp || isOrderAnnouncement) ? '🆕 New' : '📦'} Pharmarack order ${orderNoText}\n${message}`;
           }
-        } else if (followUp && orderNoText) {
+        } else if ((followUp || isOrderAnnouncement) && orderNoText) {
           message = `🆕 New Pharmarack order ${orderNoText} placed. Please dispatch ASAP — to be collected by ${boyName} (${boyPhone}) - ${storeName}`;
         } else if (orderNoText) {
           message = `📦 Pharmarack order ${orderNoText} — has it been dispatched or collected by ${boyName} (${boyPhone})? - ${storeName}`;

@@ -31945,6 +31945,1128 @@ var init_refillOrderReconciler = __esm({
   }
 });
 
+// src/services/refillService.ts
+var refillService_exports = {};
+__export(refillService_exports, {
+  buildDailyOperationalBriefing: () => buildDailyOperationalBriefing,
+  checkAllRefills: () => checkAllRefills,
+  cleanupStagedRefillNotifications: () => cleanupStagedRefillNotifications,
+  createQuickBillForRefill: () => createQuickBillForRefill,
+  dispatchDueRefillReminders: () => dispatchDueRefillReminders,
+  isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed,
+  notifyAdminStagedReminders: () => notifyAdminStagedReminders,
+  purgePendingCustomerReminders: () => purgePendingCustomerReminders,
+  sendMorningScheduleBriefingToAdmin: () => sendMorningScheduleBriefingToAdmin,
+  syncStagedRefillNotificationForPatient: () => syncStagedRefillNotificationForPatient,
+  triggerPendingRefillsForMedicine: () => triggerPendingRefillsForMedicine,
+  triggerPendingSpecialOrdersForMedicineName: () => triggerPendingSpecialOrdersForMedicineName
+});
+function formatTime12h2(timeStr) {
+  if (!timeStr) return "";
+  const [hStr, mStr] = timeStr.split(":");
+  let h = parseInt(hStr, 10);
+  const m = mStr || "00";
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+async function checkAllRefills(db2) {
+  try {
+    await db2.run(`UPDATE patient_refills SET is_ready = 0, hold_for_stock = 0 WHERE is_active = 0`);
+    await db2.run(
+      `UPDATE automation_notifications SET lifecycle_status = 'skipped' 
+       WHERE type = 'refill_collection' AND lifecycle_status = 'staged' AND reference_id IN (
+         SELECT CAST(id AS TEXT) FROM patient_refills WHERE is_active = 0
+       )`
+    );
+    const pausedUpcoming = await db2.all(
+      `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
+       JOIN medicines m ON pr.medicine_id = m.id
+       WHERE pr.is_active = 0 AND pr.next_refill_date IS NOT NULL
+         AND (pr.status IS NULL OR pr.status NOT IN ('cancelled', 'deleted', 'completed'))
+         AND date(pr.next_refill_date) <= date('now', '+7 days')`
+    ).catch(() => []);
+    for (const pRefill of pausedUpcoming) {
+      try {
+        const openDay = await advanceToNextOpenDay(new Date(pRefill.next_refill_date), {
+          storeId: pRefill.store_id || 1,
+          dbInstance: db2
+        });
+        await refillOrderReconciler.upsertForPhone({
+          phone: pRefill.patient_phone,
+          customer_name: pRefill.patient_name,
+          items: [{
+            medicine_name: pRefill.medicine_name,
+            qty: Number(pRefill.quantity_needed || 3)
+          }],
+          source: "refill",
+          source_refill_id: pRefill.id,
+          store_id: pRefill.store_id || 1,
+          priority: "Normal",
+          notes: `Paused at patient request, auto-shifted to ${openDay.ymd}`,
+          dbInstance: db2
+        });
+      } catch (_) {
+      }
+    }
+  } catch (cleanErr) {
+    console.warn("[RefillService] Cleanup of paused refills warning:", cleanErr);
+  }
+  const activeRefills = await db2.all(
+    `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
+     JOIN medicines m ON pr.medicine_id = m.id
+     WHERE pr.status = 'pending' AND pr.is_active = 1`
+  );
+  let noticeDays = 7;
+  let operatingSchedule = { openTime: "09:00", closeTime: "22:00", weeklyOff: "Monday", closedDates: [] };
+  try {
+    const setting = await db2.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
+    if (setting && setting.value) {
+      noticeDays = parseInt(setting.value, 10) || 7;
+    }
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    operatingSchedule = await getPharmacyOperatingSchedule2(db2);
+  } catch (err) {
+    console.error("Failed to load refill notice settings:", err);
+  }
+  const outOfStockRefills = [];
+  const today = /* @__PURE__ */ new Date();
+  today.setHours(0, 0, 0, 0);
+  for (const refill of activeRefills) {
+    const nextDate = new Date(refill.next_refill_date);
+    nextDate.setHours(0, 0, 0, 0);
+    const diffTime = nextDate.getTime() - today.getTime();
+    const diffDays = Math.round(diffTime / (1e3 * 60 * 60 * 24));
+    const dateYmd = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : "";
+    const effNotice = await effectiveNoticeDays(noticeDays, dateYmd, refill.store_id || 1, db2);
+    const highlightTrigger = diffDays <= effNotice;
+    const orderTrigger = diffDays <= effNotice;
+    if (!orderTrigger && !highlightTrigger) {
+      continue;
+    }
+    const stockRow = await db2.get(
+      "SELECT (SUM(quantity) + COALESCE(SUM(loose_quantity), 0)) as total_qty FROM inventory_master WHERE medicine_id = ?",
+      [refill.medicine_id]
+    );
+    const qty = stockRow ? stockRow.total_qty || 0 : 0;
+    const hasStock = qty > 0 || refill.stock_verified_override === 1;
+    if (hasStock) {
+      if (highlightTrigger) {
+        let quickBillId = refill.quick_bill_id;
+        if (!quickBillId) {
+          quickBillId = await createQuickBillForRefill(db2, refill);
+          await db2.run(
+            `UPDATE patient_refills 
+             SET is_ready = 1, hold_for_stock = 0, quick_bill_id = ?
+             WHERE id = ?`,
+            [quickBillId, refill.id]
+          );
+        } else {
+          await db2.run(
+            `UPDATE patient_refills 
+             SET is_ready = 1, hold_for_stock = 0
+             WHERE id = ?`,
+            [refill.id]
+          );
+        }
+      }
+    } else {
+      if (orderTrigger) {
+        if (refill.ordering_triggered === 0) {
+          const orderQty = Number(refill.quantity_needed || refill.quantity || 3);
+          await refillOrderReconciler.upsertForPhone({
+            phone: refill.patient_phone,
+            customer_name: refill.patient_name,
+            items: [{
+              medicine_name: refill.medicine_name,
+              qty: orderQty
+            }],
+            source: "refill",
+            source_refill_id: refill.id,
+            store_id: refill.store_id || 1,
+            priority: "High",
+            dbInstance: db2
+          });
+          await db2.run(
+            `UPDATE patient_refills 
+             SET hold_for_stock = 1, is_ready = 0, ordering_triggered = 1 
+             WHERE id = ?`,
+            [refill.id]
+          );
+          outOfStockRefills.push(refill);
+        }
+      }
+    }
+  }
+  if (outOfStockRefills.length > 0) {
+    let reportMessage = `\u{1F4CB} PENDING REFILLS OF THE WEEK (OUT OF STOCK):
+
+`;
+    outOfStockRefills.forEach((refill, index) => {
+      reportMessage += `${index + 1}. Patient: ${refill.patient_name} (${refill.patient_phone})
+   Medication: ${refill.medicine_name}
+   Next Refill Due: ${refill.next_refill_date}
+
+`;
+    });
+    reportMessage += `Please purchase/add stock for these medicines so they can be marked ready for manual customer notification.`;
+    try {
+      await telegramBotService.sendDefaultNotification(reportMessage);
+    } catch (err) {
+      console.error("Failed to send daily out-of-stock refills report to Telegram:", err);
+    }
+  }
+}
+async function createQuickBillForRefill(db2, refill) {
+  const invoice_no = `H-REF-${Date.now()}`;
+  const temp_label = `Refill - ${refill.patient_name}`;
+  const invRow = await db2.get(
+    `SELECT im.id as inventory_id, im.batch_no, im.expiry_date, im.mrp, im.unit_price, COALESCE(im.unit_price, im.mrp, m.mrp, 0) as price, COALESCE(m.pack_size, 1) as pack_size
+     FROM inventory_master im
+     JOIN medicines m ON im.medicine_id = m.id
+     WHERE im.medicine_id = ? AND (im.quantity > 0 OR im.loose_quantity > 0)
+     ORDER BY im.expiry_date ASC LIMIT 1`,
+    [refill.medicine_id]
+  );
+  const unit_price = invRow ? Number(invRow.price || invRow.mrp || 0) : 0;
+  const refillQty = Number(refill.quantity || 1);
+  const cartItems = [{
+    id: invRow ? invRow.inventory_id : refill.medicine_id,
+    inventory_id: invRow ? invRow.inventory_id : void 0,
+    medicine_id: refill.medicine_id,
+    medicine_name: refill.medicine_name,
+    batch: invRow ? invRow.batch_no || "" : "",
+    expiry: invRow ? invRow.expiry_date || "" : "",
+    mrp: invRow ? invRow.mrp || unit_price : unit_price,
+    qty: refillQty,
+    quantity: refillQty,
+    unit_price,
+    pack_size: invRow ? invRow.pack_size || 1 : 1,
+    discount_per: 0
+  }];
+  const cart_data = JSON.stringify(cartItems);
+  const billResult = await db2.run(
+    `INSERT INTO held_bills (invoice_no, temp_label, patient_name, patient_phone, remarks, cart_data)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [invoice_no, temp_label, refill.patient_name, refill.patient_phone, "AUTO_REFILL_BILL", cart_data]
+  );
+  await syncStagedRefillNotificationForPatient(db2, refill.patient_name, refill.patient_phone);
+  return billResult.lastID;
+}
+async function syncStagedRefillNotificationForPatient(db2, patientName, patientPhone) {
+  const configuredName = await getConfiguredPharmacyName(db2);
+  if (!configuredName || !patientName && !patientPhone) return;
+  const storePhone = await getStorePhone(db2);
+  const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
+  const readyRefills = await db2.all(
+    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
+     FROM patient_refills pr
+     JOIN medicines m ON pr.medicine_id = m.id
+     WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
+       AND pr.is_active = 1
+       AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
+       AND COALESCE(pr.patient_confirmed, 0) = 0
+       AND pr.cart_store_name IS NULL
+       AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
+     ORDER BY pr.id ASC`,
+    [patientPhone, patientName]
+  );
+  if (!readyRefills || readyRefills.length === 0) {
+    await db2.run(
+      `DELETE FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?)`,
+      [patientPhone, patientName]
+    );
+    return;
+  }
+  const seenMeds = /* @__PURE__ */ new Map();
+  for (const r of readyRefills) {
+    const name = (r.medicine_name || "").trim();
+    if (!name) continue;
+    if (!seenMeds.has(name)) {
+      seenMeds.set(name, {
+        id: r.id,
+        medicine_name: name,
+        quantity: Number(r.quantity_needed || 1)
+      });
+    }
+  }
+  const items = Array.from(seenMeds.values());
+  const refillIds = readyRefills.map((r) => r.id);
+  const anyReady = readyRefills.some((r) => r.is_ready === 1 || r.quick_bill_id);
+  let timingInfo = "";
+  let hoursPill = "";
+  try {
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const sched = await getPharmacyOperatingSchedule2(db2);
+    const open12 = formatTime12h2(sched.openTime || "09:00");
+    const close12 = formatTime12h2(sched.closeTime || "22:00");
+    hoursPill = `
+*(Store open ${open12} \u2013 ${close12})*`;
+    const { getRefillScheduleOpts: getRefillScheduleOpts2 } = await Promise.resolve().then(() => (init_closureNotice(), closureNotice_exports));
+    const closure = await getRefillScheduleOpts2(db2, sched);
+    timingInfo = `
+\u{1F552} *Store Hours:* ${open12} to ${close12}`;
+    if (closure.isOffDayUpcoming) {
+      timingInfo += `
+\u26A0\uFE0F *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
+    }
+  } catch (_) {
+  }
+  let msg;
+  if (anyReady) {
+    if (items.length === 1) {
+      msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your packed prescription is waiting and ready for collection at our pharmacy:
+
+\u2022 *${items[0].medicine_name}* (Qty: ${items[0].quantity})
+
+\u{1F4CD} *Pickup Location:* ${storeLabel}${timingInfo}
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+    } else {
+      const medList = items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
+      msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your packed prescription is waiting and ready for collection at our pharmacy:
+
+${medList}
+
+\u{1F4CD} *Pickup Location:* ${storeLabel}${timingInfo}
+\u{1F449} *Please collect your medicine at your earliest convenience.*`;
+    }
+  } else {
+    if (items.length === 1) {
+      msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.
+
+You may collect from ${storeLabel}.${timingInfo}
+\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
+    } else {
+      const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
+      msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
+
+Dear ${patientName},
+Your regular prescription is due for refill:
+
+${medList}
+
+You may collect from ${storeLabel}.${timingInfo}
+\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
+    }
+  }
+  const needsLangBanner = await isFirstContactOrUnconfirmed(db2, patientPhone);
+  if (needsLangBanner) {
+    msg += firstContactLanguageBanner();
+  }
+  const referenceIdStr = refillIds.join(",");
+  let existing = null;
+  try {
+    existing = await db2.get(
+      `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+       WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+       ORDER BY id DESC LIMIT 1`,
+      [patientPhone, patientName]
+    );
+  } catch (queryErr) {
+    if (queryErr?.message?.includes("snoozed_until")) {
+      await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL").catch(() => {
+      });
+      existing = await db2.get(
+        `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+         WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+         ORDER BY id DESC LIMIT 1`,
+        [patientPhone, patientName]
+      ).catch(async () => {
+        return await db2.get(
+          `SELECT id, status FROM automation_notifications 
+           WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+           ORDER BY id DESC LIMIT 1`,
+          [patientPhone, patientName]
+        );
+      });
+    } else {
+      throw queryErr;
+    }
+  }
+  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  if (existing) {
+    if (existing.status === "snoozed") {
+      if (existing.snoozed_until && existing.snoozed_until > todayStr2) {
+        return;
+      }
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
+         WHERE id = ?`,
+        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+      ).catch(async (updErr) => {
+        if (updErr?.message?.includes("snoozed_until")) {
+          await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL").catch(() => {
+          });
+          await db2.run(
+            `UPDATE automation_notifications 
+             SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
+             WHERE id = ?`,
+            [msg, referenceIdStr, patientName, patientPhone, existing.id]
+          );
+        } else {
+          throw updErr;
+        }
+      });
+    } else {
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
+         WHERE id = ?`,
+        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+      );
+    }
+    await db2.run(
+      `DELETE FROM automation_notifications 
+       WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
+      [patientPhone, patientName, existing.id]
+    );
+  } else {
+    await db2.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ["refill_collection", patientName, patientPhone, msg, "staged", 1, referenceIdStr]
+    );
+  }
+}
+async function triggerPendingRefillsForMedicine(db2, medicineId) {
+  const stockRow = await db2.get(
+    "SELECT SUM(quantity) as total_qty FROM inventory_master WHERE medicine_id = ?",
+    [medicineId]
+  );
+  const qty = stockRow ? stockRow.total_qty || 0 : 0;
+  if (qty <= 0) return;
+  const pendingRefills = await db2.all(
+    `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
+     JOIN medicines m ON pr.medicine_id = m.id
+     WHERE pr.medicine_id = ? AND pr.status = 'pending' AND (pr.hold_for_stock = 1 OR pr.is_ready = 0) AND pr.is_active = 1`,
+    [medicineId]
+  );
+  const affectedPatients = /* @__PURE__ */ new Set();
+  for (const refill of pendingRefills) {
+    let quickBillId = refill.quick_bill_id;
+    if (!quickBillId) {
+      quickBillId = await createQuickBillForRefill(db2, refill);
+    }
+    await db2.run(
+      "UPDATE patient_refills SET is_ready = 1, hold_for_stock = 0, quick_bill_id = ? WHERE id = ?",
+      [quickBillId, refill.id]
+    );
+    affectedPatients.add(`${refill.patient_name || ""}|||${refill.patient_phone || ""}`);
+  }
+  for (const p of affectedPatients) {
+    const [name, phone] = p.split("|||");
+    await syncStagedRefillNotificationForPatient(db2, name, phone);
+  }
+}
+async function triggerPendingSpecialOrdersForMedicineName(db2, medicineName) {
+  if (!medicineName) return;
+  const pendingOrders = await db2.all(
+    `SELECT * FROM special_orders WHERE status IN ('Pending', 'Ordered')`
+  );
+  for (const order of pendingOrders) {
+    const match = scoreOrderNameMatch(medicineName.trim(), order.product || order.medicine_name || "");
+    if (match.score >= ARRIVAL_MATCH_THRESHOLD) {
+      await db2.run("UPDATE special_orders SET status = 'Ready', notified = 0 WHERE id = ?", [order.id]);
+    }
+  }
+}
+async function cleanupStagedRefillNotifications(db2, refillIds, targetStatus = "sent_manually") {
+  const idsToRemove = (Array.isArray(refillIds) ? refillIds : [refillIds]).map((id) => String(id).trim()).filter(Boolean);
+  if (idsToRemove.length === 0) return;
+  try {
+    const stagedNotifications = await db2.all(
+      `SELECT id, reference_id, recipient_phone, recipient_name 
+       FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status = 'staged'`
+    );
+    for (const notif of stagedNotifications) {
+      if (!notif.reference_id) continue;
+      const existingRefIds = String(notif.reference_id).split(",").map((s) => s.trim()).filter(Boolean);
+      const hasMatch = existingRefIds.some((id) => idsToRemove.includes(id));
+      if (!hasMatch) continue;
+      const remainingRefIds = existingRefIds.filter((id) => !idsToRemove.includes(id));
+      if (remainingRefIds.length === 0) {
+        const lifecycle = targetStatus === "cancelled" ? "cancelled" : "sent";
+        await db2.run(
+          `UPDATE automation_notifications 
+           SET status = ?, lifecycle_status = ? 
+           WHERE id = ?`,
+          [targetStatus, lifecycle, notif.id]
+        );
+      } else {
+        await db2.run(
+          `UPDATE automation_notifications 
+           SET reference_id = ? 
+           WHERE id = ?`,
+          [remainingRefIds.join(","), notif.id]
+        );
+      }
+    }
+  } catch (cleanErr) {
+    console.warn("[Refills] Cleanup of staged notifications warning:", cleanErr);
+  }
+}
+async function purgePendingCustomerReminders(db2, options) {
+  let purgedQueueCount = 0;
+  let purgedNotificationsCount = 0;
+  try {
+    const rawPhone = (options.phone || "").replace(/\D/g, "");
+    const last102 = rawPhone.length >= 7 ? rawPhone.slice(-10) : "";
+    const refillIdStrs = (options.refillIds || []).map((id) => String(id).trim()).filter(Boolean);
+    const orderIdStrs = (options.specialOrderIds || []).map((id) => String(id).trim()).filter(Boolean);
+    const medNames = (options.medicineNames || []).map((m) => m.trim().toLowerCase()).filter(Boolean);
+    const waTypes = [
+      "refill_collection",
+      "order_ready",
+      "refill_reminder",
+      "special_order_arrived",
+      "special_order",
+      "special_order_batch",
+      "special_order_fulfilled",
+      "admin_shortage_reminder"
+    ];
+    const waTypePlaceholders = waTypes.map(() => "?").join(",");
+    if (last102) {
+      const pendingItems = await db2.all(
+        `SELECT id, message FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'failed_offline') 
+           AND type IN (${waTypePlaceholders})
+           AND number LIKE ?`,
+        [...waTypes, `%${last102}%`]
+      ).catch(() => []);
+      const idsToDelete = [];
+      for (const item of pendingItems || []) {
+        if (medNames.length === 0) {
+          idsToDelete.push(item.id);
+        } else {
+          const msgLower = (item.message || "").toLowerCase();
+          const matchesMed = medNames.some((m) => msgLower.includes(m));
+          if (matchesMed) {
+            idsToDelete.push(item.id);
+          }
+        }
+      }
+      if (idsToDelete.length > 0) {
+        const delPlaceholders = idsToDelete.map(() => "?").join(",");
+        const res = await db2.run(
+          `DELETE FROM whatsapp_send_queue WHERE id IN (${delPlaceholders})`,
+          idsToDelete
+        );
+        purgedQueueCount = res?.changes || idsToDelete.length;
+      }
+    }
+    if (refillIdStrs.length > 0) {
+      await cleanupStagedRefillNotifications(db2, refillIdStrs, "cancelled");
+    }
+    if (orderIdStrs.length > 0) {
+      const orderPlaceholders = orderIdStrs.map(() => "?").join(",");
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled', lifecycle_status = 'cancelled' 
+         WHERE reference_id IN (${orderPlaceholders})`,
+        orderIdStrs
+      ).catch(() => {
+      });
+    }
+    if (last102 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled', lifecycle_status = 'cancelled' 
+         WHERE recipient_phone LIKE ? 
+           AND status = 'staged' 
+           AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+        [`%${last102}%`]
+      ).catch(() => {
+      });
+    }
+  } catch (err) {
+    console.warn("[Refills] purgePendingCustomerReminders error:", err);
+  }
+  return { purgedQueueCount, purgedNotificationsCount };
+}
+async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
+  let templateKey = requestedTemplate || "";
+  if (!templateKey) {
+    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'daily_briefing_template'").catch(() => null);
+    templateKey = row?.value || "detailed";
+  }
+  if (!["detailed", "compact", "checklist", "executive"].includes(templateKey)) {
+    templateKey = "detailed";
+  }
+  const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getConfiguredPharmacyName: getConfiguredPharmacyName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+  const storeName = await getConfiguredPharmacyName2(db2) || "Pharmacy";
+  const operatingSchedule = await getPharmacyOperatingSchedule2(db2);
+  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const todayDayName = dayNames[(/* @__PURE__ */ new Date()).getDay()];
+  const isWeeklyOff = (operatingSchedule.weeklyOff || "").toLowerCase() === todayDayName.toLowerCase();
+  const isHoliday = (operatingSchedule.closedDates || []).includes(todayStr2);
+  let statusLine = "\u{1F7E2} Open as usual";
+  if (isHoliday) {
+    statusLine = "\u{1F534} Holiday / Closed today";
+  } else if (isWeeklyOff) {
+    statusLine = `\u{1F7E1} Weekly Off (${todayDayName})`;
+  }
+  const refillRows = await db2.all(`
+    SELECT pr.patient_name,
+           MIN(DATE(pr.next_refill_date)) as earliest_due,
+           COUNT(pr.id) as med_count,
+           SUM(CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END) as in_stock_count,
+           SUM(CASE WHEN (pr.is_ready = 0 AND COALESCE(inv.total_qty, 0) < COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END) as out_of_stock_count
+    FROM patient_refills pr
+    LEFT JOIN (
+      SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
+      FROM inventory_master
+      GROUP BY medicine_id
+    ) inv ON inv.medicine_id = pr.medicine_id
+    WHERE pr.is_active = 1
+      AND pr.status IN ('pending', 'notified', 'staged')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+    GROUP BY pr.patient_name
+    ORDER BY earliest_due ASC, pr.patient_name ASC
+    LIMIT 15
+  `).catch(() => []);
+  const refillDetailRows = await db2.all(`
+    SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
+           DATE(pr.next_refill_date) as due_date,
+           CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
+    FROM patient_refills pr
+    JOIN medicines m ON pr.medicine_id = m.id
+    LEFT JOIN (
+      SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
+      FROM inventory_master
+      GROUP BY medicine_id
+    ) inv ON inv.medicine_id = pr.medicine_id
+    WHERE pr.is_active = 1
+      AND pr.status IN ('pending', 'notified', 'staged')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+    ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
+    LIMIT 50
+  `).catch(() => []);
+  const pendingCallTasks = await db2.get(
+    "SELECT COUNT(*) as count FROM patient_call_tasks WHERE status IN ('pending', 'rescheduled')"
+  ).catch(() => ({ count: 0 }));
+  const callCount = Number(pendingCallTasks?.count || 0);
+  const activeOrders = await db2.all(
+    `SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source
+     FROM special_orders
+     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
+       AND DATE(date) >= DATE('now', 'localtime', '-7 days')
+     ORDER BY date DESC, id DESC LIMIT 50`
+  ).catch(() => []);
+  const customerOrderMap = /* @__PURE__ */ new Map();
+  for (const o of activeOrders) {
+    const custName = (o.requester || "Customer").trim();
+    const phone = String(o.phone || "").trim();
+    const key = phone ? phone : custName.toLowerCase();
+    const rawSrc = (o.customer_order_source || "").toLowerCase().trim();
+    let srcBadge = "";
+    if (rawSrc === "website") srcBadge = "Website";
+    else if (rawSrc === "whatsapp") srcBadge = "WhatsApp";
+    else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online";
+    else if (rawSrc && rawSrc !== "in_store") srcBadge = o.customer_order_source;
+    if (!customerOrderMap.has(key)) {
+      customerOrderMap.set(key, {
+        customerKey: key,
+        requester: custName,
+        phone,
+        orderSource: srcBadge,
+        items: []
+      });
+    }
+    const group = customerOrderMap.get(key);
+    const resolvedProduct = (o.product || o.medicine_name || "").trim() || "Unspecified Item";
+    group.items.push({
+      product: resolvedProduct,
+      qty: Number(o.qty || 1),
+      status: o.status || "Pending"
+    });
+  }
+  const groupedCustomerOrders = Array.from(customerOrderMap.values()).slice(0, 15);
+  const pendingShortages = await db2.all(
+    `SELECT id, product, medicine_name, requester, phone, qty, pharmarack_distributor, date
+     FROM special_orders
+     WHERE status IN ('Pending', 'PENDING')
+       AND datetime(date) <= datetime('now', '-23 hours')
+     ORDER BY date ASC LIMIT 10`
+  ).catch(() => []);
+  const stagedRows = await db2.all(`
+    SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
+    FROM automation_notifications an
+    LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+    LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+    WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+  `).catch(() => []);
+  const autoStagedCount = stagedRows.filter((r) => r.reminder_mode === "auto").length;
+  const manualStagedCount = stagedRows.filter((r) => r.reminder_mode !== "auto").length;
+  const dueMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const formatDate = (ymd) => {
+    if (!ymd) return "Due soon";
+    const parts = ymd.split("-");
+    if (parts.length === 3) {
+      return `${parts[2]} ${dueMonthNames[parseInt(parts[1], 10) - 1] || parts[1]}`;
+    }
+    return ymd;
+  };
+  let ordersBlock = "\u2022 No pending orders";
+  if (groupedCustomerOrders.length > 0) {
+    ordersBlock = groupedCustomerOrders.map((cust, i) => {
+      const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
+      const sourceSuffix = cust.orderSource ? ` \u2022 ${cust.orderSource}` : "";
+      const itemLines = cust.items.map((item) => `   - ${item.product} \xD7 ${item.qty} (${item.status})`).join("\n");
+      return `${i + 1}. *${cust.requester}* (${itemCountLabel}${sourceSuffix}):
+${itemLines}`;
+    }).join("\n");
+  }
+  let incomplete24hAudit = { overdue: [], marketPaused: [], stats: { totalOverdueCount: 0, totalPausedCount: 0, totalOverdueMedicines: 0, totalPausedMedicines: 0 } };
+  try {
+    const { orderScheduleService: orderScheduleService2 } = await Promise.resolve().then(() => (init_orderScheduleService(), orderScheduleService_exports));
+    incomplete24hAudit = await orderScheduleService2.evaluateIncompleteOrders24hSLA({ dbInstance: db2, cutoffHours: 24 });
+  } catch (err) {
+    console.warn("[RefillService] Failed to evaluate 24h incomplete orders SLA:", err);
+  }
+  let slaBlock = "";
+  const slaLines = [];
+  if (incomplete24hAudit.overdue.length > 0) {
+    const overdueDetails = incomplete24hAudit.overdue.slice(0, 5).map((c, idx) => {
+      const medStr = c.medicines.map((m) => `${m.name} \xD7 ${m.qty}`).join(", ");
+      return `  ${idx + 1}. *${c.name}*: ${medStr} (${c.elapsedHours}h ago \u2022 \u{1F6A8} Action Needed)`;
+    }).join("\n");
+    const extraOverdue = incomplete24hAudit.overdue.length > 5 ? `
+  ...and ${incomplete24hAudit.overdue.length - 5} more overdue` : "";
+    slaLines.push(`\u{1F6A8} *OVERDUE (>24h SLA BREACH \u2014 ${incomplete24hAudit.overdue.length} Orders)*:
+${overdueDetails}${extraOverdue}`);
+  }
+  if (incomplete24hAudit.marketPaused.length > 0) {
+    const pausedDetails = incomplete24hAudit.marketPaused.slice(0, 5).map((c, _idx) => {
+      const medStr = c.medicines.map((m) => `${m.name} \xD7 ${m.qty}`).join(", ");
+      const resumeStr = c.resumedWorkingDate ? ` \u2022 Resumes: ${c.resumedWorkingDate}` : "";
+      return `  \u2022 *${c.name}*: ${medStr} (${c.pauseReason || "Market closure"}${resumeStr})`;
+    }).join("\n");
+    const extraPaused = incomplete24hAudit.marketPaused.length > 5 ? `
+  ...and ${incomplete24hAudit.marketPaused.length - 5} more paused` : "";
+    slaLines.push(`\u23F8\uFE0F *MARKET CLOSURE / PAUSE HELD (${incomplete24hAudit.marketPaused.length} Orders)*:
+${pausedDetails}${extraPaused}`);
+  }
+  if (slaLines.length > 0) {
+    slaBlock = `
+
+\u23F1\uFE0F *24-HOUR FULFILLMENT WATCH*:
+` + slaLines.join("\n\n");
+  }
+  const outOfStockRefills = refillDetailRows.filter((r) => !r.in_stock);
+  const dailyTasks = [];
+  if (incomplete24hAudit.overdue.length > 0) {
+    dailyTasks.push(`\u{1F6A8} *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA \u2014 push to Pharmarack or contact distributor`);
+  }
+  if (pendingShortages.length > 0) {
+    const shortMeds = pendingShortages.map((s) => {
+      const pName = (s.product || s.medicine_name || "").trim() || "Unspecified Item";
+      return `${pName} \xD7 ${s.qty || 1} (${s.pharmarack_distributor || "Distributor"})`;
+    }).slice(0, 4);
+    const extra = pendingShortages.length > 4 ? ` +${pendingShortages.length - 4} more` : "";
+    dailyTasks.push(`\u{1F4E6} *Reorder Shortage Items (>23h Pending)*: ${shortMeds.join(", ")}${extra}`);
+  }
+  if (outOfStockRefills.length > 0) {
+    const holdPatients = Array.from(new Set(outOfStockRefills.map((r) => r.patient_name)));
+    dailyTasks.push(`\u26A0\uFE0F *Urgent Stock Reorder Needed*: Stock required for ${holdPatients.join(", ")}`);
+  }
+  if (callCount > 0) {
+    dailyTasks.push(`\u{1F4DE} *Patient Follow-up Calls*: ${callCount} pending call(s) on CRM Call Board`);
+  }
+  if (stagedRows.length > 0) {
+    dailyTasks.push(`\u{1F514} *Staged Customer Reminders*: ${stagedRows.length} reminder(s) pending in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual)`);
+  }
+  let dailyTasksBlock = "";
+  if (dailyTasks.length > 0) {
+    dailyTasksBlock = `
+
+\u26A1 *TODAY'S OPERATIONAL TASKS*:
+` + dailyTasks.map((t, idx) => `${idx + 1}. ${t}`).join("\n");
+  }
+  const now = /* @__PURE__ */ new Date();
+  const todayDayOfMonth = now.getDate();
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const scanDaysRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_expiry_scan_days'").catch(() => null);
+  const configuredScanDays = (scanDaysRow?.value || "1,16").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
+  const isMilestoneDate = Boolean(options?.forceMilestone) || todayDayOfMonth === 1 || todayDayOfMonth >= 15 && todayDayOfMonth <= 18 || todayDayOfMonth === lastDayOfMonth || configuredScanDays.includes(todayDayOfMonth);
+  let expCount = 0;
+  let overdueCreditCount = 0;
+  let overdueCreditTotal = 0;
+  let milestoneBlock = "";
+  if (isMilestoneDate) {
+    const currentMonth = todayStr2.slice(0, 7);
+    const expRow = await db2.get(
+      `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
+      [currentMonth, `${currentMonth}%`]
+    ).catch(() => ({ count: 0 }));
+    expCount = Number(expRow?.count || 0);
+    const creditRow = await db2.get(
+      `SELECT COUNT(*) as cust_count, COALESCE(SUM(credit_balance), 0) as total_balance
+       FROM customers
+       WHERE credit_due_date IS NOT NULL
+         AND date(credit_due_date) <= date('now', 'localtime')
+         AND credit_balance > 0`
+    ).catch(() => ({ cust_count: 0, total_balance: 0 }));
+    overdueCreditCount = Number(creditRow?.cust_count || 0);
+    overdueCreditTotal = Number(creditRow?.total_balance || 0);
+    const milestoneLabel = todayDayOfMonth === 1 ? "Monthly Start Audit" : todayDayOfMonth === lastDayOfMonth ? "Month-End Audit" : "Mid-Month Review";
+    const auditItems = [];
+    if (expCount > 0) {
+      auditItems.push(`\u26A0\uFE0F *EXPIRY AUDIT (${milestoneLabel})*:
+\u2022 ${expCount} batch(es) expiring this month (${todayStr2.slice(5, 7)}/${todayStr2.slice(0, 4)}) \u2014 check for supplier return`);
+    }
+    if (overdueCreditCount > 0) {
+      auditItems.push(`\u{1F4B0} *OVERDUE CREDIT AUDIT*:
+\u2022 \u20B9${overdueCreditTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} overdue across ${overdueCreditCount} customer(s)`);
+    }
+    if (auditItems.length > 0) {
+      milestoneBlock = "\n\n" + auditItems.join("\n\n");
+    }
+  }
+  let messageText = "";
+  if (templateKey === "detailed") {
+    const patientGroups = /* @__PURE__ */ new Map();
+    for (const row of refillDetailRows) {
+      const list = patientGroups.get(row.patient_name) || [];
+      list.push(row);
+      patientGroups.set(row.patient_name, list);
+    }
+    let t4Details = "\u2022 No refills due in next 7 days";
+    if (patientGroups.size > 0) {
+      let pIdx = 1;
+      const pBlocks = [];
+      for (const [pName, meds] of patientGroups.entries()) {
+        const dueStr = meds[0]?.due_date ? formatDate(meds[0].due_date) : "";
+        const medLines = meds.map((m) => `   - ${m.medicine_name} \xD7 ${m.quantity_needed || 1} (${m.in_stock ? "\u2705 Stock" : "\u23F3 Hold"})`).join("\n");
+        pBlocks.push(`${pIdx++}. *${pName}* (Due ${dueStr}):
+${medLines}`);
+      }
+      t4Details = pBlocks.join("\n");
+    }
+    messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
+\u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
+\u{1F3EA} *Store Status*: ${statusLine}
+
+\u{1F4CB} *REFILL PRESCRIPTIONS (Next 7 Days)*:
+${t4Details}
+
+\u{1F4E6} *TODAY'S SPECIAL & ONLINE ORDERS*:
+${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+  } else if (templateKey === "compact") {
+    let t1Refills = "\u2022 No refills due in next 7 days";
+    if (refillRows.length > 0) {
+      t1Refills = refillRows.map((r, i) => {
+        const stockStatus = r.out_of_stock_count === 0 ? "\u2705 In Stock" : r.in_stock_count === 0 ? "\u23F3 Hold for Stock" : "\u26A0\uFE0F Partial Stock";
+        const medUnit = Number(r.med_count) === 1 ? "1 med" : `${r.med_count} meds`;
+        return `${i + 1}. *${r.patient_name}* (Due ${formatDate(r.earliest_due)}) \u2014 ${medUnit} (${stockStatus})`;
+      }).join("\n");
+    }
+    let t1Orders = "\u2022 No pending orders";
+    if (groupedCustomerOrders.length > 0) {
+      t1Orders = groupedCustomerOrders.map((cust, i) => {
+        const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
+        const statuses = Array.from(new Set(cust.items.map((it) => it.status))).join(", ");
+        const srcTag = cust.orderSource ? ` [${cust.orderSource}]` : "";
+        return `${i + 1}. *${cust.requester}* \u2014 ${itemCountLabel}${srcTag} (${statuses})`;
+      }).join("\n");
+    }
+    messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
+\u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
+\u{1F3EA} *Store Status*: ${statusLine}
+
+\u{1F4CB} *1. REFILLS WORKLIST (Next 7 Days)*:
+${t1Refills}
+
+\u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
+${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+  } else if (templateKey === "checklist") {
+    const t2Items = [];
+    if (incomplete24hAudit.overdue.length > 0) {
+      t2Items.push(`[ ] *24H OVERDUE ESCALATION*: Expedite ${incomplete24hAudit.overdue.length} order(s) breaching 24h SLA (${incomplete24hAudit.stats.totalOverdueMedicines} meds)`);
+    }
+    if (incomplete24hAudit.marketPaused.length > 0) {
+      t2Items.push(`[ ] *MONITOR PAUSED ORDERS*: ${incomplete24hAudit.marketPaused.length} order(s) held for next open market day`);
+    }
+    const holdRefills = refillRows.filter((r) => r.out_of_stock_count > 0);
+    if (holdRefills.length > 0) {
+      t2Items.push(`[ ] *URGENT REORDER*: ${holdRefills.map((r) => r.patient_name).join(", ")} (Stock Needed)`);
+    }
+    if (pendingShortages.length > 0) {
+      t2Items.push(`[ ] *SHORTAGE REORDERS (>23H)*: Add ${pendingShortages.length} pending shortage item(s) to distributor cart`);
+    }
+    const inStockRefills = refillRows.filter((r) => r.out_of_stock_count === 0);
+    if (inStockRefills.length > 0) {
+      t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(", ")}`);
+    }
+    if (groupedCustomerOrders.length > 0) {
+      const totalOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
+      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${groupedCustomerOrders.length} customer order(s) (${totalOrderItems} total items)`);
+    }
+    if (callCount > 0) {
+      t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
+    }
+    if (isMilestoneDate && expCount > 0) {
+      t2Items.push(`[ ] *EXPIRY PACKING*: Check & return ${expCount} batches expiring this month`);
+    }
+    if (isMilestoneDate && overdueCreditCount > 0) {
+      t2Items.push(`[ ] *CREDIT FOLLOW-UP*: Follow up \u20B9${overdueCreditTotal.toFixed(0)} overdue credit across ${overdueCreditCount} customer(s)`);
+    }
+    if (stagedRows.length > 0) {
+      t2Items.push(`[ ] *APPROVE NOTIFICATIONS*: Review ${stagedRows.length} staged reminder(s) in CRM`);
+    }
+    if (t2Items.length === 0) {
+      t2Items.push(`[ ] All morning operational queues are clear!`);
+    }
+    messageText = `\u2600\uFE0F *MORNING ACTION CHECKLIST* \u2014 ${storeName}
+\u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
+
+\u26A1 *TODAY'S OPERATIONAL TO-DO LIST*:
+${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
+  } else {
+    const totalRefillsDue = refillRows.reduce((acc, r) => acc + (r.med_count || 1), 0);
+    const totalSpecialOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
+    let milestoneMetrics = "";
+    if (isMilestoneDate) {
+      milestoneMetrics = `
+\u2022 \u26A0\uFE0F Expiring Batches: *${expCount}*
+\u2022 \u{1F4B0} Overdue Credit: *\u20B9${overdueCreditTotal.toFixed(0)}* (${overdueCreditCount} cust)`;
+    }
+    messageText = `\u2600\uFE0F *DAILY EXECUTIVE SUMMARY* \u2014 ${storeName}
+\u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
+
+\u{1F4CA} *Morning KPI Dashboard*:
+\u2022 \u{1F4CB} Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+\u2022 \u{1F4E6} Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
+\u2022 \u23F1\uFE0F 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
+\u2022 \u23F8\uFE0F Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
+\u2022 \u{1F4DE} Pending Calls: *${callCount}*
+\u2022 \u{1F514} Staged Reminders: *${stagedRows.length}*${milestoneMetrics}`;
+  }
+  return { template: templateKey, messageText };
+}
+async function sendMorningScheduleBriefingToAdmin(db2, templateKey, options) {
+  try {
+    const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+    const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2);
+    if (!adminWhatsapp) {
+      console.log("[RefillService] No store owner WhatsApp configured for morning schedule briefing.");
+      return { success: false, message: "No store owner WhatsApp configured in Settings." };
+    }
+    const { template, messageText } = await buildDailyOperationalBriefing(db2, templateKey, options);
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(adminWhatsapp, messageText, "admin_morning_briefing", "Admin / Store Owner", void 0, void 0, void 0, { skipDedupe: true });
+    console.log(`[RefillService] Morning operational task briefing (${template}) sent to owner ${adminWhatsapp}.`);
+    return { success: true, message: `Briefing sent successfully using ${template} template.` };
+  } catch (err) {
+    console.error("[RefillService] Failed to send morning schedule briefing to admin:", err);
+    return { success: false, message: err?.message || "Failed to send briefing" };
+  }
+}
+async function notifyAdminStagedReminders(db2) {
+  try {
+    const alertSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'reminder_admin_preview_enabled'");
+    if (alertSetting?.value === "false") return;
+    const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+    const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2);
+    if (!adminWhatsapp) return;
+    const stagedRows = await db2.all(`
+      SELECT an.*,
+             COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
+      FROM automation_notifications an
+      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
+      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+    `);
+    if (stagedRows.length === 0) return;
+    const autoCount = stagedRows.filter((r) => r.patient_reminder_mode === "auto").length;
+    const manualCount = stagedRows.filter((r) => r.patient_reminder_mode === "manual").length;
+    const storeName = await getConfiguredPharmacyName(db2) || "Pharmacy";
+    const msg = `\u{1F514} *Refill Reminder Alert* \u2014 ${storeName}
+
+${stagedRows.length} patient reminder(s) are staged and waiting for review:
+\u2022 ${autoCount} set to Auto \u{1F916}
+\u2022 ${manualCount} set to Manual \u{1F446}
+
+Review & dispatch in CRM \u2192 Refills or Quick Assist.`;
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(adminWhatsapp, msg, "admin_morning_briefing", "Admin / Store Owner");
+  } catch (err) {
+    console.error("[RefillService] Failed to notify admin of staged reminders:", err);
+  }
+}
+async function isFirstContactOrUnconfirmed(db2, phone) {
+  if (!phone) return false;
+  const digits = String(phone).replace(/\D/g, "").slice(-10);
+  if (!digits) return false;
+  try {
+    const customer = await db2.get(
+      `SELECT language_confirmed FROM customers WHERE phone LIKE ? LIMIT 1`,
+      [`%${digits}`]
+    ).catch(() => null);
+    if (customer && customer.language_confirmed === 1) {
+      return false;
+    }
+    const waMsg = await db2.get(
+      `SELECT id FROM whatsapp_messages WHERE (chat_id LIKE ? OR chat_id LIKE ?) AND from_me = 1 LIMIT 1`,
+      [`%${digits}@c.us`, `%${digits}@s.whatsapp.net`]
+    ).catch(() => null);
+    if (waMsg) return false;
+    const waSent = await db2.get(
+      `SELECT id FROM whatsapp_sent_register WHERE phone LIKE ? LIMIT 1`,
+      [`%${digits}%`]
+    ).catch(() => null);
+    if (waSent) return false;
+    const notifSent = await db2.get(
+      `SELECT id FROM automation_notifications WHERE recipient_phone LIKE ? AND status = 'sent' LIMIT 1`,
+      [`%${digits}%`]
+    ).catch(() => null);
+    if (notifSent) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+async function dispatchDueRefillReminders(db2) {
+  try {
+    const enabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
+    if (enabledRow?.value === "false") {
+      return { dispatched: 0, skipped: 0, reason: "disabled" };
+    }
+    const modeRow = await db2.get("SELECT value FROM app_settings WHERE key = 'default_refill_reminder_mode'");
+    if (modeRow?.value !== "auto") {
+      return { dispatched: 0, skipped: 0, reason: "mode_manual" };
+    }
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const sched = await getPharmacyOperatingSchedule2(db2);
+    const now = /* @__PURE__ */ new Date();
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const currentDay = dayNames[now.getDay()];
+    if ((sched.weeklyOff || "").toLowerCase() === currentDay.toLowerCase()) {
+      return { dispatched: 0, skipped: 0, reason: "store_closed_weekly_off" };
+    }
+    const staged = await db2.all(
+      `SELECT id, recipient_name, recipient_phone, message, reference_id, type 
+       FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') 
+         AND status = 'staged' 
+         AND needs_confirmation = 1 
+       LIMIT 50`
+    );
+    if (!staged || staged.length === 0) {
+      return { dispatched: 0, skipped: 0, reason: "none_staged" };
+    }
+    const { normalizeWhatsAppPhone: normalizeWhatsAppPhone2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+    let dispatched = 0;
+    let skipped = 0;
+    for (const notif of staged) {
+      const cleanPhone = normalizeWhatsAppPhone2(String(notif.recipient_phone || ""));
+      if (!cleanPhone || cleanPhone.length < 10) {
+        skipped++;
+        continue;
+      }
+      if (notif.reference_id) {
+        const refIds = String(notif.reference_id).split(",").map((s) => Number(s.trim())).filter((n) => !isNaN(n) && n > 0);
+        if (refIds.length > 0) {
+          const placeholders = refIds.map(() => "?").join(",");
+          const alreadyHandled = await db2.get(
+            `SELECT id FROM patient_refills 
+             WHERE id IN (${placeholders}) 
+               AND (COALESCE(patient_confirmed, 0) = 1 
+                 OR status IN ('ordered', 'completed', 'canceled') 
+                 OR cart_store_name IS NOT NULL)
+             LIMIT 1`,
+            refIds
+          );
+          if (alreadyHandled) {
+            await db2.run(
+              `UPDATE automation_notifications 
+               SET status = 'cancelled', lifecycle_status = 'cancelled', error_message = 'Already confirmed or ordered' 
+               WHERE id = ?`,
+              [notif.id]
+            );
+            skipped++;
+            continue;
+          }
+        }
+      }
+      const recentSend = await db2.get(
+        `SELECT id FROM whatsapp_send_queue 
+         WHERE number LIKE ? AND type IN ('refill_collection', 'refill_reminder') 
+           AND created_at > datetime('now', '-24 hours') 
+         LIMIT 1`,
+        [`%${cleanPhone.slice(-10)}%`]
+      );
+      if (recentSend) {
+        skipped++;
+        continue;
+      }
+      const queueId = await whatsappQueueWorker2.enqueue(
+        cleanPhone,
+        notif.message,
+        notif.type || "refill_reminder",
+        notif.recipient_name || void 0,
+        void 0,
+        void 0,
+        void 0,
+        { skipDedupe: false }
+      );
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'queued', needs_confirmation = 0 
+         WHERE id = ?`,
+        [notif.id]
+      );
+      if (notif.reference_id) {
+        const refIds = String(notif.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
+        if (refIds.length > 0) {
+          const placeholders = refIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE patient_refills 
+             SET reminder_status = 'QUEUED', status = 'notified', reminder_job_id = ? 
+             WHERE id IN (${placeholders})`,
+            [queueId, ...refIds]
+          ).catch(() => {
+          });
+        }
+      }
+      dispatched++;
+    }
+    if (dispatched > 0) {
+      eventService2.broadcast("automation_hub_updated", { type: "auto_dispatched", count: dispatched });
+      eventService2.broadcast("refill_updated", { type: "auto_dispatched", count: dispatched });
+    }
+    return { dispatched, skipped };
+  } catch (err) {
+    console.error("[RefillService] dispatchDueRefillReminders error:", err);
+    return { dispatched: 0, skipped: 0, reason: String(err) };
+  }
+}
+var init_refillService = __esm({
+  "src/services/refillService.ts"() {
+    "use strict";
+    init_telegramBot();
+    init_storeSettingsService();
+    init_pharmacyCalendar();
+    init_refillOrderReconciler();
+    init_orderNameMatcher();
+    init_languageDetector();
+  }
+});
+
 // src/services/refillCartService.ts
 var refillCartService_exports = {};
 __export(refillCartService_exports, {
@@ -32259,6 +33381,31 @@ async function processRefillCartItem(refillId, opts = {}) {
       linked: linkedKeys.has(key)
     });
     if (candidates.length >= 30) break;
+  }
+  if (links.length === 0) {
+    const inStockCandidates = candidates.filter((c) => c.inStock && c.mapped);
+    if (inStockCandidates.length > 0) {
+      const orderedCandidates = orderByPriority(inStockCandidates, (c) => c.storeName, prioMap);
+      const best = orderedCandidates[0];
+      try {
+        await saveMedicineLinks(refill.medicine_id, [{
+          storeId: best.storeId,
+          storeName: best.storeName,
+          productCode: best.productCode,
+          productId: best.productId,
+          productName: best.productName,
+          packaging: best.packaging,
+          company: best.company,
+          mapped: true
+        }]);
+        const freshLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
+        if (freshLinks.length > 0) {
+          links.push(...freshLinks);
+        }
+      } catch (linkErr) {
+        console.warn(`[RefillCartService] Auto-link fallback note for medicine ${refill.medicine_id}:`, linkErr);
+      }
+    }
   }
   if (links.length === 0) {
     return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor linked to this medicine yet. Link one to add it." } : { ...base, status: "not_found", message: "No mapped Pharmarack distributor found for this name. Link it by searching another spelling." };
@@ -32981,7 +34128,7 @@ function sortAndFilterByRequestedStrength(items, query) {
   scored.sort((a, b) => b.score - a.score);
   return scored.map((s) => s.item);
 }
-function formatTime12h2(timeStr) {
+function formatTime12h3(timeStr) {
   if (!timeStr) return "";
   const [hStr, mStr] = timeStr.split(":");
   let h = parseInt(hStr, 10);
@@ -36781,6 +37928,16 @@ ${stepPrompt}${languageFooter(chatLang)}`;
              WHERE id IN (${placeholders})`,
             refillIds
           );
+          try {
+            const { purgePendingCustomerReminders: purgePendingCustomerReminders2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
+            await purgePendingCustomerReminders2(db3, {
+              phone: cleanDigits,
+              refillIds,
+              medicineNames: pendingRefills.map((r) => r.medicine_name).filter(Boolean)
+            });
+          } catch (purgeErr) {
+            console.warn("[Intent Service] purge reminders warning on refill confirm:", purgeErr);
+          }
           eventService.broadcast("refill_updated", {
             at: Date.now(),
             confirmed_id: primaryRefill.id,
@@ -36851,8 +38008,8 @@ ${stepPrompt}${languageFooter(chatLang)}`;
               const phoneSuffix = storePhone ? `
 \u{1F4DE} ${storePhone}` : "";
               const medListText = pendingRefills.length === 1 ? `*${primaryRefill.medicine_name}*` : pendingRefills.map((r) => `\u2022 ${r.medicine_name}`).join("\n");
-              const open12 = formatTime12h2(sched.openTime || "09:00");
-              const close12 = formatTime12h2(sched.closeTime || "22:00");
+              const open12 = formatTime12h3(sched.openTime || "09:00");
+              const close12 = formatTime12h3(sched.closeTime || "22:00");
               const offDay = sched.weeklyOff ? ` | Weekly Off: ${sched.weeklyOff}` : "";
               const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
 
@@ -48151,24 +49308,26 @@ var init_whatsappQueueWorker = __esm({
             }
             if (["refill_collection", "refill_reminder", "order_ready", "special_order_arrived", "special_order"].includes(item.type)) {
               if (item.type === "refill_collection" || item.type === "refill_reminder") {
+                const extraRefillFilter = item.type === "refill_reminder" ? "AND COALESCE(patient_confirmed, 0) = 0 AND status != 'ordered' AND cart_store_name IS NULL" : "";
                 const activeRefills = await db2.all(
                   `SELECT id FROM patient_refills 
                WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
                  AND is_active = 1
                  AND is_ready = 1
                  AND auto_remind = 1
-                 AND status NOT IN ('completed', 'canceled')`,
+                 AND status NOT IN ('completed', 'canceled')
+                 ${extraRefillFilter}`,
                   [`%${target10Digits}`, `%${target10Digits}`]
                 ).catch(() => []);
                 if (!activeRefills || activeRefills.length === 0) {
-                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 refill already fulfilled or reminder cancelled for ${target10Digits}.`);
+                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 refill already fulfilled, confirmed, ordered, or reminder cancelled for ${target10Digits}.`);
                   await db2.run(
-                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled or reminder cancelled' WHERE id = ?",
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, confirmed, or reminder cancelled' WHERE id = ?",
                     [item.id]
                   );
                   await db2.run(
                     `UPDATE automation_notifications 
-                 SET status = 'cancelled', error_message = 'Already fulfilled' 
+                 SET status = 'cancelled', error_message = 'Already fulfilled or confirmed' 
                  WHERE reference_id = ? OR reference_id = ?`,
                     [`queue_${item.id}`, String(item.id)]
                   ).catch(() => {
@@ -49295,1101 +50454,6 @@ var init_expiryAlertService = __esm({
     rebuildTimeout = null;
     pendingInventoryIds = /* @__PURE__ */ new Set();
     fullExpiryRebuildRequested = false;
-  }
-});
-
-// src/services/refillService.ts
-var refillService_exports = {};
-__export(refillService_exports, {
-  buildDailyOperationalBriefing: () => buildDailyOperationalBriefing,
-  checkAllRefills: () => checkAllRefills,
-  cleanupStagedRefillNotifications: () => cleanupStagedRefillNotifications,
-  createQuickBillForRefill: () => createQuickBillForRefill,
-  dispatchDueRefillReminders: () => dispatchDueRefillReminders,
-  isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed,
-  notifyAdminStagedReminders: () => notifyAdminStagedReminders,
-  purgePendingCustomerReminders: () => purgePendingCustomerReminders,
-  sendMorningScheduleBriefingToAdmin: () => sendMorningScheduleBriefingToAdmin,
-  syncStagedRefillNotificationForPatient: () => syncStagedRefillNotificationForPatient,
-  triggerPendingRefillsForMedicine: () => triggerPendingRefillsForMedicine,
-  triggerPendingSpecialOrdersForMedicineName: () => triggerPendingSpecialOrdersForMedicineName
-});
-function formatTime12h3(timeStr) {
-  if (!timeStr) return "";
-  const [hStr, mStr] = timeStr.split(":");
-  let h = parseInt(hStr, 10);
-  const m = mStr || "00";
-  const ampm = h >= 12 ? "PM" : "AM";
-  h = h % 12 || 12;
-  return `${h}:${m} ${ampm}`;
-}
-async function checkAllRefills(db2) {
-  try {
-    await db2.run(`UPDATE patient_refills SET is_ready = 0, hold_for_stock = 0 WHERE is_active = 0`);
-    await db2.run(
-      `UPDATE automation_notifications SET lifecycle_status = 'skipped' 
-       WHERE type = 'refill_collection' AND lifecycle_status = 'staged' AND reference_id IN (
-         SELECT CAST(id AS TEXT) FROM patient_refills WHERE is_active = 0
-       )`
-    );
-    const pausedUpcoming = await db2.all(
-      `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
-       JOIN medicines m ON pr.medicine_id = m.id
-       WHERE pr.is_active = 0 AND pr.next_refill_date IS NOT NULL
-         AND (pr.status IS NULL OR pr.status NOT IN ('cancelled', 'deleted', 'completed'))
-         AND date(pr.next_refill_date) <= date('now', '+7 days')`
-    ).catch(() => []);
-    for (const pRefill of pausedUpcoming) {
-      try {
-        const openDay = await advanceToNextOpenDay(new Date(pRefill.next_refill_date), {
-          storeId: pRefill.store_id || 1,
-          dbInstance: db2
-        });
-        await refillOrderReconciler.upsertForPhone({
-          phone: pRefill.patient_phone,
-          customer_name: pRefill.patient_name,
-          items: [{
-            medicine_name: pRefill.medicine_name,
-            qty: Number(pRefill.quantity_needed || 3)
-          }],
-          source: "refill",
-          source_refill_id: pRefill.id,
-          store_id: pRefill.store_id || 1,
-          priority: "Normal",
-          notes: `Paused at patient request, auto-shifted to ${openDay.ymd}`,
-          dbInstance: db2
-        });
-      } catch (_) {
-      }
-    }
-  } catch (cleanErr) {
-    console.warn("[RefillService] Cleanup of paused refills warning:", cleanErr);
-  }
-  const activeRefills = await db2.all(
-    `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
-     JOIN medicines m ON pr.medicine_id = m.id
-     WHERE pr.status = 'pending' AND pr.is_active = 1`
-  );
-  let noticeDays = 3;
-  let operatingSchedule = { openTime: "09:00", closeTime: "22:00", weeklyOff: "Monday", closedDates: [] };
-  try {
-    const setting = await db2.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
-    if (setting && setting.value) {
-      noticeDays = parseInt(setting.value, 10) || 3;
-    }
-    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    operatingSchedule = await getPharmacyOperatingSchedule2(db2);
-  } catch (err) {
-    console.error("Failed to load refill notice settings:", err);
-  }
-  const outOfStockRefills = [];
-  const today = /* @__PURE__ */ new Date();
-  today.setHours(0, 0, 0, 0);
-  for (const refill of activeRefills) {
-    const nextDate = new Date(refill.next_refill_date);
-    nextDate.setHours(0, 0, 0, 0);
-    const diffTime = nextDate.getTime() - today.getTime();
-    const diffDays = Math.round(diffTime / (1e3 * 60 * 60 * 24));
-    const dateYmd = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : "";
-    const effNotice = await effectiveNoticeDays(noticeDays, dateYmd, refill.store_id || 1, db2);
-    const highlightTrigger = diffDays <= effNotice;
-    const orderTrigger = diffDays <= effNotice;
-    if (!orderTrigger && !highlightTrigger) {
-      continue;
-    }
-    const stockRow = await db2.get(
-      "SELECT (SUM(quantity) + COALESCE(SUM(loose_quantity), 0)) as total_qty FROM inventory_master WHERE medicine_id = ?",
-      [refill.medicine_id]
-    );
-    const qty = stockRow ? stockRow.total_qty || 0 : 0;
-    const hasStock = qty > 0 || refill.stock_verified_override === 1;
-    if (hasStock) {
-      if (highlightTrigger) {
-        let quickBillId = refill.quick_bill_id;
-        if (!quickBillId) {
-          quickBillId = await createQuickBillForRefill(db2, refill);
-          await db2.run(
-            `UPDATE patient_refills 
-             SET is_ready = 1, hold_for_stock = 0, quick_bill_id = ?
-             WHERE id = ?`,
-            [quickBillId, refill.id]
-          );
-        } else {
-          await db2.run(
-            `UPDATE patient_refills 
-             SET is_ready = 1, hold_for_stock = 0
-             WHERE id = ?`,
-            [refill.id]
-          );
-        }
-      }
-    } else {
-      if (orderTrigger) {
-        if (refill.ordering_triggered === 0) {
-          const orderQty = Number(refill.quantity_needed || refill.quantity || 3);
-          await refillOrderReconciler.upsertForPhone({
-            phone: refill.patient_phone,
-            customer_name: refill.patient_name,
-            items: [{
-              medicine_name: refill.medicine_name,
-              qty: orderQty
-            }],
-            source: "refill",
-            source_refill_id: refill.id,
-            store_id: refill.store_id || 1,
-            priority: "High",
-            dbInstance: db2
-          });
-          await db2.run(
-            `UPDATE patient_refills 
-             SET hold_for_stock = 1, is_ready = 0, ordering_triggered = 1 
-             WHERE id = ?`,
-            [refill.id]
-          );
-          outOfStockRefills.push(refill);
-        }
-      }
-    }
-  }
-  if (outOfStockRefills.length > 0) {
-    let reportMessage = `\u{1F4CB} PENDING REFILLS OF THE WEEK (OUT OF STOCK):
-
-`;
-    outOfStockRefills.forEach((refill, index) => {
-      reportMessage += `${index + 1}. Patient: ${refill.patient_name} (${refill.patient_phone})
-   Medication: ${refill.medicine_name}
-   Next Refill Due: ${refill.next_refill_date}
-
-`;
-    });
-    reportMessage += `Please purchase/add stock for these medicines so they can be marked ready for manual customer notification.`;
-    try {
-      await telegramBotService.sendDefaultNotification(reportMessage);
-    } catch (err) {
-      console.error("Failed to send daily out-of-stock refills report to Telegram:", err);
-    }
-  }
-}
-async function createQuickBillForRefill(db2, refill) {
-  const invoice_no = `H-REF-${Date.now()}`;
-  const temp_label = `Refill - ${refill.patient_name}`;
-  const invRow = await db2.get(
-    `SELECT im.id as inventory_id, im.batch_no, im.expiry_date, im.mrp, im.unit_price, COALESCE(im.unit_price, im.mrp, m.mrp, 0) as price, COALESCE(m.pack_size, 1) as pack_size
-     FROM inventory_master im
-     JOIN medicines m ON im.medicine_id = m.id
-     WHERE im.medicine_id = ? AND (im.quantity > 0 OR im.loose_quantity > 0)
-     ORDER BY im.expiry_date ASC LIMIT 1`,
-    [refill.medicine_id]
-  );
-  const unit_price = invRow ? Number(invRow.price || invRow.mrp || 0) : 0;
-  const refillQty = Number(refill.quantity || 1);
-  const cartItems = [{
-    id: invRow ? invRow.inventory_id : refill.medicine_id,
-    inventory_id: invRow ? invRow.inventory_id : void 0,
-    medicine_id: refill.medicine_id,
-    medicine_name: refill.medicine_name,
-    batch: invRow ? invRow.batch_no || "" : "",
-    expiry: invRow ? invRow.expiry_date || "" : "",
-    mrp: invRow ? invRow.mrp || unit_price : unit_price,
-    qty: refillQty,
-    quantity: refillQty,
-    unit_price,
-    pack_size: invRow ? invRow.pack_size || 1 : 1,
-    discount_per: 0
-  }];
-  const cart_data = JSON.stringify(cartItems);
-  const billResult = await db2.run(
-    `INSERT INTO held_bills (invoice_no, temp_label, patient_name, patient_phone, remarks, cart_data)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [invoice_no, temp_label, refill.patient_name, refill.patient_phone, "AUTO_REFILL_BILL", cart_data]
-  );
-  await syncStagedRefillNotificationForPatient(db2, refill.patient_name, refill.patient_phone);
-  return billResult.lastID;
-}
-async function syncStagedRefillNotificationForPatient(db2, patientName, patientPhone) {
-  const configuredName = await getConfiguredPharmacyName(db2);
-  if (!configuredName || !patientName && !patientPhone) return;
-  const storePhone = await getStorePhone(db2);
-  const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
-  const readyRefills = await db2.all(
-    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
-     FROM patient_refills pr
-     JOIN medicines m ON pr.medicine_id = m.id
-     WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
-       AND pr.is_active = 1
-       AND pr.status NOT IN ('completed', 'canceled', 'notified')
-       AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
-     ORDER BY pr.id ASC`,
-    [patientPhone, patientName]
-  );
-  if (!readyRefills || readyRefills.length === 0) {
-    await db2.run(
-      `DELETE FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?)`,
-      [patientPhone, patientName]
-    );
-    return;
-  }
-  const seenMeds = /* @__PURE__ */ new Map();
-  for (const r of readyRefills) {
-    const name = (r.medicine_name || "").trim();
-    if (!name) continue;
-    if (!seenMeds.has(name)) {
-      seenMeds.set(name, {
-        id: r.id,
-        medicine_name: name,
-        quantity: Number(r.quantity_needed || 1)
-      });
-    }
-  }
-  const items = Array.from(seenMeds.values());
-  const refillIds = readyRefills.map((r) => r.id);
-  const anyReady = readyRefills.some((r) => r.is_ready === 1 || r.quick_bill_id);
-  let timingInfo = "";
-  let hoursPill = "";
-  try {
-    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const sched = await getPharmacyOperatingSchedule2(db2);
-    const open12 = formatTime12h3(sched.openTime || "09:00");
-    const close12 = formatTime12h3(sched.closeTime || "22:00");
-    hoursPill = `
-*(Store open ${open12} \u2013 ${close12})*`;
-    const { getRefillScheduleOpts: getRefillScheduleOpts2 } = await Promise.resolve().then(() => (init_closureNotice(), closureNotice_exports));
-    const closure = await getRefillScheduleOpts2(db2, sched);
-    timingInfo = `
-\u{1F552} *Store Hours:* ${open12} to ${close12}`;
-    if (closure.isOffDayUpcoming) {
-      timingInfo += `
-\u26A0\uFE0F *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
-    }
-  } catch (_) {
-  }
-  let msg;
-  if (anyReady) {
-    if (items.length === 1) {
-      msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${configuredName}*
-
-Dear ${patientName},
-Your packed prescription is waiting and ready for collection at our pharmacy:
-
-\u2022 *${items[0].medicine_name}* (Qty: ${items[0].quantity})
-
-\u{1F4CD} *Pickup Location:* ${storeLabel}${timingInfo}
-\u{1F449} *Please collect your medicine at your earliest convenience.*`;
-    } else {
-      const medList = items.map((it) => `\u2022 *${it.medicine_name}* (Qty: ${it.quantity})`).join("\n");
-      msg = `\u{1F514} *READY MEDICINE COLLECTION REMINDER \u2014 ${configuredName}*
-
-Dear ${patientName},
-Your packed prescription is waiting and ready for collection at our pharmacy:
-
-${medList}
-
-\u{1F4CD} *Pickup Location:* ${storeLabel}${timingInfo}
-\u{1F449} *Please collect your medicine at your earliest convenience.*`;
-    }
-  } else {
-    if (items.length === 1) {
-      msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
-
-Dear ${patientName},
-Your regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.
-
-You may collect from ${storeLabel}.${timingInfo}
-\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
-    } else {
-      const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
-      msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
-
-Dear ${patientName},
-Your regular prescription is due for refill:
-
-${medList}
-
-You may collect from ${storeLabel}.${timingInfo}
-\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
-    }
-  }
-  const needsLangBanner = await isFirstContactOrUnconfirmed(db2, patientPhone);
-  if (needsLangBanner) {
-    msg += firstContactLanguageBanner();
-  }
-  const referenceIdStr = refillIds.join(",");
-  let existing = null;
-  try {
-    existing = await db2.get(
-      `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
-       ORDER BY id DESC LIMIT 1`,
-      [patientPhone, patientName]
-    );
-  } catch (queryErr) {
-    if (queryErr?.message?.includes("snoozed_until")) {
-      await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL").catch(() => {
-      });
-      existing = await db2.get(
-        `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-         WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
-         ORDER BY id DESC LIMIT 1`,
-        [patientPhone, patientName]
-      ).catch(async () => {
-        return await db2.get(
-          `SELECT id, status FROM automation_notifications 
-           WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
-           ORDER BY id DESC LIMIT 1`,
-          [patientPhone, patientName]
-        );
-      });
-    } else {
-      throw queryErr;
-    }
-  }
-  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  if (existing) {
-    if (existing.status === "snoozed") {
-      if (existing.snoozed_until && existing.snoozed_until > todayStr2) {
-        return;
-      }
-      await db2.run(
-        `UPDATE automation_notifications 
-         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
-         WHERE id = ?`,
-        [msg, referenceIdStr, patientName, patientPhone, existing.id]
-      ).catch(async (updErr) => {
-        if (updErr?.message?.includes("snoozed_until")) {
-          await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL").catch(() => {
-          });
-          await db2.run(
-            `UPDATE automation_notifications 
-             SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
-             WHERE id = ?`,
-            [msg, referenceIdStr, patientName, patientPhone, existing.id]
-          );
-        } else {
-          throw updErr;
-        }
-      });
-    } else {
-      await db2.run(
-        `UPDATE automation_notifications 
-         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
-         WHERE id = ?`,
-        [msg, referenceIdStr, patientName, patientPhone, existing.id]
-      );
-    }
-    await db2.run(
-      `DELETE FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
-      [patientPhone, patientName, existing.id]
-    );
-  } else {
-    await db2.run(
-      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ["refill_collection", patientName, patientPhone, msg, "staged", 1, referenceIdStr]
-    );
-  }
-}
-async function triggerPendingRefillsForMedicine(db2, medicineId) {
-  const stockRow = await db2.get(
-    "SELECT SUM(quantity) as total_qty FROM inventory_master WHERE medicine_id = ?",
-    [medicineId]
-  );
-  const qty = stockRow ? stockRow.total_qty || 0 : 0;
-  if (qty <= 0) return;
-  const pendingRefills = await db2.all(
-    `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
-     JOIN medicines m ON pr.medicine_id = m.id
-     WHERE pr.medicine_id = ? AND pr.status = 'pending' AND (pr.hold_for_stock = 1 OR pr.is_ready = 0) AND pr.is_active = 1`,
-    [medicineId]
-  );
-  const affectedPatients = /* @__PURE__ */ new Set();
-  for (const refill of pendingRefills) {
-    let quickBillId = refill.quick_bill_id;
-    if (!quickBillId) {
-      quickBillId = await createQuickBillForRefill(db2, refill);
-    }
-    await db2.run(
-      "UPDATE patient_refills SET is_ready = 1, hold_for_stock = 0, quick_bill_id = ? WHERE id = ?",
-      [quickBillId, refill.id]
-    );
-    affectedPatients.add(`${refill.patient_name || ""}|||${refill.patient_phone || ""}`);
-  }
-  for (const p of affectedPatients) {
-    const [name, phone] = p.split("|||");
-    await syncStagedRefillNotificationForPatient(db2, name, phone);
-  }
-}
-async function triggerPendingSpecialOrdersForMedicineName(db2, medicineName) {
-  if (!medicineName) return;
-  const pendingOrders = await db2.all(
-    `SELECT * FROM special_orders WHERE status IN ('Pending', 'Ordered')`
-  );
-  for (const order of pendingOrders) {
-    const match = scoreOrderNameMatch(medicineName.trim(), order.product || order.medicine_name || "");
-    if (match.score >= ARRIVAL_MATCH_THRESHOLD) {
-      await db2.run("UPDATE special_orders SET status = 'Ready', notified = 0 WHERE id = ?", [order.id]);
-    }
-  }
-}
-async function cleanupStagedRefillNotifications(db2, refillIds, targetStatus = "sent_manually") {
-  const idsToRemove = (Array.isArray(refillIds) ? refillIds : [refillIds]).map((id) => String(id).trim()).filter(Boolean);
-  if (idsToRemove.length === 0) return;
-  try {
-    const stagedNotifications = await db2.all(
-      `SELECT id, reference_id, recipient_phone, recipient_name 
-       FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged'`
-    );
-    for (const notif of stagedNotifications) {
-      if (!notif.reference_id) continue;
-      const existingRefIds = String(notif.reference_id).split(",").map((s) => s.trim()).filter(Boolean);
-      const hasMatch = existingRefIds.some((id) => idsToRemove.includes(id));
-      if (!hasMatch) continue;
-      const remainingRefIds = existingRefIds.filter((id) => !idsToRemove.includes(id));
-      if (remainingRefIds.length === 0) {
-        const lifecycle = targetStatus === "cancelled" ? "cancelled" : "sent";
-        await db2.run(
-          `UPDATE automation_notifications 
-           SET status = ?, lifecycle_status = ? 
-           WHERE id = ?`,
-          [targetStatus, lifecycle, notif.id]
-        );
-      } else {
-        await db2.run(
-          `UPDATE automation_notifications 
-           SET reference_id = ? 
-           WHERE id = ?`,
-          [remainingRefIds.join(","), notif.id]
-        );
-      }
-    }
-  } catch (cleanErr) {
-    console.warn("[Refills] Cleanup of staged notifications warning:", cleanErr);
-  }
-}
-async function purgePendingCustomerReminders(db2, options) {
-  let purgedQueueCount = 0;
-  let purgedNotificationsCount = 0;
-  try {
-    const rawPhone = (options.phone || "").replace(/\D/g, "");
-    const last102 = rawPhone.length >= 7 ? rawPhone.slice(-10) : "";
-    const refillIdStrs = (options.refillIds || []).map((id) => String(id).trim()).filter(Boolean);
-    const orderIdStrs = (options.specialOrderIds || []).map((id) => String(id).trim()).filter(Boolean);
-    const medNames = (options.medicineNames || []).map((m) => m.trim().toLowerCase()).filter(Boolean);
-    const waTypes = [
-      "refill_collection",
-      "order_ready",
-      "refill_reminder",
-      "special_order_arrived",
-      "special_order",
-      "special_order_batch",
-      "special_order_fulfilled",
-      "admin_shortage_reminder"
-    ];
-    const waTypePlaceholders = waTypes.map(() => "?").join(",");
-    if (last102) {
-      const pendingItems = await db2.all(
-        `SELECT id, message FROM whatsapp_send_queue 
-         WHERE status IN ('pending', 'failed_offline') 
-           AND type IN (${waTypePlaceholders})
-           AND number LIKE ?`,
-        [...waTypes, `%${last102}%`]
-      ).catch(() => []);
-      const idsToDelete = [];
-      for (const item of pendingItems || []) {
-        if (medNames.length === 0) {
-          idsToDelete.push(item.id);
-        } else {
-          const msgLower = (item.message || "").toLowerCase();
-          const matchesMed = medNames.some((m) => msgLower.includes(m));
-          if (matchesMed) {
-            idsToDelete.push(item.id);
-          }
-        }
-      }
-      if (idsToDelete.length > 0) {
-        const delPlaceholders = idsToDelete.map(() => "?").join(",");
-        const res = await db2.run(
-          `DELETE FROM whatsapp_send_queue WHERE id IN (${delPlaceholders})`,
-          idsToDelete
-        );
-        purgedQueueCount = res?.changes || idsToDelete.length;
-      }
-    }
-    if (refillIdStrs.length > 0) {
-      await cleanupStagedRefillNotifications(db2, refillIdStrs, "cancelled");
-    }
-    if (orderIdStrs.length > 0) {
-      const orderPlaceholders = orderIdStrs.map(() => "?").join(",");
-      await db2.run(
-        `UPDATE automation_notifications 
-         SET status = 'cancelled', lifecycle_status = 'cancelled' 
-         WHERE reference_id IN (${orderPlaceholders})`,
-        orderIdStrs
-      ).catch(() => {
-      });
-    }
-    if (last102 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
-      await db2.run(
-        `UPDATE automation_notifications 
-         SET status = 'cancelled', lifecycle_status = 'cancelled' 
-         WHERE recipient_phone LIKE ? 
-           AND status = 'staged' 
-           AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
-        [`%${last102}%`]
-      ).catch(() => {
-      });
-    }
-  } catch (err) {
-    console.warn("[Refills] purgePendingCustomerReminders error:", err);
-  }
-  return { purgedQueueCount, purgedNotificationsCount };
-}
-async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
-  let templateKey = requestedTemplate || "";
-  if (!templateKey) {
-    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'daily_briefing_template'").catch(() => null);
-    templateKey = row?.value || "detailed";
-  }
-  if (!["detailed", "compact", "checklist", "executive"].includes(templateKey)) {
-    templateKey = "detailed";
-  }
-  const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getConfiguredPharmacyName: getConfiguredPharmacyName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-  const storeName = await getConfiguredPharmacyName2(db2) || "Pharmacy";
-  const operatingSchedule = await getPharmacyOperatingSchedule2(db2);
-  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const todayDayName = dayNames[(/* @__PURE__ */ new Date()).getDay()];
-  const isWeeklyOff = (operatingSchedule.weeklyOff || "").toLowerCase() === todayDayName.toLowerCase();
-  const isHoliday = (operatingSchedule.closedDates || []).includes(todayStr2);
-  let statusLine = "\u{1F7E2} Open as usual";
-  if (isHoliday) {
-    statusLine = "\u{1F534} Holiday / Closed today";
-  } else if (isWeeklyOff) {
-    statusLine = `\u{1F7E1} Weekly Off (${todayDayName})`;
-  }
-  const refillRows = await db2.all(`
-    SELECT pr.patient_name,
-           MIN(DATE(pr.next_refill_date)) as earliest_due,
-           COUNT(pr.id) as med_count,
-           SUM(CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END) as in_stock_count,
-           SUM(CASE WHEN (pr.is_ready = 0 AND COALESCE(inv.total_qty, 0) < COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END) as out_of_stock_count
-    FROM patient_refills pr
-    LEFT JOIN (
-      SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
-      FROM inventory_master
-      GROUP BY medicine_id
-    ) inv ON inv.medicine_id = pr.medicine_id
-    WHERE pr.is_active = 1
-      AND pr.status IN ('pending', 'notified', 'staged')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-    GROUP BY pr.patient_name
-    ORDER BY earliest_due ASC, pr.patient_name ASC
-    LIMIT 15
-  `).catch(() => []);
-  const refillDetailRows = await db2.all(`
-    SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
-           DATE(pr.next_refill_date) as due_date,
-           CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
-    FROM patient_refills pr
-    JOIN medicines m ON pr.medicine_id = m.id
-    LEFT JOIN (
-      SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
-      FROM inventory_master
-      GROUP BY medicine_id
-    ) inv ON inv.medicine_id = pr.medicine_id
-    WHERE pr.is_active = 1
-      AND pr.status IN ('pending', 'notified', 'staged')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-    ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
-    LIMIT 50
-  `).catch(() => []);
-  const pendingCallTasks = await db2.get(
-    "SELECT COUNT(*) as count FROM patient_call_tasks WHERE status IN ('pending', 'rescheduled')"
-  ).catch(() => ({ count: 0 }));
-  const callCount = Number(pendingCallTasks?.count || 0);
-  const activeOrders = await db2.all(
-    `SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source
-     FROM special_orders
-     WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
-       AND DATE(date) >= DATE('now', 'localtime', '-7 days')
-     ORDER BY date DESC, id DESC LIMIT 50`
-  ).catch(() => []);
-  const customerOrderMap = /* @__PURE__ */ new Map();
-  for (const o of activeOrders) {
-    const custName = (o.requester || "Customer").trim();
-    const phone = String(o.phone || "").trim();
-    const key = phone ? phone : custName.toLowerCase();
-    const rawSrc = (o.customer_order_source || "").toLowerCase().trim();
-    let srcBadge = "";
-    if (rawSrc === "website") srcBadge = "Website";
-    else if (rawSrc === "whatsapp") srcBadge = "WhatsApp";
-    else if (rawSrc === "online" || rawSrc === "portal") srcBadge = "Online";
-    else if (rawSrc && rawSrc !== "in_store") srcBadge = o.customer_order_source;
-    if (!customerOrderMap.has(key)) {
-      customerOrderMap.set(key, {
-        customerKey: key,
-        requester: custName,
-        phone,
-        orderSource: srcBadge,
-        items: []
-      });
-    }
-    const group = customerOrderMap.get(key);
-    const resolvedProduct = (o.product || o.medicine_name || "").trim() || "Unspecified Item";
-    group.items.push({
-      product: resolvedProduct,
-      qty: Number(o.qty || 1),
-      status: o.status || "Pending"
-    });
-  }
-  const groupedCustomerOrders = Array.from(customerOrderMap.values()).slice(0, 15);
-  const pendingShortages = await db2.all(
-    `SELECT id, product, medicine_name, requester, phone, qty, pharmarack_distributor, date
-     FROM special_orders
-     WHERE status IN ('Pending', 'PENDING')
-       AND datetime(date) <= datetime('now', '-23 hours')
-     ORDER BY date ASC LIMIT 10`
-  ).catch(() => []);
-  const stagedRows = await db2.all(`
-    SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
-    FROM automation_notifications an
-    LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
-    LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
-    WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
-  `).catch(() => []);
-  const autoStagedCount = stagedRows.filter((r) => r.reminder_mode === "auto").length;
-  const manualStagedCount = stagedRows.filter((r) => r.reminder_mode !== "auto").length;
-  const dueMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const formatDate = (ymd) => {
-    if (!ymd) return "Due soon";
-    const parts = ymd.split("-");
-    if (parts.length === 3) {
-      return `${parts[2]} ${dueMonthNames[parseInt(parts[1], 10) - 1] || parts[1]}`;
-    }
-    return ymd;
-  };
-  let ordersBlock = "\u2022 No pending orders";
-  if (groupedCustomerOrders.length > 0) {
-    ordersBlock = groupedCustomerOrders.map((cust, i) => {
-      const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
-      const sourceSuffix = cust.orderSource ? ` \u2022 ${cust.orderSource}` : "";
-      const itemLines = cust.items.map((item) => `   - ${item.product} \xD7 ${item.qty} (${item.status})`).join("\n");
-      return `${i + 1}. *${cust.requester}* (${itemCountLabel}${sourceSuffix}):
-${itemLines}`;
-    }).join("\n");
-  }
-  let incomplete24hAudit = { overdue: [], marketPaused: [], stats: { totalOverdueCount: 0, totalPausedCount: 0, totalOverdueMedicines: 0, totalPausedMedicines: 0 } };
-  try {
-    const { orderScheduleService: orderScheduleService2 } = await Promise.resolve().then(() => (init_orderScheduleService(), orderScheduleService_exports));
-    incomplete24hAudit = await orderScheduleService2.evaluateIncompleteOrders24hSLA({ dbInstance: db2, cutoffHours: 24 });
-  } catch (err) {
-    console.warn("[RefillService] Failed to evaluate 24h incomplete orders SLA:", err);
-  }
-  let slaBlock = "";
-  const slaLines = [];
-  if (incomplete24hAudit.overdue.length > 0) {
-    const overdueDetails = incomplete24hAudit.overdue.slice(0, 5).map((c, idx) => {
-      const medStr = c.medicines.map((m) => `${m.name} \xD7 ${m.qty}`).join(", ");
-      return `  ${idx + 1}. *${c.name}*: ${medStr} (${c.elapsedHours}h ago \u2022 \u{1F6A8} Action Needed)`;
-    }).join("\n");
-    const extraOverdue = incomplete24hAudit.overdue.length > 5 ? `
-  ...and ${incomplete24hAudit.overdue.length - 5} more overdue` : "";
-    slaLines.push(`\u{1F6A8} *OVERDUE (>24h SLA BREACH \u2014 ${incomplete24hAudit.overdue.length} Orders)*:
-${overdueDetails}${extraOverdue}`);
-  }
-  if (incomplete24hAudit.marketPaused.length > 0) {
-    const pausedDetails = incomplete24hAudit.marketPaused.slice(0, 5).map((c, _idx) => {
-      const medStr = c.medicines.map((m) => `${m.name} \xD7 ${m.qty}`).join(", ");
-      const resumeStr = c.resumedWorkingDate ? ` \u2022 Resumes: ${c.resumedWorkingDate}` : "";
-      return `  \u2022 *${c.name}*: ${medStr} (${c.pauseReason || "Market closure"}${resumeStr})`;
-    }).join("\n");
-    const extraPaused = incomplete24hAudit.marketPaused.length > 5 ? `
-  ...and ${incomplete24hAudit.marketPaused.length - 5} more paused` : "";
-    slaLines.push(`\u23F8\uFE0F *MARKET CLOSURE / PAUSE HELD (${incomplete24hAudit.marketPaused.length} Orders)*:
-${pausedDetails}${extraPaused}`);
-  }
-  if (slaLines.length > 0) {
-    slaBlock = `
-
-\u23F1\uFE0F *24-HOUR FULFILLMENT WATCH*:
-` + slaLines.join("\n\n");
-  }
-  const outOfStockRefills = refillDetailRows.filter((r) => !r.in_stock);
-  const dailyTasks = [];
-  if (incomplete24hAudit.overdue.length > 0) {
-    dailyTasks.push(`\u{1F6A8} *Expedite ${incomplete24hAudit.overdue.length} Overdue Order(s)*: Breached 24h SLA \u2014 push to Pharmarack or contact distributor`);
-  }
-  if (pendingShortages.length > 0) {
-    const shortMeds = pendingShortages.map((s) => {
-      const pName = (s.product || s.medicine_name || "").trim() || "Unspecified Item";
-      return `${pName} \xD7 ${s.qty || 1} (${s.pharmarack_distributor || "Distributor"})`;
-    }).slice(0, 4);
-    const extra = pendingShortages.length > 4 ? ` +${pendingShortages.length - 4} more` : "";
-    dailyTasks.push(`\u{1F4E6} *Reorder Shortage Items (>23h Pending)*: ${shortMeds.join(", ")}${extra}`);
-  }
-  if (outOfStockRefills.length > 0) {
-    const holdPatients = Array.from(new Set(outOfStockRefills.map((r) => r.patient_name)));
-    dailyTasks.push(`\u26A0\uFE0F *Urgent Stock Reorder Needed*: Stock required for ${holdPatients.join(", ")}`);
-  }
-  if (callCount > 0) {
-    dailyTasks.push(`\u{1F4DE} *Patient Follow-up Calls*: ${callCount} pending call(s) on CRM Call Board`);
-  }
-  if (stagedRows.length > 0) {
-    dailyTasks.push(`\u{1F514} *Staged Customer Reminders*: ${stagedRows.length} reminder(s) pending in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual)`);
-  }
-  let dailyTasksBlock = "";
-  if (dailyTasks.length > 0) {
-    dailyTasksBlock = `
-
-\u26A1 *TODAY'S OPERATIONAL TASKS*:
-` + dailyTasks.map((t, idx) => `${idx + 1}. ${t}`).join("\n");
-  }
-  const now = /* @__PURE__ */ new Date();
-  const todayDayOfMonth = now.getDate();
-  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const scanDaysRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_expiry_scan_days'").catch(() => null);
-  const configuredScanDays = (scanDaysRow?.value || "1,16").split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
-  const isMilestoneDate = Boolean(options?.forceMilestone) || todayDayOfMonth === 1 || todayDayOfMonth >= 15 && todayDayOfMonth <= 18 || todayDayOfMonth === lastDayOfMonth || configuredScanDays.includes(todayDayOfMonth);
-  let expCount = 0;
-  let overdueCreditCount = 0;
-  let overdueCreditTotal = 0;
-  let milestoneBlock = "";
-  if (isMilestoneDate) {
-    const currentMonth = todayStr2.slice(0, 7);
-    const expRow = await db2.get(
-      `SELECT COUNT(*) as count FROM inventory_master WHERE quantity > 0 AND (expiry_date = ? OR expiry_date LIKE ?)`,
-      [currentMonth, `${currentMonth}%`]
-    ).catch(() => ({ count: 0 }));
-    expCount = Number(expRow?.count || 0);
-    const creditRow = await db2.get(
-      `SELECT COUNT(*) as cust_count, COALESCE(SUM(credit_balance), 0) as total_balance
-       FROM customers
-       WHERE credit_due_date IS NOT NULL
-         AND date(credit_due_date) <= date('now', 'localtime')
-         AND credit_balance > 0`
-    ).catch(() => ({ cust_count: 0, total_balance: 0 }));
-    overdueCreditCount = Number(creditRow?.cust_count || 0);
-    overdueCreditTotal = Number(creditRow?.total_balance || 0);
-    const milestoneLabel = todayDayOfMonth === 1 ? "Monthly Start Audit" : todayDayOfMonth === lastDayOfMonth ? "Month-End Audit" : "Mid-Month Review";
-    const auditItems = [];
-    if (expCount > 0) {
-      auditItems.push(`\u26A0\uFE0F *EXPIRY AUDIT (${milestoneLabel})*:
-\u2022 ${expCount} batch(es) expiring this month (${todayStr2.slice(5, 7)}/${todayStr2.slice(0, 4)}) \u2014 check for supplier return`);
-    }
-    if (overdueCreditCount > 0) {
-      auditItems.push(`\u{1F4B0} *OVERDUE CREDIT AUDIT*:
-\u2022 \u20B9${overdueCreditTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} overdue across ${overdueCreditCount} customer(s)`);
-    }
-    if (auditItems.length > 0) {
-      milestoneBlock = "\n\n" + auditItems.join("\n\n");
-    }
-  }
-  let messageText = "";
-  if (templateKey === "detailed") {
-    const patientGroups = /* @__PURE__ */ new Map();
-    for (const row of refillDetailRows) {
-      const list = patientGroups.get(row.patient_name) || [];
-      list.push(row);
-      patientGroups.set(row.patient_name, list);
-    }
-    let t4Details = "\u2022 No refills due in next 7 days";
-    if (patientGroups.size > 0) {
-      let pIdx = 1;
-      const pBlocks = [];
-      for (const [pName, meds] of patientGroups.entries()) {
-        const dueStr = meds[0]?.due_date ? formatDate(meds[0].due_date) : "";
-        const medLines = meds.map((m) => `   - ${m.medicine_name} \xD7 ${m.quantity_needed || 1} (${m.in_stock ? "\u2705 Stock" : "\u23F3 Hold"})`).join("\n");
-        pBlocks.push(`${pIdx++}. *${pName}* (Due ${dueStr}):
-${medLines}`);
-      }
-      t4Details = pBlocks.join("\n");
-    }
-    messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
-\u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
-\u{1F3EA} *Store Status*: ${statusLine}
-
-\u{1F4CB} *REFILL PRESCRIPTIONS (Next 7 Days)*:
-${t4Details}
-
-\u{1F4E6} *TODAY'S SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
-  } else if (templateKey === "compact") {
-    let t1Refills = "\u2022 No refills due in next 7 days";
-    if (refillRows.length > 0) {
-      t1Refills = refillRows.map((r, i) => {
-        const stockStatus = r.out_of_stock_count === 0 ? "\u2705 In Stock" : r.in_stock_count === 0 ? "\u23F3 Hold for Stock" : "\u26A0\uFE0F Partial Stock";
-        const medUnit = Number(r.med_count) === 1 ? "1 med" : `${r.med_count} meds`;
-        return `${i + 1}. *${r.patient_name}* (Due ${formatDate(r.earliest_due)}) \u2014 ${medUnit} (${stockStatus})`;
-      }).join("\n");
-    }
-    let t1Orders = "\u2022 No pending orders";
-    if (groupedCustomerOrders.length > 0) {
-      t1Orders = groupedCustomerOrders.map((cust, i) => {
-        const itemCountLabel = cust.items.length === 1 ? "1 item" : `${cust.items.length} items`;
-        const statuses = Array.from(new Set(cust.items.map((it) => it.status))).join(", ");
-        const srcTag = cust.orderSource ? ` [${cust.orderSource}]` : "";
-        return `${i + 1}. *${cust.requester}* \u2014 ${itemCountLabel}${srcTag} (${statuses})`;
-      }).join("\n");
-    }
-    messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
-\u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
-\u{1F3EA} *Store Status*: ${statusLine}
-
-\u{1F4CB} *1. REFILLS WORKLIST (Next 7 Days)*:
-${t1Refills}
-
-\u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
-${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
-  } else if (templateKey === "checklist") {
-    const t2Items = [];
-    if (incomplete24hAudit.overdue.length > 0) {
-      t2Items.push(`[ ] *24H OVERDUE ESCALATION*: Expedite ${incomplete24hAudit.overdue.length} order(s) breaching 24h SLA (${incomplete24hAudit.stats.totalOverdueMedicines} meds)`);
-    }
-    if (incomplete24hAudit.marketPaused.length > 0) {
-      t2Items.push(`[ ] *MONITOR PAUSED ORDERS*: ${incomplete24hAudit.marketPaused.length} order(s) held for next open market day`);
-    }
-    const holdRefills = refillRows.filter((r) => r.out_of_stock_count > 0);
-    if (holdRefills.length > 0) {
-      t2Items.push(`[ ] *URGENT REORDER*: ${holdRefills.map((r) => r.patient_name).join(", ")} (Stock Needed)`);
-    }
-    if (pendingShortages.length > 0) {
-      t2Items.push(`[ ] *SHORTAGE REORDERS (>23H)*: Add ${pendingShortages.length} pending shortage item(s) to distributor cart`);
-    }
-    const inStockRefills = refillRows.filter((r) => r.out_of_stock_count === 0);
-    if (inStockRefills.length > 0) {
-      t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(", ")}`);
-    }
-    if (groupedCustomerOrders.length > 0) {
-      const totalOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
-      t2Items.push(`[ ] *ORDERS FULFILLMENT*: Process ${groupedCustomerOrders.length} customer order(s) (${totalOrderItems} total items)`);
-    }
-    if (callCount > 0) {
-      t2Items.push(`[ ] *CALL REMINDERS*: Complete ${callCount} pending calls on Call Board`);
-    }
-    if (isMilestoneDate && expCount > 0) {
-      t2Items.push(`[ ] *EXPIRY PACKING*: Check & return ${expCount} batches expiring this month`);
-    }
-    if (isMilestoneDate && overdueCreditCount > 0) {
-      t2Items.push(`[ ] *CREDIT FOLLOW-UP*: Follow up \u20B9${overdueCreditTotal.toFixed(0)} overdue credit across ${overdueCreditCount} customer(s)`);
-    }
-    if (stagedRows.length > 0) {
-      t2Items.push(`[ ] *APPROVE NOTIFICATIONS*: Review ${stagedRows.length} staged reminder(s) in CRM`);
-    }
-    if (t2Items.length === 0) {
-      t2Items.push(`[ ] All morning operational queues are clear!`);
-    }
-    messageText = `\u2600\uFE0F *MORNING ACTION CHECKLIST* \u2014 ${storeName}
-\u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
-
-\u26A1 *TODAY'S OPERATIONAL TO-DO LIST*:
-${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
-  } else {
-    const totalRefillsDue = refillRows.reduce((acc, r) => acc + (r.med_count || 1), 0);
-    const totalSpecialOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
-    let milestoneMetrics = "";
-    if (isMilestoneDate) {
-      milestoneMetrics = `
-\u2022 \u26A0\uFE0F Expiring Batches: *${expCount}*
-\u2022 \u{1F4B0} Overdue Credit: *\u20B9${overdueCreditTotal.toFixed(0)}* (${overdueCreditCount} cust)`;
-    }
-    messageText = `\u2600\uFE0F *DAILY EXECUTIVE SUMMARY* \u2014 ${storeName}
-\u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
-
-\u{1F4CA} *Morning KPI Dashboard*:
-\u2022 \u{1F4CB} Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
-\u2022 \u{1F4E6} Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
-\u2022 \u23F1\uFE0F 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
-\u2022 \u23F8\uFE0F Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
-\u2022 \u{1F4DE} Pending Calls: *${callCount}*
-\u2022 \u{1F514} Staged Reminders: *${stagedRows.length}*${milestoneMetrics}`;
-  }
-  return { template: templateKey, messageText };
-}
-async function sendMorningScheduleBriefingToAdmin(db2, templateKey, options) {
-  try {
-    const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
-    const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2);
-    if (!adminWhatsapp) {
-      console.log("[RefillService] No store owner WhatsApp configured for morning schedule briefing.");
-      return { success: false, message: "No store owner WhatsApp configured in Settings." };
-    }
-    const { template, messageText } = await buildDailyOperationalBriefing(db2, templateKey, options);
-    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    await whatsappQueueWorker2.enqueue(adminWhatsapp, messageText, "admin_morning_briefing", "Admin / Store Owner", void 0, void 0, void 0, { skipDedupe: true });
-    console.log(`[RefillService] Morning operational task briefing (${template}) sent to owner ${adminWhatsapp}.`);
-    return { success: true, message: `Briefing sent successfully using ${template} template.` };
-  } catch (err) {
-    console.error("[RefillService] Failed to send morning schedule briefing to admin:", err);
-    return { success: false, message: err?.message || "Failed to send briefing" };
-  }
-}
-async function notifyAdminStagedReminders(db2) {
-  try {
-    const alertSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'reminder_admin_preview_enabled'");
-    if (alertSetting?.value === "false") return;
-    const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
-    const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2);
-    if (!adminWhatsapp) return;
-    const stagedRows = await db2.all(`
-      SELECT an.*,
-             COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
-      FROM automation_notifications an
-      LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
-      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
-      WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
-    `);
-    if (stagedRows.length === 0) return;
-    const autoCount = stagedRows.filter((r) => r.patient_reminder_mode === "auto").length;
-    const manualCount = stagedRows.filter((r) => r.patient_reminder_mode === "manual").length;
-    const storeName = await getConfiguredPharmacyName(db2) || "Pharmacy";
-    const msg = `\u{1F514} *Refill Reminder Alert* \u2014 ${storeName}
-
-${stagedRows.length} patient reminder(s) are staged and waiting for review:
-\u2022 ${autoCount} set to Auto \u{1F916}
-\u2022 ${manualCount} set to Manual \u{1F446}
-
-Review & dispatch in CRM \u2192 Refills or Quick Assist.`;
-    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    await whatsappQueueWorker2.enqueue(adminWhatsapp, msg, "admin_morning_briefing", "Admin / Store Owner");
-  } catch (err) {
-    console.error("[RefillService] Failed to notify admin of staged reminders:", err);
-  }
-}
-async function isFirstContactOrUnconfirmed(db2, phone) {
-  if (!phone) return false;
-  const digits = String(phone).replace(/\D/g, "").slice(-10);
-  if (!digits) return false;
-  try {
-    const customer = await db2.get(
-      `SELECT language_confirmed FROM customers WHERE phone LIKE ? LIMIT 1`,
-      [`%${digits}`]
-    ).catch(() => null);
-    if (customer && customer.language_confirmed === 1) {
-      return false;
-    }
-    const waMsg = await db2.get(
-      `SELECT id FROM whatsapp_messages WHERE (chat_id LIKE ? OR chat_id LIKE ?) AND from_me = 1 LIMIT 1`,
-      [`%${digits}@c.us`, `%${digits}@s.whatsapp.net`]
-    ).catch(() => null);
-    if (waMsg) return false;
-    const waSent = await db2.get(
-      `SELECT id FROM whatsapp_sent_register WHERE phone LIKE ? LIMIT 1`,
-      [`%${digits}%`]
-    ).catch(() => null);
-    if (waSent) return false;
-    const notifSent = await db2.get(
-      `SELECT id FROM automation_notifications WHERE recipient_phone LIKE ? AND status = 'sent' LIMIT 1`,
-      [`%${digits}%`]
-    ).catch(() => null);
-    if (notifSent) return false;
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-async function dispatchDueRefillReminders(db2) {
-  try {
-    const enabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_refill_reminder_enabled'");
-    if (enabledRow?.value === "false") {
-      return { dispatched: 0, skipped: 0, reason: "disabled" };
-    }
-    const modeRow = await db2.get("SELECT value FROM app_settings WHERE key = 'default_refill_reminder_mode'");
-    if (modeRow?.value !== "auto") {
-      return { dispatched: 0, skipped: 0, reason: "mode_manual" };
-    }
-    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const sched = await getPharmacyOperatingSchedule2(db2);
-    const now = /* @__PURE__ */ new Date();
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const currentDay = dayNames[now.getDay()];
-    if ((sched.weeklyOff || "").toLowerCase() === currentDay.toLowerCase()) {
-      return { dispatched: 0, skipped: 0, reason: "store_closed_weekly_off" };
-    }
-    const staged = await db2.all(
-      `SELECT id, recipient_name, recipient_phone, message, reference_id, type 
-       FROM automation_notifications 
-       WHERE type IN ('refill_collection', 'refill_reminder') 
-         AND status = 'staged' 
-         AND needs_confirmation = 1 
-       LIMIT 50`
-    );
-    if (!staged || staged.length === 0) {
-      return { dispatched: 0, skipped: 0, reason: "none_staged" };
-    }
-    const { normalizeWhatsAppPhone: normalizeWhatsAppPhone2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
-    let dispatched = 0;
-    let skipped = 0;
-    for (const notif of staged) {
-      const cleanPhone = normalizeWhatsAppPhone2(String(notif.recipient_phone || ""));
-      if (!cleanPhone || cleanPhone.length < 10) {
-        skipped++;
-        continue;
-      }
-      const recentSend = await db2.get(
-        `SELECT id FROM whatsapp_send_queue 
-         WHERE number LIKE ? AND type IN ('refill_collection', 'refill_reminder') 
-           AND created_at > datetime('now', '-24 hours') 
-         LIMIT 1`,
-        [`%${cleanPhone.slice(-10)}%`]
-      );
-      if (recentSend) {
-        skipped++;
-        continue;
-      }
-      const queueId = await whatsappQueueWorker2.enqueue(
-        cleanPhone,
-        notif.message,
-        notif.type || "refill_reminder",
-        notif.recipient_name || void 0,
-        void 0,
-        void 0,
-        void 0,
-        { skipDedupe: false }
-      );
-      await db2.run(
-        `UPDATE automation_notifications 
-         SET status = 'queued', needs_confirmation = 0 
-         WHERE id = ?`,
-        [notif.id]
-      );
-      if (notif.reference_id) {
-        const refIds = String(notif.reference_id).split(",").map((s) => Number(s.trim())).filter(Boolean);
-        if (refIds.length > 0) {
-          const placeholders = refIds.map(() => "?").join(",");
-          await db2.run(
-            `UPDATE patient_refills 
-             SET reminder_status = 'QUEUED', status = 'notified', reminder_job_id = ? 
-             WHERE id IN (${placeholders})`,
-            [queueId, ...refIds]
-          ).catch(() => {
-          });
-        }
-      }
-      dispatched++;
-    }
-    if (dispatched > 0) {
-      eventService2.broadcast("automation_hub_updated", { type: "auto_dispatched", count: dispatched });
-      eventService2.broadcast("refill_updated", { type: "auto_dispatched", count: dispatched });
-    }
-    return { dispatched, skipped };
-  } catch (err) {
-    console.error("[RefillService] dispatchDueRefillReminders error:", err);
-    return { dispatched: 0, skipped: 0, reason: String(err) };
-  }
-}
-var init_refillService = __esm({
-  "src/services/refillService.ts"() {
-    "use strict";
-    init_telegramBot();
-    init_storeSettingsService();
-    init_pharmacyCalendar();
-    init_refillOrderReconciler();
-    init_orderNameMatcher();
-    init_languageDetector();
   }
 });
 
@@ -58154,7 +58218,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.88";
+    APP_VERSION = "0.1.89";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -72551,6 +72615,9 @@ var init_settings = __esm({
         if (settingsObj["auto_add_to_live_cart"] === void 0) {
           settingsObj["auto_add_to_live_cart"] = "true";
         }
+        if (settingsObj["refill_notice_days"] === void 0) {
+          settingsObj["refill_notice_days"] = "7";
+        }
         res.json(settingsObj);
       } catch (error) {
         console.error("All settings fetch error:", error);
@@ -77536,6 +77603,133 @@ var init_refills = __esm({
         res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to add refill to live cart" });
       }
     });
+    router19.post("/confirm-patient", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const { patientPhone, patientName, refillIds, addToLiveCart = true } = req.body || {};
+        let pendingRefills = [];
+        if (Array.isArray(refillIds) && refillIds.length > 0) {
+          const numIds = refillIds.map(Number).filter((n) => !isNaN(n) && n > 0);
+          if (numIds.length > 0) {
+            const placeholders2 = numIds.map(() => "?").join(",");
+            pendingRefills = await db2.all(
+              `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+           FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+           WHERE pr.id IN (${placeholders2}) AND pr.is_active = 1`,
+              numIds
+            );
+          }
+        } else if (patientPhone || patientName) {
+          const cleanDigits = (patientPhone || "").replace(/\D/g, "").slice(-10);
+          pendingRefills = await db2.all(
+            `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+         FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+         WHERE ((? != '' AND pr.patient_phone LIKE ?) OR (? != '' AND pr.patient_name = ?))
+           AND pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')
+         ORDER BY pr.id DESC`,
+            [cleanDigits, `%${cleanDigits}%`, patientName || "", patientName || ""]
+          );
+        }
+        if (!pendingRefills || pendingRefills.length === 0) {
+          return res.status(404).json({ error: "No active refill records found for this patient" });
+        }
+        const targetIds = pendingRefills.map((r) => r.id);
+        const placeholders = targetIds.map(() => "?").join(",");
+        await db2.run(
+          `UPDATE patient_refills 
+       SET patient_confirmed = 1, confirmed_at = datetime('now')
+       WHERE id IN (${placeholders})`,
+          targetIds
+        );
+        await purgePendingCustomerReminders(db2, {
+          phone: pendingRefills[0]?.patient_phone || patientPhone || void 0,
+          refillIds: targetIds,
+          medicineNames: pendingRefills.map((r) => r.medicine_name).filter(Boolean)
+        });
+        const cartResults = [];
+        if (addToLiveCart !== false) {
+          for (const r of pendingRefills) {
+            const reqQty = Math.max(1, Number(r.quantity_needed || 1));
+            try {
+              const cartRes = await processRefillCartItem(r.id, { qty: reqQty, dryRun: false });
+              cartResults.push({
+                refillId: r.id,
+                medicineName: r.medicine_name,
+                status: cartRes.status,
+                storeName: cartRes.line?.storeName,
+                qty: cartRes.qty,
+                message: cartRes.message
+              });
+            } catch (itemErr) {
+              cartResults.push({
+                refillId: r.id,
+                medicineName: r.medicine_name,
+                status: "failed",
+                message: itemErr?.message || "Cart processing error"
+              });
+            }
+          }
+          if (cartResults.length > 0 && pendingRefills[0]?.patient_name) {
+            sendRefillCartSummary(pendingRefills[0].patient_name, cartResults).catch(() => {
+            });
+          }
+        }
+        eventService.broadcast("refill_updated", {
+          at: Date.now(),
+          patient_confirmed: true,
+          confirmed_ids: targetIds,
+          patient_name: pendingRefills[0]?.patient_name,
+          patient_phone: pendingRefills[0]?.patient_phone
+        });
+        eventService.broadcast("live_cart_updated", { at: Date.now(), source: "user_refill_confirm" });
+        res.json({
+          success: true,
+          count: targetIds.length,
+          confirmed_ids: targetIds,
+          cartResults
+        });
+      } catch (err) {
+        console.error("Failed to confirm patient refills:", err);
+        res.status(500).json({ error: err?.message || "Failed to confirm patient refills" });
+      }
+    });
+    router19.post("/:id/confirm", async (req, res) => {
+      const id = parseInt(req.params.id, 10);
+      if (!id || isNaN(id)) return res.status(400).json({ error: "Valid refill ID required" });
+      try {
+        const db2 = await dbManager.getConnection();
+        const refill = await db2.get(
+          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+       FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+       WHERE pr.id = ? AND pr.is_active = 1`,
+          [id]
+        );
+        if (!refill) return res.status(404).json({ error: "Refill not found or inactive" });
+        await db2.run(
+          `UPDATE patient_refills 
+       SET patient_confirmed = 1, confirmed_at = datetime('now')
+       WHERE id = ?`,
+          [id]
+        );
+        await purgePendingCustomerReminders(db2, {
+          phone: refill.patient_phone,
+          refillIds: [id],
+          medicineNames: refill.medicine_name ? [refill.medicine_name] : void 0
+        });
+        const reqQty = Math.max(1, Number(req.body?.qty || refill.quantity_needed || 1));
+        const cartRes = await processRefillCartItem(id, { qty: reqQty, dryRun: false });
+        eventService.broadcast("refill_updated", { at: Date.now(), confirmed_id: id });
+        eventService.broadcast("live_cart_updated", { at: Date.now(), source: "user_refill_confirm" });
+        res.json({
+          success: true,
+          confirmed: true,
+          cartResult: cartRes
+        });
+      } catch (err) {
+        console.error(`Failed to confirm refill ${id}:`, err);
+        res.status(500).json({ error: err?.message || "Failed to confirm refill" });
+      }
+    });
     router19.get("/distributor-ranks", async (_req, res) => {
       try {
         res.json({ success: true, ranks: await getDistributorPurchaseRanks() });
@@ -77911,6 +78105,10 @@ var init_refills = __esm({
            stock_verified_override = 0,
            ordering_triggered = 0,
            cart_product_code = NULL,
+           cart_store_name = NULL,
+           cart_qty = NULL,
+           patient_confirmed = 0,
+           confirmed_at = NULL,
            is_ready = 0,
            hold_for_stock = 0,
            acknowledged = 0,
@@ -78022,6 +78220,10 @@ var init_refills = __esm({
                stock_verified_override = 0,
                ordering_triggered = 0,
                cart_product_code = NULL,
+               cart_store_name = NULL,
+               cart_qty = NULL,
+               patient_confirmed = 0,
+               confirmed_at = NULL,
                is_ready = 0,
                hold_for_stock = 0,
                acknowledged = 0,
@@ -78203,6 +78405,13 @@ var init_refills = __esm({
          WHERE id = ?`,
             [storeName, orderQty, id]
           );
+          const medRow = await db2.get("SELECT name FROM medicines WHERE id = ?", [refill.medicine_id]);
+          await purgePendingCustomerReminders(db2, {
+            phone: refill.patient_phone,
+            refillIds: [Number(id)],
+            customerId: refill.customer_id,
+            medicineNames: medRow?.name ? [medRow.name] : void 0
+          });
           return res.json({ success: true, message: "Refill marked as ordered", cart_store_name: storeName });
         } else {
           await db2.run(

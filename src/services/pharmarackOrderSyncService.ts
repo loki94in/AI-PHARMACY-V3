@@ -378,8 +378,8 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
 
     if (!alreadyReminded) {
       // Direct order detected for today and reminder NOT yet sent today:
-      // Auto-send the dispatch reminder to the distributor for today's orders
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { orderNos: freshOnlyOrderNos });
+      // Auto-send the dispatch announcement to the distributor for today's orders
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { isOrderAnnouncement: true, orderNos: freshOnlyOrderNos });
       await settle(db, freshOnlyOrderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
