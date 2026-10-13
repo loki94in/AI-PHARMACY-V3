@@ -1698,17 +1698,20 @@ export const RefillsSection: React.FC = () => {
                         <span>POS</span>
                       </button>
                     );
+                    const addToCartBtn = (
+                      <button
+                        onClick={() => handleOrderRefillShortages(selectedPatient)}
+                        title="Add prescribed medicines to the Pharmarack live cart using saved distributors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
+                      >
+                        <ShoppingCart size={13} />
+                        <span>Add to Cart{unaddedCount > 0 ? ` (${unaddedCount})` : ''}</span>
+                      </button>
+                    );
                     if (stage === 'upcoming') {
                       return (
                         <>
-                          <button
-                            onClick={() => handleOrderRefillShortages(selectedPatient)}
-                            title="Add every short medicine to the Pharmarack live cart using the saved distributors"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
-                          >
-                            <ShoppingCart size={13} />
-                            <span>Add to Cart{unaddedCount > 0 ? ` (${unaddedCount})` : ''}</span>
-                          </button>
+                          {addToCartBtn}
                           <button
                             onClick={() => handleMarkAllOrdered(selectedPatient)}
                             disabled={markingOrdered}
@@ -1725,6 +1728,7 @@ export const RefillsSection: React.FC = () => {
                     if (stage === 'ordered') {
                       return (
                         <>
+                          {addToCartBtn}
                           <button
                             onClick={() => handleMarkReadyPatient(selectedPatient)}
                             disabled={markingReady}
@@ -1740,6 +1744,7 @@ export const RefillsSection: React.FC = () => {
                     }
                     return (
                       <>
+                        {addToCartBtn}
                         <button
                           onClick={() => handleMarkReadyPatient(selectedPatient)}
                           disabled={markingReady}

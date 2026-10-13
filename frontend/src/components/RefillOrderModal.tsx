@@ -52,13 +52,15 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   // Initialize selection and quantities
   const [itemStates, setItemStates] = useState<Record<number, ItemState>>(() => {
     const initial: Record<number, ItemState> = {};
+    const allAlreadyInCart = activeMeds.length > 0 && activeMeds.every(m => m.in_live_cart || m.cart_store_name);
     activeMeds.forEach(m => {
       const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name;
       const shortage = Math.max(0, Number(m.quantity_needed || 3) - Number(m.in_stock_qty || 0));
       const defaultQty = Number(m.quantity_needed || 3);
       initial[m.id] = {
-        // Pre-select items needing order; unselect items that are already in today's cart to prevent duplicate adds
-        selected: !isAlreadyInCart,
+        // Pre-select items needing order; unselect items that are already in today's cart to prevent duplicate adds,
+        // unless all are already marked/in cart (re-order scenario) in which case default to selected.
+        selected: allAlreadyInCart ? true : !isAlreadyInCart,
         orderQty: defaultQty > 0 ? defaultQty : Math.max(1, shortage)
       };
     });
