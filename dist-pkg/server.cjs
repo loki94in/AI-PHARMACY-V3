@@ -43404,6 +43404,7 @@ ${mrpLine}
        */
       async sendDistributorDispatchReminder(reminderId, customMessage, scheduledAt, opts) {
         const followUp = Boolean(opts?.followUp);
+        const isOrderAnnouncement = Boolean(opts?.isOrderAnnouncement);
         try {
           const db2 = await dbManager.getConnection();
           const reminder = await db2.get(
@@ -43417,7 +43418,7 @@ ${mrpLine}
             console.warn(`[DistributorReminder] Reminder ID ${reminderId} not found.`);
             return false;
           }
-          if (reminder.status && reminder.status !== "Pending" && !customMessage && !followUp) {
+          if (reminder.status && reminder.status !== "Pending" && !customMessage && !followUp && !isOrderAnnouncement) {
             console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
             return false;
           }
@@ -43439,7 +43440,7 @@ ${mrpLine}
          LIMIT 1`,
             [reminder.distributor_name, `%${clean10Digits}%`, startOfDayMs]
           );
-          if (existingQueueItem && !customMessage && !followUp) {
+          if (existingQueueItem && !customMessage && !followUp && !isOrderAnnouncement) {
             console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
             return true;
           }
@@ -43493,10 +43494,10 @@ ${mrpLine}
               const hasOrderPlaceholder = /\{order_no\}/.test(String(rawTemplate));
               message = String(rawTemplate).replace(/\{distributor_name\}/g, reminder.distributor_name || "Distributor").replace(/\{delivery_boy\}/g, boyName).replace(/\{phone\}/g, boyPhone).replace(/\{store_name\}/g, storeName).replace(/\{order_no\}/g, orderNoText);
               if (orderNoText && !hasOrderPlaceholder) {
-                message = `${followUp ? "\u{1F195} New" : "\u{1F4E6}"} Pharmarack order ${orderNoText}
+                message = `${followUp || isOrderAnnouncement ? "\u{1F195} New" : "\u{1F4E6}"} Pharmarack order ${orderNoText}
 ${message}`;
               }
-            } else if (followUp && orderNoText) {
+            } else if ((followUp || isOrderAnnouncement) && orderNoText) {
               message = `\u{1F195} New Pharmarack order ${orderNoText} placed. Please dispatch ASAP \u2014 to be collected by ${boyName} (${boyPhone}) - ${storeName}`;
             } else if (orderNoText) {
               message = `\u{1F4E6} Pharmarack order ${orderNoText} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${storeName}`;
@@ -44159,7 +44160,7 @@ ${waiting.message}`;
     );
     const gracePeriodMs = Date.now() + 5 * 60 * 1e3;
     if (!alreadyReminded) {
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { orderNos: freshOnlyOrderNos });
+      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { isOrderAnnouncement: true, orderNos: freshOnlyOrderNos });
       await settle(db2, freshOnlyOrderNos, sent ? "dispatch_reminder_queued" : "reminder_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
@@ -58218,7 +58219,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.89";
+    APP_VERSION = "0.1.90";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
