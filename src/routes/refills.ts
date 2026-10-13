@@ -683,11 +683,11 @@ router.get('/panel', async (req, res) => {
   try {
     db = await dbManager.getConnection();
     
-    // Fetch refill notice days setting
-    // let _noticeDays = 3;
+    // Fetch refill notice days setting (default: 7 days)
+    // let _noticeDays = 7;
     const setting = await db.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
     if (setting && setting.value) {
-      // _noticeDays = parseInt(setting.value, 10) || 3;
+      // _noticeDays = parseInt(setting.value, 10) || 7;
     }
 
     // Optional upcoming_days query parameter (if omitted, returns all patient refills for CRM management)
@@ -1005,6 +1005,151 @@ router.post('/:id/add-to-cart', async (req, res) => {
   } catch (err: any) {
     console.error('Refill add-to-cart failed:', err);
     res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to add refill to live cart' });
+  }
+});
+
+// Pharmacist confirms refill for patient in the app -> marks patient_confirmed = 1 and adds to Pharmarack live cart
+router.post('/confirm-patient', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const { patientPhone, patientName, refillIds, addToLiveCart = true } = req.body || {};
+    
+    let pendingRefills: any[] = [];
+    if (Array.isArray(refillIds) && refillIds.length > 0) {
+      const numIds = refillIds.map(Number).filter(n => !isNaN(n) && n > 0);
+      if (numIds.length > 0) {
+        const placeholders = numIds.map(() => '?').join(',');
+        pendingRefills = await db.all(
+          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+           FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+           WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
+          numIds
+        );
+      }
+    } else if (patientPhone || patientName) {
+      const cleanDigits = (patientPhone || '').replace(/\D/g, '').slice(-10);
+      pendingRefills = await db.all(
+        `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+         FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+         WHERE ((? != '' AND pr.patient_phone LIKE ?) OR (? != '' AND pr.patient_name = ?))
+           AND pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')
+         ORDER BY pr.id DESC`,
+        [cleanDigits, `%${cleanDigits}%`, patientName || '', patientName || '']
+      );
+    }
+
+    if (!pendingRefills || pendingRefills.length === 0) {
+      return res.status(404).json({ error: 'No active refill records found for this patient' });
+    }
+
+    const targetIds = pendingRefills.map(r => r.id);
+    const placeholders = targetIds.map(() => '?').join(',');
+    await db.run(
+      `UPDATE patient_refills 
+       SET patient_confirmed = 1, confirmed_at = datetime('now')
+       WHERE id IN (${placeholders})`,
+      targetIds
+    );
+
+    // Customer or pharmacist has confirmed — immediately purge pending reminder messages and staged alerts!
+    await purgePendingCustomerReminders(db, {
+      phone: pendingRefills[0]?.patient_phone || patientPhone || undefined,
+      refillIds: targetIds,
+      medicineNames: pendingRefills.map(r => r.medicine_name).filter(Boolean)
+    });
+
+    const cartResults: any[] = [];
+    if (addToLiveCart !== false) {
+      for (const r of pendingRefills) {
+        const reqQty = Math.max(1, Number(r.quantity_needed || 1));
+        try {
+          const cartRes = await processRefillCartItem(r.id, { qty: reqQty, dryRun: false });
+          cartResults.push({
+            refillId: r.id,
+            medicineName: r.medicine_name,
+            status: cartRes.status,
+            storeName: cartRes.line?.storeName,
+            qty: cartRes.qty,
+            message: cartRes.message
+          });
+        } catch (itemErr: any) {
+          cartResults.push({
+            refillId: r.id,
+            medicineName: r.medicine_name,
+            status: 'failed',
+            message: itemErr?.message || 'Cart processing error'
+          });
+        }
+      }
+
+      if (cartResults.length > 0 && pendingRefills[0]?.patient_name) {
+        sendRefillCartSummary(pendingRefills[0].patient_name, cartResults).catch(() => {});
+      }
+    }
+
+    eventService.broadcast('refill_updated', {
+      at: Date.now(),
+      patient_confirmed: true,
+      confirmed_ids: targetIds,
+      patient_name: pendingRefills[0]?.patient_name,
+      patient_phone: pendingRefills[0]?.patient_phone
+    });
+    eventService.broadcast('live_cart_updated', { at: Date.now(), source: 'user_refill_confirm' });
+
+    res.json({
+      success: true,
+      count: targetIds.length,
+      confirmed_ids: targetIds,
+      cartResults
+    });
+  } catch (err: any) {
+    console.error('Failed to confirm patient refills:', err);
+    res.status(500).json({ error: err?.message || 'Failed to confirm patient refills' });
+  }
+});
+
+// Confirm single refill item and add to live cart
+router.post('/:id/confirm', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id || isNaN(id)) return res.status(400).json({ error: 'Valid refill ID required' });
+  try {
+    const db = await dbManager.getConnection();
+    const refill = await db.get(
+      `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+       FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+       WHERE pr.id = ? AND pr.is_active = 1`,
+      [id]
+    );
+    if (!refill) return res.status(404).json({ error: 'Refill not found or inactive' });
+
+    await db.run(
+      `UPDATE patient_refills 
+       SET patient_confirmed = 1, confirmed_at = datetime('now')
+       WHERE id = ?`,
+      [id]
+    );
+
+    // Customer or pharmacist confirmed — cancel and purge reminders immediately!
+    await purgePendingCustomerReminders(db, {
+      phone: refill.patient_phone,
+      refillIds: [id],
+      medicineNames: refill.medicine_name ? [refill.medicine_name] : undefined
+    });
+
+    const reqQty = Math.max(1, Number(req.body?.qty || refill.quantity_needed || 1));
+    const cartRes = await processRefillCartItem(id, { qty: reqQty, dryRun: false });
+
+    eventService.broadcast('refill_updated', { at: Date.now(), confirmed_id: id });
+    eventService.broadcast('live_cart_updated', { at: Date.now(), source: 'user_refill_confirm' });
+
+    res.json({
+      success: true,
+      confirmed: true,
+      cartResult: cartRes
+    });
+  } catch (err: any) {
+    console.error(`Failed to confirm refill ${id}:`, err);
+    res.status(500).json({ error: err?.message || 'Failed to confirm refill' });
   }
 });
 
@@ -1461,6 +1606,10 @@ router.post('/:id/fulfill', async (req, res) => {
            stock_verified_override = 0,
            ordering_triggered = 0,
            cart_product_code = NULL,
+           cart_store_name = NULL,
+           cart_qty = NULL,
+           patient_confirmed = 0,
+           confirmed_at = NULL,
            is_ready = 0,
            hold_for_stock = 0,
            acknowledged = 0,
@@ -1588,6 +1737,10 @@ router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-al
                stock_verified_override = 0,
                ordering_triggered = 0,
                cart_product_code = NULL,
+               cart_store_name = NULL,
+               cart_qty = NULL,
+               patient_confirmed = 0,
+               confirmed_at = NULL,
                is_ready = 0,
                hold_for_stock = 0,
                acknowledged = 0,
@@ -1791,6 +1944,16 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
          WHERE id = ?`,
         [storeName, orderQty, id]
       );
+
+      // Pharmacist marked "Already Added" / ordered outside — stop asking the customer for refills!
+      const medRow = await db.get('SELECT name FROM medicines WHERE id = ?', [refill.medicine_id]);
+      await purgePendingCustomerReminders(db, {
+        phone: refill.patient_phone,
+        refillIds: [Number(id)],
+        customerId: refill.customer_id,
+        medicineNames: medRow?.name ? [medRow.name] : undefined
+      });
+
       return res.json({ success: true, message: 'Refill marked as ordered', cart_store_name: storeName });
     } else {
       await db.run(

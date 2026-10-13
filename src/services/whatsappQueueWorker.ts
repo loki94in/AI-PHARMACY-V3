@@ -988,25 +988,29 @@ class WhatsAppQueueWorker {
         // If this is a collection/refill/order reminder, verify the underlying entity wasn't already fulfilled or billed
         if (['refill_collection', 'refill_reminder', 'order_ready', 'special_order_arrived', 'special_order'].includes(item.type)) {
           if (item.type === 'refill_collection' || item.type === 'refill_reminder') {
+            const extraRefillFilter = item.type === 'refill_reminder'
+              ? "AND COALESCE(patient_confirmed, 0) = 0 AND status != 'ordered' AND cart_store_name IS NULL"
+              : "";
             const activeRefills = await db.all(
               `SELECT id FROM patient_refills 
                WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
                  AND is_active = 1
                  AND is_ready = 1
                  AND auto_remind = 1
-                 AND status NOT IN ('completed', 'canceled')`,
+                 AND status NOT IN ('completed', 'canceled')
+                 ${extraRefillFilter}`,
               [`%${target10Digits}`, `%${target10Digits}`]
             ).catch(() => []);
 
             if (!activeRefills || activeRefills.length === 0) {
-              console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — refill already fulfilled or reminder cancelled for ${target10Digits}.`);
+              console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — refill already fulfilled, confirmed, ordered, or reminder cancelled for ${target10Digits}.`);
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled or reminder cancelled' WHERE id = ?",
+                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, confirmed, or reminder cancelled' WHERE id = ?",
                 [item.id]
               );
               await db.run(
                 `UPDATE automation_notifications 
-                 SET status = 'cancelled', error_message = 'Already fulfilled' 
+                 SET status = 'cancelled', error_message = 'Already fulfilled or confirmed' 
                  WHERE reference_id = ? OR reference_id = ?`,
                 [`queue_${item.id}`, String(item.id)]
               ).catch(() => {});

@@ -4774,6 +4774,18 @@ export async function handleInbound(msg: any): Promise<void> {
             refillIds
           );
 
+          // Purge pending reminders and staged notifications immediately — customer has confirmed!
+          try {
+            const { purgePendingCustomerReminders } = await import('./refillService.js');
+            await purgePendingCustomerReminders(db, {
+              phone: cleanDigits,
+              refillIds,
+              medicineNames: pendingRefills.map((r: any) => r.medicine_name).filter(Boolean)
+            });
+          } catch (purgeErr) {
+            console.warn('[Intent Service] purge reminders warning on refill confirm:', purgeErr);
+          }
+
           // P1 push event: updates Quick Assist and CRM without page reload
           eventService.broadcast('refill_updated', {
             at: Date.now(),

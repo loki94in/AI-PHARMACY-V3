@@ -286,6 +286,43 @@ export const QuickAssistSidebar = memo(({
     setRefillOrderModalGroup(group);
   };
 
+  const [confirmingRefillKeys, setConfirmingRefillKeys] = useState<Set<string>>(new Set());
+
+  const handleConfirmRefillGroup = async (group: {
+    key: string;
+    patient_name: string;
+    patient_phone?: string;
+    medicines: Array<{ id: number; medicine_name: string; is_active?: number; status?: string }>;
+  }) => {
+    if (confirmingRefillKeys.has(group.key)) return;
+    setConfirmingRefillKeys(prev => new Set(prev).add(group.key));
+    try {
+      const activeIds = group.medicines
+        .filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'completed')
+        .map(m => m.id);
+      const res = await api.confirmRefillPatient({
+        patientPhone: group.patient_phone,
+        patientName: group.patient_name,
+        refillIds: activeIds,
+        addToLiveCart: true
+      });
+      if (res?.success) {
+        toastEvent.trigger(`Refill confirmed & added to Pharmarack live cart for "${group.patient_name}"!`, 'success');
+        refillEvent.triggerRefresh();
+        onRefreshDailyLog();
+      }
+    } catch (err: any) {
+      console.error('Failed to confirm refill:', err);
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to confirm refill', 'error');
+    } finally {
+      setConfirmingRefillKeys(prev => {
+        const next = new Set(prev);
+        next.delete(group.key);
+        return next;
+      });
+    }
+  };
+
   const [markingReadyRefillPhones, setMarkingReadyRefillPhones] = useState<Set<string>>(new Set());
 
   const handleMarkRefillGroupReady = async (group: {
@@ -341,6 +378,7 @@ export const QuickAssistSidebar = memo(({
       await Promise.all(ids.map(id => api.markRefillOrdered(id, { note: 'Manual / Phone Order' }).catch(() => {})));
       toastEvent.trigger(`Marked all refills for ${group.patient_name} as Ordered`, 'success');
       refillEvent.triggerRefresh();
+      onRefreshDailyLog();
       onActionComplete();
     } catch (e) {
       toastEvent.trigger('Failed to mark as ordered', 'error');
@@ -1238,13 +1276,31 @@ export const QuickAssistSidebar = memo(({
                             <span>{group.medicines.length}</span>
                           </span>
                           {timingBadge}
-                          {group.isPatientConfirmed && (
+                          {group.isPatientConfirmed ? (
                             <span
                               className="p-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0"
-                              title="Confirmed via WhatsApp"
+                              title="Refill confirmed & added to Pharmarack live cart"
                             >
                               <MessageSquareIcon size={10} className="shrink-0" />
                             </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleConfirmRefillGroup(group);
+                              }}
+                              disabled={confirmingRefillKeys.has(group.key)}
+                              className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[8px] font-bold transition-all cursor-pointer shadow-xs shrink-0"
+                              title="1-Click Confirm refill & add directly to Live Cart"
+                            >
+                              {confirmingRefillKeys.has(group.key) ? (
+                                <Loader2 size={8} className="animate-spin shrink-0" />
+                              ) : (
+                                <CheckCircle2 size={8} className="shrink-0" />
+                              )}
+                              <span>+ Confirm</span>
+                            </button>
                           )}
                         </div>
                         {group.patient_phone && (
@@ -1400,9 +1456,30 @@ export const QuickAssistSidebar = memo(({
                             );
                           }
 
+                          const confirmBtn = !group.isPatientConfirmed ? (
+                            <button
+                              type="button"
+                              disabled={confirmingRefillKeys.has(group.key)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleConfirmRefillGroup(group);
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Confirm refill and directly add to Pharmarack Live Cart"
+                            >
+                              {confirmingRefillKeys.has(group.key) ? (
+                                <Loader2 size={10} className="animate-spin shrink-0" />
+                              ) : (
+                                <CheckCircle2 size={10} className="shrink-0" />
+                              )}
+                              <span>Confirm</span>
+                            </button>
+                          ) : null;
+
                           if (stage === 'upcoming') {
                             return (
                               <>
+                                {confirmBtn}
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -1456,6 +1533,7 @@ export const QuickAssistSidebar = memo(({
                           if (stage === 'ordered') {
                             return (
                               <>
+                                {confirmBtn}
                                 <button
                                   type="button"
                                   disabled={isMarkingReady}
@@ -1497,6 +1575,7 @@ export const QuickAssistSidebar = memo(({
 
                           return (
                             <>
+                              {confirmBtn}
                               <button
                                 type="button"
                                 disabled={isMarkingReady}

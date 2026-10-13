@@ -66,6 +66,9 @@ router.get('/', async (_req, res) => {
     if (settingsObj['auto_add_to_live_cart'] === undefined) {
       settingsObj['auto_add_to_live_cart'] = 'true';
     }
+    if (settingsObj['refill_notice_days'] === undefined) {
+      settingsObj['refill_notice_days'] = '7';
+    }
 
     res.json(settingsObj);
   } catch (error) {

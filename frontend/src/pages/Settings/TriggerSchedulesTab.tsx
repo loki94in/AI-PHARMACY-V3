@@ -74,6 +74,7 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
     // 10. Patient Chronic Refill Evaluator
     triggerRefillsEnabled: rawSettings.trigger_refills_enabled !== 'false',
     triggerRefillsCheckTime: rawSettings.trigger_refills_check_time || '09:00',
+    refillNoticeDays: rawSettings.refill_notice_days || '7',
     defaultRefillReminderMode: rawSettings.default_refill_reminder_mode || 'manual',
     reminderAdminPreviewEnabled: rawSettings.reminder_admin_preview_enabled !== 'false',
 
@@ -176,7 +177,8 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
         trigger_doctor_report_time: formData.triggerDoctorReportTime,
         trigger_refills_enabled: formData.triggerRefillsEnabled ? 'true' : 'false',
         trigger_refills_check_time: formData.triggerRefillsCheckTime,
-        default_refill_reminder_mode: formData.defaultRefillReminderMode,
+        refill_notice_days: String(formData.refillNoticeDays || '7'),
+        defaultRefillReminderMode: formData.defaultRefillReminderMode,
         reminder_admin_preview_enabled: formData.reminderAdminPreviewEnabled ? 'true' : 'false',
         trigger_pharmarack_cart_send_enabled: formData.triggerPharmarackCartSendEnabled ? 'true' : 'false',
         trigger_pharmarack_cart_send_time: formData.triggerPharmarackCartSendTime,
@@ -995,15 +997,31 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
               <div className="w-9 h-5 bg-bg3 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
             </label>
           </div>
-          <p className="text-[11px] text-muted">Scans chronic dosage schedules and queues 3-day refill alerts for patients.</p>
-          <div className="flex items-center gap-2">
-            <label className="text-[11px] font-semibold text-text whitespace-nowrap">Check Time:</label>
-            <input
-              type="time"
-              value={formData.triggerRefillsCheckTime}
-              onChange={(e) => setFormData({ ...formData, triggerRefillsCheckTime: e.target.value })}
-              className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
-            />
+          <p className="text-[11px] text-muted">Scans chronic dosage schedules and auto-dispatches refill alerts {formData.refillNoticeDays || '7'} days before due date so medicines are never short.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-semibold text-text whitespace-nowrap">Check Time:</label>
+              <input
+                type="time"
+                value={formData.triggerRefillsCheckTime}
+                onChange={(e) => setFormData({ ...formData, triggerRefillsCheckTime: e.target.value })}
+                className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-semibold text-text whitespace-nowrap">Lead Time:</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={formData.refillNoticeDays}
+                  onChange={(e) => setFormData({ ...formData, refillNoticeDays: e.target.value })}
+                  className="w-14 px-2 py-1 text-xs bg-bg border border-border rounded-lg text-text text-center focus:outline-none focus:border-primary font-bold"
+                />
+                <span className="text-[11px] text-muted font-medium">days before</span>
+              </div>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-border/40 space-y-2">

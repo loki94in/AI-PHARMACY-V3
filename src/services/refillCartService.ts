@@ -414,6 +414,34 @@ export async function processRefillCartItem(
   }
 
   if (links.length === 0) {
+    // If no links were explicitly saved, but in-stock mapped candidates were found:
+    // auto-link the top candidate based on distributor priority so zero-touch refill adds succeed!
+    const inStockCandidates = candidates.filter(c => c.inStock && c.mapped);
+    if (inStockCandidates.length > 0) {
+      const orderedCandidates = orderByPriority(inStockCandidates, c => c.storeName, prioMap);
+      const best = orderedCandidates[0];
+      try {
+        await saveMedicineLinks(refill.medicine_id, [{
+          storeId: best.storeId,
+          storeName: best.storeName,
+          productCode: best.productCode,
+          productId: best.productId,
+          productName: best.productName,
+          packaging: best.packaging,
+          company: best.company,
+          mapped: true
+        }]);
+        const freshLinks = await db.all('SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id', [refill.medicine_id]);
+        if (freshLinks.length > 0) {
+          links.push(...freshLinks);
+        }
+      } catch (linkErr) {
+        console.warn(`[RefillCartService] Auto-link fallback note for medicine ${refill.medicine_id}:`, linkErr);
+      }
+    }
+  }
+
+  if (links.length === 0) {
     return candidates.length > 0
       ? { ...base, candidates, status: 'needs_link', message: 'No distributor linked to this medicine yet. Link one to add it.' }
       : { ...base, status: 'not_found', message: 'No mapped Pharmarack distributor found for this name. Link it by searching another spelling.' };

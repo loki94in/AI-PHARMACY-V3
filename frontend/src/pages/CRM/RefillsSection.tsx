@@ -714,6 +714,7 @@ export const RefillsSection: React.FC = () => {
       toastEvent.trigger(`Marked all refills for ${patient.patient_name} as Ordered`, 'success', '/crm');
       refillEvent.triggerRefresh();
       automationHubEvent.triggerUpdated();
+      await loadStagedSummary();
       await load(true);
     } catch {
       toastEvent.trigger('Failed to mark as ordered', 'error', '/crm');
@@ -835,6 +836,36 @@ export const RefillsSection: React.FC = () => {
       return;
     }
     setOrderingPatient(patient);
+  };
+
+  const [confirmingPatient, setConfirmingPatient] = useState(false);
+
+  const handleConfirmRefillPatient = async (patient: RefillPatient) => {
+    if (confirmingPatient) return;
+    setConfirmingPatient(true);
+    try {
+      const activeIds = (patient.medicines || [])
+        .filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'completed')
+        .map(m => m.id);
+      const res = await api.confirmRefillPatient({
+        patientPhone: patient.patient_phone,
+        patientName: patient.patient_name,
+        refillIds: activeIds,
+        addToLiveCart: true
+      });
+      if (res?.success) {
+        toastEvent.trigger(`Refill confirmed & added to Pharmarack live cart for "${patient.patient_name}"!`, 'success', '/crm');
+        refillEvent.triggerRefresh();
+        await load(true);
+      } else {
+        toastEvent.trigger('Failed to confirm refill', 'error', '/crm');
+      }
+    } catch (err: any) {
+      console.error('Failed to confirm refill:', err);
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to confirm refill', 'error', '/crm');
+    } finally {
+      setConfirmingPatient(false);
+    }
   };
 
   // ── Fast In-Memory Local Search (0ms instant autocomplete) ────────────────
@@ -1708,9 +1739,23 @@ export const RefillsSection: React.FC = () => {
                         <span>Add to Cart{unaddedCount > 0 ? ` (${unaddedCount})` : ''}</span>
                       </button>
                     );
+                    const isConfirmed = (selectedPatient.medicines || []).some(m => m.patient_confirmed === 1);
+                    const confirmBtn = !isConfirmed ? (
+                      <button
+                        key="confirm-refill-btn"
+                        onClick={() => handleConfirmRefillPatient(selectedPatient)}
+                        disabled={confirmingPatient}
+                        title="Confirm refill and automatically add prescribed medicines directly to Pharmarack Live Cart"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                      >
+                        <Check size={13} className={confirmingPatient ? 'animate-spin' : ''} />
+                        <span>{confirmingPatient ? 'Adding to Cart…' : 'Confirm & Cart'}</span>
+                      </button>
+                    ) : null;
                     if (stage === 'upcoming') {
                       return (
                         <>
+                          {confirmBtn}
                           {addToCartBtn}
                           <button
                             onClick={() => handleMarkAllOrdered(selectedPatient)}
@@ -1728,6 +1773,7 @@ export const RefillsSection: React.FC = () => {
                     if (stage === 'ordered') {
                       return (
                         <>
+                          {confirmBtn}
                           {addToCartBtn}
                           <button
                             onClick={() => handleMarkReadyPatient(selectedPatient)}
@@ -1744,6 +1790,7 @@ export const RefillsSection: React.FC = () => {
                     }
                     return (
                       <>
+                        {confirmBtn}
                         {addToCartBtn}
                         <button
                           onClick={() => handleMarkReadyPatient(selectedPatient)}

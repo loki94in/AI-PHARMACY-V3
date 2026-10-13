@@ -69,12 +69,12 @@ export async function checkAllRefills(db: Database): Promise<void> {
      WHERE pr.status = 'pending' AND pr.is_active = 1`
   );
 
-  let noticeDays = 3;
+  let noticeDays = 7;
   let operatingSchedule = { openTime: '09:00', closeTime: '22:00', weeklyOff: 'Monday', closedDates: [] as string[] };
   try {
     const setting = await db.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
     if (setting && setting.value) {
-      noticeDays = parseInt(setting.value, 10) || 3;
+      noticeDays = parseInt(setting.value, 10) || 7;
     }
     const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
     operatingSchedule = await getPharmacyOperatingSchedule(db);
@@ -237,14 +237,16 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   const storePhone = await getStorePhone(db);
   const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
 
-  // Find all active patient refills for this patient that have not been notified/completed and due within upcoming 7 calendar days
+  // Find all active patient refills for this patient that have not been notified/completed/ordered and due within upcoming 7 calendar days
   const readyRefills = await db.all(
     `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
      FROM patient_refills pr
      JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
        AND pr.is_active = 1
-       AND pr.status NOT IN ('completed', 'canceled', 'notified')
+       AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
+       AND COALESCE(pr.patient_confirmed, 0) = 0
+       AND pr.cart_store_name IS NULL
        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
      ORDER BY pr.id ASC`,
     [patientPhone, patientName]
@@ -254,7 +256,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     // If no ready refills remain, remove any stale staged notification for this patient
     await db.run(
       `DELETE FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?)`,
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?)`,
       [patientPhone, patientName]
     );
     return;
@@ -469,7 +471,7 @@ export async function cleanupStagedRefillNotifications(
     const stagedNotifications = await db.all(
       `SELECT id, reference_id, recipient_phone, recipient_name 
        FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged'`
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status = 'staged'`
     );
 
     for (const notif of stagedNotifications) {
@@ -1213,6 +1215,33 @@ export async function dispatchDueRefillReminders(db: Database): Promise<{ dispat
       if (!cleanPhone || cleanPhone.length < 10) {
         skipped++;
         continue;
+      }
+
+      // Anti-spam gate: if referenced refills are already confirmed, ordered outside, or in live cart, cancel & skip!
+      if (notif.reference_id) {
+        const refIds = String(notif.reference_id).split(',').map(s => Number(s.trim())).filter(n => !isNaN(n) && n > 0);
+        if (refIds.length > 0) {
+          const placeholders = refIds.map(() => '?').join(',');
+          const alreadyHandled = await db.get(
+            `SELECT id FROM patient_refills 
+             WHERE id IN (${placeholders}) 
+               AND (COALESCE(patient_confirmed, 0) = 1 
+                 OR status IN ('ordered', 'completed', 'canceled') 
+                 OR cart_store_name IS NOT NULL)
+             LIMIT 1`,
+            refIds
+          );
+          if (alreadyHandled) {
+            await db.run(
+              `UPDATE automation_notifications 
+               SET status = 'cancelled', lifecycle_status = 'cancelled', error_message = 'Already confirmed or ordered' 
+               WHERE id = ?`,
+              [notif.id]
+            );
+            skipped++;
+            continue;
+          }
+        }
       }
 
       // Check if already queued or sent to this number in the last 24 hours

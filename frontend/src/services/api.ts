@@ -1825,6 +1825,10 @@ export const api = {
   // dryRun: plan only (never writes the cart) → 'ready' with the distributor it would use.
   addRefillToCart: (id: number, body: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean }) =>
     apiClient.post<RefillCartResult>(`/refills/${id}/add-to-cart`, body, { timeout: 90000 }).then(res => res.data),
+  confirmRefillPatient: (payload: { patientPhone?: string; patientName?: string; refillIds?: number[]; addToLiveCart?: boolean }) =>
+    apiClient.post<{ success: boolean; count: number; confirmed_ids: number[]; cartResults?: any[] }>('/refills/confirm-patient', payload, { timeout: 90000 }).then(res => res.data),
+  confirmSingleRefill: (id: number, body?: { qty?: number }) =>
+    apiClient.post<{ success: boolean; confirmed: boolean; cartResult?: any }>(`/refills/${id}/confirm`, body || {}, { timeout: 90000 }).then(res => res.data),
   getDistributorPriority: () =>
     apiClient.get<{ success: boolean; distributors: Array<{ storeName: string; ranked: boolean; linkedMedicines: number }> }>('/refills/distributor-priority').then(res => res.data),
   saveDistributorPriority: (order: string[]) =>
