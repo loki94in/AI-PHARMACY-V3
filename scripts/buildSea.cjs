@@ -92,7 +92,8 @@ const isccCandidates = [
   path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Inno Setup 6', 'ISCC.exe'),
   'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
   'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
-  'C:\\Program Files\\Inno Setup 7\\ISCC.exe'
+  'C:\\Program Files\\Inno Setup 7\\ISCC.exe',
+  path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Antigravity IDE', 'resources', 'app', 'node_modules', 'innosetup', 'bin', 'ISCC.exe')
 ];
 
 let isccExe = null;
