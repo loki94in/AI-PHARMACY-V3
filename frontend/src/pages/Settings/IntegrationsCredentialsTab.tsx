@@ -32,7 +32,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
   const [combinePharmarackSearch, setCombinePharmarackSearch] = useState(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
   const [autoAddToLiveCart, setAutoAddToLiveCart] = useState(rawSettings.auto_add_to_live_cart !== 'false');
   const [autoSavedPharmarack, setAutoSavedPharmarack] = useState(false);
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [geminiApiKey, setGeminiApiKey] = useState(rawSettings.gemini_api_key || '');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [testingGemini, setTestingGemini] = useState(false);
