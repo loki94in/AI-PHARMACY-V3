@@ -49,6 +49,9 @@ interface Distributor {
   lineTotal: number;
   deliveryPersons: { name: string; code: string }[];
   items: CartLineItem[];
+  // Server-enriched distributor WhatsApp (exact/fuzzy mapping match in
+  // GET /cart); '' = unknown, never invented. Preferred over name matching.
+  phone?: string;
   // Limits from Pharmarack; null/undefined = unknown (never assumed 0), 0 = no restriction
   minAmountLimit?: number | null;
   minItemLimit?: number | null;
@@ -1843,6 +1846,11 @@ export default function PharmarackCart() {
     const custom = customDistributorPhones[dist.storeId];
     if (custom && custom.trim().length > 0) return custom.trim();
 
+    // 1b. Server-enriched phone from GET /cart (exact/fuzzy mapping match,
+    // same sources Dispatch/Learning read) — wins over name matching.
+    const serverPhone = (dist.phone || '').replace(/\D/g, '').slice(-10);
+    if (serverPhone.length === 10) return serverPhone;
+
     // 2. Persistent store-to-distributor mapping from SQLite DB
     const normName = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
     const cleanStoreNorm = dist.storeName ? dist.storeName.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
@@ -2854,6 +2862,9 @@ export default function PharmarackCart() {
       } else if (matched?.phone || matched?.mobile || matched?.whatsapp) {
         setModalPhoneInput(matched.phone || matched.mobile || matched.whatsapp || '');
         setSelectedSavedDistId(matched.id as number | null);
+      } else if ((dist.phone || '').replace(/\D/g, '').slice(-10).length === 10) {
+        setModalPhoneInput((dist.phone || '').replace(/\D/g, '').slice(-10));
+        setSelectedSavedDistId(matched?.id || null);
       } else {
         setModalPhoneInput('');
         setSelectedSavedDistId(null);

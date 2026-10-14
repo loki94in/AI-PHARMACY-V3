@@ -1,5 +1,94 @@
 # Cursor Rules
 
+1. Think Before Coding
+Don't assume. Don't hide confusion. Surface tradeoffs.
+
+Before implementing:
+
+State your assumptions explicitly. If uncertain, ask.
+If multiple interpretations exist, present them - don't pick silently.
+If a simpler approach exists, say so. Push back when warranted.
+If something is unclear, stop. Name what's confusing. Ask.
+
+2. Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+
+No features beyond what was asked.
+No abstractions for single-use code.
+No "flexibility" or "configurability" that wasn't requested.
+No error handling for impossible scenarios.
+If you write 200 lines and it could be 50, rewrite it.
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+3. Surgical Changes
+Touch only what you must. Clean up only your own mess.
+
+When editing existing code:
+
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor things that aren't broken.
+Match existing style, even if you'd do it differently.
+If you notice unrelated dead code, mention it - don't delete it.
+The test: Every changed line should trace directly to the user's request.
+
+When your changes create orphans:
+
+Remove imports/variables/functions that YOUR changes made unused.
+Don't remove pre-existing dead code unless asked.
+
+4. Goal-Driven Execution
+Define success criteria. Loop until verified.
+
+Transform tasks into verifiable goals:
+
+"Add validation" → "Write tests for invalid inputs, then make them pass"
+"Fix the bug" → "Write a test that reproduces it, then make it pass"
+"Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+<!-- context7 -->
+Use Context7 MCP to fetch current documentation whenever the user asks about a library, framework, SDK, API, CLI tool, or cloud service -- even well-known ones like React, Next.js, Prisma, Express, Tailwind, Django, or Spring Boot. This includes API syntax, configuration, version migration, library-specific debugging, setup instructions, and CLI tool usage. Use even when you think you know the answer -- your training data may not reflect recent changes. Prefer this over web search for library docs.
+
+Do not use for: refactoring, writing scripts from scratch, debugging business logic, code review, or general programming concepts.
+
+## Steps
+
+1. Always start with `resolve-library-id` using the library name and the user's question, unless the user provides an exact library ID in `/org/project` format.
+2. Pick the best match (ID format: `/org/project`) by: exact name match, description relevance, code snippet count, source reputation (High/Medium preferred), and benchmark score (higher is better). If results don't look right, try alternate names or queries (e.g., "next.js" not "nextjs", or rephrase the question). Use version-specific IDs when the user mentions a version.
+3. `query-docs` with the selected library ID and the user's full question (not single words).
+4. Answer using the fetched docs.
+<!-- context7 -->
+
+5. WHEN USER ASKS TO DISCUSS, NEVER TOUCH ANY FILE UNLESS USER SAYS "IMPLEMENT" AS A SINGLE WORD IN THE CHAT. DISCUSS ONLY.
+
+6. Always make the final step the human-in-the-loop in the entire app and development process, so the app can automate workflows while a human can manually approve, disapprove, or change the workflow, and the agent/bot can automatically manage the adjustments.
+
+7. When the user asks about or talks about an issue, always discuss and find the root cause, think about how we can achieve the desired outcome based on what the user is describing, and if the information is not enough, use MCQs to determine the desired outcome. Then show, in short point-wise form, how we can manage to achieve the desired outcome.
+
+8. Always use senior-level search, design, and problem-solving.
+
+9. Make sure there will be no "Query Compilation & Constraint Resolution Failure" errors in the project.
+
+10. When any agent gives an implementation plan, it will create the `implementation.md` file in the root folder and save it there so any new agent can continue the task quickly and accurately. The new agent will automatically resume the task from where it was left. use prompt-master.
+ 
+The plan must also have tasks at the end showing what was completed and how it was completed after each task, so a new agent can resume without redoing the same work.
+
+Each new task must always get a new implementation plan. Never reuse a single `.md` file for a new implementation plan.
+
+11. When any agent fixes a bug or creates a new feature, it must ensure that no agent makes mistakes, that the fix is implemented correctly, and that the existing workflow and pipeline of the app are not broken.
+
+12. when any agent implimenting implimenaton plan make usre naver skip any part of the plan
+
+13. when ahen fixin and inplimenting anything new or upgrading in the project alwasy thing understand what we need to also improve that is going to show direct effect on the app workglow so that is complelty upgrad that related fielese and feature in the app.
+14. naver touch any insatll app file sunell user say use theren as referacne for the task.
+
 ## Bug Fix & Issue Resolution (MANDATORY)
 
 When the user reports a **bug**, **issue**, **regression**, or asks to **fix** something broken, read **before coding**:

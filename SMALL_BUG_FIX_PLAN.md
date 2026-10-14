@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P1-90 — Pharmarack live search false-empty after 20-30 min idle + distributor numbers missing on cart
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the installed app, Pharmarack live search returned zero results for 1-2 min after ~20-30 min idle (then went fast), with a false `No mapped distributor has product` toast. Distributor numbers showed `Missing Phone` on the Pharmarack cart while Dispatch + Learning showed them. Reported 2026-10-14. |
+| **Root cause** | (1) `performPharmarackSearch` (`src/routes/pharmarack.ts`) masked failures as `{status:'ok',items:[]}` on two paths: no-token + empty offline with `combine_pharmarack_pharmacy_search=true`, and live timeout (`response===null`) + empty offline. The UI cannot distinguish that from genuine zero stock, so it toasted false OOS. (2) Heartbeat 401/403 only logged + stood by (`src/services/tokenRefreshScheduler.ts`), never firing the single-flight `executeRefresh()` the keep-alive contract requires — so the first user search after idle paid the ~20-40 s Chrome restore inline. (3) `loadLiveCartCore()` did zero DB joins, so cart phones depended on fragile client-side store-name text matching while Dispatch reads its own `distributor_phone` snapshot and Learning reads `distributors.phone` by id. |
+| **How it was fixed** | (1) No-token + nothing local now returns `need_login` (never silent `[]`); live-timeout + nothing local now returns `connection_error` — genuine zero-stock `[]` is untouched, so the false toast only fires on real zeros. (2) Heartbeat 401/403 kicks off background single-flight `executeRefresh()` (fire-and-forget, still P4-exempt/idle-safe) so idle expiry self-heals before the next keystroke. (3) `loadLiveCartCore()` attaches `dist.phone` server-side: one exact-match UNION over `pharmarack_distributor_mappings` + `distributors`, then `resolveDistributorContact` per still-missing store (fuzzy + auto-persists the mapping); missing stays `''`, no writes on failure. Cart resolver + edit-modal prefill prefer the server value; `POST /distributor-mappings` now calls `invalidatePharmarackCartCache()` so the next cart load carries the new number. |
+| **Priority** | P1 |
+| **What not to touch** | Genuine zero-stock `ok []` semantics, SSE single-connection + deferred mark-stale contract (no new timers), session-persistence mutex, POS billing flow. |
+| **Verified by** | `npm run guardrails` exit 0 (`tsc --noEmit` clean); knowledge graph synchronized via `node scripts/quick-update.mjs`. |
+
 ### [Fixed] P2-89 — Reorder Hub "Add to Cart" opened a global popup, added the wrong medicine, and morning briefing could be lost
 - Cause: purchase bills carry local ids only, so unlinked medicines fell to a global picker; auto-resolve used loose `includes()` matching (base vs Plus/DS/M variants); payload invented `stock: 100`/`rate 0`. Morning briefing stamped "sent today" even when queued while WhatsApp was still restoring.
 - Fix: `frontend/src/utils/strictProductName.ts` (exact same-product only) in `handleReorderDirect`; one store-scoped live search auto-adds only on a single exact hit, otherwise the picker opens restricted to that store (`restrictStoreId` through `liveCartAddEvent` → Layout → LiveCartAddModal → LiveCartSearchSection); add is verified against the live cart; offline/local rows never listed; offline-fallback `mrp*0.8` rate removed. `sendMorningBriefingWhenWhatsAppReady` stamps the day only after a ready-state enqueue.

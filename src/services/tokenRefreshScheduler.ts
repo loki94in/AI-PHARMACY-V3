@@ -144,6 +144,21 @@ export function extractTokenFromProfile(profilePath: string): string | null {
   }
 }
 
+/**
+ * Extracts username, mobile number, or retailer identity from a Pharmarack JWT token payload.
+ */
+export function extractUserFromToken(token: string): string | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    const candidate = payload.mobileNumber || payload.mobile || payload.userName || payload.username || payload.phone || payload.retailerMobile || (payload.userId ? String(payload.userId) : null);
+    return candidate ? String(candidate).trim() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 export class TokenRefreshScheduler {
   private static instance: TokenRefreshScheduler;
 //   private _intervalId: NodeJS.Timeout | null = null;
@@ -504,7 +519,12 @@ export class TokenRefreshScheduler {
             // (ONE read-only request, throttled to 5 min, never blocks the heartbeat).
             import('./pharmarackOrderSyncService.js').then(m => m.syncPharmarackOrders()).catch(() => {});
           } else if (res.status === 401 || res.status === 403) {
-            console.log('[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Standing by for manual user re-auth.');
+            console.log('[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Kicking off background single-flight restore.');
+            // Proven auth death while idle: restore in background now so the
+            // next search finds a warm session instead of paying the
+            // ~20-40 s Chrome restore inline. Single-flight dedupes with
+            // search-path retries; never blocks the heartbeat.
+            this.executeRefresh().catch(() => {});
             errorMsg = `Session expired (HTTP ${res.status})`;
             try {
               await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
@@ -576,6 +596,11 @@ export class TokenRefreshScheduler {
       this.lastError = null;
       const db = await dbManager.getConnection();
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [directToken]);
+      const extractedUser = extractUserFromToken(directToken);
+      if (extractedUser) {
+        await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [extractedUser]);
+        console.log(`[TokenRefreshScheduler] Auto-persisted Pharmarack username from token: ${extractedUser}`);
+      }
       import('./pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
@@ -681,6 +706,11 @@ export class TokenRefreshScheduler {
         this.lastError = null;
         const db = await dbManager.getConnection();
         await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [holder.token]);
+        const extractedUser = extractUserFromToken(holder.token);
+        if (extractedUser) {
+          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [extractedUser]);
+          console.log(`[TokenRefreshScheduler] Auto-persisted Pharmarack username from token: ${extractedUser}`);
+        }
         import('./pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
         await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
         await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");

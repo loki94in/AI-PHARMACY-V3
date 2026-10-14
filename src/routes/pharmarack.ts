@@ -7,7 +7,7 @@ import { dbManager } from '../database/connection.js';
 import { eventService } from '../services/eventService.js';
 import { notificationService } from '../services/notificationService.js';
 import { searchCache } from '../services/searchCache.js';
-import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses, extractTokenFromProfile } from '../services/tokenRefreshScheduler.js';
+import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses, extractTokenFromProfile, extractUserFromToken } from '../services/tokenRefreshScheduler.js';
 // import { exec } from 'child_process';
 // import { promisify } from 'util';
 import { getAppDataDir } from '../config/index.js';
@@ -323,9 +323,8 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         searchCache.set(qRaw, storeId, isMapped, offline);
         return { status: 'ok', items: offline };
       }
-      if (settings['combine_pharmarack_pharmacy_search'] === 'true') {
-        return { status: 'ok', items: [] };
-      }
+      // No token and nothing local: surface the auth state, never a silent
+      // empty list (a 200 [] here renders downstream as false "no stock").
       return { status: 'need_login' };
     }
 
@@ -485,6 +484,10 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       });
       searchCache.set(qRaw, storeId, isMapped, offline);
     }
+    // response === null means the live call never answered (timeout/network).
+    // With nothing local either, surface a real failure — not a silent empty
+    // list that reads as "this medicine doesn't exist anywhere".
+    if (!response && offline.length === 0) return { status: 'connection_error' };
     return { status: 'ok', items: offline };
 
   } catch (err: any) {
@@ -539,6 +542,23 @@ router.get('/search', async (req, res) => {
     const coreTerm = sanitizePharmarackQuery(qRaw);
     if (coreTerm && coreTerm.toLowerCase() !== qRaw.toLowerCase()) {
       cachedHit = searchCache.lookup(coreTerm, storeId, isMapped);
+    }
+  }
+  // If store-specific search missed, check if global search (storeId = null) is cached (e.g. from Quick Order).
+  // If so, filter and serve instantly (<1ms) instead of blocking on an 8-12s remote network round-trip.
+  if (!cachedHit && storeId !== null) {
+    let globalHit = searchCache.lookup(qRaw, null, false);
+    if (!globalHit) {
+      const coreTerm = sanitizePharmarackQuery(qRaw);
+      if (coreTerm && coreTerm.toLowerCase() !== qRaw.toLowerCase()) {
+        globalHit = searchCache.lookup(coreTerm, null, false);
+      }
+    }
+    if (globalHit && Array.isArray(globalHit.items) && globalHit.items.length > 0) {
+      const filtered = globalHit.items.filter((it: any) => Number(it.storeId) === Number(storeId));
+      if (filtered.length > 0) {
+        cachedHit = { items: filtered, stale: globalHit.stale };
+      }
     }
   }
   if (cachedHit) {
@@ -669,6 +689,10 @@ router.post('/distributor-mappings', async (req, res) => {
       delivery_boy_id: resolvedBoyId
     });
 
+    // Mapping changed the phone truth the cart header reads — drop the 30 s
+    // burst cache so the next cart load carries it immediately.
+    invalidatePharmarackCartCache();
+
     eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'mapping_update', store_name });
     eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
 
@@ -750,11 +774,16 @@ router.post('/login-window', async (_req, res) => {
         if (tokenCaptured) return;
         tokenCaptured = true;
         console.log(`[LoginWindow] Successfully captured token (${source}):`, token.substring(0, 15) + '...');
+        const extractedUser = extractUserFromToken(token);
         try {
           const db = await dbManager.getConnection();
           await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
           await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
           await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+          if (extractedUser) {
+            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [extractedUser]);
+            console.log(`[LoginWindow] Auto-saved Pharmarack username/mobile from token: ${extractedUser}`);
+          }
           import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
         } catch (dbErr: any) {
           console.error('[LoginWindow] Failed to persist token:', dbErr.message);
@@ -768,7 +797,8 @@ router.post('/login-window', async (_req, res) => {
           const { eventService } = await import('../services/eventService.js');
           eventService.broadcast('pharmarack_session_refreshed', {
             status: 'success',
-            message: 'Pharmarack B2B account linked successfully!'
+            message: 'Pharmarack B2B account linked successfully!',
+            username: extractedUser || undefined
           });
         } catch (_) {}
       };
@@ -1129,6 +1159,49 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
   distributors.sort((a: any, b: any) =>
     String(a.storeName || '').localeCompare(String(b.storeName || ''), undefined, { sensitivity: 'base' })
   );
+
+  // Server-side distributor phone (same sources Dispatch/Learning read): one
+  // exact-match UNION over mappings + distributors, then per-store
+  // resolveDistributorContact for name-variants (fuzzy, auto-persists the
+  // mapping so the next load hits exactly). Missing stays '' — never
+  // invented. Best-effort: cart lines stay authoritative on failure.
+  try {
+    const db = await dbManager.getConnection();
+    const phoneRows: any[] = await db.all(`
+      SELECT LOWER(TRIM(m.store_name)) AS k, COALESCE(d.phone, d.contact, m.phone) AS phone
+      FROM pharmarack_distributor_mappings m
+      LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
+      UNION
+      SELECT LOWER(TRIM(d.name)) AS k, COALESCE(d.phone, d.contact) AS phone
+      FROM distributors d
+      WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
+    `).catch(() => []);
+    const cleanDigits = (p: any): string => {
+      let digits = String(p || '').replace(/\D/g, '');
+      if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+      if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+      return digits.length === 10 ? digits : '';
+    };
+    const phoneMap = new Map<string, string>();
+    for (const r of phoneRows || []) {
+      const key = String(r?.k || '').toLowerCase().trim();
+      const digits = cleanDigits(r?.phone);
+      if (key && digits) phoneMap.set(key, digits);
+    }
+    for (const dist of distributors) {
+      const key = String(dist.storeName || '').toLowerCase().trim();
+      let phone = phoneMap.get(key) || '';
+      if (!phone && dist.storeName) {
+        try {
+          const resolved = await resolveDistributorContact(db, dist.storeName);
+          if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
+            phone = resolved.distributor_phone;
+          }
+        } catch (_) {}
+      }
+      (dist as any).phone = phone;
+    }
+  } catch (_) {}
 
   const totalItems = distributors.reduce((s: number, d: any) => s + d.items.length, 0);
 
