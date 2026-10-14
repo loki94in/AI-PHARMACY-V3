@@ -58219,7 +58219,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.90";
+    APP_VERSION = "0.1.92";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -89653,6 +89653,18 @@ var init_sales = __esm({
             refillIds: matchingRefills.map((r) => r.id),
             customerId
           });
+          try {
+            eventService.broadcast("refill_updated", {
+              at: Date.now(),
+              invoice_id: invoiceId,
+              patient_phone,
+              customer_id: customerId,
+              fulfilled: true,
+              count: matchingRefills.length
+            });
+            eventService.broadcast("app-refills-updated", { at: Date.now() });
+          } catch (_) {
+          }
         }
         try {
           const explicitSoId = req.body.special_order_id ? Number(req.body.special_order_id) : null;
