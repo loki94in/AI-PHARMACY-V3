@@ -34693,7 +34693,7 @@ async function executeConfirmedProcurementFlow(params) {
     );
     if (recent) {
       console.log(`[Intent Service] Duplicate confirmed order detected for ${cleanDigits} - ${confirmedMedicine} within 15 min. Skipping duplicate procurement.`);
-      return;
+      return true;
     }
     const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
     const allCatalog = [...localCat.mapped || [], ...localCat.nonMapped || []];
@@ -34754,7 +34754,7 @@ async function executeConfirmedProcurementFlow(params) {
           success: false,
           error: cartResult.error || cartResult.details || "Failed to add items to Pharmarack Live Cart"
         });
-        return;
+        return false;
       }
     } else {
       console.log(`[Intent Service] Auto Add to Live Cart is OFF. Skipping automatic cart call for "${cartItem.productName}". Queuing for manual review.`);
@@ -34840,8 +34840,10 @@ async function executeConfirmedProcurementFlow(params) {
     } catch (_) {
     }
     console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer message staged for manual send.`);
+    return true;
   } catch (procErr) {
     console.error("[Intent Service] Error in executeConfirmedProcurementFlow:", procErr);
+    return false;
   }
 }
 async function checkMedicineClarificationResponse(phone, body, customer, chatId, preferredLang) {
@@ -36627,11 +36629,12 @@ Reply *1* (or *YES*) to confirm.`;
         if (bundle && bundle.length > 1) {
           await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
           const confirmedNames = [];
+          let bundleAllAdded = true;
           for (const item of bundle) {
             const confirmedMedicine = item.matchedName || item.medicine_name || item.name || item.requestedName;
             if (!confirmedMedicine) continue;
             confirmedNames.push(confirmedMedicine);
-            await executeConfirmedProcurementFlow({
+            const ok = await executeConfirmedProcurementFlow({
               phone,
               chatId,
               confirmedMedicine,
@@ -36640,19 +36643,22 @@ Reply *1* (or *YES*) to confirm.`;
               customer,
               isBundle: true
             });
+            if (!ok) bundleAllAdded = false;
           }
-          if (confirmedNames.length > 0) {
+          if (confirmedNames.length > 0 && bundleAllAdded) {
             const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
             const { getStoreMedicalName: getStoreMedicalName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
             const storeLabel = await getStoreMedicalName2(db2);
             const listText = confirmedNames.map((n, i) => `${i + 1}. *${n}*`).join("\n");
             const bundleConfirmMsg = `\u2705 *Order Received!*
 
-Thank you ${customer?.name || "Customer"}, your order for:
+Thank you ${customer?.name || "Customer"} for choosing ${storeLabel}, your order for:
 ${listText}
 
-has been received at ${storeLabel}. We are processing it and will update you shortly!`;
+has been added to our live cart. We are processing it and will update you shortly!`;
             await whatsappQueueWorker2.enqueue(phone, bundleConfirmMsg, "customer_medicine_clarification", customer?.name || "Customer");
+          } else if (confirmedNames.length > 0) {
+            console.log(`[Intent Service] Bundle cart partially failed for ${cleanDigits}; patient thank-you suppressed, owner already notified.`);
           }
           return true;
         }
@@ -37320,15 +37326,20 @@ Patient *${patientName}* has been notified on WhatsApp that their prescription i
       mrp: order.pharmarack_mrp || 0,
       packaging: "1 strip"
     };
+    let ownerConfirmCartOk = false;
+    let ownerConfirmCartError;
     try {
       const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
       const cartResult = await addItemsToPharmarackCart2([cartItem]);
       if (cartResult?.success) {
+        ownerConfirmCartOk = true;
         console.log(`[Intent Service] Live cart successfully added "${cartItem.productName}" to ${cartItem.storeName} (mode: ${cartResult.mode || "live"})`);
       } else {
-        console.warn(`[Intent Service] Live cart add note for "${cartItem.productName}":`, cartResult?.error || cartResult?.details);
+        ownerConfirmCartError = String(cartResult?.error || cartResult?.details || "Live cart add failed");
+        console.warn(`[Intent Service] Live cart add note for "${cartItem.productName}":`, ownerConfirmCartError);
       }
     } catch (cartErr) {
+      ownerConfirmCartError = String(cartErr?.message || cartErr || "Live cart add failed");
       console.warn("[Intent Service] Live Cart add attempt warning:", cartErr);
     }
     await db2.run(
@@ -37354,20 +37365,22 @@ Patient *${patientName}* has been notified on WhatsApp that their prescription i
 \u{1F4B0} Booking Amount Paid: \u20B950
 
 \u{1F6D2} Your medicine has been added to your Live Cart.`;
-    await db2.run(
-      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
-       VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
-      ["whatsapp_order", order.requester || "Customer", String(order.phone || "").replace(/\D/g, "").slice(-10), custFinalMsg, String(orderId)]
-    );
-    const cleanCustPhone = String(order.phone || "").replace(/\D/g, "").slice(-10);
-    if (cleanCustPhone) {
-      const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker3.enqueue(
-        cleanCustPhone,
-        custFinalMsg,
-        "customer_order_confirmed",
-        order.requester || "Customer"
+    if (ownerConfirmCartOk) {
+      await db2.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+         VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
+        ["whatsapp_order", order.requester || "Customer", String(order.phone || "").replace(/\D/g, "").slice(-10), custFinalMsg, String(orderId)]
       );
+      const cleanCustPhone = String(order.phone || "").replace(/\D/g, "").slice(-10);
+      if (cleanCustPhone) {
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(
+          cleanCustPhone,
+          custFinalMsg,
+          "customer_order_confirmed",
+          order.requester || "Customer"
+        );
+      }
     }
     await waAdminEscalationService.notifyAdminOfLiveCartAdd({
       orderId: soCode2,
@@ -37380,15 +37393,20 @@ Patient *${patientName}* has been notified on WhatsApp that their prescription i
         rate: order.pharmarack_rate,
         mrp: order.pharmarack_mrp
       }],
-      success: true
+      success: ownerConfirmCartOk,
+      ...ownerConfirmCartOk ? {} : { error: ownerConfirmCartError || "Live cart add failed \u2014 needs manual review" }
     });
-    const ownerFinalAck = `\u2705 Payment verified for Special Order #${soCode2}!
+    const ownerFinalAck = ownerConfirmCartOk ? `\u2705 Payment verified for Special Order #${soCode2}!
 
 Added *${order.medicine_name || order.product}* \xD7 ${order.qty} to Live Cart.
 \u{1F69A} Distributor: *${order.pharmarack_distributor || "Standard Distributor"}*
-Customer *${order.requester || "Customer"}* has been sent their confirmation receipt.`;
+Customer *${order.requester || "Customer"}* has been sent their confirmation receipt.` : `\u26A0\uFE0F Payment verified for Special Order #${soCode2}, but Live Cart add FAILED (${ownerConfirmCartError || "cart error"}).
+
+*${order.medicine_name || order.product}* \xD7 ${order.qty} was NOT added.
+\u{1F69A} Distributor: *${order.pharmarack_distributor || "Standard Distributor"}*
+No receipt was sent to *${order.requester || "Customer"}* to avoid a false confirmation. Please add it manually.`;
     await whatsappQueueWorker2.enqueue(phone, ownerFinalAck, "admin_escalation", "Owner");
-    console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode2}). Added to Live Cart.`);
+    console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode2}). Added to Live Cart: ${ownerConfirmCartOk}.`);
     return true;
   }
   const rejectSoMatch = cleanBody.match(/^(REJECT|WRONG|CANCEL|DECLINE)[\s\-:]*(?:SO-)?([A-Z0-9\-]*\d+)?$/i);
@@ -37996,8 +38014,20 @@ ${stepPrompt}${languageFooter(chatLang)}`;
             }
           } catch (cartErr) {
             console.warn("[Intent Service] Live Cart auto-add note on refill confirm:", cartErr);
+            try {
+              const { sendRefillCartSummary: sendRefillCartSummary2 } = await Promise.resolve().then(() => (init_refillCartService(), refillCartService_exports));
+              const fallbackRows = pendingRefills.map((r) => ({
+                refillId: r.id,
+                medicineName: r.medicine_name,
+                status: "failed",
+                message: "Cart processing did not run (internal error). Open CRM \u2192 Refills to fix."
+              }));
+              if (fallbackRows.length > 0) await sendRefillCartSummary2(primaryRefill.patient_name, fallbackRows);
+            } catch (_) {
+            }
           }
-          if (!isManualSession) {
+          const refillAllAdded = cartSummaryRows.length > 0 && cartSummaryRows.every((r) => r.status === "added" || r.status === "in_cart");
+          if (!isManualSession && refillAllAdded) {
             try {
               const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName2, getStorePhone: getStorePhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
               const sched = await getPharmacyOperatingSchedule2(db3);
@@ -38013,9 +38043,9 @@ ${stepPrompt}${languageFooter(chatLang)}`;
               const offDay = sched.weeklyOff ? ` | Weekly Off: ${sched.weeklyOff}` : "";
               const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
 
-Thank you ${primaryRefill.patient_name}! Your regular prescription for:
+Thank you ${primaryRefill.patient_name} for choosing ${storeName}! Your regular prescription for:
 ${medListText}
-has been confirmed.
+has been added to our live cart.
 
 \u{1F552} *Store Hours:* ${open12} \u2013 ${close12}${offDay}${hoursNotice ? `
 ${hoursNotice.trim()}` : ""}${deliveryNotice ? `
@@ -38032,6 +38062,8 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
             } catch (ackErr) {
               console.warn("[Intent Service] Refill confirmation acknowledgment note:", ackErr);
             }
+          } else if (!isManualSession) {
+            console.log(`[Intent Service] Refill cart not fully added for ${primaryRefill.patient_name}; patient thank-you suppressed (owner notified).`);
           }
           console.log(`[Intent Service] Patient ${primaryRefill.patient_name} confirmed ${pendingRefills.length} refill(s) via WhatsApp.`);
           return;
@@ -58219,7 +58251,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.93";
+    APP_VERSION = "0.1.94";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -89588,7 +89620,7 @@ var init_sales = __esm({
             const fulfilledQty = Number(refill.quantity_needed || 1);
             const recentPosOpened = await db2.get(
               `SELECT id FROM refill_fulfillments 
-           WHERE refill_id = ? AND fulfilled_via = 'pos_opened' 
+           WHERE refill_id = ? AND fulfilled_via IN ('pos_opened', 'quick_assist_complete') 
              AND fulfilled_at >= datetime('now', '-30 minutes')
            ORDER BY id DESC LIMIT 1`,
               [refill.id]
