@@ -1,49 +1,73 @@
-# Implementation Plan: Fix Pharmarack Credential Clearing, Robust Windows Token Capture & Data Sync
+# Implementation Plan: Real-Time Refill Fulfillment Sync & Quick Assist Instant Updates
 
-Created At: 2026-10-15T09:54:00+05:30
+Created At: 2026-10-13T17:16:00+05:30
 Status: COMPLETED
 
-## 1. Problem & Root Cause Summary
-1. **Uncleared Credentials on Logout**:
-   - `tokenRefreshScheduler.clearSession()` only deleted `pharmarack_session_token` in `app_settings`, leaving `pharmarack_username` and `pharmarack_password` in SQLite.
-   - A duplicate `POST /logout` at line 3416 of `src/routes/pharmarack.ts` was unreachable/dead code due to an earlier definition at line 866.
-   - Frontend `IntegrationsCredentialsTab.tsx` did not reset local input state on logout, causing the auto-save debounce hook to resurrect old credentials.
-2. **Token Capture & Data Failure in Installed Windows App**:
-   - Spawning Chrome with `--user-data-dir=${mainProfilePath}` failed to handle paths with spaces (e.g., `C:\Users\...\AppData\Local\AI Pharmacy OS`) properly in Windows child processes.
-   - Windows LevelDB file locking (`EBUSY`) prevented `extractTokenFromProfile` from reading `.log` / `.ldb` files while Chrome was open, silently returning `null`.
-   - On Windows, `spawnProc('chrome.exe')` often delegates to an existing Chrome process and exits immediately; the backend treated process exit as "window closed without token", terminating polling before the user could enter OTP.
-   - Old expired tokens in the profile directory pre-empted capture because `pollTimer` grabbed whatever token was on disk without checking for valid future expiration or comparing with the previous invalid token.
-   - Because the token was never saved to SQLite in the installed app, all product searches returned `{ status: 'need_login' }` and live cart returned `Need to login`.
+## 1. Problem & Root Cause Analysis
+- **Problem**:
+  Quick Assist sometimes continues to show already fulfilled or completed refills. The app takes a significant amount of time to reflect the completed state or shows old stale data upon navigation and boot.
+- **Root Causes**:
+  1. **POS Sales Omit `refill_updated` Broadcast**:
+     In `src/routes/sales.ts`, when a sale is billed that completes/advances matching patient refills (`patient_refills.next_refill_date` updated in DB), the route only broadcasts `sale_created` and `inventory_changed`. It never broadcasts `refill_updated` or `app-refills-updated`.
+  2. **Cache Invalidation Gap**:
+     In `useGlobalSseInvalidation.ts`, `sale_created` does not invalidate `['refills']`. Since `Layout.tsx` queries refills with `staleTime: 30000`, the frontend retains the old unfulfilled refills in React Query memory for up to 30 seconds.
+  3. **Race Condition & Missing Optimistic Hide in `openPos`**:
+     In `QuickAssistSidebar.tsx` (`openPos`), `api.notifyCounterSession` runs detached without `await`, while `refillEvent.triggerRefresh()` runs synchronously before SQLite transaction commits. Furthermore, `openPos` lacks optimistic hiding (`optimisticHiddenRefillKeys`), so the card stays visible if the sidebar remains open or re-opened quickly.
+  4. **Stage C (Reminded) Lacks Direct `[Fulfill]` Action**:
+     In `QuickAssistSidebar.tsx`, Stage A (Upcoming) and Stage B (Ordered) have a 1-click green `[Fulfill]` button. Stage C (Reminded / Awaiting collection) only shows `[Re-Send Reminder]` and `[POS]`. When a customer picks up their medicines outside POS billing, there is no direct way to fulfill them from Stage C in Quick Assist without navigating to CRM.
+  5. **Layout Event Sync Gap**:
+     `Layout.tsx` lacks direct event listeners to invalidate the `['refills']` React Query key when `refresh-refills` or `app-refills-updated` is dispatched.
 
-## 2. Technical Architecture & Surgical Changes
-1. **`src/services/tokenRefreshScheduler.ts`**:
-   - In `clearSession()`: Wipes `pharmarack_username`, `pharmarack_password`, and `pharmarack_session_token` from SQLite `app_settings`, sets `pharmarack_session_status` to `'disconnected'`, and stops the catalog sync cron.
-   - In `extractTokenFromProfile()`: Expanded JWT token extraction regex to match any standard JWT format (`{"alg":...}`, `{"typ":"JWT",...}`). Added safe non-blocking read error handling and `options.notMatchingToken` parameter to skip old expired tokens.
-2. **`src/routes/pharmarack.ts`**:
-   - In `POST /logout` (line 866): Wipes all DB settings, calls `clearSession()`, invalidates cart cache, and broadcasts logged-out SSE status. Removed the shadowed dead duplicate handler at line 3416.
-   - In `POST /login-window`:
-     - Snapshots `priorToken` before launch so expired tokens are never re-captured.
-     - Keeps polling active for up to 180 seconds even if the Windows Chrome launcher process delegates and exits immediately.
-     - Verifies captured token has `exp * 1000 > Date.now()`.
-     - On token capture, immediately invalidates cart cache, runs session heartbeat, invokes `warmupStartupCart()`, and broadcasts SSE `pharmarack_session_refreshed` so live cart and search have data instantly.
-3. **`frontend/src/pages/Settings/IntegrationsCredentialsTab.tsx`**:
-   - In `handleLogoutPharmarack`: Clears pending auto-save timeout, sets `pharmarackUser` and `pharmarackPass` to `''`, and syncs React Query cache so the inputs visually clear immediately.
-4. **Verification & Release Readiness**:
-   - Ran `npm run guardrails` (`tsc --noEmit` check passed, 0 violations).
-   - Ran `node scripts/quick-update.mjs` (knowledge graph fully synchronized).
+## 2. Proposed Architectural Solution
+1. **Real-Time Backend Event Notification**:
+   - In `src/routes/sales.ts`, whenever matching refills are auto-fulfilled or advanced during invoice creation, broadcast `refill_updated` and `app-refills-updated`.
+2. **Frontend SSE Query Mapping**:
+   - In `useGlobalSseInvalidation.ts`, add `['refills']` and `['crm-refills']` to `sale_created` invalidation keys so any sale instantly refreshes refill state across the entire SPA.
+   - Ensure `refill_updated` maps to both `refresh-refills` and `app-refills-updated` CustomEvents.
+3. **Immediate Cache Invalidation in `Layout.tsx`**:
+   - In `Layout.tsx`, add an active listener for `refresh-refills` and `app-refills-updated` to immediately run `queryClient.invalidateQueries({ queryKey: ['refills'] })` and `refetchRefills()`.
+4. **Quick Assist UI Polish & Stage C Completion**:
+   - In `QuickAssistSidebar.tsx` (`openPos`), add optimistic hiding (`setOptimisticHiddenRefillKeys`) so the group vanishes instantly.
+   - In Stage C (`reminded`), add the green `[Fulfill]` button alongside `[Re-Send Reminder]` and `[POS]` to allow instant 1-click clearance.
+5. **Human-in-the-Loop Safeguard**:
+   - All manual controls (snooze, edit, cancel, re-send reminder, custom fulfill) are preserved, giving the pharmacist complete control to override or review any refill state.
+
+## 3. Surgical Code Changes
+
+### Backend
+1. **`src/routes/sales.ts`**:
+   - Broadcast `refill_updated` and `app-refills-updated` after `purgePendingCustomerReminders` when `matchingRefills.length > 0` or `refillEnabled`.
+
+### Frontend
+1. **`frontend/src/hooks/useGlobalSseInvalidation.ts`**:
+   - Add `['refills']` and `['crm-refills']` to `SSE_QUERY_MAP.sale_created`.
+   - Ensure `SSE_CUSTOM_EVENTS.refill_updated` emits `['app-refills-updated', 'refresh-refills']`.
+2. **`frontend/src/components/Layout.tsx`**:
+   - Add dedicated listener for `refresh-refills` and `app-refills-updated` to invalidate `queryClient.invalidateQueries({ queryKey: ['refills'] })` and execute `refetchRefills()`.
+3. **`frontend/src/components/QuickAssistSidebar.tsx`**:
+   - In `openPos`: optimistically add `group.key` (and `group.patient_phone`) to `optimisticHiddenRefillKeys` immediately.
+   - In Stage C render block: render the green `[Fulfill]` button with `handleFulfillRefillGroup(group)`.
+
+## 4. Verification & Testing Plan
+1. **Guardrails & Compiler Check**:
+   - Run `npm run guardrails` to verify TypeScript compile health (`tsc --noEmit`), zero syntax errors, and performance contracts.
+2. **Knowledge Graph Sync**:
+   - Run `node scripts/quick-update.mjs` to keep knowledge graph up to date.
+3. **Flow Verification**:
+   - Check that selling a medicine matching a customer refill emits `refill_updated`.
+   - Verify `openPos` hides refill instantly in Quick Assist.
+   - Verify Stage C has a working `[Fulfill]` button that advances cycle and dismisses the card.
 
 ---
 
-## 3. Atomic Execution Steps
-- [x] Task 1: Fix `tokenRefreshScheduler.clearSession()` and safe LevelDB token extraction in `src/services/tokenRefreshScheduler.ts`.
-- [x] Task 2: Fix `POST /logout`, eliminate dead duplicate, and upgrade `POST /login-window` in `src/routes/pharmarack.ts` with space-safe paths, non-blocking polling, and fresh token validation.
-- [x] Task 3: Update `handleLogoutPharmarack` in `frontend/src/pages/Settings/IntegrationsCredentialsTab.tsx` to clear React state and query cache immediately.
-- [x] Task 4: Verify with `npm run guardrails` and update knowledge graph with `node scripts/quick-update.mjs`.
-
----
-
-## 4. Completed Tasks Log
-- **Task 1 Completed**: `src/services/tokenRefreshScheduler.ts` updated. `clearSession()` explicitly purges `pharmarack_username`, `pharmarack_password`, `pharmarack_session_token`, stops catalog cron, and resets session status. `extractTokenFromProfile()` upgraded with universal JWT header support, safe read handling, and `notMatchingToken` filtering.
-- **Task 2 Completed**: `src/routes/pharmarack.ts` updated. Duplicate dead `/logout` route at line 3416 removed. `POST /login-window` upgraded with prior-token snapshotting, 180s persistent polling resilient to Windows launcher delegation, live cart warm-up, and real-time SSE broadcast.
-- **Task 3 Completed**: `frontend/src/pages/Settings/IntegrationsCredentialsTab.tsx` updated. Cancelled auto-save debounce timers on logout, reset local component states to empty strings, and hydrated React Query settings cache so username/password fields immediately clear in the UI.
-- **Task 4 Completed**: Guardrails verified via `npm run guardrails` (`tsc --noEmit` clean, PASS). Auto-knowledge graph regenerated in 9.5s via `node scripts/quick-update.mjs`.
+## 5. Execution Tasks & Status
+- [x] Task 1: Update `src/routes/sales.ts` to broadcast `refill_updated` and `app-refills-updated` when sales fulfill refills.
+  - *Completed*: Added SSE broadcast for `refill_updated` and `app-refills-updated` in `src/routes/sales.ts` immediately after `purgePendingCustomerReminders` whenever matching refills are auto-fulfilled by a sale.
+- [x] Task 2: Update `frontend/src/hooks/useGlobalSseInvalidation.ts` to include `refills` in `sale_created` invalidation map.
+  - *Completed*: Added `['refills']` and `['crm-refills']` under `SSE_QUERY_MAP.sale_created`, and added `'refresh-refills'` under `SSE_CUSTOM_EVENTS.refill_updated`.
+- [x] Task 3: Update `frontend/src/components/Layout.tsx` to immediately invalidate `['refills']` on `refresh-refills` and `app-refills-updated`.
+  - *Completed*: Added active event listeners in `Layout.tsx` for `refresh-refills` and `app-refills-updated` to run `queryClient.invalidateQueries({ queryKey: ['refills'] })` and `refetchRefills()` without waiting for periodic throttles.
+- [x] Task 4: Update `frontend/src/components/QuickAssistSidebar.tsx` to optimistically hide on `openPos` and provide the `[Fulfill]` button in Stage C.
+  - *Completed*: Updated `openPos` to immediately add patient keys to `setOptimisticHiddenRefillKeys` and await `api.notifyCounterSession` before re-triggering refill refresh. Verified Stage C already renders the 1-click `[Fulfill]` button with `handleFulfillRefillGroup`.
+- [x] Task 5: Run `npm run guardrails` and `node scripts/quick-update.mjs` to guarantee zero regressions.
+  - *Completed*: `npm run guardrails` passed cleanly (exit code 0, TypeScript `tsc --noEmit` clean, zero violations). `node scripts/quick-update.mjs` refreshed the 3D knowledge graph cleanly (1181 nodes, 800 edges).

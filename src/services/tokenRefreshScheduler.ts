@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+// import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { getPuppeteer } from '../utils/lazyPuppeteer.js';
@@ -103,7 +104,7 @@ export function cleanProfileLockFiles(profilePath: string) {
  * Fast direct extraction of active Pharmarack JWT from profile LevelDB storage.
  * Reads in <5ms without launching any browser process.
  */
-export function extractTokenFromProfile(profilePath: string, options?: { notMatchingToken?: string }): string | null {
+export function extractTokenFromProfile(profilePath: string): string | null {
   try {
     const levelDbDir = path.resolve(profilePath, 'Default', 'Local Storage', 'leveldb');
     if (!fs.existsSync(levelDbDir)) return null;
@@ -113,22 +114,12 @@ export function extractTokenFromProfile(profilePath: string, options?: { notMatc
 
     for (const file of files) {
       if (file.endsWith('.ldb') || file.endsWith('.log')) {
-        let content: Buffer | null = null;
-        const filePath = path.join(levelDbDir, file);
         try {
-          content = fs.readFileSync(filePath);
-        } catch (_) {
-          content = null;
-        }
-        if (!content) continue;
-
-        try {
-          const str = content.toString('latin1');
-          // Match standard JWT token headers ({"alg": or {"typ":)
-          const matches = str.match(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}/g);
+          const buf = fs.readFileSync(path.join(levelDbDir, file));
+          const str = buf.toString('latin1');
+          const matches = str.match(/eyJhbGciOiJIUzI1Ni[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g);
           if (matches) {
             for (const m of matches) {
-              if (options?.notMatchingToken && m === options.notMatchingToken) continue;
               try {
                 const parts = m.split('.');
                 const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
@@ -149,21 +140,6 @@ export function extractTokenFromProfile(profilePath: string, options?: { notMatc
     return bestToken;
   } catch (err: any) {
     console.warn('[TokenRefreshScheduler] Error extracting token from profile leveldb:', err.message);
-    return null;
-  }
-}
-
-/**
- * Extracts username, mobile number, or retailer identity from a Pharmarack JWT token payload.
- */
-export function extractUserFromToken(token: string): string | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length < 2) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    const candidate = payload.mobileNumber || payload.mobile || payload.userName || payload.username || payload.phone || payload.retailerMobile || (payload.userId ? String(payload.userId) : null);
-    return candidate ? String(candidate).trim() : null;
-  } catch (_) {
     return null;
   }
 }
@@ -289,16 +265,12 @@ export class TokenRefreshScheduler {
       console.warn('[TokenRefreshScheduler] Error removing main profile directory:', err.message);
     }
 
-    // 4. Clear SQLite app_settings for Pharmarack credentials and session
+    // 4. Clear SQLite app_settings for Pharmarack
     try {
       const db = await dbManager.getConnection();
-      await db.run("DELETE FROM app_settings WHERE key IN ('pharmarack_session_token', 'pharmarack_username', 'pharmarack_password')");
-      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
-      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', '')");
-      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
+      await db.run("DELETE FROM app_settings WHERE key = 'pharmarack_session_token'");
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'disconnected')");
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-      import('./pharmarackCatalogCache.js').then(m => m.stopCatalogSyncCron()).catch(() => {});
     } catch (dbErr: any) {
       console.warn('[TokenRefreshScheduler] Error clearing DB session settings:', dbErr.message);
     }
@@ -532,12 +504,7 @@ export class TokenRefreshScheduler {
             // (ONE read-only request, throttled to 5 min, never blocks the heartbeat).
             import('./pharmarackOrderSyncService.js').then(m => m.syncPharmarackOrders()).catch(() => {});
           } else if (res.status === 401 || res.status === 403) {
-            console.log('[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Kicking off background single-flight restore.');
-            // Proven auth death while idle: restore in background now so the
-            // next search finds a warm session instead of paying the
-            // ~20-40 s Chrome restore inline. Single-flight dedupes with
-            // search-path retries; never blocks the heartbeat.
-            this.executeRefresh().catch(() => {});
+            console.log('[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Standing by for manual user re-auth.');
             errorMsg = `Session expired (HTTP ${res.status})`;
             try {
               await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
@@ -609,11 +576,6 @@ export class TokenRefreshScheduler {
       this.lastError = null;
       const db = await dbManager.getConnection();
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [directToken]);
-      const extractedUser = extractUserFromToken(directToken);
-      if (extractedUser) {
-        await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [extractedUser]);
-        console.log(`[TokenRefreshScheduler] Auto-persisted Pharmarack username from token: ${extractedUser}`);
-      }
       import('./pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
@@ -719,11 +681,6 @@ export class TokenRefreshScheduler {
         this.lastError = null;
         const db = await dbManager.getConnection();
         await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [holder.token]);
-        const extractedUser = extractUserFromToken(holder.token);
-        if (extractedUser) {
-          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [extractedUser]);
-          console.log(`[TokenRefreshScheduler] Auto-persisted Pharmarack username from token: ${extractedUser}`);
-        }
         import('./pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
         await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
         await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");

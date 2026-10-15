@@ -411,7 +411,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
           setSearchLoading(false);
         }
       }
-    }, 280); // 280ms debounce matching Quick Order to prevent in-flight request flooding
+    }, 120); // Snappy 120ms debounce for near-instant typing feedback
 
     return () => {
       clearTimeout(delayDebounce);

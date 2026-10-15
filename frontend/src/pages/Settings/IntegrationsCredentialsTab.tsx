@@ -31,8 +31,6 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
   const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
   const [combinePharmarackSearch, setCombinePharmarackSearch] = useState(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
   const [autoAddToLiveCart, setAutoAddToLiveCart] = useState(rawSettings.auto_add_to_live_cart !== 'false');
-  const [autoSavedPharmarack, setAutoSavedPharmarack] = useState(false);
-  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [geminiApiKey, setGeminiApiKey] = useState(rawSettings.gemini_api_key || '');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [testingGemini, setTestingGemini] = useState(false);
@@ -139,47 +137,6 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
 
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
-
-  // Auto-synchronize state when rawSettings updates (e.g. background token capture or external save)
-  useEffect(() => {
-    if (rawSettings.pharmarack_username !== undefined) {
-      setPharmarackUser(rawSettings.pharmarack_username || '');
-    }
-    if (rawSettings.pharmarack_password !== undefined) {
-      setPharmarackPass(rawSettings.pharmarack_password || '');
-    }
-  }, [rawSettings.pharmarack_username, rawSettings.pharmarack_password]);
-
-  // Listen for real-time SSE session refresh event when user logs in via Chrome login window
-  useEffect(() => {
-    const handlePharmarackRefreshed = (e: any) => {
-      refetchSettings();
-      if (e?.detail?.username) {
-        setPharmarackUser(e.detail.username);
-        toastEvent.trigger(`Pharmarack account auto-linked: ${e.detail.username}`, 'success');
-      }
-    };
-    window.addEventListener('sse-pharmarack-refreshed', handlePharmarackRefreshed);
-    return () => {
-      window.removeEventListener('sse-pharmarack-refreshed', handlePharmarackRefreshed);
-    };
-  }, [refetchSettings]);
-
-  const autoSavePharmarackCredentials = useCallback(async (userVal?: string, passVal?: string) => {
-    const user = userVal !== undefined ? userVal : pharmarackUser;
-    const pass = passVal !== undefined ? passVal : pharmarackPass;
-    try {
-      const payload: Record<string, string> = {
-        pharmarack_username: user,
-        pharmarack_password: pass,
-        pharmarack_mode: 'Live'
-      };
-      await apiClient.post('/settings/save', payload);
-      updateSettingsCache(queryClient, payload);
-      setAutoSavedPharmarack(true);
-      setTimeout(() => setAutoSavedPharmarack(false), 2500);
-    } catch (_) {}
-  }, [pharmarackUser, pharmarackPass, queryClient]);
 
   // WhatsApp Web QR & Status — P1 "events, not timers": event-driven via SSE push / focus.
   // Polls ONLY while actively awaiting a QR scan after explicit user connection.
@@ -600,20 +557,9 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
     setPharmarackLoggingOut(true);
     setConfirmPharmarackLogout(false);
     try {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
       const res = await api.logoutPharmarack();
       if (res?.success) {
-        setPharmarackUser('');
-        setPharmarackPass('');
-        updateSettingsCache(queryClient, {
-          pharmarack_username: '',
-          pharmarack_password: '',
-          pharmarack_session_token: '',
-          pharmarack_session_status: 'disconnected'
-        });
-        toastEvent.trigger('Pharmarack session, credentials, and profile data cleared successfully', 'success');
+        toastEvent.trigger('Pharmarack session and profile data cleared successfully', 'success');
         refetchSettings();
       } else {
         toastEvent.trigger(res?.message || 'Failed to clean Pharmarack session', 'error');
@@ -1055,13 +1001,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
               <input
                 type="text"
                 value={pharmarackUser}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setPharmarackUser(val);
-                  if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
-                  autoSaveTimeoutRef.current = setTimeout(() => autoSavePharmarackCredentials(val, undefined), 1200);
-                }}
-                onBlur={() => autoSavePharmarackCredentials(pharmarackUser, undefined)}
+                onChange={(e) => setPharmarackUser(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
                 placeholder="Mobile / Username"
               />
@@ -1071,13 +1011,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
               <input
                 type="password"
                 value={pharmarackPass}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setPharmarackPass(val);
-                  if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
-                  autoSaveTimeoutRef.current = setTimeout(() => autoSavePharmarackCredentials(undefined, val), 1200);
-                }}
-                onBlur={() => autoSavePharmarackCredentials(undefined, pharmarackPass)}
+                onChange={(e) => setPharmarackPass(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
                 placeholder="Account Password"
               />
@@ -1125,7 +1059,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
 
           {/* Dedicated Pharmarack Save & Reset Action Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 border border-border rounded-xl p-3">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                 pharmarackUser && pharmarackPass
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
@@ -1134,13 +1068,8 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
                 <span className={`w-2 h-2 rounded-full ${pharmarackUser && pharmarackPass ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                 {pharmarackUser && pharmarackPass ? 'Credentials Configured' : 'Credentials Missing'}
               </span>
-              {autoSavedPharmarack && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                  <Check size={11} /> Auto-saved
-                </span>
-              )}
               <span className="text-[11px] text-muted">
-                Credentials auto-save on change &amp; auto-capture on login
+                Auto-fill login will use these credentials when launching Chrome
               </span>
             </div>
             <div className="flex items-center gap-2">
