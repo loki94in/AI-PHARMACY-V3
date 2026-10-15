@@ -5,12 +5,15 @@ export interface RefillPatient {
   language?: string;
   reminder_mode?: 'auto' | 'manual';
   next_refill_date: string;
+  last_refill_date?: string | null;
   reminder_status?: string;
   reminder_sent_at?: string | null;
   medicines: {
     id: number;
     medicine_id?: number;
     medicine_name: string;
+    next_refill_date?: string;
+    last_refill_date?: string | null;
     quantity_needed: number;
     refill_interval_days?: number;
     reminder_mode?: 'auto' | 'manual';

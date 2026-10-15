@@ -1,4 +1,4 @@
-import { getRefillStage, isOrderGroupSettled } from '../utils/refillSettled';
+import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -830,7 +830,8 @@ export const QuickAssistSidebar = memo(({
         !r.next_refill_date ||
         r.status === 'completed' ||
         r.status === 'fulfilled' ||
-        r.status === 'canceled'
+        r.status === 'canceled' ||
+        isRefillFulfilledToday(r)
       ) {
         return false;
       }

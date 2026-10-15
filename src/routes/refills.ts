@@ -597,7 +597,7 @@ router.put('/:id', async (req, res, next) => {
     if (refill_interval_days !== undefined && next_refill_date === undefined) {
       const nextDate = new Date();
       nextDate.setDate(nextDate.getDate() + updatedInterval);
-      updatedNextDate = nextDate.toISOString().slice(0, 19).replace('T', ' ');
+      updatedNextDate = toLocalSqlDateTime(nextDate);
     }
 
     const updatedStatus = (status !== undefined && (status === 'pending' || status === 'notified')) ? status : refill.status;
@@ -652,7 +652,7 @@ router.post('/:id/skip', async (req, res) => {
     
     const nextDate = new Date(refill.next_refill_date || refill.last_refill_date || new Date());
     nextDate.setDate(nextDate.getDate() + 1);
-    const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
+    const nextDateStr = toLocalSqlDateTime(nextDate);
 
     await db.run(
       `UPDATE patient_refills 
@@ -798,6 +798,7 @@ router.get('/panel', async (req, res) => {
           language: row.language || 'en',
           reminder_mode: row.reminder_mode || 'manual',
           next_refill_date: row.next_refill_date,
+          last_refill_date: row.last_refill_date || null,
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
           medicines: []
@@ -832,6 +833,8 @@ router.get('/panel', async (req, res) => {
           id: row.id,
           medicine_id: row.medicine_id,
           medicine_name: row.medicine_name,
+          next_refill_date: row.next_refill_date,
+          last_refill_date: row.last_refill_date || null,
           quantity_needed: (row.quantity_needed !== undefined && row.quantity_needed !== null) ? row.quantity_needed : 3, // default refill quantity: 3
           refill_interval_days: row.refill_interval_days || 30,
           reminder_mode: row.reminder_mode || 'manual',
@@ -1555,53 +1558,77 @@ router.post('/:id/toggle-override', async (req, res) => {
   }
 });
 
-// Fulfill a refill manually (advances next cycle & records fulfillment occurrence)
-router.post('/:id/fulfill', async (req, res) => {
-  const { id } = req.params;
-  let db;
-  try {
-    db = await dbManager.getConnection();
-    const refill = await db.get(
-      `SELECT pr.*, m.name as medicine_name 
-       FROM patient_refills pr 
-       LEFT JOIN medicines m ON pr.medicine_id = m.id 
-       WHERE pr.id = ?`,
-      [id]
-    );
-    if (!refill) {
-      return res.status(404).json({ error: 'Refill not found' });
-    }
+interface CloseRefillCycleResult {
+  refillId: number;
+  medicineName: string;
+  nextRefillDate: string;
+  alreadyFulfilled: boolean;
+}
 
+/**
+ * Unified atomic helper for closing a refill cycle:
+ * 1. Checks per-cycle idempotency (skips duplicate insert in refill_fulfillments if already recorded for this cycle_due_date).
+ * 2. Stamps refill_fulfillments with local timestamp and fulfilled_via tag.
+ * 3. Advances patient_refills next_refill_date by interval, stamps last_refill_date with local timestamp, clears cart & staged flags.
+ * 4. Atomically marks companion special_orders as 'Completed'.
+ * 5. Purges pending WhatsApp reminders & updates staged notifications.
+ */
+async function executeCloseRefillCycles(
+  db: any,
+  refills: any[],
+  fulfilledVia: string
+): Promise<{ fulfilledCount: number; results: CloseRefillCycleResult[] }> {
+  const results: CloseRefillCycleResult[] = [];
+  const fulfilledIds: number[] = [];
+  const fulfilledMedNames: string[] = [];
+  const phonesToPurge = new Set<string>();
+  const customerIdsToPurge = new Set<number>();
+  const localNow = toLocalSqlDateTime();
+
+  for (const refill of refills) {
     const interval = refill.refill_interval_days || 30;
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + interval);
     const nextDateStr = toLocalSqlDateTime(nextDate);
-    const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+    const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : localNow.slice(0, 10);
     const fulfilledQty = Number(refill.quantity_needed || 3);
+    const medName = refill.medicine_name || 'Prescribed Medicine';
 
-    // 1. Record persistent fulfillment occurrence in refill_fulfillments table
-    await db.run(
-      `INSERT INTO refill_fulfillments (
-        refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-        quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'crm_complete')`,
-      [
-        refill.id,
-        refill.customer_id,
-        refill.patient_name,
-        refill.patient_phone,
-        refill.medicine_id,
-        refill.medicine_name || 'Prescribed Medicine',
-        fulfilledQty,
-        cycleDueDate,
-        nextDateStr
-      ]
+    // Per-cycle idempotency check
+    const existing = await db.get(
+      `SELECT id FROM refill_fulfillments WHERE refill_id = ? AND cycle_due_date = ? LIMIT 1`,
+      [refill.id, cycleDueDate]
     );
 
-    // 2. Advance the same persistent schedule in-place
+    let alreadyFulfilled = false;
+    if (!existing) {
+      await db.run(
+        `INSERT INTO refill_fulfillments (
+          refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+          quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          refill.id,
+          refill.customer_id,
+          refill.patient_name,
+          refill.patient_phone,
+          refill.medicine_id,
+          medName,
+          fulfilledQty,
+          localNow,
+          cycleDueDate,
+          nextDateStr,
+          fulfilledVia
+        ]
+      );
+    } else {
+      alreadyFulfilled = true;
+    }
+
+    // Advance the same persistent schedule in-place
     await db.run(
       `UPDATE patient_refills 
-       SET last_refill_date = datetime('now'),
+       SET last_refill_date = ?,
            next_refill_date = ?,
            stock_verified_override = 0,
            ordering_triggered = 0,
@@ -1623,26 +1650,99 @@ router.post('/:id/fulfill', async (req, res) => {
            last_collection_reminder_at = NULL,
            collection_reminder_count = 0
        WHERE id = ?`,
-      [nextDateStr, id]
+      [localNow, nextDateStr, refill.id]
     );
 
-    // 2.5 Close companion out-of-stock special order if one was generated
-    const cleanDigits = (refill.patient_phone || '').replace(/\D/g, '').slice(-10);
-    await db.run(
-      `UPDATE special_orders 
-       SET status = 'Completed', updated_at = datetime('now')
-       WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') 
-         AND (source_refill_id = ? OR (source = 'refill' AND length(?) >= 7 AND phone LIKE ? AND LOWER(TRIM(product)) = LOWER(TRIM(?))))`,
-      [id, cleanDigits, `%${cleanDigits}%`, refill.medicine_name || '']
-    ).catch(() => {});
+    fulfilledIds.push(refill.id);
+    if (refill.medicine_name) fulfilledMedNames.push(refill.medicine_name.trim().toLowerCase());
+    if (refill.patient_phone) phonesToPurge.add(refill.patient_phone);
+    if (refill.customer_id) customerIdsToPurge.add(refill.customer_id);
 
-    // 3. Purge pending WhatsApp queue items and update staged notifications
-    await purgePendingCustomerReminders(db, {
-      phone: refill.patient_phone,
-      refillIds: [Number(id)],
-      customerId: refill.customer_id,
-      medicineNames: refill.medicine_name ? [refill.medicine_name] : undefined
+    results.push({
+      refillId: refill.id,
+      medicineName: medName,
+      nextRefillDate: nextDateStr,
+      alreadyFulfilled
     });
+  }
+
+  // Atomically close companion out-of-stock special orders
+  if (fulfilledIds.length > 0) {
+    const idPlaceholders = fulfilledIds.map(() => '?').join(',');
+    const conditions: string[] = [`source_refill_id IN (${idPlaceholders})`];
+    const params: any[] = [...fulfilledIds];
+
+    for (const refill of refills) {
+      const cleanPhoneDigits = (refill.patient_phone || '').replace(/\D/g, '').slice(-10);
+      const mName = (refill.medicine_name || '').trim().toLowerCase();
+      if (cleanPhoneDigits.length >= 7 && mName) {
+        conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) = ?))`);
+        params.push(`%${cleanPhoneDigits}%`, mName);
+      } else if (cleanPhoneDigits.length >= 7) {
+        conditions.push(`(phone LIKE ? AND source = 'refill')`);
+        params.push(`%${cleanPhoneDigits}%`);
+      }
+      if (refill.customer_id) {
+        conditions.push(`(customer_id = ? AND source = 'refill')`);
+        params.push(refill.customer_id);
+      }
+    }
+
+    if (conditions.length > 0) {
+      const updateQuery = `UPDATE special_orders 
+                           SET status = 'Completed', updated_at = ?
+                           WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(' OR ')})`;
+      await db.run(updateQuery, [localNow, ...params]).catch(() => {});
+    }
+  }
+
+  // Purge pending reminders and update staged notifications
+  for (const phone of phonesToPurge) {
+    await purgePendingCustomerReminders(db, {
+      phone,
+      refillIds: fulfilledIds,
+      medicineNames: fulfilledMedNames.length > 0 ? fulfilledMedNames : undefined
+    });
+  }
+  if (phonesToPurge.size === 0 && fulfilledIds.length > 0) {
+    await purgePendingCustomerReminders(db, {
+      refillIds: fulfilledIds,
+      medicineNames: fulfilledMedNames.length > 0 ? fulfilledMedNames : undefined
+    });
+  }
+
+  return { fulfilledCount: results.length, results };
+}
+
+// Fulfill a refill manually (advances next cycle & records fulfillment occurrence)
+router.post('/:id/fulfill', async (req, res) => {
+  const { id } = req.params;
+  const fulfilledVia = req.body?.fulfilled_via || 'crm_complete';
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const refill = await db.get(
+      `SELECT pr.*, m.name as medicine_name 
+       FROM patient_refills pr 
+       LEFT JOIN medicines m ON pr.medicine_id = m.id 
+       WHERE pr.id = ?`,
+      [id]
+    );
+    if (!refill) {
+      return res.status(404).json({ error: 'Refill not found' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    let outcome;
+    try {
+      outcome = await executeCloseRefillCycles(db, [refill], fulfilledVia);
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK').catch(() => {});
+      throw txErr;
+    }
+
+    const nextDateStr = outcome.results[0]?.nextRefillDate || toLocalSqlDateTime();
 
     // Re-run checking engine in background (non-blocking)
     setImmediate(() => {
@@ -1710,131 +1810,29 @@ router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-al
       return res.status(404).json({ error: 'No active refills found for this patient' });
     }
 
-    let fulfilledCount = 0;
-    const fulfilledIds: number[] = [];
     await db.run('BEGIN TRANSACTION');
+    let outcome;
     try {
-      for (const refill of activeRefills) {
-        const interval = refill.refill_interval_days || 30;
-        const nextDate = new Date();
-        nextDate.setDate(nextDate.getDate() + interval);
-        const nextDateStr = toLocalSqlDateTime(nextDate);
-        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
-        const fulfilledQty = Number(refill.quantity_needed || 3);
-
-        await db.run(
-          `INSERT INTO refill_fulfillments (
-            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-            quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)`,
-          [
-            refill.id,
-            refill.customer_id,
-            refill.patient_name,
-            refill.patient_phone,
-            refill.medicine_id,
-            refill.medicine_name || 'Prescribed Medicine',
-            fulfilledQty,
-            cycleDueDate,
-            nextDateStr,
-            fulfilledVia
-          ]
-        );
-
-        await db.run(
-          `UPDATE patient_refills 
-           SET last_refill_date = datetime('now'),
-               next_refill_date = ?,
-               stock_verified_override = 0,
-               ordering_triggered = 0,
-               cart_product_code = NULL,
-               cart_store_name = NULL,
-               cart_qty = NULL,
-               patient_confirmed = 0,
-               confirmed_at = NULL,
-               is_ready = 0,
-               hold_for_stock = 0,
-               acknowledged = 0,
-               quick_bill_id = NULL,
-               status = 'pending',
-               reminder_status = 'NOT_SENT',
-               reminder_sent_at = NULL,
-               reminder_job_id = NULL,
-               reminder_occurrence_date = NULL,
-               auto_remind = 0,
-               last_collection_reminder_at = NULL,
-               collection_reminder_count = 0
-           WHERE id = ?`,
-          [nextDateStr, refill.id]
-        );
-
-        fulfilledCount++;
-        fulfilledIds.push(refill.id);
-      }
-
-      // 2.5 Also atomically close any companion out-of-stock special orders created for this patient and these medicines
-      const fulfilledMedNames = activeRefills.map(r => (r.medicine_name || '').trim().toLowerCase()).filter(Boolean);
-      const cleanPhoneDigits = (rawPhone || '').replace(/\D/g, '').slice(-10);
-
-      if (fulfilledIds.length > 0 || (cleanPhoneDigits.length >= 7 && fulfilledMedNames.length > 0)) {
-        const idPlaceholders = fulfilledIds.map(() => '?').join(',');
-        const medPlaceholders = fulfilledMedNames.map(() => '?').join(',');
-
-        const conditions: string[] = [];
-        const params: any[] = [];
-        if (fulfilledIds.length > 0) {
-          conditions.push(`source_refill_id IN (${idPlaceholders})`);
-          params.push(...fulfilledIds);
-        }
-        if (cleanPhoneDigits.length >= 7) {
-          if (fulfilledMedNames.length > 0) {
-            conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) IN (${medPlaceholders})))`);
-            params.push(`%${cleanPhoneDigits}%`, ...fulfilledMedNames);
-          } else {
-            conditions.push(`(phone LIKE ? AND source = 'refill')`);
-            params.push(`%${cleanPhoneDigits}%`);
-          }
-        }
-        if (customerId) {
-          conditions.push(`(customer_id = ? AND source = 'refill')`);
-          params.push(customerId);
-        }
-
-        if (conditions.length > 0) {
-          const updateQuery = `UPDATE special_orders 
-                               SET status = 'Completed', updated_at = datetime('now')
-                               WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(' OR ')})`;
-          await db.run(updateQuery, params).catch(() => {});
-        }
-      }
-
+      outcome = await executeCloseRefillCycles(db, activeRefills, fulfilledVia);
       await db.run('COMMIT');
     } catch (txErr) {
       await db.run('ROLLBACK').catch(() => {});
       throw txErr;
     }
 
-    // Purge pending WhatsApp queue items and clean up staged notifications
-    await purgePendingCustomerReminders(db, {
-      phone: rawPhone || undefined,
-      refillIds: fulfilledIds,
-      customerId,
-      medicineNames: activeRefills.map(r => r.medicine_name).filter(Boolean)
-    });
-
     // Respond immediately - checkAllRefills is a full-table scan, run in the background
     setImmediate(() => {
       checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after fulfill-all:', e));
     });
 
-    eventService.broadcast('refill_updated', { at: Date.now(), fulfilled: true, count: fulfilledCount });
+    eventService.broadcast('refill_updated', { at: Date.now(), fulfilled: true, count: outcome.fulfilledCount });
     eventService.broadcast('app-refills-updated', { at: Date.now() });
     eventService.broadcast('order_updated', { at: Date.now(), source: 'fulfill-all' });
 
     res.json({
       success: true,
-      fulfilledCount,
-      message: `Successfully fulfilled ${fulfilledCount} medicine schedule(s) for this patient and advanced to next cycle.`
+      fulfilledCount: outcome.fulfilledCount,
+      message: `Successfully fulfilled ${outcome.fulfilledCount} medicine schedule(s) for this patient and advanced to next cycle.`
     });
   } catch (err: any) {
     console.error('Failed to fulfill patient refills:', err);
@@ -1898,66 +1896,30 @@ const handleRefillStatusUpdate = async (req: express.Request, res: express.Respo
     }
 
     if (normalizedStatus === 'completed' || normalizedStatus === 'fulfilled') {
-      const interval = refill.refill_interval_days || 30;
-      const nextDate = new Date();
-      nextDate.setDate(nextDate.getDate() + interval);
-      const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
-      const cycleDueDate = refill.next_refill_date || new Date().toISOString().slice(0, 10);
-      const fulfilledQty = Number(refill.quantity_needed || 3);
-
       const medRow = await db.get('SELECT name FROM medicines WHERE id = ?', [refill.medicine_id]);
-      const medName = medRow?.name || 'Prescribed Medicine';
+      refill.medicine_name = medRow?.name || refill.medicine_name || 'Prescribed Medicine';
 
-      await db.run(
-        `INSERT INTO refill_fulfillments (
-          refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-          quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'status_update')`,
-        [
-          refill.id,
-          refill.customer_id,
-          refill.patient_name,
-          refill.patient_phone,
-          refill.medicine_id,
-          medName,
-          fulfilledQty,
-          cycleDueDate,
-          nextDateStr
-        ]
-      );
+      await db.run('BEGIN TRANSACTION');
+      let outcome;
+      try {
+        outcome = await executeCloseRefillCycles(db, [refill], 'status_update');
+        await db.run('COMMIT');
+      } catch (txErr) {
+        await db.run('ROLLBACK').catch(() => {});
+        throw txErr;
+      }
 
-      await db.run(
-        `UPDATE patient_refills 
-         SET last_refill_date = datetime('now'),
-             next_refill_date = ?,
-             stock_verified_override = 0,
-             ordering_triggered = 0,
-             cart_product_code = NULL,
-             is_ready = 0,
-             hold_for_stock = 0,
-             acknowledged = 0,
-             quick_bill_id = NULL,
-             status = 'pending',
-             reminder_status = 'NOT_SENT',
-             reminder_sent_at = NULL,
-             reminder_job_id = NULL,
-             reminder_occurrence_date = NULL,
-             auto_remind = 0,
-             last_collection_reminder_at = NULL,
-             collection_reminder_count = 0
-         WHERE id = ?`,
-        [nextDateStr, id]
-      );
+      const nextDateStr = outcome.results[0]?.nextRefillDate || toLocalSqlDateTime();
 
-      // Purge pending WhatsApp queue items and clean up staged notifications
-      await purgePendingCustomerReminders(db, {
-        phone: refill.patient_phone,
-        refillIds: [Number(id)],
-        customerId: refill.customer_id,
-        medicineNames: [medName]
+      // Re-run checking engine in background (non-blocking)
+      setImmediate(() => {
+        checkAllRefills(db!).catch(e => console.warn('[bg] checkAllRefills after status update:', e));
       });
 
-      await checkAllRefills(db);
+      eventService.broadcast('refill_updated', { at: Date.now(), refillId: Number(id), fulfilled: true });
+      eventService.broadcast('app-refills-updated', { at: Date.now() });
+      eventService.broadcast('order_updated', { at: Date.now(), source: 'status_update' });
+
       return res.json({ success: true, message: 'Refill completed and advanced to next cycle', next_refill_date: nextDateStr });
     } else if (normalizedStatus === 'notified' || normalizedStatus === 'dismissed') {
       await db.run(

@@ -1,12 +1,26 @@
 // A refill medicine or special order is only settled once it is fulfilled/completed
 // or billed at POS. Marking ready arms the collection notification workflow but does
 // NOT hide the order from the store workflow until the customer transaction is handled!
-type RefillLike = { status?: string | null; cart_store_name?: string | null; reminder_status?: string | null };
+type RefillLike = {
+  status?: string | null;
+  cart_store_name?: string | null;
+  reminder_status?: string | null;
+  last_refill_date?: string | null;
+};
+
+// Returns true if this refill medicine was fulfilled today in shop local time
+export const isRefillFulfilledToday = (m: { last_refill_date?: string | null } | undefined | null): boolean => {
+  if (!m || !m.last_refill_date) return false;
+  const lastYmd = m.last_refill_date.slice(0, 10);
+  const now = new Date();
+  const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return lastYmd === todayYmd;
+};
 
 export const isRefillOrdered = (m: RefillLike) => m.status === 'ordered' || !!m.cart_store_name;
 export const isRefillReminded = (m: RefillLike) => m.reminder_status === 'SENT' || m.status === 'notified';
 export const isRefillSettled = (m: RefillLike) =>
-  m.status === 'completed' || m.status === 'fulfilled' || m.status === 'canceled';
+  m.status === 'completed' || m.status === 'fulfilled' || m.status === 'canceled' || isRefillFulfilledToday(m);
 
 // True when the patient has medicines and every one is settled — nothing left to act on.
 export const isPatientRefillsSettled = (meds: RefillLike[] | undefined | null) =>

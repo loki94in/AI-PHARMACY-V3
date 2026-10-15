@@ -85,11 +85,17 @@ export async function checkAllRefills(db: Database): Promise<void> {
   const outOfStockRefills: any[] = [];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
 //   const _dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 //   const _weeklyOffLower = (operatingSchedule.weeklyOff || 'monday').toLowerCase();
 
   for (const refill of activeRefills) {
+    // Durable guard: if this refill cycle was already fulfilled today, do not resurrect quick bill or special orders today
+    if (refill.last_refill_date && refill.last_refill_date.slice(0, 10) === todayYmd) {
+      continue;
+    }
+
     const nextDate = new Date(refill.next_refill_date);
     nextDate.setHours(0, 0, 0, 0);
     const diffTime = nextDate.getTime() - today.getTime();
@@ -248,6 +254,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
        AND COALESCE(pr.patient_confirmed, 0) = 0
        AND pr.cart_store_name IS NULL
        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
+       AND (pr.last_refill_date IS NULL OR substr(pr.last_refill_date, 1, 10) != date('now', 'localtime'))
      ORDER BY pr.id ASC`,
     [patientPhone, patientName]
   );

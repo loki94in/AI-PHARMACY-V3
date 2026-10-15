@@ -1863,7 +1863,8 @@ export const api = {
   skipRefill: (id: number) => apiClient.post(`/refills/${id}/skip`).then(res => res.data),
   markRefillOrdered: (id: number, options?: { note?: string; storeName?: string; qty?: number }) =>
     apiClient.post<{ success: boolean; message: string; cart_store_name?: string }>(`/refills/${id}/status`, { status: 'ordered', ...options }).then(res => res.data),
-  getRefillsPanel: () => apiClient.get('/refills/panel').then(res => res.data),
+  getRefillsPanel: (params?: { upcoming_days?: number; all_stores?: boolean }) =>
+    apiClient.get('/refills/panel', { params }).then(res => res.data),
   toggleRefillOverride: (id: number) => apiClient.post(`/refills/${id}/toggle-override`).then(res => res.data),
   fulfillAllRefills: (phone: string, data?: { refill_ids?: number[]; customer_id?: number | null; fulfilled_via?: string; patient_phone?: string }) => {
     const cleanPhone = (phone || data?.patient_phone || '').trim();

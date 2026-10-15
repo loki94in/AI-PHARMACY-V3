@@ -3159,7 +3159,7 @@ export const Layout = ({
   const { data: refillsList = NO_REFILLS, refetch: refetchRefills, isSuccess: refillsReady } = useApiQuery<Refill[]>(
     'refills',
     async () => {
-      const data = await api.getRefills();
+      const data = await api.getRefillsPanel({ upcoming_days: 7 });
       return Array.isArray(data) ? data : [];
     },
     { staleTime: 30000, enabled: compactCacheLoaded }

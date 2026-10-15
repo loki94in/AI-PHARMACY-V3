@@ -1,4 +1,4 @@
-import { isPatientRefillsSettled, getRefillStage } from '../../utils/refillSettled';
+import { isPatientRefillsSettled, getRefillStage, isRefillFulfilledToday } from '../../utils/refillSettled';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -1161,11 +1161,12 @@ export const RefillsSection: React.FC = () => {
     const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
     const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
 
-    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })));
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
+    const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
 
-    // Action tabs hide patients already fully handled (ordered + reminder sent); master tabs keep everyone
-    if (filterTab === 'overdue' && !showSettledOverdue && isSettled) return false;
-    if (filterTab === 'lead' && isSettled) return false;
+    // Action tabs hide patients already fully handled (ordered + reminder sent, or fulfilled today); master tabs keep everyone
+    if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday)) return false;
+    if (filterTab === 'lead' && (isSettled || isFulfilledToday)) return false;
     if (filterTab === 'overdue') return isOverdue;
     if (filterTab === 'lead') return isLeadWindow;
     if (filterTab === 'active') {
@@ -1184,19 +1185,23 @@ export const RefillsSection: React.FC = () => {
   const totalPrescriptions = data.reduce((sum, p) => sum + (p.medicines?.length || 0), 0);
   const actionableOverdueCount = data.filter(p => {
     const isOverdue = new Date(p.next_refill_date) < new Date();
-    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })));
-    return isOverdue && !isSettled;
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
+    const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
+    return isOverdue && !isSettled && !isFulfilledToday;
   }).length;
   const settledOverdueCount = data.filter(p => {
     const isOverdue = new Date(p.next_refill_date) < new Date();
-    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status })));
-    return isOverdue && isSettled;
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
+    const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
+    return isOverdue && (isSettled || isFulfilledToday);
   }).length;
   const leadWindowCount = data.filter(p => {
     const today = new Date();
     const dueDate = new Date(p.next_refill_date);
     const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
-    return dueDate >= today && diffDays <= 6 && diffDays >= 0;
+    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
+    const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
+    return dueDate >= today && diffDays <= 6 && diffDays >= 0 && !isSettled && !isFulfilledToday;
   }).length;
 
   // Patients with an active refill medicine that has no linked distributor.

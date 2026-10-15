@@ -98,8 +98,8 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
   - **Stage A (upcoming)**: `[Confirm?] [Add to Cart] [Already Added] [Snooze (+1d/+3d/+7d)] [Edit]`. `Add to Cart` opens `RefillOrderModal` (qty-editable) to start cart job; `Already Added` marks ordered (manual, no cart write); `Snooze` calls `POST /automation/notifications/snooze-patient` with optimistic hide + rollback; `Edit` opens the schedule editor.
   - **Stage B (ordered)**: `[Confirm?] [Mark Ready] [Complete]`. `Mark Ready` calls `POST /refills/patient/:phone/mark-ready` (user click only) which queues one collection WhatsApp alert (60-min dupe suppression), sets `is_ready=1`, and clears live-cart lines via `removeRefillCartLines`. `Complete` calls `POST /refills/patient/:phone/fulfill-all { refill_ids, fulfilled_via: 'quick_assist_complete' }` and navigates to `/pos` prefilled with patient and medicine metadata.
   - **Stage C (reminded)**: `[Confirm?] [Re-Send Reminder] [Complete]`. `Re-Send Reminder` re-invokes mark-ready; `Complete` acts identically to Stage B Complete.
-- Standalone `POS`-only and raw `Fulfill` buttons are removed from refill cards to ensure a single, consistent fulfillment and billing handoff.
 - The refill cycle is permanently closed and advanced when Complete is clicked even if the POS bill is never saved. If saved within 30 min, `src/routes/sales.ts` attaches the invoice without double-advancement.
+- **Refill Complete Durable Hiding (added 2026-10-15)**: `actionableRefills` filters out any refill fulfilled today via `isRefillFulfilledToday` (`last_refill_date` = today in local time). Layout queries `api.getRefillsPanel({ upcoming_days: 7 })`. This ensures completed cycles stay hidden across app restarts by durable database fact rather than transient in-memory state. CRM Overdue/Lead tabs enforce the same guard.
 
 ## Daily Communications Log (updated 2026-09-30)
 
