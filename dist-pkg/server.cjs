@@ -27680,20 +27680,6 @@ function sameProductName(a, b) {
   const tb = [...getCoreMedicineTokens(String(b || ""))].sort().join(" ");
   return ta.length > 0 && ta === tb;
 }
-function filterCandidateMedicines(query, items) {
-  const queryTokens = Array.from(getCoreMedicineTokens(query));
-  if (queryTokens.length === 0) return items;
-  const hasNumericStrength = queryTokens.some((t) => /^\d+(\.\d+)?$/.test(t));
-  return items.filter((item) => {
-    const rawName = String(item.name || item.fullName || item.shortName || "");
-    if (!rawName.trim()) return false;
-    if (hasNumericStrength || queryTokens.length >= 2) {
-      return sameProductName(query, rawName);
-    }
-    const itemTokens = getCoreMedicineTokens(rawName);
-    return queryTokens.every((qt) => itemTokens.has(qt));
-  });
-}
 async function performPharmarackSearch(qRaw, storeId, isMapped) {
   const hasStoreFilter = storeId !== null && !isNaN(storeId);
   let settings = {};
@@ -27703,7 +27689,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     let token = settings["pharmarack_session_token"] || "";
     if (!token) {
       const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      const filteredOffline2 = filterCandidateMedicines(qRaw, offline2);
+      const filteredOffline2 = offline2;
       if (filteredOffline2.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, filteredOffline2);
         return { status: "ok", items: filteredOffline2 };
@@ -27737,7 +27723,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       tokenRefreshScheduler.executeRefresh().catch(() => {
       });
       const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      const filteredOffline2 = filterCandidateMedicines(qRaw, offline2);
+      const filteredOffline2 = offline2;
       if (filteredOffline2.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, filteredOffline2);
         return { status: "ok", items: filteredOffline2 };
@@ -27798,7 +27784,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
           pharmarackRank: idx
         };
       });
-      const results = filterCandidateMedicines(qRaw, rawResults);
+      const results = rawResults;
       if (results.length > 0) {
         for (const r of results) {
           r.matchScore = scoreProductName(qRaw, String(r.name || ""));
@@ -27814,15 +27800,12 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
           return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
         });
         searchCache.set(qRaw, storeId, isMapped, results);
-        if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
-          searchCache.set(primaryKeyword, storeId, isMapped, results);
-        }
         return { status: "ok", items: results };
       }
       return { status: "ok", items: [] };
     }
     const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-    const filteredOffline = filterCandidateMedicines(qRaw, offline);
+    const filteredOffline = offline;
     if (filteredOffline.length > 0) {
       for (const r of filteredOffline) {
         r.matchScore = scoreProductName(qRaw, String(r.name || ""));
@@ -27844,7 +27827,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     console.error("Pharmarack direct live API search failed:", err.message);
     try {
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      const filteredOffline = offline;
       if (filteredOffline.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, filteredOffline);
         return { status: "ok", items: filteredOffline };
@@ -29425,12 +29408,6 @@ var init_pharmarack = __esm({
       const storeId = req.query.storeId ? Number(req.query.storeId) : null;
       const isMapped = req.query.isMapped === "true";
       let cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
-      if (!cachedHit) {
-        const coreTerm = sanitizePharmarackQuery(qRaw);
-        if (coreTerm && coreTerm.toLowerCase() !== qRaw.toLowerCase()) {
-          cachedHit = searchCache.lookup(coreTerm, storeId, isMapped);
-        }
-      }
       if (!cachedHit) {
         cachedHit = searchCache.findPrefixMatch(qRaw, storeId, isMapped);
       }
@@ -32324,7 +32301,7 @@ async function processRefillCartItem(refillId, opts = {}) {
   const candidates = [];
   for (const i of items) {
     const key = `${Number(i.storeId)}|${String(i.productCode)}`;
-    if (seen.has(key) || i.mapped === false) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     candidates.push({
       storeId: Number(i.storeId),
@@ -32343,7 +32320,7 @@ async function processRefillCartItem(refillId, opts = {}) {
       inCart: !!findLine(lines, i.storeId, i.productCode),
       linked: linkedKeys.has(key)
     });
-    if (candidates.length >= 30) break;
+    if (candidates.length >= 50) break;
   }
   if (links.length === 0) {
     return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor linked to this medicine yet. Link one to add it." } : { ...base, status: "not_found", message: "No mapped Pharmarack distributor found for this name. Link it by searching another spelling." };
@@ -46506,11 +46483,13 @@ async function shouldRouteToBusiness() {
 }
 async function cleanupProfileLocks() {
   const sessionPath = import_path24.default.join(WWEBJS_AUTH_DIR, "session");
-  if (process.platform === "win32") {
+  const lockNames = ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"];
+  const hasLocks = import_fs25.default.existsSync(sessionPath) && lockNames.some((f) => import_fs25.default.existsSync(import_path24.default.join(sessionPath, f)));
+  if (hasLocks && process.platform === "win32") {
     try {
       const filterPattern = sessionPath.replace(/\\/g, "*").replace(/\//g, "*");
       const cmd = `powershell -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*${filterPattern}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      await execAsync2(cmd, { timeout: 8e3 });
+      await execAsync2(cmd, { timeout: 4e3 });
       console.log("[WhatsApp Init] Stale WhatsApp browser processes terminated.");
     } catch (err) {
       console.warn("[WhatsApp Init] Could not check/kill running browser processes (non-fatal):", err.message);
@@ -58524,7 +58503,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.98";
+    APP_VERSION = "0.1.99";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -93221,9 +93200,7 @@ Rules:
 var purchases_exports = {};
 __export(purchases_exports, {
   default: () => purchases_default,
-  normalizeInvoiceNo: () => normalizeInvoiceNo,
-  stripPharmaNoise: () => stripPharmaNoise,
-  tokensMatchFuzzy: () => tokensMatchFuzzy
+  invalidateReconciliationCache: () => invalidateReconciliationCache
 });
 function formatExpiryToMMYY(val) {
   if (!val) return "";
@@ -93516,7 +93493,11 @@ async function handleUpdatePurchaseFull(req, res, targetId) {
     res.status(error instanceof PurchaseEditError ? 400 : 500).json({ error: error.message || "Internal server error" });
   }
 }
-var import_express38, import_path52, import_multer2, import_fs57, router36, upload2, purchases_default;
+function invalidateReconciliationCache() {
+  reconciliationCache = null;
+  inFlightReconciliationPromise = null;
+}
+var import_express38, import_path52, import_multer2, import_fs57, router36, upload2, batchLastPurchaseCache, BATCH_LAST_PURCHASE_TTL_MS, reconciliationCache, inFlightReconciliationPromise, RECONCILIATION_CACHE_TTL_MS, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
@@ -94753,6 +94734,8 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    batchLastPurchaseCache = /* @__PURE__ */ new Map();
+    BATCH_LAST_PURCHASE_TTL_MS = 6e4;
     router36.post("/batch-last-purchase", async (req, res) => {
       let db2;
       try {
@@ -94761,19 +94744,56 @@ var init_purchases = __esm({
           return res.status(400).json({ error: "medicines array is required" });
         }
         db2 = await dbManager.getConnection();
+        const targetMedicines = medicines.slice(0, 100);
         const results = [];
-        for (const med of medicines) {
-          const name = med.name || med;
-          const fuzzyRows = await db2.all(
-            "SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 5",
-            [`%${name}%`]
-          );
-          if (fuzzyRows.length === 0) {
-            results.push({ query: name, found: false });
+        const now = Date.now();
+        for (const med of targetMedicines) {
+          const name = typeof med === "string" ? med.trim() : (med?.name || "").trim();
+          if (!name) {
+            results.push({ query: "", found: false });
             continue;
           }
-          const ids = fuzzyRows.map((r) => r.id);
-          const ph = ids.map(() => "?").join(",");
+          const cacheKey = `${name.toLowerCase()}|${distributor_id || ""}`;
+          const cached = batchLastPurchaseCache.get(cacheKey);
+          if (cached && now - cached.ts < BATCH_LAST_PURCHASE_TTL_MS) {
+            results.push(cached.data);
+            continue;
+          }
+          let candidateIds = [];
+          const exactRows = await db2.all(
+            "SELECT id, name FROM medicines WHERE name = ? LIMIT 1",
+            [name]
+          ).catch(() => []);
+          if (exactRows.length > 0) {
+            candidateIds = exactRows.map((r) => r.id);
+          } else {
+            const cleanPrefix = (name.split(" ")[0] || name).slice(0, 10).replace(/[%_]/g, "");
+            if (cleanPrefix.length >= 3) {
+              const prefixRows = await db2.all(
+                "SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 3",
+                [`${cleanPrefix}%`]
+              ).catch(() => []);
+              if (prefixRows.length > 0) {
+                candidateIds = prefixRows.map((r) => r.id);
+              }
+            }
+          }
+          if (candidateIds.length === 0 && name.length >= 4) {
+            const fuzzyRows = await db2.all(
+              "SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 2",
+              [`%${name.slice(0, 16)}%`]
+            ).catch(() => []);
+            if (fuzzyRows.length > 0) {
+              candidateIds = fuzzyRows.map((r) => r.id);
+            }
+          }
+          if (candidateIds.length === 0) {
+            const notFoundResult = { query: name, found: false };
+            batchLastPurchaseCache.set(cacheKey, { ts: now, data: notFoundResult });
+            results.push(notFoundResult);
+            continue;
+          }
+          const ph = candidateIds.map(() => "?").join(",");
           let q = `
         SELECT pi.*, m.name as medicine_name, m.id as medicine_id,
                d.name as distributor_name, d.id as distributor_id,
@@ -94784,18 +94804,20 @@ var init_purchases = __esm({
         JOIN distributors d ON p.distributor_id = d.id
         WHERE pi.medicine_id IN (${ph})
       `;
-          const p = [...ids];
+          const p = [...candidateIds];
           if (distributor_id) {
             q += " AND p.distributor_id = ?";
             p.push(parseInt(distributor_id));
           }
           q += " ORDER BY p.date DESC LIMIT 1";
-          const row = await db2.get(q, p);
+          const row = await db2.get(q, p).catch(() => null);
           if (!row) {
-            results.push({ query: name, found: false });
+            const notFoundResult = { query: name, found: false };
+            batchLastPurchaseCache.set(cacheKey, { ts: now, data: notFoundResult });
+            results.push(notFoundResult);
             continue;
           }
-          results.push({
+          const itemResult = {
             query: name,
             found: true,
             medicine_id: row.medicine_id,
@@ -94813,7 +94835,9 @@ var init_purchases = __esm({
             distributor_id: row.distributor_id,
             purchase_date: row.purchase_date,
             invoice_no: row.invoice_no
-          });
+          };
+          batchLastPurchaseCache.set(cacheKey, { ts: now, data: itemResult });
+          results.push(itemResult);
         }
         res.json(results);
       } catch (error) {
@@ -95023,269 +95047,321 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    reconciliationCache = null;
+    inFlightReconciliationPromise = null;
+    RECONCILIATION_CACHE_TTL_MS = 15e3;
     router36.get("/reconciliation", async (_req, res) => {
       try {
-        const db2 = await dbManager.getConnection();
-        const aliasRows = await db2.all(
-          `SELECT LOWER(ma.alias_name) as alias_name, LOWER(m.name) as real_name 
-       FROM medicine_aliases ma 
-       JOIN medicines m ON ma.medicine_id = m.id`
-        ).catch(() => []);
-        const aliasMap = /* @__PURE__ */ new Map();
-        for (const a of aliasRows) {
-          if (a.alias_name && a.real_name) aliasMap.set(a.alias_name, a.real_name);
+        const now = Date.now();
+        if (reconciliationCache && now - reconciliationCache.ts < RECONCILIATION_CACHE_TTL_MS) {
+          return res.json(reconciliationCache.data);
         }
-        const ocrRows = await db2.all(`SELECT LOWER(ocr) as raw_text, LOWER(correct) as corrected_text FROM ocr_corrections`).catch(() => []);
-        for (const o of ocrRows) {
-          if (o.raw_text && o.corrected_text) aliasMap.set(o.raw_text, o.corrected_text);
+        if (inFlightReconciliationPromise) {
+          const data = await inFlightReconciliationPromise;
+          return res.json(data);
         }
-        const piwRows = await db2.all(`SELECT word FROM permanently_ignored_words`).catch(() => []);
-        const ignoredSet = new Set(piwRows.map((r) => String(r.word || "").trim().toLowerCase()));
-        const orderEmails = await db2.all(`
-      SELECT uid, from_addr, subject, body, date, is_seen, is_saved, distributor_name, has_attachments, medicine_names, extracted_invoice_no, extracted_distributor
-      FROM emails 
-      WHERE (is_order = 1 
-         OR has_attachments = 1 
-         OR LOWER(subject) LIKE '%invoice%' 
-         OR LOWER(subject) LIKE '%inv%' 
-         OR LOWER(subject) LIKE '%bill%' 
-         OR LOWER(subject) LIKE '%order%' 
-         OR LOWER(subject) LIKE '%dispatch%'
-         OR LOWER(subject) LIKE '%tax%')
-      ORDER BY uid DESC
-      LIMIT 200
-    `);
-        const uids = orderEmails.map((e) => e.uid);
-        const attachmentsMap = /* @__PURE__ */ new Map();
-        if (uids.length > 0) {
-          const placeholders = uids.map(() => "?").join(",");
-          const allAttachments = await db2.all(
-            `SELECT uid, filename, size, content_type, local_path FROM email_attachments WHERE uid IN (${placeholders})`,
-            uids
-          );
-          for (const att of allAttachments) {
-            if (!attachmentsMap.has(att.uid)) {
-              attachmentsMap.set(att.uid, []);
-            }
-            attachmentsMap.get(att.uid).push(att);
+        inFlightReconciliationPromise = (async () => {
+          const db2 = await dbManager.getConnection();
+          const aliasRows = await db2.all(
+            `SELECT LOWER(ma.alias_name) as alias_name, LOWER(m.name) as real_name 
+         FROM medicine_aliases ma 
+         JOIN medicines m ON ma.medicine_id = m.id`
+          ).catch(() => []);
+          const aliasMap = /* @__PURE__ */ new Map();
+          for (const a of aliasRows) {
+            if (a.alias_name && a.real_name) aliasMap.set(a.alias_name, a.real_name);
           }
-        }
-        const grouped = /* @__PURE__ */ new Map();
-        for (const email of orderEmails) {
-          let extractedInvoiceNo = email.extracted_invoice_no;
-          let distributorName = email.extracted_distributor;
-          if (!extractedInvoiceNo || !distributorName) {
-            const orderInfo = await emailService.extractOrderInfo({
-              subject: email.subject || "",
-              body: email.body || "",
-              from: email.from_addr || "",
-              attachments: []
-            });
-            extractedInvoiceNo = orderInfo.invoiceNumber || "N/A";
-            distributorName = (orderInfo.distributorName && isValidDistributorName(orderInfo.distributorName) ? orderInfo.distributorName.trim() : "") || (email.distributor_name && isValidDistributorName(email.distributor_name) ? email.distributor_name.trim() : "") || "";
-            await db2.run(
-              "UPDATE emails SET extracted_invoice_no = ?, extracted_distributor = ? WHERE uid = ?",
-              [extractedInvoiceNo, distributorName || null, email.uid]
+          const ocrRows = await db2.all(`SELECT LOWER(ocr) as raw_text, LOWER(correct) as corrected_text FROM ocr_corrections`).catch(() => []);
+          for (const o of ocrRows) {
+            if (o.raw_text && o.corrected_text) aliasMap.set(o.raw_text, o.corrected_text);
+          }
+          const piwRows = await db2.all(`SELECT word FROM permanently_ignored_words`).catch(() => []);
+          const ignoredSet = new Set(piwRows.map((r) => String(r.word || "").trim().toLowerCase()));
+          const orderEmails = await db2.all(`
+        SELECT uid, from_addr, subject, body, date, is_seen, is_saved, distributor_name, has_attachments, medicine_names, extracted_invoice_no, extracted_distributor
+        FROM emails 
+        WHERE (is_order = 1 
+           OR has_attachments = 1 
+           OR LOWER(subject) LIKE '%invoice%' 
+           OR LOWER(subject) LIKE '%inv%' 
+           OR LOWER(subject) LIKE '%bill%' 
+           OR LOWER(subject) LIKE '%order%' 
+           OR LOWER(subject) LIKE '%dispatch%'
+           OR LOWER(subject) LIKE '%tax%')
+        ORDER BY uid DESC
+        LIMIT 50
+      `);
+          const uids = orderEmails.map((e) => e.uid);
+          const attachmentsMap = /* @__PURE__ */ new Map();
+          if (uids.length > 0) {
+            const placeholders = uids.map(() => "?").join(",");
+            const allAttachments = await db2.all(
+              `SELECT uid, filename, size, content_type, local_path FROM email_attachments WHERE uid IN (${placeholders})`,
+              uids
             );
-          }
-          const attachments = attachmentsMap.get(email.uid) || [];
-          let medNames = [];
-          let needsDbUpdate = false;
-          if (email.medicine_names) {
-            try {
-              const parsed = JSON.parse(email.medicine_names);
-              if (Array.isArray(parsed)) {
-                const sanitizedList = parsed.map((n) => cleanMedicineName2(n)).filter((n) => Boolean(n) && !isNonMedicineNoise(n));
-                medNames = Array.from(new Set(sanitizedList));
-                if (JSON.stringify(parsed) !== JSON.stringify(medNames)) {
-                  needsDbUpdate = true;
-                }
+            for (const att of allAttachments) {
+              if (!attachmentsMap.has(att.uid)) {
+                attachmentsMap.set(att.uid, []);
               }
-            } catch (e) {
-              medNames = [];
+              attachmentsMap.get(att.uid).push(att);
             }
           }
-          if (medNames.length === 0 && !email.medicine_names) {
-            const parsedItems = [];
-            for (const att of attachments) {
-              if (att.local_path && import_fs57.default.existsSync(att.local_path)) {
-                try {
-                  const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
-                  if (resParse && resParse.success && resParse.items) {
-                    parsedItems.push(...resParse.items);
+          const distRows = await db2.all(
+            `SELECT id, name, email FROM distributors WHERE name IS NOT NULL AND TRIM(name) != ''`
+          ).catch(() => []);
+          const distEmailMap = /* @__PURE__ */ new Map();
+          for (const d of distRows) {
+            if (d.email && d.name) {
+              const emails = String(d.email).split(/[,;]/);
+              for (const em of emails) {
+                const clean2 = em.trim().toLowerCase();
+                if (clean2 && clean2.includes("@")) distEmailMap.set(clean2, d.name.trim());
+              }
+            }
+          }
+          const grouped = /* @__PURE__ */ new Map();
+          for (const email of orderEmails) {
+            let extractedInvoiceNo = email.extracted_invoice_no;
+            let distributorName = (email.extracted_distributor && isValidDistributorName(email.extracted_distributor) ? email.extracted_distributor.trim() : "") || (email.distributor_name && isValidDistributorName(email.distributor_name) ? email.distributor_name.trim() : "");
+            const attachments = attachmentsMap.get(email.uid) || [];
+            if (!distributorName && email.from_addr) {
+              const fromClean = email.from_addr.toLowerCase();
+              for (const [em, dName] of distEmailMap.entries()) {
+                if (fromClean.includes(em)) {
+                  distributorName = dName;
+                  break;
+                }
+              }
+              if (!distributorName) {
+                const fromMatch = (email.from_addr || "").match(/([^<]+)/);
+                if (fromMatch && fromMatch[1].trim()) {
+                  const candidate = fromMatch[1].trim().replace(/['"]/g, "");
+                  if (candidate && isValidDistributorName(candidate)) {
+                    distributorName = candidate;
                   }
-                } catch (pe) {
-                  console.error("[Email Reconciliation] Attachment parse failed:", pe);
                 }
               }
             }
-            if (parsedItems.length === 0) {
-              const orderInfo = await emailService.extractOrderInfo({
-                subject: email.subject || "",
-                body: email.body || "",
-                from: email.from_addr || "",
-                attachments: []
+            if (!extractedInvoiceNo || extractedInvoiceNo === "N/A") {
+              const textToScan = `${email.subject || ""} ${(email.body || "").slice(0, 1500)}`;
+              const invMatch = textToScan.match(/(?:invoice\s*no\.?|vou\.?\s*no\.?|bill\s*no\.?|inv\s*no\.?|invoice|bill)\s*[:\-\s]*\s*([a-zA-Z0-9_\-\/]+)/i);
+              if (invMatch && invMatch[1] && invMatch[1].length >= 3) {
+                extractedInvoiceNo = invMatch[1];
+              } else {
+                const codeMatch = (email.subject || "").match(/\b([A-Z0-9_\-\/]{4,15})\b/);
+                extractedInvoiceNo = codeMatch ? codeMatch[1] : "N/A";
+              }
+              if (extractedInvoiceNo === "N/A" && attachments.length > 0) {
+                for (const att of attachments) {
+                  const attMatch = (att.filename || "").match(/(?:inv|bill|invoice|vou)[_\-\s]*([a-zA-Z0-9_\-\/]+)/i);
+                  if (attMatch && attMatch[1]) {
+                    extractedInvoiceNo = attMatch[1].replace(/\.(pdf|csv|xlsx|xls|txt)$/i, "");
+                    break;
+                  }
+                }
+              }
+              void db2.run(
+                "UPDATE emails SET extracted_invoice_no = ?, extracted_distributor = ? WHERE uid = ?",
+                [extractedInvoiceNo, distributorName || null, email.uid]
+              ).catch(() => {
               });
-              for (const med of orderInfo.medicines) {
-                parsedItems.push({ name: med.name });
+            }
+            let medNames = [];
+            let needsDbUpdate = false;
+            if (email.medicine_names) {
+              try {
+                const parsed = JSON.parse(email.medicine_names);
+                if (Array.isArray(parsed)) {
+                  const sanitizedList = parsed.map((n) => cleanMedicineName2(n)).filter((n) => Boolean(n) && !isNonMedicineNoise(n));
+                  medNames = Array.from(new Set(sanitizedList));
+                  if (JSON.stringify(parsed) !== JSON.stringify(medNames)) {
+                    needsDbUpdate = true;
+                  }
+                }
+              } catch (e) {
+                medNames = [];
               }
             }
-            medNames = Array.from(new Set(parsedItems.map((i) => cleanMedicineName2(i.name)).filter((n) => Boolean(n) && !isNonMedicineNoise(n))));
-            needsDbUpdate = true;
-          }
-          if (needsDbUpdate) {
-            await db2.run("UPDATE emails SET medicine_names = ? WHERE uid = ?", [JSON.stringify(medNames), email.uid]);
-          }
-          const canonInvoice = normalizeInvoiceNo(extractedInvoiceNo);
-          const key = canonInvoice && distributorName ? `${distributorName.toLowerCase()}_${canonInvoice.toLowerCase()}` : `uid_${email.uid}`;
-          const mappedAttachments = attachments.map((a) => ({
-            filename: a.filename,
-            size: a.size,
-            content_type: a.content_type
-          }));
-          const bodySnippet = (email.body || "").replace(/\s+/g, " ").substring(0, 300);
-          if (!grouped.has(key)) {
-            grouped.set(key, {
-              email_uid: email.uid,
-              from: email.from_addr,
-              subject: email.subject,
-              body_snippet: bodySnippet,
-              date: email.date,
-              is_seen: email.is_seen === 1,
-              is_saved: email.is_saved === 1,
-              extracted_distributor: distributorName,
-              extracted_invoice_no: extractedInvoiceNo || "N/A",
-              expected_medicines: new Set(medNames),
-              attachments: mappedAttachments
-            });
-          } else {
-            const existing = grouped.get(key);
-            medNames.forEach((name) => existing.expected_medicines.add(name));
-            mappedAttachments.forEach((att) => {
-              if (!existing.attachments.some((a) => a.filename === att.filename)) {
-                existing.attachments.push(att);
-              }
-            });
-          }
-        }
-        const candidatePurchases = await db2.all(
-          `SELECT p.id, p.invoice_no, p.app_invoice_no, p.total_amount, p.date, p.distributor_id, d.name as dist_name, d.email as dist_email
-       FROM purchases p
-       LEFT JOIN distributors d ON p.distributor_id = d.id
-       ORDER BY p.id DESC LIMIT 200`
-        );
-        for (const group of grouped.values()) {
-          let matchedPurchase = null;
-          const groupCanonInvoice = normalizeInvoiceNo(group.extracted_invoice_no);
-          const normDistName = group.extracted_distributor.toLowerCase().replace(/[^a-z0-9]/g, "");
-          if (groupCanonInvoice) {
-            matchedPurchase = candidatePurchases.find((p) => {
-              const pCanonInv = normalizeInvoiceNo(p.invoice_no);
-              const pCanonAppInv = normalizeInvoiceNo(p.app_invoice_no);
-              const invMatches = groupCanonInvoice === pCanonInv || groupCanonInvoice === pCanonAppInv;
-              if (!invMatches) return false;
-              if (!p.dist_name && !p.dist_email) return true;
-              const normPDist = (p.dist_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              const distNameMatches = normPDist.includes(normDistName) || normDistName.includes(normPDist);
-              let domainMatches = false;
-              if (p.dist_email && group.from) {
-                const pDomain = p.dist_email.split("@")[1]?.toLowerCase();
-                const groupDomain = group.from.split("@")[1]?.toLowerCase();
-                if (pDomain && groupDomain && pDomain === groupDomain) {
-                  domainMatches = true;
+            if (medNames.length === 0 && email.body) {
+              const lines = (email.body || "").split("\n").slice(0, 50);
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.length < 3) continue;
+                const qtyMatch = trimmed.match(/(?:(?:qty|quantity|x|count)\s*[:\-\s]*\s*(\d+))|(\d+)\s*(?:x|units|pcs)/i);
+                let name = trimmed;
+                if (qtyMatch) {
+                  name = trimmed.replace(qtyMatch[0], "");
+                }
+                const clean2 = cleanMedicineName2(name.replace(/[:\-\t\r\n]/g, " ").trim());
+                if (clean2 && clean2.length > 2 && isNaN(Number(clean2)) && !isNonMedicineNoise(clean2)) {
+                  medNames.push(clean2);
                 }
               }
-              return distNameMatches || domainMatches;
-            });
-            if (!matchedPurchase) {
-              const invCandidates = candidatePurchases.filter((p) => {
+              medNames = Array.from(new Set(medNames)).slice(0, 25);
+              if (medNames.length > 0) {
+                needsDbUpdate = true;
+              }
+            }
+            if (needsDbUpdate) {
+              void db2.run("UPDATE emails SET medicine_names = ? WHERE uid = ?", [JSON.stringify(medNames), email.uid]).catch(() => {
+              });
+            }
+            const canonInvoice = normalizeInvoiceNo(extractedInvoiceNo);
+            const key = canonInvoice && distributorName ? `${distributorName.toLowerCase()}_${canonInvoice.toLowerCase()}` : `uid_${email.uid}`;
+            const mappedAttachments = attachments.map((a) => ({
+              filename: a.filename,
+              size: a.size,
+              content_type: a.content_type
+            }));
+            const bodySnippet = (email.body || "").replace(/\s+/g, " ").substring(0, 300);
+            if (!grouped.has(key)) {
+              grouped.set(key, {
+                email_uid: email.uid,
+                from: email.from_addr,
+                subject: email.subject,
+                body_snippet: bodySnippet,
+                date: email.date,
+                is_seen: email.is_seen === 1,
+                is_saved: email.is_saved === 1,
+                extracted_distributor: distributorName,
+                extracted_invoice_no: extractedInvoiceNo || "N/A",
+                expected_medicines: new Set(medNames),
+                attachments: mappedAttachments
+              });
+            } else {
+              const existing = grouped.get(key);
+              medNames.forEach((name) => existing.expected_medicines.add(name));
+              mappedAttachments.forEach((att) => {
+                if (!existing.attachments.some((a) => a.filename === att.filename)) {
+                  existing.attachments.push(att);
+                }
+              });
+            }
+          }
+          const candidatePurchases = await db2.all(
+            `SELECT p.id, p.invoice_no, p.app_invoice_no, p.total_amount, p.date, p.distributor_id, d.name as dist_name, d.email as dist_email
+         FROM purchases p
+         LEFT JOIN distributors d ON p.distributor_id = d.id
+         ORDER BY p.id DESC LIMIT 200`
+          );
+          for (const group of grouped.values()) {
+            let matchedPurchase = null;
+            const groupCanonInvoice = normalizeInvoiceNo(group.extracted_invoice_no);
+            const normDistName = group.extracted_distributor.toLowerCase().replace(/[^a-z0-9]/g, "");
+            if (groupCanonInvoice) {
+              matchedPurchase = candidatePurchases.find((p) => {
                 const pCanonInv = normalizeInvoiceNo(p.invoice_no);
                 const pCanonAppInv = normalizeInvoiceNo(p.app_invoice_no);
-                return groupCanonInvoice === pCanonInv || groupCanonInvoice === pCanonAppInv;
+                const invMatches = groupCanonInvoice === pCanonInv || groupCanonInvoice === pCanonAppInv;
+                if (!invMatches) return false;
+                if (!p.dist_name && !p.dist_email) return true;
+                const normPDist = (p.dist_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const distNameMatches = normPDist.includes(normDistName) || normDistName.includes(normPDist);
+                let domainMatches = false;
+                if (p.dist_email && group.from) {
+                  const pDomain = p.dist_email.split("@")[1]?.toLowerCase();
+                  const groupDomain = group.from.split("@")[1]?.toLowerCase();
+                  if (pDomain && groupDomain && pDomain === groupDomain) {
+                    domainMatches = true;
+                  }
+                }
+                return distNameMatches || domainMatches;
               });
-              if (invCandidates.length === 1) {
-                matchedPurchase = invCandidates[0];
-              }
-            }
-          }
-          group.matchedPurchase = matchedPurchase;
-        }
-        const matchedPurchaseIds = Array.from(grouped.values()).map((g) => g.matchedPurchase?.id).filter(Boolean);
-        const receivedItemsMap = /* @__PURE__ */ new Map();
-        if (matchedPurchaseIds.length > 0) {
-          const placeholders = matchedPurchaseIds.map(() => "?").join(",");
-          const receivedItems = await db2.all(`
-        SELECT pi.purchase_id, m.name as medicine_name
-        FROM purchase_items pi
-        JOIN medicines m ON pi.medicine_id = m.id
-        WHERE pi.purchase_id IN (${placeholders})
-      `, matchedPurchaseIds);
-          for (const item of receivedItems) {
-            if (!receivedItemsMap.has(item.purchase_id)) {
-              receivedItemsMap.set(item.purchase_id, []);
-            }
-            receivedItemsMap.get(item.purchase_id).push(item.medicine_name);
-          }
-        }
-        const result = [];
-        for (const group of grouped.values()) {
-          const matchedPurchase = group.matchedPurchase;
-          let status = "Missing";
-          let displayMedicines = Array.from(group.expected_medicines);
-          if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
-            displayMedicines = displayMedicines.filter((m) => !ignoredSet.has(m.trim().toLowerCase()));
-          }
-          if (matchedPurchase) {
-            const receivedMeds = receivedItemsMap.get(matchedPurchase.id) || [];
-            const missingMedicines = displayMedicines.filter((expMed) => {
-              for (const recMed of receivedMeds) {
-                if (tokensMatchFuzzy(expMed, recMed, aliasMap)) {
-                  return false;
+              if (!matchedPurchase) {
+                const invCandidates = candidatePurchases.filter((p) => {
+                  const pCanonInv = normalizeInvoiceNo(p.invoice_no);
+                  const pCanonAppInv = normalizeInvoiceNo(p.app_invoice_no);
+                  return groupCanonInvoice === pCanonInv || groupCanonInvoice === pCanonAppInv;
+                });
+                if (invCandidates.length === 1) {
+                  matchedPurchase = invCandidates[0];
                 }
               }
-              return true;
+            }
+            group.matchedPurchase = matchedPurchase;
+          }
+          const matchedPurchaseIds = Array.from(grouped.values()).map((g) => g.matchedPurchase?.id).filter(Boolean);
+          const receivedItemsMap = /* @__PURE__ */ new Map();
+          if (matchedPurchaseIds.length > 0) {
+            const placeholders = matchedPurchaseIds.map(() => "?").join(",");
+            const receivedItems = await db2.all(`
+          SELECT pi.purchase_id, m.name as medicine_name
+          FROM purchase_items pi
+          JOIN medicines m ON pi.medicine_id = m.id
+          WHERE pi.purchase_id IN (${placeholders})
+        `, matchedPurchaseIds);
+            for (const item of receivedItems) {
+              if (!receivedItemsMap.has(item.purchase_id)) {
+                receivedItemsMap.set(item.purchase_id, []);
+              }
+              receivedItemsMap.get(item.purchase_id).push(item.medicine_name);
+            }
+          }
+          const result2 = [];
+          for (const group of grouped.values()) {
+            const matchedPurchase = group.matchedPurchase;
+            let status = "Missing";
+            let displayMedicines = Array.from(group.expected_medicines);
+            if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
+              displayMedicines = displayMedicines.filter((m) => !ignoredSet.has(m.trim().toLowerCase()));
+            }
+            if (matchedPurchase) {
+              const receivedMeds = receivedItemsMap.get(matchedPurchase.id) || [];
+              const missingMedicines = displayMedicines.filter((expMed) => {
+                for (const recMed of receivedMeds) {
+                  if (tokensMatchFuzzy(expMed, recMed, aliasMap)) {
+                    return false;
+                  }
+                }
+                return true;
+              });
+              if (missingMedicines.length > 0) {
+                status = "Bounced";
+                displayMedicines = missingMedicines;
+              } else {
+                status = "Matched";
+                displayMedicines = [];
+              }
+            } else {
+              if (displayMedicines.length === 0) {
+                status = "Matched";
+              } else {
+                status = "Missing";
+              }
+            }
+            if (displayMedicines.length === 0 && status === "Bounced") {
+              status = "Matched";
+            }
+            result2.push({
+              email_uid: group.email_uid,
+              from: group.from,
+              subject: group.subject,
+              body_snippet: group.body_snippet,
+              date: group.date,
+              is_seen: group.is_seen,
+              is_saved: group.is_saved,
+              extracted_distributor: group.extracted_distributor,
+              extracted_invoice_no: group.extracted_invoice_no,
+              matched_purchase: matchedPurchase ? {
+                id: matchedPurchase.id,
+                invoice_no: matchedPurchase.invoice_no,
+                app_invoice_no: matchedPurchase.app_invoice_no,
+                total_amount: matchedPurchase.total_amount,
+                date: matchedPurchase.date
+              } : null,
+              status,
+              medicine_names: displayMedicines,
+              attachments: group.attachments
             });
-            if (missingMedicines.length > 0) {
-              status = "Bounced";
-              displayMedicines = missingMedicines;
-            } else {
-              status = "Matched";
-              displayMedicines = [];
-            }
-          } else {
-            if (displayMedicines.length === 0) {
-              status = "Matched";
-            } else {
-              status = "Missing";
-            }
           }
-          if (displayMedicines.length === 0 && status === "Bounced") {
-            status = "Matched";
-          }
-          result.push({
-            email_uid: group.email_uid,
-            from: group.from,
-            subject: group.subject,
-            body_snippet: group.body_snippet,
-            date: group.date,
-            is_seen: group.is_seen,
-            is_saved: group.is_saved,
-            extracted_distributor: group.extracted_distributor,
-            extracted_invoice_no: group.extracted_invoice_no,
-            matched_purchase: matchedPurchase ? {
-              id: matchedPurchase.id,
-              invoice_no: matchedPurchase.invoice_no,
-              app_invoice_no: matchedPurchase.app_invoice_no,
-              total_amount: matchedPurchase.total_amount,
-              date: matchedPurchase.date
-            } : null,
-            status,
-            medicine_names: displayMedicines,
-            attachments: group.attachments
-          });
-        }
+          return result2;
+        })();
+        const result = await inFlightReconciliationPromise;
+        inFlightReconciliationPromise = null;
+        reconciliationCache = { ts: Date.now(), data: result };
         res.json(result);
       } catch (error) {
+        inFlightReconciliationPromise = null;
         console.error("Fetch reconciliation error:", error);
         res.status(500).json({ error: "Internal server error" });
       }
@@ -95313,6 +95389,7 @@ var init_purchases = __esm({
           [cleanWord, source]
         );
         const row = await db2.get("SELECT id, word, source, created_at FROM permanently_ignored_words WHERE word = ? COLLATE NOCASE", [cleanWord]);
+        invalidateReconciliationCache();
         res.json({ success: true, id: row?.id || result.lastID, word: cleanWord });
       } catch (error) {
         console.error("Add ignored word error:", error);
@@ -95327,6 +95404,7 @@ var init_purchases = __esm({
           return res.status(400).json({ error: "Invalid ID" });
         }
         await db2.run("DELETE FROM permanently_ignored_words WHERE id = ?", [id]);
+        invalidateReconciliationCache();
         res.json({ success: true, message: "Word un-ignored successfully" });
       } catch (error) {
         console.error("Remove ignored word error:", error);
@@ -95346,6 +95424,7 @@ var init_purchases = __esm({
         } else {
           await db2.run("UPDATE distributors SET mapping_config = ? WHERE LOWER(name) = ?", [configStr, distributor_name.toLowerCase()]);
         }
+        invalidateReconciliationCache();
         res.json({ success: true, message: "Distributor column mapping template updated successfully" });
       } catch (err) {
         console.error("Error saving distributor mapping:", err);
@@ -95368,6 +95447,7 @@ var init_purchases = __esm({
           ["EMAIL_ORDER_RESOLVED_MANUALLY", `Manually reconciled email order from: ${email.from_addr}, subject: ${email.subject}`]
         );
         await emailService.markEmailSaved(Number(email_uid), true);
+        invalidateReconciliationCache();
         res.json({ success: true, message: "Email order marked as reconciled" });
       } catch (error) {
         console.error("Resolve email order error:", error);
