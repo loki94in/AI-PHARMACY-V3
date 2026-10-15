@@ -800,6 +800,9 @@ export default function PharmarackCart() {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<Date | null>(() => cachedLastFetched);
+  const [sessionStatus, setSessionStatus] = useState<'active' | 'restoring' | 'expired' | 'connection_issue' | null>(null);
+  const [sessionDaysLeft, setSessionDaysLeft] = useState<number | null>(null);
+  const [isCartFromCache, setIsCartFromCache] = useState<boolean>(() => cachedDistributors.length > 0);
   const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
   const [priceHistoryCache, setPriceHistoryCache] = useState<Record<string, LocalPriceHistoryRow[]>>(() => cachedPriceHistory);
   const [sendingNotifId, setSendingNotifId] = useState<number | null>(null);
@@ -3271,6 +3274,37 @@ export default function PharmarackCart() {
     }, delayMs);
   };
 
+  const checkSession = useCallback(async () => {
+    try {
+      const data = await api.checkPharmarackSession();
+      if (typeof data.daysLeft === 'number') {
+        setSessionDaysLeft(data.daysLeft);
+      }
+      if (data.healthy) {
+        setSessionStatus('active');
+      } else if (data.isRefreshing) {
+        setSessionStatus('restoring');
+      } else if (data.reason === 'NETWORK_ERROR' || data.reason === 'SERVER_ERROR') {
+        setSessionStatus('connection_issue');
+      } else {
+        setSessionStatus('expired');
+      }
+    } catch {
+      setSessionStatus('connection_issue');
+    }
+  }, []);
+
+  const handleReconnect = useCallback(async () => {
+    try {
+      toastEvent.trigger('Opening Pharmarack Login window...', 'info');
+      await api.launchPharmarackLoginWindow();
+      setSessionStatus('restoring');
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiError;
+      toastEvent.trigger(apiErr?.response?.data?.error || 'Failed to launch login window', 'error');
+    }
+  }, []);
+
   const fetchCart = async (forceFresh?: unknown) => {
     const isFresh = forceFresh === true;
     // Only show loading spinner on cold cache (first visit)
@@ -3281,6 +3315,7 @@ export default function PharmarackCart() {
     try {
       const data = await (apiClient.get(`/pharmarack/cart${isFresh ? '?fresh=true' : ''}`).then(res => res.data));
       if (data && data.success) {
+        setIsCartFromCache(false);
         const rawList = data.distributors || [];
         setDistributors(prev => {
           const list = applyCartDiff(prev, rawList, userCheckOverridesRef.current);
@@ -3307,14 +3342,19 @@ export default function PharmarackCart() {
         const now = new Date();
         setLastFetched(now);
         cachedLastFetched = now;
-        fetchPriceHistories(rawList);
-        fetchLatestSentMap();
+        setTimeout(() => {
+          fetchPriceHistories(rawList);
+          fetchLatestSentMap();
+        }, 0);
       } else {
         setError('Failed to retrieve cart details.');
       }
     } catch (err: unknown) {
       const apiErr = err as LocalApiError;
       console.error('Failed to fetch Pharmarack cart:', err);
+      if (cachedDistributors.length > 0) {
+        setIsCartFromCache(true);
+      }
       setError(apiErr?.response?.data?.error || 'Failed to fetch cart. Please check server logs or verify your session.');
     } finally {
       setLoading(false);
@@ -3325,6 +3365,7 @@ export default function PharmarackCart() {
     setIsRefreshing(true);
     try {
       await fetchCart(true);
+      await checkSession();
       await new Promise(r => setTimeout(r, 600));
     } finally {
       setIsRefreshing(false);
@@ -3340,6 +3381,7 @@ export default function PharmarackCart() {
     try {
       const data = await api.getPharmarackCart();
       if (data && data.success) {
+        setIsCartFromCache(false);
         if (data.reconciledItems && Array.isArray(data.reconciledItems) && data.reconciledItems.length > 0) {
           setAutoReconciledItems(data.reconciledItems);
         }
@@ -3368,10 +3410,15 @@ export default function PharmarackCart() {
         const now = new Date();
         setLastFetched(now);
         cachedLastFetched = now;
-        fetchPriceHistories(rawList);
+        setTimeout(() => {
+          fetchPriceHistories(rawList);
+        }, 0);
       }
     } catch (err) {
       console.error('Failed silent cart refresh:', err);
+      if (cachedDistributors.length > 0) {
+        setIsCartFromCache(true);
+      }
     }
   };
 
@@ -3879,13 +3926,14 @@ export default function PharmarackCart() {
   const [showSuggestionsTier, setShowSuggestionsTier] = useState(false);
 
   useEffect(() => {
+    checkSession();
     if (cachedDistributors.length === 0) {
       fetchCart();
     } else {
       fetchCartSilent();
     }
     fetchLatestSentMap();
-  }, []);
+  }, [checkSession]);
 
   // Auto-refresh on every RETURN to this page: KeepAlive keeps us mounted forever,
   // so switching away and back used to show the stale list until a manual refresh.
@@ -3897,9 +3945,10 @@ export default function PharmarackCart() {
     const wasActive = pageActiveRef.current;
     pageActiveRef.current = pageActive;
     if (!pageActive || wasActive) return;
+    checkSession();
     fetchCartSilent();
     fetchLatestSentMap();
-  }, [pageActive]);
+  }, [pageActive, checkSession]);
 
   // Auto-refresh when switching internal sub-tabs back to the 'cart' tab
   const prevTabRef = useRef(currentTab);
@@ -4067,6 +4116,7 @@ export default function PharmarackCart() {
   // 'refresh-special-orders'     → re-fetch pending orders so the left sidebar count is up-to-date
   useEffect(() => {
     const handleCartRefresh = () => {
+      checkSession();
       // Hidden kept-alive page must not background-fetch (P3 gating) — the
       // activation effect silently syncs the moment the user returns.
       if (!pageActiveRef.current) return;
@@ -4088,11 +4138,13 @@ export default function PharmarackCart() {
     window.addEventListener('refresh-pharmarack-cart', handleCartRefresh);
     window.addEventListener('pharmarack-auth-changed', handleCartRefresh);
     window.addEventListener('pharmarack-session-updated', handleCartRefresh);
+    window.addEventListener('sse-pharmarack-refreshed', handleCartRefresh);
     window.addEventListener('refresh-special-orders', handleOrdersRefresh);
     return () => {
       window.removeEventListener('refresh-pharmarack-cart', handleCartRefresh);
       window.removeEventListener('pharmarack-auth-changed', handleCartRefresh);
       window.removeEventListener('pharmarack-session-updated', handleCartRefresh);
+      window.removeEventListener('sse-pharmarack-refreshed', handleCartRefresh);
       window.removeEventListener('refresh-special-orders', handleOrdersRefresh);
     };
   }, []);
@@ -5255,9 +5307,46 @@ export default function PharmarackCart() {
               <div>
                 <h3 className="text-sm font-bold text-text tracking-wide uppercase leading-none flex items-center gap-2">
                   Pharmarack Cart
-                  <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
-                    ● LIVE
-                  </span>
+                  {isCartFromCache && (
+                    <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-amber-500/10 text-amber-400 border-amber-500/30">
+                      ● CACHED
+                    </span>
+                  )}
+                  {sessionStatus === 'active' && (
+                    <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+                      ● LIVE READY{typeof sessionDaysLeft === 'number' ? ` (${sessionDaysLeft}d left)` : ''}
+                    </span>
+                  )}
+                  {sessionStatus === 'restoring' && (
+                    <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-blue-500/10 text-blue-400 border-blue-500/30 flex items-center gap-1">
+                      <Loader2 size={10} className="animate-spin" /> RESTORING…
+                    </span>
+                  )}
+                  {sessionStatus === 'connection_issue' && (
+                    <button
+                      type="button"
+                      onClick={() => { checkSession(); fetchCart(true); }}
+                      className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 cursor-pointer flex items-center gap-1"
+                      title="Connection issue. Click to retry."
+                    >
+                      CONNECTION ISSUE ↺
+                    </button>
+                  )}
+                  {sessionStatus === 'expired' && (
+                    <button
+                      type="button"
+                      onClick={handleReconnect}
+                      className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer flex items-center gap-1"
+                      title="Session expired. Click to reconnect."
+                    >
+                      SESSION EXPIRED — RECONNECT
+                    </button>
+                  )}
+                  {sessionStatus === null && !isCartFromCache && (
+                    <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+                      ● LIVE
+                    </span>
+                  )}
                 </h3>
                 <p className="text-[10px] text-muted tracking-wider mt-1">
                   {lastFetched
@@ -5323,7 +5412,7 @@ export default function PharmarackCart() {
                     Fetching Live Cart…
                   </p>
                 </div>
-              ) : error ? (
+              ) : (error && distributors.length === 0) ? (
                 <div className="flex flex-col items-center justify-center h-full gap-4 max-w-md mx-auto text-center py-12">
                   <AlertCircle size={32} className="text-red/80" />
                   <div>
@@ -5372,6 +5461,20 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <>
+                  {error && (
+                    <div className="mx-6 mt-3 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-xs text-amber-400">
+                      <span className="flex items-center gap-2">
+                        <AlertTriangle size={14} className="shrink-0" />
+                        Showing cached cart. Live refresh failed: {error}
+                      </span>
+                      <button
+                        onClick={() => fetchCart(true)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 font-bold transition-all cursor-pointer"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
                   {/* ── Sticky Sub-Filter Toggle Bar (Unsent Cart Orders / Sent Orders / All / Failed / Missing Phone) ── */}
                   <div className="sticky top-0 z-10 bg-bg/40 px-6 py-3 border-b border-glass-border/30 shrink-0 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-1.5 bg-bg3/30 p-1 rounded-xl border border-glass-border/30 text-xs font-bold select-none overflow-x-auto">

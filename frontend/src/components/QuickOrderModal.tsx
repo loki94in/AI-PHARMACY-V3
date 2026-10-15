@@ -24,7 +24,9 @@ import {
   Package,
   Clock,
   MessageCircle,
-  RotateCcw
+  RotateCcw,
+  WifiOff,
+  RotateCw
 } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent, specialOrdersEvent } from '../services/events';
@@ -385,7 +387,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   
   const [isSubmitting] = useState(false);
   const [prMode, setPrMode] = useState<'Live' | 'Unknown'>('Live');
-  type SessionState = 'active' | 'restoring' | 'disconnected';
+  type SessionState = 'active' | 'restoring' | 'expired' | 'connection_issue';
   const [sessionStatus, setSessionStatus] = useState<SessionState>('active');
   const [sessionDaysLeft, setSessionDaysLeft] = useState<number | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -535,7 +537,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const checkSession = useCallback(async () => {
     try {
       const data = await api.checkPharmarackSession();
-      setPrMode(data.mode || 'Live');
+      setPrMode(data.mode === 'Unknown' ? 'Unknown' : 'Live');
       if (typeof data.daysLeft === 'number') {
         setSessionDaysLeft(data.daysLeft);
       }
@@ -543,12 +545,14 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
         setSessionStatus('active');
       } else if (data.isRefreshing) {
         setSessionStatus('restoring');
+      } else if (data.reason === 'NETWORK_ERROR' || data.reason === 'SERVER_ERROR') {
+        setSessionStatus('connection_issue');
       } else {
-        setSessionStatus('disconnected');
+        setSessionStatus('expired');
       }
     } catch {
       setPrMode('Live');
-      setSessionStatus('disconnected');
+      setSessionStatus('connection_issue');
     }
   }, []);
 
@@ -635,8 +639,10 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
       setSearchLoading(true);
       try {
         const prData = await api.searchPharmarack(query).catch((err: LocalApiError) => {
+          const code = (err as any)?.response?.data?.code;
+          const isRefreshing = Boolean((err as any)?.response?.data?.isRefreshing);
           const errMsg = err?.response?.data?.error || 'Connection error, please check internet or reconnect';
-          return { isError: true, message: errMsg };
+          return { isError: true, code, isRefreshing, message: errMsg };
         });
 
         if (!active || isSelectingRef.current) return;
@@ -746,8 +752,14 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
         if (isSelectingRef.current) return;
         if (prSuggestions.length > 0 && !prSuggestions[0].isErrorMessage) {
           setSessionStatus('active');
-        } else if (prSuggestions.length > 0 && prSuggestions[0].isErrorMessage) {
-          setSessionStatus('disconnected');
+        } else if (prData && (prData as any).isError) {
+          if ((prData as any).isRefreshing) {
+            setSessionStatus('restoring');
+          } else if ((prData as any).code === 'NEED_LOGIN') {
+            setSessionStatus('expired');
+          } else {
+            setSessionStatus('connection_issue');
+          }
         }
         setSuggestions(prSuggestions);
         setShowSuggestions(true);
@@ -1021,10 +1033,10 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                   <Loader2 size={10} className="animate-spin text-amber-400" /> RESTORING SESSION…
                 </span>
               )}
-              {sessionStatus === 'disconnected' && (
+              {sessionStatus === 'expired' && (
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] font-extrabold px-2.5 py-0.5 rounded-full border leading-none bg-red-500/10 text-red border-red-500/30 flex items-center gap-1 shadow-sm">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red" /> OFFLINE
+                    <span className="w-1.5 h-1.5 rounded-full bg-red" /> SESSION EXPIRED
                   </span>
                   <button
                     type="button"
@@ -1034,6 +1046,21 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                     title="Open browser to reconnect Pharmarack"
                   >
                     {reconnecting ? <Loader2 size={9} className="animate-spin" /> : null} Reconnect
+                  </button>
+                </div>
+              )}
+              {sessionStatus === 'connection_issue' && (
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] font-extrabold px-2.5 py-0.5 rounded-full border leading-none bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center gap-1 shadow-sm">
+                    <WifiOff size={10} className="text-amber-400" /> CONNECTION ISSUE
+                  </span>
+                  <button
+                    type="button"
+                    onClick={checkSession}
+                    className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 font-bold transition-all flex items-center gap-1 cursor-pointer"
+                    title="Retry session connection check"
+                  >
+                    <RotateCw size={9} /> Retry
                   </button>
                 </div>
               )}

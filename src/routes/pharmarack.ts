@@ -238,49 +238,6 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
               });
             }
           }
-
-          // Fallback: If no purchase history found for this medicine, query medicines directly
-          if (results.length === 0) {
-            const baseMedicines = await db.all(`
-              SELECT 
-                m.id as medicineId,
-                m.name as medicineName,
-                COALESCE(m.packaging, m.pack_size, '') as packaging,
-                COALESCE(m.manufacturer, m.marketed_by, '') as company,
-                m.mrp as mrp,
-                (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock
-              FROM medicines m
-              WHERE (${likeClauses})
-              LIMIT 15
-            `, likeParams).catch(() => []);
-
-            const defaultDistributor = await db.get("SELECT id, name FROM distributors ORDER BY id ASC LIMIT 1").catch(() => null);
-
-            for (const bm of baseMedicines) {
-              const key = `${(bm.medicineName || '').toLowerCase()}|${defaultDistributor?.id || 1}|${bm.mrp}`;
-              if (!seenKeys.has(key)) {
-                seenKeys.add(key);
-                results.push({
-                  name: bm.medicineName,
-                  shortName: bm.medicineName,
-                  fullName: bm.medicineName,
-                  packaging: bm.packaging || '',
-                  distributor: defaultDistributor?.name || 'Local Pharmacy',
-                  rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
-                  mrp: bm.mrp ? Number(bm.mrp) : null,
-                  mapped: true,
-                  stock: 'Offline',
-                  scheme: '',
-                  productId: bm.medicineId || 1,
-                  productCode: String(bm.medicineId || ''),
-                  company: bm.company || '',
-                  storeId: defaultDistributor?.id || 1,
-                  isLocalPharmacy: true,
-                  isOffline: true
-                });
-              }
-            }
-          }
         }
       } catch (_) {}
     }
@@ -305,6 +262,33 @@ function sameProductName(a: unknown, b: unknown): boolean {
   return ta.length > 0 && ta === tb;
 }
 
+/**
+ * Strict search candidate filter (No-Fake-Data contract):
+ * - If query specifies a numeric strength (e.g. "TELMA 40", "DOLO 650", "PAN 40") or has >= 2 core tokens,
+ *   candidate core tokens MUST match query core tokens identically via sameProductName().
+ *   This ensures TELMA 40 never returns TELMA 40 H, TELMA PLUS, or TELMA 20.
+ * - If query is a single term without numeric strength (e.g. typing "telma" or "pan"),
+ *   candidate core tokens must contain the query token.
+ */
+function filterCandidateMedicines(query: string, items: any[]): any[] {
+  const queryTokens = Array.from(getCoreMedicineTokens(query));
+  if (queryTokens.length === 0) return items;
+
+  const hasNumericStrength = queryTokens.some(t => /^\d+(\.\d+)?$/.test(t));
+
+  return items.filter(item => {
+    const rawName = String(item.name || item.fullName || item.shortName || '');
+    if (!rawName.trim()) return false;
+
+    if (hasNumericStrength || queryTokens.length >= 2) {
+      return sameProductName(query, rawName);
+    }
+
+    const itemTokens = getCoreMedicineTokens(rawName);
+    return queryTokens.every(qt => itemTokens.has(qt));
+  });
+}
+
 let lastSearchOkAt = 0;
 
 export type PharmarackSearchOutcome =
@@ -325,9 +309,10 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     if (!token) {
       // Token missing: search offline catalog fallback or return need_login (no autonomous browser launch)
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline);
-        return { status: 'ok', items: offline };
+      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      if (filteredOffline.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, filteredOffline);
+        return { status: 'ok', items: filteredOffline };
       }
       if (settings['combine_pharmarack_pharmacy_search'] === 'true') {
         return { status: 'ok', items: [] };
@@ -370,9 +355,10 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     if (response && (response.status === 401 || response.status === 403)) {
       tokenRefreshScheduler.executeRefresh().catch(() => {});
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline);
-        return { status: 'ok', items: offline };
+      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      if (filteredOffline.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, filteredOffline);
+        return { status: 'ok', items: filteredOffline };
       }
       return { status: 'need_login', isRefreshing: true };
     }
@@ -419,7 +405,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     }
 
     if (data && Array.isArray(data.data) && data.data.length > 0) {
-      const results = data.data.map((p: any, idx: number) => {
+      const rawResults = data.data.map((p: any, idx: number) => {
         const rawName = p.ProductFullName || p.MasterProductName || p.BrandName || p.ProductName || '';
 
         return {
@@ -444,40 +430,43 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         };
       });
 
-      // Real similarity score against the typed query so the best actual
-      // match surfaces first (was: only a startsWith/alphabetical tiebreak,
-      // which left two "starts with" results ordered by name, not by how
-      // close a match they really are).
-      for (const r of results) {
-        (r as any).matchScore = scoreProductName(qRaw, String(r.name || ''));
-      }
-      results.sort((a: any, b: any) => {
-        // Prioritize mapped distributors first (a business preference, not a match-quality signal)
-        const aMapped = Boolean(a.mapped);
-        const bMapped = Boolean(b.mapped);
-        if (aMapped && !bMapped) return -1;
-        if (!aMapped && bMapped) return 1;
+      // Filter candidates through the No-Fake-Data core medicine tokens filter
+      const results = filterCandidateMedicines(qRaw, rawResults);
 
-        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
-        const nameA = String(a.name || '').toLowerCase();
-        const nameB = String(b.name || '').toLowerCase();
-        return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
-      });
+      if (results.length > 0) {
+        for (const r of results) {
+          (r as any).matchScore = scoreProductName(qRaw, String(r.name || ''));
+        }
+        results.sort((a: any, b: any) => {
+          // Prioritize mapped distributors first (a business preference, not a match-quality signal)
+          const aMapped = Boolean(a.mapped);
+          const bMapped = Boolean(b.mapped);
+          if (aMapped && !bMapped) return -1;
+          if (!aMapped && bMapped) return 1;
 
-      searchCache.set(qRaw, storeId, isMapped, results);
-      if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
-        searchCache.set(primaryKeyword, storeId, isMapped, results);
+          if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+          const nameA = String(a.name || '').toLowerCase();
+          const nameB = String(b.name || '').toLowerCase();
+          return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        searchCache.set(qRaw, storeId, isMapped, results);
+        if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
+          searchCache.set(primaryKeyword, storeId, isMapped, results);
+        }
+        return { status: 'ok', items: results };
       }
-      return { status: 'ok', items: results };
+      return { status: 'ok', items: [] };
     }
 
     // Fallback: If live OpenSearch returns 0 items, search local catalog cache
     const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-    if (offline.length > 0) {
-      for (const r of offline) {
+    const filteredOffline = filterCandidateMedicines(qRaw, offline);
+    if (filteredOffline.length > 0) {
+      for (const r of filteredOffline) {
         (r as any).matchScore = scoreProductName(qRaw, String((r as any).name || ''));
       }
-      offline.sort((a: any, b: any) => {
+      filteredOffline.sort((a: any, b: any) => {
         // Prioritize mapped distributors first (a business preference, not a match-quality signal)
         const aMapped = Boolean(a.mapped);
         const bMapped = Boolean(b.mapped);
@@ -489,9 +478,9 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         const nameB = String(b.name || '').toLowerCase();
         return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
       });
-      searchCache.set(qRaw, storeId, isMapped, offline);
+      searchCache.set(qRaw, storeId, isMapped, filteredOffline);
     }
-    return { status: 'ok', items: offline };
+    return { status: 'ok', items: filteredOffline };
 
   } catch (err: any) {
     console.error('Pharmarack direct live API search failed:', err.message);
@@ -499,9 +488,10 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     // Fallback: On network error or timeout, search local catalog cache before returning 503
     try {
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline);
-        return { status: 'ok', items: offline };
+      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      if (filteredOffline.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, filteredOffline);
+        return { status: 'ok', items: filteredOffline };
       }
     } catch (_) {}
 
@@ -3069,7 +3059,7 @@ router.get('/live-cart-summary', async (_req, res) => {
     let cartDistributors: any[] = [];
     if (token) {
       try {
-        const probe = await probeUserCartDetails(20000);
+        const probe = await probeUserCartDetails(6000);
 
         if (probe.ok) {
           const cartData: any = probe.data;
@@ -3239,21 +3229,31 @@ router.get('/live-cart-summary', async (_req, res) => {
       }
     }
 
+    // Parallelize resolving unmapped distributor phones
+    const unmappedDistributors = cartDistributors.filter(dist => {
+      const sLower = String(dist.storeName || '').toLowerCase().trim();
+      const mappedPhone = phoneMap.get(sLower);
+      return (!mappedPhone || mappedPhone.length !== 10) && dist.storeName;
+    });
+
+    if (unmappedDistributors.length > 0) {
+      await Promise.all(
+        unmappedDistributors.map(async (dist) => {
+          const sLower = String(dist.storeName || '').toLowerCase().trim();
+          try {
+            const resolved = await resolveDistributorContact(db, dist.storeName);
+            if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
+              phoneMap.set(sLower, resolved.distributor_phone);
+            }
+          } catch (_) {}
+        })
+      );
+    }
+
     let missingDistributorsCount = 0;
     for (const dist of cartDistributors) {
       const sLower = String(dist.storeName || '').toLowerCase().trim();
-      let mappedPhone = phoneMap.get(sLower) || '';
-
-      if ((!mappedPhone || mappedPhone.length !== 10) && dist.storeName) {
-        try {
-          const resolved = await resolveDistributorContact(db, dist.storeName);
-          if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
-            mappedPhone = resolved.distributor_phone;
-            phoneMap.set(sLower, mappedPhone);
-          }
-        } catch (_) {}
-      }
-
+      const mappedPhone = phoneMap.get(sLower) || '';
       dist.phone = mappedPhone;
       const cleanP = mappedPhone.replace(/\D/g, '').slice(-10);
       if (!cleanP || cleanP.length !== 10) {

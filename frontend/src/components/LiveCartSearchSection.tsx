@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Loader2, Zap, Tag, Sparkles, Store, ShoppingCart, WifiOff, Package } from 'lucide-react';
+import { Search, Loader2, Zap, Tag, Sparkles, Store, ShoppingCart, WifiOff, Package, AlertTriangle } from 'lucide-react';
 import { api } from '../services/api';
 import { loadDistributorPriority, priorityRankOf } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
@@ -58,7 +58,7 @@ export interface LiveCartSearchSectionProps {
   /** Bump to empty the search box (after an add / cancelled selection). 0 = never cleared. */
   clearToken?: number;
   qty: number;
-  sessionStatus: 'active' | 'restoring' | 'disconnected';
+  sessionStatus: 'active' | 'restoring' | 'disconnected' | 'expired' | 'connection_issue';
   cartDistributors: Array<{
     storeId: number;
     storeName: string;
@@ -140,6 +140,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchStatusBanner, setSearchStatusBanner] = useState<{ isRefreshing: boolean; message: string } | null>(null);
 
   const localInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || localInputRef;
@@ -218,6 +219,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
     if (cleanQuery.length < 3) {
       setSuggestions([]);
       setShowSuggestions(false);
+      setSearchStatusBanner(null);
       return;
     }
 
@@ -377,14 +379,15 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
               return 0;
             });
           }
+          setSearchStatusBanner(null);
         } else if (prData && (prData as LocalPrSearchFallback).isError) {
           const fallback = prData as LocalPrSearchFallback;
-          mergedList.push({
-            medicine_name: fallback.isRefreshing ? `🔄 ${fallback.message}` : `⚠️ ${fallback.message}`,
-            isPharmarack: true,
-            isErrorMessage: true
+          setSearchStatusBanner({
+            isRefreshing: Boolean(fallback.isRefreshing),
+            message: fallback.message
           });
         } else {
+          setSearchStatusBanner(null);
           if (cleanQuery.length >= 3 && cleanQuery !== lastToastedQueryRef.current) {
             toastEvent.trigger('No mapped distributor has product', 'info');
             lastToastedQueryRef.current = cleanQuery;
@@ -492,7 +495,22 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
         />
       </div>
 
-      {sessionStatus === 'restoring' && !showSuggestions && (
+      {searchStatusBanner && (
+        <div className={`mt-2 p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 animate-in fade-in select-none ${
+          searchStatusBanner.isRefreshing
+            ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+            : 'bg-red-500/10 border-red-500/30 text-red'
+        }`}>
+          {searchStatusBanner.isRefreshing ? (
+            <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
+          ) : (
+            <AlertTriangle size={13} className="text-red shrink-0" />
+          )}
+          <span>{searchStatusBanner.message}</span>
+        </div>
+      )}
+
+      {!searchStatusBanner && sessionStatus === 'restoring' && !showSuggestions && (
         <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl animate-in fade-in">
           <Loader2 size={12} className="animate-spin shrink-0 text-amber-400" />
           <span>Reconnecting live Pharmarack session in background… suggestions will appear automatically once ready.</span>

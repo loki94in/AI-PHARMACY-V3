@@ -584,6 +584,69 @@ export default function CustomerPortal() {
     setSelectedItems({});
   };
 
+  const handleSelectAllRefills = () => {
+    setSelectedItems(prev => {
+      const next = { ...prev };
+      refills.forEach(r => {
+        next[r.medicine_name] = {
+          product: r.medicine_name,
+          qty: next[r.medicine_name]?.qty || r.quantity_needed || 1,
+          price: r.sell_price || r.mrp || 0,
+          itemType: 'refill'
+        };
+      });
+      return next;
+    });
+  };
+
+  const handleClearRefills = () => {
+    setSelectedItems(prev => {
+      const next = { ...prev };
+      refills.forEach(r => {
+        delete next[r.medicine_name];
+      });
+      return next;
+    });
+  };
+
+  const getActiveOrderForMedicine = (medName: string) => {
+    if (!customerOrders || customerOrders.length === 0 || !medName) return null;
+    const lower = medName.toLowerCase().trim();
+    return customerOrders.find(ord => {
+      const st = (ord.status || '').toLowerCase();
+      const isActiveStatus = ['pending', 'confirmed', 'ready', 'order_ready_for_pickup', 'pending_verification', 'scheduled'].includes(st);
+      if (!isActiveStatus) return false;
+      if ((ord.product || '').toLowerCase().trim() === lower) return true;
+      if (ord.items?.some((it: any) => (it.product_name || it.product || '').toLowerCase().trim() === lower)) return true;
+      return false;
+    });
+  };
+
+  const handleReorderOnlineOrder = (order: any) => {
+    const itemsToAdd = (order.items && order.items.length > 0)
+      ? order.items
+      : [{ product_name: order.product, requested_qty: order.qty || 1, mrp: order.total_amount ? (order.total_amount / (order.qty || 1)) : 0 }];
+
+    setSelectedItems(prev => {
+      const next = { ...prev };
+      itemsToAdd.forEach((it: any) => {
+        const name = (it.product_name || it.product || '').trim();
+        if (!name) return;
+        const qty = Number(it.requested_qty || it.qty) || 1;
+        const price = Number(it.confirmed_price || it.mrp || 0);
+        next[name] = {
+          product: name,
+          qty,
+          price,
+          itemType: 'special_order'
+        };
+      });
+      return next;
+    });
+
+    setIsCartModalOpen(true);
+  };
+
   // ─── Submit Refill Order ───────────────────────────────────────────────────
 
   const [orderError, setOrderError] = useState('');
@@ -1581,6 +1644,16 @@ export default function CustomerPortal() {
                                   </span>
                                 )}
 
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderOnlineOrder(order)}
+                                  className="px-2.5 py-1.5 bg-bg2 hover:bg-bg border border-border hover:border-primary/50 text-text rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+                                  title="Add items from this order into your current booking cart"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-primary" />
+                                  <span>Reorder Items</span>
+                                </button>
+
                                 {isUnpaid && (
                                   <button
                                     type="button"
@@ -1602,14 +1675,32 @@ export default function CustomerPortal() {
 
                 {/* Section 1: Active Refills */}
                 <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
                       <h3 className="text-base font-bold text-text">Your Regular Prescriptions</h3>
                       <p className="text-xs text-muted">Select medicines and adjust quantities for your refill</p>
                     </div>
-                    <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
-                      {refills.length} Regular Items
-                    </span>
+                    {refills.length > 0 && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
+                          {refills.filter(r => Boolean(selectedItems[r.medicine_name])).length} of {refills.length} selected
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleSelectAllRefills}
+                          className="px-2.5 py-1 text-xs font-semibold bg-bg border border-border rounded-lg text-text hover:border-primary/50 transition-colors cursor-pointer"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearRefills}
+                          className="px-2.5 py-1 text-xs font-semibold bg-bg border border-border rounded-lg text-muted hover:text-red-400 hover:border-red-400/50 transition-colors cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {loadingData ? (
@@ -1627,6 +1718,7 @@ export default function CustomerPortal() {
                         const isSelected = Boolean(selectedItems[r.medicine_name]);
                         const currentQty = selectedItems[r.medicine_name]?.qty || r.quantity_needed || 1;
                         const price = r.sell_price || r.mrp || 0;
+                        const activeOrder = getActiveOrderForMedicine(r.medicine_name);
 
                         return (
                           <div
@@ -1642,11 +1734,17 @@ export default function CustomerPortal() {
                                 {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                               </div>
                               <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm font-bold text-text block leading-snug">{r.medicine_name}</span>
                                   {r.status === 'paused' && (
                                     <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 font-bold">
                                       Paused
+                                    </span>
+                                  )}
+                                  {activeOrder && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/30 font-semibold flex items-center gap-1">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      <span>Active Order #{activeOrder.id} ({activeOrder.status === 'ORDER_READY_FOR_PICKUP' ? 'Ready for Pickup' : (activeOrder.status || 'Pending')})</span>
                                     </span>
                                   )}
                                 </div>
@@ -1729,11 +1827,20 @@ export default function CustomerPortal() {
                                 {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                               </div>
                               <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm font-bold text-text block leading-snug">{so.medicine_name}</span>
                                   <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 font-bold">
                                     Special Request
                                   </span>
+                                  {(() => {
+                                    const activeOrder = getActiveOrderForMedicine(so.medicine_name);
+                                    return activeOrder ? (
+                                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/30 font-semibold flex items-center gap-1">
+                                        <Clock className="w-2.5 h-2.5" />
+                                        <span>Active Order #{activeOrder.id}</span>
+                                      </span>
+                                    ) : null;
+                                  })()}
                                 </div>
                                 <span className="text-xs text-muted">
                                   Qty: {so.qty || 1} • {price > 0 ? `₹${price.toFixed(2)}` : 'MRP on arrival'}
@@ -2109,7 +2216,7 @@ export default function CustomerPortal() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-muted uppercase tracking-wider block">
-                  Selected Medicines ({selectedList.length})
+                  Selected Medicines ({selectedList.length} items • {selectedList.reduce((sum, item) => sum + item.qty, 0)} units)
                 </span>
                 {selectedList.length > 0 && (
                   <button

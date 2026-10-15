@@ -423,11 +423,23 @@ export class TokenRefreshScheduler {
             // (ONE read-only request, throttled to 5 min, never blocks the heartbeat).
             import('./pharmarackOrderSyncService.js').then(m => m.syncPharmarackOrders()).catch(() => {});
           } else if (res.status === 401 || res.status === 403) {
-            console.log('[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Standing by for manual user re-auth.');
-            errorMsg = `Session expired (HTTP ${res.status})`;
-            try {
-              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
-            } catch (_) {}
+            console.log(`[TokenRefreshScheduler] Heartbeat got HTTP ${res.status}: session stale/expired. Attempting single-flight session restore...`);
+            const refreshedToken = await this.executeRefresh().catch(() => null);
+            if (refreshedToken) {
+              console.log('[TokenRefreshScheduler] Heartbeat successfully restored session via executeRefresh.');
+              ok = true;
+              this.lastError = null;
+              try {
+                await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+              } catch (_) {}
+              import('./pharmarackOrderSyncService.js').then(m => m.syncPharmarackOrders()).catch(() => {});
+            } else {
+              console.log('[TokenRefreshScheduler] Single-flight restore failed or profile expired. Standing by for manual user re-auth.');
+              errorMsg = `Session expired (HTTP ${res.status})`;
+              try {
+                await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+              } catch (_) {}
+            }
           } else {
             errorMsg = `Heartbeat HTTP ${res.status}`;
           }

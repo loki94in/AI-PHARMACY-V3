@@ -1128,6 +1128,16 @@ export interface TunnelStatusResponse {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface PharmarackSessionStatusResponse {
+  healthy: boolean;
+  mode: string;
+  isRefreshing?: boolean;
+  daysLeft?: number | null;
+  expiresAt?: string | null;
+  reason?: 'EXPIRED' | 'NO_TOKEN' | 'SERVER_ERROR' | 'NETWORK_ERROR' | string;
+  message?: string;
+}
+
 // API methods mapping
 let lastKnownPharmarackHealthy: boolean | null = null;
 export const api = {
@@ -1486,7 +1496,7 @@ export const api = {
     apiClient.post('/pharmarack/cart/notify-manual', data).then(res => res.data),
   getPharmarackDistributors: () => apiClient.get('/pharmarack/distributors').then(res => res.data),
   getPharmarackDistributorMappings: () => apiClient.get<{ success: boolean; mappings: { store_name: string; distributor_id: number; phone?: string; distributor_name?: string }[] }>('/pharmarack/distributor-mappings').then(res => res.data),
-  checkPharmarackSession: () => apiClient.get('/pharmarack/session-status').then(res => {
+  checkPharmarackSession: () => apiClient.get<PharmarackSessionStatusResponse>('/pharmarack/session-status').then(res => {
     const isHealthy = Boolean(res.data?.healthy);
     if (lastKnownPharmarackHealthy !== null && lastKnownPharmarackHealthy !== isHealthy) {
       window.dispatchEvent(new CustomEvent('pharmarack-auth-changed'));

@@ -115,6 +115,7 @@ export interface SpecialOrder {
   auto_remind?: number;
   last_collection_reminder_at?: string | null;
   collection_reminder_count?: number;
+  source_refill_id?: number | null;
 }
 
 export interface Refill {

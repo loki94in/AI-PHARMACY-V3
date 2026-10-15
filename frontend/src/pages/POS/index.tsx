@@ -1461,6 +1461,8 @@ const POS = () => {
       // ponytail: capture refillIds so we can fulfill after successful bill save
       if (Array.isArray(prefill.refillIds) && prefill.refillIds.length > 0) {
         pendingRefillIdsRef.current = prefill.refillIds.map(Number).filter(Boolean);
+      } else if (refillId) {
+        pendingRefillIdsRef.current = [Number(refillId)];
       }
       if (prefill.onlineOrderId || prefill.orderId) {
         pendingOnlineOrderIdRef.current = Number(prefill.onlineOrderId || prefill.orderId);
@@ -1489,10 +1491,12 @@ const POS = () => {
       if (doctorName || docName) {
         setDoctor(doctorName || docName || '');
       }
-      if (refillPatient || refillId) {
+      if (refillPatient || refillId || (Array.isArray(prefill.refillIds) && prefill.refillIds.length > 0)) {
         setRefillEnabled(true);
         if (refillId) setActiveRefillId(Number(refillId));
         if (rDays) setRefillDays(Number(rDays));
+        setMatchedRefill(null);
+        setDismissedRefillId(Number(refillId || (Array.isArray(prefill.refillIds) && prefill.refillIds[0]) || 999999));
       }
       if (advancePayment && Number(advancePayment) > 0) {
         setDiscount((prev: number) => prev + Number(advancePayment));
@@ -2298,6 +2302,12 @@ const POS = () => {
       return;
     }
 
+    // Suppress refill match prompt if POS is already loaded with / linked to refills for this customer
+    if (pendingRefillIdsRef.current.length > 0) {
+      setMatchedRefill(null);
+      return;
+    }
+
     const cleanPName = patientName.trim();
     const cleanPPhone = patientPhone.trim();
     if (cleanPName.length < 2 && cleanPPhone.length < 5) {
@@ -2308,6 +2318,11 @@ const POS = () => {
     const refillDigits = cleanPPhone.replace(/\D/g, '');
     const delayCheck = setTimeout(async () => {
       try {
+        if (pendingRefillIdsRef.current.length > 0) {
+          setMatchedRefill(null);
+          return;
+        }
+
         // 1. Check patient previous sales & refills
         const res = await api.getPatientRefillMedicines({
           customerId: selectedCustomerIdRef.current || undefined,
@@ -2319,8 +2334,17 @@ const POS = () => {
         const hasPastPurchases = Boolean((res?.past_purchase_count && res.past_purchase_count > 0) || (Array.isArray(res?.medicines) && res.medicines.some((m: any) => m.source === 'sales_history')));
 
         if (res && res.success && Array.isArray(res.medicines) && res.medicines.length > 0 && (hasScheduledRefill || hasPastPurchases)) {
+          // If items from the refill are already present in POS cart, do not prompt again
+          const cartMedIds = new Set(cart.map(r => r.medicine_id).filter(Boolean));
+          const allAlreadyInCart = res.medicines.length > 0 && res.medicines.every((m: any) => m.medicine_id && cartMedIds.has(m.medicine_id));
+          if (allAlreadyInCart) {
+            setMatchedRefill(null);
+            return;
+          }
+
           const firstMedId = res.medicines[0].refill_id || res.medicines[0].medicine_id;
-          if (firstMedId !== dismissedRefillId) {
+          const isPending = res.medicines[0].refill_id && pendingRefillIdsRef.current.includes(Number(res.medicines[0].refill_id));
+          if (firstMedId !== dismissedRefillId && !isPending) {
             setMatchedRefill({
               id: firstMedId,
               patient_name: res.customer?.name || cleanPName,
@@ -2349,7 +2373,8 @@ const POS = () => {
             : undefined);
         if (match && match.medicines && match.medicines.length > 0) {
           const med = match.medicines.find(m => m.is_ready === 1 || m.stock_verified_override === 1) || match.medicines[0];
-          if (med && med.id !== dismissedRefillId) {
+          const isPending = med && pendingRefillIdsRef.current.includes(Number(med.id));
+          if (med && med.id !== dismissedRefillId && !isPending) {
             setMatchedRefill({
               id: med.id,
               patient_name: match.patient_name,

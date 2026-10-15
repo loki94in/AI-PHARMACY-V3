@@ -1796,14 +1796,184 @@ function closeAppBrowser() {
     }
   }
 }
-var import_fs4, import_path4, import_child_process, PROFILE_SKIP_NAMES, activeAppBrowserProcess, activeBrowserPid;
+async function killOrphanChromeProcesses(keyword = "pharmarack_profile") {
+  if (process.platform !== "win32") return;
+  try {
+    const resolvedPath = import_path4.default.isAbsolute(keyword) ? keyword : import_path4.default.join(getAppDataDir(), "data", keyword);
+    const filterPattern = resolvedPath.replace(/\\/g, "%").replace(/\//g, "%");
+    const execResult = await execAsync(
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe') and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
+      { timeout: 4e3 }
+    ).catch(async () => {
+      return await execAsync(
+        `wmic process where "(name='chrome.exe' or name='msedge.exe') and CommandLine like '%${filterPattern}%'" get ProcessId`,
+        { timeout: 3e3 }
+      ).catch(() => ({ stdout: "" }));
+    });
+    const stdout = execResult.stdout || "";
+    const pids = stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.toLowerCase().includes("processid")).map((pid) => parseInt(pid, 10)).filter((pid) => !isNaN(pid) && pid > 0);
+    for (const pid of pids) {
+      console.log(`[ProcessGuardian] Killing lock-holding Chrome process: ${pid}`);
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (_) {
+        try {
+          await execAsync(`taskkill /F /PID ${pid}`);
+        } catch (_2) {
+        }
+      }
+    }
+    if (pids.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1e3));
+    }
+  } catch (err) {
+    console.error(`[ProcessGuardian] Failed to kill lock-holding Chrome processes for ${keyword}:`, err.message);
+  }
+}
+function cleanTempProfileFolders() {
+  try {
+    const dataDir = import_path4.default.resolve(getAppDataDir(), "data");
+    if (!import_fs4.default.existsSync(dataDir)) return;
+    const entries = import_fs4.default.readdirSync(dataDir);
+    for (const entry of entries) {
+      if (entry.startsWith("pharmarack_profile_temp_")) {
+        const fullPath = import_path4.default.join(dataDir, entry);
+        try {
+          import_fs4.default.rmSync(fullPath, { recursive: true, force: true });
+          console.log(`[ChromeBrowser] Removed orphaned temp profile folder: ${entry}`);
+        } catch (_) {
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[ChromeBrowser] Error cleaning temp profile folders:", err.message);
+  }
+}
+function cleanProfileLockFiles(profilePath) {
+  if (!import_fs4.default.existsSync(profilePath)) return;
+  const lockFiles = [
+    "SingletonLock",
+    "lockfile",
+    "parent.lock",
+    "Singleton Cookie",
+    "Singleton Socket",
+    "Singleton Preference",
+    "devtoolsactiveport"
+  ];
+  for (const file of lockFiles) {
+    const filePath = import_path4.default.join(profilePath, file);
+    if (import_fs4.default.existsSync(filePath)) {
+      try {
+        import_fs4.default.unlinkSync(filePath);
+        console.log(`[ChromeBrowser] Removed stale lock file: ${filePath}`);
+      } catch (err) {
+        console.warn(`[ChromeBrowser] Could not remove lock file ${filePath}: ${err.message}`);
+      }
+    }
+  }
+}
+function isShutdownInProgress() {
+  return shutdownInProgressFlag;
+}
+function markShutdownInProgress() {
+  shutdownInProgressFlag = true;
+}
+function trackHeadless(target, tag) {
+  const id = `hl_${Date.now()}_${nextHeadlessId++}`;
+  activeHeadlessRegistry.set(id, {
+    id,
+    tag,
+    target,
+    startedAt: Date.now()
+  });
+  return id;
+}
+function untrackHeadless(idOrTarget) {
+  if (typeof idOrTarget === "string") {
+    activeHeadlessRegistry.delete(idOrTarget);
+    return;
+  }
+  for (const [id, item] of activeHeadlessRegistry.entries()) {
+    if (item.target === idOrTarget) {
+      activeHeadlessRegistry.delete(id);
+      break;
+    }
+  }
+}
+async function closeAllHeadlessBrowsers() {
+  markShutdownInProgress();
+  const entries = Array.from(activeHeadlessRegistry.values());
+  activeHeadlessRegistry.clear();
+  if (entries.length > 0) {
+    console.log(`[ChromeBrowser] Closing ${entries.length} tracked headless browser session(s)...`);
+  }
+  await Promise.allSettled(
+    entries.map(async (entry) => {
+      try {
+        const target = entry.target;
+        if (!target) return;
+        if (typeof target.close === "function") {
+          console.log(`[ChromeBrowser] Closing tracked headless browser (${entry.tag})...`);
+          await Promise.race([
+            target.close().catch(() => {
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Browser.close() timed out")), 1500))
+          ]).catch((err) => {
+            console.warn(`[ChromeBrowser] Headless browser close notice (${entry.tag}): ${err.message}`);
+          });
+          return;
+        }
+        if (typeof target.kill === "function") {
+          console.log(`[ChromeBrowser] Terminating tracked child process (${entry.tag}, PID: ${target.pid})...`);
+          try {
+            if (process.platform === "win32" && target.pid) {
+              (0, import_child_process.execSync)(`taskkill /pid ${target.pid} /t /f`, { stdio: "ignore" });
+            } else {
+              target.kill("SIGTERM");
+            }
+          } catch (_) {
+          }
+          return;
+        }
+        if (typeof target === "number" && target > 0) {
+          try {
+            if (process.platform === "win32") {
+              (0, import_child_process.execSync)(`taskkill /pid ${target} /t /f`, { stdio: "ignore" });
+            } else {
+              process.kill(target, "SIGTERM");
+            }
+          } catch (_) {
+          }
+        }
+      } catch (err) {
+        console.warn(`[ChromeBrowser] Error closing tracked instance (${entry.tag}):`, err.message || err);
+      }
+    })
+  );
+  try {
+    await killOrphanChromeProcesses("pharmarack_profile");
+  } catch (_) {
+  }
+  try {
+    cleanTempProfileFolders();
+  } catch (_) {
+  }
+  try {
+    const mainProfilePath = import_path4.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+    cleanProfileLockFiles(mainProfilePath);
+  } catch (_) {
+  }
+}
+var import_fs4, import_path4, import_child_process, import_util, execAsync, PROFILE_SKIP_NAMES, activeAppBrowserProcess, activeBrowserPid, activeHeadlessRegistry, shutdownInProgressFlag, nextHeadlessId;
 var init_chromeBrowser = __esm({
   "src/utils/chromeBrowser.ts"() {
     "use strict";
     import_fs4 = __toESM(require("fs"), 1);
     import_path4 = __toESM(require("path"), 1);
     import_child_process = require("child_process");
+    import_util = require("util");
     init_config();
+    execAsync = (0, import_util.promisify)(import_child_process.exec);
     PROFILE_SKIP_NAMES = /* @__PURE__ */ new Set([
       "cache",
       "code cache",
@@ -1823,6 +1993,9 @@ var init_chromeBrowser = __esm({
     ]);
     activeAppBrowserProcess = null;
     activeBrowserPid = null;
+    activeHeadlessRegistry = /* @__PURE__ */ new Map();
+    shutdownInProgressFlag = false;
+    nextHeadlessId = 1;
   }
 });
 
@@ -13389,6 +13562,37 @@ var init_searchCache = __esm({
         const entry = this.cache.get(this.getCacheKey(q, storeId, isMapped));
         if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) return null;
         return { items: entry.data, stale: Date.now() - entry.timestamp >= this.CACHE_TTL };
+      }
+      /**
+       * Fast prefix/family match for instant local paint while typing
+       * (e.g. user typed "dolo 650", we have "dolo" cached; or user typed "dolo 6", we have "dolo 650").
+       */
+      findPrefixMatch(query, storeId, isMapped) {
+        const q = query.toLowerCase().trim();
+        if (q.length < 3) return null;
+        this.cleanup();
+        const suffix = this.getCacheKeySuffix(storeId, isMapped);
+        for (let len = q.length - 1; len >= 3; len--) {
+          const sub = q.substring(0, len);
+          const entry = this.cache.get(sub + suffix);
+          if (entry && Array.isArray(entry.data) && entry.data.length > 0) {
+            const filtered = entry.data.filter((item) => {
+              const name = String(item.name || item.medicine_name || item.product_name || item.shortName || "").toLowerCase();
+              return name.includes(q);
+            });
+            if (filtered.length > 0) {
+              return { items: filtered, stale: true };
+            }
+          }
+        }
+        for (const [key, entry] of this.cache.entries()) {
+          if (!key.endsWith(suffix)) continue;
+          const keyQuery = key.slice(0, key.length - suffix.length);
+          if (keyQuery.startsWith(q) && Array.isArray(entry.data) && entry.data.length > 0) {
+            return { items: entry.data, stale: true };
+          }
+        }
+        return null;
       }
       set(query, storeId, isMapped, data) {
         const q = query.toLowerCase().trim();
@@ -29229,8 +29433,8 @@ var init_pharmarack = __esm({
     init_distributorDispatchReminderWorker();
     init_pharmarackCatalogCache();
     init_startupSyncCoordinator();
-    init_chromeBrowser();
     init_intentKeywords();
+    init_chromeBrowser();
     init_marketClosureService();
     init_phoneValidation();
     init_activityTracker();
@@ -29252,6 +29456,9 @@ var init_pharmarack = __esm({
           cachedHit = searchCache.lookup(coreTerm, storeId, isMapped);
         }
       }
+      if (!cachedHit) {
+        cachedHit = searchCache.findPrefixMatch(qRaw, storeId, isMapped);
+      }
       if (cachedHit) {
         if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
         return res.json(cachedHit.items);
@@ -29268,6 +29475,72 @@ var init_pharmarack = __esm({
         return res.status(503).json({ error: "Connection error, please check internet or reconnect", code: "CONNECTION_ERROR" });
       }
       return res.json(outcome.items);
+    });
+    router.get("/warmup-terms", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(`
+      SELECT DISTINCT TRIM(medicine_name) as term
+      FROM sale_items
+      WHERE medicine_name IS NOT NULL AND LENGTH(TRIM(medicine_name)) >= 3
+      GROUP BY TRIM(medicine_name)
+      ORDER BY COUNT(*) DESC
+      LIMIT 20
+    `);
+        const terms = rows.map((r) => r.term).filter(Boolean);
+        const fallbackTerms = [
+          "dolo 650",
+          "paracetamol",
+          "pan d",
+          "telma 40",
+          "azithromycin 500",
+          "amoxyclav 625",
+          "pantocid 40",
+          "montair lc",
+          "clavam 625",
+          "augmentin 625",
+          "glycomet 500",
+          "shelcal 500",
+          "becosules",
+          "atorvastatin 10",
+          "cetirizine 10",
+          "ondansetron 4",
+          "omeprazole 20",
+          "ciprofloxacin 500",
+          "metformin 500",
+          "rabeprazole 20"
+        ];
+        for (const fb of fallbackTerms) {
+          if (terms.length >= 20) break;
+          if (!terms.some((t) => t.toLowerCase() === fb.toLowerCase())) {
+            terms.push(fb);
+          }
+        }
+        res.json(terms);
+      } catch {
+        res.json([
+          "dolo 650",
+          "paracetamol",
+          "pan d",
+          "telma 40",
+          "azithromycin 500",
+          "amoxyclav 625",
+          "pantocid 40",
+          "montair lc",
+          "clavam 625",
+          "augmentin 625",
+          "glycomet 500",
+          "shelcal 500",
+          "becosules",
+          "atorvastatin 10",
+          "cetirizine 10",
+          "ondansetron 4",
+          "omeprazole 20",
+          "ciprofloxacin 500",
+          "metformin 500",
+          "rabeprazole 20"
+        ]);
+      }
     });
     router.get("/distributors", async (_req, res) => {
       try {
@@ -29385,6 +29658,9 @@ var init_pharmarack = __esm({
       });
     });
     router.post("/login-window", async (_req, res) => {
+      if (isShutdownInProgress()) {
+        return res.status(503).json({ error: "Application shutdown in progress" });
+      }
       const chromePath = findChromePath2();
       if (!chromePath) {
         return res.status(404).json({ error: "Google Chrome was not found on your system. Please install Google Chrome to use this feature." });
@@ -29417,6 +29693,7 @@ var init_pharmarack = __esm({
             "--mute-audio",
             "https://retailers.pharmarack.com/loginotp"
           ], { detached: false, stdio: "ignore", windowsHide: false });
+          const chromeTrackId = trackHeadless(chromeProc, "pharmarack_login_window");
           let pollTimer = null;
           let tokenCaptured = false;
           const saveTokenAndBroadcast = async (token, source) => {
@@ -29459,16 +29736,18 @@ var init_pharmarack = __esm({
             }
           }, 2e3);
           chromeProc.on("error", (e) => {
+            untrackHeadless(chromeTrackId);
             if (pollTimer) clearInterval(pollTimer);
             console.warn("[LoginWindow] Chrome spawn error:", e.message);
             tokenRefreshScheduler.isLoginWindowActive = false;
           });
           chromeProc.on("exit", async () => {
+            untrackHeadless(chromeTrackId);
             if (pollTimer) clearInterval(pollTimer);
             console.log("[LoginWindow] Chrome login window closed. Checking session token...");
             tokenRefreshScheduler.isLoginWindowActive = false;
             await new Promise((r) => setTimeout(r, 1200));
-            if (!tokenCaptured) {
+            if (!tokenCaptured && !isShutdownInProgress()) {
               let token = extractTokenFromProfile(mainProfilePath);
               if (token) {
                 await saveTokenAndBroadcast(token, "exit-scan");
@@ -44618,82 +44897,6 @@ __export(tokenRefreshScheduler_exports, {
   killOrphanChromeProcesses: () => killOrphanChromeProcesses,
   tokenRefreshScheduler: () => tokenRefreshScheduler
 });
-async function killOrphanChromeProcesses(keyword = "pharmarack_profile") {
-  if (process.platform !== "win32") return;
-  try {
-    const resolvedPath = import_path23.default.isAbsolute(keyword) ? keyword : import_path23.default.join(getAppDataDir(), "data", keyword);
-    const filterPattern = resolvedPath.replace(/\\/g, "%").replace(/\//g, "%");
-    const execResult = await execAsync(
-      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe') and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
-      { timeout: 4e3 }
-    ).catch(async () => {
-      return await execAsync(
-        `wmic process where "(name='chrome.exe' or name='msedge.exe') and CommandLine like '%${filterPattern}%'" get ProcessId`,
-        { timeout: 3e3 }
-      ).catch(() => ({ stdout: "" }));
-    });
-    const stdout = execResult.stdout || "";
-    const pids = stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.toLowerCase().includes("processid")).map((pid) => parseInt(pid, 10)).filter((pid) => !isNaN(pid) && pid > 0);
-    for (const pid of pids) {
-      console.log(`[ProcessGuardian] Killing lock-holding Chrome process: ${pid}`);
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch (_) {
-        try {
-          await execAsync(`taskkill /F /PID ${pid}`);
-        } catch (_2) {
-        }
-      }
-    }
-    if (pids.length > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1e3));
-    }
-  } catch (err) {
-    console.error(`[ProcessGuardian] Failed to kill lock-holding Chrome processes for ${keyword}:`, err.message);
-  }
-}
-function cleanTempProfileFolders() {
-  try {
-    const dataDir = import_path23.default.resolve(getAppDataDir(), "data");
-    if (!import_fs24.default.existsSync(dataDir)) return;
-    const entries = import_fs24.default.readdirSync(dataDir);
-    for (const entry of entries) {
-      if (entry.startsWith("pharmarack_profile_temp_")) {
-        const fullPath = import_path23.default.join(dataDir, entry);
-        try {
-          import_fs24.default.rmSync(fullPath, { recursive: true, force: true });
-          console.log(`[TokenRefreshScheduler] Removed orphaned temp profile folder: ${entry}`);
-        } catch (_) {
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[TokenRefreshScheduler] Error cleaning temp profile folders:", err.message);
-  }
-}
-function cleanProfileLockFiles(profilePath) {
-  if (!import_fs24.default.existsSync(profilePath)) return;
-  const lockFiles = [
-    "SingletonLock",
-    "lockfile",
-    "parent.lock",
-    "Singleton Cookie",
-    "Singleton Socket",
-    "Singleton Preference",
-    "devtoolsactiveport"
-  ];
-  for (const file of lockFiles) {
-    const filePath = import_path23.default.join(profilePath, file);
-    if (import_fs24.default.existsSync(filePath)) {
-      try {
-        import_fs24.default.unlinkSync(filePath);
-        console.log(`[TokenRefreshScheduler] Removed stale lock file: ${filePath}`);
-      } catch (err) {
-        console.warn(`[TokenRefreshScheduler] Could not remove lock file ${filePath}: ${err.message}`);
-      }
-    }
-  }
-}
 function extractTokenFromProfile(profilePath) {
   try {
     const levelDbDir = import_path23.default.resolve(profilePath, "Default", "Local Storage", "leveldb");
@@ -44734,19 +44937,16 @@ function extractTokenFromProfile(profilePath) {
     return null;
   }
 }
-var import_fs24, import_path23, import_child_process3, import_util, execAsync, TokenRefreshScheduler, tokenRefreshScheduler;
+var import_fs24, import_path23, TokenRefreshScheduler, tokenRefreshScheduler;
 var init_tokenRefreshScheduler = __esm({
   "src/services/tokenRefreshScheduler.ts"() {
     "use strict";
     import_fs24 = __toESM(require("fs"), 1);
     import_path23 = __toESM(require("path"), 1);
-    import_child_process3 = require("child_process");
-    import_util = require("util");
     init_lazyPuppeteer();
     init_connection();
     init_config();
     init_chromeBrowser();
-    execAsync = (0, import_util.promisify)(import_child_process3.exec);
     TokenRefreshScheduler = class _TokenRefreshScheduler {
       static instance;
       //   private _intervalId: NodeJS.Timeout | null = null;
@@ -44985,7 +45185,7 @@ var init_tokenRefreshScheduler = __esm({
        * Cost: ~1 small request per interval. Only mode='off' suppresses it.
        */
       async runSessionHeartbeat(trigger = "heartbeat") {
-        if (this.heartbeatInFlight || this.isLoginWindowActive) return false;
+        if (this.heartbeatInFlight || this.isLoginWindowActive || isShutdownInProgress()) return false;
         this.heartbeatInFlight = true;
         let ok = false;
         let errorMsg = null;
@@ -45092,6 +45292,7 @@ var init_tokenRefreshScheduler = __esm({
       /** Single-flight mutex: overlapping callers (cron, 401 retry, catalog cache)
        *  share ONE browser session restore instead of spawning concurrent Chromes. */
       executeRefresh() {
+        if (isShutdownInProgress()) return Promise.resolve(null);
         if (this.refreshPromise) return this.refreshPromise;
         this.refreshPromise = this.executeRefreshInternal().finally(() => {
           this.refreshPromise = null;
@@ -45099,6 +45300,7 @@ var init_tokenRefreshScheduler = __esm({
         return this.refreshPromise;
       }
       async executeRefreshInternal() {
+        if (isShutdownInProgress()) return null;
         const chromePath = findChromePath({ includeEdge: true });
         if (!chromePath) {
           console.error("[TokenRefreshScheduler] Chrome or Chromium browser path not found.");
@@ -45123,6 +45325,7 @@ var init_tokenRefreshScheduler = __esm({
           return directToken;
         }
         let browser;
+        let headlessTrackId = null;
         const holder = { token: null };
         let tempProfilePathToDelete = "";
         const puppeteer = await getPuppeteer();
@@ -45142,7 +45345,9 @@ var init_tokenRefreshScheduler = __esm({
                 "--window-position=-10000,-10000"
               ])
             });
+            headlessTrackId = trackHeadless(browser, "pharmarack_refresh_main");
           } catch (launchErr) {
+            if (isShutdownInProgress()) return null;
             console.log("[TokenRefreshScheduler] Main profile is locked. Copying to temp profile...", launchErr.message);
             const randomSuffix = Math.floor(Math.random() * 1e6);
             const tempProfilePath = import_path23.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
@@ -45158,6 +45363,7 @@ var init_tokenRefreshScheduler = __esm({
                 "--window-position=-10000,-10000"
               ])
             });
+            headlessTrackId = trackHeadless(browser, "pharmarack_refresh_temp");
             tempProfilePathToDelete = tempProfilePath;
           }
           const [page] = await browser.pages();
@@ -45226,6 +45432,9 @@ var init_tokenRefreshScheduler = __esm({
           this.lastError = err.message || "Background token refresh failed";
           return null;
         } finally {
+          if (headlessTrackId) {
+            untrackHeadless(headlessTrackId);
+          }
           if (browser) {
             try {
               await browser.close();
@@ -48350,13 +48559,13 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_fs25, import_path24, import_child_process4, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
+var import_fs25, import_path24, import_child_process3, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
     import_fs25 = __toESM(require("fs"), 1);
     import_path24 = __toESM(require("path"), 1);
-    import_child_process4 = require("child_process");
+    import_child_process3 = require("child_process");
     import_util2 = require("util");
     init_eventService();
     init_connection();
@@ -48365,7 +48574,7 @@ var init_whatsappClient = __esm({
     init_tokenRefreshScheduler();
     init_chromeBrowser();
     wwebjsPromise = null;
-    execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
+    execAsync2 = (0, import_util2.promisify)(import_child_process3.exec);
     UPLOADS_DIR = import_path24.default.resolve(getAppDataDir(), "uploads");
     WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path24.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path24.default.resolve(getAppDataDir(), ".wwebjs_auth");
     process.on("unhandledRejection", (reason) => {
@@ -57989,7 +58198,7 @@ function getMachineId() {
   }
   let winGuid = "";
   try {
-    const out = (0, import_child_process5.execSync)(
+    const out = (0, import_child_process4.execSync)(
       'reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
       { encoding: "utf8", timeout: 3e3 }
     );
@@ -58145,7 +58354,7 @@ async function activateLicense(licenseId, licenseKey) {
   const machineId = getMachineId();
   const machineName = (() => {
     try {
-      return (0, import_child_process5.execSync)("hostname", { encoding: "utf8", timeout: 2e3 }).trim();
+      return (0, import_child_process4.execSync)("hostname", { encoding: "utf8", timeout: 2e3 }).trim();
     } catch {
       return "Unknown PC";
     }
@@ -58230,14 +58439,14 @@ async function reportCrashTelemetry(errorData) {
   } catch {
   }
 }
-var import_crypto4, import_fs32, import_path31, import_child_process5, import_os, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
+var import_crypto4, import_fs32, import_path31, import_child_process4, import_os, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
 var init_licenseService = __esm({
   "src/services/licenseService.ts"() {
     "use strict";
     import_crypto4 = __toESM(require("crypto"), 1);
     import_fs32 = __toESM(require("fs"), 1);
     import_path31 = __toESM(require("path"), 1);
-    import_child_process5 = require("child_process");
+    import_child_process4 = require("child_process");
     import_os = require("os");
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
@@ -58251,7 +58460,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.94";
+    APP_VERSION = "0.1.95";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -61117,11 +61326,11 @@ __export(workerSupervisor_exports, {
   WorkerSupervisor: () => WorkerSupervisor,
   workerSupervisor: () => workerSupervisor
 });
-var import_child_process6, WorkerSupervisor, workerSupervisor;
+var import_child_process5, WorkerSupervisor, workerSupervisor;
 var init_workerSupervisor = __esm({
   "src/worker/workerSupervisor.ts"() {
     "use strict";
-    import_child_process6 = require("child_process");
+    import_child_process5 = require("child_process");
     init_config();
     init_activityTracker();
     WorkerSupervisor = class _WorkerSupervisor {
@@ -61176,7 +61385,7 @@ var init_workerSupervisor = __esm({
             config2.instance.removeAllListeners("exit");
             if (process.platform === "win32" && config2.instance.pid) {
               try {
-                (0, import_child_process6.execSync)(`taskkill /pid ${config2.instance.pid} /t /f`, { stdio: "ignore" });
+                (0, import_child_process5.execSync)(`taskkill /pid ${config2.instance.pid} /t /f`, { stdio: "ignore" });
               } catch (_) {
                 config2.instance.kill("SIGTERM");
               }
@@ -61210,7 +61419,7 @@ var init_workerSupervisor = __esm({
           return;
         }
         try {
-          const child = (0, import_child_process6.fork)(forkTarget, [], {
+          const child = (0, import_child_process5.fork)(forkTarget, [], {
             execArgv: [...process.execArgv],
             env: { ...process.env, IS_WORKER: "true", WORKER_ROLE: config2.role }
           });
@@ -61285,6 +61494,7 @@ __export(backupService_exports, {
   getPreupdateBackupsInfo: () => getPreupdateBackupsInfo,
   getScheduleConfig: () => getScheduleConfig,
   initBackupScheduler: () => initBackupScheduler,
+  invalidatePreupdateCache: () => invalidatePreupdateCache,
   listBackups: () => listBackups,
   restoreBackup: () => restoreBackup,
   setScheduleConfig: () => setScheduleConfig,
@@ -61339,6 +61549,7 @@ async function createBackup(reason = "Manual") {
   } catch (cloudErr) {
     console.warn("[Backup] Cloud sync hook warning (non-fatal):", cloudErr);
   }
+  invalidatePreupdateCache();
   return { filename };
 }
 async function uploadBackupFileToGoogleDrive(filename) {
@@ -61453,6 +61664,7 @@ function deleteBackup(filename) {
     throw new Error("Backup file not found");
   }
   import_fs36.default.unlinkSync(filePath);
+  invalidatePreupdateCache();
 }
 async function restoreBackup(filename) {
   const sanitized = import_path35.default.basename(filename);
@@ -61592,6 +61804,7 @@ async function restoreBackup(filename) {
     "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
     ["RESTORE_BACKUP", `Database restored from backup: ${sanitized}`]
   );
+  invalidatePreupdateCache();
 }
 async function getScheduleConfig() {
   try {
@@ -61720,7 +61933,15 @@ function getDirectorySize(dirPath) {
   }
   return total;
 }
-function getPreupdateBackupsInfo() {
+function invalidatePreupdateCache() {
+  cachedPreupdateInfo = null;
+  cachedPreupdateTimestamp = 0;
+}
+function getPreupdateBackupsInfo(force = false) {
+  const now = Date.now();
+  if (!force && cachedPreupdateInfo && now - cachedPreupdateTimestamp < PREUPDATE_CACHE_TTL_MS) {
+    return cachedPreupdateInfo;
+  }
   const folders = [];
   const searchDirs = /* @__PURE__ */ new Set();
   if (BACKUP_DIR2) searchDirs.add(BACKUP_DIR2);
@@ -61753,11 +61974,14 @@ function getPreupdateBackupsInfo() {
   }
   folders.sort((a, b) => b.name.localeCompare(a.name));
   const totalSizeBytes = folders.reduce((acc, f) => acc + f.sizeBytes, 0);
-  return {
+  const result = {
     count: folders.length,
     totalSizeBytes,
     folders
   };
+  cachedPreupdateInfo = result;
+  cachedPreupdateTimestamp = now;
+  return result;
 }
 async function cleanOldPreupdateBackups(keepCount = 2) {
   const info = getPreupdateBackupsInfo();
@@ -61783,6 +62007,7 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
     }
   }
   if (deletedCount > 0) {
+    invalidatePreupdateCache();
     try {
       const db2 = await dbManager.getConnection();
       await db2.run(
@@ -61798,7 +62023,7 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
     remainingCount: Math.min(info.folders.length - deletedCount, keepCount)
   };
 }
-var import_fs36, import_path35, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, DB_PATH2, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask, LEGACY_PREUPGRADE_DB_RE;
+var import_fs36, import_path35, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, DB_PATH2, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask, LEGACY_PREUPGRADE_DB_RE, cachedPreupdateInfo, cachedPreupdateTimestamp, PREUPDATE_CACHE_TTL_MS;
 var init_backupService = __esm({
   "src/services/backupService.ts"() {
     "use strict";
@@ -61829,6 +62054,9 @@ var init_backupService = __esm({
     ]);
     scheduledTask = null;
     LEGACY_PREUPGRADE_DB_RE = /^app-preupgrade-\d{4}-\d{2}-\d{2}-\d+\.db$/i;
+    cachedPreupdateInfo = null;
+    cachedPreupdateTimestamp = 0;
+    PREUPDATE_CACHE_TTL_MS = 6e4;
   }
 });
 
@@ -69193,9 +69421,32 @@ var init_migration = __esm({
 // src/routes/utilities.ts
 var utilities_exports = {};
 __export(utilities_exports, {
-  default: () => utilities_default
+  default: () => utilities_default,
+  invalidateBackupSizeCache: () => invalidateBackupSizeCache
 });
-var import_express8, import_path39, import_url5, import_fs41, import_pdfkit3, import_qrcode4, import_better_sqlite34, import_adm_zip3, __filename3, __dirname3, getDbPath4, router8, utilities_default;
+function invalidateBackupSizeCache() {
+  cachedBackupSizeTotal = null;
+  cachedBackupSizeTimestamp = 0;
+  invalidatePreupdateCache();
+}
+async function calculateFolderSizeAsync(dir) {
+  let size = 0;
+  try {
+    const entries = await import_fs41.default.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        try {
+          const stats = await import_fs41.default.promises.stat(import_path39.default.join(dir, entry.name));
+          size += stats.size;
+        } catch {
+        }
+      }
+    }
+  } catch {
+  }
+  return size;
+}
+var import_express8, import_path39, import_url5, import_fs41, import_pdfkit3, import_qrcode4, import_better_sqlite34, import_adm_zip3, __filename3, __dirname3, getDbPath4, router8, cachedBackupSizeTotal, cachedBackupSizeTimestamp, BACKUP_SIZE_CACHE_TTL_MS, utilities_default;
 var init_utilities = __esm({
   "src/routes/utilities.ts"() {
     "use strict";
@@ -69220,6 +69471,7 @@ var init_utilities = __esm({
     router8.post("/backup", async (_req, res) => {
       try {
         const result = await createBackup("Manual");
+        invalidateBackupSizeCache();
         res.json({ success: true, message: "Backup created successfully", backupFilename: result.filename });
       } catch (error) {
         console.error("Backup failed:", error);
@@ -69238,6 +69490,7 @@ var init_utilities = __esm({
     router8.delete("/backup/:filename", async (req, res) => {
       try {
         deleteBackup(req.params.filename);
+        invalidateBackupSizeCache();
         res.json({ success: true, message: "Backup deleted" });
       } catch (error) {
         console.error("Delete backup failed:", error);
@@ -69384,6 +69637,7 @@ var init_utilities = __esm({
           filename = backups[0].filename;
         }
         await restoreBackup(filename);
+        invalidateBackupSizeCache();
         res.json({ success: true, message: `Backup restored successfully from: ${filename}` });
       } catch (e) {
         console.error("Backup restore error:", e);
@@ -69397,12 +69651,16 @@ var init_utilities = __esm({
           return res.status(400).json({ error: "No backup files found to restore" });
         }
         await restoreBackup(backups[0].filename);
+        invalidateBackupSizeCache();
         res.json({ success: true, message: `Backup restored successfully from: ${backups[0].filename}` });
       } catch (e) {
         console.error("Restore error:", e);
         res.status(500).json({ error: "Failed to restore backup: " + e.message });
       }
     });
+    cachedBackupSizeTotal = null;
+    cachedBackupSizeTimestamp = 0;
+    BACKUP_SIZE_CACHE_TTL_MS = 6e4;
     router8.get("/backup/status", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
@@ -69446,27 +69704,24 @@ var init_utilities = __esm({
             lastUploadDate = lastArchive.date;
           }
         }
-        const BACKUP_DIR3 = config.backupDir;
-        const SNAPSHOTS_DIR2 = import_path39.default.join(BACKUP_DIR3, "snapshots");
-        const ARCHIVES_DIR2 = import_path39.default.join(BACKUP_DIR3, "archives");
         let totalSize = 0;
-        const calculateFolderSize = (dir) => {
-          if (import_fs41.default.existsSync(dir)) {
-            import_fs41.default.readdirSync(dir).forEach((f) => {
-              try {
-                const stats = import_fs41.default.statSync(import_path39.default.join(dir, f));
-                if (stats.isFile()) {
-                  totalSize += stats.size;
-                }
-              } catch {
-              }
-            });
-          }
-        };
-        calculateFolderSize(SNAPSHOTS_DIR2);
-        calculateFolderSize(ARCHIVES_DIR2);
+        const now = Date.now();
+        if (cachedBackupSizeTotal !== null && now - cachedBackupSizeTimestamp < BACKUP_SIZE_CACHE_TTL_MS) {
+          totalSize = cachedBackupSizeTotal;
+        } else {
+          const BACKUP_DIR3 = config.backupDir;
+          const SNAPSHOTS_DIR2 = import_path39.default.join(BACKUP_DIR3, "snapshots");
+          const ARCHIVES_DIR2 = import_path39.default.join(BACKUP_DIR3, "archives");
+          const [snapshotsSize, archivesSize] = await Promise.all([
+            calculateFolderSizeAsync(SNAPSHOTS_DIR2),
+            calculateFolderSizeAsync(ARCHIVES_DIR2)
+          ]);
+          const preupdateBackups2 = getPreupdateBackupsInfo();
+          totalSize = snapshotsSize + archivesSize + preupdateBackups2.totalSizeBytes;
+          cachedBackupSizeTotal = totalSize;
+          cachedBackupSizeTimestamp = now;
+        }
         const preupdateBackups = getPreupdateBackupsInfo();
-        totalSize += preupdateBackups.totalSizeBytes;
         const frequency = await getScheduleConfig();
         let nextScheduledBackup = "N/A";
         if (frequency !== "off" && !isPaused) {
@@ -69485,7 +69740,7 @@ var init_utilities = __esm({
         res.json({
           success: true,
           showRestorePopup: false,
-          availableArchives: archives,
+          availableArchives: archives.slice(0, 60),
           localBackupStatus: localEnabled ? isPaused ? "Paused" : "Enabled" : "Disabled",
           gdriveStatus: gdriveStatusLabel,
           hasGdriveAuth,
@@ -69506,8 +69761,7 @@ var init_utilities = __esm({
             local: "backup/archives",
             gdrive: hasGdriveAuth ? `Google Drive (${gdriveFolderName})` : "Not Connected",
             telegram: telegramEnabled ? "Telegram Bot Notifications" : "Not Configured"
-          },
-          isPaused
+          }
         });
       } catch (err) {
         console.error("[Backup] Status API failed:", err);
@@ -69518,6 +69772,7 @@ var init_utilities = __esm({
       try {
         const keepCount = typeof req.body?.keepCount === "number" ? Math.max(1, req.body.keepCount) : 2;
         const result = await cleanOldPreupdateBackups(keepCount);
+        invalidateBackupSizeCache();
         res.json({ success: true, ...result });
       } catch (error) {
         console.error("[Backup] Clean preupdate backups failed:", error);
@@ -69562,6 +69817,7 @@ var init_utilities = __esm({
       }
       try {
         await backupRecoveryService.restoreFromArchive(filename);
+        invalidateBackupSizeCache();
         res.json({ success: true, message: "Backup restored successfully" });
       } catch (err) {
         console.error("[Backup] Restore failed:", err);
@@ -69571,6 +69827,7 @@ var init_utilities = __esm({
     router8.delete("/backup/archive/:filename", async (req, res) => {
       try {
         await backupRecoveryService.deleteArchive(req.params.filename);
+        invalidateBackupSizeCache();
         res.json({ success: true, message: "Archive deleted successfully" });
       } catch (err) {
         res.status(500).json({ error: "Failed to delete archive: " + err.message });
@@ -69604,6 +69861,7 @@ var init_utilities = __esm({
           import_fs41.default.unlinkSync(tempDbPath);
           upload5 = await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
+          invalidateBackupSizeCache();
         }
         const message = upload5.gdrive === "failed" ? `Backup saved on this PC. Google Drive upload failed: ${upload5.gdriveError}` : upload5.gdrive === "uploaded" ? "Backup saved and uploaded to Google Drive" : "Backup saved on this PC";
         res.json({ success: true, message, archiveName, gdrive: upload5.gdrive, gdriveError: upload5.gdriveError });
@@ -81182,7 +81440,7 @@ function computeSha256(filePath) {
     stream.on("error", reject);
   });
 }
-var import_fs50, import_path46, import_os2, import_https, import_http, import_crypto7, import_child_process7, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+var import_fs50, import_path46, import_os2, import_https, import_http, import_crypto7, import_child_process6, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
 var init_autoUpdateService = __esm({
   "src/services/autoUpdateService.ts"() {
     "use strict";
@@ -81192,7 +81450,7 @@ var init_autoUpdateService = __esm({
     import_https = __toESM(require("https"), 1);
     import_http = __toESM(require("http"), 1);
     import_crypto7 = __toESM(require("crypto"), 1);
-    import_child_process7 = require("child_process");
+    import_child_process6 = require("child_process");
     init_connection();
     init_licenseService();
     init_eventService();
@@ -81389,7 +81647,7 @@ var init_autoUpdateService = __esm({
         console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
         console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
         console.log(`[AutoUpdate]   SHA-256  : ${sha256 || "(not provided)"}`);
-        const child = (0, import_child_process7.spawn)("cmd.exe", [
+        const child = (0, import_child_process6.spawn)("cmd.exe", [
           "/c",
           updaterPath,
           zipPath,
@@ -84510,11 +84768,11 @@ __export(cloudflareTunnelService_exports, {
   cloudflareTunnelService: () => cloudflareTunnelService,
   default: () => cloudflareTunnelService_default
 });
-var import_child_process8, import_http2, import_fs53, import_path48, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
+var import_child_process7, import_http2, import_fs53, import_path48, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
 var init_cloudflareTunnelService = __esm({
   "src/services/cloudflareTunnelService.ts"() {
     "use strict";
-    import_child_process8 = require("child_process");
+    import_child_process7 = require("child_process");
     import_http2 = __toESM(require("http"), 1);
     import_fs53 = __toESM(require("fs"), 1);
     import_path48 = __toESM(require("path"), 1);
@@ -84669,7 +84927,7 @@ var init_cloudflareTunnelService = __esm({
         const isWindows = process.platform === "win32";
         if (isWindows) {
           try {
-            (0, import_child_process8.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
+            (0, import_child_process7.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
           } catch (_) {
           }
         }
@@ -84677,7 +84935,7 @@ var init_cloudflareTunnelService = __esm({
         const spawnArgs = [...spawnArgsPrefix, ...args];
         console.log(`[CloudflareTunnel] Spawning cloudflared (${binary}) in ${this.currentMode} mode...`);
         try {
-          this.childProcess = (0, import_child_process8.spawn)(binary, spawnArgs, {
+          this.childProcess = (0, import_child_process7.spawn)(binary, spawnArgs, {
             stdio: ["ignore", "pipe", "pipe"],
             shell: useShell,
             detached: false
@@ -84738,7 +84996,7 @@ var init_cloudflareTunnelService = __esm({
           try {
             if (process.platform === "win32") {
               try {
-                (0, import_child_process8.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
+                (0, import_child_process7.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
               } catch (_) {
               }
             } else {
@@ -100321,6 +100579,7 @@ async function getOcrWorker() {
   return ocrWorkerPromise;
 }
 async function captureSerpPage(url, resultSelector) {
+  if (isShutdownInProgress()) throw new Error("SHUTDOWN_IN_PROGRESS");
   const chromePath = findChromePath({ includeEdge: true });
   if (!chromePath) throw new Error("NO_CHROME");
   const puppeteer = await getPuppeteer();
@@ -100335,6 +100594,7 @@ async function captureSerpPage(url, resultSelector) {
       "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ]
   });
+  const trackId = trackHeadless(browser, "schedule_research");
   try {
     const page = await browser.newPage();
     await page.setExtraHTTPHeaders({ "Accept-Language": "en-IN,en;q=0.9" });
@@ -100348,6 +100608,7 @@ async function captureSerpPage(url, resultSelector) {
     const png = await page.screenshot({ encoding: "binary", fullPage: true });
     return { png, blocked };
   } finally {
+    untrackHeadless(trackId);
     await browser.close().catch(() => {
     });
   }
@@ -105900,7 +106161,7 @@ function readAppVersion() {
 }
 function readBuildId() {
   try {
-    return (0, import_child_process9.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
+    return (0, import_child_process8.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
   } catch (_e) {
     return "unknown";
   }
@@ -105942,14 +106203,14 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs66, import_path59, import_url7, import_child_process9, __filename5, __dirname4;
+var import_fs66, import_path59, import_url7, import_child_process8, __filename5, __dirname4;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
     import_fs66 = __toESM(require("fs"), 1);
     import_path59 = __toESM(require("path"), 1);
     import_url7 = require("url");
-    import_child_process9 = require("child_process");
+    import_child_process8 = require("child_process");
     init_nameNormalizer();
     __filename5 = (0, import_url7.fileURLToPath)(import_meta_url);
     __dirname4 = import_path59.default.dirname(__filename5);
@@ -106472,7 +106733,7 @@ function extractMedicinesWithPython(messageText) {
     if (!import_fs67.default.existsSync(pythonExecutable) || !import_fs67.default.existsSync(scriptPath)) {
       return resolve([]);
     }
-    const pythonProcess = (0, import_child_process10.spawn)(pythonExecutable, [scriptPath, messageText]);
+    const pythonProcess = (0, import_child_process9.spawn)(pythonExecutable, [scriptPath, messageText]);
     let resultData = "";
     let errorData = "";
     let isSettled = false;
@@ -106585,6 +106846,7 @@ async function setupCrons(db2) {
 async function gracefulShutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
+  markShutdownInProgress();
   console.log(`[Shutdown] ${signal} received. Closing UI window immediately...`);
   const shutdownWatchdog = setTimeout(async () => {
     console.warn("[Shutdown] Hard watchdog expired (6s). Forcing immediate process termination.");
@@ -106683,6 +106945,16 @@ async function gracefulShutdown(signal) {
       } catch (err) {
         console.error("Error stopping cloudflare tunnel:", err);
       }
+    })(),
+    (async () => {
+      try {
+        await Promise.race([
+          closeAllHeadlessBrowsers(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Headless browsers close timed out")), 2e3))
+        ]);
+      } catch (hbErr) {
+        console.error("Error closing headless browsers:", hbErr);
+      }
     })()
   ]);
   try {
@@ -106708,7 +106980,7 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express60, import_compression, import_zlib5, import_cors, import_helmet, import_express_rate_limit, import_path60, import_child_process10, import_url8, import_fs67, import_axios5, __filename6, __dirname5, DB_PATH5, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express60, import_compression, import_zlib5, import_cors, import_helmet, import_express_rate_limit, import_path60, import_child_process9, import_url8, import_fs67, import_axios5, __filename6, __dirname5, DB_PATH5, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -106720,7 +106992,7 @@ var init_server = __esm({
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
     import_path60 = __toESM(require("path"), 1);
-    import_child_process10 = require("child_process");
+    import_child_process9 = require("child_process");
     import_url8 = require("url");
     import_fs67 = __toESM(require("fs"), 1);
     import_axios5 = __toESM(require("axios"), 1);
@@ -107058,7 +107330,7 @@ var init_server = __esm({
         let ownerPath = null;
         let isSameInstall = false;
         try {
-          const netstatOut = (0, import_child_process10.execSync)(
+          const netstatOut = (0, import_child_process9.execSync)(
             `netstat -ano | findstr ":${PORT} " | findstr LISTENING`,
             { encoding: "utf8", timeout: 4e3 }
           ).trim();
@@ -107066,7 +107338,7 @@ var init_server = __esm({
           if (pidMatch && /^\d+$/.test(pidMatch)) {
             ownerPid = pidMatch;
             try {
-              const wmicOut = (0, import_child_process10.execSync)(
+              const wmicOut = (0, import_child_process9.execSync)(
                 `wmic process where "ProcessId=${ownerPid}" get ExecutablePath /value`,
                 { encoding: "utf8", timeout: 4e3 }
               );
@@ -107090,7 +107362,7 @@ var init_server = __esm({
           console.warn(`[SingleInstance] Stale process PID ${ownerPid} (${ownerPath ?? "unknown"}) holds port ${PORT}.`);
           console.warn(`[SingleInstance] Killing stale process and retaking port...`);
           try {
-            (0, import_child_process10.execSync)(`taskkill /F /PID ${ownerPid}`, { timeout: 5e3 });
+            (0, import_child_process9.execSync)(`taskkill /F /PID ${ownerPid}`, { timeout: 5e3 });
           } catch {
           }
           let retries = 0;

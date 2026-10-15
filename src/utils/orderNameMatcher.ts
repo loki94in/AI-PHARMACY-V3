@@ -16,7 +16,7 @@ const PACKAGING_STOP_WORDS = new Set([
   'drop', 'drops', 'sol', 'solution', 'lot', 'lotion', 'respule', 'respules', 'sachet', 'sachets',
   'soap', 'wash', 'shampoo', 'spray', 'powder', 'drg', 'oil', 'emulsion', 'pc', 'pcs', 'pack', 'pck',
   'box', 'btl', 'bottle', 'vial', 'amp', 'ampoule', 'gm', 'mg', 'ml', 'mcg', 'iu', 'kg', 'ltr',
-  '10s', '15s', '20s', '30s', '5s', '1s', '6s', '10', '15', '20', '30', '50', '100', '200', '500'
+  '10s', '15s', '20s', '30s', '5s', '1s', '6s'
 ]);
 
 function normalizeStr(str: string | null | undefined): string {
@@ -34,7 +34,7 @@ export function getCoreMedicineTokens(str: string): Set<string> {
     .split(' ')
     .filter(w => w.length > 0)
     .map(normalizeToken)
-    .filter(w => w.length > 0 && !PACKAGING_STOP_WORDS.has(w));
+    .filter(w => w.length > 0 && !PACKAGING_STOP_WORDS.has(w) && !/^\d+(s|tab|tabs|cap|caps|strip|strips)$/.test(w));
   return new Set(words.length > 0 ? words : normalizeStr(str).split(' ').filter(w => w.length > 0));
 }
 

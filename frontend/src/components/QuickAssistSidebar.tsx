@@ -467,13 +467,41 @@ export const QuickAssistSidebar = memo(({
   }) => {
     if (fulfillingRefillKeys.has(group.key)) return;
     setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
-    // Optimistically hide from Quick Assist immediately
+
+    const cleanDigits = (group.patient_phone || '').replace(/\D/g, '').slice(-10);
+    const medNames = new Set(group.medicines.map(m => (m.medicine_name || '').toLowerCase().trim()));
+
+    // Optimistically hide from Quick Assist immediately across key, phone, name, and medicine IDs
     setOptimisticHiddenRefillKeys(prev => {
       const next = new Set(prev);
       next.add(group.key);
       if (group.patient_phone) next.add(group.patient_phone);
+      if (cleanDigits) next.add(cleanDigits);
+      if (group.patient_name) next.add(group.patient_name.trim());
+      for (const m of group.medicines) {
+        next.add(String(m.id));
+      }
       return next;
     });
+
+    // Also optimistically hide any companion special orders created for this patient / refill
+    const matchingOrderIds = (Array.isArray(specialOrders) ? specialOrders : [])
+      .filter(so => {
+        const soPhoneDigits = (so.phone || '').replace(/\D/g, '').slice(-10);
+        const phoneMatch = cleanDigits && soPhoneDigits && (cleanDigits === soPhoneDigits || soPhoneDigits.includes(cleanDigits) || cleanDigits.includes(soPhoneDigits));
+        const medMatch = so.product && medNames.has(so.product.toLowerCase().trim());
+        const sourceRefillMatch = group.medicines.some(m => so.source_refill_id === m.id);
+        return sourceRefillMatch || (phoneMatch && (so.source === 'refill' || medMatch));
+      })
+      .map(so => so.id);
+
+    if (matchingOrderIds.length > 0) {
+      setOptimisticHiddenOrderIds(prev => {
+        const next = new Set(prev);
+        matchingOrderIds.forEach(id => next.add(id));
+        return next;
+      });
+    }
 
     try {
       const res = await api.fulfillAllRefills(group.patient_phone, {
@@ -484,6 +512,8 @@ export const QuickAssistSidebar = memo(({
       });
       toastEvent.trigger(res?.message || `Refill cycle completed & opening POS for "${group.patient_name}"...`, 'success', '/pos');
       refillEvent.triggerRefresh();
+      specialOrdersEvent.triggerUpdated();
+      automationHubEvent.triggerUpdated();
       onRefreshDailyLog();
       onActionComplete();
       setExpanded(false);
@@ -527,8 +557,20 @@ export const QuickAssistSidebar = memo(({
         const next = new Set(prev);
         next.delete(group.key);
         if (group.patient_phone) next.delete(group.patient_phone);
+        if (cleanDigits) next.delete(cleanDigits);
+        if (group.patient_name) next.delete(group.patient_name.trim());
+        for (const m of group.medicines) {
+          next.delete(String(m.id));
+        }
         return next;
       });
+      if (matchingOrderIds.length > 0) {
+        setOptimisticHiddenOrderIds(prev => {
+          const next = new Set(prev);
+          matchingOrderIds.forEach(id => next.delete(id));
+          return next;
+        });
+      }
     } finally {
       setFulfillingRefillKeys(prev => {
         const next = new Set(prev);
@@ -969,7 +1011,15 @@ export const QuickAssistSidebar = memo(({
     // 3-button workflow: settled (ordered + reminded) patients STAY visible as
     // Stage-C [Re-Send Reminder] [POS] until POS fulfillment removes them via
     // status completed/fulfilled. Do not re-add the settled filter here.
-    return list.filter(g => !optimisticHiddenRefillKeys.has(g.key) && (!g.patient_phone || !optimisticHiddenRefillKeys.has(g.patient_phone)));
+    return list.filter(g => {
+      if (optimisticHiddenRefillKeys.has(g.key)) return false;
+      if (g.patient_phone && optimisticHiddenRefillKeys.has(g.patient_phone)) return false;
+      const gDigits = (g.patient_phone || '').replace(/\D/g, '').slice(-10);
+      if (gDigits && optimisticHiddenRefillKeys.has(gDigits)) return false;
+      if (g.patient_name && optimisticHiddenRefillKeys.has(g.patient_name.trim())) return false;
+      if (g.medicines.some(m => optimisticHiddenRefillKeys.has(String(m.id)))) return false;
+      return true;
+    });
   }, [actionableRefills, optimisticHiddenRefillKeys]);
 
   // Distinguish Online Orders (website + WhatsApp) from Local In-Store Special Requests

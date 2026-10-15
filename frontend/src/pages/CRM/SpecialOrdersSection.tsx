@@ -14,6 +14,7 @@ import { toastEvent, specialOrdersEvent, messageSendEvent, whatsappQueueEvent } 
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils/date';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
@@ -55,6 +56,12 @@ let cachedSpecialOrders: SpecialOrderItem[] = [];
 
 export const SpecialOrdersSection: React.FC = () => {
   const navigate = useNavigate();
+  const pageActive = usePageActive();
+  const pageActiveRef = useRef(pageActive);
+  useEffect(() => {
+    pageActiveRef.current = pageActive;
+  }, [pageActive]);
+
   const [orders, setOrders] = useState<SpecialOrderItem[]>(cachedSpecialOrders);
   const [loading, setLoading] = useState(cachedSpecialOrders.length === 0);
   const [refreshing, setRefreshing] = useState(false);
@@ -466,10 +473,19 @@ export const SpecialOrdersSection: React.FC = () => {
     }
   }, []);
 
+  const wasActiveRef = useRef(pageActive);
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = pageActive;
+    if (!pageActive || wasActive) return;
+    loadOrders();
+  }, [pageActive, loadOrders]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- module-cache hydration loader, event-refresh
     loadOrders();
     const handleRefresh = () => {
+      if (!pageActiveRef.current) return;
       loadOrders();
     };
     const handleOrderDelta = (e: any) => {

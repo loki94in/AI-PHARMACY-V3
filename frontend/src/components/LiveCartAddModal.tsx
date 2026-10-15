@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, Store, Tag, Zap, WifiOff, Trash2 } from 'lucide-react';
+import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, RotateCw, Store, Tag, Zap, WifiOff, Trash2 } from 'lucide-react';
 import { api, type SpecialOrder, type Refill } from '../services/api';
 import { loadDistributorPriority, priorityRankOf } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
@@ -262,7 +262,7 @@ const makeLocalIgnoredEntry = (word: string) => ({ id: Date.now(), word, source:
 const setIgnoreNextSearchRef = (ref: { current: boolean }, value: boolean) => { ref.current = value; };
 let cachedSkippedItemKeys: Set<string> = loadInitialSkippedKeys();
 let cachedPrMode: 'Live' | 'Unknown' = 'Live';
-type SessionState = 'active' | 'restoring' | 'disconnected';
+type SessionState = 'active' | 'restoring' | 'expired' | 'connection_issue';
 let cachedSessionStatus: SessionState = 'active';
 let cachedSessionDaysLeft: number | null = null;
 const clientSearchCache = new Map<string, SuggestionMedicine[]>();
@@ -942,7 +942,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const checkSession = useCallback(async () => {
     try {
       const data = await api.checkPharmarackSession();
-      cachedPrMode = data.mode || 'Live';
+      cachedPrMode = (data.mode === 'Unknown' ? 'Unknown' : 'Live');
       setPrMode(cachedPrMode);
       if (typeof data.daysLeft === 'number') {
         cachedSessionDaysLeft = data.daysLeft;
@@ -954,14 +954,17 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       } else if (data.isRefreshing) {
         cachedSessionStatus = 'restoring';
         setSessionStatus('restoring');
+      } else if (data.reason === 'NETWORK_ERROR' || data.reason === 'SERVER_ERROR') {
+        cachedSessionStatus = 'connection_issue';
+        setSessionStatus('connection_issue');
       } else {
-        cachedSessionStatus = 'disconnected';
-        setSessionStatus('disconnected');
+        cachedSessionStatus = 'expired';
+        setSessionStatus('expired');
       }
     } catch {
       setPrMode('Live');
-      cachedSessionStatus = 'disconnected';
-      setSessionStatus('disconnected');
+      cachedSessionStatus = 'connection_issue';
+      setSessionStatus('connection_issue');
     }
   }, []);
 
@@ -2101,10 +2104,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                         <Loader2 size={10} className="animate-spin text-amber-400" /> RESTORING SESSION…
                       </span>
                     )}
-                    {sessionStatus === 'disconnected' && (
+                    {sessionStatus === 'expired' && (
                       <div className="flex items-center gap-1">
                         <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border leading-none bg-red-500/10 text-red border-red-500/30 flex items-center gap-1 shadow-sm">
-                          <span className="w-1.5 h-1.5 rounded-full bg-red" /> OFFLINE
+                          <span className="w-1.5 h-1.5 rounded-full bg-red" /> SESSION EXPIRED
                         </span>
                         <button
                           type="button"
@@ -2114,6 +2117,21 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                           title="Open browser to reconnect Pharmarack"
                         >
                           {reconnecting ? <Loader2 size={9} className="animate-spin" /> : <RotateCcw size={9} />} Reconnect
+                        </button>
+                      </div>
+                    )}
+                    {sessionStatus === 'connection_issue' && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border leading-none bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center gap-1 shadow-sm">
+                          <WifiOff size={10} className="text-amber-400" /> CONNECTION ISSUE
+                        </span>
+                        <button
+                          type="button"
+                          onClick={checkSession}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 font-bold transition-all flex items-center gap-1 cursor-pointer"
+                          title="Retry session connection check"
+                        >
+                          <RotateCw size={9} /> Retry
                         </button>
                       </div>
                     )}
@@ -2416,6 +2434,11 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                 <ShoppingCart size={16} className="text-emerald-400" />
                 <h4 className="text-xs font-bold text-text uppercase tracking-wider">Cart Preview</h4>
               </div>
+              {sortedCartDistributors.length > 0 && (sessionStatus !== 'active' || cartLoading) && (
+                <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 tracking-wider">
+                  Cached
+                </span>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto pr-1 py-3 space-y-3 scrollbar-thin">

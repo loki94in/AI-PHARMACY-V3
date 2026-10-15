@@ -3669,7 +3669,7 @@ router.get('/patient-refill-medicines', async (req, res) => {
       }
     }
 
-    // 1. Check active records in patient_refills table
+    // 1. Check active records in patient_refills table (only actionable/due-soon refills; exclude already-fulfilled cycles)
     let scheduledRefills: any[] = [];
     if (customerIds.length > 0 || digitsOnly.length === 10) {
       const phoneParam = digitsOnly.length === 10 ? `%${digitsOnly}%` : 'NON_EXISTENT';
@@ -3679,7 +3679,11 @@ router.get('/patient-refill-medicines', async (req, res) => {
                 m.name as medicine_name, m.mrp, m.sell_price, m.packaging, COALESCE(m.pack_size, 1) as pack_size
          FROM patient_refills pr
          JOIN medicines m ON pr.medicine_id = m.id
-         WHERE (pr.customer_id IN (${cIdPlaceholders}) OR pr.patient_phone LIKE ?) AND pr.is_active = 1`,
+         WHERE (pr.customer_id IN (${cIdPlaceholders}) OR pr.patient_phone LIKE ?) 
+           AND pr.is_active = 1
+           AND (pr.status IS NULL OR pr.status NOT IN ('completed', 'fulfilled', 'canceled'))
+           AND date(pr.next_refill_date) <= date('now', '+7 days')
+           AND (pr.last_refill_date IS NULL OR pr.last_refill_date < datetime('now', '-24 hours'))`,
         [...customerIds, phoneParam]
       );
     }

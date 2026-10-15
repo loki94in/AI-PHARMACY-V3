@@ -12,6 +12,7 @@ import {
 import { apiClient, api, getCompactInventoryCache, getCompactInventoryIndex } from '../../services/api';
 import { toastEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
@@ -38,6 +39,12 @@ let cachedRefillsData: RefillPatient[] = [];
 
 export const RefillsSection: React.FC = () => {
   const navigate = useNavigate();
+  const pageActive = usePageActive();
+  const pageActiveRef = useRef(pageActive);
+  useEffect(() => {
+    pageActiveRef.current = pageActive;
+  }, [pageActive]);
+
   const [data, setData] = useState<RefillPatient[]>(cachedRefillsData);
   const [selectedPatient, setSelectedPatient] = useState<RefillPatient | null>(null);
   const [showUnlinked, setShowUnlinked] = useState(false);
@@ -661,11 +668,21 @@ export const RefillsSection: React.FC = () => {
     }
   };
 
+  const wasActiveRef = useRef(pageActive);
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = pageActive;
+    if (!pageActive || wasActive) return;
+    load(true);
+    loadStagedSummary();
+  }, [pageActive, load, loadStagedSummary]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- module-cache hydration loader, silent retries
     load();
     loadStagedSummary();
     const unsub = refillEvent.subscribeRefresh(() => {
+      if (!pageActiveRef.current) return;
       load(true);
       loadStagedSummary();
     });
@@ -674,6 +691,7 @@ export const RefillsSection: React.FC = () => {
 
   useEffect(() => {
     const handleSync = () => {
+      if (!pageActiveRef.current) return;
       load(true);
     };
     window.addEventListener('phone-numbers-updated', handleSync);

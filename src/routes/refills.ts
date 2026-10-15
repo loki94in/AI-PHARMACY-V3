@@ -1626,6 +1626,16 @@ router.post('/:id/fulfill', async (req, res) => {
       [nextDateStr, id]
     );
 
+    // 2.5 Close companion out-of-stock special order if one was generated
+    const cleanDigits = (refill.patient_phone || '').replace(/\D/g, '').slice(-10);
+    await db.run(
+      `UPDATE special_orders 
+       SET status = 'Completed', updated_at = datetime('now')
+       WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') 
+         AND (source_refill_id = ? OR (source = 'refill' AND length(?) >= 7 AND phone LIKE ? AND LOWER(TRIM(product)) = LOWER(TRIM(?))))`,
+      [id, cleanDigits, `%${cleanDigits}%`, refill.medicine_name || '']
+    ).catch(() => {});
+
     // 3. Purge pending WhatsApp queue items and update staged notifications
     await purgePendingCustomerReminders(db, {
       phone: refill.patient_phone,
@@ -1641,6 +1651,7 @@ router.post('/:id/fulfill', async (req, res) => {
 
     eventService.broadcast('refill_updated', { at: Date.now(), refillId: Number(id), fulfilled: true });
     eventService.broadcast('app-refills-updated', { at: Date.now() });
+    eventService.broadcast('order_updated', { at: Date.now(), source: 'fulfill' });
 
     res.json({
       success: true,
@@ -1760,6 +1771,43 @@ router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-al
         fulfilledCount++;
         fulfilledIds.push(refill.id);
       }
+
+      // 2.5 Also atomically close any companion out-of-stock special orders created for this patient and these medicines
+      const fulfilledMedNames = activeRefills.map(r => (r.medicine_name || '').trim().toLowerCase()).filter(Boolean);
+      const cleanPhoneDigits = (rawPhone || '').replace(/\D/g, '').slice(-10);
+
+      if (fulfilledIds.length > 0 || (cleanPhoneDigits.length >= 7 && fulfilledMedNames.length > 0)) {
+        const idPlaceholders = fulfilledIds.map(() => '?').join(',');
+        const medPlaceholders = fulfilledMedNames.map(() => '?').join(',');
+
+        const conditions: string[] = [];
+        const params: any[] = [];
+        if (fulfilledIds.length > 0) {
+          conditions.push(`source_refill_id IN (${idPlaceholders})`);
+          params.push(...fulfilledIds);
+        }
+        if (cleanPhoneDigits.length >= 7) {
+          if (fulfilledMedNames.length > 0) {
+            conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) IN (${medPlaceholders})))`);
+            params.push(`%${cleanPhoneDigits}%`, ...fulfilledMedNames);
+          } else {
+            conditions.push(`(phone LIKE ? AND source = 'refill')`);
+            params.push(`%${cleanPhoneDigits}%`);
+          }
+        }
+        if (customerId) {
+          conditions.push(`(customer_id = ? AND source = 'refill')`);
+          params.push(customerId);
+        }
+
+        if (conditions.length > 0) {
+          const updateQuery = `UPDATE special_orders 
+                               SET status = 'Completed', updated_at = datetime('now')
+                               WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(' OR ')})`;
+          await db.run(updateQuery, params).catch(() => {});
+        }
+      }
+
       await db.run('COMMIT');
     } catch (txErr) {
       await db.run('ROLLBACK').catch(() => {});
@@ -1770,7 +1818,8 @@ router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-al
     await purgePendingCustomerReminders(db, {
       phone: rawPhone || undefined,
       refillIds: fulfilledIds,
-      customerId
+      customerId,
+      medicineNames: activeRefills.map(r => r.medicine_name).filter(Boolean)
     });
 
     // Respond immediately - checkAllRefills is a full-table scan, run in the background
@@ -1780,6 +1829,7 @@ router.post(['/patient/:phone/fulfill-all', '/patient/fulfill-all', '/fulfill-al
 
     eventService.broadcast('refill_updated', { at: Date.now(), fulfilled: true, count: fulfilledCount });
     eventService.broadcast('app-refills-updated', { at: Date.now() });
+    eventService.broadcast('order_updated', { at: Date.now(), source: 'fulfill-all' });
 
     res.json({
       success: true,
