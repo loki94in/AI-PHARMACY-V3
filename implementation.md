@@ -1,46 +1,47 @@
-# Implementation Plan: Rewind to Commit 5fff501d (v0.1.92) & Discard Other Changes
+# Refill Quick Assist Complete Workflow — Implementation Tracking
 
-Created At: 2026-10-15T11:27:00+05:30
+Created At: 2026-10-15T12:35:00+05:30
+Source Plan: `REFILL_QUICK_ASSIST_COMPLETE_WORKFLOW_PLAN.md`
 Status: COMPLETED
 
-## 1. Goal & Context
-The user requested to rewind the repository back to commit `5fff501d68621c8d0c0e0b6b63ab1aea2f6d2c55` (`chore(release): bump version to 0.1.92`) and discard all other changes and commit.
-
-Ahead of `5fff501d` on `origin/main` were four pushed commits:
-- `62ce33eb` fix(P1-90): idle Pharmarack search honesty + cart distributor phones; credential auto-save
-- `4e362e85` fix(release): browser-safe timeout ref type for credential auto-save
-- `91f04ac6` fix(pharmarack): robust token capture, credentials purge on logout, and live cart data sync
-- `1a4ebd7f` fix(settings): remove duplicate queryClient declaration in IntegrationsCredentialsTab
-
-The user selected the recommended non-destructive strategy:
-- Create a clean forward revert commit on top of main, reverting `5fff501d..HEAD`, which brings the repository back to the exact code state of `5fff501d` without requiring destructive force pushes.
-
-## 2. Technical Steps Executed
-1. **Discard Uncommitted Working Changes**:
-   - Ran `git restore .` to clear dirty files (`package.json`, `dist-pkg/`).
-2. **Revert Commits 5fff501d..HEAD**:
-   - Ran `git revert --no-commit 5fff501d..HEAD` to roll back changes without individual merge/revert commit clutter.
-3. **Commit the Reversion**:
-   - Committed with message `revert: rollback changes back to 5fff501d (v0.1.92)`.
-   - Verified that `git diff 5fff501d HEAD` produces zero diff.
-4. **Performance Guardrails & Knowledge Graph**:
-   - Ran `npm run guardrails`.
-   - Ran `node scripts/quick-update.mjs`.
+## 1. Goal & Architecture
+Implemented the complete Quick Assist 7-day refill workflow according to the locked specifications in `REFILL_QUICK_ASSIST_COMPLETE_WORKFLOW_PLAN.md`:
+1. **Stage A (upcoming)**: `[Add to Cart] [Already Added] [Snooze (+1d/+3d/+7d)] [Edit]` (and `[Confirm]` if unconfirmed).
+   - `Add to Cart`: Opens `RefillOrderModal` (qty-editable, distributor linkage) → `startRefillCartJob`.
+   - `Already Added`: Calls `markRefillOrdered` (manual order, no cart write).
+   - `Snooze`: Calls `POST /automation/notifications/snooze-patient { days: 1/3/7 }` with optimistic hide + rollback and outside-click dismissal.
+   - `Edit`: Opens schedule editor.
+2. **Stage B (ordered)**: `[Mark Ready] [Complete]` (and `[Confirm]` if unconfirmed).
+   - `Mark Ready`: `POST /refills/patient/:phone/mark-ready` → queues pickup WhatsApp alert (user-click), sets `is_ready=1`, removes cart lines.
+   - `Complete`: Calls `POST /refills/patient/:phone/fulfill-all { refill_ids, fulfilled_via: 'quick_assist_complete' }` + opens POS prefilled with patient and medicine inventory metadata.
+3. **Stage C (reminded)**: `[Re-Send Reminder] [Complete]` (and `[Confirm]` if unconfirmed).
+   - `Re-Send Reminder`: `POST /refills/patient/:phone/mark-ready` (with 60-min dupe suppression).
+   - `Complete`: Identical to Stage B Complete.
+4. **POS Save Attach & No Double-Advance**:
+   - `src/routes/sales.ts`: Extended `recentPosOpened` query to `fulfilled_via IN ('pos_opened', 'quick_assist_complete')` within 30 min, attaching `invoice_id` and `invoice_no` without double-advancing the cycle.
+5. **API & Helper Parity**:
+   - `frontend/src/services/api.ts`: Exposed `api.snoozePatient`.
 
 ---
 
-## 3. Atomic Execution Checklist
-- [x] Task 1: Discard all uncommitted working directory changes (`git restore .`).
-- [x] Task 2: Revert commits `5fff501d..HEAD` cleanly without individual commit noise.
-- [x] Task 3: Commit the revert to main (`git commit -m "revert: rollback changes back to 5fff501d (v0.1.92)"`).
-- [x] Task 4: Verify tree parity with `git diff 5fff501d HEAD`.
-- [x] Task 5: Run performance guardrails and refresh knowledge graph.
+## 2. Technical Tasks Checklist
+
+- [x] Task 1: Update backend `src/routes/sales.ts` to attach sale invoices to `quick_assist_complete` fulfillments in the 30-minute window (idempotent, no double-advance).
+- [x] Task 2: Expose `api.snoozePatient` in `frontend/src/services/api.ts`.
+- [x] Task 3: Implement Quick Assist Stage A Snooze control (+1d, +3d, +7d) and optimistic hide with rollback in `frontend/src/components/QuickAssistSidebar.tsx`.
+- [x] Task 4: Implement Quick Assist Stage B & Stage C `Complete` action (fulfill-all + POS prefilled navigation with optimistic hide, timeout rollback, double-click lock, and cart cleanup) in `frontend/src/components/QuickAssistSidebar.tsx`.
+- [x] Task 5: Clean up old standalone `POS` and raw `Fulfill` buttons from Quick Assist refill cards to prevent split fulfill paths.
+- [x] Task 6: Validate with `npm run guardrails` and `tsc --noEmit`.
+- [x] Task 7: Update knowledge graph (`node scripts/quick-update.mjs`) and DOX contracts.
 
 ---
 
-## 4. Completed Tasks Log
-- **Task 1 Completed**: Cleared all uncommitted modifications from working tree using `git restore .`.
-- **Task 2 Completed**: Reverted 4 commits (`1a4ebd7f`, `91f04ac6`, `4e362e85`, `62ce33eb`) via `git revert --no-commit 5fff501d..HEAD` with zero conflicts.
-- **Task 3 Completed**: Committed the rollback as commit `bd093eb7`: `revert: rollback changes back to 5fff501d (v0.1.92)`.
-- **Task 4 Completed**: Verified `git diff 5fff501d HEAD` returns empty output, confirming full parity with commit `5fff501d`.
-- **Task 5 Completed**: Ran performance guardrails (`npm run guardrails`) and synchronized project knowledge graph (`node scripts/quick-update.mjs`).
+## 3. Completed Tasks Log
+
+- **Task 1 Completed**: Updated `src/routes/sales.ts` (lines 798-806) to check `fulfilled_via IN ('pos_opened', 'quick_assist_complete')` within the 30-minute window. When saving the sale invoice, it attaches `invoice_id` and `invoice_no` to the existing fulfillment record and updates `fulfilled_via = 'pos_sale'`, preventing double-advance of `next_refill_date`.
+- **Task 2 Completed**: Added `api.snoozePatient` to `frontend/src/services/api.ts`, sending `POST /automation/notifications/snooze-patient` with `patient_phone`, `patient_name`, and `days`.
+- **Task 3 Completed**: Added Snooze control to Stage A cards in `frontend/src/components/QuickAssistSidebar.tsx`. Clicking opens a sleek popover with options for `+1 Day (Tomorrow)`, `+3 Days`, and `+7 Days (1 Week)`. Handled outside-clicks via `useOnClickOutside`, optimistic hiding via `setOptimisticHiddenRefillKeys`, rollback on error, and broadcasting `automationHubEvent` and `refillEvent`.
+- **Task 4 Completed**: Implemented `handleCompleteRefillGroup` in `frontend/src/components/QuickAssistSidebar.tsx`. When clicked, it optimistically hides the card, calls `api.fulfillAllRefills` with `fulfilled_via: 'quick_assist_complete'`, advances the cycle, triggers events, closes the sidebar, and navigates to `/pos` with complete prefill metadata (`patientName`, `patientPhone`, `customerId`, `refillPatient`, `refillIds`, `medicines`). On error/timeout, rolls back optimistic hide and alerts the user.
+- **Task 5 Completed**: Removed the redundant standalone `POS` button and raw `Fulfill` button from Quick Assist Stage A, B, and C cards, unifying the fulfillment and POS handoff into `Complete` (Stage B/C) and keeping Stage A focused on ordering/snoozing/editing. Cleaned up orphaned imports (`Receipt`).
+- **Task 6 Completed**: Verified full TypeScript compilation clean (`tsc --noEmit` on root and frontend) and ran `npm run guardrails` with exit 0 ("Speed architecture intact").
+- **Task 7 Completed**: Synchronized project knowledge graph via `node scripts/quick-update.mjs` (1186 nodes, 800 edges, 10 layers) and updated DOX contracts in `frontend/AGENTS.md` and `src/AGENTS.md`.

@@ -119,6 +119,7 @@ export interface SpecialOrder {
 
 export interface Refill {
   id: number;
+  customer_id?: number | null;
   patient_name: string;
   patient_phone: string;
   medicine_id: number;

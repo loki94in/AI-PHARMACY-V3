@@ -795,10 +795,10 @@ router.post('/', async (req, res) => {
         const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
         const fulfilledQty = Number(refill.quantity_needed || 1);
 
-        // Check if recently auto-fulfilled when opening POS (within last 30 minutes)
+        // Check if recently auto-fulfilled when opening POS or completed via Quick Assist (within last 30 minutes)
         const recentPosOpened = await db.get(
           `SELECT id FROM refill_fulfillments 
-           WHERE refill_id = ? AND fulfilled_via = 'pos_opened' 
+           WHERE refill_id = ? AND fulfilled_via IN ('pos_opened', 'quick_assist_complete') 
              AND fulfilled_at >= datetime('now', '-30 minutes')
            ORDER BY id DESC LIMIT 1`,
           [refill.id]

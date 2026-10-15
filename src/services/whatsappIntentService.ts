@@ -1141,7 +1141,7 @@ export interface ConfirmedProcurementParams {
   isBundle?: boolean;
 }
 
-export async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParams): Promise<void> {
+export async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParams): Promise<boolean> {
   const { phone, chatId, confirmedMedicine, quantity, unit, customer } = params;
   const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
 
@@ -1158,7 +1158,7 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
     );
     if (recent) {
       console.log(`[Intent Service] Duplicate confirmed order detected for ${cleanDigits} - ${confirmedMedicine} within 15 min. Skipping duplicate procurement.`);
-      return;
+      return true;
     }
 
     // 2. Search Pharmarack / distributor catalog for the confirmed item
@@ -1242,7 +1242,8 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
           error: cartResult.error || (cartResult as any).details || 'Failed to add items to Pharmarack Live Cart'
         });
         // STOP: Do NOT record Confirmed order, do NOT create customer staged message
-        return;
+        // Caller gates the patient thank-you on this false so no false message goes out.
+        return false;
       }
     } else {
       console.log(`[Intent Service] Auto Add to Live Cart is OFF. Skipping automatic cart call for "${cartItem.productName}". Queuing for manual review.`);
@@ -1338,8 +1339,10 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
     } catch (_) {}
 
     console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer message staged for manual send.`);
+    return true;
   } catch (procErr) {
     console.error('[Intent Service] Error in executeConfirmedProcurementFlow:', procErr);
+    return false;
   }
 }
 
@@ -3288,11 +3291,12 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         if (bundle && bundle.length > 1) {
           await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
           const confirmedNames: string[] = [];
+          let bundleAllAdded = true;
           for (const item of bundle) {
             const confirmedMedicine = item.matchedName || (item as any).medicine_name || (item as any).name || item.requestedName;
             if (!confirmedMedicine) continue;
             confirmedNames.push(confirmedMedicine);
-            await executeConfirmedProcurementFlow({
+            const ok = await executeConfirmedProcurementFlow({
               phone,
               chatId,
               confirmedMedicine,
@@ -3301,14 +3305,21 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
               customer,
               isBundle: true
             });
+            if (!ok) bundleAllAdded = false;
           }
-          if (confirmedNames.length > 0) {
+          // All-or-nothing patient thank-you: only when every medicine reached the
+          // live cart (same workflow as manual Add to live cart). A single failure
+          // skips the patient message so no false confirmation goes out; the owner
+          // was already notified per-item (success + failure) inside the flow.
+          if (confirmedNames.length > 0 && bundleAllAdded) {
             const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
             const { getStoreMedicalName } = await import('./storeSettingsService.js');
             const storeLabel = await getStoreMedicalName(db);
             const listText = confirmedNames.map((n, i) => `${i + 1}. *${n}*`).join('\n');
-            const bundleConfirmMsg = `✅ *Order Received!*\n\nThank you ${customer?.name || 'Customer'}, your order for:\n${listText}\n\nhas been received at ${storeLabel}. We are processing it and will update you shortly!`;
+            const bundleConfirmMsg = `✅ *Order Received!*\n\nThank you ${customer?.name || 'Customer'} for choosing ${storeLabel}, your order for:\n${listText}\n\nhas been added to our live cart. We are processing it and will update you shortly!`;
             await whatsappQueueWorker.enqueue(phone, bundleConfirmMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+          } else if (confirmedNames.length > 0) {
+            console.log(`[Intent Service] Bundle cart partially failed for ${cleanDigits}; patient thank-you suppressed, owner already notified.`);
           }
           return true;
         }
@@ -4073,17 +4084,25 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       packaging: '1 strip'
     };
 
+    let ownerConfirmCartOk = false;
+    let ownerConfirmCartError: string | undefined;
     try {
       const { addItemsToPharmarackCart } = await import('../routes/pharmarack.js');
       const cartResult = await addItemsToPharmarackCart([cartItem]);
       if (cartResult?.success) {
+        ownerConfirmCartOk = true;
         console.log(`[Intent Service] Live cart successfully added "${cartItem.productName}" to ${cartItem.storeName} (mode: ${cartResult.mode || 'live'})`);
       } else {
-        console.warn(`[Intent Service] Live cart add note for "${cartItem.productName}":`, cartResult?.error || cartResult?.details);
+        ownerConfirmCartError = String(cartResult?.error || cartResult?.details || 'Live cart add failed');
+        console.warn(`[Intent Service] Live cart add note for "${cartItem.productName}":`, ownerConfirmCartError);
       }
-    } catch (cartErr) {
+    } catch (cartErr: any) {
+      ownerConfirmCartError = String(cartErr?.message || cartErr || 'Live cart add failed');
       console.warn('[Intent Service] Live Cart add attempt warning:', cartErr);
     }
+
+    // All-or-nothing: a failed live-cart add must NOT send the patient a
+    // "confirmed/added" receipt. The owner is told of the failure instead.
 
     // Mark owner pending request fulfilled
     await db.run(
@@ -4112,22 +4131,24 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       `💰 Booking Amount Paid: ₹50\n\n` +
       `🛒 Your medicine has been added to your Live Cart.`;
 
-    await db.run(
-      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
-       VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
-      ['whatsapp_order', order.requester || 'Customer', String(order.phone || '').replace(/\D/g, '').slice(-10), custFinalMsg, String(orderId)]
-    );
-
-    // Send final confirmation receipt directly to customer on WhatsApp
-    const cleanCustPhone = String(order.phone || '').replace(/\D/g, '').slice(-10);
-    if (cleanCustPhone) {
-      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-      await whatsappQueueWorker.enqueue(
-        cleanCustPhone,
-        custFinalMsg,
-        'customer_order_confirmed',
-        order.requester || 'Customer'
+    if (ownerConfirmCartOk) {
+      await db.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+         VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
+        ['whatsapp_order', order.requester || 'Customer', String(order.phone || '').replace(/\D/g, '').slice(-10), custFinalMsg, String(orderId)]
       );
+
+      // Send final confirmation receipt directly to customer on WhatsApp (only on verified cart add)
+      const cleanCustPhone = String(order.phone || '').replace(/\D/g, '').slice(-10);
+      if (cleanCustPhone) {
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(
+          cleanCustPhone,
+          custFinalMsg,
+          'customer_order_confirmed',
+          order.requester || 'Customer'
+        );
+      }
     }
 
     // Notify Store Owner on WhatsApp via waAdminEscalationService (automatic; customer message stays staged)
@@ -4142,14 +4163,17 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
         rate: order.pharmarack_rate,
         mrp: order.pharmarack_mrp
       }],
-      success: true
+      success: ownerConfirmCartOk,
+      ...(ownerConfirmCartOk ? {} : { error: ownerConfirmCartError || 'Live cart add failed — needs manual review' })
     });
 
     // Ack to owner (owner-facing, allowed to stay automatic)
-    const ownerFinalAck = `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\n🚚 Distributor: *${order.pharmarack_distributor || 'Standard Distributor'}*\nCustomer *${order.requester || 'Customer'}* has been sent their confirmation receipt.`;
+    const ownerFinalAck = ownerConfirmCartOk
+      ? `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\n🚚 Distributor: *${order.pharmarack_distributor || 'Standard Distributor'}*\nCustomer *${order.requester || 'Customer'}* has been sent their confirmation receipt.`
+      : `⚠️ Payment verified for Special Order #${soCode}, but Live Cart add FAILED (${ownerConfirmCartError || 'cart error'}).\n\n*${order.medicine_name || order.product}* × ${order.qty} was NOT added.\n🚚 Distributor: *${order.pharmarack_distributor || 'Standard Distributor'}*\nNo receipt was sent to *${order.requester || 'Customer'}* to avoid a false confirmation. Please add it manually.`;
     await whatsappQueueWorker.enqueue(phone, ownerFinalAck, 'admin_escalation', 'Owner');
 
-    console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode}). Added to Live Cart.`);
+    console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode}). Added to Live Cart: ${ownerConfirmCartOk}.`);
     return true;
   }
 
@@ -4815,6 +4839,8 @@ export async function handleInbound(msg: any): Promise<void> {
           }
 
           // Automatically add confirmed refill medicines directly to Pharmarack Live Cart
+          // (same workflow as manual CRM "Order to Cart": processRefillCartItem ->
+          // addItemsToPharmarackCart -> verified re-read -> patient_refills.cart_*).
           const cartSummaryRows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; message?: string }> = [];
           try {
             const { processRefillCartItem, sendRefillCartSummary } = await import('./refillCartService.js');
@@ -4850,10 +4876,27 @@ export async function handleInbound(msg: any): Promise<void> {
             }
           } catch (cartErr) {
             console.warn('[Intent Service] Live Cart auto-add note on refill confirm:', cartErr);
+            // Owner must still be told the auto-add never ran (success + failure both notify owner).
+            try {
+              const { sendRefillCartSummary } = await import('./refillCartService.js');
+              const fallbackRows = pendingRefills.map((r: any) => ({
+                refillId: r.id,
+                medicineName: r.medicine_name,
+                status: 'failed',
+                message: 'Cart processing did not run (internal error). Open CRM → Refills to fix.'
+              }));
+              if (fallbackRows.length > 0) await sendRefillCartSummary(primaryRefill.patient_name, fallbackRows);
+            } catch (_) {}
           }
 
-          // Optional acknowledgement to patient via queue worker (suppressed in active manual takeover)
-          if (!isManualSession) {
+          // All-or-nothing patient thank-you (suppressed in active manual takeover).
+          // Every refill must be live in the cart (added/in_cart) before the patient
+          // hears "thank you for choosing {shop}". A single needs_link/linked_oos/
+          // not_found/failed row suppresses the patient message so no false
+          // confirmation goes out; the owner summary above already lists the failure.
+          const refillAllAdded = cartSummaryRows.length > 0
+            && cartSummaryRows.every(r => r.status === 'added' || r.status === 'in_cart');
+          if (!isManualSession && refillAllAdded) {
             try {
               const { getPharmacyOperatingSchedule, getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
               const sched = await getPharmacyOperatingSchedule(db);
@@ -4862,8 +4905,8 @@ export async function handleInbound(msg: any): Promise<void> {
               const hoursNotice = await getStoreHoursNotice(db);
               const deliveryNotice = await getDynamicDeliveryNotice(db);
               const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
-              const medListText = pendingRefills.length === 1 
-                ? `*${primaryRefill.medicine_name}*` 
+              const medListText = pendingRefills.length === 1
+                ? `*${primaryRefill.medicine_name}*`
                 : pendingRefills.map((r: any) => `• ${r.medicine_name}`).join('\n');
 
               const open12 = formatTime12h(sched.openTime || '09:00');
@@ -4871,7 +4914,7 @@ export async function handleInbound(msg: any): Promise<void> {
               const offDay = sched.weeklyOff ? ` | Weekly Off: ${sched.weeklyOff}` : '';
 
               const ackMsg = `✅ *Refill Confirmed — ${storeName}*\n\n` +
-                `Thank you ${primaryRefill.patient_name}! Your regular prescription for:\n${medListText}\nhas been confirmed.\n\n` +
+                `Thank you ${primaryRefill.patient_name} for choosing ${storeName}! Your regular prescription for:\n${medListText}\nhas been added to our live cart.\n\n` +
                 `🕒 *Store Hours:* ${open12} – ${close12}${offDay}${hoursNotice ? `\n${hoursNotice.trim()}` : ''}` +
                 `${deliveryNotice ? `\n${deliveryNotice.trim()}` : ''}\n\n` +
                 `Our team will keep your medicines ready for collection.${phoneSuffix}`;
@@ -4886,6 +4929,8 @@ export async function handleInbound(msg: any): Promise<void> {
             } catch (ackErr) {
               console.warn('[Intent Service] Refill confirmation acknowledgment note:', ackErr);
             }
+          } else if (!isManualSession) {
+            console.log(`[Intent Service] Refill cart not fully added for ${primaryRefill.patient_name}; patient thank-you suppressed (owner notified).`);
           }
 
           console.log(`[Intent Service] Patient ${primaryRefill.patient_name} confirmed ${pendingRefills.length} refill(s) via WhatsApp.`);

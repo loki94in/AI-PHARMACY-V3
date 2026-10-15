@@ -1881,6 +1881,8 @@ export const api = {
   retryNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/retry`).then(res => res.data),
   cancelNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/cancel`).then(res => res.data),
   manualNotification: (id: number) => apiClient.post(`/automation/notifications/${id}/manual`).then(res => res.data),
+  snoozePatient: (data: { patient_phone?: string; patient_name?: string; days: number }) =>
+    apiClient.post<{ success: boolean; message: string }>('/automation/notifications/snooze-patient', data).then(res => res.data),
   // Omit `days` for the lean Quick Assist counts; pass it to also get the day-grouped `log`.
   getDailyNotificationSummary: (days?: number) =>
     apiClient.get<{

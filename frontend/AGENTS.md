@@ -92,6 +92,15 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 - QuickAssistSidebar (components/Layout.tsx) group actions call POST /api/orders/:id/status. The backend queues the arrival WhatsApp when status becomes Ready (response field whatsapp_queued) — toasts must reflect it, never fabricate a queued state.
 - Complete / Complete All mark items Fulfilled and then navigate to /pos with state.prefill {patientName, patientPhone, specialOrderId, advancePayment, medicines[]} — the same prefill shape CRM's Sell Now uses; POS hydrates it on mount.
 
+## Quick Assist 7-Day Refill Workflow (added 2026-10)
+
+- QuickAssistSidebar manages 7-day actionable refills (`diffDays <= 7`, active, uncompleted) in a 3-stage workflow (`getRefillStage`):
+  - **Stage A (upcoming)**: `[Confirm?] [Add to Cart] [Already Added] [Snooze (+1d/+3d/+7d)] [Edit]`. `Add to Cart` opens `RefillOrderModal` (qty-editable) to start cart job; `Already Added` marks ordered (manual, no cart write); `Snooze` calls `POST /automation/notifications/snooze-patient` with optimistic hide + rollback; `Edit` opens the schedule editor.
+  - **Stage B (ordered)**: `[Confirm?] [Mark Ready] [Complete]`. `Mark Ready` calls `POST /refills/patient/:phone/mark-ready` (user click only) which queues one collection WhatsApp alert (60-min dupe suppression), sets `is_ready=1`, and clears live-cart lines via `removeRefillCartLines`. `Complete` calls `POST /refills/patient/:phone/fulfill-all { refill_ids, fulfilled_via: 'quick_assist_complete' }` and navigates to `/pos` prefilled with patient and medicine metadata.
+  - **Stage C (reminded)**: `[Confirm?] [Re-Send Reminder] [Complete]`. `Re-Send Reminder` re-invokes mark-ready; `Complete` acts identically to Stage B Complete.
+- Standalone `POS`-only and raw `Fulfill` buttons are removed from refill cards to ensure a single, consistent fulfillment and billing handoff.
+- The refill cycle is permanently closed and advanced when Complete is clicked even if the POS bill is never saved. If saved within 30 min, `src/routes/sales.ts` attaches the invoice without double-advancement.
+
 ## Daily Communications Log (updated 2026-09-30)
 
 - `components/DailyCommunicationsModal.tsx` owns its data. On open it fetches `api.getDailyNotificationSummary(7)` (`GET /automation/notifications/daily-summary?days=7`) into a module-level cache, then reloads only on `app-wa-queue-updated` (SSE `wa_queue_update`) or after its own actions. No timers, and never an effect keyed on a parent callback: an inline `onRefresh` in effect deps caused a fetch loop (P2-58). Layout's Quick Assist calls the same endpoint WITHOUT `days` and gets counts + `sentPhones` only, no `log`.
