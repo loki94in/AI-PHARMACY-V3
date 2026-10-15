@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, execSync, exec, ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import { getAppDataDir } from '../config/index.js';
+
+const execAsync = promisify(exec);
 
 /**
  * Shared Chromium browser/profile helpers.
@@ -294,4 +297,231 @@ export function closeAppBrowser(): void {
     }
   }
 }
+
+/**
+ * Kill any orphan Chrome or Edge processes locking a specific profile folder.
+ */
+export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_profile'): Promise<void> {
+  if (process.platform !== 'win32') return;
+  try {
+    const resolvedPath = path.isAbsolute(keyword)
+      ? keyword
+      : path.join(getAppDataDir(), 'data', keyword);
+    const filterPattern = resolvedPath.replace(/\\/g, '%').replace(/\//g, '%');
+
+    const execResult = await execAsync(
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe') and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
+      { timeout: 4000 }
+    ).catch(async () => {
+      return await execAsync(
+        `wmic process where "(name='chrome.exe' or name='msedge.exe') and CommandLine like '%${filterPattern}%'" get ProcessId`,
+        { timeout: 3000 }
+      ).catch(() => ({ stdout: '' }));
+    });
+
+    const stdout = execResult.stdout || '';
+    const pids = stdout
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line && !line.toLowerCase().includes('processid'))
+      .map(pid => parseInt(pid, 10))
+      .filter(pid => !isNaN(pid) && pid > 0);
+
+    for (const pid of pids) {
+      console.log(`[ProcessGuardian] Killing lock-holding Chrome process: ${pid}`);
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (_) {
+        try {
+          await execAsync(`taskkill /F /PID ${pid}`);
+        } catch (_) {}
+      }
+    }
+    if (pids.length > 0) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  } catch (err: any) {
+    console.error(`[ProcessGuardian] Failed to kill lock-holding Chrome processes for ${keyword}:`, err.message);
+  }
+}
+
+/**
+ * Remove orphaned temporary profile folders created during profile-lock fallbacks.
+ */
+export function cleanTempProfileFolders(): void {
+  try {
+    const dataDir = path.resolve(getAppDataDir(), 'data');
+    if (!fs.existsSync(dataDir)) return;
+    const entries = fs.readdirSync(dataDir);
+    for (const entry of entries) {
+      if (entry.startsWith('pharmarack_profile_temp_')) {
+        const fullPath = path.join(dataDir, entry);
+        try {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+          console.log(`[ChromeBrowser] Removed orphaned temp profile folder: ${entry}`);
+        } catch (_) {}
+      }
+    }
+  } catch (err: any) {
+    console.warn('[ChromeBrowser] Error cleaning temp profile folders:', err.message);
+  }
+}
+
+/**
+ * Unlink lingering Chromium lock files (SingletonLock, lockfile, devtoolsactiveport, etc.).
+ */
+export function cleanProfileLockFiles(profilePath: string): void {
+  if (!fs.existsSync(profilePath)) return;
+  const lockFiles = [
+    'SingletonLock',
+    'lockfile',
+    'parent.lock',
+    'Singleton Cookie',
+    'Singleton Socket',
+    'Singleton Preference',
+    'devtoolsactiveport'
+  ];
+  for (const file of lockFiles) {
+    const filePath = path.join(profilePath, file);
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+        console.log(`[ChromeBrowser] Removed stale lock file: ${filePath}`);
+      } catch (err: any) {
+        console.warn(`[ChromeBrowser] Could not remove lock file ${filePath}: ${err.message}`);
+      }
+    }
+  }
+}
+
+/**
+ * Central registry for active headless/background browser sessions.
+ * Allows gracefulShutdown to terminate in-flight Puppeteer browsers or
+ * spawned Chrome instances before closing, preventing locked profiles on re-open.
+ */
+interface TrackedHeadlessSession {
+  id: string;
+  tag: string;
+  target: any; // Puppeteer Browser, ChildProcess, or PID
+  startedAt: number;
+}
+
+const activeHeadlessRegistry = new Map<string, TrackedHeadlessSession>();
+let shutdownInProgressFlag = false;
+let nextHeadlessId = 1;
+
+/** Check whether application shutdown is currently in progress. */
+export function isShutdownInProgress(): boolean {
+  return shutdownInProgressFlag;
+}
+
+/** Signal that application shutdown has started to prevent new browser launches. */
+export function markShutdownInProgress(): void {
+  shutdownInProgressFlag = true;
+}
+
+/** Register a headless browser or spawned chrome process for clean shutdown tracking. */
+export function trackHeadless(target: any, tag: string): string {
+  const id = `hl_${Date.now()}_${nextHeadlessId++}`;
+  activeHeadlessRegistry.set(id, {
+    id,
+    tag,
+    target,
+    startedAt: Date.now()
+  });
+  return id;
+}
+
+/** Deregister a headless browser or spawned process when it finishes normally. */
+export function untrackHeadless(idOrTarget: any): void {
+  if (typeof idOrTarget === 'string') {
+    activeHeadlessRegistry.delete(idOrTarget);
+    return;
+  }
+  for (const [id, item] of activeHeadlessRegistry.entries()) {
+    if (item.target === idOrTarget) {
+      activeHeadlessRegistry.delete(id);
+      break;
+    }
+  }
+}
+
+/**
+ * Gracefully close all registered headless/background browser sessions with a 1.5s timeout,
+ * then clean up orphan processes, temp profile directories, and lock files.
+ */
+export async function closeAllHeadlessBrowsers(): Promise<void> {
+  markShutdownInProgress();
+  const entries = Array.from(activeHeadlessRegistry.values());
+  activeHeadlessRegistry.clear();
+
+  if (entries.length > 0) {
+    console.log(`[ChromeBrowser] Closing ${entries.length} tracked headless browser session(s)...`);
+  }
+
+  // 1. Concurrently close all tracked instances with a 1500ms timeout per instance
+  await Promise.allSettled(
+    entries.map(async (entry) => {
+      try {
+        const target = entry.target;
+        if (!target) return;
+
+        // Puppeteer Browser instance
+        if (typeof target.close === 'function') {
+          console.log(`[ChromeBrowser] Closing tracked headless browser (${entry.tag})...`);
+          await Promise.race([
+            target.close().catch(() => {}),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Browser.close() timed out')), 1500))
+          ]).catch(err => {
+            console.warn(`[ChromeBrowser] Headless browser close notice (${entry.tag}): ${err.message}`);
+          });
+          return;
+        }
+
+        // ChildProcess instance
+        if (typeof target.kill === 'function') {
+          console.log(`[ChromeBrowser] Terminating tracked child process (${entry.tag}, PID: ${target.pid})...`);
+          try {
+            if (process.platform === 'win32' && target.pid) {
+              execSync(`taskkill /pid ${target.pid} /t /f`, { stdio: 'ignore' });
+            } else {
+              target.kill('SIGTERM');
+            }
+          } catch (_) {}
+          return;
+        }
+
+        // Raw PID number
+        if (typeof target === 'number' && target > 0) {
+          try {
+            if (process.platform === 'win32') {
+              execSync(`taskkill /pid ${target} /t /f`, { stdio: 'ignore' });
+            } else {
+              process.kill(target, 'SIGTERM');
+            }
+          } catch (_) {}
+        }
+      } catch (err: any) {
+        console.warn(`[ChromeBrowser] Error closing tracked instance (${entry.tag}):`, err.message || err);
+      }
+    })
+  );
+
+  // 2. Kill orphan Chrome processes holding locks on pharmarack_profile
+  try {
+    await killOrphanChromeProcesses('pharmarack_profile');
+  } catch (_) {}
+
+  // 3. Remove any orphaned temp profile folders
+  try {
+    cleanTempProfileFolders();
+  } catch (_) {}
+
+  // 4. Clean lock files on main pharmarack profile
+  try {
+    const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
+    cleanProfileLockFiles(mainProfilePath);
+  } catch (_) {}
+}
+
 

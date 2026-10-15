@@ -143,6 +143,7 @@ type LocalApiError = { response?: { data?: { error?: string } }; message?: strin
 type TabType = 'all' | 'queue' | 'reminders' | 'staff' | 'logs';
 
 const Dispatch = () => {
+  const isPageActive = usePageActive();
   const cachedOrders = getDispatchOrdersCache() as DispatchOrder[] | null;
   const cachedDeliveryBoys = getDispatchDeliveryBoysCache() as DeliveryBoy[] | null;
   const cachedReminders = getDispatchRemindersCache() as LocalReminderRow[] | null;
@@ -247,13 +248,25 @@ const Dispatch = () => {
     }
   };
 
-  // 1-second interval live clock for auto-reminder countdown
+  // 1-second interval live clock for auto-reminder countdown (gated on page active & visible)
   useEffect(() => {
-    const timer = setInterval(() => {
-      setNowTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!isPageActive) return;
+    setNowTime(new Date());
+
+    const updateClock = () => {
+      if (document.visibilityState === 'visible') {
+        setNowTime(new Date());
+      }
+    };
+
+    const timer = setInterval(updateClock, 1000);
+    document.addEventListener('visibilitychange', updateClock);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', updateClock);
+    };
+  }, [isPageActive]);
 
   const getWindowCountdownInfo = (now: Date, startStr = '12:30', endStr = '13:00') => {
     const [startH, startM] = startStr.split(':').map(Number);

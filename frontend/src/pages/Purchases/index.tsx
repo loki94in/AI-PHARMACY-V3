@@ -2049,6 +2049,11 @@ const Purchases: React.FC = () => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+      searchAbortRef.current = null;
+    }
+    searchSeqRef.current++;
 
     const newItems = [...items];
     const item = newItems[index];

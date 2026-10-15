@@ -1,104 +1,23 @@
 import fs from 'fs';
 import path from 'path';
 // import { fileURLToPath } from 'url';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { dbManager } from '../database/connection.js';
 import { getAppDataDir } from '../config/index.js';
 // import { activityTracker } from '../utils/activityTracker.js';
-import { findChromePath, copyProfileFolder, getCommonHeadlessChromiumArgs } from '../utils/chromeBrowser.js';
+import {
+  findChromePath,
+  copyProfileFolder,
+  getCommonHeadlessChromiumArgs,
+  killOrphanChromeProcesses,
+  cleanTempProfileFolders,
+  cleanProfileLockFiles,
+  trackHeadless,
+  untrackHeadless,
+  isShutdownInProgress
+} from '../utils/chromeBrowser.js';
 
-const execAsync = promisify(exec);
-// const __filename = fileURLToPath(import.meta.url);
-// const __dirname = path.dirname(__filename);
-
-export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_profile'): Promise<void> {
-  if (process.platform !== 'win32') return;
-  try {
-    const resolvedPath = path.isAbsolute(keyword)
-      ? keyword
-      : path.join(getAppDataDir(), 'data', keyword);
-    const filterPattern = resolvedPath.replace(/\\/g, '%').replace(/\//g, '%');
-
-    const execResult = await execAsync(
-      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe') and commandline like '%${filterPattern}%'\\" | Select-Object -ExpandProperty ProcessId"`,
-      { timeout: 4000 }
-    ).catch(async () => {
-      return await execAsync(
-        `wmic process where "(name='chrome.exe' or name='msedge.exe') and CommandLine like '%${filterPattern}%'" get ProcessId`,
-        { timeout: 3000 }
-      ).catch(() => ({ stdout: '' }));
-    });
-
-    const stdout = execResult.stdout || '';
-    const pids = stdout
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line && !line.toLowerCase().includes('processid'))
-      .map(pid => parseInt(pid, 10))
-      .filter(pid => !isNaN(pid) && pid > 0);
-
-    for (const pid of pids) {
-      console.log(`[ProcessGuardian] Killing lock-holding Chrome process: ${pid}`);
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch (_) {
-        try {
-          await execAsync(`taskkill /F /PID ${pid}`);
-        } catch (_) {}
-      }
-    }
-    if (pids.length > 0) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  } catch (err: any) {
-    console.error(`[ProcessGuardian] Failed to kill lock-holding Chrome processes for ${keyword}:`, err.message);
-  }
-}
-
-export function cleanTempProfileFolders() {
-  try {
-    const dataDir = path.resolve(getAppDataDir(), 'data');
-    if (!fs.existsSync(dataDir)) return;
-    const entries = fs.readdirSync(dataDir);
-    for (const entry of entries) {
-      if (entry.startsWith('pharmarack_profile_temp_')) {
-        const fullPath = path.join(dataDir, entry);
-        try {
-          fs.rmSync(fullPath, { recursive: true, force: true });
-          console.log(`[TokenRefreshScheduler] Removed orphaned temp profile folder: ${entry}`);
-        } catch (_) {}
-      }
-    }
-  } catch (err: any) {
-    console.warn('[TokenRefreshScheduler] Error cleaning temp profile folders:', err.message);
-  }
-}
-
-export function cleanProfileLockFiles(profilePath: string) {
-  if (!fs.existsSync(profilePath)) return;
-  const lockFiles = [
-    'SingletonLock',
-    'lockfile',
-    'parent.lock',
-    'Singleton Cookie',
-    'Singleton Socket',
-    'Singleton Preference',
-    'devtoolsactiveport'
-  ];
-  for (const file of lockFiles) {
-    const filePath = path.join(profilePath, file);
-    if (fs.existsSync(filePath)) {
-      try {
-        fs.unlinkSync(filePath);
-        console.log(`[TokenRefreshScheduler] Removed stale lock file: ${filePath}`);
-      } catch (err: any) {
-        console.warn(`[TokenRefreshScheduler] Could not remove lock file ${filePath}: ${err.message}`);
-      }
-    }
-  }
-}
+export { killOrphanChromeProcesses, cleanTempProfileFolders, cleanProfileLockFiles };
 
 /**
  * Fast direct extraction of active Pharmarack JWT from profile LevelDB storage.
@@ -423,7 +342,7 @@ export class TokenRefreshScheduler {
    * Cost: ~1 small request per interval. Only mode='off' suppresses it.
    */
   public async runSessionHeartbeat(trigger: 'boot' | 'heartbeat' = 'heartbeat'): Promise<boolean> {
-    if (this.heartbeatInFlight || this.isLoginWindowActive) return false;
+    if (this.heartbeatInFlight || this.isLoginWindowActive || isShutdownInProgress()) return false;
     this.heartbeatInFlight = true;
 
     let ok = false;
@@ -544,6 +463,7 @@ export class TokenRefreshScheduler {
   /** Single-flight mutex: overlapping callers (cron, 401 retry, catalog cache)
    *  share ONE browser session restore instead of spawning concurrent Chromes. */
   public executeRefresh(): Promise<string | null> {
+    if (isShutdownInProgress()) return Promise.resolve(null);
     if (this.refreshPromise) return this.refreshPromise;
     this.refreshPromise = this.executeRefreshInternal().finally(() => {
       this.refreshPromise = null;
@@ -552,6 +472,7 @@ export class TokenRefreshScheduler {
   }
 
   private async executeRefreshInternal(): Promise<string | null> {
+    if (isShutdownInProgress()) return null;
     // P4 decision (API_OPTIMIZATION_IMPLEMENTATION_PLAN.md Phase 1.3): refresh runs
     // even when the user is idle — its whole purpose is keeping the Pharmarack
     // session alive overnight so no morning OTP re-login is needed.
@@ -582,7 +503,8 @@ export class TokenRefreshScheduler {
       return directToken;
     }
 
-    let browser;
+    let browser: any;
+    let headlessTrackId: string | null = null;
     const holder = { token: null as string | null };
     let tempProfilePathToDelete = '';
     const puppeteer = await getPuppeteer();
@@ -603,7 +525,9 @@ export class TokenRefreshScheduler {
             '--window-position=-10000,-10000'
           ])
         });
+        headlessTrackId = trackHeadless(browser, 'pharmarack_refresh_main');
       } catch (launchErr: any) {
+        if (isShutdownInProgress()) return null;
         console.log('[TokenRefreshScheduler] Main profile is locked. Copying to temp profile...', launchErr.message);
         const randomSuffix = Math.floor(Math.random() * 1000000);
         const tempProfilePath = path.resolve(getAppDataDir(), 'data', `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
@@ -619,12 +543,13 @@ export class TokenRefreshScheduler {
             '--window-position=-10000,-10000'
           ])
         });
+        headlessTrackId = trackHeadless(browser, 'pharmarack_refresh_temp');
         tempProfilePathToDelete = tempProfilePath;
       }
 
       const [page] = await browser.pages();
       
-      page.on('request', request => {
+      page.on('request', (request: any) => {
         const headers = request.headers();
         const auth = headers['authorization'] || headers['Authorization'];
         if (auth && auth.length > 15) {
@@ -640,7 +565,7 @@ export class TokenRefreshScheduler {
 
       // Start navigation with a 10s timeout and domcontentloaded
       await page.goto('https://retailers.pharmarack.com/', { waitUntil: 'domcontentloaded', timeout: 10000 })
-        .catch(err => {
+        .catch((err: any) => {
           console.log('[TokenRefreshScheduler] Headless navigation error/timeout:', err.message);
         });
 
@@ -695,6 +620,9 @@ export class TokenRefreshScheduler {
       this.lastError = err.message || 'Background token refresh failed';
       return null;
     } finally {
+      if (headlessTrackId) {
+        untrackHeadless(headlessTrackId);
+      }
       if (browser) {
         try {
           await browser.close();

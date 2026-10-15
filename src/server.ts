@@ -18,9 +18,8 @@ import { ensureSchema } from './database.js';
 import { registerProcessGuardian } from './process/processGuardian.js';
 import { activityTracker } from './utils/activityTracker.js';
 import { runHeavyJob } from './utils/backgroundJobLane.js';
-// import { getBackendFetchMode } from './services/dataFetchControl.js';
 import { config, getAppDataDir, isPackagedApp } from './config/index.js';
-import { launchAppBrowser, closeAppBrowser } from './utils/chromeBrowser.js';
+import { launchAppBrowser, closeAppBrowser, markShutdownInProgress, closeAllHeadlessBrowsers } from './utils/chromeBrowser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1128,6 +1127,7 @@ let isShuttingDown = false;
 async function gracefulShutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
+  markShutdownInProgress();
 
   console.log(`[Shutdown] ${signal} received. Closing UI window immediately...`);
 
@@ -1237,6 +1237,16 @@ async function gracefulShutdown(signal: string) {
         await cloudflareTunnelService.stop();
       } catch (err) {
         console.error('Error stopping cloudflare tunnel:', err);
+      }
+    })(),
+    (async () => {
+      try {
+        await Promise.race([
+          closeAllHeadlessBrowsers(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Headless browsers close timed out')), 2000))
+        ]);
+      } catch (hbErr) {
+        console.error('Error closing headless browsers:', hbErr);
       }
     })(),
   ]);

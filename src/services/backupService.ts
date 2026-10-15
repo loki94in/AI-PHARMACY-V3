@@ -94,6 +94,7 @@ export async function createBackup(reason: string = 'Manual'): Promise<{ filenam
     console.warn('[Backup] Cloud sync hook warning (non-fatal):', cloudErr);
   }
 
+  invalidatePreupdateCache();
   return { filename };
 }
 
@@ -236,6 +237,7 @@ export function deleteBackup(filename: string): void {
   }
 
   fs.unlinkSync(filePath);
+  invalidatePreupdateCache();
 }
 
 /**
@@ -390,6 +392,7 @@ export async function restoreBackup(filename: string): Promise<void> {
     'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
     ['RESTORE_BACKUP', `Database restored from backup: ${sanitized}`]
   );
+  invalidatePreupdateCache();
 }
 
 /**
@@ -579,11 +582,26 @@ export interface PreupdateBackupsSummary {
 // also clears this legacy debt — never deleted automatically/silently.
 const LEGACY_PREUPGRADE_DB_RE = /^app-preupgrade-\d{4}-\d{2}-\d{2}-\d+\.db$/i;
 
+let cachedPreupdateInfo: PreupdateBackupsSummary | null = null;
+let cachedPreupdateTimestamp = 0;
+const PREUPDATE_CACHE_TTL_MS = 60_000;
+
+export function invalidatePreupdateCache(): void {
+  cachedPreupdateInfo = null;
+  cachedPreupdateTimestamp = 0;
+}
+
 /**
  * Scan for pre-update rollback safety backups created by Updater.bat (current dated-folder
  * scheme) plus any leftover legacy flat app-preupgrade-*.db files from an older build.
+ * Cached with 60s TTL so requests do not synchronously walk disk recursively on every poll.
  */
-export function getPreupdateBackupsInfo(): PreupdateBackupsSummary {
+export function getPreupdateBackupsInfo(force: boolean = false): PreupdateBackupsSummary {
+  const now = Date.now();
+  if (!force && cachedPreupdateInfo && (now - cachedPreupdateTimestamp < PREUPDATE_CACHE_TTL_MS)) {
+    return cachedPreupdateInfo;
+  }
+
   const folders: PreupdateFolderInfo[] = [];
   const searchDirs = new Set<string>();
   if (BACKUP_DIR) searchDirs.add(BACKUP_DIR);
@@ -619,11 +637,15 @@ export function getPreupdateBackupsInfo(): PreupdateBackupsSummary {
   folders.sort((a, b) => b.name.localeCompare(a.name));
   const totalSizeBytes = folders.reduce((acc, f) => acc + f.sizeBytes, 0);
 
-  return {
+  const result: PreupdateBackupsSummary = {
     count: folders.length,
     totalSizeBytes,
     folders,
   };
+
+  cachedPreupdateInfo = result;
+  cachedPreupdateTimestamp = now;
+  return result;
 }
 
 /**
@@ -660,6 +682,7 @@ export async function cleanOldPreupdateBackups(keepCount: number = 2): Promise<{
   }
 
   if (deletedCount > 0) {
+    invalidatePreupdateCache();
     try {
       const db = await dbManager.getConnection();
       await db.run(

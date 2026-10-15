@@ -15,8 +15,14 @@ import { syncDistributorPhoneAcrossTables, resolveDistributorContact } from '../
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
 import { pharmarackCatalogCache, scoreProductName } from '../services/pharmarackCatalogCache.js';
 import { startupSyncCoordinator } from '../services/startupSyncCoordinator.js';
-import { findChromePath as findChromiumPath, copyProfileFolder as copyChromeProfileFolder } from '../utils/chromeBrowser.js';
 import { sanitizePharmarackQuery } from '../services/intentKeywords.js';
+import {
+  findChromePath as findChromiumPath,
+  copyProfileFolder as copyChromeProfileFolder,
+  trackHeadless,
+  untrackHeadless,
+  isShutdownInProgress
+} from '../utils/chromeBrowser.js';
 import { marketClosureService } from '../services/marketClosureService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
@@ -541,6 +547,9 @@ router.get('/search', async (req, res) => {
       cachedHit = searchCache.lookup(coreTerm, storeId, isMapped);
     }
   }
+  if (!cachedHit) {
+    cachedHit = searchCache.findPrefixMatch(qRaw, storeId, isMapped);
+  }
   if (cachedHit) {
     if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
     return res.json(cachedHit.items);
@@ -558,6 +567,42 @@ router.get('/search', async (req, res) => {
     return res.status(503).json({ error: 'Connection error, please check internet or reconnect', code: 'CONNECTION_ERROR' });
   }
   return res.json(outcome.items);
+});
+
+// Top frequent terms for idle background warm-up
+router.get('/warmup-terms', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(`
+      SELECT DISTINCT TRIM(medicine_name) as term
+      FROM sale_items
+      WHERE medicine_name IS NOT NULL AND LENGTH(TRIM(medicine_name)) >= 3
+      GROUP BY TRIM(medicine_name)
+      ORDER BY COUNT(*) DESC
+      LIMIT 20
+    `);
+    const terms = rows.map((r: any) => r.term).filter(Boolean);
+    const fallbackTerms = [
+      'dolo 650', 'paracetamol', 'pan d', 'telma 40', 'azithromycin 500',
+      'amoxyclav 625', 'pantocid 40', 'montair lc', 'clavam 625', 'augmentin 625',
+      'glycomet 500', 'shelcal 500', 'becosules', 'atorvastatin 10', 'cetirizine 10',
+      'ondansetron 4', 'omeprazole 20', 'ciprofloxacin 500', 'metformin 500', 'rabeprazole 20'
+    ];
+    for (const fb of fallbackTerms) {
+      if (terms.length >= 20) break;
+      if (!terms.some(t => t.toLowerCase() === fb.toLowerCase())) {
+        terms.push(fb);
+      }
+    }
+    res.json(terms);
+  } catch {
+    res.json([
+      'dolo 650', 'paracetamol', 'pan d', 'telma 40', 'azithromycin 500',
+      'amoxyclav 625', 'pantocid 40', 'montair lc', 'clavam 625', 'augmentin 625',
+      'glycomet 500', 'shelcal 500', 'becosules', 'atorvastatin 10', 'cetirizine 10',
+      'ondansetron 4', 'omeprazole 20', 'ciprofloxacin 500', 'metformin 500', 'rabeprazole 20'
+    ]);
+  }
 });
 
 // Fetch store list grouped by mapped vs non-mapped (Strictly from local AI Learning database)
@@ -701,6 +746,9 @@ router.post('/session/warmup', async (_req, res) => {
 
 // Launch non-headless login window
 router.post('/login-window', async (_req, res) => {
+  if (isShutdownInProgress()) {
+    return res.status(503).json({ error: 'Application shutdown in progress' });
+  }
   const chromePath = findChromePath();
   if (!chromePath) {
     return res.status(404).json({ error: 'Google Chrome was not found on your system. Please install Google Chrome to use this feature.' });
@@ -743,6 +791,7 @@ router.post('/login-window', async (_req, res) => {
         'https://retailers.pharmarack.com/loginotp'
       ], { detached: false, stdio: 'ignore', windowsHide: false });
 
+      const chromeTrackId = trackHeadless(chromeProc, 'pharmarack_login_window');
       let pollTimer: NodeJS.Timeout | null = null;
       let tokenCaptured = false;
 
@@ -789,19 +838,21 @@ router.post('/login-window', async (_req, res) => {
       }, 2000);
 
       chromeProc.on('error', (e: Error) => {
+        untrackHeadless(chromeTrackId);
         if (pollTimer) clearInterval(pollTimer);
         console.warn('[LoginWindow] Chrome spawn error:', e.message);
         tokenRefreshScheduler.isLoginWindowActive = false;
       });
 
       chromeProc.on('exit', async () => {
+        untrackHeadless(chromeTrackId);
         if (pollTimer) clearInterval(pollTimer);
         console.log('[LoginWindow] Chrome login window closed. Checking session token...');
         tokenRefreshScheduler.isLoginWindowActive = false;
         // Give Chrome a moment to flush cookies/localStorage to disk before final read
         await new Promise(r => setTimeout(r, 1200));
 
-        if (!tokenCaptured) {
+        if (!tokenCaptured && !isShutdownInProgress()) {
           let token = extractTokenFromProfile(mainProfilePath);
           if (token) {
             await saveTokenAndBroadcast(token, 'exit-scan');

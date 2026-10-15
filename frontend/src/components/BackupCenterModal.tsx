@@ -86,13 +86,17 @@ interface BackupCenterContentProps {
   isInline?: boolean;
 }
 
+// Module-level persistent cache for zero-latency instant rendering (<1ms)
+let cachedBackupStatus: BackupStatus | null = null;
+
 export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
   isStartupMode = false,
   onClose,
   isInline = false,
 }) => {
-  const [status, setStatus] = useState<BackupStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<BackupStatus | null>(() => cachedBackupStatus);
+  const [loading, setLoading] = useState(() => !cachedBackupStatus);
+  const [refreshing, setRefreshing] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
@@ -100,13 +104,19 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
   const [confirmCleanPreupdate, setConfirmCleanPreupdate] = useState(false);
   const [lastBackupError, setLastBackupError] = useState<string | null>(null);
 
-  // Core loader (no sync setState before the await); the mount path relies on
-  // the initial loading=true / statusError=null state.
-  const fetchStatus = async () => {
+  // Core loader (no sync setState before the await); paints from cache instantly
+  // and validates freshness in background without freezing the UI.
+  const fetchStatus = async (isManualRefresh = false) => {
+    if (isManualRefresh || !cachedBackupStatus) {
+      if (!cachedBackupStatus) setLoading(true);
+      else setRefreshing(true);
+    }
     try {
       const { data } = await apiClient.get('/utilities/backup/status');
       if (data.success) {
+        cachedBackupStatus = data;
         setStatus(data);
+        setStatusError(null);
       } else {
         const msg = data.error || 'Failed to retrieve backup system status';
         setStatusError(msg);
@@ -120,19 +130,18 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
       toastEvent.trigger(msg, 'error');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // User-action refresh entry: gates loading/errors explicitly.
+  // User-action refresh entry: triggers explicit freshness sync.
   const refreshStatus = async () => {
-    setLoading(true);
-    setStatusError(null);
-    await fetchStatus();
+    await fetchStatus(true);
   };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async mount fetch; setState fires after await only
-    fetchStatus();
+    fetchStatus(false);
   }, []);
 
   const handleManualBackup = async () => {
@@ -331,9 +340,12 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
       {!isInline && (
         <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border bg-bg3/50 shrink-0">
           <div className="flex items-center gap-2">
-            <Shield className="text-sky animate-pulse" size={20} />
+            <Shield className="text-sky" size={20} />
             <div>
-              <h3 className="text-base font-bold text-text">Multi-Layer Backup & Recovery Center</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-text">Multi-Layer Backup & Recovery Center</h3>
+                {refreshing && <RefreshCw size={12} className="animate-spin text-sky shrink-0" />}
+              </div>
               <p className="text-xs text-muted">Visibility and management of database safety layers</p>
             </div>
           </div>
@@ -349,7 +361,7 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
       )}
 
       {/* Main Body */}
-      {loading ? (
+      {loading && !status ? (
         <div className="flex-1 flex flex-col items-center justify-center py-20 text-muted gap-2">
           <RefreshCw className="animate-spin text-sky" size={28} />
           <span className="text-xs font-semibold">Retrieving backup layers status...</span>

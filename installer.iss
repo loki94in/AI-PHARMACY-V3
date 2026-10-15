@@ -29,6 +29,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
 #endif
+#ifndef Compression
+  #define Compression "lzma2/fast"
+#endif
 #define MyAppPublisher "AI Pharmacy Team"
 #define MyAppURL       ""
 #define MyAppExeName   "PharmacyOS.exe"
@@ -52,7 +55,7 @@ DisableDirPage=no
 OutputDir=dist\installer
 OutputBaseFilename=AI-Pharmacy-OS-Portable-Setup-v{#MyAppVersion}
 
-Compression=lzma2/max
+Compression={#Compression}
 SolidCompression=yes
 
 WizardStyle=modern
@@ -106,8 +109,8 @@ Source: "sea-entry.cjs"; DestDir: "{app}"; Flags: ignoreversion
 ; Built web frontend (local images excluded — images are dynamically fetched online via web)
 Source: "frontend\dist\*"; DestDir: "{app}\frontend\dist"; Excludes: "products\*,products"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Full node_modules (SEA does not embed third-party packages)
-Source: "node_modules\*"; DestDir: "{app}\node_modules"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Full node_modules (SEA does not embed third-party packages; dev tools, duplicates, and non-Windows binaries excluded)
+Source: "node_modules\*"; DestDir: "{app}\node_modules"; Excludes: "electron\dist\*,electron\dist,onnxruntime-node\bin\napi-v6\darwin\*,onnxruntime-node\bin\napi-v6\darwin,onnxruntime-node\bin\napi-v6\linux\*,onnxruntime-node\bin\napi-v6\linux,.bin\*,electron-winstaller\*,typescript\*,playwright-core\*,@playwright\*,e2e\*,@e2e-dev\*,*.map,*.ts,*.md,LICENSE*,test\*,tests\*,__tests__\*,example\*,examples\*,*.obj,*.pdb,*.c,*.cc,*.cpp,*.h,*.hpp"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Portable production env (auto-opens browser on first launch)
 Source: "packaging\portable.env"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist

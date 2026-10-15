@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect, useCallback } from 'react';
+import React, { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { Smartphone, QrCode, Wifi, WifiOff, Edit2, Save, X, Bot, BotOff, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -24,6 +24,7 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   const [editName, setEditName] = useState('');
   const [waStatus, setWaStatus] = useState<{ isReady: boolean; sleeping: boolean; status: string } | null>(null);
   const [waking, setWaking] = useState(false);
+  const wakePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchDevicesStatus = useCallback(async () => {
     try {
@@ -47,23 +48,39 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
           sleeping: waRes?.status === 'SLEEPING' || waRes?.sleeping === true,
           status: waRes?.status || (waRes?.isReady ? 'READY' : 'DISCONNECTED'),
         });
+        return !!(waRes?.isReady || waRes?.status === 'READY' || waRes?.status === 'CONNECTED');
       }
     } catch {
       // Ignore background fetch errors
     }
+    return false;
   }, []);
 
   const handleWake = useCallback(async () => {
     if (waking) return;
     setWaking(true);
+    if (wakePollRef.current) {
+      clearInterval(wakePollRef.current);
+      wakePollRef.current = null;
+    }
     try {
       await (api as any).wakeWhatsapp?.();
-      // Poll for ready state after wake (max 20s)
+      // Poll for ready state after wake (max 20s, stops immediately when ready)
       let attempts = 0;
-      const poll = setInterval(async () => {
+      wakePollRef.current = setInterval(async () => {
         attempts++;
-        await fetchWhatsAppStatus();
-        if (attempts >= 10) clearInterval(poll);
+        if (document.visibilityState === 'visible') {
+          const isReady = await fetchWhatsAppStatus();
+          if (isReady && wakePollRef.current) {
+            clearInterval(wakePollRef.current);
+            wakePollRef.current = null;
+            return;
+          }
+        }
+        if (attempts >= 10 && wakePollRef.current) {
+          clearInterval(wakePollRef.current);
+          wakePollRef.current = null;
+        }
       }, 2000);
     } catch {
       // ignore
@@ -90,6 +107,10 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
     window.addEventListener('focus', handleVisibility);
 
     return () => {
+      if (wakePollRef.current) {
+        clearInterval(wakePollRef.current);
+        wakePollRef.current = null;
+      }
       window.removeEventListener('sse-wa-status-changed', handleSse);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);

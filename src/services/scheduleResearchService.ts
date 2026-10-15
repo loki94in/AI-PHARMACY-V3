@@ -19,7 +19,7 @@
 import { Jimp } from 'jimp';
 import { createWorker } from 'tesseract.js';
 import { getPuppeteer } from '../utils/lazyPuppeteer.js';
-import { findChromePath } from '../utils/chromeBrowser.js';
+import { findChromePath, trackHeadless, untrackHeadless, isShutdownInProgress } from '../utils/chromeBrowser.js';
 import {
   buildSearchQuery, findScheduleMatches,
   STOP_WORDS, COSMETIC_MARKERS,
@@ -70,6 +70,7 @@ const GOOGLE_SEARCH_URL = 'https://www.google.com/search?hl=en&gl=in&num=10&q=';
 const DDG_SEARCH_URL = 'https://html.duckduckgo.com/html/?q=';
 
 async function captureSerpPage(url: string, resultSelector: string[]): Promise<{ png: Buffer; blocked: boolean }> {
+  if (isShutdownInProgress()) throw new Error('SHUTDOWN_IN_PROGRESS');
   const chromePath = findChromePath({ includeEdge: true });
   if (!chromePath) throw new Error('NO_CHROME');
   const puppeteer = await getPuppeteer();
@@ -84,6 +85,7 @@ async function captureSerpPage(url: string, resultSelector: string[]): Promise<{
       '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     ],
   });
+  const trackId = trackHeadless(browser, 'schedule_research');
   try {
     const page = await browser.newPage();
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-IN,en;q=0.9' });
@@ -101,6 +103,7 @@ async function captureSerpPage(url: string, resultSelector: string[]): Promise<{
     const png = await page.screenshot({ encoding: 'binary', fullPage: true }) as unknown as Buffer;
     return { png, blocked };
   } finally {
+    untrackHeadless(trackId);
     await browser.close().catch(() => {});
   }
 }

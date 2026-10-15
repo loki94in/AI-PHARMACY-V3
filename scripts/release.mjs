@@ -22,12 +22,21 @@ const pkgPath   = path.join(rootDir, 'package.json');
 const pkg       = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
 // ── Parse CLI flags ─────────────────────────────────────────────────────────
-const args       = process.argv.slice(2);
-const isPilot    = args.includes('--pilot')  || args.includes('-p');
-const isPromote  = args.includes('--promote');
-const skipBuild  = args.includes('--skip-build');
-const bumpMajor  = args.includes('--major');
-const bumpMinor  = args.includes('--minor');
+const args             = process.argv.slice(2);
+const isPilot          = args.includes('--pilot')  || args.includes('-p');
+const isPromote        = args.includes('--promote');
+const skipBuild        = args.includes('--skip-build');
+const isClean          = args.includes('--clean');
+const isMaxCompression = args.includes('--max-compression');
+const bumpMajor        = args.includes('--major');
+const bumpMinor        = args.includes('--minor');
+
+// Set Inno Setup compression mode (default fast, max when explicitly asked)
+if (isMaxCompression) {
+  process.env.ISCC_COMPRESSION = 'lzma2/max';
+} else if (!process.env.ISCC_COMPRESSION) {
+  process.env.ISCC_COMPRESSION = 'lzma2/fast';
+}
 
 // Check for remote publish (owner preference 2026-09-18: local by default unless BOTH "git" and "vercel" are specified)
 const isRemote   = (args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
@@ -144,24 +153,34 @@ if (shouldBump) {
 const tagName   = `v${version}`;
 const rollout   = isPilot ? 'PILOT' : 'ALL';
 
+// ── Timing stopwatch ────────────────────────────────────────────────────────
+const releaseStartTime = performance.now();
+const formatElapsed = (start) => `${((performance.now() - start) / 1000).toFixed(1)}s`;
+
 console.log('\n=============================================================');
 console.log(`🚀  AI Pharmacy OS — Release ${isRemote ? 'Publisher' : 'Builder'} (${tagName})`);
 console.log(`🎯  Rollout Target: ${isPilot ? 'PILOT ONLY (Only test/pilot licensed PCs)' : 'ALL (Production — all customers)'}`);
 console.log(`🌐  Mode: ${isRemote ? 'REMOTE (GitHub + Vercel)' : 'LOCAL ONLY (Installer & Update Package)'}`);
+console.log(`⚙️   Build Mode: ${skipBuild ? 'SKIP BUILD (--skip-build)' : isClean ? 'CLEAN REBUILD (--clean)' : 'INCREMENTAL (fast cached)'}`);
+console.log(`🗜️   Compression: ${process.env.ISCC_COMPRESSION || 'lzma2/fast'}`);
 console.log('=============================================================\n');
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 const installerDir = path.join(rootDir, 'dist', 'installer');
 
 // ── Step 1: Build ────────────────────────────────────────────────────────────
+const step1Start = performance.now();
 if (!skipBuild) {
-  console.log('📦 Step 1: Building application (npm run build:exe:nobump)...');
-  execSync('npm run build:exe:nobump', { stdio: 'inherit', cwd: rootDir });
+  const buildCmd = isClean ? 'npm run build:exe:clean' : 'npm run build:exe:nobump';
+  console.log(`📦 Step 1: Building application (${buildCmd})...`);
+  execSync(buildCmd, { stdio: 'inherit', cwd: rootDir });
+  console.log(`⏱️  Step 1 finished in ${formatElapsed(step1Start)}`);
 } else {
   console.log('📦 Step 1: Skipping build (--skip-build).');
 }
 
 // ── Step 2: Locate installer — must contain the bumped version ──────────────
+const step2Start = performance.now();
 console.log('\n🔍 Step 2: Locating versioned installer...');
 const expectedInstallerName = `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`;
 const installerExe = path.join(installerDir, expectedInstallerName);
@@ -175,9 +194,10 @@ if (!fs.existsSync(installerExe)) {
   console.error('   This prevents a stale installer from being released. Fix the build and retry.');
   process.exit(1);
 }
-console.log(`✓ Installer: ${expectedInstallerName}`);
+console.log(`✓ Installer: ${expectedInstallerName} (${formatElapsed(step2Start)})`);
 
 // ── Step 3: Build update package + SHA-256 ──────────────────────────────────
+const step3Start = performance.now();
 console.log('\n📦 Step 3: Building update package...');
 let updateManifest;
 try {
@@ -198,6 +218,53 @@ if (!fs.existsSync(updateZipPath)) {
 }
 console.log(`✓ Update ZIP: ${expectedZipName}`);
 console.log(`✓ SHA-256: ${sha256}`);
+console.log(`⏱️  Step 3 finished in ${formatElapsed(step3Start)}`);
+
+// ── Housekeeping: Retention pruning in dist/installer ──────────────────────
+console.log('\n🧹 Housekeeping: Pruning old installer and update artifacts...');
+try {
+  if (fs.existsSync(installerDir)) {
+    const files = fs.readdirSync(installerDir);
+    const setupFiles = files
+      .filter(f => f.startsWith('AI-Pharmacy-OS-Portable-Setup-') && f.endsWith('.exe'))
+      .map(f => ({ name: f, path: path.join(installerDir, f), mtime: fs.statSync(path.join(installerDir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    const updateFiles = files
+      .filter(f => f.startsWith('AI-Pharmacy-OS-Update-') && f.endsWith('.zip'))
+      .map(f => ({ name: f, path: path.join(installerDir, f), mtime: fs.statSync(path.join(installerDir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+
+    let prunedCount = 0;
+    let reclaimedBytes = 0;
+    // Keep newest 2 setups, delete older
+    for (const item of setupFiles.slice(2)) {
+      try {
+        const size = fs.statSync(item.path).size;
+        fs.unlinkSync(item.path);
+        reclaimedBytes += size;
+        prunedCount++;
+        console.log(`   - Pruned old setup: ${item.name} (${(size / (1024 * 1024)).toFixed(1)} MB)`);
+      } catch (_) {}
+    }
+    // Keep newest 2 updates, delete older
+    for (const item of updateFiles.slice(2)) {
+      try {
+        const size = fs.statSync(item.path).size;
+        fs.unlinkSync(item.path);
+        reclaimedBytes += size;
+        prunedCount++;
+        console.log(`   - Pruned old update: ${item.name} (${(size / (1024 * 1024)).toFixed(1)} MB)`);
+      } catch (_) {}
+    }
+    if (prunedCount > 0) {
+      console.log(`✓ Cleaned ${prunedCount} old files, reclaimed ${(reclaimedBytes / (1024 * 1024)).toFixed(1)} MB.`);
+    } else {
+      console.log('✓ No old artifacts to prune (kept newest 2 setups & updates).');
+    }
+  }
+} catch (pruneErr) {
+  console.warn('⚠️  Notice: Housekeeping prune warning:', pruneErr.message);
+}
 
 // ── Local Mode Exit ──────────────────────────────────────────────────────────
 if (!isRemote) {
@@ -208,8 +275,13 @@ if (!isRemote) {
   console.log(`    Installer: ${installerExe}`);
   console.log(`    Update   : ${updateZipPath}`);
   console.log(`    SHA-256  : ${sha256}`);
-  console.log('\n💡  To publish to GitHub & Vercel, include both "git" and "vercel":');
-  console.log('    npm release git vercel');
+  console.log(`    Duration : ${formatElapsed(releaseStartTime)}`);
+  console.log('\n💡  Fast Path & Release Options:');
+  console.log('    • Re-publish without rebuild : npm run release -- --skip-build');
+  console.log('    • Promote PILOT to ALL       : npm run release -- --promote');
+  console.log('    • Force fresh full build     : npm run release -- --clean');
+  console.log('    • Maximum compression        : npm run release -- --max-compression');
+  console.log('    • Publish to GitHub & Vercel : npm run release -- git vercel');
   console.log('=============================================================\n');
   process.exit(0);
 }
@@ -307,6 +379,7 @@ console.log(`    Rollout  : ${rollout}`);
 console.log(`    Installer: ${downloadUrl}`);
 console.log(`    Update   : ${updatePackageUrl}`);
 console.log(`    SHA-256  : ${sha256}`);
+console.log(`    Duration : ${formatElapsed(releaseStartTime)}`);
 if (isPilot) {
   console.log('\n🔒  Status: PILOT MODE.');
   console.log('    Only Pilot-licensed PCs will receive this update.');

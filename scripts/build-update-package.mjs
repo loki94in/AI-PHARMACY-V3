@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import archiver from 'archiver';
 import AdmZip from 'adm-zip';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,66 @@ const UPDATE_SOURCES = [
 // frontend/dist directory (recursive)
 const frontendDist = path.join(root, 'frontend', 'dist');
 
+function buildWithArchiver() {
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(zipOutPath);
+    const hash = crypto.createHash('sha256');
+    const archive = archiver('zip', {
+      zlib: { level: 6 }
+    });
+
+    output.on('close', () => {
+      resolve(hash.digest('hex'));
+    });
+    archive.on('error', reject);
+    output.on('error', reject);
+
+    archive.on('data', chunk => hash.update(chunk));
+    archive.pipe(output);
+
+    for (const { src, zipEntry } of UPDATE_SOURCES) {
+      console.log(`[UpdatePackage]   + ${zipEntry}`);
+      archive.file(src, { name: zipEntry });
+    }
+
+    console.log(`[UpdatePackage]   + frontend/dist/**`);
+    archive.directory(frontendDist, 'frontend/dist', entry => {
+      if (entry.name.startsWith('frontend/dist/products') || entry.name.includes('/products/')) {
+        return false;
+      }
+      return entry;
+    });
+
+    archive.finalize();
+  });
+}
+
+async function buildWithAdmZip() {
+  const zip = new AdmZip();
+  for (const { src, zipEntry } of UPDATE_SOURCES) {
+    console.log(`[UpdatePackage]   + ${zipEntry}`);
+    zip.addLocalFile(src, '', zipEntry);
+  }
+
+  function addDirToZip(dirPath, zipBasePath) {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      const entryZipDir = zipBasePath || '';
+      if (entry.isDirectory()) {
+        if (entry.name === 'products' && zipBasePath === 'frontend/dist') continue;
+        addDirToZip(fullPath, `${entryZipDir}${entry.name}/`);
+      } else {
+        zip.addLocalFile(fullPath, entryZipDir, entry.name);
+      }
+    }
+  }
+
+  addDirToZip(frontendDist, 'frontend/dist/');
+  zip.writeZip(zipOutPath);
+  return await computeSha256(zipOutPath);
+}
+
 export async function buildUpdatePackage() {
   console.log(`\n[UpdatePackage] Building update package for v${version}...`);
 
@@ -64,39 +125,17 @@ export async function buildUpdatePackage() {
     console.log(`[UpdatePackage] Removed stale zip: ${zipName}`);
   }
 
-  const zip = new AdmZip();
-
-  // Add individual files
-  for (const { src, zipEntry } of UPDATE_SOURCES) {
-    console.log(`[UpdatePackage]   + ${zipEntry}`);
-    zip.addLocalFile(src, '', zipEntry);
+  let sha256;
+  try {
+    // Fast streaming zip creation with fused SHA-256
+    sha256 = await buildWithArchiver();
+    console.log(`[UpdatePackage] ZIP created (archiver stream): ${zipName}`);
+  } catch (streamErr) {
+    console.warn(`[UpdatePackage] Streaming zip failed (${streamErr.message}), falling back to AdmZip...`);
+    sha256 = await buildWithAdmZip();
+    console.log(`[UpdatePackage] ZIP created (AdmZip fallback): ${zipName}`);
   }
 
-  // Add frontend/dist recursively, exclude product images (per installer spec — images load via web)
-  function addDirToZip(dirPath, zipBasePath) {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
-      const entryZipDir = zipBasePath || '';
-      if (entry.isDirectory()) {
-        // Skip product images directory
-        if (entry.name === 'products' && zipBasePath === 'frontend/dist') continue;
-        addDirToZip(fullPath, `${entryZipDir}${entry.name}/`);
-      } else {
-        zip.addLocalFile(fullPath, entryZipDir, entry.name);
-      }
-    }
-  }
-
-  console.log(`[UpdatePackage]   + frontend/dist/**`);
-  addDirToZip(frontendDist, 'frontend/dist/');
-
-  // Write zip
-  zip.writeZip(zipOutPath);
-  console.log(`[UpdatePackage] ZIP created: ${zipName}`);
-
-  // Calculate SHA-256
-  const sha256 = await computeSha256(zipOutPath);
   console.log(`[UpdatePackage] SHA-256: ${sha256}`);
 
   // Write manifest for release.mjs to consume

@@ -26,6 +26,7 @@ import {
   setScheduleConfig,
   getPreupdateBackupsInfo,
   cleanOldPreupdateBackups,
+  invalidatePreupdateCache,
 } from '../services/backupService.js';
 import { backupRecoveryService } from '../services/backupRecoveryService.js';
 import { closeMessageDAO } from '../database/messageDAO.js';
@@ -36,6 +37,7 @@ import AdmZip from 'adm-zip';
 router.post('/backup', async (_req, res) => {
   try {
     const result = await createBackup('Manual');
+    invalidateBackupSizeCache();
     res.json({ success: true, message: 'Backup created successfully', backupFilename: result.filename });
   } catch (error) {
     console.error('Backup failed:', error);
@@ -59,6 +61,7 @@ router.delete('/backup/:filename', async (req, res) => {
   try {
     // Security: path.basename is applied inside deleteBackup()
     deleteBackup(req.params.filename);
+    invalidateBackupSizeCache();
     res.json({ success: true, message: 'Backup deleted' });
   } catch (error: any) {
     console.error('Delete backup failed:', error);
@@ -253,6 +256,7 @@ router.post('/backup/restore', async (req, res) => {
       filename = backups[0].filename;
     }
     await restoreBackup(filename);
+    invalidateBackupSizeCache();
     res.json({ success: true, message: `Backup restored successfully from: ${filename}` });
   } catch (e: any) {
     console.error('Backup restore error:', e);
@@ -268,12 +272,40 @@ router.post('/restore', async (_req, res) => {
       return res.status(400).json({ error: 'No backup files found to restore' });
     }
     await restoreBackup(backups[0].filename);
+    invalidateBackupSizeCache();
     res.json({ success: true, message: `Backup restored successfully from: ${backups[0].filename}` });
   } catch (e: any) {
     console.error('Restore error:', e);
     res.status(500).json({ error: 'Failed to restore backup: ' + e.message });
   }
 });
+
+// Module-level TTL cache for backup size calculation (prevents heavy sync disk walks on every status query)
+let cachedBackupSizeTotal: number | null = null;
+let cachedBackupSizeTimestamp = 0;
+const BACKUP_SIZE_CACHE_TTL_MS = 60_000;
+
+export function invalidateBackupSizeCache(): void {
+  cachedBackupSizeTotal = null;
+  cachedBackupSizeTimestamp = 0;
+  invalidatePreupdateCache();
+}
+
+async function calculateFolderSizeAsync(dir: string): Promise<number> {
+  let size = 0;
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        try {
+          const stats = await fs.promises.stat(path.join(dir, entry.name));
+          size += stats.size;
+        } catch {}
+      }
+    }
+  } catch {}
+  return size;
+}
 
 // GET /api/utilities/backup/status
 router.get('/backup/status', async (_req, res) => {
@@ -327,30 +359,28 @@ router.get('/backup/status', async (_req, res) => {
       }
     }
 
-    // Calculate total size of snapshots and archives
-    const BACKUP_DIR = config.backupDir;
-    const SNAPSHOTS_DIR = path.join(BACKUP_DIR, 'snapshots');
-    const ARCHIVES_DIR = path.join(BACKUP_DIR, 'archives');
-    
+    // Calculate total size of snapshots and archives (async + 60s TTL cached)
     let totalSize = 0;
-    const calculateFolderSize = (dir: string) => {
-      if (fs.existsSync(dir)) {
-        fs.readdirSync(dir).forEach(f => {
-          try {
-            const stats = fs.statSync(path.join(dir, f));
-            if (stats.isFile()) {
-              totalSize += stats.size;
-            }
-          } catch {}
-        });
-      }
-    };
-    calculateFolderSize(SNAPSHOTS_DIR);
-    calculateFolderSize(ARCHIVES_DIR);
+    const now = Date.now();
+    if (cachedBackupSizeTotal !== null && (now - cachedBackupSizeTimestamp < BACKUP_SIZE_CACHE_TTL_MS)) {
+      totalSize = cachedBackupSizeTotal;
+    } else {
+      const BACKUP_DIR = config.backupDir;
+      const SNAPSHOTS_DIR = path.join(BACKUP_DIR, 'snapshots');
+      const ARCHIVES_DIR = path.join(BACKUP_DIR, 'archives');
+      
+      const [snapshotsSize, archivesSize] = await Promise.all([
+        calculateFolderSizeAsync(SNAPSHOTS_DIR),
+        calculateFolderSizeAsync(ARCHIVES_DIR)
+      ]);
+      const preupdateBackups = getPreupdateBackupsInfo();
+      totalSize = snapshotsSize + archivesSize + preupdateBackups.totalSizeBytes;
+      cachedBackupSizeTotal = totalSize;
+      cachedBackupSizeTimestamp = now;
+    }
 
-    // Scan for pre-update rollback safety backups
+    // Scan for pre-update rollback safety backups (cached inside backupService)
     const preupdateBackups = getPreupdateBackupsInfo();
-    totalSize += preupdateBackups.totalSizeBytes;
 
     // Next scheduled backup
     const frequency = await getScheduleConfig();
@@ -374,7 +404,7 @@ router.get('/backup/status', async (_req, res) => {
     res.json({
       success: true,
       showRestorePopup: false,
-      availableArchives: archives,
+      availableArchives: archives.slice(0, 60),
       localBackupStatus: localEnabled ? (isPaused ? 'Paused' : 'Enabled') : 'Disabled',
       gdriveStatus: gdriveStatusLabel,
       hasGdriveAuth,
@@ -396,7 +426,6 @@ router.get('/backup/status', async (_req, res) => {
         gdrive: hasGdriveAuth ? `Google Drive (${gdriveFolderName})` : 'Not Connected',
         telegram: telegramEnabled ? 'Telegram Bot Notifications' : 'Not Configured'
       },
-      isPaused
     });
   } catch (err: any) {
     console.error('[Backup] Status API failed:', err);
@@ -409,6 +438,7 @@ router.post('/backup/clean-preupdate', async (req, res) => {
   try {
     const keepCount = typeof req.body?.keepCount === 'number' ? Math.max(1, req.body.keepCount) : 2;
     const result = await cleanOldPreupdateBackups(keepCount);
+    invalidateBackupSizeCache();
     res.json({ success: true, ...result });
   } catch (error: any) {
     console.error('[Backup] Clean preupdate backups failed:', error);
@@ -461,6 +491,7 @@ router.post('/backup/archive/restore', async (req, res) => {
   }
   try {
     await backupRecoveryService.restoreFromArchive(filename);
+    invalidateBackupSizeCache();
     res.json({ success: true, message: 'Backup restored successfully' });
   } catch (err: any) {
     console.error('[Backup] Restore failed:', err);
@@ -472,6 +503,7 @@ router.post('/backup/archive/restore', async (req, res) => {
 router.delete('/backup/archive/:filename', async (req, res) => {
   try {
     await backupRecoveryService.deleteArchive(req.params.filename);
+    invalidateBackupSizeCache();
     res.json({ success: true, message: 'Archive deleted successfully' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to delete archive: ' + err.message });
@@ -517,6 +549,7 @@ router.post('/backup/manual', async (_req, res) => {
 
       upload = await backupRecoveryService.uploadArchive(archiveName);
       await backupRecoveryService.enforceRetention();
+      invalidateBackupSizeCache();
     }
 
     const message = upload.gdrive === 'failed'

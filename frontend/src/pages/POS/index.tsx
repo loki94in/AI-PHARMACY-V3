@@ -3016,6 +3016,13 @@ const POS = () => {
   };
 
   const fetchDetailsAndAddToCart = async (item: PosBatchItem) => {
+    if (headerCatalogSearchTimeoutRef.current) clearTimeout(headerCatalogSearchTimeoutRef.current);
+    if (headerCatalogSearchAbortRef.current) {
+      headerCatalogSearchAbortRef.current.abort();
+      headerCatalogSearchAbortRef.current = null;
+    }
+    headerCatalogSearchSeqRef.current++;
+
     const autoDisc = (item.sell_price && item.mrp && Number(item.sell_price) > 0 && Number(item.mrp) > 0 && Number(item.sell_price) < Number(item.mrp))
       ? parseFloat((((Number(item.mrp) - Number(item.sell_price)) / Number(item.mrp)) * 100).toFixed(2))
       : (item.discount || 0);
@@ -3248,6 +3255,13 @@ const POS = () => {
       next.splice(index, 1, ...rowsToAdd);
       return next;
     });
+
+    if (rowCatalogSearchTimeoutRef.current) clearTimeout(rowCatalogSearchTimeoutRef.current);
+    if (rowCatalogSearchAbortRef.current) {
+      rowCatalogSearchAbortRef.current.abort();
+      rowCatalogSearchAbortRef.current = null;
+    }
+    rowCatalogSearchSeqRef.current++;
 
     setActiveRowSearchIndex(null);
     setRowSearchTerm('');

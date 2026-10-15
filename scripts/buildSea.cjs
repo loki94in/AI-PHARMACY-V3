@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync, execSync } = require('child_process');
+const esbuild = require('esbuild');
 
 const root = path.resolve(__dirname, '..');
 
@@ -34,24 +35,50 @@ if (fs.existsSync(backendExe)) fs.rmSync(backendExe);
 fs.copyFileSync(process.execPath, backendExe);
 
 console.log('[build-sea] Step 3: Injecting blob with postject...');
-const q = (s) => `"${s}"`;
-execSync(
-  `npx --yes postject ${q(backendExe)} NODE_SEA_BLOB ${q(blobPath)} --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`,
-  { cwd: root, stdio: 'inherit' }
-);
+const postjectCli = path.join(root, 'node_modules', 'postject', 'dist', 'cli.js');
+if (fs.existsSync(postjectCli)) {
+  execFileSync(
+    process.execPath,
+    [
+      postjectCli,
+      backendExe,
+      'NODE_SEA_BLOB',
+      blobPath,
+      '--sentinel-fuse',
+      'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
+    ],
+    { cwd: root, stdio: 'inherit' }
+  );
+} else {
+  const q = (s) => `"${s}"`;
+  execSync(
+    `npx --no-install postject ${q(backendExe)} NODE_SEA_BLOB ${q(blobPath)} --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`,
+    { cwd: root, stdio: 'inherit' }
+  );
+}
 console.log('[build-sea] ✓ PharmacyBackend.exe ready ->', backendExe);
 
 console.log('[build-sea] Step 4: Compiling Electron main and preload scripts...');
 const electronDistDir = path.join(distDir, 'electron');
 fs.mkdirSync(electronDistDir, { recursive: true });
-execSync(
-  `npx esbuild electron/main.ts --bundle --platform=node --target=node20 --outfile=${q(path.join(electronDistDir, 'main.cjs'))} --external:electron`,
-  { cwd: root, stdio: 'inherit' }
-);
-execSync(
-  `npx esbuild electron/preload.ts --bundle --platform=node --target=node20 --outfile=${q(path.join(electronDistDir, 'preload.cjs'))} --external:electron`,
-  { cwd: root, stdio: 'inherit' }
-);
+esbuild.buildSync({
+  entryPoints: [path.join(root, 'electron', 'main.ts')],
+  bundle: true,
+  platform: 'node',
+  target: 'node20',
+  outfile: path.join(electronDistDir, 'main.cjs'),
+  external: ['electron'],
+  logLevel: 'info',
+});
+esbuild.buildSync({
+  entryPoints: [path.join(root, 'electron', 'preload.ts')],
+  bundle: true,
+  platform: 'node',
+  target: 'node20',
+  outfile: path.join(electronDistDir, 'preload.cjs'),
+  external: ['electron'],
+  logLevel: 'info',
+});
 
 console.log('[build-sea] Step 5: Preparing Electron runtime (PharmacyOS.exe)...');
 const electronSourceDir = path.join(root, 'node_modules', 'electron', 'dist');
@@ -123,11 +150,13 @@ if (isccExe && fs.existsSync(issPath)) {
     } catch (_) {}
   }
 
+  const compression = process.env.ISCC_COMPRESSION || 'lzma2/fast';
   console.log('[build-sea] Found Inno Setup compiler! Building standalone installer setup package...');
   console.log(`[build-sea] Injecting version: ${APP_VERSION} (from package.json)`);
+  console.log(`[build-sea] Inno compression mode: ${compression}`);
   try {
-    // Pass version via /DMyAppVersion= so installer.iss never needs manual edits (PRODUCTION.md §6)
-    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} "${issPath}"`, { cwd: root, stdio: 'inherit' });
+    // Pass version via /DMyAppVersion= and compression via /DCompression= so installer.iss never needs manual edits (PRODUCTION.md §6)
+    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} "${issPath}"`, { cwd: root, stdio: 'inherit' });
     console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v${APP_VERSION}.exe`);
   } catch (e) {
     console.error('[build-sea] Inno Setup compilation failed:', e.message);

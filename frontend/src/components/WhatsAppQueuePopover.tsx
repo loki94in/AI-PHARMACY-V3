@@ -183,7 +183,11 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
       data.isProcessing
     );
     if (active && !pollIntervalRef.current) {
-      pollIntervalRef.current = setInterval(() => fetchStatus(true), 2000);
+      pollIntervalRef.current = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          fetchStatus(true);
+        }
+      }, 2000);
     } else if (!active && pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;

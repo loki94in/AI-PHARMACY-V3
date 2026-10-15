@@ -5,7 +5,6 @@ import { KeepAliveOutlet, type KeepAliveRoute } from './lib/keepAlive/KeepAliveO
 import { prewarmRoute } from './lib/keepAlive/routePool';
 import { queryClient } from './lib/queryClient';
 import { api } from './services/api';
-import { getTodayString, getNDaysAgoString } from './utils/date';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { StoreProvider } from './context/StoreContext';
@@ -131,29 +130,53 @@ function App() {
     ];
     let idx = 0;
     let timer: ReturnType<typeof setTimeout>;
+    let searchWarmupStarted = false;
+    let lastActivity = Date.now();
+    const onActivity = () => { lastActivity = Date.now(); };
+    window.addEventListener('keydown', onActivity, { passive: true });
+    window.addEventListener('mousedown', onActivity, { passive: true });
+
+    const startSearchWarmup = async () => {
+      if (searchWarmupStarted) return;
+      searchWarmupStarted = true;
+      try {
+        const terms = await api.getPharmarackWarmupTerms();
+        if (!Array.isArray(terms) || terms.length === 0) return;
+        let termIdx = 0;
+
+        const searchStep = () => {
+          if (termIdx >= terms.length) return;
+          // Gated: visible tab + user idle > 45s (no active typing or clicks)
+          if (document.visibilityState === 'visible' && Date.now() - lastActivity >= 45_000) {
+            const term = terms[termIdx++];
+            api.searchPharmarack(term).catch(() => {});
+            timer = setTimeout(searchStep, 8000); // 8s spacing between terms
+          } else {
+            // Not idle or hidden: pause and re-check in 8s
+            timer = setTimeout(searchStep, 8000);
+          }
+        };
+
+        timer = setTimeout(searchStep, 8000);
+      } catch {
+        // search warmup is best-effort
+      }
+    };
 
     const step = () => {
-      if (idx >= WARMUP_PATHS.length) return;
+      if (idx >= WARMUP_PATHS.length) {
+        startSearchWarmup();
+        return;
+      }
       if (document.visibilityState === 'visible') {
         const path = WARMUP_PATHS[idx];
         prewarmRoute(path);
 
-        // One-time data prefetch along with the dashboard/reports warmup
+        // One-time lightweight data prefetch along with the dashboard warmup
         if (path === '/dashboard') {
           queryClient.prefetchQuery({
             queryKey: ['dashboard'],
             queryFn: () => api.getDashboard(),
-            staleTime: 5 * 60_000,
-          }).catch(() => {});
-
-          const today = getTodayString();
-          const from30 = getNDaysAgoString(30);
-          queryClient.prefetchQuery({
-            queryKey: ['reports', 'sales', from30, today],
-            queryFn: () => Promise.all([
-              api.getReportsSummary({ type: 'sales', fromDate: from30, toDate: today }),
-              api.getReportsData({ type: 'sales', fromDate: from30, toDate: today }),
-            ]).then(([summary, records]) => ({ summary, records })),
             staleTime: 5 * 60_000,
           }).catch(() => {});
 
@@ -172,6 +195,8 @@ function App() {
 
     return () => {
       clearTimeout(timer);
+      window.removeEventListener('keydown', onActivity);
+      window.removeEventListener('mousedown', onActivity);
     };
   }, []);
 

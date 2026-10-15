@@ -1,47 +1,74 @@
-# Refill Quick Assist Complete Workflow — Implementation Tracking
+# Pharmarack Search & Shutdown Browser Lifecycle — Implementation Tracking
 
-Created At: 2026-10-15T12:35:00+05:30
-Source Plan: `REFILL_QUICK_ASSIST_COMPLETE_WORKFLOW_PLAN.md`
+Created At: 2026-10-15T14:05:00+05:30
+Source Plan: `PHARMARACK_SEARCH_AND_SHUTDOWN_IMPLEMENTATION_PLAN.md`
 Status: COMPLETED
 
-## 1. Goal & Architecture
-Implemented the complete Quick Assist 7-day refill workflow according to the locked specifications in `REFILL_QUICK_ASSIST_COMPLETE_WORKFLOW_PLAN.md`:
-1. **Stage A (upcoming)**: `[Add to Cart] [Already Added] [Snooze (+1d/+3d/+7d)] [Edit]` (and `[Confirm]` if unconfirmed).
-   - `Add to Cart`: Opens `RefillOrderModal` (qty-editable, distributor linkage) → `startRefillCartJob`.
-   - `Already Added`: Calls `markRefillOrdered` (manual order, no cart write).
-   - `Snooze`: Calls `POST /automation/notifications/snooze-patient { days: 1/3/7 }` with optimistic hide + rollback and outside-click dismissal.
-   - `Edit`: Opens schedule editor.
-2. **Stage B (ordered)**: `[Mark Ready] [Complete]` (and `[Confirm]` if unconfirmed).
-   - `Mark Ready`: `POST /refills/patient/:phone/mark-ready` → queues pickup WhatsApp alert (user-click), sets `is_ready=1`, removes cart lines.
-   - `Complete`: Calls `POST /refills/patient/:phone/fulfill-all { refill_ids, fulfilled_via: 'quick_assist_complete' }` + opens POS prefilled with patient and medicine inventory metadata.
-3. **Stage C (reminded)**: `[Re-Send Reminder] [Complete]` (and `[Confirm]` if unconfirmed).
-   - `Re-Send Reminder`: `POST /refills/patient/:phone/mark-ready` (with 60-min dupe suppression).
-   - `Complete`: Identical to Stage B Complete.
-4. **POS Save Attach & No Double-Advance**:
-   - `src/routes/sales.ts`: Extended `recentPosOpened` query to `fulfilled_via IN ('pos_opened', 'quick_assist_complete')` within 30 min, attaching `invoice_id` and `invoice_no` without double-advancing the cycle.
-5. **API & Helper Parity**:
-   - `frontend/src/services/api.ts`: Exposed `api.snoozePatient`.
+## 1. Goal & Architecture Overview
+1. **Headless Browser Registry & Clean Shutdown**:
+   - Central registry in `src/utils/chromeBrowser.ts` tracking all headless browser instances and spawned browser processes (Pharmarack token refresh Puppeteer browsers on main and temp profiles, schedule research Puppeteer browsers, Pharmarack login window native Chrome processes).
+   - `isShutdownInProgress()` abort flag to immediately reject/prevent background refreshes or heartbeats from launching new browser processes during shutdown.
+   - `closeAllHeadlessBrowsers()`: Gracefully races `browser.close()` / process kill within 1.5s timeout, followed by targeted cleanup of orphan lock-holding Chrome processes (`pharmarack_profile`), temp profile folders, and profile lockfiles (`SingletonLock`, `lockfile`, etc.).
+   - Integrated into `src/server.ts` `gracefulShutdown()` within the concurrent `Promise.allSettled` block.
+2. **Instant Medicine Search Across the Entire App**:
+   - Ensure local-first paint (<30ms) from memory caches (`getCompactInventoryCache()`, `searchResultsCache`, prefix narrowing) across search inputs.
+   - Detached asynchronous live-append query to `GET /api/pharmarack/search` with monotonic sequence guarding (`searchSeqRef`) and `AbortController` cancellation so typing or selecting never repaints stale results.
+   - Maintain strict contracts: no second data source in Purchases, keep autocomplete gating (≥2 chars, ≥3 for cart/purchase rows, never on focus), `.dropdown-scroll` styling, opaque dropdown panels, finite animations (No-GPU contract), no dummy data tokens, and shop-local bill dates.
+   - Idle term warmup (gated on visible tab + idle, no timers when hidden) for top frequent terms to leverage disk-backed `searchCache.ts` Stale-While-Revalidate (SWR).
+3. **Verification & Quality Standards**:
+   - Clean `npm run guardrails` exit 0 (E1 No-GPU, B4 shop-local dates, polling intervals, no dummy tokens).
+   - Zero TypeScript compilation errors (`tsc --noEmit` and `npx tsc -b frontend`).
+   - Auto-Knowledge Graph updated via `node scripts/quick-update.mjs`.
 
 ---
 
 ## 2. Technical Tasks Checklist
 
-- [x] Task 1: Update backend `src/routes/sales.ts` to attach sale invoices to `quick_assist_complete` fulfillments in the 30-minute window (idempotent, no double-advance).
-- [x] Task 2: Expose `api.snoozePatient` in `frontend/src/services/api.ts`.
-- [x] Task 3: Implement Quick Assist Stage A Snooze control (+1d, +3d, +7d) and optimistic hide with rollback in `frontend/src/components/QuickAssistSidebar.tsx`.
-- [x] Task 4: Implement Quick Assist Stage B & Stage C `Complete` action (fulfill-all + POS prefilled navigation with optimistic hide, timeout rollback, double-click lock, and cart cleanup) in `frontend/src/components/QuickAssistSidebar.tsx`.
-- [x] Task 5: Clean up old standalone `POS` and raw `Fulfill` buttons from Quick Assist refill cards to prevent split fulfill paths.
-- [x] Task 6: Validate with `npm run guardrails` and `tsc --noEmit`.
-- [x] Task 7: Update knowledge graph (`node scripts/quick-update.mjs`) and DOX contracts.
+### Phase 1: Headless Browser Registry & Shutdown Lifecycle
+- [x] Task 1: Add headless browser registry (`trackHeadless`, `untrackHeadless`, `isShutdownInProgress`, `markShutdownInProgress`, `closeAllHeadlessBrowsers`) in `src/utils/chromeBrowser.ts`.
+- [x] Task 2: Register Puppeteer browser instances in `src/services/tokenRefreshScheduler.ts` (both main profile and temp profile paths), check `isShutdownInProgress()` early, and untrack on completion/finally.
+- [x] Task 3: Register Puppeteer browser instances in `src/services/scheduleResearchService.ts` and untrack in finally.
+- [x] Task 4: Register spawned `chromeProc` in `src/routes/pharmarack.ts` (`/login-window`) and untrack on process exit.
+- [x] Task 5: Wire `markShutdownInProgress()` and `closeAllHeadlessBrowsers()` into `gracefulShutdown()` in `src/server.ts`.
+
+### Phase 2: Instant Search Performance & Stale-Guarded Live-Append
+- [x] Task 6: Verify backend `GET /api/pharmarack/search` SWR behavior and ensure prefix-key/core-term lookups serve instantaneous disk/memory hits with background single-flight revalidations (`searchCache.findPrefixMatch`).
+- [x] Task 7: Verify and enhance POS medicine search and Purchases search to ensure instant paint (<30ms) from local memory, followed by stale-guarded cancellation via `AbortController` and monotonic sequence IDs.
+- [x] Task 8: Implement gated idle search warmup for top common terms (gated: tab visible, user idle > 45s, staggered, pause when hidden).
+
+### Phase 3: Verification, Guardrails & Auto-Knowledge Graph
+- [x] Task 9: Run `npm run guardrails` and verify exit code 0.
+- [x] Task 10: Run TypeScript checks (`tsc --noEmit` and `npx tsc -b frontend`).
+- [x] Task 11: Update Knowledge Graph (`node scripts/quick-update.mjs`).
 
 ---
 
 ## 3. Completed Tasks Log
 
-- **Task 1 Completed**: Updated `src/routes/sales.ts` (lines 798-806) to check `fulfilled_via IN ('pos_opened', 'quick_assist_complete')` within the 30-minute window. When saving the sale invoice, it attaches `invoice_id` and `invoice_no` to the existing fulfillment record and updates `fulfilled_via = 'pos_sale'`, preventing double-advance of `next_refill_date`.
-- **Task 2 Completed**: Added `api.snoozePatient` to `frontend/src/services/api.ts`, sending `POST /automation/notifications/snooze-patient` with `patient_phone`, `patient_name`, and `days`.
-- **Task 3 Completed**: Added Snooze control to Stage A cards in `frontend/src/components/QuickAssistSidebar.tsx`. Clicking opens a sleek popover with options for `+1 Day (Tomorrow)`, `+3 Days`, and `+7 Days (1 Week)`. Handled outside-clicks via `useOnClickOutside`, optimistic hiding via `setOptimisticHiddenRefillKeys`, rollback on error, and broadcasting `automationHubEvent` and `refillEvent`.
-- **Task 4 Completed**: Implemented `handleCompleteRefillGroup` in `frontend/src/components/QuickAssistSidebar.tsx`. When clicked, it optimistically hides the card, calls `api.fulfillAllRefills` with `fulfilled_via: 'quick_assist_complete'`, advances the cycle, triggers events, closes the sidebar, and navigates to `/pos` with complete prefill metadata (`patientName`, `patientPhone`, `customerId`, `refillPatient`, `refillIds`, `medicines`). On error/timeout, rolls back optimistic hide and alerts the user.
-- **Task 5 Completed**: Removed the redundant standalone `POS` button and raw `Fulfill` button from Quick Assist Stage A, B, and C cards, unifying the fulfillment and POS handoff into `Complete` (Stage B/C) and keeping Stage A focused on ordering/snoozing/editing. Cleaned up orphaned imports (`Receipt`).
-- **Task 6 Completed**: Verified full TypeScript compilation clean (`tsc --noEmit` on root and frontend) and ran `npm run guardrails` with exit 0 ("Speed architecture intact").
-- **Task 7 Completed**: Synchronized project knowledge graph via `node scripts/quick-update.mjs` (1186 nodes, 800 edges, 10 layers) and updated DOX contracts in `frontend/AGENTS.md` and `src/AGENTS.md`.
+- **Task 1 Completed**: Built the central headless browser registry and lifecycle management in `src/utils/chromeBrowser.ts`. Added `trackHeadless`, `untrackHeadless`, `isShutdownInProgress`, `markShutdownInProgress`, and `closeAllHeadlessBrowsers()`. Relocated `killOrphanChromeProcesses`, `cleanTempProfileFolders`, and `cleanProfileLockFiles` to `chromeBrowser.ts` as canonical Chromium utilities to eliminate circular dependencies.
+- **Task 2 Completed**: Updated `src/services/tokenRefreshScheduler.ts`:
+  - Re-exported cleanup functions for complete backwards compatibility.
+  - Added early `isShutdownInProgress()` gates in `runSessionHeartbeat()`, `executeRefresh()`, and `executeRefreshInternal()` to abort early and prevent launching new browser sessions during shutdown.
+  - Registered launched Puppeteer `browser` instances on both main profile and temp profile launch paths via `trackHeadless(browser, ...)` and untracked them in the `finally` block.
+- **Task 3 Completed**: Updated `src/services/scheduleResearchService.ts`:
+  - Added early `isShutdownInProgress()` gate before launching Puppeteer.
+  - Tracked the launched Puppeteer browser using `trackHeadless(browser, 'schedule_research')` and untracked in `finally`.
+- **Task 4 Completed**: Updated `src/routes/pharmarack.ts` (`/login-window`):
+  - Added early `isShutdownInProgress()` guard returning HTTP 503.
+  - Tracked natively spawned `chromeProc` via `trackHeadless(chromeProc, 'pharmarack_login_window')`.
+  - Untracked `chromeProc` on `error` and `exit` events, and skipped the `executeRefresh` fallback if shutdown was initiated while the window was closing.
+- **Task 5 Completed**: Wired the browser shutdown lifecycle into `src/server.ts`:
+  - Called `markShutdownInProgress()` at the top of `gracefulShutdown()`.
+  - Added `closeAllHeadlessBrowsers()` with a 2-second timeout inside the concurrent `Promise.allSettled` block alongside worker and sidecar teardowns.
+- **Task 6 Completed**: Enhanced `src/services/searchCache.ts` and `src/routes/pharmarack.ts`:
+  - Added `findPrefixMatch(query, storeId, isMapped)` in `SearchCache` to match subqueries and superset queries from memory, enabling immediate (<1ms) response for family terms while background single-flight revalidations refresh the exact key.
+  - Exposed `GET /api/pharmarack/warmup-terms` returning shop-specific top sale items merged with top standard chronic medicine brands.
+- **Task 7 Completed**: Enhanced search cancellation and stale guards in `frontend/src/pages/POS/index.tsx` and `frontend/src/pages/Purchases/index.tsx`:
+  - In `POS/index.tsx`: Aborted in-flight header and row catalog searches (`headerCatalogSearchAbortRef`, `rowCatalogSearchAbortRef`) and bumped sequence IDs upon medicine selection (`fetchDetailsAndAddToCart`, `changeRowMedicine`), preventing delayed responses from repainting closed dropdowns.
+  - In `Purchases/index.tsx`: Aborted in-flight searches (`searchAbortRef`) and bumped `searchSeqRef` on `selectMedicine`, ensuring selections never get overwritten by in-flight responses.
+- **Task 8 Completed**: Added gated idle search warmup in `frontend/src/App.tsx` and `frontend/src/services/api.ts`:
+  - Added `api.getPharmarackWarmupTerms()` to API layer.
+  - In `App.tsx`: Following initial route warmups, initiated background search warmup gated on `document.visibilityState === 'visible'` AND user idle > 45s (tracked via `keydown`/`mousedown` listeners), issuing one term lookup every 8 seconds to prefill memory and disk `data/search-cache.json`.
+- **Task 9 Completed**: Ran `npm run guardrails` (`node scripts/performance-guardrails.mjs`). All 20 modified files verified cleanly with exit code 0 ("PASS — no guardrail violations. Speed architecture intact.").
+- **Task 10 Completed**: Ran `npx tsc -b frontend` and `tsc --noEmit`. Both frontend and backend TypeScript compilations passed with 0 errors.
+- **Task 11 Completed**: Executed `node scripts/quick-update.mjs`. Updated Auto-Knowledge Graph (1189 files, 800 edges, 10 layers, generated `3d-knowledge-graph.html`) in 3.4 seconds.
