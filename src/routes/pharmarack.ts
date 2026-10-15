@@ -748,8 +748,15 @@ router.post('/login-window', async (_req, res) => {
       if (!fs.existsSync(mainProfilePath)) fs.mkdirSync(mainProfilePath, { recursive: true });
       cleanProfileLockFiles(mainProfilePath);
 
+      // Snapshot prior token so we only accept a fresh valid token
+      let priorToken = '';
+      try {
+        const db = await dbManager.getConnection();
+        const row = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
+        priorToken = row?.value || '';
+      } catch (_) {}
+
       // Spawn Chrome directly — opens instantly, no Puppeteer init overhead.
-      // Active token polling captures login in real-time while window is open.
       console.log('[LoginWindow] Spawning Chrome natively from:', chromePath);
       const { spawn: spawnProc } = await import('child_process');
       const chromeProc = spawnProc(chromePath, [
@@ -769,10 +776,17 @@ router.post('/login-window', async (_req, res) => {
 
       let pollTimer: NodeJS.Timeout | null = null;
       let tokenCaptured = false;
+      let pollCount = 0;
+      const MAX_POLL_CYCLES = 90; // 90 * 2000ms = 180 seconds to enter OTP
 
       const saveTokenAndBroadcast = async (token: string, source: string) => {
         if (tokenCaptured) return;
         tokenCaptured = true;
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        tokenRefreshScheduler.isLoginWindowActive = false;
         console.log(`[LoginWindow] Successfully captured token (${source}):`, token.substring(0, 15) + '...');
         const extractedUser = extractUserFromToken(token);
         try {
@@ -789,8 +803,10 @@ router.post('/login-window', async (_req, res) => {
           console.error('[LoginWindow] Failed to persist token:', dbErr.message);
         }
 
-        // Run heartbeat probe to verify live connection and warm up cart
+        // Invalidate in-memory cart cache and run heartbeat probe to warm up cart
+        invalidatePharmarackCartCache();
         tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => {});
+        warmupStartupCart().catch(() => {});
 
         // Broadcast session state so UI updates in real-time without needing to close window
         try {
@@ -803,56 +819,42 @@ router.post('/login-window', async (_req, res) => {
         } catch (_) {}
       };
 
-      // Poll profile LevelDB storage every 2 seconds while Chrome is active
+      // Resilient active polling loop — continues even if Chrome launcher delegates to an existing browser
       pollTimer = setInterval(async () => {
+        pollCount++;
         if (tokenCaptured) {
-          if (pollTimer) clearInterval(pollTimer);
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
           return;
         }
+
+        if (pollCount > MAX_POLL_CYCLES) {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          tokenRefreshScheduler.isLoginWindowActive = false;
+          console.log('[LoginWindow] Polling window timed out after 180s without token capture.');
+          return;
+        }
+
         try {
-          const token = extractTokenFromProfile(mainProfilePath);
+          const token = extractTokenFromProfile(mainProfilePath, { notMatchingToken: priorToken });
           if (token) {
-            if (pollTimer) clearInterval(pollTimer);
             await saveTokenAndBroadcast(token, 'active-poll');
           }
         } catch (_) {}
       }, 2000);
 
       chromeProc.on('error', (e: Error) => {
-        if (pollTimer) clearInterval(pollTimer);
         console.warn('[LoginWindow] Chrome spawn error:', e.message);
-        tokenRefreshScheduler.isLoginWindowActive = false;
       });
 
       chromeProc.on('exit', async () => {
-        if (pollTimer) clearInterval(pollTimer);
-        console.log('[LoginWindow] Chrome login window closed. Checking session token...');
-        tokenRefreshScheduler.isLoginWindowActive = false;
-        // Give Chrome a moment to flush cookies/localStorage to disk before final read
+        console.log('[LoginWindow] Chrome launcher process exited. Active poller will continue checking for OTP completion...');
         await new Promise(r => setTimeout(r, 1200));
-
         if (!tokenCaptured) {
-          let token = extractTokenFromProfile(mainProfilePath);
+          const token = extractTokenFromProfile(mainProfilePath, { notMatchingToken: priorToken });
           if (token) {
             await saveTokenAndBroadcast(token, 'exit-scan');
-          } else {
-            console.log('[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...');
-            token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
-            if (token) {
-              await saveTokenAndBroadcast(token, 'executeRefresh-fallback');
-            } else {
-              try {
-                const { eventService } = await import('../services/eventService.js');
-                eventService.broadcast('pharmarack_session_refreshed', {
-                  status: 'failed',
-                  error: 'Login window closed without capturing token'
-                });
-              } catch (_) {}
-            }
           }
         }
-
-        console.log('[LoginWindow] Pharmarack login window session ended.');
       });
 
     } catch (err: any) {
@@ -3412,28 +3414,6 @@ router.get('/session-status', async (_req, res) => {
   }
 });
 
-// Logout endpoint (clears credentials & Puppeteer Chrome profile folder to delete cookies)
-router.post('/logout', async (_req, res) => {
-  try {
-    const db = await dbManager.getConnection();
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', '')");
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
-    import('../services/pharmarackCatalogCache.js').then(m => m.stopCatalogSyncCron()).catch(() => {});
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-
-    const pharmarackProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
-    if (fs.existsSync(pharmarackProfilePath)) {
-      fs.rmSync(pharmarackProfilePath, { recursive: true, force: true });
-      console.log('Cleared Pharmarack Puppeteer profile directory.');
-    }
-
-    res.json({ success: true, message: 'Logged out and cleared Pharmarack session successfully' });
-  } catch (err: any) {
-    console.error('Error during Pharmarack logout:', err);
-    res.status(500).json({ error: 'Failed to clear session: ' + err.message });
-  }
-});
 
 /**
  * GET /api/pharmarack/sent-orders/dates

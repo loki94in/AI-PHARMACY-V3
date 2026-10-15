@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-// import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { getPuppeteer } from '../utils/lazyPuppeteer.js';
@@ -104,7 +103,7 @@ export function cleanProfileLockFiles(profilePath: string) {
  * Fast direct extraction of active Pharmarack JWT from profile LevelDB storage.
  * Reads in <5ms without launching any browser process.
  */
-export function extractTokenFromProfile(profilePath: string): string | null {
+export function extractTokenFromProfile(profilePath: string, options?: { notMatchingToken?: string }): string | null {
   try {
     const levelDbDir = path.resolve(profilePath, 'Default', 'Local Storage', 'leveldb');
     if (!fs.existsSync(levelDbDir)) return null;
@@ -114,12 +113,22 @@ export function extractTokenFromProfile(profilePath: string): string | null {
 
     for (const file of files) {
       if (file.endsWith('.ldb') || file.endsWith('.log')) {
+        let content: Buffer | null = null;
+        const filePath = path.join(levelDbDir, file);
         try {
-          const buf = fs.readFileSync(path.join(levelDbDir, file));
-          const str = buf.toString('latin1');
-          const matches = str.match(/eyJhbGciOiJIUzI1Ni[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g);
+          content = fs.readFileSync(filePath);
+        } catch (_) {
+          content = null;
+        }
+        if (!content) continue;
+
+        try {
+          const str = content.toString('latin1');
+          // Match standard JWT token headers ({"alg": or {"typ":)
+          const matches = str.match(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}/g);
           if (matches) {
             for (const m of matches) {
+              if (options?.notMatchingToken && m === options.notMatchingToken) continue;
               try {
                 const parts = m.split('.');
                 const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
@@ -280,12 +289,16 @@ export class TokenRefreshScheduler {
       console.warn('[TokenRefreshScheduler] Error removing main profile directory:', err.message);
     }
 
-    // 4. Clear SQLite app_settings for Pharmarack
+    // 4. Clear SQLite app_settings for Pharmarack credentials and session
     try {
       const db = await dbManager.getConnection();
-      await db.run("DELETE FROM app_settings WHERE key = 'pharmarack_session_token'");
+      await db.run("DELETE FROM app_settings WHERE key IN ('pharmarack_session_token', 'pharmarack_username', 'pharmarack_password')");
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', '')");
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'disconnected')");
       await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+      import('./pharmarackCatalogCache.js').then(m => m.stopCatalogSyncCron()).catch(() => {});
     } catch (dbErr: any) {
       console.warn('[TokenRefreshScheduler] Error clearing DB session settings:', dbErr.message);
     }

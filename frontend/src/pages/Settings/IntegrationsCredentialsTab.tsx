@@ -33,6 +33,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
   const [autoAddToLiveCart, setAutoAddToLiveCart] = useState(rawSettings.auto_add_to_live_cart !== 'false');
   const [autoSavedPharmarack, setAutoSavedPharmarack] = useState(false);
   const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryClient = useQueryClient();
   const [geminiApiKey, setGeminiApiKey] = useState(rawSettings.gemini_api_key || '');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [testingGemini, setTestingGemini] = useState(false);
@@ -600,9 +601,20 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
     setPharmarackLoggingOut(true);
     setConfirmPharmarackLogout(false);
     try {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
       const res = await api.logoutPharmarack();
       if (res?.success) {
-        toastEvent.trigger('Pharmarack session and profile data cleared successfully', 'success');
+        setPharmarackUser('');
+        setPharmarackPass('');
+        updateSettingsCache(queryClient, {
+          pharmarack_username: '',
+          pharmarack_password: '',
+          pharmarack_session_token: '',
+          pharmarack_session_status: 'disconnected'
+        });
+        toastEvent.trigger('Pharmarack session, credentials, and profile data cleared successfully', 'success');
         refetchSettings();
       } else {
         toastEvent.trigger(res?.message || 'Failed to clean Pharmarack session', 'error');
