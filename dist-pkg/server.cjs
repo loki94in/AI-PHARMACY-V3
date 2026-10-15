@@ -4109,7 +4109,7 @@ async function syncCatalog() {
             continue;
           }
           consecutiveErrors = 0;
-          await db2.run("BEGIN TRANSACTION");
+          await db2.run("BEGIN TRANSACTION /* BACKGROUND */");
           try {
             for (const p of catalogData.data) {
               const productName = p.ProductName || p.ProductFullName || "";
@@ -15846,7 +15846,7 @@ function normalizeToken(w) {
   return w.replace(/^(\d+)(mg|mcg|ml|gm|g|iu)$/, "$1");
 }
 function getCoreMedicineTokens(str) {
-  const words = normalizeStr(str).split(" ").filter((w) => w.length > 0).map(normalizeToken).filter((w) => w.length > 0 && !PACKAGING_STOP_WORDS.has(w));
+  const words = normalizeStr(str).split(" ").filter((w) => w.length > 0).map(normalizeToken).filter((w) => w.length > 0 && !PACKAGING_STOP_WORDS.has(w) && !/^\d+(s|tab|tabs|cap|caps|strip|strips)$/.test(w));
   return new Set(words.length > 0 ? words : normalizeStr(str).split(" ").filter((w) => w.length > 0));
 }
 function levenshteinSimilarity2(a, b) {
@@ -15994,15 +15994,7 @@ var init_orderNameMatcher = __esm({
       "30s",
       "5s",
       "1s",
-      "6s",
-      "10",
-      "15",
-      "20",
-      "30",
-      "50",
-      "100",
-      "200",
-      "500"
+      "6s"
     ]);
   }
 });
@@ -27674,45 +27666,6 @@ async function searchOfflineCatalogFallback(q, storeId, isMapped) {
               });
             }
           }
-          if (results.length === 0) {
-            const baseMedicines = await db2.all(`
-              SELECT 
-                m.id as medicineId,
-                m.name as medicineName,
-                COALESCE(m.packaging, m.pack_size, '') as packaging,
-                COALESCE(m.manufacturer, m.marketed_by, '') as company,
-                m.mrp as mrp,
-                (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock
-              FROM medicines m
-              WHERE (${likeClauses})
-              LIMIT 15
-            `, likeParams).catch(() => []);
-            const defaultDistributor = await db2.get("SELECT id, name FROM distributors ORDER BY id ASC LIMIT 1").catch(() => null);
-            for (const bm of baseMedicines) {
-              const key = `${(bm.medicineName || "").toLowerCase()}|${defaultDistributor?.id || 1}|${bm.mrp}`;
-              if (!seenKeys.has(key)) {
-                seenKeys.add(key);
-                results.push({
-                  name: bm.medicineName,
-                  shortName: bm.medicineName,
-                  fullName: bm.medicineName,
-                  packaging: bm.packaging || "",
-                  distributor: defaultDistributor?.name || "Local Pharmacy",
-                  rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
-                  mrp: bm.mrp ? Number(bm.mrp) : null,
-                  mapped: true,
-                  stock: "Offline",
-                  scheme: "",
-                  productId: bm.medicineId || 1,
-                  productCode: String(bm.medicineId || ""),
-                  company: bm.company || "",
-                  storeId: defaultDistributor?.id || 1,
-                  isLocalPharmacy: true,
-                  isOffline: true
-                });
-              }
-            }
-          }
         }
       } catch (_) {
       }
@@ -27727,6 +27680,20 @@ function sameProductName(a, b) {
   const tb = [...getCoreMedicineTokens(String(b || ""))].sort().join(" ");
   return ta.length > 0 && ta === tb;
 }
+function filterCandidateMedicines(query, items) {
+  const queryTokens = Array.from(getCoreMedicineTokens(query));
+  if (queryTokens.length === 0) return items;
+  const hasNumericStrength = queryTokens.some((t) => /^\d+(\.\d+)?$/.test(t));
+  return items.filter((item) => {
+    const rawName = String(item.name || item.fullName || item.shortName || "");
+    if (!rawName.trim()) return false;
+    if (hasNumericStrength || queryTokens.length >= 2) {
+      return sameProductName(query, rawName);
+    }
+    const itemTokens = getCoreMedicineTokens(rawName);
+    return queryTokens.every((qt) => itemTokens.has(qt));
+  });
+}
 async function performPharmarackSearch(qRaw, storeId, isMapped) {
   const hasStoreFilter = storeId !== null && !isNaN(storeId);
   let settings = {};
@@ -27736,9 +27703,10 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     let token = settings["pharmarack_session_token"] || "";
     if (!token) {
       const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline2.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline2);
-        return { status: "ok", items: offline2 };
+      const filteredOffline2 = filterCandidateMedicines(qRaw, offline2);
+      if (filteredOffline2.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, filteredOffline2);
+        return { status: "ok", items: filteredOffline2 };
       }
       if (settings["combine_pharmarack_pharmacy_search"] === "true") {
         return { status: "ok", items: [] };
@@ -27769,9 +27737,10 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       tokenRefreshScheduler.executeRefresh().catch(() => {
       });
       const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline2.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline2);
-        return { status: "ok", items: offline2 };
+      const filteredOffline2 = filterCandidateMedicines(qRaw, offline2);
+      if (filteredOffline2.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, filteredOffline2);
+        return { status: "ok", items: filteredOffline2 };
       }
       return { status: "need_login", isRefreshing: true };
     }
@@ -27806,7 +27775,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       }
     }
     if (data && Array.isArray(data.data) && data.data.length > 0) {
-      const results = data.data.map((p, idx) => {
+      const rawResults = data.data.map((p, idx) => {
         const rawName = p.ProductFullName || p.MasterProductName || p.BrandName || p.ProductName || "";
         return {
           name: rawName,
@@ -27829,31 +27798,36 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
           pharmarackRank: idx
         };
       });
-      for (const r of results) {
-        r.matchScore = scoreProductName(qRaw, String(r.name || ""));
+      const results = filterCandidateMedicines(qRaw, rawResults);
+      if (results.length > 0) {
+        for (const r of results) {
+          r.matchScore = scoreProductName(qRaw, String(r.name || ""));
+        }
+        results.sort((a, b) => {
+          const aMapped = Boolean(a.mapped);
+          const bMapped = Boolean(b.mapped);
+          if (aMapped && !bMapped) return -1;
+          if (!aMapped && bMapped) return 1;
+          if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+          const nameA = String(a.name || "").toLowerCase();
+          const nameB = String(b.name || "").toLowerCase();
+          return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
+        });
+        searchCache.set(qRaw, storeId, isMapped, results);
+        if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
+          searchCache.set(primaryKeyword, storeId, isMapped, results);
+        }
+        return { status: "ok", items: results };
       }
-      results.sort((a, b) => {
-        const aMapped = Boolean(a.mapped);
-        const bMapped = Boolean(b.mapped);
-        if (aMapped && !bMapped) return -1;
-        if (!aMapped && bMapped) return 1;
-        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
-        const nameA = String(a.name || "").toLowerCase();
-        const nameB = String(b.name || "").toLowerCase();
-        return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
-      });
-      searchCache.set(qRaw, storeId, isMapped, results);
-      if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
-        searchCache.set(primaryKeyword, storeId, isMapped, results);
-      }
-      return { status: "ok", items: results };
+      return { status: "ok", items: [] };
     }
     const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-    if (offline.length > 0) {
-      for (const r of offline) {
+    const filteredOffline = filterCandidateMedicines(qRaw, offline);
+    if (filteredOffline.length > 0) {
+      for (const r of filteredOffline) {
         r.matchScore = scoreProductName(qRaw, String(r.name || ""));
       }
-      offline.sort((a, b) => {
+      filteredOffline.sort((a, b) => {
         const aMapped = Boolean(a.mapped);
         const bMapped = Boolean(b.mapped);
         if (aMapped && !bMapped) return -1;
@@ -27863,16 +27837,17 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
         const nameB = String(b.name || "").toLowerCase();
         return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
       });
-      searchCache.set(qRaw, storeId, isMapped, offline);
+      searchCache.set(qRaw, storeId, isMapped, filteredOffline);
     }
-    return { status: "ok", items: offline };
+    return { status: "ok", items: filteredOffline };
   } catch (err) {
     console.error("Pharmarack direct live API search failed:", err.message);
     try {
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline);
-        return { status: "ok", items: offline };
+      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      if (filteredOffline.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, filteredOffline);
+        return { status: "ok", items: filteredOffline };
       }
     } catch (_) {
     }
@@ -30029,7 +30004,7 @@ var init_pharmarack = __esm({
         let cartDistributors = [];
         if (token) {
           try {
-            const probe = await probeUserCartDetails(2e4);
+            const probe = await probeUserCartDetails(6e3);
             if (probe.ok) {
               const cartData = probe.data;
               let rawList = [];
@@ -30192,20 +30167,29 @@ var init_pharmarack = __esm({
             }
           }
         }
+        const unmappedDistributors = cartDistributors.filter((dist) => {
+          const sLower = String(dist.storeName || "").toLowerCase().trim();
+          const mappedPhone = phoneMap.get(sLower);
+          return (!mappedPhone || mappedPhone.length !== 10) && dist.storeName;
+        });
+        if (unmappedDistributors.length > 0) {
+          await Promise.all(
+            unmappedDistributors.map(async (dist) => {
+              const sLower = String(dist.storeName || "").toLowerCase().trim();
+              try {
+                const resolved = await resolveDistributorContact(db2, dist.storeName);
+                if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
+                  phoneMap.set(sLower, resolved.distributor_phone);
+                }
+              } catch (_) {
+              }
+            })
+          );
+        }
         let missingDistributorsCount = 0;
         for (const dist of cartDistributors) {
           const sLower = String(dist.storeName || "").toLowerCase().trim();
-          let mappedPhone = phoneMap.get(sLower) || "";
-          if ((!mappedPhone || mappedPhone.length !== 10) && dist.storeName) {
-            try {
-              const resolved = await resolveDistributorContact(db2, dist.storeName);
-              if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
-                mappedPhone = resolved.distributor_phone;
-                phoneMap.set(sLower, mappedPhone);
-              }
-            } catch (_) {
-            }
-          }
+          const mappedPhone = phoneMap.get(sLower) || "";
           dist.phone = mappedPhone;
           const cleanP = mappedPhone.replace(/\D/g, "").slice(-10);
           if (!cleanP || cleanP.length !== 10) {
@@ -32039,6 +32023,525 @@ var init_waBotSilence = __esm({
   }
 });
 
+// src/services/refillCartService.ts
+var refillCartService_exports = {};
+__export(refillCartService_exports, {
+  REFILL_CART_COLUMNS: () => REFILL_CART_COLUMNS,
+  getDistributorPriorityList: () => getDistributorPriorityList,
+  getDistributorPurchaseRanks: () => getDistributorPurchaseRanks,
+  getMedicineLinks: () => getMedicineLinks,
+  orderByPriority: () => orderByPriority,
+  processRefillCartItem: () => processRefillCartItem,
+  removeRefillCartLines: () => removeRefillCartLines,
+  saveDistributorPriority: () => saveDistributorPriority,
+  saveMedicineLinks: () => saveMedicineLinks,
+  sendRefillCartSummary: () => sendRefillCartSummary
+});
+function flattenCart(cart) {
+  const lines = [];
+  for (const d of cart.distributors || []) {
+    for (const it of d.items || []) {
+      lines.push({
+        storeId: Number(it.storeId || d.storeId || 0),
+        storeName: String(d.storeName || ""),
+        productCode: String(it.productCode || ""),
+        productName: String(it.productName || ""),
+        qty: Number(it.qty) || 0,
+        raw: it
+      });
+    }
+  }
+  return lines;
+}
+async function getMedicineLinks(medicineId) {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all(
+    `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
+     FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id`,
+    [medicineId]
+  );
+  return rows.map((r) => ({
+    storeId: Number(r.store_id),
+    storeName: String(r.store_name),
+    productCode: String(r.product_code),
+    productId: r.product_id,
+    productName: r.product_name || "",
+    packaging: r.packaging || "",
+    company: r.company || "",
+    mapped: r.mapped !== 0
+  }));
+}
+async function saveMedicineLinks(medicineId, picks) {
+  const clean2 = picks.filter(isValidPick);
+  if (clean2.length !== picks.length) {
+    throw Object.assign(new Error("Each linked product needs a Pharmarack distributor and product code."), { httpStatus: 400 });
+  }
+  const db2 = await dbManager.getConnection();
+  const med = await db2.get("SELECT id FROM medicines WHERE id = ?", [medicineId]);
+  if (!med) throw Object.assign(new Error("Medicine not found"), { httpStatus: 404 });
+  await db2.run("BEGIN");
+  try {
+    await db2.run("DELETE FROM medicine_distributor_links WHERE medicine_id = ?", [medicineId]);
+    for (let i = 0; i < clean2.length; i++) {
+      const p = clean2[i];
+      await db2.run(
+        `INSERT OR REPLACE INTO medicine_distributor_links
+           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          medicineId,
+          Number(p.storeId),
+          String(p.storeName).trim(),
+          String(p.productCode).trim(),
+          p.productId != null ? String(p.productId) : null,
+          p.productName || null,
+          p.packaging || null,
+          p.company || null,
+          p.mapped === false ? 0 : 1,
+          i
+        ]
+      );
+    }
+    await db2.run(
+      `UPDATE patient_refills 
+       SET cart_store_id = NULL, cart_store_name = NULL, cart_product_code = NULL, cart_qty = NULL, cart_item_id = NULL 
+       WHERE medicine_id = ?`,
+      [medicineId]
+    ).catch(() => {
+    });
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK").catch(() => {
+    });
+    throw err;
+  }
+  return clean2.length;
+}
+async function loadPriorityMap() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all("SELECT name_key, priority FROM distributor_priority");
+  return new Map(rows.map((r) => [String(r.name_key), Number(r.priority)]));
+}
+function orderByPriority(items, storeNameOf, prio) {
+  const rank = (i) => prio.get(nameKey(storeNameOf(i)));
+  return items.map((it, idx) => ({ it, idx, r: rank(it) })).sort((a, b) => (a.r ?? Infinity) - (b.r ?? Infinity) || a.idx - b.idx).map((x) => x.it);
+}
+async function getDistributorPriorityList() {
+  const db2 = await dbManager.getConnection();
+  const found = /* @__PURE__ */ new Map();
+  const add = (name, linked) => {
+    const storeName = String(name || "").trim();
+    const key = nameKey(storeName);
+    if (!key) return;
+    const cur = found.get(key);
+    if (cur) cur.linkedMedicines += linked;
+    else found.set(key, { storeName, ranked: false, linkedMedicines: linked });
+  };
+  const saved = await db2.all("SELECT name_key, store_name, priority FROM distributor_priority ORDER BY priority");
+  const links = await db2.all("SELECT store_name FROM medicine_distributor_links WHERE mapped != 0");
+  const maps = await db2.all("SELECT store_name FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL");
+  const ranked = [];
+  for (const r of saved) {
+    const row = { storeName: String(r.store_name), ranked: true, linkedMedicines: 0 };
+    found.set(String(r.name_key), row);
+    ranked.push(row);
+  }
+  for (const l of links) add(l.store_name, 1);
+  for (const m of maps) add(m.store_name, 0);
+  const rest = [...found.values()].filter((v) => !v.ranked).sort((a, b) => b.linkedMedicines - a.linkedMedicines || a.storeName.localeCompare(b.storeName));
+  return [...ranked, ...rest];
+}
+async function saveDistributorPriority(storeNames) {
+  const seen = /* @__PURE__ */ new Set();
+  const clean2 = storeNames.map((n) => String(n || "").trim()).filter((n) => {
+    const k = nameKey(n);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const prioMap = /* @__PURE__ */ new Map();
+  for (let i = 0; i < clean2.length; i++) {
+    prioMap.set(nameKey(clean2[i]), i);
+  }
+  const db2 = await dbManager.getConnection();
+  await db2.run("BEGIN");
+  try {
+    await db2.run("DELETE FROM distributor_priority");
+    for (let i = 0; i < clean2.length; i++) {
+      await db2.run("INSERT INTO distributor_priority (name_key, store_name, priority) VALUES (?, ?, ?)", [nameKey(clean2[i]), clean2[i], i]);
+    }
+    const allLinks = await db2.all("SELECT id, medicine_id, store_name, pick_order FROM medicine_distributor_links");
+    if (allLinks.length > 0) {
+      const byMed = /* @__PURE__ */ new Map();
+      for (const link of allLinks) {
+        const medId = Number(link.medicine_id);
+        const arr = byMed.get(medId) || [];
+        arr.push(link);
+        byMed.set(medId, arr);
+      }
+      for (const links of byMed.values()) {
+        links.sort((a, b) => {
+          const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+          const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+          if (rA !== rB) return rA - rB;
+          return (Number(a.pick_order) || 0) - (Number(b.pick_order) || 0) || Number(a.id) - Number(b.id);
+        });
+        for (let newOrder = 0; newOrder < links.length; newOrder++) {
+          if (links[newOrder].pick_order !== newOrder) {
+            await db2.run("UPDATE medicine_distributor_links SET pick_order = ? WHERE id = ?", [newOrder, links[newOrder].id]);
+          }
+        }
+      }
+    }
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK").catch(() => {
+    });
+    throw err;
+  }
+  return clean2.length;
+}
+function cartErrorMessage(err) {
+  if (err?.code === "NEED_LOGIN") return "Pharmarack is not logged in. Log in from the Live Cart page, then retry.";
+  if (err?.code === "SESSION_EXPIRED") return "Pharmarack session expired. Re-login, then retry.";
+  return `Could not read the Pharmarack live cart (${err?.message || "network error"}). Retry.`;
+}
+async function processRefillCartItem(refillId, opts = {}) {
+  const db2 = await dbManager.getConnection();
+  const refill = await db2.get(
+    `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
+            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name
+     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+     WHERE pr.id = ?`,
+    [refillId]
+  );
+  if (!refill) throw Object.assign(new Error("Refill not found"), { httpStatus: 404 });
+  const medicineName = String(refill.medicine_name || "");
+  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
+  const base = { refillId, medicineName, qty, linked: [], candidates: [] };
+  const fail = (message, extra = {}) => ({ ...base, ...extra, status: "failed", message });
+  if (refill.is_active === 0 || ["canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
+    return fail("This refill is paused or cancelled.");
+  }
+  if (Array.isArray(opts.pick) && opts.pick.length > 0) {
+    const picks = opts.pick.filter(isValidPick);
+    if (picks.length === 0) return fail("Tick a distributor product from the list.");
+    const prioMap2 = await loadPriorityMap();
+    const orderedPicks = orderByPriority(picks, (p) => p.storeName, prioMap2);
+    await saveMedicineLinks(refill.medicine_id, orderedPicks);
+  }
+  const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+  let lines;
+  try {
+    lines = flattenCart(await pr.loadLiveCartCore());
+  } catch (err) {
+    return fail(cartErrorMessage(err));
+  }
+  const prioMap = await loadPriorityMap();
+  const rawLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
+  const links = [...rawLinks].sort((a, b) => {
+    const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
+    const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;
+    if (poA !== poB) return poA - poB;
+    const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
+    const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
+    return rA - rB;
+  });
+  const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
+  if (mine) {
+    return {
+      ...base,
+      status: "in_cart",
+      message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
+      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty }
+    };
+  }
+  let hit;
+  for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
+  if (!hit) {
+    const want = norm(medicineName);
+    hit = lines.find((l) => want && norm(l.productName) === want);
+  }
+  if (hit) {
+    const total = hit.qty + qty;
+    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total };
+    if (opts.dryRun) {
+      return { ...base, status: "ready", message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
+    }
+    const raw = hit.raw || {};
+    const inc = await pr.addItemsToPharmarackCart([{
+      productId: raw.productId,
+      storeId: hit.storeId,
+      productCode: hit.productCode,
+      productName: hit.productName,
+      storeName: hit.storeName,
+      company: raw.company || void 0,
+      rate: raw.ptr != null ? Number(raw.ptr) : void 0,
+      mrp: raw.mrp != null ? Number(raw.mrp) : void 0,
+      scheme: raw.scheme || void 0,
+      packaging: raw.packaging || void 0,
+      mapped: true,
+      qty: total
+    }]);
+    if (!inc.success || inc.offline) {
+      return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || "offline"}`);
+    }
+    pr.invalidatePharmarackCartCache();
+    let after;
+    for (let attempt = 0; attempt < 2 && !(after && after.qty === total); attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      try {
+        after = findLine(flattenCart(await pr.loadLiveCartCore()), hit.storeId, hit.productCode);
+      } catch (_) {
+      }
+    }
+    if (!after || after.qty !== total) {
+      return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
+    }
+    await db2.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
+    );
+    return {
+      ...base,
+      status: "added",
+      message: `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`,
+      line: { storeName: after.storeName, productName: after.productName, qty: total }
+    };
+  }
+  const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "";
+  const outcome = await pr.performPharmarackSearch(medicineName, null, false);
+  if (outcome.status === "need_login") return fail(cartErrorMessage({ code: "NEED_LOGIN" }));
+  if (outcome.status === "connection_error") return fail("Pharmarack search did not answer (network). Retry.");
+  const items = outcome.items.filter(isLive);
+  const findItem = (l) => items.find((i) => Number(i.storeId) === Number(l.store_id) && String(i.productCode) === String(l.product_code));
+  for (const l of links.filter((l2) => !findItem(l2)).slice(0, 3)) {
+    const o = await pr.performPharmarackSearch(l.product_name || medicineName, Number(l.store_id), l.mapped !== 0);
+    if (o.status === "ok") items.push(...o.items.filter(isLive));
+  }
+  const linkedKeys = new Set(links.map((l) => `${l.store_id}|${l.product_code}`));
+  const seen = /* @__PURE__ */ new Set();
+  const candidates = [];
+  for (const i of items) {
+    const key = `${Number(i.storeId)}|${String(i.productCode)}`;
+    if (seen.has(key) || i.mapped === false) continue;
+    seen.add(key);
+    candidates.push({
+      storeId: Number(i.storeId),
+      storeName: String(i.distributor || ""),
+      productCode: String(i.productCode),
+      productId: i.productId ?? null,
+      productName: String(i.name || ""),
+      packaging: String(i.packaging || ""),
+      company: String(i.company || ""),
+      mapped: i.mapped !== false,
+      rate: i.rate != null ? Number(i.rate) : null,
+      mrp: i.mrp != null ? Number(i.mrp) : null,
+      scheme: String(i.scheme || ""),
+      stock: String(i.stock ?? ""),
+      inStock: pr.isItemInStock(i.stock),
+      inCart: !!findLine(lines, i.storeId, i.productCode),
+      linked: linkedKeys.has(key)
+    });
+    if (candidates.length >= 30) break;
+  }
+  if (links.length === 0) {
+    return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor linked to this medicine yet. Link one to add it." } : { ...base, status: "not_found", message: "No mapped Pharmarack distributor found for this name. Link it by searching another spelling." };
+  }
+  const linkedState = links.map((l) => {
+    const item = findItem(l);
+    return { link: l, item, inStock: !!item && pr.isItemInStock(item.stock) };
+  });
+  const linked = linkedState.map((s) => ({
+    storeName: String(s.link.store_name),
+    productName: String(s.link.product_name || ""),
+    stock: s.item ? String(s.item.stock ?? "") : "not listed now",
+    inStock: s.inStock
+  }));
+  const available = linkedState.filter((s) => s.inStock);
+  if (available.length === 0) {
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "linked_oos",
+      message: `Out of stock at ${linked.map((l) => l.storeName).join(", ")}. Link another distributor.`
+    };
+  }
+  const chosen = available[0];
+  const it = chosen.item;
+  if (opts.dryRun) {
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "ready",
+      message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? "?"}). Press Add.`,
+      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ""), qty }
+    };
+  }
+  const addFailures = [];
+  for (const cand of available) {
+    const candItem = cand.item;
+    const addRes = await pr.addItemsToPharmarackCart([{
+      productId: candItem.productId,
+      storeId: Number(candItem.storeId),
+      productCode: String(candItem.productCode),
+      productName: String(candItem.name || cand.link.product_name || medicineName),
+      storeName: String(candItem.distributor || cand.link.store_name),
+      company: candItem.company || void 0,
+      rate: candItem.rate != null ? Number(candItem.rate) : void 0,
+      mrp: candItem.mrp != null ? Number(candItem.mrp) : void 0,
+      scheme: candItem.scheme || void 0,
+      packaging: candItem.packaging || void 0,
+      mapped: candItem.mapped !== false,
+      qty
+    }]);
+    if (!addRes.success || addRes.offline) {
+      addFailures.push(`${cand.link.store_name} (${addRes.details || addRes.error || addRes.message || "offline"})`);
+      continue;
+    }
+    pr.invalidatePharmarackCartCache();
+    let added;
+    for (let attempt = 0; attempt < 2 && !added; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      try {
+        added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
+      } catch (_) {
+      }
+    }
+    if (!added) {
+      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
+      continue;
+    }
+    await db2.run(
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
+    );
+    await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [cand.link.id]);
+    const firstLink = linkedState[0];
+    const skipped = linkedState.filter((s) => s !== cand && !s.inStock).map((s) => String(s.link.store_name));
+    const failedBefore = available.slice(0, available.indexOf(cand)).filter((s) => s !== cand && s.inStock).map((s) => String(s.link.store_name));
+    const noteParts = [...skipped.map((n) => `${n} was out of stock`), ...failedBefore.map((n) => `${n} did not accept it`)];
+    const note = noteParts.length > 0 ? ` (${noteParts.join("; ")})` : firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
+    return {
+      ...base,
+      linked,
+      candidates,
+      status: "added",
+      message: `Added ${qty} to ${added.storeName}${note}.`,
+      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
+    };
+  }
+  return fail(`Pharmarack did not accept the item at ${available.map((s) => String(s.link.store_name)).join(", ")}: ${addFailures.join("; ") || "no confirmation"}`, { linked, candidates });
+}
+async function getDistributorPurchaseRanks() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all(
+    `SELECT d.name, COUNT(p.id) AS purchases FROM distributors d JOIN purchases p ON p.distributor_id = d.id
+     GROUP BY d.id ORDER BY purchases DESC LIMIT 300`
+  );
+  return rows.map((r) => ({ name: String(r.name || ""), purchases: Number(r.purchases) || 0 })).filter((r) => r.name);
+}
+async function sendRefillCartSummary(patientName, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return { queued: false, reason: "Nothing to report." };
+  const db2 = await dbManager.getConnection();
+  const { resolveAdminWhatsappNumber: resolveAdminWhatsappNumber2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+  const owner = await resolveAdminWhatsappNumber2(db2);
+  if (!owner) return { queued: false, reason: "Owner WhatsApp number is not set in Settings." };
+  const ids = rows.map((r) => Number(r.refillId)).filter((n) => n > 0);
+  const saved = /* @__PURE__ */ new Map();
+  if (ids.length > 0) {
+    const dbRows = await db2.all(
+      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => "?").join(",")})`,
+      ids
+    );
+    for (const r of dbRows) saved.set(Number(r.id), r);
+  }
+  const byStore = /* @__PURE__ */ new Map();
+  const needs = [];
+  for (const r of rows) {
+    const name = String(r.medicineName || "Medicine");
+    const db_ = saved.get(Number(r.refillId));
+    const confirmed = r.status === "added" && db_?.cart_product_code;
+    if (confirmed || r.status === "in_cart") {
+      const store = String((confirmed ? r.storeName || db_.cart_store_name : r.storeName) || "Distributor").trim();
+      const qty = r.qty ?? (confirmed ? db_.cart_qty : void 0);
+      const line = `\u2022 ${name} \xD7 ${qty ?? "?"}${r.status === "in_cart" ? " (already in cart)" : ""}`;
+      byStore.set(store, [...byStore.get(store) || [], line]);
+    } else {
+      needs.push(`\u2022 ${name} \u2014 ${r.message || r.status}`);
+    }
+  }
+  const parts = [`\u{1F6D2} *Refill cart \u2014 ${patientName || "Patient"}*`];
+  for (const [store, lines] of byStore) parts.push(`
+*${store}*
+${lines.join("\n")}`);
+  if (needs.length) parts.push(`
+\u26A0\uFE0F *Failed to add (${needs.length})*
+${needs.join("\n")}
+Open CRM \u2192 Refills to fix.`);
+  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+  await whatsappQueueWorker2.enqueue(owner, parts.join("\n"), "refill_cart_summary", "Admin / Store Owner");
+  return { queued: true };
+}
+function removeRefillCartLines(rows, clearRows) {
+  const tracked = (rows || []).filter((r) => r && r.cart_product_code && Number(r.cart_store_id) > 0);
+  if (tracked.length === 0) return;
+  setImmediate(async () => {
+    const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+    const db2 = await dbManager.getConnection();
+    for (const r of tracked) {
+      const name = String(r.cart_product_name || "medicine");
+      const store = String(r.cart_store_name || "distributor");
+      let type = "error";
+      let message;
+      try {
+        const adj = await pr.adjustSpecialOrderInLiveCart({
+          product: name,
+          qty: Number(r.cart_qty) || 1,
+          productCode: String(r.cart_product_code),
+          storeId: Number(r.cart_store_id),
+          distributor: store,
+          exactOnly: true
+        });
+        if (adj.action === "removed") {
+          type = "success";
+          message = `Refill cancelled: removed "${name}" from the ${store} cart.`;
+        } else if (adj.action === "adjusted") {
+          type = "info";
+          message = `Refill cancelled: "${name}" in the ${store} cart reduced from ${adj.previousQty} to ${adj.remainingQty}.`;
+        } else if (adj.message === "Item not found in current live cart" || adj.message === "Live cart is empty") {
+          type = "info";
+          message = `Refill cancelled: "${name}" is no longer in the live cart (already ordered or removed).`;
+        } else {
+          message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${adj.message || "unknown error"}). Remove it in Live Cart.`;
+        }
+      } catch (err) {
+        message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${err?.message || "error"}). Remove it in Live Cart.`;
+      }
+      if (clearRows && type !== "error") {
+        await db2.run("UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?", [r.id]).catch(() => {
+        });
+      }
+      eventService.broadcast("toast_alert", { type, message, link: "/crm?tab=refills" });
+    }
+  });
+}
+var norm, isValidPick, nameKey, findLine, REFILL_CART_COLUMNS;
+var init_refillCartService = __esm({
+  "src/services/refillCartService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    isValidPick = (p) => Number(p?.storeId) > 0 && String(p?.productCode || "").trim() !== "" && String(p?.storeName || "").trim() !== "";
+    nameKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    findLine = (lines, storeId, code) => lines.find((l) => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ""));
+    REFILL_CART_COLUMNS = "id, cart_store_id, cart_store_name, cart_product_code, cart_product_name, cart_qty";
+  }
+});
+
 // src/services/refillOrderReconciler.ts
 var refillOrderReconciler_exports = {};
 __export(refillOrderReconciler_exports, {
@@ -33346,543 +33849,6 @@ var init_refillService = __esm({
   }
 });
 
-// src/services/refillCartService.ts
-var refillCartService_exports = {};
-__export(refillCartService_exports, {
-  REFILL_CART_COLUMNS: () => REFILL_CART_COLUMNS,
-  getDistributorPriorityList: () => getDistributorPriorityList,
-  getDistributorPurchaseRanks: () => getDistributorPurchaseRanks,
-  getMedicineLinks: () => getMedicineLinks,
-  orderByPriority: () => orderByPriority,
-  processRefillCartItem: () => processRefillCartItem,
-  removeRefillCartLines: () => removeRefillCartLines,
-  saveDistributorPriority: () => saveDistributorPriority,
-  saveMedicineLinks: () => saveMedicineLinks,
-  sendRefillCartSummary: () => sendRefillCartSummary
-});
-function flattenCart(cart) {
-  const lines = [];
-  for (const d of cart.distributors || []) {
-    for (const it of d.items || []) {
-      lines.push({
-        storeId: Number(it.storeId || d.storeId || 0),
-        storeName: String(d.storeName || ""),
-        productCode: String(it.productCode || ""),
-        productName: String(it.productName || ""),
-        qty: Number(it.qty) || 0,
-        raw: it
-      });
-    }
-  }
-  return lines;
-}
-async function getMedicineLinks(medicineId) {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all(
-    `SELECT store_id, store_name, product_code, product_id, product_name, packaging, company, mapped
-     FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id`,
-    [medicineId]
-  );
-  return rows.map((r) => ({
-    storeId: Number(r.store_id),
-    storeName: String(r.store_name),
-    productCode: String(r.product_code),
-    productId: r.product_id,
-    productName: r.product_name || "",
-    packaging: r.packaging || "",
-    company: r.company || "",
-    mapped: r.mapped !== 0
-  }));
-}
-async function saveMedicineLinks(medicineId, picks) {
-  const clean2 = picks.filter(isValidPick);
-  if (clean2.length !== picks.length) {
-    throw Object.assign(new Error("Each linked product needs a Pharmarack distributor and product code."), { httpStatus: 400 });
-  }
-  const db2 = await dbManager.getConnection();
-  const med = await db2.get("SELECT id FROM medicines WHERE id = ?", [medicineId]);
-  if (!med) throw Object.assign(new Error("Medicine not found"), { httpStatus: 404 });
-  await db2.run("BEGIN");
-  try {
-    await db2.run("DELETE FROM medicine_distributor_links WHERE medicine_id = ?", [medicineId]);
-    for (let i = 0; i < clean2.length; i++) {
-      const p = clean2[i];
-      await db2.run(
-        `INSERT OR REPLACE INTO medicine_distributor_links
-           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-        [
-          medicineId,
-          Number(p.storeId),
-          String(p.storeName).trim(),
-          String(p.productCode).trim(),
-          p.productId != null ? String(p.productId) : null,
-          p.productName || null,
-          p.packaging || null,
-          p.company || null,
-          p.mapped === false ? 0 : 1,
-          i
-        ]
-      );
-    }
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK").catch(() => {
-    });
-    throw err;
-  }
-  return clean2.length;
-}
-async function loadPriorityMap() {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all("SELECT name_key, priority FROM distributor_priority");
-  return new Map(rows.map((r) => [String(r.name_key), Number(r.priority)]));
-}
-function orderByPriority(items, storeNameOf, prio) {
-  const rank = (i) => prio.get(nameKey(storeNameOf(i)));
-  return items.map((it, idx) => ({ it, idx, r: rank(it) })).sort((a, b) => (a.r ?? Infinity) - (b.r ?? Infinity) || a.idx - b.idx).map((x) => x.it);
-}
-async function getDistributorPriorityList() {
-  const db2 = await dbManager.getConnection();
-  const found = /* @__PURE__ */ new Map();
-  const add = (name, linked) => {
-    const storeName = String(name || "").trim();
-    const key = nameKey(storeName);
-    if (!key) return;
-    const cur = found.get(key);
-    if (cur) cur.linkedMedicines += linked;
-    else found.set(key, { storeName, ranked: false, linkedMedicines: linked });
-  };
-  const saved = await db2.all("SELECT name_key, store_name, priority FROM distributor_priority ORDER BY priority");
-  const links = await db2.all("SELECT store_name FROM medicine_distributor_links WHERE mapped != 0");
-  const maps = await db2.all("SELECT store_name FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL");
-  const ranked = [];
-  for (const r of saved) {
-    const row = { storeName: String(r.store_name), ranked: true, linkedMedicines: 0 };
-    found.set(String(r.name_key), row);
-    ranked.push(row);
-  }
-  for (const l of links) add(l.store_name, 1);
-  for (const m of maps) add(m.store_name, 0);
-  const rest = [...found.values()].filter((v) => !v.ranked).sort((a, b) => b.linkedMedicines - a.linkedMedicines || a.storeName.localeCompare(b.storeName));
-  return [...ranked, ...rest];
-}
-async function saveDistributorPriority(storeNames) {
-  const seen = /* @__PURE__ */ new Set();
-  const clean2 = storeNames.map((n) => String(n || "").trim()).filter((n) => {
-    const k = nameKey(n);
-    if (!k || seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  const prioMap = /* @__PURE__ */ new Map();
-  for (let i = 0; i < clean2.length; i++) {
-    prioMap.set(nameKey(clean2[i]), i);
-  }
-  const db2 = await dbManager.getConnection();
-  await db2.run("BEGIN");
-  try {
-    await db2.run("DELETE FROM distributor_priority");
-    for (let i = 0; i < clean2.length; i++) {
-      await db2.run("INSERT INTO distributor_priority (name_key, store_name, priority) VALUES (?, ?, ?)", [nameKey(clean2[i]), clean2[i], i]);
-    }
-    const allLinks = await db2.all("SELECT id, medicine_id, store_name, pick_order FROM medicine_distributor_links");
-    if (allLinks.length > 0) {
-      const byMed = /* @__PURE__ */ new Map();
-      for (const link of allLinks) {
-        const medId = Number(link.medicine_id);
-        const arr = byMed.get(medId) || [];
-        arr.push(link);
-        byMed.set(medId, arr);
-      }
-      for (const links of byMed.values()) {
-        links.sort((a, b) => {
-          const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
-          const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
-          if (rA !== rB) return rA - rB;
-          return (Number(a.pick_order) || 0) - (Number(b.pick_order) || 0) || Number(a.id) - Number(b.id);
-        });
-        for (let newOrder = 0; newOrder < links.length; newOrder++) {
-          if (links[newOrder].pick_order !== newOrder) {
-            await db2.run("UPDATE medicine_distributor_links SET pick_order = ? WHERE id = ?", [newOrder, links[newOrder].id]);
-          }
-        }
-      }
-    }
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK").catch(() => {
-    });
-    throw err;
-  }
-  return clean2.length;
-}
-function cartErrorMessage(err) {
-  if (err?.code === "NEED_LOGIN") return "Pharmarack is not logged in. Log in from the Live Cart page, then retry.";
-  if (err?.code === "SESSION_EXPIRED") return "Pharmarack session expired. Re-login, then retry.";
-  return `Could not read the Pharmarack live cart (${err?.message || "network error"}). Retry.`;
-}
-async function processRefillCartItem(refillId, opts = {}) {
-  const db2 = await dbManager.getConnection();
-  const refill = await db2.get(
-    `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
-            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name
-     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
-     WHERE pr.id = ?`,
-    [refillId]
-  );
-  if (!refill) throw Object.assign(new Error("Refill not found"), { httpStatus: 404 });
-  const medicineName = String(refill.medicine_name || "");
-  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
-  const base = { refillId, medicineName, qty, linked: [], candidates: [] };
-  const fail = (message, extra = {}) => ({ ...base, ...extra, status: "failed", message });
-  if (refill.is_active === 0 || ["canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
-    return fail("This refill is paused or cancelled.");
-  }
-  if (Array.isArray(opts.pick) && opts.pick.length > 0) {
-    const picks = opts.pick.filter(isValidPick);
-    if (picks.length === 0) return fail("Tick a distributor product from the list.");
-    const prioMap2 = await loadPriorityMap();
-    const orderedPicks = orderByPriority(picks, (p) => p.storeName, prioMap2);
-    await saveMedicineLinks(refill.medicine_id, orderedPicks);
-  }
-  const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-  let lines;
-  try {
-    lines = flattenCart(await pr.loadLiveCartCore());
-  } catch (err) {
-    return fail(cartErrorMessage(err));
-  }
-  const prioMap = await loadPriorityMap();
-  const rawLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
-  const links = [...rawLinks].sort((a, b) => {
-    const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
-    const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;
-    if (poA !== poB) return poA - poB;
-    const rA = prioMap.get(nameKey(a.store_name)) ?? Infinity;
-    const rB = prioMap.get(nameKey(b.store_name)) ?? Infinity;
-    return rA - rB;
-  });
-  const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : void 0;
-  if (mine) {
-    return {
-      ...base,
-      status: "in_cart",
-      message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
-      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty }
-    };
-  }
-  let hit;
-  for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
-  if (!hit) {
-    const want = norm(medicineName);
-    hit = lines.find((l) => want && norm(l.productName) === want);
-  }
-  if (hit) {
-    const total = hit.qty + qty;
-    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total };
-    if (opts.dryRun) {
-      return { ...base, status: "ready", message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
-    }
-    const raw = hit.raw || {};
-    const inc = await pr.addItemsToPharmarackCart([{
-      productId: raw.productId,
-      storeId: hit.storeId,
-      productCode: hit.productCode,
-      productName: hit.productName,
-      storeName: hit.storeName,
-      company: raw.company || void 0,
-      rate: raw.ptr != null ? Number(raw.ptr) : void 0,
-      mrp: raw.mrp != null ? Number(raw.mrp) : void 0,
-      scheme: raw.scheme || void 0,
-      packaging: raw.packaging || void 0,
-      mapped: true,
-      qty: total
-    }]);
-    if (!inc.success || inc.offline) {
-      return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || "offline"}`);
-    }
-    pr.invalidatePharmarackCartCache();
-    let after;
-    for (let attempt = 0; attempt < 2 && !(after && after.qty === total); attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
-      try {
-        after = findLine(flattenCart(await pr.loadLiveCartCore()), hit.storeId, hit.productCode);
-      } catch (_) {
-      }
-    }
-    if (!after || after.qty !== total) {
-      return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
-    }
-    await db2.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
-      [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
-    );
-    return {
-      ...base,
-      status: "added",
-      message: `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`,
-      line: { storeName: after.storeName, productName: after.productName, qty: total }
-    };
-  }
-  const isLive = (i) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || "").trim() !== "";
-  const outcome = await pr.performPharmarackSearch(medicineName, null, false);
-  if (outcome.status === "need_login") return fail(cartErrorMessage({ code: "NEED_LOGIN" }));
-  if (outcome.status === "connection_error") return fail("Pharmarack search did not answer (network). Retry.");
-  const items = outcome.items.filter(isLive);
-  const findItem = (l) => items.find((i) => Number(i.storeId) === Number(l.store_id) && String(i.productCode) === String(l.product_code));
-  for (const l of links.filter((l2) => !findItem(l2)).slice(0, 3)) {
-    const o = await pr.performPharmarackSearch(l.product_name || medicineName, Number(l.store_id), l.mapped !== 0);
-    if (o.status === "ok") items.push(...o.items.filter(isLive));
-  }
-  const linkedKeys = new Set(links.map((l) => `${l.store_id}|${l.product_code}`));
-  const seen = /* @__PURE__ */ new Set();
-  const candidates = [];
-  for (const i of items) {
-    const key = `${Number(i.storeId)}|${String(i.productCode)}`;
-    if (seen.has(key) || i.mapped === false) continue;
-    seen.add(key);
-    candidates.push({
-      storeId: Number(i.storeId),
-      storeName: String(i.distributor || ""),
-      productCode: String(i.productCode),
-      productId: i.productId ?? null,
-      productName: String(i.name || ""),
-      packaging: String(i.packaging || ""),
-      company: String(i.company || ""),
-      mapped: i.mapped !== false,
-      rate: i.rate != null ? Number(i.rate) : null,
-      mrp: i.mrp != null ? Number(i.mrp) : null,
-      scheme: String(i.scheme || ""),
-      stock: String(i.stock ?? ""),
-      inStock: pr.isItemInStock(i.stock),
-      inCart: !!findLine(lines, i.storeId, i.productCode),
-      linked: linkedKeys.has(key)
-    });
-    if (candidates.length >= 30) break;
-  }
-  if (links.length === 0) {
-    const inStockCandidates = candidates.filter((c) => c.inStock && c.mapped);
-    if (inStockCandidates.length > 0) {
-      const orderedCandidates = orderByPriority(inStockCandidates, (c) => c.storeName, prioMap);
-      const best = orderedCandidates[0];
-      try {
-        await saveMedicineLinks(refill.medicine_id, [{
-          storeId: best.storeId,
-          storeName: best.storeName,
-          productCode: best.productCode,
-          productId: best.productId,
-          productName: best.productName,
-          packaging: best.packaging,
-          company: best.company,
-          mapped: true
-        }]);
-        const freshLinks = await db2.all("SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id", [refill.medicine_id]);
-        if (freshLinks.length > 0) {
-          links.push(...freshLinks);
-        }
-      } catch (linkErr) {
-        console.warn(`[RefillCartService] Auto-link fallback note for medicine ${refill.medicine_id}:`, linkErr);
-      }
-    }
-  }
-  if (links.length === 0) {
-    return candidates.length > 0 ? { ...base, candidates, status: "needs_link", message: "No distributor linked to this medicine yet. Link one to add it." } : { ...base, status: "not_found", message: "No mapped Pharmarack distributor found for this name. Link it by searching another spelling." };
-  }
-  const linkedState = links.map((l) => {
-    const item = findItem(l);
-    return { link: l, item, inStock: !!item && pr.isItemInStock(item.stock) };
-  });
-  const linked = linkedState.map((s) => ({
-    storeName: String(s.link.store_name),
-    productName: String(s.link.product_name || ""),
-    stock: s.item ? String(s.item.stock ?? "") : "not listed now",
-    inStock: s.inStock
-  }));
-  const available = linkedState.filter((s) => s.inStock);
-  if (available.length === 0) {
-    return {
-      ...base,
-      linked,
-      candidates,
-      status: "linked_oos",
-      message: `Out of stock at ${linked.map((l) => l.storeName).join(", ")}. Link another distributor.`
-    };
-  }
-  const chosen = available[0];
-  const it = chosen.item;
-  if (opts.dryRun) {
-    return {
-      ...base,
-      linked,
-      candidates,
-      status: "ready",
-      message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? "?"}). Press Add.`,
-      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ""), qty }
-    };
-  }
-  const addFailures = [];
-  for (const cand of available) {
-    const candItem = cand.item;
-    const addRes = await pr.addItemsToPharmarackCart([{
-      productId: candItem.productId,
-      storeId: Number(candItem.storeId),
-      productCode: String(candItem.productCode),
-      productName: String(candItem.name || cand.link.product_name || medicineName),
-      storeName: String(candItem.distributor || cand.link.store_name),
-      company: candItem.company || void 0,
-      rate: candItem.rate != null ? Number(candItem.rate) : void 0,
-      mrp: candItem.mrp != null ? Number(candItem.mrp) : void 0,
-      scheme: candItem.scheme || void 0,
-      packaging: candItem.packaging || void 0,
-      mapped: candItem.mapped !== false,
-      qty
-    }]);
-    if (!addRes.success || addRes.offline) {
-      addFailures.push(`${cand.link.store_name} (${addRes.details || addRes.error || addRes.message || "offline"})`);
-      continue;
-    }
-    pr.invalidatePharmarackCartCache();
-    let added;
-    for (let attempt = 0; attempt < 2 && !added; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
-      try {
-        added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
-      } catch (_) {
-      }
-    }
-    if (!added) {
-      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
-      continue;
-    }
-    await db2.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
-      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
-    );
-    await db2.run("UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [cand.link.id]);
-    const firstLink = linkedState[0];
-    const skipped = linkedState.filter((s) => s !== cand && !s.inStock).map((s) => String(s.link.store_name));
-    const failedBefore = available.slice(0, available.indexOf(cand)).filter((s) => s !== cand && s.inStock).map((s) => String(s.link.store_name));
-    const noteParts = [...skipped.map((n) => `${n} was out of stock`), ...failedBefore.map((n) => `${n} did not accept it`)];
-    const note = noteParts.length > 0 ? ` (${noteParts.join("; ")})` : firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : "";
-    return {
-      ...base,
-      linked,
-      candidates,
-      status: "added",
-      message: `Added ${qty} to ${added.storeName}${note}.`,
-      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
-    };
-  }
-  return fail(`Pharmarack did not accept the item at ${available.map((s) => String(s.link.store_name)).join(", ")}: ${addFailures.join("; ") || "no confirmation"}`, { linked, candidates });
-}
-async function getDistributorPurchaseRanks() {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all(
-    `SELECT d.name, COUNT(p.id) AS purchases FROM distributors d JOIN purchases p ON p.distributor_id = d.id
-     GROUP BY d.id ORDER BY purchases DESC LIMIT 300`
-  );
-  return rows.map((r) => ({ name: String(r.name || ""), purchases: Number(r.purchases) || 0 })).filter((r) => r.name);
-}
-async function sendRefillCartSummary(patientName, rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return { queued: false, reason: "Nothing to report." };
-  const db2 = await dbManager.getConnection();
-  const { resolveAdminWhatsappNumber: resolveAdminWhatsappNumber2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
-  const owner = await resolveAdminWhatsappNumber2(db2);
-  if (!owner) return { queued: false, reason: "Owner WhatsApp number is not set in Settings." };
-  const ids = rows.map((r) => Number(r.refillId)).filter((n) => n > 0);
-  const saved = /* @__PURE__ */ new Map();
-  if (ids.length > 0) {
-    const dbRows = await db2.all(
-      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => "?").join(",")})`,
-      ids
-    );
-    for (const r of dbRows) saved.set(Number(r.id), r);
-  }
-  const byStore = /* @__PURE__ */ new Map();
-  const needs = [];
-  for (const r of rows) {
-    const name = String(r.medicineName || "Medicine");
-    const db_ = saved.get(Number(r.refillId));
-    const confirmed = r.status === "added" && db_?.cart_product_code;
-    if (confirmed || r.status === "in_cart") {
-      const store = String((confirmed ? r.storeName || db_.cart_store_name : r.storeName) || "Distributor").trim();
-      const qty = r.qty ?? (confirmed ? db_.cart_qty : void 0);
-      const line = `\u2022 ${name} \xD7 ${qty ?? "?"}${r.status === "in_cart" ? " (already in cart)" : ""}`;
-      byStore.set(store, [...byStore.get(store) || [], line]);
-    } else {
-      needs.push(`\u2022 ${name} \u2014 ${r.message || r.status}`);
-    }
-  }
-  const parts = [`\u{1F6D2} *Refill cart \u2014 ${patientName || "Patient"}*`];
-  for (const [store, lines] of byStore) parts.push(`
-*${store}*
-${lines.join("\n")}`);
-  if (needs.length) parts.push(`
-\u26A0\uFE0F *Failed to add (${needs.length})*
-${needs.join("\n")}
-Open CRM \u2192 Refills to fix.`);
-  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-  await whatsappQueueWorker2.enqueue(owner, parts.join("\n"), "refill_cart_summary", "Admin / Store Owner");
-  return { queued: true };
-}
-function removeRefillCartLines(rows, clearRows) {
-  const tracked = (rows || []).filter((r) => r && r.cart_product_code && Number(r.cart_store_id) > 0);
-  if (tracked.length === 0) return;
-  setImmediate(async () => {
-    const pr = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-    const db2 = await dbManager.getConnection();
-    for (const r of tracked) {
-      const name = String(r.cart_product_name || "medicine");
-      const store = String(r.cart_store_name || "distributor");
-      let type = "error";
-      let message;
-      try {
-        const adj = await pr.adjustSpecialOrderInLiveCart({
-          product: name,
-          qty: Number(r.cart_qty) || 1,
-          productCode: String(r.cart_product_code),
-          storeId: Number(r.cart_store_id),
-          distributor: store,
-          exactOnly: true
-        });
-        if (adj.action === "removed") {
-          type = "success";
-          message = `Refill cancelled: removed "${name}" from the ${store} cart.`;
-        } else if (adj.action === "adjusted") {
-          type = "info";
-          message = `Refill cancelled: "${name}" in the ${store} cart reduced from ${adj.previousQty} to ${adj.remainingQty}.`;
-        } else if (adj.message === "Item not found in current live cart" || adj.message === "Live cart is empty") {
-          type = "info";
-          message = `Refill cancelled: "${name}" is no longer in the live cart (already ordered or removed).`;
-        } else {
-          message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${adj.message || "unknown error"}). Remove it in Live Cart.`;
-        }
-      } catch (err) {
-        message = `Refill cancelled, but "${name}" could not be removed from the ${store} cart (${err?.message || "error"}). Remove it in Live Cart.`;
-      }
-      if (clearRows && type !== "error") {
-        await db2.run("UPDATE patient_refills SET cart_product_code = NULL WHERE id = ?", [r.id]).catch(() => {
-        });
-      }
-      eventService.broadcast("toast_alert", { type, message, link: "/crm?tab=refills" });
-    }
-  });
-}
-var norm, isValidPick, nameKey, findLine, REFILL_CART_COLUMNS;
-var init_refillCartService = __esm({
-  "src/services/refillCartService.ts"() {
-    "use strict";
-    init_connection();
-    init_eventService();
-    norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    isValidPick = (p) => Number(p?.storeId) > 0 && String(p?.productCode || "").trim() !== "" && String(p?.storeName || "").trim() !== "";
-    nameKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    findLine = (lines, storeId, code) => lines.find((l) => l.storeId === Number(storeId) && !!l.productCode && l.productCode === String(code || ""));
-    REFILL_CART_COLUMNS = "id, cart_store_id, cart_store_name, cart_product_code, cart_product_name, cart_qty";
-  }
-});
-
 // src/services/shortageReminderService.ts
 var shortageReminderService_exports = {};
 __export(shortageReminderService_exports, {
@@ -34361,6 +34327,14 @@ function filterCandidatesByFormulation(targetName, candidates) {
     if (exactMatches.length > 0) {
       return exactMatches;
     }
+    return [];
+  }
+  if (targetTokens.brand) {
+    return formFilteredCandidates.filter((c) => {
+      const cName = c.name || c.productName || c.product || c.shortName || "";
+      const cTokens = tokenize(cName);
+      return cTokens.brand.startsWith(targetTokens.brand) || targetTokens.brand.startsWith(cTokens.brand);
+    });
   }
   return formFilteredCandidates;
 }
@@ -34974,29 +34948,102 @@ async function executeConfirmedProcurementFlow(params) {
       console.log(`[Intent Service] Duplicate confirmed order detected for ${cleanDigits} - ${confirmedMedicine} within 15 min. Skipping duplicate procurement.`);
       return true;
     }
-    const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
-    const allCatalog = [...localCat.mapped || [], ...localCat.nonMapped || []];
-    const formulationSafeCatalog = filterCandidatesByFormulation(confirmedMedicine, allCatalog);
-    const inStockCandidates = formulationSafeCatalog.filter((c) => isItemInStock(c.availability ?? c.stock));
     let selectedDistributor = null;
     let selectedProductInfo = null;
-    if (inStockCandidates.length > 0) {
-      const candidateStores = inStockCandidates.map((c) => ({
-        storeId: Number(c.store_id || c.storeId || 0),
-        storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
-      })).filter((c) => c.storeName.length > 0);
-      selectedDistributor = await resolveCommonOrFrequentDistributor(db2, candidateStores);
-      selectedProductInfo = inStockCandidates.find((c) => {
-        const distName = String(c.distributor || c.supplier_name || c.distributor_name || "");
-        return distName === selectedDistributor?.storeName || selectedDistributor?.storeId && Number(c.store_id) === selectedDistributor.storeId;
-      }) || inStockCandidates[0];
-    } else if (formulationSafeCatalog.length > 0) {
-      const candidateStores = formulationSafeCatalog.map((c) => ({
-        storeId: Number(c.store_id || c.storeId || 0),
-        storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
-      })).filter((c) => c.storeName.length > 0);
-      selectedDistributor = await resolveCommonOrFrequentDistributor(db2, candidateStores);
-      selectedProductInfo = formulationSafeCatalog[0];
+    let targetMedId = params.medicineId;
+    if (!targetMedId) {
+      const medRow = await db2.get(
+        `SELECT m.id FROM medicines m
+         LEFT JOIN patient_refills pr ON pr.medicine_id = m.id AND pr.patient_phone = ?
+         WHERE LOWER(m.name) = LOWER(?) OR LOWER(pr.medicine_name) = LOWER(?)
+         ORDER BY pr.id DESC LIMIT 1`,
+        [cleanDigits, confirmedMedicine, confirmedMedicine]
+      );
+      if (medRow) targetMedId = medRow.id;
+    }
+    if (targetMedId) {
+      const { getMedicineLinks: getMedicineLinks2 } = await Promise.resolve().then(() => (init_refillCartService(), refillCartService_exports));
+      const savedLinks = await getMedicineLinks2(targetMedId).catch(() => []);
+      if (savedLinks.length > 0) {
+        let chosenLink = null;
+        for (const link of savedLinks) {
+          const catRow = await db2.get(
+            `SELECT availability, distributor_price, mrp FROM distributor_catalog 
+             WHERE store_id = ? AND (product_name = ? OR product_name LIKE ?)
+             LIMIT 1`,
+            [link.storeId, link.productName, `${link.productName}%`]
+          );
+          const isOOS = catRow && !isItemInStock(catRow.availability);
+          if (!isOOS) {
+            chosenLink = {
+              ...link,
+              rate: catRow?.distributor_price || 0,
+              mrp: catRow?.mrp || 0
+            };
+            break;
+          }
+        }
+        if (chosenLink) {
+          selectedDistributor = {
+            storeId: Number(chosenLink.storeId),
+            storeName: String(chosenLink.storeName)
+          };
+          selectedProductInfo = {
+            productName: chosenLink.productName || confirmedMedicine,
+            productId: chosenLink.productId || 0,
+            productCode: chosenLink.productCode || "",
+            packaging: chosenLink.packaging || unit,
+            company: chosenLink.company || "",
+            rate: chosenLink.rate || 0,
+            mrp: chosenLink.mrp || 0
+          };
+        } else {
+          console.warn(`[Intent Service] All ${savedLinks.length} linked distributors for "${confirmedMedicine}" are Out-of-Stock. Halting procurement without adding random candidates.`);
+          await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+            orderId: "OOS",
+            customer,
+            phone: cleanDigits,
+            chatId,
+            items: [{
+              name: confirmedMedicine,
+              quantity: quantity > 0 ? quantity : 1,
+              distributor: savedLinks.map((l) => l.storeName).join(", ")
+            }],
+            success: false,
+            error: `All ${savedLinks.length} linked distributors are Out-of-Stock`
+          }).catch(() => {
+          });
+          return false;
+        }
+      }
+    }
+    if (!selectedProductInfo) {
+      const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
+      const allCatalog = [...localCat.mapped || [], ...localCat.nonMapped || []];
+      const formulationSafeCatalog = filterCandidatesByFormulation(confirmedMedicine, allCatalog);
+      const inStockCandidates = formulationSafeCatalog.filter((c) => isItemInStock(c.availability ?? c.stock));
+      if (inStockCandidates.length > 0) {
+        const candidateStores = inStockCandidates.map((c) => ({
+          storeId: Number(c.store_id || c.storeId || 0),
+          storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
+        })).filter((c) => c.storeName.length > 0);
+        selectedDistributor = await resolveCommonOrFrequentDistributor(db2, candidateStores);
+        selectedProductInfo = inStockCandidates.find((c) => {
+          const distName = String(c.distributor || c.supplier_name || c.distributor_name || "");
+          return distName === selectedDistributor?.storeName || selectedDistributor?.storeId && Number(c.store_id) === selectedDistributor.storeId;
+        }) || inStockCandidates[0];
+      } else if (formulationSafeCatalog.length > 0) {
+        const candidateStores = formulationSafeCatalog.map((c) => ({
+          storeId: Number(c.store_id || c.storeId || 0),
+          storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
+        })).filter((c) => c.storeName.length > 0);
+        selectedDistributor = await resolveCommonOrFrequentDistributor(db2, candidateStores);
+        selectedProductInfo = formulationSafeCatalog[0];
+      }
+    }
+    if (!selectedProductInfo || !selectedDistributor?.storeId || !selectedProductInfo?.productCode) {
+      console.warn(`[Intent Service] No valid product code or distributor found for "${confirmedMedicine}". Halting live cart add.`);
+      return false;
     }
     const cartItem = {
       productName: selectedProductInfo?.productName || selectedProductInfo?.name || confirmedMedicine,
@@ -36917,6 +36964,7 @@ Reply *1* (or *YES*) to confirm.`;
               phone,
               chatId,
               confirmedMedicine,
+              medicineId: item.medicine_id || item.id,
               quantity: item.quantity || item.quantity_needed || 1,
               unit: item.unit || "strip",
               customer,
@@ -45254,11 +45302,25 @@ var init_tokenRefreshScheduler = __esm({
                 Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports)).then((m) => m.syncPharmarackOrders()).catch(() => {
                 });
               } else if (res.status === 401 || res.status === 403) {
-                console.log("[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Standing by for manual user re-auth.");
-                errorMsg = `Session expired (HTTP ${res.status})`;
-                try {
-                  await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
-                } catch (_) {
+                console.log(`[TokenRefreshScheduler] Heartbeat got HTTP ${res.status}: session stale/expired. Attempting single-flight session restore...`);
+                const refreshedToken = await this.executeRefresh().catch(() => null);
+                if (refreshedToken) {
+                  console.log("[TokenRefreshScheduler] Heartbeat successfully restored session via executeRefresh.");
+                  ok = true;
+                  this.lastError = null;
+                  try {
+                    await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+                  } catch (_) {
+                  }
+                  Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports)).then((m) => m.syncPharmarackOrders()).catch(() => {
+                  });
+                } else {
+                  console.log("[TokenRefreshScheduler] Single-flight restore failed or profile expired. Standing by for manual user re-auth.");
+                  errorMsg = `Session expired (HTTP ${res.status})`;
+                  try {
+                    await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+                  } catch (_) {
+                  }
                 }
               } else {
                 errorMsg = `Heartbeat HTTP ${res.status}`;
@@ -56503,8 +56565,10 @@ var init_connection = __esm({
             const trimmed = sql.trim().toUpperCase().replace(/;+$/, "");
             if (phase === "begin") {
               const callerCtx = requestTxStorage.getStore();
-              const foreignRequestOwnsTx = Boolean(callerCtx && self.txOwner && callerCtx !== self.txOwner);
-              if (self.isTxLocked && self.txDepth > 0 && !foreignRequestOwnsTx) {
+              const isSameRequestNesting = Boolean(callerCtx && self.txOwner && callerCtx === self.txOwner);
+              const isWorkerNesting = Boolean(!callerCtx && !self.txOwner);
+              const canUseSavepoint = self.isTxLocked && self.txDepth > 0 && (isSameRequestNesting || isWorkerNesting);
+              if (canUseSavepoint) {
                 self.txDepth++;
                 return await originalRun(`SAVEPOINT sp_${self.txDepth}`);
               }
@@ -58460,7 +58524,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.95";
+    APP_VERSION = "0.1.97";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -78415,6 +78479,15 @@ var init_refills = __esm({
        WHERE id = ?`,
           [nextDateStr, id]
         );
+        const cleanDigits = (refill.patient_phone || "").replace(/\D/g, "").slice(-10);
+        await db2.run(
+          `UPDATE special_orders 
+       SET status = 'Completed', updated_at = datetime('now')
+       WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') 
+         AND (source_refill_id = ? OR (source = 'refill' AND length(?) >= 7 AND phone LIKE ? AND LOWER(TRIM(product)) = LOWER(TRIM(?))))`,
+          [id, cleanDigits, `%${cleanDigits}%`, refill.medicine_name || ""]
+        ).catch(() => {
+        });
         await purgePendingCustomerReminders(db2, {
           phone: refill.patient_phone,
           refillIds: [Number(id)],
@@ -78426,6 +78499,7 @@ var init_refills = __esm({
         });
         eventService.broadcast("refill_updated", { at: Date.now(), refillId: Number(id), fulfilled: true });
         eventService.broadcast("app-refills-updated", { at: Date.now() });
+        eventService.broadcast("order_updated", { at: Date.now(), source: "fulfill" });
         res.json({
           success: true,
           message: `Refill for ${refill.medicine_name || "Medicine"} marked as fulfilled and advanced to ${nextDateStr.slice(0, 10)}.`,
@@ -78533,6 +78607,38 @@ var init_refills = __esm({
             fulfilledCount++;
             fulfilledIds.push(refill.id);
           }
+          const fulfilledMedNames = activeRefills.map((r) => (r.medicine_name || "").trim().toLowerCase()).filter(Boolean);
+          const cleanPhoneDigits = (rawPhone || "").replace(/\D/g, "").slice(-10);
+          if (fulfilledIds.length > 0 || cleanPhoneDigits.length >= 7 && fulfilledMedNames.length > 0) {
+            const idPlaceholders = fulfilledIds.map(() => "?").join(",");
+            const medPlaceholders = fulfilledMedNames.map(() => "?").join(",");
+            const conditions = [];
+            const params = [];
+            if (fulfilledIds.length > 0) {
+              conditions.push(`source_refill_id IN (${idPlaceholders})`);
+              params.push(...fulfilledIds);
+            }
+            if (cleanPhoneDigits.length >= 7) {
+              if (fulfilledMedNames.length > 0) {
+                conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) IN (${medPlaceholders})))`);
+                params.push(`%${cleanPhoneDigits}%`, ...fulfilledMedNames);
+              } else {
+                conditions.push(`(phone LIKE ? AND source = 'refill')`);
+                params.push(`%${cleanPhoneDigits}%`);
+              }
+            }
+            if (customerId) {
+              conditions.push(`(customer_id = ? AND source = 'refill')`);
+              params.push(customerId);
+            }
+            if (conditions.length > 0) {
+              const updateQuery = `UPDATE special_orders 
+                               SET status = 'Completed', updated_at = datetime('now')
+                               WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(" OR ")})`;
+              await db2.run(updateQuery, params).catch(() => {
+              });
+            }
+          }
           await db2.run("COMMIT");
         } catch (txErr) {
           await db2.run("ROLLBACK").catch(() => {
@@ -78542,13 +78648,15 @@ var init_refills = __esm({
         await purgePendingCustomerReminders(db2, {
           phone: rawPhone || void 0,
           refillIds: fulfilledIds,
-          customerId
+          customerId,
+          medicineNames: activeRefills.map((r) => r.medicine_name).filter(Boolean)
         });
         setImmediate(() => {
           checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after fulfill-all:", e));
         });
         eventService.broadcast("refill_updated", { at: Date.now(), fulfilled: true, count: fulfilledCount });
         eventService.broadcast("app-refills-updated", { at: Date.now() });
+        eventService.broadcast("order_updated", { at: Date.now(), source: "fulfill-all" });
         res.json({
           success: true,
           fulfilledCount,
@@ -92285,7 +92393,11 @@ var init_sales = __esm({
                 m.name as medicine_name, m.mrp, m.sell_price, m.packaging, COALESCE(m.pack_size, 1) as pack_size
          FROM patient_refills pr
          JOIN medicines m ON pr.medicine_id = m.id
-         WHERE (pr.customer_id IN (${cIdPlaceholders}) OR pr.patient_phone LIKE ?) AND pr.is_active = 1`,
+         WHERE (pr.customer_id IN (${cIdPlaceholders}) OR pr.patient_phone LIKE ?) 
+           AND pr.is_active = 1
+           AND (pr.status IS NULL OR pr.status NOT IN ('completed', 'fulfilled', 'canceled'))
+           AND date(pr.next_refill_date) <= date('now', '+7 days')
+           AND (pr.last_refill_date IS NULL OR pr.last_refill_date < datetime('now', '-24 hours'))`,
             [...customerIds, phoneParam]
           );
         }
