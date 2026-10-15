@@ -397,8 +397,7 @@ export async function processRefillCartItem(
   const candidates: RefillCartCandidate[] = [];
   for (const i of items) {
     const key = `${Number(i.storeId)}|${String(i.productCode)}`;
-    // Owner rule: only MAPPED distributors are offered for linking.
-    if (seen.has(key) || i.mapped === false) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     candidates.push({
       storeId: Number(i.storeId),
@@ -417,7 +416,7 @@ export async function processRefillCartItem(
       inCart: !!findLine(lines, i.storeId, i.productCode),
       linked: linkedKeys.has(key)
     });
-    if (candidates.length >= 30) break;
+    if (candidates.length >= 50) break;
   }
 
   if (links.length === 0) {

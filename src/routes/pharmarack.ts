@@ -309,7 +309,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     if (!token) {
       // Token missing: search offline catalog fallback or return need_login (no autonomous browser launch)
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      const filteredOffline = offline;
       if (filteredOffline.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, filteredOffline);
         return { status: 'ok', items: filteredOffline };
@@ -355,7 +355,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     if (response && (response.status === 401 || response.status === 403)) {
       tokenRefreshScheduler.executeRefresh().catch(() => {});
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      const filteredOffline = offline;
       if (filteredOffline.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, filteredOffline);
         return { status: 'ok', items: filteredOffline };
@@ -430,8 +430,8 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         };
       });
 
-      // Filter candidates through the No-Fake-Data core medicine tokens filter
-      const results = filterCandidateMedicines(qRaw, rawResults);
+      // Never filter out search results: preserve 100% of live candidates from upstream search
+      const results = rawResults;
 
       if (results.length > 0) {
         for (const r of results) {
@@ -451,9 +451,6 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         });
 
         searchCache.set(qRaw, storeId, isMapped, results);
-        if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
-          searchCache.set(primaryKeyword, storeId, isMapped, results);
-        }
         return { status: 'ok', items: results };
       }
       return { status: 'ok', items: [] };
@@ -461,7 +458,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
 
     // Fallback: If live OpenSearch returns 0 items, search local catalog cache
     const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-    const filteredOffline = filterCandidateMedicines(qRaw, offline);
+    const filteredOffline = offline;
     if (filteredOffline.length > 0) {
       for (const r of filteredOffline) {
         (r as any).matchScore = scoreProductName(qRaw, String((r as any).name || ''));
@@ -488,7 +485,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     // Fallback: On network error or timeout, search local catalog cache before returning 503
     try {
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      const filteredOffline = filterCandidateMedicines(qRaw, offline);
+      const filteredOffline = offline;
       if (filteredOffline.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, filteredOffline);
         return { status: 'ok', items: filteredOffline };
@@ -531,12 +528,6 @@ router.get('/search', async (req, res) => {
   // dropdown instantly (cold-boot resilience); a background single-flight
   // refresh replaces the entry for the next keystroke.
   let cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
-  if (!cachedHit) {
-    const coreTerm = sanitizePharmarackQuery(qRaw);
-    if (coreTerm && coreTerm.toLowerCase() !== qRaw.toLowerCase()) {
-      cachedHit = searchCache.lookup(coreTerm, storeId, isMapped);
-    }
-  }
   if (!cachedHit) {
     cachedHit = searchCache.findPrefixMatch(qRaw, storeId, isMapped);
   }

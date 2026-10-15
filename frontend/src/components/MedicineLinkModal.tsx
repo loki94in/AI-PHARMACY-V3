@@ -42,7 +42,7 @@ export const MedicineLinkModal: React.FC<{
   // A failed load shows an empty list; saving it would wipe the real links.
   const [loadFailed, setLoadFailed] = useState(false);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<RefillCartCandidate[]>(() => (initialResults || []).filter(c => c.mapped !== false));
+  const [results, setResults] = useState<RefillCartCandidate[]>(() => initialResults || []);
   const [searching, setSearching] = useState(false);
   const [searchNote, setSearchNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -223,7 +223,7 @@ export const MedicineLinkModal: React.FC<{
               )}
             </div>
             <p className="text-[10px] text-muted">
-              Only mapped distributors are listed. When a refill is added to the cart, the app uses ONE linked product with stock: the distributor already in your cart, else the first in-stock one in this priority order. Linking never adds to the cart.
+              All matching distributor products are listed. When a refill is added to the cart, the app uses ONE linked product with stock: the distributor already in your cart, else the first in-stock one in this priority order. Linking never adds to the cart.
             </p>
           </div>
 
@@ -328,6 +328,11 @@ export const MedicineLinkModal: React.FC<{
                             </div>
                             <div className="flex items-center gap-1.5 text-[10px] text-muted truncate mt-0.5">
                               <span className="font-semibold text-text truncate">{c.storeName}</span>
+                              {c.mapped === false && (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-[8.5px] font-semibold text-amber-500 border border-amber-500/30 shrink-0">
+                                  Unmapped
+                                </span>
+                              )}
                               <span>·</span>
                               <span className="shrink-0">bought {bought(c.storeName)}×</span>
                               {c.rate != null && (

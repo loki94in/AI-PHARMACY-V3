@@ -736,7 +736,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         setReconOrders(filtered);
       }
     } catch (err) {
-      console.error('Failed to fetch reconcile orders in modal:', err);
+      console.warn('Failed to fetch reconcile orders in modal (non-fatal):', err);
     }
   };
 
@@ -800,6 +800,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       if (data && (data.success || Array.isArray(data.distributors))) {
         cachedCartDistributors = data.distributors || [];
         setCartDistributors(cachedCartDistributors);
+        if (!(data as any).cached) {
+          cachedSessionStatus = 'active';
+          setSessionStatus('active');
+        }
       } else {
         if (cachedCartDistributors.length === 0) {
           setCartError(data?.error || 'Failed to retrieve cart details.');
@@ -827,6 +831,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         if (summary.cart?.distributors && summary.cart.distributors.length > 0) {
           cachedCartDistributors = summary.cart.distributors;
           setCartDistributors(summary.cart.distributors);
+          if (!(summary.cart as any).cached) {
+            cachedSessionStatus = 'active';
+            setSessionStatus('active');
+          }
         } else {
           await fetchCart(true);
         }
@@ -2206,6 +2214,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                   onSelectSuggestion={selectSuggestion}
                   onClearSelection={handleClearSelectedMedicine}
                   onTopSuggestionChange={(top) => { topSuggestionRef.current = top; }}
+                  onSessionActive={() => {
+                    cachedSessionStatus = 'active';
+                    setSessionStatus('active');
+                  }}
                   inputRef={productInputRef}
                 />
 

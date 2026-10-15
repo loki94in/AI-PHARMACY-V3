@@ -69,6 +69,7 @@ export interface LiveCartSearchSectionProps {
   onSelectSuggestion: (med: SuggestionMedicine, allCandidates: SuggestionMedicine[]) => void;
   onClearSelection?: () => void;
   onTopSuggestionChange?: (top: SuggestionMedicine | null) => void;
+  onSessionActive?: () => void;
   inputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
@@ -126,6 +127,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
   onSelectSuggestion,
   onClearSelection,
   onTopSuggestionChange,
+  onSessionActive,
   inputRef: externalInputRef
 }) => {
   const [product, setProduct] = useState(initialValue);
@@ -261,6 +263,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
         const mergedList: SuggestionMedicine[] = [];
 
         if (prData && !(prData as LocalPrSearchFallback).isError && Array.isArray(prData) && prData.length > 0) {
+          onSessionActive?.();
           const activeCartMap = new Map<string, { storeId: number; count: number; total: number; name: string }>();
           cartDistributors.forEach(d => {
             if (d.items && d.items.length > 0) {

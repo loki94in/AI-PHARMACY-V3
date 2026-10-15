@@ -1794,6 +1794,10 @@ router.get('/frequent', async (req, res) => {
   }
 });
 
+// In-memory cache for batch last purchase lookups (60s TTL)
+const batchLastPurchaseCache = new Map<string, { ts: number; data: any }>();
+const BATCH_LAST_PURCHASE_TTL_MS = 60_000;
+
 // Batch auto-fill: get last purchase for multiple medicines at once
 router.post('/batch-last-purchase', async (req, res) => {
   let db;
@@ -1804,20 +1808,68 @@ router.post('/batch-last-purchase', async (req, res) => {
     }
     db = await dbManager.getConnection();
 
+    // Cap to at most 100 medicines to prevent event loop exhaustion
+    const targetMedicines = medicines.slice(0, 100);
     const results: any[] = [];
-    for (const med of medicines) {
-      const name = med.name || med;
-      const fuzzyRows = await db.all(
-        'SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 5',
-        [`%${name}%`]
-      );
-      if (fuzzyRows.length === 0) {
-        results.push({ query: name, found: false });
+    const now = Date.now();
+
+    for (const med of targetMedicines) {
+      const name = typeof med === 'string' ? med.trim() : (med?.name || '').trim();
+      if (!name) {
+        results.push({ query: '', found: false });
         continue;
       }
 
-      const ids = fuzzyRows.map((r: any) => r.id);
-      const ph = ids.map(() => '?').join(',');
+      const cacheKey = `${name.toLowerCase()}|${distributor_id || ''}`;
+      const cached = batchLastPurchaseCache.get(cacheKey);
+      if (cached && now - cached.ts < BATCH_LAST_PURCHASE_TTL_MS) {
+        results.push(cached.data);
+        continue;
+      }
+
+      // Fast tiered resolution:
+      // 1. Indexed exact match (0.05ms)
+      let candidateIds: number[] = [];
+      const exactRows = await db.all(
+        'SELECT id, name FROM medicines WHERE name = ? LIMIT 1',
+        [name]
+      ).catch(() => []);
+
+      if (exactRows.length > 0) {
+        candidateIds = exactRows.map((r: any) => r.id);
+      } else {
+        // 2. Indexed prefix match (0.1ms)
+        const cleanPrefix = (name.split(' ')[0] || name).slice(0, 10).replace(/[%_]/g, '');
+        if (cleanPrefix.length >= 3) {
+          const prefixRows = await db.all(
+            'SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 3',
+            [`${cleanPrefix}%`]
+          ).catch(() => []);
+          if (prefixRows.length > 0) {
+            candidateIds = prefixRows.map((r: any) => r.id);
+          }
+        }
+      }
+
+      // 3. Fallback to quick LIKE scan only if prefix matched nothing
+      if (candidateIds.length === 0 && name.length >= 4) {
+        const fuzzyRows = await db.all(
+          'SELECT id, name FROM medicines WHERE name LIKE ? LIMIT 2',
+          [`%${name.slice(0, 16)}%`]
+        ).catch(() => []);
+        if (fuzzyRows.length > 0) {
+          candidateIds = fuzzyRows.map((r: any) => r.id);
+        }
+      }
+
+      if (candidateIds.length === 0) {
+        const notFoundResult = { query: name, found: false };
+        batchLastPurchaseCache.set(cacheKey, { ts: now, data: notFoundResult });
+        results.push(notFoundResult);
+        continue;
+      }
+
+      const ph = candidateIds.map(() => '?').join(',');
       let q = `
         SELECT pi.*, m.name as medicine_name, m.id as medicine_id,
                d.name as distributor_name, d.id as distributor_id,
@@ -1828,19 +1880,22 @@ router.post('/batch-last-purchase', async (req, res) => {
         JOIN distributors d ON p.distributor_id = d.id
         WHERE pi.medicine_id IN (${ph})
       `;
-      const p: any[] = [...ids];
+      const p: any[] = [...candidateIds];
       if (distributor_id) {
         q += ' AND p.distributor_id = ?';
         p.push(parseInt(distributor_id));
       }
       q += ' ORDER BY p.date DESC LIMIT 1';
 
-      const row = await db.get(q, p);
+      const row = await db.get(q, p).catch(() => null);
       if (!row) {
-        results.push({ query: name, found: false });
+        const notFoundResult = { query: name, found: false };
+        batchLastPurchaseCache.set(cacheKey, { ts: now, data: notFoundResult });
+        results.push(notFoundResult);
         continue;
       }
-      results.push({
+
+      const itemResult = {
         query: name,
         found: true,
         medicine_id: row.medicine_id,
@@ -1858,7 +1913,9 @@ router.post('/batch-last-purchase', async (req, res) => {
         distributor_id: row.distributor_id,
         purchase_date: row.purchase_date,
         invoice_no: row.invoice_no
-      });
+      };
+      batchLastPurchaseCache.set(cacheKey, { ts: now, data: itemResult });
+      results.push(itemResult);
     }
 
     res.json(results);
@@ -2118,349 +2175,409 @@ router.get('/:id/pdf', async (req, res) => {
 });
 
 import { normalizeInvoiceNo, tokensMatchFuzzy, stripPharmaNoise } from '../utils/reconciliationMatcher.js';
-export { normalizeInvoiceNo, tokensMatchFuzzy, stripPharmaNoise };
+
+// In-memory cache for /purchases/reconciliation list (15s TTL)
+let reconciliationCache: { ts: number; data: any[] } | null = null;
+let inFlightReconciliationPromise: Promise<any[]> | null = null;
+const RECONCILIATION_CACHE_TTL_MS = 15_000;
+
+export function invalidateReconciliationCache(): void {
+  reconciliationCache = null;
+  inFlightReconciliationPromise = null;
+}
 
 // GET /reconciliation - Detect missing/unreconciled orders from distributor emails with canonical normalization & alias matching
 router.get('/reconciliation', async (_req, res) => {
   try {
-    const db = await dbManager.getConnection();
-
-    // Fetch medicine aliases and OCR corrections for alias-aware reconciliation
-    const aliasRows = await db.all(
-      `SELECT LOWER(ma.alias_name) as alias_name, LOWER(m.name) as real_name 
-       FROM medicine_aliases ma 
-       JOIN medicines m ON ma.medicine_id = m.id`
-    ).catch(() => []);
-    const aliasMap = new Map<string, string>();
-    for (const a of aliasRows) {
-      if (a.alias_name && a.real_name) aliasMap.set(a.alias_name, a.real_name);
+    const now = Date.now();
+    if (reconciliationCache && (now - reconciliationCache.ts) < RECONCILIATION_CACHE_TTL_MS) {
+      return res.json(reconciliationCache.data);
+    }
+    if (inFlightReconciliationPromise) {
+      const data = await inFlightReconciliationPromise;
+      return res.json(data);
     }
 
-    const ocrRows = await db.all(`SELECT LOWER(ocr) as raw_text, LOWER(correct) as corrected_text FROM ocr_corrections`).catch(() => []);
-    for (const o of ocrRows) {
-      if (o.raw_text && o.corrected_text) aliasMap.set(o.raw_text, o.corrected_text);
-    }
-    
-    // Fetch permanently ignored words
-    const piwRows = await db.all(`SELECT word FROM permanently_ignored_words`).catch(() => []);
-    const ignoredSet = new Set(piwRows.map((r: any) => String(r.word || '').trim().toLowerCase()));
-    
-    // Fetch latest order/invoice emails up to limit of 50
-    const orderEmails = await db.all(`
-      SELECT uid, from_addr, subject, body, date, is_seen, is_saved, distributor_name, has_attachments, medicine_names, extracted_invoice_no, extracted_distributor
-      FROM emails 
-      WHERE (is_order = 1 
-         OR has_attachments = 1 
-         OR LOWER(subject) LIKE '%invoice%' 
-         OR LOWER(subject) LIKE '%inv%' 
-         OR LOWER(subject) LIKE '%bill%' 
-         OR LOWER(subject) LIKE '%order%' 
-         OR LOWER(subject) LIKE '%dispatch%'
-         OR LOWER(subject) LIKE '%tax%')
-      ORDER BY uid DESC
-      LIMIT 200
-    `);
+    inFlightReconciliationPromise = (async () => {
+      const db = await dbManager.getConnection();
 
-    const uids = orderEmails.map(e => e.uid);
-    const attachmentsMap = new Map<number, any[]>();
-    
-    if (uids.length > 0) {
-      const placeholders = uids.map(() => '?').join(',');
-      const allAttachments = await db.all(
-        `SELECT uid, filename, size, content_type, local_path FROM email_attachments WHERE uid IN (${placeholders})`,
-        uids
-      );
-      for (const att of allAttachments) {
-        if (!attachmentsMap.has(att.uid)) {
-          attachmentsMap.set(att.uid, []);
-        }
-        attachmentsMap.get(att.uid)!.push(att);
+      // Fetch medicine aliases and OCR corrections for alias-aware reconciliation
+      const aliasRows = await db.all(
+        `SELECT LOWER(ma.alias_name) as alias_name, LOWER(m.name) as real_name 
+         FROM medicine_aliases ma 
+         JOIN medicines m ON ma.medicine_id = m.id`
+      ).catch(() => []);
+      const aliasMap = new Map<string, string>();
+      for (const a of aliasRows) {
+        if (a.alias_name && a.real_name) aliasMap.set(a.alias_name, a.real_name);
       }
-    }
 
-    // Group emails by distributor name + invoice number to support corrections/revisions
-    const grouped = new Map<string, {
-      email_uid: number;
-      from: string;
-      subject: string;
-      body_snippet: string;
-      date: string;
-      is_seen: boolean;
-      is_saved: boolean;
-      extracted_distributor: string;
-      extracted_invoice_no: string;
-      expected_medicines: Set<string>;
-      attachments: any[];
-      matchedPurchase?: any;
-    }>();
+      const ocrRows = await db.all(`SELECT LOWER(ocr) as raw_text, LOWER(correct) as corrected_text FROM ocr_corrections`).catch(() => []);
+      for (const o of ocrRows) {
+        if (o.raw_text && o.corrected_text) aliasMap.set(o.raw_text, o.corrected_text);
+      }
+      
+      // Fetch permanently ignored words
+      const piwRows = await db.all(`SELECT word FROM permanently_ignored_words`).catch(() => []);
+      const ignoredSet = new Set(piwRows.map((r: any) => String(r.word || '').trim().toLowerCase()));
+      
+      // Fetch latest order/invoice emails up to limit of 50
+      const orderEmails = await db.all(`
+        SELECT uid, from_addr, subject, body, date, is_seen, is_saved, distributor_name, has_attachments, medicine_names, extracted_invoice_no, extracted_distributor
+        FROM emails 
+        WHERE (is_order = 1 
+           OR has_attachments = 1 
+           OR LOWER(subject) LIKE '%invoice%' 
+           OR LOWER(subject) LIKE '%inv%' 
+           OR LOWER(subject) LIKE '%bill%' 
+           OR LOWER(subject) LIKE '%order%' 
+           OR LOWER(subject) LIKE '%dispatch%'
+           OR LOWER(subject) LIKE '%tax%')
+        ORDER BY uid DESC
+        LIMIT 50
+      `);
 
-    for (const email of orderEmails) {
-      let extractedInvoiceNo = email.extracted_invoice_no;
-      let distributorName = email.extracted_distributor;
-
-      if (!extractedInvoiceNo || !distributorName) {
-        // Extract invoice details dynamically
-        const orderInfo = await emailService.extractOrderInfo({
-          subject: email.subject || '',
-          body: email.body || '',
-          from: email.from_addr || '',
-          attachments: []
-        });
-
-        extractedInvoiceNo = orderInfo.invoiceNumber || 'N/A';
-        distributorName = (orderInfo.distributorName && isValidDistributorName(orderInfo.distributorName) ? orderInfo.distributorName.trim() : '') || (email.distributor_name && isValidDistributorName(email.distributor_name) ? email.distributor_name.trim() : '') || '';
-        
-        await db.run(
-          'UPDATE emails SET extracted_invoice_no = ?, extracted_distributor = ? WHERE uid = ?',
-          [extractedInvoiceNo, distributorName || null, email.uid]
+      const uids = orderEmails.map(e => e.uid);
+      const attachmentsMap = new Map<number, any[]>();
+      
+      if (uids.length > 0) {
+        const placeholders = uids.map(() => '?').join(',');
+        const allAttachments = await db.all(
+          `SELECT uid, filename, size, content_type, local_path FROM email_attachments WHERE uid IN (${placeholders})`,
+          uids
         );
-      }
-
-      const attachments = attachmentsMap.get(email.uid) || [];
-
-      // Get or parse medicine names
-      let medNames: string[] = [];
-      let needsDbUpdate = false;
-      if (email.medicine_names) {
-        try {
-          const parsed = JSON.parse(email.medicine_names);
-          if (Array.isArray(parsed)) {
-            const sanitizedList = parsed
-              .map(n => cleanMedicineName(n))
-              .filter(n => Boolean(n) && !isNonMedicineNoise(n));
-            medNames = Array.from(new Set(sanitizedList));
-            if (JSON.stringify(parsed) !== JSON.stringify(medNames)) {
-              needsDbUpdate = true;
-            }
+        for (const att of allAttachments) {
+          if (!attachmentsMap.has(att.uid)) {
+            attachmentsMap.set(att.uid, []);
           }
-        } catch (e) {
-          medNames = [];
+          attachmentsMap.get(att.uid)!.push(att);
         }
       }
 
-      if (medNames.length === 0 && !email.medicine_names) {
-        const parsedItems = [];
-        for (const att of attachments) {
-          if (att.local_path && fs.existsSync(att.local_path)) {
-            try {
-              const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
-              if (resParse && resParse.success && resParse.items) {
-                parsedItems.push(...resParse.items);
+      // Pre-fetch distributor directory for instant in-memory sender/domain mapping (<1ms)
+      const distRows = await db.all(
+        `SELECT id, name, email FROM distributors WHERE name IS NOT NULL AND TRIM(name) != ''`
+      ).catch(() => []);
+      const distEmailMap = new Map<string, string>();
+      for (const d of distRows) {
+        if (d.email && d.name) {
+          const emails = String(d.email).split(/[,;]/);
+          for (const em of emails) {
+            const clean = em.trim().toLowerCase();
+            if (clean && clean.includes('@')) distEmailMap.set(clean, d.name.trim());
+          }
+        }
+      }
+
+      // Group emails by distributor name + invoice number to support corrections/revisions
+      const grouped = new Map<string, {
+        email_uid: number;
+        from: string;
+        subject: string;
+        body_snippet: string;
+        date: string;
+        is_seen: boolean;
+        is_saved: boolean;
+        extracted_distributor: string;
+        extracted_invoice_no: string;
+        expected_medicines: Set<string>;
+        attachments: any[];
+        matchedPurchase?: any;
+      }>();
+
+      for (const email of orderEmails) {
+        let extractedInvoiceNo = email.extracted_invoice_no;
+        let distributorName = (email.extracted_distributor && isValidDistributorName(email.extracted_distributor) ? email.extracted_distributor.trim() : '') ||
+                              (email.distributor_name && isValidDistributorName(email.distributor_name) ? email.distributor_name.trim() : '');
+
+        const attachments = attachmentsMap.get(email.uid) || [];
+
+        // 1. Fast in-memory distributor resolution if missing
+        if (!distributorName && email.from_addr) {
+          const fromClean = email.from_addr.toLowerCase();
+          for (const [em, dName] of distEmailMap.entries()) {
+            if (fromClean.includes(em)) {
+              distributorName = dName;
+              break;
+            }
+          }
+          if (!distributorName) {
+            const fromMatch = (email.from_addr || '').match(/([^<]+)/);
+            if (fromMatch && fromMatch[1].trim()) {
+              const candidate = fromMatch[1].trim().replace(/['"]/g, '');
+              if (candidate && isValidDistributorName(candidate)) {
+                distributorName = candidate;
               }
-            } catch (pe) {
-              console.error('[Email Reconciliation] Attachment parse failed:', pe);
             }
           }
         }
-        if (parsedItems.length === 0) {
-          // Re-extract order info if medicines not populated
-          const orderInfo = await emailService.extractOrderInfo({
-            subject: email.subject || '',
-            body: email.body || '',
-            from: email.from_addr || '',
-            attachments: []
+
+        // 2. Fast regex invoice number extraction if missing
+        if (!extractedInvoiceNo || extractedInvoiceNo === 'N/A') {
+          const textToScan = `${email.subject || ''} ${(email.body || '').slice(0, 1500)}`;
+          const invMatch = textToScan.match(/(?:invoice\s*no\.?|vou\.?\s*no\.?|bill\s*no\.?|inv\s*no\.?|invoice|bill)\s*[:\-\s]*\s*([a-zA-Z0-9_\-\/]+)/i);
+          if (invMatch && invMatch[1] && invMatch[1].length >= 3) {
+            extractedInvoiceNo = invMatch[1];
+          } else {
+            const codeMatch = (email.subject || '').match(/\b([A-Z0-9_\-\/]{4,15})\b/);
+            extractedInvoiceNo = codeMatch ? codeMatch[1] : 'N/A';
+          }
+
+          if (extractedInvoiceNo === 'N/A' && attachments.length > 0) {
+            for (const att of attachments) {
+              const attMatch = (att.filename || '').match(/(?:inv|bill|invoice|vou)[_\-\s]*([a-zA-Z0-9_\-\/]+)/i);
+              if (attMatch && attMatch[1]) {
+                extractedInvoiceNo = attMatch[1].replace(/\.(pdf|csv|xlsx|xls|txt)$/i, '');
+                break;
+              }
+            }
+          }
+
+          void db.run(
+            'UPDATE emails SET extracted_invoice_no = ?, extracted_distributor = ? WHERE uid = ?',
+            [extractedInvoiceNo, distributorName || null, email.uid]
+          ).catch(() => {});
+        }
+
+        // 3. Fast medicine names extraction without blocking catalog fuzzy scans
+        let medNames: string[] = [];
+        let needsDbUpdate = false;
+        if (email.medicine_names) {
+          try {
+            const parsed = JSON.parse(email.medicine_names);
+            if (Array.isArray(parsed)) {
+              const sanitizedList = parsed
+                .map(n => cleanMedicineName(n))
+                .filter(n => Boolean(n) && !isNonMedicineNoise(n));
+              medNames = Array.from(new Set(sanitizedList));
+              if (JSON.stringify(parsed) !== JSON.stringify(medNames)) {
+                needsDbUpdate = true;
+              }
+            }
+          } catch (e) {
+            medNames = [];
+          }
+        }
+
+        if (medNames.length === 0 && email.body) {
+          const lines = (email.body || '').split('\n').slice(0, 50);
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.length < 3) continue;
+            const qtyMatch = trimmed.match(/(?:(?:qty|quantity|x|count)\s*[:\-\s]*\s*(\d+))|(\d+)\s*(?:x|units|pcs)/i);
+            let name = trimmed;
+            if (qtyMatch) {
+              name = trimmed.replace(qtyMatch[0], '');
+            }
+            const clean = cleanMedicineName(name.replace(/[:\-\t\r\n]/g, ' ').trim());
+            if (clean && clean.length > 2 && isNaN(Number(clean)) && !isNonMedicineNoise(clean)) {
+              medNames.push(clean);
+            }
+          }
+          medNames = Array.from(new Set(medNames)).slice(0, 25);
+          if (medNames.length > 0) {
+            needsDbUpdate = true;
+          }
+        }
+
+        if (needsDbUpdate) {
+          void db.run('UPDATE emails SET medicine_names = ? WHERE uid = ?', [JSON.stringify(medNames), email.uid]).catch(() => {});
+        }
+
+        // Construct canonical unique key for distributor + invoice
+        const canonInvoice = normalizeInvoiceNo(extractedInvoiceNo);
+        const key = (canonInvoice && distributorName)
+          ? `${distributorName.toLowerCase()}_${canonInvoice.toLowerCase()}`
+          : `uid_${email.uid}`;
+
+        const mappedAttachments = attachments.map(a => ({
+          filename: a.filename,
+          size: a.size,
+          content_type: a.content_type
+        }));
+
+        const bodySnippet = (email.body || '').replace(/\s+/g, ' ').substring(0, 300);
+
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            email_uid: email.uid,
+            from: email.from_addr,
+            subject: email.subject,
+            body_snippet: bodySnippet,
+            date: email.date,
+            is_seen: email.is_seen === 1,
+            is_saved: email.is_saved === 1,
+            extracted_distributor: distributorName,
+            extracted_invoice_no: extractedInvoiceNo || 'N/A',
+            expected_medicines: new Set(medNames),
+            attachments: mappedAttachments
           });
-          for (const med of orderInfo.medicines) {
-            parsedItems.push({ name: med.name });
-          }
-        }
-        medNames = Array.from(new Set(parsedItems.map(i => cleanMedicineName(i.name)).filter(n => Boolean(n) && !isNonMedicineNoise(n))));
-        needsDbUpdate = true;
-      }
-
-
-
-      if (needsDbUpdate) {
-        await db.run('UPDATE emails SET medicine_names = ? WHERE uid = ?', [JSON.stringify(medNames), email.uid]);
-      }
-
-      // Construct canonical unique key for distributor + invoice
-      const canonInvoice = normalizeInvoiceNo(extractedInvoiceNo);
-      const key = (canonInvoice && distributorName)
-        ? `${distributorName.toLowerCase()}_${canonInvoice.toLowerCase()}`
-        : `uid_${email.uid}`;
-
-      const mappedAttachments = attachments.map(a => ({
-        filename: a.filename,
-        size: a.size,
-        content_type: a.content_type
-      }));
-
-      const bodySnippet = (email.body || '').replace(/\s+/g, ' ').substring(0, 300);
-
-      if (!grouped.has(key)) {
-        grouped.set(key, {
-          email_uid: email.uid,
-          from: email.from_addr,
-          subject: email.subject,
-          body_snippet: bodySnippet,
-          date: email.date,
-          is_seen: email.is_seen === 1,
-          is_saved: email.is_saved === 1,
-          extracted_distributor: distributorName,
-          extracted_invoice_no: extractedInvoiceNo || 'N/A',
-          expected_medicines: new Set(medNames),
-          attachments: mappedAttachments
-        });
-      } else {
-        // Older email with same invoice number. Merge expected medicines.
-        const existing = grouped.get(key)!;
-        medNames.forEach(name => existing.expected_medicines.add(name));
-        mappedAttachments.forEach(att => {
-          if (!existing.attachments.some(a => a.filename === att.filename)) {
-            existing.attachments.push(att);
-          }
-        });
-      }
-    }
-
-    // Pass 1: Gather candidate purchases and perform matching with canonical invoice numbers & distributor email domain
-    const candidatePurchases = await db.all(
-      `SELECT p.id, p.invoice_no, p.app_invoice_no, p.total_amount, p.date, p.distributor_id, d.name as dist_name, d.email as dist_email
-       FROM purchases p
-       LEFT JOIN distributors d ON p.distributor_id = d.id
-       ORDER BY p.id DESC LIMIT 200`
-    );
-
-    for (const group of grouped.values()) {
-      let matchedPurchase = null;
-      const groupCanonInvoice = normalizeInvoiceNo(group.extracted_invoice_no);
-      const normDistName = group.extracted_distributor.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-      if (groupCanonInvoice) {
-        matchedPurchase = candidatePurchases.find(p => {
-          const pCanonInv = normalizeInvoiceNo(p.invoice_no);
-          const pCanonAppInv = normalizeInvoiceNo(p.app_invoice_no);
-
-          const invMatches = (groupCanonInvoice === pCanonInv) || (groupCanonInvoice === pCanonAppInv);
-          if (!invMatches) return false;
-
-          // If invoice matches, check distributor name or email domain alignment
-          if (!p.dist_name && !p.dist_email) return true; // Fallback match by invoice only
-
-          const normPDist = (p.dist_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          const distNameMatches = normPDist.includes(normDistName) || normDistName.includes(normPDist);
-
-          let domainMatches = false;
-          if (p.dist_email && group.from) {
-            const pDomain = p.dist_email.split('@')[1]?.toLowerCase();
-            const groupDomain = group.from.split('@')[1]?.toLowerCase();
-            if (pDomain && groupDomain && pDomain === groupDomain) {
-              domainMatches = true;
+        } else {
+          // Older email with same invoice number. Merge expected medicines.
+          const existing = grouped.get(key)!;
+          medNames.forEach(name => existing.expected_medicines.add(name));
+          mappedAttachments.forEach(att => {
+            if (!existing.attachments.some(a => a.filename === att.filename)) {
+              existing.attachments.push(att);
             }
-          }
+          });
+        }
+      }
 
-          return distNameMatches || domainMatches;
-        });
+      // Pass 1: Gather candidate purchases and perform matching with canonical invoice numbers & distributor email domain
+      const candidatePurchases = await db.all(
+        `SELECT p.id, p.invoice_no, p.app_invoice_no, p.total_amount, p.date, p.distributor_id, d.name as dist_name, d.email as dist_email
+         FROM purchases p
+         LEFT JOIN distributors d ON p.distributor_id = d.id
+         ORDER BY p.id DESC LIMIT 200`
+      );
 
-        // Secondary fallback: match purely by canonical invoice if single candidate matches
-        if (!matchedPurchase) {
-          const invCandidates = candidatePurchases.filter(p => {
+      for (const group of grouped.values()) {
+        let matchedPurchase = null;
+        const groupCanonInvoice = normalizeInvoiceNo(group.extracted_invoice_no);
+        const normDistName = group.extracted_distributor.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        if (groupCanonInvoice) {
+          matchedPurchase = candidatePurchases.find(p => {
             const pCanonInv = normalizeInvoiceNo(p.invoice_no);
             const pCanonAppInv = normalizeInvoiceNo(p.app_invoice_no);
-            return groupCanonInvoice === pCanonInv || groupCanonInvoice === pCanonAppInv;
+
+            const invMatches = (groupCanonInvoice === pCanonInv) || (groupCanonInvoice === pCanonAppInv);
+            if (!invMatches) return false;
+
+            // If invoice matches, check distributor name or email domain alignment
+            if (!p.dist_name && !p.dist_email) return true; // Fallback match by invoice only
+
+            const normPDist = (p.dist_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const distNameMatches = normPDist.includes(normDistName) || normDistName.includes(normPDist);
+
+            let domainMatches = false;
+            if (p.dist_email && group.from) {
+              const pDomain = p.dist_email.split('@')[1]?.toLowerCase();
+              const groupDomain = group.from.split('@')[1]?.toLowerCase();
+              if (pDomain && groupDomain && pDomain === groupDomain) {
+                domainMatches = true;
+              }
+            }
+
+            return distNameMatches || domainMatches;
           });
-          if (invCandidates.length === 1) {
-            matchedPurchase = invCandidates[0];
-          }
-        }
-      }
-      group.matchedPurchase = matchedPurchase;
-    }
 
-    // Pass 2: Batch query purchase items for all matched purchases
-    const matchedPurchaseIds = Array.from(grouped.values())
-      .map(g => g.matchedPurchase?.id)
-      .filter(Boolean) as number[];
-
-    const receivedItemsMap = new Map<number, string[]>();
-    if (matchedPurchaseIds.length > 0) {
-      const placeholders = matchedPurchaseIds.map(() => '?').join(',');
-      const receivedItems = await db.all(`
-        SELECT pi.purchase_id, m.name as medicine_name
-        FROM purchase_items pi
-        JOIN medicines m ON pi.medicine_id = m.id
-        WHERE pi.purchase_id IN (${placeholders})
-      `, matchedPurchaseIds);
-      
-      for (const item of receivedItems) {
-        if (!receivedItemsMap.has(item.purchase_id)) {
-          receivedItemsMap.set(item.purchase_id, []);
-        }
-        receivedItemsMap.get(item.purchase_id)!.push(item.medicine_name);
-      }
-    }
-
-    const result = [];
-    for (const group of grouped.values()) {
-      const matchedPurchase = group.matchedPurchase;
-      let status = 'Missing';
-      let displayMedicines = Array.from(group.expected_medicines);
-
-      // Pre-filter with permanently ignored noise words
-      if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
-        displayMedicines = displayMedicines.filter((m: string) => !ignoredSet.has(m.trim().toLowerCase()));
-      }
-
-      if (matchedPurchase) {
-        // Get received items from the pre-fetched map
-        const receivedMeds = receivedItemsMap.get(matchedPurchase.id) || [];
-
-        // Filter expected medicines to find what is missing/bounced using token-fuzzy & alias matching
-        const missingMedicines = displayMedicines.filter(expMed => {
-          for (const recMed of receivedMeds) {
-            if (tokensMatchFuzzy(expMed, recMed, aliasMap)) {
-              return false; // Matched item found
+          // Secondary fallback: match purely by canonical invoice if single candidate matches
+          if (!matchedPurchase) {
+            const invCandidates = candidatePurchases.filter(p => {
+              const pCanonInv = normalizeInvoiceNo(p.invoice_no);
+              const pCanonAppInv = normalizeInvoiceNo(p.app_invoice_no);
+              return groupCanonInvoice === pCanonInv || groupCanonInvoice === pCanonAppInv;
+            });
+            if (invCandidates.length === 1) {
+              matchedPurchase = invCandidates[0];
             }
           }
-          return true; // Item missing / bounced
+        }
+        group.matchedPurchase = matchedPurchase;
+      }
+
+      // Pass 2: Batch query purchase items for all matched purchases
+      const matchedPurchaseIds = Array.from(grouped.values())
+        .map(g => g.matchedPurchase?.id)
+        .filter(Boolean) as number[];
+
+      const receivedItemsMap = new Map<number, string[]>();
+      if (matchedPurchaseIds.length > 0) {
+        const placeholders = matchedPurchaseIds.map(() => '?').join(',');
+        const receivedItems = await db.all(`
+          SELECT pi.purchase_id, m.name as medicine_name
+          FROM purchase_items pi
+          JOIN medicines m ON pi.medicine_id = m.id
+          WHERE pi.purchase_id IN (${placeholders})
+        `, matchedPurchaseIds);
+        
+        for (const item of receivedItems) {
+          if (!receivedItemsMap.has(item.purchase_id)) {
+            receivedItemsMap.set(item.purchase_id, []);
+          }
+          receivedItemsMap.get(item.purchase_id)!.push(item.medicine_name);
+        }
+      }
+
+      const result = [];
+      for (const group of grouped.values()) {
+        const matchedPurchase = group.matchedPurchase;
+        let status = 'Missing';
+        let displayMedicines = Array.from(group.expected_medicines);
+
+        // Pre-filter with permanently ignored noise words
+        if (ignoredSet.size > 0 && Array.isArray(displayMedicines)) {
+          displayMedicines = displayMedicines.filter((m: string) => !ignoredSet.has(m.trim().toLowerCase()));
+        }
+
+        if (matchedPurchase) {
+          // Get received items from the pre-fetched map
+          const receivedMeds = receivedItemsMap.get(matchedPurchase.id) || [];
+
+          // Filter expected medicines to find what is missing/bounced using token-fuzzy & alias matching
+          const missingMedicines = displayMedicines.filter(expMed => {
+            for (const recMed of receivedMeds) {
+              if (tokensMatchFuzzy(expMed, recMed, aliasMap)) {
+                return false; // Matched item found
+              }
+            }
+            return true; // Item missing / bounced
+          });
+
+          if (missingMedicines.length > 0) {
+            status = 'Bounced';
+            displayMedicines = missingMedicines;
+          } else {
+            status = 'Matched';
+            displayMedicines = [];
+          }
+        } else {
+          if (displayMedicines.length === 0) {
+            status = 'Matched';
+          } else {
+            status = 'Missing';
+          }
+        }
+
+        // Hard invariant: If displayMedicines is empty, status can NEVER be 'Bounced'
+        if (displayMedicines.length === 0 && status === 'Bounced') {
+          status = 'Matched';
+        }
+
+        result.push({
+          email_uid: group.email_uid,
+          from: group.from,
+          subject: group.subject,
+          body_snippet: group.body_snippet,
+          date: group.date,
+          is_seen: group.is_seen,
+          is_saved: group.is_saved,
+          extracted_distributor: group.extracted_distributor,
+          extracted_invoice_no: group.extracted_invoice_no,
+          matched_purchase: matchedPurchase ? {
+            id: matchedPurchase.id,
+            invoice_no: matchedPurchase.invoice_no,
+            app_invoice_no: matchedPurchase.app_invoice_no,
+            total_amount: matchedPurchase.total_amount,
+            date: matchedPurchase.date
+          } : null,
+          status,
+          medicine_names: displayMedicines,
+          attachments: group.attachments
         });
-
-        if (missingMedicines.length > 0) {
-          status = 'Bounced';
-          displayMedicines = missingMedicines;
-        } else {
-          status = 'Matched';
-          displayMedicines = [];
-        }
-      } else {
-        if (displayMedicines.length === 0) {
-          status = 'Matched';
-        } else {
-          status = 'Missing';
-        }
       }
 
-      // Hard invariant: If displayMedicines is empty, status can NEVER be 'Bounced'
-      if (displayMedicines.length === 0 && status === 'Bounced') {
-        status = 'Matched';
-      }
+      return result;
+    })();
 
-      result.push({
-        email_uid: group.email_uid,
-        from: group.from,
-        subject: group.subject,
-        body_snippet: group.body_snippet,
-        date: group.date,
-        is_seen: group.is_seen,
-        is_saved: group.is_saved,
-        extracted_distributor: group.extracted_distributor,
-        extracted_invoice_no: group.extracted_invoice_no,
-        matched_purchase: matchedPurchase ? {
-          id: matchedPurchase.id,
-          invoice_no: matchedPurchase.invoice_no,
-          app_invoice_no: matchedPurchase.app_invoice_no,
-          total_amount: matchedPurchase.total_amount,
-          date: matchedPurchase.date
-        } : null,
-        status,
-        medicine_names: displayMedicines,
-        attachments: group.attachments
-      });
-    }
-
+    const result = await inFlightReconciliationPromise;
+    inFlightReconciliationPromise = null;
+    reconciliationCache = { ts: Date.now(), data: result };
     res.json(result);
   } catch (error) {
+    inFlightReconciliationPromise = null;
     console.error('Fetch reconciliation error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -2494,6 +2611,7 @@ router.post('/ignored-words', async (req, res) => {
     
     const row = await db.get('SELECT id, word, source, created_at FROM permanently_ignored_words WHERE word = ? COLLATE NOCASE', [cleanWord]);
     
+    invalidateReconciliationCache();
     res.json({ success: true, id: row?.id || result.lastID, word: cleanWord });
   } catch (error) {
     console.error('Add ignored word error:', error);
@@ -2510,6 +2628,7 @@ router.delete('/ignored-words/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid ID' });
     }
     await db.run('DELETE FROM permanently_ignored_words WHERE id = ?', [id]);
+    invalidateReconciliationCache();
     res.json({ success: true, message: 'Word un-ignored successfully' });
   } catch (error) {
     console.error('Remove ignored word error:', error);
@@ -2531,6 +2650,7 @@ router.post('/reconciliation/learn-mapping', async (req, res) => {
     } else {
       await db.run('UPDATE distributors SET mapping_config = ? WHERE LOWER(name) = ?', [configStr, distributor_name.toLowerCase()]);
     }
+    invalidateReconciliationCache();
     res.json({ success: true, message: 'Distributor column mapping template updated successfully' });
   } catch (err: any) {
     console.error('Error saving distributor mapping:', err);
@@ -2557,6 +2677,7 @@ router.post('/reconciliation/resolve', async (req, res) => {
       ['EMAIL_ORDER_RESOLVED_MANUALLY', `Manually reconciled email order from: ${email.from_addr}, subject: ${email.subject}`]
     );
     await emailService.markEmailSaved(Number(email_uid), true);
+    invalidateReconciliationCache();
     res.json({ success: true, message: 'Email order marked as reconciled' });
   } catch (error) {
     console.error('Resolve email order error:', error);

@@ -90,10 +90,10 @@ export function isInStock(stock: unknown): boolean {
  * local-history rows are dropped (no real Pharmarack product code or stock), and
  * so are unmapped distributors (owner rule: link to mapped distributors only).
  */
-export function toLinkCandidates(data: unknown, linkedKeys: Set<string>, limit = 30): RefillCartCandidate[] {
+export function toLinkCandidates(data: unknown, linkedKeys: Set<string>, limit = 50): RefillCartCandidate[] {
   const list = (Array.isArray(data) ? data : []) as LocalPrSearchItem[];
   return list
-    .filter(i => !i.isOffline && !i.isLocalPharmacy && i.mapped !== false && Number(i.storeId) > 0 && String(i.productCode || '').trim())
+    .filter(i => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || '').trim())
     .slice(0, limit)
     .map(i => {
       const storeId = Number(i.storeId);

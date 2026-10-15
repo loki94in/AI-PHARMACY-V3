@@ -3315,7 +3315,10 @@ export default function PharmarackCart() {
     try {
       const data = await (apiClient.get(`/pharmarack/cart${isFresh ? '?fresh=true' : ''}`).then(res => res.data));
       if (data && data.success) {
-        setIsCartFromCache(false);
+        setIsCartFromCache(Boolean(data.cached));
+        if (!data.cached) {
+          setSessionStatus('active');
+        }
         const rawList = data.distributors || [];
         setDistributors(prev => {
           const list = applyCartDiff(prev, rawList, userCheckOverridesRef.current);
@@ -3990,11 +3993,16 @@ export default function PharmarackCart() {
 
   // Card quantity overrides
   // Load batch last purchase info for candidate names
+  const inFlightBatchNamesRef = useRef<Set<string>>(new Set());
   const fetchBatchLastPurchases = async (names: string[]) => {
     if (!names || names.length === 0) return;
-    const missingNames = names.filter(n => !lastPurchaseMap[n] && !lastPurchaseMap[n.toLowerCase().trim()]);
+    const missingNames = names.filter(n => {
+      const clean = (n || '').toLowerCase().trim();
+      return clean && !lastPurchaseMap[n] && !lastPurchaseMap[clean] && !inFlightBatchNamesRef.current.has(clean);
+    });
     if (missingNames.length === 0) return;
 
+    missingNames.forEach(n => inFlightBatchNamesRef.current.add((n || '').toLowerCase().trim()));
     setLastPurchaseLoading(true);
     try {
       const payload = missingNames.slice(0, 100).map(name => ({ name }));
@@ -4016,6 +4024,7 @@ export default function PharmarackCart() {
     } catch (err) {
       console.warn('Failed to load batch last purchase info:', err);
     } finally {
+      missingNames.forEach(n => inFlightBatchNamesRef.current.delete((n || '').toLowerCase().trim()));
       setLastPurchaseLoading(false);
     }
   };
@@ -4028,9 +4037,11 @@ export default function PharmarackCart() {
       ...pendingRefills.map(r => r.medicine_name)
     ].filter(Boolean) as string[];
 
-    if (candidateNames.length > 0) {
+    if (candidateNames.length === 0) return;
+    const timer = setTimeout(() => {
       fetchBatchLastPurchases(candidateNames);
-    }
+    }, 400);
+    return () => clearTimeout(timer);
   }, [distributors, reorderSuggestions, pendingOrders, pendingRefills]);
 
 

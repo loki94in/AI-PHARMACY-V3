@@ -524,11 +524,15 @@ export async function shouldRouteToBusiness(): Promise<boolean> {
 async function cleanupProfileLocks(): Promise<void> {
   const sessionPath = path.join(WWEBJS_AUTH_DIR, 'session');
 
-  if (process.platform === 'win32') {
+  // Fast check: if sessionPath does not exist or has no lock files, skip expensive PowerShell process scanning
+  const lockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'];
+  const hasLocks = fs.existsSync(sessionPath) && lockNames.some(f => fs.existsSync(path.join(sessionPath, f)));
+
+  if (hasLocks && process.platform === 'win32') {
     try {
       const filterPattern = sessionPath.replace(/\\/g, '*').replace(/\//g, '*');
       const cmd = `powershell -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*${filterPattern}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      await execAsync(cmd, { timeout: 8000 });
+      await execAsync(cmd, { timeout: 4000 });
       console.log('[WhatsApp Init] Stale WhatsApp browser processes terminated.');
     } catch (err: any) {
       // Includes timeout kills (ETIMEDOUT/SIGTERM) — non-fatal either way, WA init proceeds.
