@@ -286,7 +286,7 @@ export async function syncCatalog(): Promise<{ synced: number; errors: number }>
 
           consecutiveErrors = 0; // reset on success
 
-          await db.run('BEGIN TRANSACTION');
+          await db.run('BEGIN TRANSACTION /* BACKGROUND */');
           try {
             for (const p of catalogData.data) {
               const productName = p.ProductName || p.ProductFullName || '';

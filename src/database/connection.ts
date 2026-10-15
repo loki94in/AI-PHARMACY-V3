@@ -400,12 +400,15 @@ class DatabaseManager {
         const trimmed = sql.trim().toUpperCase().replace(/;+$/, '');
 
         if (phase === 'begin') {
-          // A DIFFERENT HTTP request must wait for its own turn, never join this request's transaction as
-          // a savepoint: the shared depth counter then mixed up the two COMMITs, the orphan cleanup rolled
-          // both back, and the second save failed with "cannot commit - no transaction is active".
+          // An HTTP request only nests into a transaction if it already owns it itself.
+          // A different HTTP request, or an HTTP request arriving while a background worker holds the lock,
+          // must ALWAYS wait for its own turn.
           const callerCtx = requestTxStorage.getStore();
-          const foreignRequestOwnsTx = Boolean(callerCtx && self.txOwner && callerCtx !== self.txOwner);
-          if (self.isTxLocked && self.txDepth > 0 && !foreignRequestOwnsTx) {
+          const isSameRequestNesting = Boolean(callerCtx && self.txOwner && callerCtx === self.txOwner);
+          const isWorkerNesting = Boolean(!callerCtx && !self.txOwner);
+          const canUseSavepoint = self.isTxLocked && self.txDepth > 0 && (isSameRequestNesting || isWorkerNesting);
+
+          if (canUseSavepoint) {
             // Nested transaction inside an already locked transaction context (use SQLite savepoints)
             self.txDepth++;
             return await originalRun(`SAVEPOINT sp_${self.txDepth}`);

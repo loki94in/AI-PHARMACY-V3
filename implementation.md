@@ -1,45 +1,51 @@
-# Web Portal Multiple Refill & Re-Order Booking — Implementation Tracking
+# Implementation Plan: Fix Idle DB Locks, 15s Timeout & Strict Refill Distributor Linking
 
-Created At: 2026-10-15T15:38:00+05:30
-Source Plan: `WEB_PORTAL_MULTIPLE_REFILL_BOOKING_PLAN.md`
-Status: COMPLETED
-Completed At: 2026-10-15T15:42:30+05:30
-
-## 1. Goal & Architecture Overview
-Enable seamless multiple refill and repeat booking on the Web Portal (`/portal`):
-1. **Bulk Selection & Single Booking Controls**:
-   - Provide "Select All" and "Clear" controls for regular refills with live selection counters (`X of Y selected`).
-   - Allow patients to easily select single medicines or multiple combinations with individual quantity steppers.
-2. **Active Booking Awareness**:
-   - Show an informative badge on refill items if an order for that same medicine is currently active/pending (`⏳ Active Order #{id} ({status})`).
-3. **1-Click Repeat Order**:
-   - Add a 1-click "🔁 Reorder Items" button on previous online orders in the order manager so patients can instantly re-book the same medicines and quantities.
-4. **Human-in-the-Loop & Speed Architecture**:
-   - Orders flow into Quick Assist and POS for pharmacist verification and billing.
-   - Guardrails, TypeScript, and Auto-Knowledge Graph remain clean.
+## 1. Problem Statement
+1. **15,000ms Timeout & Transaction Rollbacks**: When editing medicine distributor links or database settings during idle times, Axios times out at 15s (`timeout: 15000`), aborting the connection. `requestTransactionGuard` detects `res.on('close')` with an open transaction and forcibly rolls back the database operation (`[DB-MUTEX] PUT /api/refills/medicine-links/:id answered with its transaction still open`).
+2. **Idle DB Lock Contention**: Background catalog sync (`pharmarackCatalogCache.ts`) ran `BEGIN TRANSACTION` without `/* BACKGROUND */` priority tag, treating long batches as `NORMAL` priority and blocking interactive requests. Furthermore, HTTP requests entering during a background worker's transaction erroneously joined it via `SAVEPOINT` instead of waiting for their own turn.
+3. **Wrong Medicine Added to Live Cart (Vishal Bhise 16:35 Incident)**: WhatsApp bot confirmed refill flow in `whatsappIntentService.ts` bypassed saved `medicine_distributor_links` and searched `distributor_catalog` with broad wildcard queries. When 0 exact matches existed for `LAMETEC`, line 407 returned 500 unrelated `formFilteredCandidates`, picking and adding `SUBSYDE CR 100` and `TAMBAC 200` to the Live Cart.
+4. **Stale Refill Snapshot & Silent Auto-Link**: `saveMedicineLinks` did not clear stale `cart_store_name` / `cart_product_code` in `patient_refills` when links were deleted or replaced. Additionally, `processRefillCartItem` had a silent live-search fallback that auto-linked arbitrary candidates.
 
 ---
 
-## 2. Technical Tasks Checklist
+## 2. Implementation Tasks
 
-### Phase 1: Frontend Implementation (`frontend/src/pages/CustomerPortal/index.tsx`)
-- [x] Task 1: Add `handleSelectAllRefills()` and `handleClearRefills()` handlers with selection count and action buttons in Section 1.
-- [x] Task 2: Add active order detection (`getActiveOrderForMedicine()`) and status badge on refill and past request items when an unfulfilled booking exists.
-- [x] Task 3: Add `handleReorderOnlineOrder(order)` function and "🔁 Reorder Items" button to online order cards in Section 0.
-- [x] Task 4: Enhance multi-item cart breakdown to show item count and total units (`X items • Y units`).
+### Task 1: Fix Database Locks, Worker Isolation & Frontend Timeouts
+- [x] **1.1 Database Worker Isolation (`src/database/connection.ts`)**:
+  - Updated `BEGIN` handler: HTTP requests now only use `SAVEPOINT` for nested transactions within the same request. When a background worker holds the lock, incoming HTTP requests wait for lock acquisition rather than joining the worker's transaction.
+- [x] **1.2 Background Priority Tagging (`src/services/pharmarackCatalogCache.ts`)**:
+  - Tagged catalog sync transactions with `BEGIN TRANSACTION /* BACKGROUND */` so the prioritized mutex always lets interactive UI actions (`NORMAL`/`VIP`) jump ahead.
+- [x] **1.3 Frontend Timeout Extension (`frontend/src/services/api.ts`)**:
+  - Added `{ timeout: 60000 }` on `saveMedicineLinks` and `saveDistributorPriority` so operations never abort prematurely at 15s.
 
-### Phase 2: Verification & Guardrails
-- [x] Task 5: Run `npm run guardrails` and verify exit code 0.
-- [x] Task 6: Run `tsc --noEmit` and `npx tsc -b frontend` to verify 0 TypeScript errors.
-- [x] Task 7: Run `node scripts/quick-update.mjs` to refresh knowledge graph.
+### Task 2: Strict Distributor Linking & No Wrong Product in WhatsApp Flow
+- [x] **2.1 Strict Linked-Distributor Ordering (`src/services/whatsappIntentService.ts`)**:
+  - In `executeConfirmedProcurementFlow`, now checks `medicine_distributor_links` first. If linked distributors exist, it checks stock in priority order for that exact `store_id` and `product_code`.
+  - If all linked distributors are Out-of-Stock, it halts immediately with `OOS` status, alerts the store owner, and never adds random catalog candidates.
+  - Passes `medicineId` into `executeConfirmedProcurementFlow` across bundle confirmation items.
+- [x] **2.2 Remove Wildcard Candidate Leak (`src/services/whatsappIntentService.ts`)**:
+  - In `filterCandidatesByFormulation`, if `exactMatches.length === 0` for target modifiers/strengths, returns `[]` instead of leaking 500 unrelated `formFilteredCandidates`. Ensures brand compatibility when no modifiers are present.
+
+### Task 3: Clear Stale Cart Snapshot & Remove Silent Fallback
+- [x] **3.1 Clear Stale Cart Snapshot on Unlink (`src/services/refillCartService.ts`)**:
+  - In `saveMedicineLinks`, clears stale `cart_store_id`, `cart_store_name`, `cart_product_code`, and `cart_qty` on `patient_refills` for the target medicine whenever links are updated or deleted.
+- [x] **3.2 Remove Silent Auto-Link Fallback (`src/services/refillCartService.ts`)**:
+  - In `processRefillCartItem`, removed the silent auto-linking fallback that linked arbitrary in-stock candidates when `links.length === 0`. Now strictly returns `needs_link`.
 
 ---
 
-## 3. Completed Tasks Log
-1. **Task 1 Completed**: In [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L587-L612) and [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L1645-L1680), implemented `handleSelectAllRefills` and `handleClearRefills`. Added a responsive header bar displaying `{selectedCount} of {total} selected` alongside "Select All" and "Clear" action buttons, giving patients 1-click control over bulk vs single refill selection.
-2. **Task 2 Completed**: In [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L614-L635) and [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L1715-L1730), implemented `getActiveOrderForMedicine` cross-referencing medicine names against `customerOrders` where status is active (`pending`, `confirmed`, `ready`, `order_ready_for_pickup`, `pending_verification`). Refill cards now display an informative chip `⏳ Active Order #{order.id} ({status})`, preventing duplicate guesswork while keeping the item selectable if extra quantity is needed.
-3. **Task 3 Completed**: In [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L637-L665) and [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L1620-L1635), implemented `handleReorderOnlineOrder(order)` and added a `🔁 Reorder Items` action button on each order card in Section 0. Clicking it imports all items and quantities from that past order into the active checkout basket and opens the cart modal for 1-click booking.
-4. **Task 4 Completed**: In [CustomerPortal/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CustomerPortal/index.tsx#L2180-L2195), updated the cart header to display `Selected Medicines ({selectedList.length} items • {totalUnits} units)` with source badges (`Refill`, `Special`, `New`).
-5. **Task 5 Completed**: Ran `npm run guardrails` — exit code 0, 0 violations, speed architecture intact.
-6. **Task 6 Completed**: Ran `npx tsc -b frontend` and `tsc --noEmit` — 0 errors, clean compile.
-7. **Task 7 Completed**: Ran `node scripts/quick-update.mjs` — knowledge graph updated successfully in 4.1s (1192 nodes, 798 edges).
+## 3. Verification & Compliance
+- [x] Run `npx tsc --noEmit` and frontend TypeScript check: **0 errors** (Both passed with exit code 0).
+- [x] Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`): **PASS — no guardrail violations. Speed architecture intact.**
+- [x] Run `node scripts/quick-update.mjs` to synchronize the Auto-Knowledge Graph: **Done in 10.8s (1192 nodes, 798 edges)**.
+
+---
+
+## 4. Execution Log
+- **2026-10-15**:
+  - Patched `src/database/connection.ts` to prevent HTTP requests from mistakenly joining background worker transactions as savepoints.
+  - Tagged `pharmarackCatalogCache.ts` daily sync transactions with `/* BACKGROUND */`.
+  - Added `{ timeout: 60000 }` to `saveMedicineLinks` and `saveDistributorPriority` in `frontend/src/services/api.ts`.
+  - Hardened `whatsappIntentService.ts` to strictly query saved distributor links, halt truthfully on OOS, and block candidate leaks in `filterCandidatesByFormulation`.
+  - Cleared stale cart snapshots and eliminated silent auto-linking fallbacks in `src/services/refillCartService.ts`.
+  - Verified compilation and guardrails cleanly. Knowledge graph updated.

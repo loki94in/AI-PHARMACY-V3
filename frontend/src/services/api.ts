@@ -1843,7 +1843,7 @@ export const api = {
   getDistributorPriority: () =>
     apiClient.get<{ success: boolean; distributors: Array<{ storeName: string; ranked: boolean; linkedMedicines: number }> }>('/refills/distributor-priority').then(res => res.data),
   saveDistributorPriority: (order: string[]) =>
-    apiClient.put<{ success: boolean; saved: number; distributors: Array<{ storeName: string; ranked: boolean; linkedMedicines: number }> }>('/refills/distributor-priority', { order }).then(res => res.data),
+    apiClient.put<{ success: boolean; saved: number; distributors: Array<{ storeName: string; ranked: boolean; linkedMedicines: number }> }>('/refills/distributor-priority', { order }, { timeout: 60000 }).then(res => res.data),
   getDistributorRanks: () =>
     apiClient.get<{ success: boolean; ranks: Array<{ name: string; purchases: number }> }>('/refills/distributor-ranks').then(res => res.data),
   // One WhatsApp to the OWNER after a refill cart run; queued:false + reason when no owner number.
@@ -1855,7 +1855,7 @@ export const api = {
   getMedicineLinks: (medicineId: number) =>
     apiClient.get<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`).then(res => res.data),
   saveMedicineLinks: (medicineId: number, links: RefillCartPick[]) =>
-    apiClient.put<{ success: boolean; saved: number; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`, { links }).then(res => res.data),
+    apiClient.put<{ success: boolean; saved: number; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`, { links }, { timeout: 60000 }).then(res => res.data),
   sendRefillNow: (id: number) => apiClient.post<{ success: boolean; queueId?: number; message: string }>(`/refills/${id}/send`).then(res => res.data),
   sendGroupedRefill: (data: { patient_phone: string; patient_name: string; refill_ids?: number[]; medicines?: Array<{ id: number; medicine_name: string; quantity_needed?: number }> }) =>
     apiClient.post<{ success: boolean; queueId?: number; updatedRefillCount?: number; message: string }>('/refills/send-grouped', data).then(res => res.data),

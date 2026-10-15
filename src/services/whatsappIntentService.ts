@@ -402,6 +402,19 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
     if (exactMatches.length > 0) {
       return exactMatches;
     }
+    // When the target specified dosage modifiers (e.g. DT, CR) or strengths (e.g. 100, 25),
+    // and no candidate matched, DO NOT return formFilteredCandidates (which leaks 500 unrelated pills).
+    // Return empty array [] so no incorrect medicine enters the cart.
+    return [];
+  }
+
+  // If no modifiers/strengths specified, ensure candidates at least match brand
+  if (targetTokens.brand) {
+    return formFilteredCandidates.filter(c => {
+      const cName = c.name || c.productName || c.product || c.shortName || '';
+      const cTokens = tokenize(cName);
+      return cTokens.brand.startsWith(targetTokens.brand) || targetTokens.brand.startsWith(cTokens.brand);
+    });
   }
 
   return formFilteredCandidates;
@@ -1135,6 +1148,7 @@ export interface ConfirmedProcurementParams {
   phone: string;
   chatId?: string;
   confirmedMedicine: string;
+  medicineId?: number;
   quantity: number;
   unit: string;
   customer: any;
@@ -1161,41 +1175,113 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
       return true;
     }
 
-    // 2. Search Pharmarack / distributor catalog for the confirmed item
-    const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
-    const allCatalog = [...(localCat.mapped || []), ...(localCat.nonMapped || [])];
-
-    // Strict formulation/variant shield: reject mismatched single-salts or
-    // conflicting combinations/strengths (same guard proceedWithConfirmedProcurement
-    // uses) — a bundle-order item must never silently substitute a same-brand
-    // different-variant product into the live cart.
-    const formulationSafeCatalog = filterCandidatesByFormulation(confirmedMedicine, allCatalog);
-
-    // Filter to distributors with available stock (excluding 0, OOS, nil)
-    const inStockCandidates = formulationSafeCatalog.filter(c => isItemInStock(c.availability ?? (c as any).stock));
-
     let selectedDistributor: { storeId: number; storeName: string } | null = null;
     let selectedProductInfo: any = null;
 
-    if (inStockCandidates.length > 0) {
-      const candidateStores = inStockCandidates.map(c => ({
-        storeId: Number((c as any).store_id || (c as any).storeId || 0),
-        storeName: String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '')
-      })).filter(c => c.storeName.length > 0);
+    // 2. Check saved distributor links first (CRM Refill Link Distributor truthfulness)
+    let targetMedId = params.medicineId;
+    if (!targetMedId) {
+      const medRow: any = await db.get(
+        `SELECT m.id FROM medicines m
+         LEFT JOIN patient_refills pr ON pr.medicine_id = m.id AND pr.patient_phone = ?
+         WHERE LOWER(m.name) = LOWER(?) OR LOWER(pr.medicine_name) = LOWER(?)
+         ORDER BY pr.id DESC LIMIT 1`,
+        [cleanDigits, confirmedMedicine, confirmedMedicine]
+      );
+      if (medRow) targetMedId = medRow.id;
+    }
 
-      selectedDistributor = await resolveCommonOrFrequentDistributor(db, candidateStores);
-      selectedProductInfo = inStockCandidates.find(c => {
-        const distName = String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '');
-        return distName === selectedDistributor?.storeName || (selectedDistributor?.storeId && Number((c as any).store_id) === selectedDistributor.storeId);
-      }) || inStockCandidates[0];
-    } else if (formulationSafeCatalog.length > 0) {
-      const candidateStores = formulationSafeCatalog.map(c => ({
-        storeId: Number((c as any).store_id || (c as any).storeId || 0),
-        storeName: String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '')
-      })).filter(c => c.storeName.length > 0);
+    if (targetMedId) {
+      const { getMedicineLinks } = await import('./refillCartService.js');
+      const savedLinks = await getMedicineLinks(targetMedId).catch(() => []);
+      if (savedLinks.length > 0) {
+        // Find if any linked distributor has stock in distributor_catalog
+        let chosenLink: any = null;
+        for (const link of savedLinks) {
+          const catRow: any = await db.get(
+            `SELECT availability, distributor_price, mrp FROM distributor_catalog 
+             WHERE store_id = ? AND (product_name = ? OR product_name LIKE ?)
+             LIMIT 1`,
+            [link.storeId, link.productName, `${link.productName}%`]
+          );
+          const isOOS = catRow && !isItemInStock(catRow.availability);
+          if (!isOOS) {
+            chosenLink = {
+              ...link,
+              rate: catRow?.distributor_price || 0,
+              mrp: catRow?.mrp || 0
+            };
+            break;
+          }
+        }
 
-      selectedDistributor = await resolveCommonOrFrequentDistributor(db, candidateStores);
-      selectedProductInfo = formulationSafeCatalog[0];
+        if (chosenLink) {
+          selectedDistributor = {
+            storeId: Number(chosenLink.storeId),
+            storeName: String(chosenLink.storeName)
+          };
+          selectedProductInfo = {
+            productName: chosenLink.productName || confirmedMedicine,
+            productId: chosenLink.productId || 0,
+            productCode: chosenLink.productCode || '',
+            packaging: chosenLink.packaging || unit,
+            company: chosenLink.company || '',
+            rate: chosenLink.rate || 0,
+            mrp: chosenLink.mrp || 0
+          };
+        } else {
+          // ALL linked distributors are Out-of-Stock!
+          console.warn(`[Intent Service] All ${savedLinks.length} linked distributors for "${confirmedMedicine}" are Out-of-Stock. Halting procurement without adding random candidates.`);
+          await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+            orderId: 'OOS',
+            customer,
+            phone: cleanDigits,
+            chatId,
+            items: [{
+              name: confirmedMedicine,
+              quantity: quantity > 0 ? quantity : 1,
+              distributor: savedLinks.map(l => l.storeName).join(', ')
+            }],
+            success: false,
+            error: `All ${savedLinks.length} linked distributors are Out-of-Stock`
+          }).catch(() => {});
+          return false;
+        }
+      }
+    }
+
+    // 2b. If no saved links existed for this medicine, search catalog strictly
+    if (!selectedProductInfo) {
+      const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
+      const allCatalog = [...(localCat.mapped || []), ...(localCat.nonMapped || [])];
+      const formulationSafeCatalog = filterCandidatesByFormulation(confirmedMedicine, allCatalog);
+      const inStockCandidates = formulationSafeCatalog.filter(c => isItemInStock(c.availability ?? (c as any).stock));
+
+      if (inStockCandidates.length > 0) {
+        const candidateStores = inStockCandidates.map(c => ({
+          storeId: Number((c as any).store_id || (c as any).storeId || 0),
+          storeName: String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '')
+        })).filter(c => c.storeName.length > 0);
+
+        selectedDistributor = await resolveCommonOrFrequentDistributor(db, candidateStores);
+        selectedProductInfo = inStockCandidates.find(c => {
+          const distName = String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '');
+          return distName === selectedDistributor?.storeName || (selectedDistributor?.storeId && Number((c as any).store_id) === selectedDistributor.storeId);
+        }) || inStockCandidates[0];
+      } else if (formulationSafeCatalog.length > 0) {
+        const candidateStores = formulationSafeCatalog.map(c => ({
+          storeId: Number((c as any).store_id || (c as any).storeId || 0),
+          storeName: String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '')
+        })).filter(c => c.storeName.length > 0);
+
+        selectedDistributor = await resolveCommonOrFrequentDistributor(db, candidateStores);
+        selectedProductInfo = formulationSafeCatalog[0];
+      }
+    }
+
+    if (!selectedProductInfo || !selectedDistributor?.storeId || !selectedProductInfo?.productCode) {
+      console.warn(`[Intent Service] No valid product code or distributor found for "${confirmedMedicine}". Halting live cart add.`);
+      return false;
     }
 
     // 3. Prepare item for Pharmarack Live Cart
@@ -3300,6 +3386,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
               phone,
               chatId,
               confirmedMedicine,
+              medicineId: (item as any).medicine_id || (item as any).id,
               quantity: item.quantity || (item as any).quantity_needed || 1,
               unit: item.unit || 'strip',
               customer,

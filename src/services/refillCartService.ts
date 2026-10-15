@@ -126,6 +126,13 @@ export async function saveMedicineLinks(medicineId: number, picks: RefillCartPic
          p.company || null, p.mapped === false ? 0 : 1, i]
       );
     }
+    // Clear stale cart snapshots on patient_refills for this medicine so CRM truth reflects updated links
+    await db.run(
+      `UPDATE patient_refills 
+       SET cart_store_id = NULL, cart_store_name = NULL, cart_product_code = NULL, cart_qty = NULL, cart_item_id = NULL 
+       WHERE medicine_id = ?`,
+      [medicineId]
+    ).catch(() => {});
     await db.run('COMMIT');
   } catch (err) {
     await db.run('ROLLBACK').catch(() => {});
@@ -411,34 +418,6 @@ export async function processRefillCartItem(
       linked: linkedKeys.has(key)
     });
     if (candidates.length >= 30) break;
-  }
-
-  if (links.length === 0) {
-    // If no links were explicitly saved, but in-stock mapped candidates were found:
-    // auto-link the top candidate based on distributor priority so zero-touch refill adds succeed!
-    const inStockCandidates = candidates.filter(c => c.inStock && c.mapped);
-    if (inStockCandidates.length > 0) {
-      const orderedCandidates = orderByPriority(inStockCandidates, c => c.storeName, prioMap);
-      const best = orderedCandidates[0];
-      try {
-        await saveMedicineLinks(refill.medicine_id, [{
-          storeId: best.storeId,
-          storeName: best.storeName,
-          productCode: best.productCode,
-          productId: best.productId,
-          productName: best.productName,
-          packaging: best.packaging,
-          company: best.company,
-          mapped: true
-        }]);
-        const freshLinks = await db.all('SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id', [refill.medicine_id]);
-        if (freshLinks.length > 0) {
-          links.push(...freshLinks);
-        }
-      } catch (linkErr) {
-        console.warn(`[RefillCartService] Auto-link fallback note for medicine ${refill.medicine_id}:`, linkErr);
-      }
-    }
   }
 
   if (links.length === 0) {
