@@ -116,7 +116,7 @@ const QTY_KEYS = ['Quantity', 'quantity', 'OrderQty', 'orderQty', 'Qty', 'qty'];
  * Returns null when nothing readable came back: lines are never invented, and the response SHAPE (keys only)
  * is written to action_logs so the parser can be corrected.
  */
-async function fetchOrderLines(db: any, token: string, orderId: number | null, orderNo: string): Promise<Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> | null> {
+export async function fetchOrderLines(db: any, token: string, orderId: number | null, orderNo: string): Promise<Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> | null> {
   if (orderId === null) return null;
   try {
     const res = await fetch(`${ORDER_DETAIL_URL}?OrderId=${orderId}`, {
@@ -183,7 +183,16 @@ async function fillOrderLines(db: any, token: string, orders: any[], todayIso: s
         await db.run('UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?', [orderNo, row.id]);
       }
     }
-    if (!row) continue;
+    if (!row) {
+      const storeId = Number.isFinite(Number(o?.storeId)) ? Number(o.storeId) : (Number.isFinite(Number(o?.StoreId)) ? Number(o.StoreId) : null);
+      const storeName = String(o?.StoreName ?? '').trim();
+      const insertResult = await db.run(
+        `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+         VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+        [todayIso, storeId, storeName, orderNo, Date.now()]
+      );
+      row = { id: insertResult.lastID, items_json: '[]' };
+    }
 
     let existing: any[] = [];
     try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { existing = []; }
@@ -274,11 +283,21 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     const storeName = String(o?.StoreName ?? '').trim();
     if (!orderNo || !storeName) continue; // never guess a missing number/distributor
     // TODAY ONLY: an order stamped with any other day is ignored (no record, no message), even if
-    // Pharmarack returned it. An unreadable date trusts the today-only range the request asked for.
     const day = orderDayIso(o?.OrderDate);
     if (day && day !== today.iso) continue;
     const known = await db.get('SELECT order_no FROM pharmarack_synced_orders WHERE order_no = ?', [orderNo]);
-    if (known) continue;
+    if (known) {
+      const placedCheck = await db.get('SELECT id FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1', [orderNo]);
+      if (!placedCheck) {
+        const storeId = Number.isFinite(Number(o?.storeId)) ? Number(o.storeId) : (Number.isFinite(Number(o?.StoreId)) ? Number(o.StoreId) : null);
+        await db.run(
+          `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+          [today.iso, storeId, storeName, orderNo, Date.now()]
+        );
+      }
+      continue;
+    }
 
     const amountNum = parseFloat(String(o?.OrderAmount ?? ''));
     const amount = Number.isFinite(amountNum) ? amountNum : null;
@@ -791,4 +810,77 @@ export async function syncHistoricalPharmarackOrders(days = 30): Promise<{ ok: b
     return { ok: false, fetched: 0, imported: 0, error: err?.message || String(err) };
   }
 }
+
+/**
+ * Backfills missing line items in `pharmarack_placed_orders` for orders recorded in `pharmarack_synced_orders`.
+ * If an order lacks a placed order entry or has empty `items_json`, fetches lines from Pharmarack and persists them.
+ */
+export async function backfillSyncedOrderLines(targetDate?: string): Promise<{ ok: boolean; count: number }> {
+  try {
+    const db = await dbManager.getConnection();
+    const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
+    const token: string = tokenRow?.value || '';
+    if (!token) return { ok: false, count: 0 };
+
+    let query = `
+      SELECT so.order_no, so.pharmarack_order_id, so.store_id, so.store_name, so.order_date, so.first_seen_at,
+             po.id AS placed_id, po.items_json
+      FROM pharmarack_synced_orders so
+      LEFT JOIN pharmarack_placed_orders po ON po.order_no = so.order_no
+    `;
+    const params: any[] = [];
+    if (targetDate) {
+      query += ` WHERE so.order_date = ?`;
+      params.push(targetDate);
+    } else {
+      query += ` WHERE so.order_date >= date('now', '-30 days')`;
+    }
+    const candidates = await db.all(query, params);
+
+    let updatedCount = 0;
+    const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
+
+    for (const c of candidates) {
+      const orderNo = String(c.order_no || '').trim();
+      if (!orderNo) continue;
+
+      let items: any[] = [];
+      try { items = JSON.parse(c.items_json || '[]'); } catch (_) { items = []; }
+      if (items.length > 0) continue;
+
+      const orderId = Number.isFinite(Number(c.pharmarack_order_id)) ? Number(c.pharmarack_order_id) : null;
+      const lines = await fetchOrderLines(db, token, orderId, orderNo);
+      if (!lines || lines.length === 0) continue;
+
+      if (c.placed_id) {
+        await db.run(
+          `UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?`,
+          [JSON.stringify(lines), c.placed_id]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO pharmarack_placed_orders
+             (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, 0, NULL)`,
+          [c.order_date, c.store_id || null, c.store_name, orderNo, JSON.stringify(lines), c.first_seen_at || Date.now()]
+        );
+      }
+      updatedCount++;
+
+      try {
+        const storeId = Number(c.store_id || 0);
+        if (storeId > 0) {
+          await upsertDistributorProducts(lines, storeId, c.store_name, 'synced_order', c.order_date);
+          void autoSaveMedicineDistributorLinks(lines.map(l => ({ ...l, storeId, storeName: c.store_name })));
+        }
+      } catch (_) {}
+    }
+
+    return { ok: true, count: updatedCount };
+  } catch (err: any) {
+    console.error('[PharmarackOrderSync] Error in backfillSyncedOrderLines:', err);
+    return { ok: false, count: 0 };
+  }
+}
+
 

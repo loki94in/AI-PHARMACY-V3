@@ -3552,6 +3552,12 @@ router.get('/sent-orders', async (req, res) => {
       targetDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     }
 
+    // Ensure any synced orders for targetDate with missing placed rows or missing items are backfilled
+    try {
+      const { backfillSyncedOrderLines } = await import('../services/pharmarackOrderSyncService.js');
+      await backfillSyncedOrderLines(targetDate);
+    } catch (_) {}
+
     const rows = await db.all(
       'SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC',
       [targetDate]
@@ -3624,18 +3630,23 @@ router.get('/sent-orders', async (req, res) => {
       const sNo = String(s.order_no || '').trim();
       if (sNo && !claimedOrderNos.has(sNo)) {
         claimedOrderNos.add(sNo);
+        const placed = await db.get('SELECT * FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1', [sNo]);
+        let items = [];
+        if (placed?.items_json) {
+          try { items = JSON.parse(placed.items_json); } catch (_) {}
+        }
         parsedOrders.push({
-          id: s.pharmarack_order_id || s.id || Date.now(),
+          id: placed?.id || s.pharmarack_order_id || s.id || Date.now(),
           order_date: s.order_date,
-          store_id: s.store_id,
+          store_id: s.store_id || placed?.store_id,
           store_name: s.store_name,
           order_no: sNo,
           pharmarack_order_nos: [sNo],
-          items: [],
+          items,
           delivery_persons: [],
-          placed_at: s.first_seen_at || Date.now(),
-          batch_sent: false,
-          batch_sent_at: null,
+          placed_at: placed?.placed_at || s.first_seen_at || Date.now(),
+          batch_sent: placed?.batch_sent === 1,
+          batch_sent_at: placed?.batch_sent_at || null,
           source: 'pharmarack_sync'
         });
       }
