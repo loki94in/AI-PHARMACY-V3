@@ -17423,6 +17423,14 @@ async function ensureRefillCartLinkSchema(db2) {
     `);
   } catch (_) {
   }
+  await db2.run(`
+    CREATE TABLE IF NOT EXISTS live_cart_skipped_medicines (
+      medicine_name_clean TEXT PRIMARY KEY,
+      original_name TEXT NOT NULL,
+      skipped_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db2.run("CREATE INDEX IF NOT EXISTS idx_lc_skipped_meds_clean ON live_cart_skipped_medicines (medicine_name_clean)");
 }
 async function ensureOrderTimingSchema(db2) {
   await db2.run(`
@@ -31883,7 +31891,7 @@ var init_pharmarack = __esm({
         }
         const db2 = await dbManager.getConnection();
         const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
-          db2.all("SELECT * FROM special_orders WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Waiting') ORDER BY id DESC"),
+          db2.all("SELECT * FROM special_orders WHERE status IN ('Pending', 'Waiting') ORDER BY id DESC"),
           db2.all("SELECT word FROM permanently_ignored_words").catch(() => []),
           db2.all(`
         SELECT 
@@ -32114,22 +32122,35 @@ var init_pharmarack = __esm({
           const pad2 = (n) => String(n).padStart(2, "0");
           targetDate = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
         }
+        try {
+          const { backfillSyncedOrderLines: backfillSyncedOrderLines2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
+          await backfillSyncedOrderLines2(targetDate);
+        } catch (_) {
+        }
         const rows = await db2.all(
           "SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC",
           [targetDate]
         );
-        const syncedByStore = /* @__PURE__ */ new Map();
         const syncedOrdersList = [];
+        const unattachedSyncedByStore = /* @__PURE__ */ new Map();
         try {
-          const synced = await db2.all("SELECT * FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at", [targetDate]);
+          const synced = await db2.all("SELECT * FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at ASC", [targetDate]);
           for (const o of synced) {
-            const k = String(o.store_name || "").toLowerCase().trim();
-            syncedByStore.set(k, [...syncedByStore.get(k) || [], String(o.order_no)]);
             syncedOrdersList.push(o);
           }
         } catch (_) {
         }
-        const existingOrderNos = new Set(rows.map((r) => String(r.order_no || "")).filter(Boolean));
+        const claimedOrderNos = /* @__PURE__ */ new Set();
+        rows.forEach((r) => {
+          if (r.order_no) claimedOrderNos.add(String(r.order_no).trim());
+        });
+        for (const s of syncedOrdersList) {
+          const sNo = String(s.order_no || "").trim();
+          if (sNo && !claimedOrderNos.has(sNo)) {
+            const k = String(s.store_name || "").toLowerCase().trim();
+            unattachedSyncedByStore.set(k, [...unattachedSyncedByStore.get(k) || [], s]);
+          }
+        }
         const parsedOrders = rows.map((r) => {
           let items = [];
           let deliveryPersons = [];
@@ -32141,17 +32162,23 @@ var init_pharmarack = __esm({
             deliveryPersons = JSON.parse(r.delivery_persons_json || "[]");
           } catch (_) {
           }
-          const storeNos = syncedByStore.get(String(r.store_name || "").toLowerCase().trim()) || [];
-          const orderNos = Array.from(/* @__PURE__ */ new Set([
-            ...r.order_no ? [String(r.order_no)] : [],
-            ...storeNos
-          ]));
+          let effectiveOrderNo = r.order_no ? String(r.order_no).trim() : null;
+          if (!effectiveOrderNo) {
+            const k = String(r.store_name || "").toLowerCase().trim();
+            const unattached = unattachedSyncedByStore.get(k);
+            if (unattached && unattached.length > 0) {
+              const matched = unattached.shift();
+              effectiveOrderNo = String(matched.order_no).trim();
+              claimedOrderNos.add(effectiveOrderNo);
+            }
+          }
+          const orderNos = effectiveOrderNo ? [effectiveOrderNo] : [];
           return {
             id: r.id,
             order_date: r.order_date,
             store_id: r.store_id,
             store_name: r.store_name,
-            order_no: r.order_no || (orderNos[0] || null),
+            order_no: effectiveOrderNo,
             pharmarack_order_nos: orderNos,
             items,
             delivery_persons: deliveryPersons,
@@ -32162,26 +32189,31 @@ var init_pharmarack = __esm({
           };
         });
         for (const s of syncedOrdersList) {
-          if (s.order_no && !existingOrderNos.has(String(s.order_no))) {
-            const alreadyHasOrderNo = parsedOrders.some(
-              (p) => p.order_no && String(p.order_no) === String(s.order_no) || Array.isArray(p.pharmarack_order_nos) && p.pharmarack_order_nos.includes(String(s.order_no))
-            );
-            if (!alreadyHasOrderNo) {
-              parsedOrders.push({
-                id: s.pharmarack_order_id || s.id || Date.now(),
-                order_date: s.order_date,
-                store_id: s.store_id,
-                store_name: s.store_name,
-                order_no: s.order_no,
-                pharmarack_order_nos: [String(s.order_no)],
-                items: [],
-                delivery_persons: [],
-                placed_at: s.first_seen_at || Date.now(),
-                batch_sent: false,
-                batch_sent_at: null,
-                source: "pharmarack_external"
-              });
+          const sNo = String(s.order_no || "").trim();
+          if (sNo && !claimedOrderNos.has(sNo)) {
+            claimedOrderNos.add(sNo);
+            const placed = await db2.get("SELECT * FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1", [sNo]);
+            let items = [];
+            if (placed?.items_json) {
+              try {
+                items = JSON.parse(placed.items_json);
+              } catch (_) {
+              }
             }
+            parsedOrders.push({
+              id: placed?.id || s.pharmarack_order_id || s.id || Date.now(),
+              order_date: s.order_date,
+              store_id: s.store_id || placed?.store_id,
+              store_name: s.store_name,
+              order_no: sNo,
+              pharmarack_order_nos: [sNo],
+              items,
+              delivery_persons: [],
+              placed_at: placed?.placed_at || s.first_seen_at || Date.now(),
+              batch_sent: placed?.batch_sent === 1,
+              batch_sent_at: placed?.batch_sent_at || null,
+              source: "pharmarack_sync"
+            });
           }
         }
         res.json({ success: true, date: targetDate, is_recent_fallback: false, orders: parsedOrders });
@@ -32204,11 +32236,11 @@ var init_pharmarack = __esm({
     router.get("/sent-orders/latest-map", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
-        const ONE_DAY_MS = 1 * 24 * 60 * 60 * 1e3;
-        const cutoff = Date.now() - ONE_DAY_MS;
+        const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1e3;
+        const cutoff = Date.now() - SEVEN_DAYS_MS;
         const rows = await db2.all(
           `SELECT * FROM pharmarack_placed_orders 
-       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? 
+       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? OR order_date >= date('now', '-7 days')
        ORDER BY placed_at DESC`,
           [cutoff]
         );
@@ -32221,12 +32253,12 @@ var init_pharmarack = __esm({
           }
           const storeKey = r.store_id ? String(r.store_id) : (r.store_name || "").toLowerCase().trim();
           const normNameKey = (r.store_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-          const placedAt = Number(r.placed_at || r.batch_sent_at || 0);
+          const placedAt = Number(r.placed_at || r.batch_sent_at || Date.now());
           const parsedItems = items.map((i) => ({
             productCode: i.productCode || i.product_code || "",
             productName: i.productName || i.product || i.name || "",
             qty: i.qty || i.quantity || 1,
-            placedAt: Number(i.placedAt || i.placed_at || placedAt || 0)
+            placedAt: Number(i.placedAt || i.placed_at || placedAt || Date.now())
           })).filter((i) => i.placedAt >= cutoff);
           if (parsedItems.length === 0) return;
           const updateKey = (key) => {
@@ -32264,6 +32296,99 @@ var init_pharmarack = __esm({
       } catch (err) {
         console.error("Error fetching Pharmarack latest sent map:", err);
         res.status(500).json({ error: "Failed to fetch latest sent map: " + err.message });
+      }
+    });
+    router.get("/skipped-medicines", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all("SELECT medicine_name_clean, original_name, skipped_at FROM live_cart_skipped_medicines ORDER BY skipped_at DESC");
+        res.json({ success: true, skipped: rows || [] });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to fetch skipped medicines: " + err.message });
+      }
+    });
+    router.post("/skipped-medicines", async (req, res) => {
+      try {
+        const { medicine_name } = req.body || {};
+        if (!medicine_name || !String(medicine_name).trim()) {
+          return res.status(400).json({ error: "medicine_name is required" });
+        }
+        const orig = String(medicine_name).trim();
+        const clean2 = orig.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!clean2) return res.status(400).json({ error: "Invalid medicine name" });
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO live_cart_skipped_medicines (medicine_name_clean, original_name, skipped_at)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(medicine_name_clean) DO UPDATE SET original_name = excluded.original_name, skipped_at = datetime('now')`,
+          [clean2, orig]
+        );
+        res.json({ success: true, medicine_name_clean: clean2, original_name: orig });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to save skipped medicine: " + err.message });
+      }
+    });
+    router.delete("/skipped-medicines/:name", async (req, res) => {
+      try {
+        const clean2 = String(req.params.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const db2 = await dbManager.getConnection();
+        await db2.run("DELETE FROM live_cart_skipped_medicines WHERE medicine_name_clean = ?", [clean2]);
+        res.json({ success: true, removed: clean2 });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to remove skipped medicine: " + err.message });
+      }
+    });
+    router.get("/distributor-purchased-check", async (req, res) => {
+      try {
+        const storeName = String(req.query.store_name || "").trim();
+        const medName = String(req.query.medicine_name || "").trim();
+        if (!medName) return res.json({ success: true, exists: false });
+        const db2 = await dbManager.getConnection();
+        const cleanMed = medName.toLowerCase().replace(/[^a-z0-9]/g, "").replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, "");
+        if (!cleanMed) return res.json({ success: true, exists: false });
+        let distId = null;
+        if (storeName) {
+          const normStore = storeName.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const distRow = await db2.get(
+            `SELECT id FROM distributors 
+         WHERE LOWER(REPLACE(name, ' ', '')) = ? OR LOWER(REPLACE(name, ' ', '')) LIKE ?
+         LIMIT 1`,
+            [normStore, `%${normStore}%`]
+          );
+          if (distRow) distId = distRow.id;
+        }
+        let query = `
+      SELECT p.id as purchase_id, p.invoice_no, p.date, d.name as distributor_name, m.name as medicine_name
+      FROM purchase_items pi
+      JOIN purchases p ON p.id = pi.purchase_id
+      JOIN medicines m ON m.id = pi.medicine_id
+      LEFT JOIN distributors d ON d.id = p.distributor_id
+      WHERE date(p.date) >= date('now', '-180 days')
+    `;
+        const params = [];
+        if (distId) {
+          query += " AND p.distributor_id = ?";
+          params.push(distId);
+        }
+        query += " ORDER BY p.date DESC LIMIT 50";
+        const recentPurchases = await db2.all(query, params);
+        for (const pur of recentPurchases) {
+          const purMedClean = (pur.medicine_name || "").toLowerCase().replace(/[^a-z0-9]/g, "").replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, "");
+          if (purMedClean && (purMedClean === cleanMed || cleanMed.length >= 4 && purMedClean.length >= 4 && (purMedClean.includes(cleanMed) || cleanMed.includes(purMedClean)))) {
+            return res.json({
+              success: true,
+              exists: true,
+              invoiceNo: pur.invoice_no,
+              purchaseDate: pur.date,
+              distributorName: pur.distributor_name,
+              matchedMedicineName: pur.medicine_name
+            });
+          }
+        }
+        res.json({ success: true, exists: false });
+      } catch (err) {
+        console.warn("Error in distributor-purchased-check:", err);
+        res.json({ success: true, exists: false });
       }
     });
     router.get("/distributor-medicines/:storeId", async (req, res) => {
@@ -44572,7 +44697,9 @@ ${message}`;
 // src/services/pharmarackOrderSyncService.ts
 var pharmarackOrderSyncService_exports = {};
 __export(pharmarackOrderSyncService_exports, {
+  backfillSyncedOrderLines: () => backfillSyncedOrderLines,
   dryRunOrderSync: () => dryRunOrderSync,
+  fetchOrderLines: () => fetchOrderLines,
   getOrderSyncAudit: () => getOrderSyncAudit,
   orderDayIso: () => orderDayIso,
   recoverTodayUnnotifiedOrders: () => recoverTodayUnnotifiedOrders,
@@ -44695,38 +44822,50 @@ async function fetchOrderLines(db2, token, orderId, orderNo) {
   }
 }
 async function fillOrderLines(db2, token, orders, todayIso) {
-  const byStore = /* @__PURE__ */ new Map();
   for (const o of orders) {
-    const k = String(o?.StoreName ?? "").toLowerCase().trim();
-    if (!k || !o?.OrderNo) continue;
+    const orderNo = String(o?.OrderNo ?? "").trim();
+    if (!orderNo) continue;
     const day = orderDayIso(o?.OrderDate);
     if (day && day !== todayIso) continue;
-    byStore.set(k, [...byStore.get(k) || [], o]);
-  }
-  for (const [, list] of byStore) {
-    const row = await db2.get(
-      `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
-      [todayIso, String(list[0].StoreName).trim()]
+    let row = await db2.get(
+      `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+      [orderNo]
     );
-    if (!row) continue;
+    if (!row) {
+      row = await db2.get(
+        `SELECT id, items_json FROM pharmarack_placed_orders 
+         WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '') 
+         ORDER BY id ASC LIMIT 1`,
+        [todayIso, String(o?.StoreName ?? "").trim()]
+      );
+      if (row) {
+        await db2.run("UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?", [orderNo, row.id]);
+      }
+    }
+    if (!row) {
+      const storeId = Number.isFinite(Number(o?.storeId)) ? Number(o.storeId) : Number.isFinite(Number(o?.StoreId)) ? Number(o.StoreId) : null;
+      const storeName = String(o?.StoreName ?? "").trim();
+      const insertResult = await db2.run(
+        `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+         VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+        [todayIso, storeId, storeName, orderNo, Date.now()]
+      );
+      row = { id: insertResult.lastID, items_json: "[]" };
+    }
     let existing = [];
     try {
       existing = JSON.parse(row.items_json || "[]");
     } catch (_) {
+      existing = [];
     }
     if (existing.length > 0) continue;
-    const lines = [];
-    for (const o of list) {
-      const got = await fetchOrderLines(db2, token, Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null, String(o.OrderNo));
-      if (got) lines.push(...got);
-    }
-    if (lines.length === 0) continue;
-    if (existing.length === 0) {
-      await db2.run("UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?", [JSON.stringify(lines), row.id]);
-    }
+    const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
+    const lines = await fetchOrderLines(db2, token, orderId, orderNo);
+    if (!lines || lines.length === 0) continue;
+    await db2.run("UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?", [JSON.stringify(lines), row.id]);
     try {
-      const storeId = Number(list[0]?.storeId || list[0]?.StoreId || 0);
-      const storeName = String(list[0]?.StoreName || "").trim();
+      const storeId = Number(o?.storeId || o?.StoreId || 0);
+      const storeName = String(o?.StoreName || "").trim();
       const { upsertDistributorProducts: upsertDistributorProducts2, autoSaveMedicineDistributorLinks: autoSaveMedicineDistributorLinks2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
       if (storeId > 0) {
         await upsertDistributorProducts2(lines, storeId, storeName, "synced_order", todayIso);
@@ -44800,7 +44939,18 @@ async function runSync() {
     const day = orderDayIso(o?.OrderDate);
     if (day && day !== today.iso) continue;
     const known = await db2.get("SELECT order_no FROM pharmarack_synced_orders WHERE order_no = ?", [orderNo]);
-    if (known) continue;
+    if (known) {
+      const placedCheck = await db2.get("SELECT id FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1", [orderNo]);
+      if (!placedCheck) {
+        const storeId2 = Number.isFinite(Number(o?.storeId)) ? Number(o.storeId) : Number.isFinite(Number(o?.StoreId)) ? Number(o.StoreId) : null;
+        await db2.run(
+          `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+          [today.iso, storeId2, storeName, orderNo, Date.now()]
+        );
+      }
+      continue;
+    }
     const amountNum = parseFloat(String(o?.OrderAmount ?? ""));
     const amount = Number.isFinite(amountNum) ? amountNum : null;
     const storeId = Number.isFinite(Number(o?.storeId)) ? Number(o.storeId) : null;
@@ -44811,17 +44961,28 @@ async function runSync() {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [orderNo, orderId, storeId, storeName, amount, today.iso, Date.now()]
     );
-    const logged = await db2.get(
-      `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
-      [today.iso, storeName]
+    let logged = await db2.get(
+      `SELECT id FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+      [orderNo]
     );
     if (!logged) {
-      await db2.run(
-        `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-         VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
-        [today.iso, storeId, storeName, orderNo, Date.now()]
-        // placed_at = when the app noticed it
+      const inAppPending = await db2.get(
+        `SELECT id FROM pharmarack_placed_orders 
+         WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '') 
+         ORDER BY id ASC LIMIT 1`,
+        [today.iso, storeName]
       );
+      if (inAppPending) {
+        await db2.run(`UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?`, [orderNo, inAppPending.id]);
+        logged = inAppPending;
+      } else {
+        await db2.run(
+          `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+          [today.iso, storeId, storeName, orderNo, Date.now()]
+          // placed_at = when the app noticed it
+        );
+      }
     }
     fresh.push({ orderNo, storeName, amount, appAlreadySent: Boolean(logged) });
     await audit(db2, orderNo, "order_noticed", { storeName, amount, appAlreadySentOrderMessage: Boolean(logged) });
@@ -45177,12 +45338,14 @@ async function syncHistoricalPharmarackOrders(days = 30) {
         [orderNo, orderId, storeId, storeName, amount, orderDate, Date.now()]
       );
       let placedRow = await db2.get(
-        `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+        `SELECT id, items_json, order_no FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
         [orderNo]
       );
       if (!placedRow) {
         placedRow = await db2.get(
-          `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
+          `SELECT id, items_json, order_no FROM pharmarack_placed_orders 
+           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '') 
+           ORDER BY id ASC LIMIT 1`,
           [orderDate, storeName]
         );
       }
@@ -45206,11 +45369,16 @@ async function syncHistoricalPharmarackOrders(days = 30) {
           [orderDate, storeId, storeName, orderNo, JSON.stringify(lines), Date.now()]
         );
         importedCount++;
-      } else if (lines.length > 0 && (!placedRow.items_json || placedRow.items_json === "[]")) {
-        await db2.run(
-          `UPDATE pharmarack_placed_orders SET items_json = ?, order_no = COALESCE(order_no, ?) WHERE id = ?`,
-          [JSON.stringify(lines), orderNo, placedRow.id]
-        );
+      } else {
+        if (!placedRow.order_no) {
+          await db2.run(`UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?`, [orderNo, placedRow.id]);
+        }
+        if (lines.length > 0 && (!placedRow.items_json || placedRow.items_json === "[]")) {
+          await db2.run(
+            `UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?`,
+            [JSON.stringify(lines), placedRow.id]
+          );
+        }
       }
       if (lines.length > 0 && storeId) {
         await upsertDistributorProducts2(lines, storeId, storeName, "synced_order", orderDate);
@@ -45221,6 +45389,70 @@ async function syncHistoricalPharmarackOrders(days = 30) {
   } catch (err) {
     console.error("Historical order sync failed:", err);
     return { ok: false, fetched: 0, imported: 0, error: err?.message || String(err) };
+  }
+}
+async function backfillSyncedOrderLines(targetDate) {
+  try {
+    const db2 = await dbManager.getConnection();
+    const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
+    const token = tokenRow?.value || "";
+    if (!token) return { ok: false, count: 0 };
+    let query = `
+      SELECT so.order_no, so.pharmarack_order_id, so.store_id, so.store_name, so.order_date, so.first_seen_at,
+             po.id AS placed_id, po.items_json
+      FROM pharmarack_synced_orders so
+      LEFT JOIN pharmarack_placed_orders po ON po.order_no = so.order_no
+    `;
+    const params = [];
+    if (targetDate) {
+      query += ` WHERE so.order_date = ?`;
+      params.push(targetDate);
+    } else {
+      query += ` WHERE so.order_date >= date('now', '-30 days')`;
+    }
+    const candidates = await db2.all(query, params);
+    let updatedCount = 0;
+    const { upsertDistributorProducts: upsertDistributorProducts2, autoSaveMedicineDistributorLinks: autoSaveMedicineDistributorLinks2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+    for (const c of candidates) {
+      const orderNo = String(c.order_no || "").trim();
+      if (!orderNo) continue;
+      let items = [];
+      try {
+        items = JSON.parse(c.items_json || "[]");
+      } catch (_) {
+        items = [];
+      }
+      if (items.length > 0) continue;
+      const orderId = Number.isFinite(Number(c.pharmarack_order_id)) ? Number(c.pharmarack_order_id) : null;
+      const lines = await fetchOrderLines(db2, token, orderId, orderNo);
+      if (!lines || lines.length === 0) continue;
+      if (c.placed_id) {
+        await db2.run(
+          `UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?`,
+          [JSON.stringify(lines), c.placed_id]
+        );
+      } else {
+        await db2.run(
+          `INSERT INTO pharmarack_placed_orders
+             (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, 0, NULL)`,
+          [c.order_date, c.store_id || null, c.store_name, orderNo, JSON.stringify(lines), c.first_seen_at || Date.now()]
+        );
+      }
+      updatedCount++;
+      try {
+        const storeId = Number(c.store_id || 0);
+        if (storeId > 0) {
+          await upsertDistributorProducts2(lines, storeId, c.store_name, "synced_order", c.order_date);
+          void autoSaveMedicineDistributorLinks2(lines.map((l) => ({ ...l, storeId, storeName: c.store_name })));
+        }
+      } catch (_) {
+      }
+    }
+    return { ok: true, count: updatedCount };
+  } catch (err) {
+    console.error("[PharmarackOrderSync] Error in backfillSyncedOrderLines:", err);
+    return { ok: false, count: 0 };
   }
 }
 var ORDER_LIST_URL, MIN_GAP_MS, inFlight, lastRunAt, ORDER_DETAIL_URL, NAME_KEYS, QTY_KEYS;
@@ -58974,7 +59206,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.105";
+    APP_VERSION = "0.1.107";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -89873,6 +90105,29 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    router34.get("/today-medicines", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(`
+      SELECT DISTINCT 
+        COALESCE(si.medicine_name_snapshot, m.name) as medicine_name,
+        m.id as medicine_id
+      FROM sale_items si
+      JOIN sales_invoices s ON s.id = si.invoice_id
+      LEFT JOIN inventory_master inv ON inv.id = si.inventory_id
+      LEFT JOIN medicines m ON m.id = inv.medicine_id
+      WHERE substr(s.date, 1, 10) = substr(${SQL_LOCAL_NOW}, 1, 10)
+    `);
+        const medicines = (rows || []).map((r) => ({
+          medicine_name: r.medicine_name,
+          medicine_id: r.medicine_id,
+          clean_name: String(r.medicine_name || "").toLowerCase().replace(/[^a-z0-9]/g, "")
+        })).filter((m) => m.clean_name);
+        res.json({ success: true, medicines });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to fetch today sold medicines: " + err.message });
+      }
+    });
     router34.post("/counter-session", async (req, res) => {
       try {
         let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds, autoFulfill } = req.body;
@@ -90619,6 +90874,9 @@ var init_sales = __esm({
         activityLogger.logSale(invoice_no, Number(total || 0), patient_name || "Walk-in", paymentStatus || "paid");
         eventService.broadcast("sale_created", { invoice_no, total: Number(total || 0) });
         eventService.broadcast("inventory_changed", { reason: "sale", invoice_no });
+        eventService.broadcast("pharmarack_cart_changed", { reason: "sale", invoice_no });
+        eventService.broadcast("refill_updated", { reason: "sale" });
+        eventService.broadcast("order_updated", { reason: "sale" });
         (async () => {
           try {
             for (const item of items) {
@@ -93739,6 +93997,22 @@ function formatExpiryToMMYY(val) {
   }
   return cleaned;
 }
+async function clearSkippedMedicinesOnPurchase(db2, medicineNames) {
+  if (!medicineNames || !Array.isArray(medicineNames) || medicineNames.length === 0) return;
+  const cleanNames = Array.from(new Set(
+    medicineNames.map((n) => String(n || "").toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean)
+  ));
+  if (cleanNames.length === 0) return;
+  const placeholders = cleanNames.map(() => "?").join(",");
+  try {
+    await db2.run(
+      `DELETE FROM live_cart_skipped_medicines WHERE medicine_name_clean IN (${placeholders})`,
+      cleanNames
+    );
+  } catch (err) {
+    console.warn("[Purchases] Failed to clear skipped medicines:", err);
+  }
+}
 async function handleUpdatePurchaseFull(req, res, targetId) {
   const id = targetId || req.params.id;
   const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items } = req.body;
@@ -94651,6 +94925,11 @@ var init_purchases = __esm({
                 }
               } catch (ovErr) {
                 console.warn("Overlap detection trigger warning in manual purchase:", ovErr);
+              }
+              try {
+                const purchasedMedNames = items.map((it) => it.medicine || it.medicine_name || it.name).concat(masterMedItems.map((m) => m.name));
+                await clearSkippedMedicinesOnPurchase(bgDb, purchasedMedNames);
+              } catch (_) {
               }
             });
           } catch (bgTxErr) {
@@ -96680,6 +96959,11 @@ var init_purchases = __esm({
         }
         if (touchedInvIds.size > 0) {
           triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
+        }
+        try {
+          const purchasedMedNames = itemsToProcess.map((it) => it.name || it.medicine_name || it.medicine);
+          await clearSkippedMedicinesOnPurchase(db2, purchasedMedNames);
+        } catch (_) {
         }
         try {
           const { eventService: es } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
