@@ -17741,6 +17741,8 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) SELECT 'trigger_dispatch_reminder_enabled', value FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('trigger_dispatch_reminder_enabled', 'false')");
     try {
       const versionRow = await db2.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
       const migrationRow = await db2.get("SELECT MAX(version) as version FROM schema_migrations");
@@ -20691,6 +20693,8 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) SELECT 'trigger_dispatch_reminder_enabled', value FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('trigger_dispatch_reminder_enabled', 'false')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
@@ -58928,7 +58932,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.103";
+    APP_VERSION = "0.1.104";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -80177,13 +80181,16 @@ ${summaryLines}
 // src/services/automationCatalog.ts
 async function getAutomationToggleStates() {
   const db2 = await dbManager.getConnection();
-  const keys = AUTOMATION_CATALOG.map((e) => e.appSettingsKey);
+  const keys = Array.from(/* @__PURE__ */ new Set([...AUTOMATION_CATALOG.map((e) => e.appSettingsKey), "trigger_wa_dispatch_reminder_enabled"]));
   const placeholders = keys.map(() => "?").join(",");
   const rows = keys.length ? await db2.all(`SELECT key, value FROM app_settings WHERE key IN (${placeholders})`, keys) : [];
   const valueByKey = new Map(rows.map((r) => [r.key, r.value]));
   const result = {};
   for (const entry of AUTOMATION_CATALOG) {
-    const raw = valueByKey.get(entry.appSettingsKey);
+    let raw = valueByKey.get(entry.appSettingsKey);
+    if (raw === void 0 && entry.id === "dispatch_reminder") {
+      raw = valueByKey.get("trigger_wa_dispatch_reminder_enabled");
+    }
     result[entry.id] = raw === void 0 ? entry.defaultEnabled : raw !== "false";
   }
   return result;
@@ -80282,7 +80289,7 @@ var init_automationCatalog = __esm({
         id: "dispatch_reminder",
         label: "Distributor Dispatch Reminder",
         description: "Reminds a distributor when the delivery boy has not dropped off stock.",
-        appSettingsKey: "trigger_wa_dispatch_reminder_enabled",
+        appSettingsKey: "trigger_dispatch_reminder_enabled",
         defaultEnabled: true
       },
       {
@@ -80514,6 +80521,17 @@ var init_automation = __esm({
           "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
           [entry.appSettingsKey, String(enabled)]
         );
+        if (id === "dispatch_reminder") {
+          await db2.run(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('trigger_wa_dispatch_reminder_enabled', ?)",
+            [String(enabled)]
+          );
+        }
+        try {
+          const { triggerSchedulerService: triggerSchedulerService2 } = await Promise.resolve().then(() => (init_triggerSchedulerService(), triggerSchedulerService_exports));
+          await triggerSchedulerService2.reloadSchedules(db2);
+        } catch (_) {
+        }
         res.json({ success: true });
       } catch (err) {
         console.error("Failed to toggle automation:", err);
