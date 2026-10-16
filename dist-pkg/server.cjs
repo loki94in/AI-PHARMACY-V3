@@ -32122,15 +32122,6 @@ var init_pharmarack = __esm({
           const pad2 = (n) => String(n).padStart(2, "0");
           targetDate = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
         }
-        void Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports)).then(({ backfillSyncedOrderLines: backfillSyncedOrderLines2 }) => backfillSyncedOrderLines2(targetDate)).then((res2) => {
-          if (res2 && res2.count > 0) {
-            try {
-              eventService.broadcast("pharmarack_orders_changed", { today: targetDate });
-            } catch (_) {
-            }
-          }
-        }).catch(() => {
-        });
         const rows = await db2.all(
           "SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC",
           [targetDate]
@@ -59227,7 +59218,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.108";
+    APP_VERSION = "0.1.109";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
