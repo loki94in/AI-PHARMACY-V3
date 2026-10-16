@@ -32122,11 +32122,15 @@ var init_pharmarack = __esm({
           const pad2 = (n) => String(n).padStart(2, "0");
           targetDate = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
         }
-        try {
-          const { backfillSyncedOrderLines: backfillSyncedOrderLines2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
-          await backfillSyncedOrderLines2(targetDate);
-        } catch (_) {
-        }
+        void Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports)).then(({ backfillSyncedOrderLines: backfillSyncedOrderLines2 }) => backfillSyncedOrderLines2(targetDate)).then((res2) => {
+          if (res2 && res2.count > 0) {
+            try {
+              eventService.broadcast("pharmarack_orders_changed", { today: targetDate });
+            } catch (_) {
+            }
+          }
+        }).catch(() => {
+        });
         const rows = await db2.all(
           "SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC",
           [targetDate]
@@ -44789,8 +44793,9 @@ async function fetchOrderLines(db2, token, orderId, orderNo) {
         "Referer": "https://retailers.pharmarack.com/",
         "Origin": "https://retailers.pharmarack.com"
       },
-      signal: AbortSignal.timeout(15e3)
+      signal: AbortSignal.timeout(5e3)
     });
+    if (res.status === 401 || res.status === 403) return "expired";
     if (!res.ok) {
       await audit(db2, orderNo, "detail_http_error", { status: res.status });
       return null;
@@ -44861,6 +44866,7 @@ async function fillOrderLines(db2, token, orders, todayIso) {
     if (existing.length > 0) continue;
     const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
     const lines = await fetchOrderLines(db2, token, orderId, orderNo);
+    if (lines === "expired") break;
     if (!lines || lines.length === 0) continue;
     await db2.run("UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?", [JSON.stringify(lines), row.id]);
     try {
@@ -45352,7 +45358,8 @@ async function syncHistoricalPharmarackOrders(days = 30) {
       let lines = [];
       if (!placedRow || !placedRow.items_json || placedRow.items_json === "[]") {
         const fetchedLines = await fetchOrderLines(db2, token, orderId, orderNo);
-        if (fetchedLines && fetchedLines.length > 0) {
+        if (fetchedLines === "expired") break;
+        if (Array.isArray(fetchedLines) && fetchedLines.length > 0) {
           lines = fetchedLines;
         }
       } else {
@@ -45416,6 +45423,19 @@ async function backfillSyncedOrderLines(targetDate) {
     for (const c of candidates) {
       const orderNo = String(c.order_no || "").trim();
       if (!orderNo) continue;
+      if (!c.placed_id) {
+        const storeMatch = await db2.get(
+          `SELECT id, items_json FROM pharmarack_placed_orders
+           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '')
+           ORDER BY id ASC LIMIT 1`,
+          [c.order_date, c.store_name]
+        );
+        if (storeMatch) {
+          await db2.run("UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?", [orderNo, storeMatch.id]);
+          c.placed_id = storeMatch.id;
+          c.items_json = storeMatch.items_json;
+        }
+      }
       let items = [];
       try {
         items = JSON.parse(c.items_json || "[]");
@@ -45425,6 +45445,7 @@ async function backfillSyncedOrderLines(targetDate) {
       if (items.length > 0) continue;
       const orderId = Number.isFinite(Number(c.pharmarack_order_id)) ? Number(c.pharmarack_order_id) : null;
       const lines = await fetchOrderLines(db2, token, orderId, orderNo);
+      if (lines === "expired") break;
       if (!lines || lines.length === 0) continue;
       if (c.placed_id) {
         await db2.run(
@@ -59206,7 +59227,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.107";
+    APP_VERSION = "0.1.108";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
