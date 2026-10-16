@@ -38,3 +38,10 @@ This plan fixes the issue where customers with recently booked orders (e.g. Spec
   - Ran `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) succeeded with 0 errors; no performance guardrail violations.
   - Ran `node scripts/quick-update.mjs`: Knowledge Graph refreshed (1,193 nodes, 798 edges).
 
+- [x] **Task 5: Production Release (v0.1.101)**
+  - Auto-bumped version to `0.1.101`.
+  - Executed `npm run release` which compiled frontend bundles (`vite build`), backend TypeScript (`tsc -p tsconfig.json`), SEA executables (`PharmacyBackend.exe`, `PharmacyOS.exe`), and packaged the installer with Inno Setup 6.
+  - Standalone installer generated: `dist\installer\AI-Pharmacy-OS-Portable-Setup-v0.1.101.exe`.
+  - Update ZIP generated: `dist\installer\AI-Pharmacy-OS-Update-v0.1.101.zip` (SHA-256: `9abe0d53a35bf9334e28fc4e92e7d61e23f4f5f24a647706e101db62bbc59acc`).
+  - Verified rollout target: `ALL` (Production).
+
