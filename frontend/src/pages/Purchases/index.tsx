@@ -25,7 +25,7 @@ import { isValidDistributorName } from '../../utils/distributorValidator';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
 import { createRecentSearchCache, normalizeSearchKey } from '../../utils/recentSearchCache';
 import { useModalEscape } from '../../services/keyboardShortcuts';
-import { DistributorModal, OpenFDADrawer, OldMedicineQuickAddBox } from '../../components/Purchases';
+import { DistributorModal, OpenFDADrawer } from '../../components/Purchases';
 
 /* eslint-disable react-hooks/refs -- conditional JSX ref assignment is standard React pattern */
 
@@ -2474,58 +2474,7 @@ const Purchases: React.FC = () => {
 
 
 
-  const handleQuickAddOldMedicine = async (med: {
-    id: number;
-    name: string;
-    manufacturer?: string;
-    rate?: number | string | null;
-    mrp?: number | string | null;
-    batch_no?: string | null;
-    expiry_date?: string | null;
-    cgst_per?: number | null;
-    sgst_per?: number | null;
-    hsn_code?: string | null;
-  }) => {
-    let lastPurchaseInfo: (BatchLastPurchaseResult & { hsn_code?: string }) | undefined;
-    if (selectedDistributor) {
-      try {
-        const res = await api.batchLastPurchase([{ name: med.name }], selectedDistributor);
-        if (Array.isArray(res) && res.length > 0 && res[0].found) {
-          lastPurchaseInfo = res[0];
-        }
-      } catch (_) {}
-    }
 
-    const newRow: BillItem = {
-      ...createEmptyItem(),
-      medicine_id: med.id,
-      medicine_name: med.name,
-      name: med.name,
-      manufacturer: med.manufacturer || '',
-      rate: lastPurchaseInfo?.cost_price ?? med.rate ?? '',
-      mrp: lastPurchaseInfo?.mrp ?? med.mrp ?? '',
-      batch_no: lastPurchaseInfo?.batch_no ?? med.batch_no ?? '',
-      expiry_date: lastPurchaseInfo?.expiry_date ?? med.expiry_date ?? '',
-      cgst_per: (lastPurchaseInfo?.cgst_per !== undefined && lastPurchaseInfo.cgst_per !== null) ? lastPurchaseInfo.cgst_per : (med.cgst_per ?? ''),
-      sgst_per: (lastPurchaseInfo?.sgst_per !== undefined && lastPurchaseInfo.sgst_per !== null) ? lastPurchaseInfo.sgst_per : (med.sgst_per ?? ''),
-      hsn_code: lastPurchaseInfo?.hsn_code ?? med.hsn_code ?? '',
-    };
-    newRow.amount = calculateItemAmount(newRow);
-
-    let targetRowIdx = items.length;
-    setItems(prev => {
-      const kept = prev.filter(i => i.medicine_id || (i.medicine_name || '').trim());
-      targetRowIdx = kept.length;
-      return [...kept, newRow, createEmptyItem()];
-    });
-
-    toastEvent.trigger(`Added ${med.name} to bill`, 'success', '/purchases');
-
-    // Automatically focus the new row's Qty field so the cashier can immediately input quantity
-    setTimeout(() => {
-      focusRowField(targetRowIdx, 'qty');
-    }, 80);
-  };
 
   type PrevalidatedBill = {
     distIdToSave: number | null;
@@ -3764,19 +3713,7 @@ const Purchases: React.FC = () => {
 
       {/* Items Table */}
       <div className="p-4 pt-3 flex-1 flex flex-col min-h-0">
-        {/* Dedicated Old Medicine Quick-Add Box */}
-        <OldMedicineQuickAddBox
-          selectedDistributor={selectedDistributor}
-          selectedDistributorName={selectedDistributorObj?.name || selectedDistributorObj?.distributor_name || distributorSearch}
-          minOrderWarning={minOrderWarning}
-          minItemsRequired={Math.floor(Number(selectedDistributorObj?.min_order_items)) || 0}
-          currentValidCount={items.filter(item => {
-            const qtyVal = item.qty !== undefined ? item.qty : item.quantity;
-            return (parseFloat(String(qtyVal || 0)) || 0) > 0;
-          }).length}
-          existingMedicineIds={new Set(items.map(i => i.medicine_id).filter(Boolean) as number[])}
-          onQuickAdd={handleQuickAddOldMedicine}
-        />
+
 
         <div className="flex-1 overflow-auto">
           {(() => {
@@ -4179,19 +4116,6 @@ const Purchases: React.FC = () => {
                                             📍 {(medicine as any).location || (medicine as any).rack || (medicine as any).shelf}
                                           </span>
                                         )}
-                                        {(medicine.pharmarack_rate) && (medicine.pharmarack_rate < (medicine.mrp || 99999)) && (
-                                           <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                                             ⚡ Pharmarack Rate: ₹{(medicine.pharmarack_rate)} ({medicine.pharmarack_distributor || 'Mapped Distributor'})
-                                           </span>
-                                         )}
-                                         {(medicine.lowest_purchase_ptr && Number(medicine.lowest_purchase_ptr) > 0) && (
-                                            <span 
-                                              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
-                                              title={`Lowest past purchase rate from ${medicine.lowest_distributor_name || 'distributor'}`}
-                                            >
-                                              🏷️ Best: ₹{medicine.lowest_purchase_ptr} ({medicine.lowest_distributor_name || 'Best Dist'})
-                                            </span>
-                                          )}
                                       </div>
                                       <div className="text-xs text-muted mt-0.5">
                                         {medicine.manufacturer && <span>{medicine.manufacturer}</span>}

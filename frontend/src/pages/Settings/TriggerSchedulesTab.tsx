@@ -24,7 +24,7 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
     triggerExpiryLookaheadDays: rawSettings.trigger_expiry_lookahead_days || '90',
 
     // 3. Distributor Dispatch Reminder
-    triggerDispatchReminderEnabled: rawSettings.trigger_dispatch_reminder_enabled === 'true',
+    triggerDispatchReminderEnabled: rawSettings.trigger_dispatch_reminder_enabled === 'true' || rawSettings.trigger_wa_dispatch_reminder_enabled === 'true',
     triggerDispatchReminderTimeStart: rawSettings.trigger_dispatch_reminder_time_start || '12:30',
     triggerDispatchReminderTimeEnd: rawSettings.trigger_dispatch_reminder_time_end || '13:00',
     triggerAfternoonDispatchReminderEnabled: rawSettings.trigger_afternoon_dispatch_reminder_enabled === 'true',
@@ -143,6 +143,7 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
         trigger_expiry_scan_days: formData.triggerExpiryScanDays,
         trigger_expiry_lookahead_days: formData.triggerExpiryLookaheadDays,
         trigger_dispatch_reminder_enabled: formData.triggerDispatchReminderEnabled ? 'true' : 'false',
+        trigger_wa_dispatch_reminder_enabled: formData.triggerDispatchReminderEnabled ? 'true' : 'false',
         trigger_dispatch_reminder_time_start: formData.triggerDispatchReminderTimeStart,
         trigger_dispatch_reminder_time_end: formData.triggerDispatchReminderTimeEnd,
         trigger_afternoon_dispatch_reminder_enabled: formData.triggerAfternoonDispatchReminderEnabled ? 'true' : 'false',

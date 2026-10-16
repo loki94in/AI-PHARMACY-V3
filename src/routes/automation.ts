@@ -39,6 +39,17 @@ router.post('/catalog/:id/toggle', async (req, res) => {
       "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
       [entry.appSettingsKey, String(enabled)]
     );
+    if (id === 'dispatch_reminder') {
+      await db.run(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('trigger_wa_dispatch_reminder_enabled', ?)",
+        [String(enabled)]
+      );
+    }
+    // Reload schedules live so worker immediately reflects updated toggle
+    try {
+      const { triggerSchedulerService } = await import('../services/triggerSchedulerService.js');
+      await triggerSchedulerService.reloadSchedules(db);
+    } catch (_) {}
     res.json({ success: true });
   } catch (err: any) {
     console.error('Failed to toggle automation:', err);

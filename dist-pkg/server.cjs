@@ -15976,6 +15976,41 @@ var init_pharmarackCheckoutService = __esm({
             const logs = [];
             const placedStores = [];
             const failedStores = [];
+            if (targetNames && targetNames.length > 0) {
+              try {
+                const potentialSections = Array.from(document.querySelectorAll(
+                  '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel'
+                ));
+                for (const section of potentialSections) {
+                  const headerEl = section.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"], [class*="supplier-name"]');
+                  if (!headerEl || !headerEl.textContent) continue;
+                  const cardName = headerEl.textContent.trim();
+                  if (cardName.length < 3 || cardName.toLowerCase().includes("cart") || cardName.toLowerCase().includes("total")) continue;
+                  const normCard = cardName.toLowerCase().trim();
+                  const shouldBeSelected = targetNames.some((t) => {
+                    const normT = t.toLowerCase().trim();
+                    return normCard.includes(normT) || normT.includes(normCard);
+                  });
+                  const chk = section.querySelector('input[type="checkbox"], [role="checkbox"], .ant-checkbox-input, .mat-checkbox-input');
+                  if (chk) {
+                    const isChecked = chk.checked || chk.getAttribute("aria-checked") === "true" || chk.closest(".ant-checkbox-checked") !== null || chk.closest(".mat-checkbox-checked") !== null;
+                    if (shouldBeSelected && !isChecked) {
+                      chk.scrollIntoView({ behavior: "instant", block: "center" });
+                      chk.click();
+                      logs.push(`Checked distributor checkbox on Pharmarack: ${cardName}`);
+                      await new Promise((r) => setTimeout(r, 200));
+                    } else if (!shouldBeSelected && isChecked) {
+                      chk.scrollIntoView({ behavior: "instant", block: "center" });
+                      chk.click();
+                      logs.push(`Unchecked distributor checkbox on Pharmarack: ${cardName}`);
+                      await new Promise((r) => setTimeout(r, 200));
+                    }
+                  }
+                }
+              } catch (syncErr) {
+                logs.push(`Distributor checkbox sync warning: ${syncErr?.message || syncErr}`);
+              }
+            }
             const allButtons = Array.from(document.querySelectorAll('button, a[role="button"]'));
             const placeOrderButtons = allButtons.filter((b) => {
               const txt = (b.innerText || b.textContent || "").trim().toLowerCase();
@@ -16008,7 +16043,10 @@ var init_pharmarackCheckoutService = __esm({
                 if (targetNames && targetNames.length > 0) {
                   const normStore = storeName.toLowerCase().trim();
                   const isMatch = targetNames.some((t) => normStore.includes(t.toLowerCase().trim()) || t.toLowerCase().trim().includes(normStore));
-                  if (!isMatch) continue;
+                  if (storeName !== "Distributor" && !isMatch) {
+                    logs.push(`Skipped non-target store Place Order button: ${storeName}`);
+                    continue;
+                  }
                 }
                 btn.scrollIntoView({ behavior: "instant", block: "center" });
                 btn.click();
@@ -30271,6 +30309,25 @@ var init_pharmarack = __esm({
             console.warn("[PharmarackRoute] Failed to enqueue batch summary post-checkout:", queueErr);
           }
         }
+        if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
+          for (const ord of checkoutResult.orders) {
+            if (ord.status === "placed" && ord.orderNo) {
+              try {
+                await db2.run(
+                  `UPDATE pharmarack_placed_orders 
+               SET order_no = ? 
+               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '')`,
+                  [ord.orderNo, today, ord.storeName]
+                );
+              } catch (_) {
+              }
+            }
+          }
+        }
+        try {
+          eventService.broadcast("pharmarack_orders_changed", { today });
+        } catch (_) {
+        }
         res.json({
           success: checkoutResult.ok,
           placedCount: checkoutResult.placedCount,
@@ -30790,10 +30847,12 @@ var init_pharmarack = __esm({
         });
         for (const s of syncedOrdersList) {
           if (s.order_no && !existingOrderNos.has(String(s.order_no))) {
-            const alreadyCovered = parsedOrders.some((p) => String(p.store_name || "").toLowerCase().trim() === String(s.store_name || "").toLowerCase().trim());
-            if (!alreadyCovered) {
+            const alreadyHasOrderNo = parsedOrders.some(
+              (p) => p.order_no && String(p.order_no) === String(s.order_no) || Array.isArray(p.pharmarack_order_nos) && p.pharmarack_order_nos.includes(String(s.order_no))
+            );
+            if (!alreadyHasOrderNo) {
               parsedOrders.push({
-                id: s.pharmarack_order_id || Date.now(),
+                id: s.pharmarack_order_id || s.id || Date.now(),
                 order_date: s.order_date,
                 store_id: s.store_id,
                 store_name: s.store_name,
@@ -48991,9 +49050,10 @@ var init_nonWaFallbackService = __esm({
         return raw || phone;
       }
       buildOwnerAlertMessage(ctx, storeName) {
-        const typeEmoji = ctx.taskType === "refill" ? "\u{1F48A}" : "\u{1F4B0}";
-        const typeLabel = ctx.taskType === "refill" ? "REFILL DUE" : "CREDIT REMINDER";
-        return "\u{1F4DE} *CALL TASK: " + typeLabel + " (Patient Not on WhatsApp)*\n\n" + typeEmoji + " *Patient:* " + ctx.patientName + "\n\u{1F4F1} *Phone:* " + (ctx.patientPhone || "N/A") + "\n\u{1F4CB} *Details:* " + ctx.details + "\n\n\u26A0\uFE0F This patient does not have WhatsApp \u2014 automatic message was not delivered.\nPlease call them directly to confirm " + (ctx.taskType === "refill" ? "their refill & collection" : "payment for outstanding dues") + ".\n\n\u2014 " + storeName;
+        const typeEmoji = ctx.taskType === "refill" ? "\u{1F48A}" : ctx.taskType === "special_order" ? "\u{1F4E6}" : "\u{1F4B0}";
+        const typeLabel = ctx.taskType === "refill" ? "REFILL DUE" : ctx.taskType === "special_order" ? "SPECIAL ORDER READY" : "CREDIT REMINDER";
+        const actionLabel = ctx.taskType === "refill" ? "their refill & collection" : ctx.taskType === "special_order" ? "order arrival & collection" : "payment for outstanding dues";
+        return "\u{1F4DE} *CALL TASK: " + typeLabel + " (Patient Not on WhatsApp)*\n\n" + typeEmoji + " *Patient:* " + ctx.patientName + "\n\u{1F4F1} *Phone:* " + (ctx.patientPhone || "N/A") + "\n\n\u{1F4CB} *Details:*\n" + ctx.details + "\n\n\u26A0\uFE0F This patient does not have WhatsApp \u2014 automatic message was not delivered.\nPlease call them directly to confirm " + actionLabel + ".\n\n\u2014 " + storeName;
       }
       async handleFallback(ctx, dbInstance) {
         const db2 = dbInstance || await dbManager.getConnection();
@@ -49005,6 +49065,70 @@ var init_nonWaFallbackService = __esm({
         const storeName = storeRow?.value || "AI Pharmacy";
         const cleanDisplayPhone = await this.resolveDisplayPhone(db2, ctx.patientPhone);
         const resolvedCtx = { ...ctx, patientPhone: cleanDisplayPhone };
+        let enrichedDetails = resolvedCtx.details;
+        let medicinesList = [];
+        if (resolvedCtx.taskType === "refill") {
+          try {
+            const refillRows = await db2.all(
+              `SELECT pr.id, pr.medicine_name, pr.quantity_needed, pr.next_refill_date, m.name as m_name
+           FROM patient_refills pr
+           LEFT JOIN medicines m ON pr.medicine_id = m.id
+           WHERE (
+             (pr.patient_phone IS NOT NULL AND (pr.patient_phone LIKE ? OR pr.patient_phone = ?))
+             OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
+           )
+           AND pr.is_active = 1
+           AND pr.status IN ('pending', 'notified', 'staged')
+           ORDER BY pr.id ASC`,
+              [`%${resolvedCtx.patientPhone.slice(-10)}`, resolvedCtx.patientPhone, resolvedCtx.patientName]
+            );
+            if (refillRows && refillRows.length > 0) {
+              medicinesList = refillRows.map((r) => ({
+                name: r.medicine_name || r.m_name || "Medicine",
+                qty: Number(r.quantity_needed || 1),
+                date: r.next_refill_date
+              }));
+              const medLines = medicinesList.map((m, idx) => `${idx + 1}. ${m.name} \xD7 ${m.qty}`).join("\n");
+              enrichedDetails = `Medicines Due (${medicinesList.length}):
+${medLines}`;
+            }
+          } catch (rErr) {
+            console.warn("[NonWaFallback] Refill enrichment error:", rErr);
+          }
+        } else if (resolvedCtx.taskType === "special_order" || resolvedCtx.detailsJson?.type === "special_order") {
+          try {
+            const orderRows = await db2.all(
+              `SELECT id, product, medicine_name, qty, status
+           FROM special_orders
+           WHERE (
+             (phone IS NOT NULL AND (phone LIKE ? OR phone = ?))
+             OR (requester IS NOT NULL AND LOWER(TRIM(requester)) = LOWER(TRIM(?)))
+           )
+           AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP', 'Pending', 'Confirmed')
+           ORDER BY id ASC`,
+              [`%${resolvedCtx.patientPhone.slice(-10)}`, resolvedCtx.patientPhone, resolvedCtx.patientName]
+            );
+            if (orderRows && orderRows.length > 0) {
+              medicinesList = orderRows.map((r) => ({
+                name: r.product || r.medicine_name || "Special Order Item",
+                qty: Number(r.qty || 1)
+              }));
+              const medLines = medicinesList.map((m, idx) => `${idx + 1}. ${m.name} \xD7 ${m.qty}`).join("\n");
+              enrichedDetails = `Special Order Items (${medicinesList.length}):
+${medLines}`;
+            }
+          } catch (oErr) {
+            console.warn("[NonWaFallback] Special order enrichment error:", oErr);
+          }
+        }
+        resolvedCtx.details = enrichedDetails;
+        if (medicinesList.length > 0) {
+          resolvedCtx.detailsJson = {
+            ...resolvedCtx.detailsJson || {},
+            medicines: medicinesList,
+            totalMeds: medicinesList.length
+          };
+        }
         const recentTask = await db2.get(
           `SELECT id FROM patient_call_tasks
        WHERE task_type = ? AND patient_phone = ?
@@ -49981,14 +50105,15 @@ var init_whatsappQueueWorker = __esm({
                   });
                 } catch (_) {
                 }
-                const taskType = item.type === "credit_reminder" ? "credit" : "refill";
+                const isSpecialOrder = item.type === "special_order" || item.type === "order_ready" || item.type === "special_order_arrived" || item.type === "special_order_multi_arrived";
+                const taskType = item.type === "credit_reminder" ? "credit" : isSpecialOrder ? "special_order" : "refill";
                 nonWaFallbackService.handleFallback({
                   taskType,
                   patientName: item.target_name || "Patient",
                   patientPhone: target10Digits || item.number,
                   referenceId: String(item.id),
-                  details: item.message ? item.message.slice(0, 200) : `${taskType} reminder`,
-                  detailsJson: { queueItemId: item.id, type: item.type, message: item.message?.slice(0, 500) }
+                  details: item.message || `${taskType} notification`,
+                  detailsJson: { queueItemId: item.id, type: item.type, message: item.message }
                 }, db2).catch((e) => console.warn("[WhatsAppQueueWorker] NonWaFallback error:", e));
                 continue;
               }
@@ -52541,17 +52666,28 @@ var init_inventory = __esm({
       }
     });
     router2.post("/medicines/alias", async (req, res) => {
-      const { alias_name, medicine_id } = req.body;
+      const { alias_name, medicine_id, distributor_id } = req.body;
       if (!alias_name || !medicine_id) {
         return res.status(400).json({ error: "alias_name and medicine_id are required" });
       }
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        await db2.run(
-          "INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)",
-          [alias_name, medicine_id]
-        );
+        const cleanAlias = String(alias_name).trim();
+        const distId = distributor_id ? Number(distributor_id) : null;
+        if (distId && !isNaN(distId)) {
+          await db2.run(
+            `INSERT INTO distributor_medicine_aliases (distributor_id, alias_name, medicine_id)
+         VALUES (?, ?, ?)
+         ON CONFLICT(distributor_id, alias_name) DO UPDATE SET medicine_id = excluded.medicine_id`,
+            [distId, cleanAlias.toLowerCase(), medicine_id]
+          );
+        } else {
+          await db2.run(
+            "INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)",
+            [cleanAlias, medicine_id]
+          );
+        }
         res.json({ success: true, message: "Alias saved successfully" });
       } catch (error) {
         console.error("Save alias error:", error.message);
@@ -58792,7 +58928,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.102";
+    APP_VERSION = "0.1.103";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -60045,7 +60181,31 @@ var crm_exports = {};
 __export(crm_exports, {
   default: () => crm_default
 });
-var import_express6, router6, crm_default;
+async function syncLegacySpecialOrdersToCustomers(db2) {
+  if (specialOrdersSyncedToCustomers) return;
+  try {
+    const unindexed = await db2.all(`
+      SELECT DISTINCT phone, requester 
+      FROM special_orders 
+      WHERE phone IS NOT NULL AND TRIM(phone) != '' 
+      LIMIT 100
+    `);
+    for (const row of unindexed) {
+      const cleanPhone = (row.phone || "").replace(/\D/g, "");
+      const validPhone = cleanPhone.length === 12 && cleanPhone.startsWith("91") ? cleanPhone.slice(2) : cleanPhone;
+      if (validPhone.length === 10) {
+        const exists = await db2.get("SELECT id FROM customers WHERE phone = ? OR phone = ? LIMIT 1", [validPhone, `91${validPhone}`]);
+        if (!exists) {
+          const cleanName = formatCustomerName(row.requester || "Customer");
+          await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [cleanName, validPhone]);
+        }
+      }
+    }
+  } catch (_) {
+  }
+  specialOrdersSyncedToCustomers = true;
+}
+var import_express6, specialOrdersSyncedToCustomers, router6, crm_default;
 var init_crm = __esm({
   "src/routes/crm.ts"() {
     "use strict";
@@ -60063,12 +60223,14 @@ var init_crm = __esm({
     init_pharmacyCalendar();
     init_nameNormalizer();
     init_phoneValidation();
+    specialOrdersSyncedToCustomers = false;
     router6 = import_express6.default.Router();
     router6.get("/patients", async (req, res) => {
       const { q, limit } = req.query;
       const isPosMode = req.query.pos === "true" || req.query.hasHistory === "true";
       try {
         const db2 = await dbManager.getConnection();
+        await syncLegacySpecialOrdersToCustomers(db2);
         let query = "SELECT * FROM customers";
         const params = [];
         if (isPosMode) {
@@ -60088,8 +60250,12 @@ var init_crm = __esm({
           if (q) {
             query += " WHERE name LIKE ? OR phone LIKE ?";
             params.push(`%${q}%`, `%${q}%`);
+            const qStr = String(q).trim();
+            query += " ORDER BY CASE WHEN phone = ? THEN 0 WHEN phone LIKE ? THEN 1 WHEN name LIKE ? THEN 2 ELSE 3 END, id DESC";
+            params.push(qStr, `${qStr}%`, `${qStr}%`);
+          } else {
+            query += " ORDER BY id DESC";
           }
-          query += " ORDER BY id DESC";
         }
         if (limit) {
           const limitVal = parseInt(limit, 10);
@@ -60111,6 +60277,7 @@ var init_crm = __esm({
             for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
             const salesMap = /* @__PURE__ */ new Map();
             const refillSet = /* @__PURE__ */ new Set();
+            const specialOrderSet = /* @__PURE__ */ new Set();
             for (const chunk of chunks) {
               const ph = chunk.map(() => "?").join(",");
               const chunkParams = allStores ? chunk : [...chunk, targetStoreId, targetStoreId];
@@ -60127,12 +60294,18 @@ var init_crm = __esm({
                 chunkParams
               );
               for (const r of refillRows) refillSet.add(r.customer_id);
+              const soRows = await db2.all(
+                `SELECT DISTINCT customer_id FROM special_orders WHERE customer_id IN (${ph}) ${storeCond}`,
+                chunkParams
+              );
+              for (const r of soRows) if (r.customer_id) specialOrderSet.add(r.customer_id);
             }
             for (const p of patients) {
               const s = salesMap.get(p.id);
               p.purchase_count = s ? s.purchase_count : 0;
               p.last_sale_date = s ? s.last_sale_date : null;
               p.active_refill = refillSet.has(p.id) ? 1 : 0;
+              p.has_special_order = specialOrderSet.has(p.id) ? 1 : 0;
             }
           } catch (enrichErr) {
             console.warn("[CRM] Patient enrichment failed, returning unenriched rows:", enrichErr);
@@ -79091,9 +79264,36 @@ var init_refills = __esm({
         const nextRefillDateObj = refill.next_refill_date ? new Date(refill.next_refill_date) : /* @__PURE__ */ new Date();
         const refillSchedOpts = await getRefillScheduleOpts(db2, sched, nextRefillDateObj);
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
-        const msg = buildRefillReminderMessage(
+        const companionRefills = await db2.all(
+          `SELECT pr.*, m.name as medicine_name
+       FROM patient_refills pr
+       JOIN medicines m ON pr.medicine_id = m.id
+       WHERE (
+         (pr.patient_phone IS NOT NULL AND (pr.patient_phone = ? OR pr.patient_phone = ?))
+         OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
+       )
+       AND pr.is_active = 1
+       AND pr.status IN ('pending', 'notified', 'staged')
+       ORDER BY pr.id ASC`,
+          [cleanPhone, cleanDigits, patientName]
+        );
+        const bundleRows = companionRefills && companionRefills.length > 0 ? companionRefills : [refill];
+        const anyReady = bundleRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
+        const notifType = anyReady ? "refill_collection" : "refill_reminder";
+        const items = bundleRows.map((r) => ({
+          medicine_name: r.medicine_name || "Prescribed Medicine",
+          quantity_needed: r.quantity_needed || 1
+        }));
+        const msg = anyReady ? buildRefillCollectionMessage(
           patientName,
-          [{ medicine_name: refill.medicine_name || "Prescribed Medicine", quantity_needed: refill.quantity_needed || 1 }],
+          items,
+          medicalName,
+          lang,
+          refillSchedOpts,
+          { includeLanguageBanner: includeLangBanner }
+        ) : buildRefillReminderMessage(
+          patientName,
+          items,
           medicalName,
           lang,
           void 0,
@@ -79116,11 +79316,13 @@ var init_refills = __esm({
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
           msg,
-          "refill_reminder",
+          notifType,
           patientName,
           void 0,
           pdfPath
         );
+        const bundleIds = bundleRows.map((r) => r.id);
+        const placeholders = bundleIds.map(() => "?").join(",");
         await db2.run(
           `UPDATE patient_refills
        SET status = 'notified',
@@ -79130,19 +79332,22 @@ var init_refills = __esm({
            auto_remind = 1,
            last_collection_reminder_at = datetime('now'),
            collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
-       WHERE id = ?`,
-          [queueId, refill.next_refill_date, id]
+       WHERE id IN (${placeholders})`,
+          [queueId, refill.next_refill_date, ...bundleIds]
         );
-        await db2.run(
-          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-          ["refill_reminder", patientName, cleanPhone, msg, "queued", String(id)]
-        );
+        for (const bId of bundleIds) {
+          await db2.run(
+            `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+            [notifType, patientName, cleanPhone, msg, "queued", String(bId)]
+          );
+        }
         res.json({
           success: true,
           queueId,
           reminder_status: "QUEUED",
-          message: `Refill reminder queued for ${patientName} (${cleanPhone})`
+          bundled_items_count: bundleRows.length,
+          message: `Refill reminder queued for ${patientName} (${cleanPhone}) with ${bundleRows.length} medicine(s)`
         });
       } catch (err) {
         console.error("Failed to send single refill reminder:", err);
@@ -98204,12 +98409,30 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
   const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
   const lang = custRow?.language || "en";
-  const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
+  const companionOrders = await db2.all(
+    `SELECT id, product, medicine_name, qty, status FROM special_orders
+     WHERE (phone LIKE ? OR phone = ? OR (requester = ? AND requester != ''))
+       AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
+       AND (notified = 0 OR id = ?)`,
+    [`%${last102}`, cleanPhone, order.requester || "", order.id]
+  ).catch(() => []);
+  const bundleOrders = companionOrders && companionOrders.length > 0 ? companionOrders : [order];
+  let msg;
+  if (bundleOrders.length > 1) {
+    const multiItems = bundleOrders.map((o) => ({
+      productName: (o.product || o.medicine_name || "Special Order Item").trim(),
+      qty: o.qty || 1,
+      status: "arrived"
+    }));
+    msg = await buildMultiOrderNotificationMessage(order.requester, multiItems, db2, lang);
+  } else {
+    msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
+  }
   if (!options?.forceResend && !options?.skipDedupe) {
     const recentQueue = await db2.get(
       `SELECT id, created_at FROM whatsapp_send_queue
        WHERE (number LIKE ? OR number LIKE ?)
-         AND type = 'special_order'
+         AND type IN ('special_order', 'special_order_multi_arrived')
          AND message = ?
          AND status NOT IN ('cancelled', 'failed_perm')
          AND created_at >= ?
@@ -98217,7 +98440,7 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
       [`%${last102}%`, `%${formattedPhone}%`, msg, sixtyMinutesAgoMs]
     );
     if (recentQueue) {
-      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same medicine already queued within 60m, queue ID: ${recentQueue.id}).`);
+      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same order already queued within 60m, queue ID: ${recentQueue.id}).`);
       return false;
     }
   }
@@ -98246,12 +98469,25 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   );
   void ensureWhatsAppReady(3e4).catch(() => {
   });
+  const bundleOrderIds = bundleOrders.map((o) => o.id);
+  const placeholders = bundleOrderIds.map(() => "?").join(",");
   await db2.run(
-    `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    ["special_order_arrived", order.requester || "Customer", formattedPhone, msg, "queued", String(order.id)]
+    `UPDATE special_orders 
+     SET notified = 1, 
+         notification_count = COALESCE(notification_count, 0) + 1,
+         last_collection_reminder_at = datetime('now')
+     WHERE id IN (${placeholders})`,
+    bundleOrderIds
   ).catch(() => {
   });
+  for (const bOrd of bundleOrders) {
+    await db2.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["special_order_arrived", order.requester || "Customer", formattedPhone, msg, "queued", String(bOrd.id)]
+    ).catch(() => {
+    });
+  }
   return true;
 }
 async function cancelPendingWhatsAppForOrder(db2, order) {

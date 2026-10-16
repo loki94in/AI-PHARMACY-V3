@@ -97,7 +97,7 @@ export const AUTOMATION_CATALOG: AutomationCatalogEntry[] = [
     id: 'dispatch_reminder',
     label: 'Distributor Dispatch Reminder',
     description: 'Reminds a distributor when the delivery boy has not dropped off stock.',
-    appSettingsKey: 'trigger_wa_dispatch_reminder_enabled',
+    appSettingsKey: 'trigger_dispatch_reminder_enabled',
     defaultEnabled: true,
   },
   {
@@ -126,7 +126,7 @@ export const AUTOMATION_CATALOG: AutomationCatalogEntry[] = [
 /** Reads app_settings for every catalog entry's key in one query, defaulting missing keys to enabled ('true'). */
 export async function getAutomationToggleStates(): Promise<Record<string, boolean>> {
   const db = await dbManager.getConnection();
-  const keys = AUTOMATION_CATALOG.map(e => e.appSettingsKey);
+  const keys = Array.from(new Set([...AUTOMATION_CATALOG.map(e => e.appSettingsKey), 'trigger_wa_dispatch_reminder_enabled']));
   const placeholders = keys.map(() => '?').join(',');
   const rows = keys.length
     ? await db.all(`SELECT key, value FROM app_settings WHERE key IN (${placeholders})`, keys)
@@ -134,7 +134,10 @@ export async function getAutomationToggleStates(): Promise<Record<string, boolea
   const valueByKey = new Map(rows.map((r: any) => [r.key, r.value]));
   const result: Record<string, boolean> = {};
   for (const entry of AUTOMATION_CATALOG) {
-    const raw = valueByKey.get(entry.appSettingsKey);
+    let raw = valueByKey.get(entry.appSettingsKey);
+    if (raw === undefined && entry.id === 'dispatch_reminder') {
+      raw = valueByKey.get('trigger_wa_dispatch_reminder_enabled');
+    }
     result[entry.id] = raw === undefined ? entry.defaultEnabled : raw !== 'false';
   }
   return result;

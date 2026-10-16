@@ -897,6 +897,9 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
+    // Preserve & unify distributor dispatch reminder setting across updates
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) SELECT 'trigger_dispatch_reminder_enabled', value FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('trigger_dispatch_reminder_enabled', 'false')");
 
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
     try {
@@ -3945,6 +3948,9 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_idle_greeting_text', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_enabled', 'true')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
+    // Preserve & unify distributor dispatch reminder setting across updates
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) SELECT 'trigger_dispatch_reminder_enabled', value FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('trigger_dispatch_reminder_enabled', 'false')");
 
     // WhatsApp Admin Auto-Escalation defaults
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
