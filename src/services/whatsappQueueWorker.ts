@@ -1078,15 +1078,16 @@ class WhatsAppQueueWorker {
                 message: `⚠️ Skipped WhatsApp to ${item.target_name || item.number}: Not registered on WhatsApp`
               });
             } catch (_) {}
-            // Non-WhatsApp fallback: create call task + alert pharmacy owner
-            const taskType = item.type === 'credit_reminder' ? 'credit' : 'refill';
+            // Non-WhatsApp fallback: create call task + alert pharmacy owner with complete medicine details
+            const isSpecialOrder = item.type === 'special_order' || item.type === 'order_ready' || item.type === 'special_order_arrived' || item.type === 'special_order_multi_arrived';
+            const taskType = item.type === 'credit_reminder' ? 'credit' : (isSpecialOrder ? 'special_order' : 'refill');
             nonWaFallbackService.handleFallback({
               taskType,
               patientName: item.target_name || 'Patient',
               patientPhone: target10Digits || item.number,
               referenceId: String(item.id),
-              details: item.message ? item.message.slice(0, 200) : `${taskType} reminder`,
-              detailsJson: { queueItemId: item.id, type: item.type, message: item.message?.slice(0, 500) }
+              details: item.message || `${taskType} notification`,
+              detailsJson: { queueItemId: item.id, type: item.type, message: item.message }
             }, db).catch(e => console.warn('[WhatsAppQueueWorker] NonWaFallback error:', e));
             continue;
           }

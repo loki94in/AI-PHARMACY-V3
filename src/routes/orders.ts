@@ -460,15 +460,35 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
   const custRow = await db.get('SELECT language FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
   const lang = custRow?.language || 'en';
 
-  const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db, lang);
+  // Check if this customer has multiple companion orders that are Ready
+  const companionOrders = await db.all(
+    `SELECT id, product, medicine_name, qty, status FROM special_orders
+     WHERE (phone LIKE ? OR phone = ? OR (requester = ? AND requester != ''))
+       AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
+       AND (notified = 0 OR id = ?)`,
+    [`%${last10}`, cleanPhone, order.requester || '', order.id]
+  ).catch(() => []);
 
-  // 60-minute duplicate safeguard: suppress duplicate arrival messages for the SAME medicine/order within 60 minutes
-  // unless forceResend or skipDedupe is set. Does NOT suppress different medicines for the same customer.
+  const bundleOrders = companionOrders && companionOrders.length > 0 ? companionOrders : [order];
+
+  let msg: string;
+  if (bundleOrders.length > 1) {
+    const multiItems: MultiOrderItemArrival[] = bundleOrders.map((o: any) => ({
+      productName: (o.product || o.medicine_name || 'Special Order Item').trim(),
+      qty: o.qty || 1,
+      status: 'arrived'
+    }));
+    msg = await buildMultiOrderNotificationMessage(order.requester, multiItems, db, lang);
+  } else {
+    msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db, lang);
+  }
+
+  // 60-minute duplicate safeguard: suppress duplicate arrival messages for the SAME customer/order within 60 minutes
   if (!options?.forceResend && !options?.skipDedupe) {
     const recentQueue = await db.get(
       `SELECT id, created_at FROM whatsapp_send_queue
        WHERE (number LIKE ? OR number LIKE ?)
-         AND type = 'special_order'
+         AND type IN ('special_order', 'special_order_multi_arrived')
          AND message = ?
          AND status NOT IN ('cancelled', 'failed_perm')
          AND created_at >= ?
@@ -477,7 +497,7 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
     );
 
     if (recentQueue) {
-      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same medicine already queued within 60m, queue ID: ${recentQueue.id}).`);
+      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same order already queued within 60m, queue ID: ${recentQueue.id}).`);
       return false;
     }
   }
@@ -510,11 +530,26 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
   // Pre-warm / wake WhatsApp if sleeping so it is ready immediately
   void ensureWhatsAppReady(30_000).catch(() => {});
 
+  const bundleOrderIds = bundleOrders.map((o: any) => o.id);
+  const placeholders = bundleOrderIds.map(() => '?').join(',');
+
+  // Mark all bundled companion orders as notified atomically
   await db.run(
-    `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    ['special_order_arrived', order.requester || 'Customer', formattedPhone, msg, 'queued', String(order.id)]
+    `UPDATE special_orders 
+     SET notified = 1, 
+         notification_count = COALESCE(notification_count, 0) + 1,
+         last_collection_reminder_at = datetime('now')
+     WHERE id IN (${placeholders})`,
+    bundleOrderIds
   ).catch(() => {});
+
+  for (const bOrd of bundleOrders) {
+    await db.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['special_order_arrived', order.requester || 'Customer', formattedPhone, msg, 'queued', String(bOrd.id)]
+    ).catch(() => {});
+  }
 
   return true;
 }

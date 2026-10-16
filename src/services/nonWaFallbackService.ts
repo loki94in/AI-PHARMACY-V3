@@ -18,7 +18,7 @@ import { resolveAdminWhatsappNumber } from './waAdminEscalationService.js';
 import { eventService } from './eventService.js';
 
 export interface FallbackContext {
-  taskType: 'refill' | 'credit';
+  taskType: 'refill' | 'credit' | 'special_order';
   patientName: string;
   patientPhone: string;
   referenceId?: string;
@@ -63,15 +63,18 @@ export class NonWaFallbackService {
   }
 
   private buildOwnerAlertMessage(ctx: FallbackContext, storeName: string): string {
-    const typeEmoji = ctx.taskType === 'refill' ? '\u{1F48A}' : '\u{1F4B0}';
-    const typeLabel = ctx.taskType === 'refill' ? 'REFILL DUE' : 'CREDIT REMINDER';
+    const typeEmoji = ctx.taskType === 'refill' ? '\u{1F48A}' : (ctx.taskType === 'special_order' ? '\u{1F4E6}' : '\u{1F4B0}');
+    const typeLabel = ctx.taskType === 'refill' ? 'REFILL DUE' : (ctx.taskType === 'special_order' ? 'SPECIAL ORDER READY' : 'CREDIT REMINDER');
+    const actionLabel = ctx.taskType === 'refill'
+      ? 'their refill & collection'
+      : (ctx.taskType === 'special_order' ? 'order arrival & collection' : 'payment for outstanding dues');
     return (
       '\u{1F4DE} *CALL TASK: ' + typeLabel + ' (Patient Not on WhatsApp)*\n\n' +
       typeEmoji + ' *Patient:* ' + ctx.patientName + '\n' +
-      '\u{1F4F1} *Phone:* ' + (ctx.patientPhone || 'N/A') + '\n' +
-      '\u{1F4CB} *Details:* ' + ctx.details + '\n\n' +
+      '\u{1F4F1} *Phone:* ' + (ctx.patientPhone || 'N/A') + '\n\n' +
+      '\u{1F4CB} *Details:*\n' + ctx.details + '\n\n' +
       '\u26A0\uFE0F This patient does not have WhatsApp — automatic message was not delivered.\n' +
-      'Please call them directly to confirm ' + (ctx.taskType === 'refill' ? 'their refill & collection' : 'payment for outstanding dues') + '.\n\n' +
+      'Please call them directly to confirm ' + actionLabel + '.\n\n' +
       '\u2014 ' + storeName
     );
   }
@@ -88,6 +91,74 @@ export class NonWaFallbackService {
 
     const cleanDisplayPhone = await this.resolveDisplayPhone(db, ctx.patientPhone);
     const resolvedCtx: FallbackContext = { ...ctx, patientPhone: cleanDisplayPhone };
+
+    // Auto-enrich details with all medicines for this patient
+    let enrichedDetails = resolvedCtx.details;
+    let medicinesList: Array<{ name: string; qty: number; date?: string }> = [];
+
+    if (resolvedCtx.taskType === 'refill') {
+      try {
+        const refillRows = await db.all(
+          `SELECT pr.id, pr.medicine_name, pr.quantity_needed, pr.next_refill_date, m.name as m_name
+           FROM patient_refills pr
+           LEFT JOIN medicines m ON pr.medicine_id = m.id
+           WHERE (
+             (pr.patient_phone IS NOT NULL AND (pr.patient_phone LIKE ? OR pr.patient_phone = ?))
+             OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
+           )
+           AND pr.is_active = 1
+           AND pr.status IN ('pending', 'notified', 'staged')
+           ORDER BY pr.id ASC`,
+          [`%${resolvedCtx.patientPhone.slice(-10)}`, resolvedCtx.patientPhone, resolvedCtx.patientName]
+        );
+
+        if (refillRows && refillRows.length > 0) {
+          medicinesList = refillRows.map((r: any) => ({
+            name: r.medicine_name || r.m_name || 'Medicine',
+            qty: Number(r.quantity_needed || 1),
+            date: r.next_refill_date
+          }));
+          const medLines = medicinesList.map((m, idx) => `${idx + 1}. ${m.name} × ${m.qty}`).join('\n');
+          enrichedDetails = `Medicines Due (${medicinesList.length}):\n${medLines}`;
+        }
+      } catch (rErr) {
+        console.warn('[NonWaFallback] Refill enrichment error:', rErr);
+      }
+    } else if (resolvedCtx.taskType === 'special_order' || resolvedCtx.detailsJson?.type === 'special_order') {
+      try {
+        const orderRows = await db.all(
+          `SELECT id, product, medicine_name, qty, status
+           FROM special_orders
+           WHERE (
+             (phone IS NOT NULL AND (phone LIKE ? OR phone = ?))
+             OR (requester IS NOT NULL AND LOWER(TRIM(requester)) = LOWER(TRIM(?)))
+           )
+           AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP', 'Pending', 'Confirmed')
+           ORDER BY id ASC`,
+          [`%${resolvedCtx.patientPhone.slice(-10)}`, resolvedCtx.patientPhone, resolvedCtx.patientName]
+        );
+
+        if (orderRows && orderRows.length > 0) {
+          medicinesList = orderRows.map((r: any) => ({
+            name: r.product || r.medicine_name || 'Special Order Item',
+            qty: Number(r.qty || 1)
+          }));
+          const medLines = medicinesList.map((m, idx) => `${idx + 1}. ${m.name} × ${m.qty}`).join('\n');
+          enrichedDetails = `Special Order Items (${medicinesList.length}):\n${medLines}`;
+        }
+      } catch (oErr) {
+        console.warn('[NonWaFallback] Special order enrichment error:', oErr);
+      }
+    }
+
+    resolvedCtx.details = enrichedDetails;
+    if (medicinesList.length > 0) {
+      resolvedCtx.detailsJson = {
+        ...(resolvedCtx.detailsJson || {}),
+        medicines: medicinesList,
+        totalMeds: medicinesList.length
+      };
+    }
 
     // Dedup: don't create duplicate pending task for same patient+type within 24h
     const recentTask = await db.get(

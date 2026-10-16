@@ -2038,6 +2038,15 @@ export const SpecialOrdersSection: React.FC = () => {
                     required={true}
                     allowEmpty={false}
                     shakeOnError={shakePhone}
+                    enablePatientAutocomplete={true}
+                    onSelectPatient={(patient) => {
+                      setSelectedCustomerId(patient.id);
+                      const parsed = parseSalutationAndName(patient.name);
+                      setOrderSalutation(parsed.salutation);
+                      setOrderCustomSalutation(parsed.customSalutation);
+                      setRequester(parsed.name);
+                      if (patient.language) setLanguage(patient.language);
+                    }}
                   />
                 </div>
               </div>
@@ -2285,6 +2294,15 @@ export const SpecialOrdersSection: React.FC = () => {
                     onChange={val => setEditPhone(val)}
                     required={true}
                     allowEmpty={false}
+                    enablePatientAutocomplete={true}
+                    onSelectPatient={(patient) => {
+                      setEditCustomerId(patient.id);
+                      const parsed = parseSalutationAndName(patient.name);
+                      setEditSalutation(parsed.salutation);
+                      setEditCustomSalutation(parsed.customSalutation);
+                      setEditRequester(parsed.name);
+                      if (patient.language) setEditLanguage(patient.language);
+                    }}
                   />
                 </div>
               </div>

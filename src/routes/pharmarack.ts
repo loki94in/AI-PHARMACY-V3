@@ -2887,6 +2887,26 @@ router.post('/cart/place-official-orders', async (req, res) => {
       }
     }
 
+    // Attach any confirmed order numbers directly to placed orders for today
+    if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
+      for (const ord of checkoutResult.orders) {
+        if (ord.status === 'placed' && ord.orderNo) {
+          try {
+            await db.run(
+              `UPDATE pharmarack_placed_orders 
+               SET order_no = ? 
+               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '')`,
+              [ord.orderNo, today, ord.storeName]
+            );
+          } catch (_) {}
+        }
+      }
+    }
+
+    try {
+      eventService.broadcast('pharmarack_orders_changed', { today });
+    } catch (_) {}
+
     res.json({
       success: checkoutResult.ok,
       placedCount: checkoutResult.placedCount,
@@ -3581,10 +3601,13 @@ router.get('/sent-orders', async (req, res) => {
     // Surface externally synced orders that lack placed_order entry
     for (const s of syncedOrdersList) {
       if (s.order_no && !existingOrderNos.has(String(s.order_no))) {
-        const alreadyCovered = parsedOrders.some(p => String(p.store_name || '').toLowerCase().trim() === String(s.store_name || '').toLowerCase().trim());
-        if (!alreadyCovered) {
+        const alreadyHasOrderNo = parsedOrders.some(p =>
+          (p.order_no && String(p.order_no) === String(s.order_no)) ||
+          (Array.isArray(p.pharmarack_order_nos) && p.pharmarack_order_nos.includes(String(s.order_no)))
+        );
+        if (!alreadyHasOrderNo) {
           parsedOrders.push({
-            id: s.pharmarack_order_id || Date.now(),
+            id: s.pharmarack_order_id || s.id || Date.now(),
             order_date: s.order_date,
             store_id: s.store_id,
             store_name: s.store_name,

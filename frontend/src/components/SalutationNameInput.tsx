@@ -15,6 +15,7 @@ export interface PatientSuggestionItem {
   language?: string;
   credit_balance?: number;
   credit_enabled?: number;
+  has_special_order?: number;
 }
 
 /**
@@ -307,7 +308,7 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
                           : 'text-text hover:bg-primary/10'
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                         <span className="font-semibold truncate">{p.name}</span>
                         {p.active_refill === 1 && (
                           <span
@@ -315,6 +316,22 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
                             title="Active Refill Schedule"
                           >
                             🔁 Refill
+                          </span>
+                        )}
+                        {p.has_special_order === 1 && (
+                          <span
+                            className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-bold"
+                            title="Special Order Customer"
+                          >
+                            📦 Special Order
+                          </span>
+                        )}
+                        {(p.purchase_count || 0) > 0 && p.active_refill !== 1 && p.has_special_order !== 1 && (
+                          <span
+                            className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-400 text-[10px] font-bold"
+                            title="Walk-in / POS Customer"
+                          >
+                            ⭐ POS
                           </span>
                         )}
                       </div>

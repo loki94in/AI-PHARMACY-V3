@@ -22,6 +22,31 @@ import { validate10DigitPhone } from '../utils/phoneValidation.js';
 
 
 
+let specialOrdersSyncedToCustomers = false;
+async function syncLegacySpecialOrdersToCustomers(db: any) {
+  if (specialOrdersSyncedToCustomers) return;
+  try {
+    const unindexed = await db.all(`
+      SELECT DISTINCT phone, requester 
+      FROM special_orders 
+      WHERE phone IS NOT NULL AND TRIM(phone) != '' 
+      LIMIT 100
+    `);
+    for (const row of unindexed) {
+      const cleanPhone = (row.phone || '').replace(/\D/g, '');
+      const validPhone = cleanPhone.length === 12 && cleanPhone.startsWith('91') ? cleanPhone.slice(2) : cleanPhone;
+      if (validPhone.length === 10) {
+        const exists = await db.get('SELECT id FROM customers WHERE phone = ? OR phone = ? LIMIT 1', [validPhone, `91${validPhone}`]);
+        if (!exists) {
+          const cleanName = formatCustomerName(row.requester || 'Customer');
+          await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [cleanName, validPhone]);
+        }
+      }
+    }
+  } catch (_) {}
+  specialOrdersSyncedToCustomers = true;
+}
+
 const router = express.Router();
 
 // Get patients
@@ -30,6 +55,7 @@ router.get('/patients', async (req, res) => {
   const isPosMode = req.query.pos === 'true' || req.query.hasHistory === 'true';
   try {
     const db = await dbManager.getConnection();
+    await syncLegacySpecialOrdersToCustomers(db);
     let query = 'SELECT * FROM customers';
     const params = [];
     
@@ -50,8 +76,12 @@ router.get('/patients', async (req, res) => {
       if (q) {
         query += ' WHERE name LIKE ? OR phone LIKE ?';
         params.push(`%${q}%`, `%${q}%`);
+        const qStr = String(q).trim();
+        query += ' ORDER BY CASE WHEN phone = ? THEN 0 WHEN phone LIKE ? THEN 1 WHEN name LIKE ? THEN 2 ELSE 3 END, id DESC';
+        params.push(qStr, `${qStr}%`, `${qStr}%`);
+      } else {
+        query += ' ORDER BY id DESC';
       }
-      query += ' ORDER BY id DESC';
     }
     
     if (limit) {
@@ -78,6 +108,7 @@ router.get('/patients', async (req, res) => {
         for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
         const salesMap = new Map<number, { purchase_count: number; last_sale_date: string }>();
         const refillSet = new Set<number>();
+        const specialOrderSet = new Set<number>();
         for (const chunk of chunks) {
           const ph = chunk.map(() => '?').join(',');
           const chunkParams = allStores ? chunk : [...chunk, targetStoreId, targetStoreId];
@@ -94,12 +125,19 @@ router.get('/patients', async (req, res) => {
             chunkParams
           );
           for (const r of refillRows) refillSet.add(r.customer_id);
+
+          const soRows = await db.all(
+            `SELECT DISTINCT customer_id FROM special_orders WHERE customer_id IN (${ph}) ${storeCond}`,
+            chunkParams
+          );
+          for (const r of soRows) if (r.customer_id) specialOrderSet.add(r.customer_id);
         }
         for (const p of patients) {
           const s = salesMap.get(p.id);
           p.purchase_count = s ? s.purchase_count : 0;
           p.last_sale_date = s ? s.last_sale_date : null;
           p.active_refill = refillSet.has(p.id) ? 1 : 0;
+          p.has_special_order = specialOrderSet.has(p.id) ? 1 : 0;
         }
       } catch (enrichErr) {
         console.warn('[CRM] Patient enrichment failed, returning unenriched rows:', enrichErr);

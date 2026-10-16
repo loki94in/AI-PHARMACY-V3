@@ -2044,15 +2044,48 @@ router.post('/:id/send', async (req, res) => {
 
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
-    const msg = buildRefillReminderMessage(
-      patientName,
-      [{ medicine_name: refill.medicine_name || 'Prescribed Medicine', quantity_needed: refill.quantity_needed || 1 }],
-      medicalName,
-      lang,
-      undefined,
-      refillSchedOpts,
-      { includeLanguageBanner: includeLangBanner }
+    // Auto-bundle ALL companion active refills for this patient so ONE message carries all medicines
+    const companionRefills = await db.all(
+      `SELECT pr.*, m.name as medicine_name
+       FROM patient_refills pr
+       JOIN medicines m ON pr.medicine_id = m.id
+       WHERE (
+         (pr.patient_phone IS NOT NULL AND (pr.patient_phone = ? OR pr.patient_phone = ?))
+         OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
+       )
+       AND pr.is_active = 1
+       AND pr.status IN ('pending', 'notified', 'staged')
+       ORDER BY pr.id ASC`,
+      [cleanPhone, cleanDigits, patientName]
     );
+
+    const bundleRows = companionRefills && companionRefills.length > 0 ? companionRefills : [refill];
+    const anyReady = bundleRows.some((r: any) => r.is_ready === 1 || r.quick_bill_id);
+    const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
+
+    const items = bundleRows.map((r: any) => ({
+      medicine_name: r.medicine_name || 'Prescribed Medicine',
+      quantity_needed: r.quantity_needed || 1
+    }));
+
+    const msg = anyReady
+      ? buildRefillCollectionMessage(
+          patientName,
+          items,
+          medicalName,
+          lang,
+          refillSchedOpts,
+          { includeLanguageBanner: includeLangBanner }
+        )
+      : buildRefillReminderMessage(
+          patientName,
+          items,
+          medicalName,
+          lang,
+          undefined,
+          refillSchedOpts,
+          { includeLanguageBanner: includeLangBanner }
+        );
 
     let pdfPath: string | undefined = undefined;
     try {
@@ -2071,11 +2104,14 @@ router.post('/:id/send', async (req, res) => {
     const queueId = await whatsappQueueWorker.enqueue(
       cleanPhone,
       msg,
-      'refill_reminder',
+      notifType,
       patientName,
       undefined,
       pdfPath
     );
+
+    const bundleIds = bundleRows.map((r: any) => r.id);
+    const placeholders = bundleIds.map(() => '?').join(',');
 
     await db.run(
       `UPDATE patient_refills
@@ -2086,21 +2122,24 @@ router.post('/:id/send', async (req, res) => {
            auto_remind = 1,
            last_collection_reminder_at = datetime('now'),
            collection_reminder_count = COALESCE(collection_reminder_count, 0) + 1
-       WHERE id = ?`,
-      [queueId, refill.next_refill_date, id]
+       WHERE id IN (${placeholders})`,
+      [queueId, refill.next_refill_date, ...bundleIds]
     );
 
-    await db.run(
-      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ['refill_reminder', patientName, cleanPhone, msg, 'queued', String(id)]
-    );
+    for (const bId of bundleIds) {
+      await db.run(
+        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        [notifType, patientName, cleanPhone, msg, 'queued', String(bId)]
+      );
+    }
 
     res.json({
       success: true,
       queueId,
       reminder_status: 'QUEUED',
-      message: `Refill reminder queued for ${patientName} (${cleanPhone})`
+      bundled_items_count: bundleRows.length,
+      message: `Refill reminder queued for ${patientName} (${cleanPhone}) with ${bundleRows.length} medicine(s)`
     });
   } catch (err: any) {
     console.error('Failed to send single refill reminder:', err);

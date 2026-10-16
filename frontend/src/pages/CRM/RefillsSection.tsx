@@ -2526,6 +2526,18 @@ export const RefillsSection: React.FC = () => {
                       placeholder="10-digit WhatsApp phone"
                       required={true}
                       allowEmpty={false}
+                      enablePatientAutocomplete={!editingPatient}
+                      onSelectPatient={(patient) => {
+                        setSelectedRefillCustomerId(patient.id);
+                        setOriginalSelectedPhone(patient.phone || '');
+                        const parsed = parseSalutationAndName(patient.name);
+                        setRefillSalutation(parsed.salutation);
+                        setRefillCustomSalutation(parsed.customSalutation);
+                        setAddPatientName(parsed.name);
+                        if (patient.language && (patient.language === 'en' || patient.language === 'hi' || patient.language === 'mr')) {
+                          setAddLanguage(patient.language as 'en' | 'hi' | 'mr');
+                        }
+                      }}
                     />
                   </div>
                 </div>

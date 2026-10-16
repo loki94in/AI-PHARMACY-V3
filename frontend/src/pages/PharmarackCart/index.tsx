@@ -1329,6 +1329,9 @@ export default function PharmarackCart() {
 
   useEffect(() => {
     if (currentTab === 'sent-history') {
+      const todayStr = getTodayDateKey();
+      delete cachedSentOrdersMap[todayStr];
+      cachedSentDates = [];
       loadSentDates();
     }
   }, [currentTab]);
@@ -1606,15 +1609,24 @@ export default function PharmarackCart() {
       } catch (_) { }
     };
 
+    const handleSentOrdersUpdate = () => {
+      const todayStr = getTodayDateKey();
+      delete cachedSentOrdersMap[todayStr];
+      cachedSentDates = [];
+      loadSentDates();
+    };
+
     window.addEventListener('phone-numbers-updated', handlePhoneUpdate);
     window.addEventListener('settings-updated', handlePhoneUpdate);
     window.addEventListener('clear-sent-history', handleClearSentHistory);
     window.addEventListener('clear-app-cache', handleClearSentHistory);
+    window.addEventListener('refresh-sent-orders', handleSentOrdersUpdate);
     return () => {
       window.removeEventListener('phone-numbers-updated', handlePhoneUpdate);
       window.removeEventListener('settings-updated', handlePhoneUpdate);
       window.removeEventListener('clear-sent-history', handleClearSentHistory);
       window.removeEventListener('clear-app-cache', handleClearSentHistory);
+      window.removeEventListener('refresh-sent-orders', handleSentOrdersUpdate);
     };
   }, []);
 

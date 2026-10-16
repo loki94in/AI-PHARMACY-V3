@@ -66,6 +66,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   // Reuses the page's existing DOM event name — PharmarackCart, LiveCartAddModal
   // and Layout already listen for 'refresh-pharmarack-cart'.
   pharmarack_cart_changed: ['refresh-pharmarack-cart'],
+  pharmarack_orders_changed: ['refresh-sent-orders', 'refresh-pharmarack-cart'],
   dispatch_updated: ['sse-dispatch-updated'],
   email_new: ['sse-email-new'],
   inventory_changed: ['sse-inventory-changed'],

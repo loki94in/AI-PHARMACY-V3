@@ -30,7 +30,8 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent, specialOrdersEvent } from '../services/events';
-import { SalutationNameInput, combineSalutationAndName } from './SalutationNameInput';
+import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName, type PatientSuggestionItem } from './SalutationNameInput';
+import { PhoneInputWithBadge } from './PhoneInputWithBadge';
 import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import {} from '../hooks/useApiQuery';
@@ -212,6 +213,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const [customSalutation, setCustomSalutation] = useState('');
   const [requester, setRequester] = useState('');
   const [phone, setPhone] = useState('');
+  const [customerId, setCustomerId] = useState<number | null>(null);
   const [qty, setQty] = useState(1);
   const [advancePayment, setAdvancePayment] = useState<number | ''>('');
   const [priority, setPriority] = useState<'Low' | 'Normal' | 'High'>('Normal');
@@ -874,6 +876,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
         items,
         requester: customerName,
         phone: customerPhone,
+        customer_id: customerId || undefined,
         priority: orderPriority,
         advance_payment: advanceAmt,
         language: messageLang,
@@ -968,6 +971,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
     setCustomSalutation('');
     setRequester('');
     setPhone('');
+    setCustomerId(null);
     setQty(1);
     setAdvancePayment('');
     setPriority('Normal');
@@ -1421,22 +1425,51 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                       setSalutation(sal);
                       if (custom !== undefined) setCustomSalutation(custom);
                     }}
-                    onNameChange={(val) => setRequester(val)}
+                    onNameChange={(val) => {
+                      setCustomerId(null);
+                      setRequester(val);
+                    }}
+                    enablePatientAutocomplete={true}
+                    onSelectPatient={(patient) => {
+                      setCustomerId(patient.id);
+                      const parsed = parseSalutationAndName(patient.name);
+                      setSalutation(parsed.salutation);
+                      setCustomSalutation(parsed.customSalutation);
+                      setRequester(parsed.name);
+                      if (patient.phone) {
+                        const cleanP = patient.phone.replace(/\D/g, '');
+                        const valid10 = cleanP.length === 12 && cleanP.startsWith('91') ? cleanP.slice(2) : cleanP;
+                        setPhone(valid10);
+                      }
+                      if (patient.language && (patient.language === 'en' || patient.language === 'hi' || patient.language === 'mr')) {
+                        setLanguage(patient.language);
+                      }
+                    }}
                     placeholder="Customer Name (Optional)"
                     inputClassName="rounded-2xl bg-bg3/40 border-glass-border font-semibold text-xs py-2.5"
                   />
 
-                  {/* Phone Number */}
+                  {/* Phone Number with Autocomplete */}
                   <div className="relative">
-                    <Phone size={14} className="absolute left-3.5 top-3 text-muted pointer-events-none" />
-                    <input
-                      type="tel"
+                    <PhoneInputWithBadge
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="w-full premium-input pl-10 pr-3 py-2.5 text-xs font-semibold rounded-2xl bg-bg3/40 border-glass-border font-mono"
+                      onChange={(val) => {
+                        setPhone(val);
+                      }}
+                      enablePatientAutocomplete={true}
+                      onSelectPatient={(patient) => {
+                        setCustomerId(patient.id);
+                        const parsed = parseSalutationAndName(patient.name);
+                        setSalutation(parsed.salutation);
+                        setCustomSalutation(parsed.customSalutation);
+                        setRequester(parsed.name);
+                        if (patient.language && (patient.language === 'en' || patient.language === 'hi' || patient.language === 'mr')) {
+                          setLanguage(patient.language);
+                        }
+                      }}
                       placeholder="Phone Number (Optional)"
-                      maxLength={15}
-                      autoComplete="off"
+                      allowEmpty={true}
+                      required={false}
                     />
                   </div>
 
