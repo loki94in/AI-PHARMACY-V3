@@ -2068,7 +2068,7 @@ export default function PharmarackCart() {
           if (!patient.medicines || !Array.isArray(patient.medicines)) return;
 
           patient.medicines.forEach((m) => {
-            if (m.status === 'canceled' || m.is_active === 0) return;
+            if (m.status === 'canceled' || m.status === 'ordered' || m.status === 'completed' || m.is_active === 0) return;
 
             const dueDate = new Date(patient.next_refill_date);
             const diffMs = dueDate.getTime() - today.getTime();
@@ -2110,7 +2110,7 @@ export default function PharmarackCart() {
     try {
       const data = await api.getRefills();
       if (Array.isArray(data)) {
-        const filtered = data.filter(r => r.is_active !== 0 && r.status !== 'canceled');
+        const filtered = data.filter(r => r.is_active !== 0 && r.status !== 'canceled' && r.status !== 'ordered' && r.status !== 'completed');
         setPendingRefills(filtered);
         cachedPendingRefills = filtered;
       }
@@ -2133,8 +2133,8 @@ export default function PharmarackCart() {
     try {
       const data = await api.getOrders();
       if (Array.isArray(data)) {
-        // Show all pending, ordered, confirmed, or waiting requests (no same-day date constraint)
-        const filtered = data.filter(o => o.status === 'Pending' || o.status === 'Ordered' || o.status === 'Confirmed' || o.status === 'Waiting');
+        // Show pending, confirmed, or waiting requests (placed orders are hidden from pending list)
+        const filtered = data.filter(o => ['Pending', 'Confirmed', 'Waiting'].includes(o.status) && o.status !== 'Ordered');
         setPendingOrders(filtered);
         cachedPendingOrders = filtered;
       }
@@ -2177,16 +2177,44 @@ export default function PharmarackCart() {
     return false;
   }, [distributors]);
 
+  const isMedicineInSentPO = React.useCallback((medName?: string): boolean => {
+    if (!medName) return false;
+    const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+    const targetKey = cleanMedKey(medName);
+    if (!targetKey) return false;
+
+    for (const sentInfo of Object.values(latestSentMap)) {
+      if (sentInfo && Array.isArray(sentInfo.items)) {
+        for (const it of sentInfo.items) {
+          const itKey = cleanMedKey(it.productName || it.product || it.name);
+          if (itKey === targetKey || (targetKey.length >= 4 && itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey)))) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }, [latestSentMap]);
+
   // Single source of truth for the "Req"/"Refills" tab badge counts, so they match what
   // the "Show Added" toggle actually leaves visible in the list below instead of the raw,
-  // unfiltered pending counts.
+  // unfiltered pending counts. Placed PO items are completely hidden.
   const visiblePendingOrders = React.useMemo(() => {
-    return showAddedItems ? pendingOrders : pendingOrders.filter(order => !getOrderItemInCart(order));
-  }, [pendingOrders, showAddedItems]);
+    return pendingOrders.filter(order => {
+      if (order.status === 'Ordered') return false;
+      if (isMedicineInSentPO(order.product)) return false;
+      return showAddedItems ? true : !getOrderItemInCart(order);
+    });
+  }, [pendingOrders, showAddedItems, isMedicineInSentPO]);
 
   const visiblePendingRefills = React.useMemo(() => {
-    return showAddedItems ? pendingRefills : pendingRefills.filter(refill => !getRefillItemInCart(refill));
-  }, [pendingRefills, showAddedItems]);
+    return pendingRefills.filter(refill => {
+      if (refill.status === 'ordered' || refill.status === 'completed') return false;
+      if (isMedicineInSentPO(refill.medicine_name)) return false;
+      return showAddedItems ? true : !getRefillItemInCart(refill);
+    });
+  }, [pendingRefills, showAddedItems, isMedicineInSentPO]);
 
   // Reorder Hub search = the MEDICINE the user typed, nothing else. Every typed word must start a word of
   // the medicine name ("muchatac ocea" -> MUCHATAC OCEAN ...); a contiguous substring still matches.

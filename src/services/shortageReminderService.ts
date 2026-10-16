@@ -36,7 +36,7 @@ export async function trackMedicineRequest(req: {
   // Prevent duplicate open requests for the same medicine & customer/distributor in the last 23 hours
   const existing = await db.get(
     `SELECT id FROM special_orders 
-     WHERE LOWER(product) = LOWER(?) AND status = 'Pending'
+     WHERE LOWER(product) = LOWER(?) AND (status = 'Pending' OR status = 'Inquiry')
      AND datetime(date) >= datetime('now', '-23 hours')`,
     [name]
   );
@@ -52,11 +52,17 @@ export async function trackMedicineRequest(req: {
     return existing.id;
   }
 
+  const isWa = source.includes('whatsapp');
+  const targetStatus = isWa ? 'Inquiry' : 'Pending';
+  const customerOrderSource = isWa ? 'whatsapp' : 'in_store';
+  const requesterName = req.customer_name || (isWa ? 'WhatsApp Customer' : 'Walk-in Customer');
+  const notes = isWa ? `[WhatsApp Inquiry] Customer asked for ${name}` : undefined;
+
   const result = await db.run(
     `INSERT INTO special_orders 
-     (product, requester, phone, qty, priority, status, source)
-     VALUES (?, ?, ?, ?, 'Normal', 'Pending', ?)`,
-    [name, req.customer_name || 'Walk-in Customer', String(req.customer_phone || '').replace(/\D/g, ''), qty, source]
+     (product, requester, phone, qty, priority, status, source, customer_order_source, notes)
+     VALUES (?, ?, ?, ?, 'Normal', ?, ?, ?, ?)`,
+    [name, requesterName, String(req.customer_phone || '').replace(/\D/g, ''), qty, targetStatus, source, customerOrderSource, notes]
   );
 
   return result.lastID || 0;
@@ -73,7 +79,7 @@ export async function checkShortageRequestsAndNotifyAdmin(db?: Database): Promis
   // Fetch pending requests created > 23 hours ago
   const pendingRequests = await connection.all(
     `SELECT * FROM special_orders
-     WHERE status = 'Pending'
+     WHERE (status = 'Pending' OR status = 'Inquiry')
      AND datetime(date) <= datetime('now', '-23 hours')`
   );
 

@@ -4262,6 +4262,38 @@ router.post('/log-placed-order', async (req, res) => {
       } catch (orderErr) {
         console.warn('Error auto-updating special orders status on placed order:', orderErr);
       }
+      try {
+        const { purgePendingCustomerReminders } = await import('../services/refillService.js');
+        const pendingRefills = await db.all(
+          `SELECT pr.id, pr.patient_phone, pr.customer_id, m.name AS medicine_name 
+           FROM patient_refills pr 
+           JOIN medicines m ON m.id = pr.medicine_id 
+           WHERE pr.is_active = 1 AND pr.status NOT IN ('ordered', 'completed', 'canceled', 'cancelled')`
+        );
+        for (const item of items) {
+          const prodName = (item.productName || item.product || item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!prodName) continue;
+          for (const refill of pendingRefills) {
+            const refName = (refill.medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (refName && (refName === prodName || (refName.length >= 4 && prodName.length >= 4 && (refName.includes(prodName) || prodName.includes(refName))))) {
+              await db.run(
+                `UPDATE patient_refills 
+                 SET status = 'ordered', hold_for_stock = 1, cart_store_name = ? 
+                 WHERE id = ?`,
+                [store_name, refill.id]
+              );
+              await purgePendingCustomerReminders(db, {
+                phone: refill.patient_phone,
+                refillIds: [refill.id],
+                customerId: refill.customer_id,
+                medicineNames: [refill.medicine_name]
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (refillErr) {
+        console.warn('Error auto-updating patient refills status on placed order:', refillErr);
+      }
     }
 
     // Auto-sync distributor contact and reminders immediately
@@ -4270,9 +4302,13 @@ router.post('/log-placed-order', async (req, res) => {
       syncTodayActiveDistributors().catch(err => console.warn('Background sync reminders error on placed order:', err));
     } catch (_) {}
 
-    // Broadcast SSE update so Dispatch, CRM, and Cart update across kept-alive pages
+    // Broadcast SSE update so Dispatch, CRM, Refills, Special Orders, and Cart update across kept-alive pages
     eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'log_placed_order', store_name });
     eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+    eventService.broadcast('app-refills-updated', { at: Date.now() });
+    eventService.broadcast('refresh-refills', { at: Date.now() });
+    eventService.broadcast('refresh-special-orders', { at: Date.now() });
+    eventService.broadcast('order_updated', { at: Date.now(), source: 'log_placed_order' });
 
     res.json({ success: true });
   } catch (err: any) {

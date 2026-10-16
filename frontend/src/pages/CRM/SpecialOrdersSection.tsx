@@ -1098,11 +1098,12 @@ export const SpecialOrdersSection: React.FC = () => {
     if (!matchesSearch) return false;
 
     let matchesStatus = true;
-    if (statusFilter === 'Pending') matchesStatus = o.status === 'Pending';
+    if (statusFilter === 'Inquiries') matchesStatus = o.status === 'Inquiry';
+    else if (statusFilter === 'Pending') matchesStatus = o.status === 'Pending';
     else if (statusFilter === 'Ordered') matchesStatus = o.status === 'Ordered';
     else if (statusFilter === 'Waiting') matchesStatus = o.status === 'Waiting';
     else if (statusFilter === 'Arrived') matchesStatus = o.status === 'Ready' || o.status === 'Arrived';
-    else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled' && o.status !== 'Cancelled';
+    else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled' && o.status !== 'Cancelled' && o.status !== 'Inquiry';
     else if (statusFilter === 'Cancelled') matchesStatus = o.status === 'Cancelled';
 
     if (!matchesStatus) return false;
@@ -1185,7 +1186,9 @@ export const SpecialOrdersSection: React.FC = () => {
       <div
         key={order.id}
         className={`p-3.5 rounded-xl border transition-all ${
-          isArrived
+          order.status === 'Inquiry'
+            ? 'bg-amber-500/5 border-amber-500/30'
+            : isArrived
             ? 'bg-emerald-500/5 border-emerald-500/30'
             : order.status === 'Waiting'
             ? 'bg-amber-500/5 border-amber-500/30'
@@ -1226,7 +1229,9 @@ export const SpecialOrdersSection: React.FC = () => {
                 </span>
               )}
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                isArrived
+                order.status === 'Inquiry'
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                  : isArrived
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                   : order.status === 'Waiting'
                   ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
@@ -1236,7 +1241,7 @@ export const SpecialOrdersSection: React.FC = () => {
                   ? 'bg-zinc-500/20 text-muted border border-border'
                   : 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
               }`}>
-                {order.status}
+                {order.status === 'Inquiry' ? 'Inquiry (Needs Approval)' : order.status}
               </span>
 
               {order.notified === 1 && (
@@ -1260,6 +1265,19 @@ export const SpecialOrdersSection: React.FC = () => {
 
           {/* Right Column: Status Action Bar */}
           <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+            {/* Approve Inquiry Button */}
+            {order.status === 'Inquiry' && (
+              <button
+                onClick={() => handleUpdateStatus(order.id, 'Pending')}
+                disabled={updatingId === order.id}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm shadow-amber-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
+                title="Approve customer inquiry and convert to active special order"
+              >
+                <CheckCircle2 size={13} className={updatingId === order.id ? 'animate-spin' : ''} />
+                <span>Approve</span>
+              </button>
+            )}
+
             {/* Sell Now Button */}
             <button
               onClick={() => handleSellSpecialOrder(order)}
@@ -1579,7 +1597,7 @@ export const SpecialOrdersSection: React.FC = () => {
             />
           </div>
           <div className="flex items-center gap-1 bg-bg3/60 p-1 rounded-xl border border-border">
-            {['All', 'Pending', 'Ordered', 'Waiting', 'Arrived', 'Not Arrived', 'Cancelled'].map(st => (
+            {['All', 'Inquiries', 'Pending', 'Ordered', 'Waiting', 'Arrived', 'Not Arrived', 'Cancelled'].map(st => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -2355,6 +2373,7 @@ export const SpecialOrdersSection: React.FC = () => {
                     onChange={e => setEditStatus(e.target.value)}
                     className="w-full px-3 py-2 bg-bg border border-border rounded-xl font-medium focus:outline-none focus:border-primary"
                   >
+                    <option value="Inquiry">Inquiry (Pending Approval)</option>
                     <option value="Pending">Pending</option>
                     <option value="Waiting">Waiting</option>
                     <option value="Ordered">Ordered</option>

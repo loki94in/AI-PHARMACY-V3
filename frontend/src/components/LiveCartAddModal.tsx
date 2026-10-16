@@ -257,6 +257,7 @@ let cachedPendingOrders: SpecialOrder[] = [];
 let cachedPendingRefills: Refill[] = [];
 let cachedReconOrders: LocalReconOrder[] = [];
 let cachedAutoRefillItems: LocalAutoRefillItem[] = [];
+let cachedLatestSentMap: Record<string, any> = {};
 let cachedIgnoredWords: Array<{ id: number; word: string; source: string; created_at: string }> = [];
 const makeLocalIgnoredEntry = (word: string) => ({ id: Date.now(), word, source: 'user_ignore', created_at: new Date().toISOString() });
 const setIgnoreNextSearchRef = (ref: { current: boolean }, value: boolean) => { ref.current = value; };
@@ -370,6 +371,14 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [activeSourceRefillId, setActiveSourceRefillId] = useState<number | undefined>(sourceRefillId);
   const topSuggestionRef = useRef<SuggestionMedicine | null>(null);
   const [pendingTargetQty, setPendingTargetQty] = useState<number | null>(initialQty || null);
+
+  const autocompleteRef = useRef<HTMLDivElement>(null);
+  const productInputRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
+  const ignoreNextSearchRef = useRef(false);
+  const isSelectingRef = useRef(false);
+  const lastToastedQueryRef = useRef<string>('');
+  const searchAbortControllerRef = useRef<AbortController | null>(null);
 
   // Transfer medicine directly to Medicine Search box
   const handleTransferToSearch = (medName: string, targetQty: number = 1, srcOrderId?: number, srcRefillId?: number) => {
@@ -508,9 +517,21 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     setSkippedItemKeys(new Set());
     toastEvent.trigger('Restored all skipped items to pending lists', 'success');
   };
-
   // Pending Refills States and Functions
   const [pendingRefills, setPendingRefills] = useState<Refill[]>(cachedPendingRefills);
+  const [latestSentMap, setLatestSentMap] = useState<Record<string, any>>(cachedLatestSentMap);
+
+  const fetchLatestSentMap = useCallback(async () => {
+    try {
+      const res = await api.getPharmarackLatestSentMap();
+      if (res && res.success && res.sentMap) {
+        cachedLatestSentMap = res.sentMap;
+        setLatestSentMap(res.sentMap);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch latest sent map in modal:', err);
+    }
+  }, []);
 
   // Reconcile Orders (unreconciled distributor email orders)
   const [reconOrders, setReconOrders] = useState<LocalReconOrder[]>(cachedReconOrders);
@@ -640,7 +661,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const data = await api.getOrders();
       if (Array.isArray(data)) {
         const filtered = data.filter(o => 
-          ['Pending', 'Ordered', 'Confirmed', 'Waiting'].includes(o.status) &&
+          ['Pending', 'Waiting'].includes(o.status) &&
+          o.status !== 'Ordered' &&
           !isMedicineIgnored(o.product, cachedIgnoredWords)
         );
         cachedPendingOrders = filtered;
@@ -662,7 +684,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
           if (!patient.medicines || !Array.isArray(patient.medicines)) return;
 
           patient.medicines.forEach((m) => {
-            if (m.status === 'canceled' || m.is_active === 0) return;
+            if (m.status === 'canceled' || m.status === 'ordered' || m.status === 'completed' || m.is_active === 0) return;
             // Already marked Ready (stock arrived / handled) — nothing left to order
             if (Number(m.is_ready) === 1) return;
             if (isMedicineIgnored(m.medicine_name, cachedIgnoredWords)) return;
@@ -708,7 +730,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const data = await api.getRefills();
       if (Array.isArray(data)) {
         const filtered = data.filter(r => {
-          if (!r.is_active || r.status === 'completed' || r.status === 'canceled') return false;
+          if (!r.is_active || r.status === 'completed' || r.status === 'canceled' || r.status === 'ordered') return false;
           if (Number((r as { is_ready?: number }).is_ready) === 1) return false;
           return !isMedicineIgnored(r.medicine_name, cachedIgnoredWords);
         });
@@ -778,13 +800,48 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     return null;
   }, [cartLookup, cartDistributors]);
 
-  const autocompleteRef = useRef<HTMLDivElement>(null);
-  const productInputRef = useRef<HTMLInputElement>(null);
-  const qtyInputRef = useRef<HTMLInputElement>(null);
-  const ignoreNextSearchRef = useRef(false);
-  const isSelectingRef = useRef(false);
-  const lastToastedQueryRef = useRef<string>('');
-  const searchAbortControllerRef = useRef<AbortController | null>(null);
+  const isMedicineInSentPO = useCallback((medName?: string, storeId?: string | number, storeName?: string): boolean => {
+    if (!medName) return false;
+    const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+    const targetKey = cleanMedKey(medName);
+    if (!targetKey) return false;
+
+    if (storeId || storeName) {
+      const sId = storeId ? String(storeId) : '';
+      const sName = (storeName || '').toLowerCase().trim();
+      const normDistName = sName.replace(/[^a-z0-9]/g, '');
+      let sentInfo = (sId ? latestSentMap[sId] : null) || latestSentMap[sName] || (normDistName ? latestSentMap[normDistName] : null);
+      if (!sentInfo && normDistName) {
+        const matchKey = Object.keys(latestSentMap).find(k => {
+          const normK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return normK && (normK === normDistName || (normK.length >= 4 && normDistName.length >= 4 && (normK.includes(normDistName) || normDistName.includes(normK))));
+        });
+        if (matchKey) sentInfo = latestSentMap[matchKey];
+      }
+      if (sentInfo && Array.isArray(sentInfo.items)) {
+        for (const it of sentInfo.items) {
+          const itKey = cleanMedKey(it.productName || it.product || it.name);
+          if (itKey === targetKey || (targetKey.length >= 4 && itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey)))) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    for (const sentInfo of Object.values(latestSentMap)) {
+      if (sentInfo && Array.isArray(sentInfo.items)) {
+        for (const it of sentInfo.items) {
+          const itKey = cleanMedKey(it.productName || it.product || it.name);
+          if (itKey === targetKey || (targetKey.length >= 4 && itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey)))) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }, [latestSentMap]);
 
 
 
@@ -865,6 +922,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     try {
       await Promise.allSettled([
         fetchLiveCartSummary(false),
+        fetchLatestSentMap(),
         fetchPendingRefills(),
         fetchReconOrders()
       ]);
@@ -1001,6 +1059,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const hasCache = cachedCartDistributors.length > 0;
       // Fetch consolidated live cart summary immediately (silent if cached data already exists)
       fetchLiveCartSummary(hasCache);
+      fetchLatestSentMap();
       checkSession();
 
       // Stagger secondary background lists so the UI thread & search input have 100% immediate responsiveness
@@ -1316,24 +1375,26 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const addedList = addedReconMedicines[reconUid] || [];
       const medNames: string[] = recon.medicine_names && recon.medicine_names.length > 0 ? recon.medicine_names : [recon.subject || 'Recon Medicine'];
 
-      return medNames.map((medName: string) => {
-        const normName = medName.trim().toLowerCase();
-        const itemKey = `recon-${reconUid}-${normName}`;
-        const isSkipped = isItemSkipped(itemKey, medName);
-        const isAdded = addedList.includes(medName);
+      return medNames
+        .filter((medName: string) => !isMedicineInSentPO(medName, restrictStoreId, recon.extracted_distributor || undefined))
+        .map((medName: string) => {
+          const normName = medName.trim().toLowerCase();
+          const itemKey = `recon-${reconUid}-${normName}`;
+          const isSkipped = isItemSkipped(itemKey, medName);
+          const isAdded = addedList.includes(medName);
 
-        return {
-          category: 'bounced' as const,
-          recon,
-          reconUid,
-          medName,
-          itemKey,
-          isSkipped,
-          isAdded
-        };
-      });
+          return {
+            category: 'bounced' as const,
+            recon,
+            reconUid,
+            medName,
+            itemKey,
+            isSkipped,
+            isAdded
+          };
+        });
     });
-  }, [reconOrders, addedReconMedicines, isItemSkipped]);
+  }, [reconOrders, addedReconMedicines, isItemSkipped, isMedicineInSentPO, restrictStoreId]);
 
   const orderCartMatches = useMemo(() => {
     const map = new Map<number, { item: any; result: any }>();
@@ -1360,52 +1421,58 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   }, [pendingRefills, cartDistributors, getRefillItemInCart]);
 
   const specialOrderRows = useMemo(() => {
-    return pendingOrders.map(order => {
-      const itemKey = `order-${order.id}`;
-      const isSkipped = isItemSkipped(itemKey, order.product);
-      const cartMatch = orderCartMatches.get(order.id);
-      const inCart = Boolean(cartMatch?.item);
-      const matchScore = cartMatch?.result?.score || 0;
-      return {
-        category: 'order' as const,
-        order,
-        itemKey,
-        isSkipped,
-        inCart,
-        matchScore
-      };
-    });
-  }, [pendingOrders, isItemSkipped, orderCartMatches]);
+    return pendingOrders
+      .filter(order => order.status !== 'Ordered' && !isMedicineInSentPO(order.product, restrictStoreId))
+      .map(order => {
+        const itemKey = `order-${order.id}`;
+        const isSkipped = isItemSkipped(itemKey, order.product);
+        const cartMatch = orderCartMatches.get(order.id);
+        const inCart = Boolean(cartMatch?.item);
+        const matchScore = cartMatch?.result?.score || 0;
+        return {
+          category: 'order' as const,
+          order,
+          itemKey,
+          isSkipped,
+          inCart,
+          matchScore
+        };
+      });
+  }, [pendingOrders, isItemSkipped, orderCartMatches, isMedicineInSentPO, restrictStoreId]);
 
   const refillRows = useMemo(() => {
-    return pendingRefills.map(refill => {
-      const itemKey = `refill-${refill.id}`;
-      const isSkipped = isItemSkipped(itemKey, refill.medicine_name || '');
-      const inCart = Boolean(refillCartMatches.get(refill.id));
-      const refillQty = Math.max(1, Number(refill.quantity_needed) || 1);
-      return {
-        category: 'refill' as const,
-        refill,
-        itemKey,
-        isSkipped,
-        inCart,
-        refillQty
-      };
-    });
-  }, [pendingRefills, isItemSkipped, refillCartMatches]);
+    return pendingRefills
+      .filter(refill => refill.status !== 'ordered' && refill.status !== 'completed' && !isMedicineInSentPO(refill.medicine_name, restrictStoreId))
+      .map(refill => {
+        const itemKey = `refill-${refill.id}`;
+        const isSkipped = isItemSkipped(itemKey, refill.medicine_name || '');
+        const inCart = Boolean(refillCartMatches.get(refill.id));
+        const refillQty = Math.max(1, Number(refill.quantity_needed) || 1);
+        return {
+          category: 'refill' as const,
+          refill,
+          itemKey,
+          isSkipped,
+          inCart,
+          refillQty
+        };
+      });
+  }, [pendingRefills, isItemSkipped, refillCartMatches, isMedicineInSentPO, restrictStoreId]);
 
   const minStockRows = useMemo(() => {
-    return autoRefillItems.map(item => {
-      const itemKey = `minstock-${item.medicine_id}`;
-      const isSkipped = isItemSkipped(itemKey, item.medicine_name);
-      return {
-        category: 'minstock' as const,
-        item,
-        itemKey,
-        isSkipped
-      };
-    });
-  }, [autoRefillItems, isItemSkipped]);
+    return autoRefillItems
+      .filter(item => !isMedicineInSentPO(item.medicine_name, restrictStoreId))
+      .map(item => {
+        const itemKey = `minstock-${item.medicine_id}`;
+        const isSkipped = isItemSkipped(itemKey, item.medicine_name);
+        return {
+          category: 'minstock' as const,
+          item,
+          itemKey,
+          isSkipped
+        };
+      });
+  }, [autoRefillItems, isItemSkipped, isMedicineInSentPO, restrictStoreId]);
 
   const activeBounced = useMemo(() => bouncedRows.filter(r => !r.isSkipped), [bouncedRows]);
   const activeOrders = useMemo(() => specialOrderRows.filter(r => !r.isSkipped), [specialOrderRows]);

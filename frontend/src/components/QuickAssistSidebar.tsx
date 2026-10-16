@@ -582,7 +582,7 @@ export const QuickAssistSidebar = memo(({
 
 
   const handleUpdateGroupStatus = async (
-    group: { requester: string; phone?: string; items: Array<{ id: number; product: string; qty: number; notification_count?: number }> },
+    group: { requester: string; phone?: string; overallStatus?: string; items: Array<{ id: number; product: string; qty: number; notification_count?: number }> },
     newStatus: string,
     opts?: { navigateToPos?: boolean; resend?: boolean }
   ) => {
@@ -643,6 +643,8 @@ export const QuickAssistSidebar = memo(({
               ? `Arrival reminder WhatsApp re-queued for "${group.requester}"!`
               : `Marked ready & arrival WhatsApp queued for ${queuedCount} customer(s)!`)
           : `Marked all requests for "${group.requester}" as Ready!`, 'success');
+      } else if (newStatus === 'Pending' && group.overallStatus === 'Inquiry') {
+        toastEvent.trigger(`Approved inquiry! Special order created for "${group.requester}".`, 'success');
       } else if (newStatus === 'Cancelled') {
         toastEvent.trigger(`Marked all requests for "${group.requester}" as Cancelled!`, 'success');
       } else {
@@ -1121,7 +1123,8 @@ export const QuickAssistSidebar = memo(({
     }
 
     for (const g of list) {
-      if (g.items.some(i => i.status === 'Pending')) g.overallStatus = 'Pending';
+      if (g.items.some(i => i.status === 'Inquiry')) g.overallStatus = 'Inquiry';
+      else if (g.items.some(i => i.status === 'Pending')) g.overallStatus = 'Pending';
       else if (g.items.some(i => i.status === 'Ordered')) g.overallStatus = 'Ordered';
       else if (g.items.some(i => i.status === 'Ready')) g.overallStatus = 'Ready';
       else if (g.items.some(i => i.status === 'Confirmed')) g.overallStatus = 'Confirmed';
@@ -1188,7 +1191,8 @@ export const QuickAssistSidebar = memo(({
     }
 
     for (const g of list) {
-      if (g.items.some(i => i.status === 'Pending')) g.overallStatus = 'Pending';
+      if (g.items.some(i => i.status === 'Inquiry')) g.overallStatus = 'Inquiry';
+      else if (g.items.some(i => i.status === 'Pending')) g.overallStatus = 'Pending';
       else if (g.items.some(i => i.status === 'Ordered')) g.overallStatus = 'Ordered';
       else if (g.items.some(i => i.status === 'Ready')) g.overallStatus = 'Ready';
       else g.overallStatus = 'Other';
@@ -1849,7 +1853,9 @@ export const QuickAssistSidebar = memo(({
                   <div
                     key={group.key}
                     className={`p-2.5 rounded-xl border border-border border-l-4 bg-bg2/95 flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs ${
-                      group.overallStatus === 'Ready'
+                      group.overallStatus === 'Inquiry'
+                        ? 'border-l-amber-500 hover:border-amber-500/30'
+                        : group.overallStatus === 'Ready'
                         ? 'border-l-sky-500 hover:border-sky-500/30'
                         : group.overallStatus === 'Ordered'
                         ? 'border-l-indigo-500 hover:border-indigo-500/30'
@@ -1903,7 +1909,9 @@ export const QuickAssistSidebar = memo(({
                           return (
                             <span
                               className={`flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8.5px] font-mono font-bold uppercase ${
-                                group.overallStatus === 'Ready'
+                                group.overallStatus === 'Inquiry'
+                                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                  : group.overallStatus === 'Ready'
                                   ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
                                   : group.overallStatus === 'Ordered'
                                   ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
@@ -1914,7 +1922,9 @@ export const QuickAssistSidebar = memo(({
                             >
                               <ClockIcon size={9} className="shrink-0" />
                               <span>
-                                {group.overallStatus === 'Ready' && maxCount > 0
+                                {group.overallStatus === 'Inquiry'
+                                  ? 'WhatsApp Inquiry'
+                                  : group.overallStatus === 'Ready' && maxCount > 0
                                   ? `Ready (${maxCount}x)`
                                   : group.overallStatus}
                               </span>
@@ -1968,7 +1978,41 @@ export const QuickAssistSidebar = memo(({
                     <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border min-w-0">
                       {/* Tier 1: Primary Action Buttons */}
                       <div className="flex items-center gap-1.5 min-w-0">
-                        {group.overallStatus === 'Ready' ? (
+                        {group.overallStatus === 'Inquiry' ? (
+                          <>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Pending')}
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Approve this WhatsApp customer inquiry and convert to active Special Order"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span className="truncate">Approve & Order</span>
+                            </button>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                              className="h-6.5 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Open POS to bill directly"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
+                              <span className="truncate">POS</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Cancelled');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-red-600/15 hover:bg-red-600 hover:text-white text-red-400 border border-red-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Dismiss and ignore this inquiry (will not place an order)"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <X size={11} className="shrink-0" />}
+                              <span>Dismiss</span>
+                            </button>
+                          </>
+                        ) : group.overallStatus === 'Ready' ? (
                           <>
                             {(() => {
                               const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
@@ -2188,7 +2232,9 @@ export const QuickAssistSidebar = memo(({
                 return (
                   <div
                     key={group.key}
-                    className="p-2.5 rounded-xl border border-border border-l-4 border-l-amber-500 bg-bg2/95 flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs hover:border-amber-500/30"
+                    className={`p-2.5 rounded-xl border border-border border-l-4 ${
+                      group.overallStatus === 'Inquiry' ? 'border-l-amber-400 bg-amber-500/5 hover:border-amber-400/40' : 'border-l-amber-500 bg-bg2/95 hover:border-amber-500/30'
+                    } flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs`}
                   >
                     {/* Header (Click to toggle expansion / fold & unfold) */}
                     <div
@@ -2226,7 +2272,9 @@ export const QuickAssistSidebar = memo(({
                           return (
                             <span
                               className={`flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8.5px] font-mono font-bold uppercase ${
-                                group.overallStatus === 'Ready'
+                                group.overallStatus === 'Inquiry'
+                                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                  : group.overallStatus === 'Ready'
                                   ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
                                   : group.overallStatus === 'Ordered'
                                   ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
@@ -2235,7 +2283,9 @@ export const QuickAssistSidebar = memo(({
                             >
                               <ClockIcon size={9} className="shrink-0" />
                               <span>
-                                {group.overallStatus === 'Ready' && maxCount > 0
+                                {group.overallStatus === 'Inquiry'
+                                  ? 'Inquiry (Needs Approval)'
+                                  : group.overallStatus === 'Ready' && maxCount > 0
                                   ? `Ready (${maxCount}x)`
                                   : group.overallStatus}
                               </span>
@@ -2289,7 +2339,41 @@ export const QuickAssistSidebar = memo(({
                     <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border min-w-0">
                       {/* Tier 1: Primary Action Buttons */}
                       <div className="flex items-center gap-1.5 min-w-0">
-                        {group.overallStatus === 'Ready' ? (
+                        {group.overallStatus === 'Inquiry' ? (
+                          <>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Pending')}
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Approve this inquiry and convert to active special order"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                              <span className="truncate">Approve & Order</span>
+                            </button>
+                            <button
+                              disabled={isProcessing}
+                              onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                              className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                              title="Open POS to bill this medicine immediately"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
+                              <span className="truncate">POS</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateGroupStatus(group, 'Cancelled');
+                              }}
+                              className="h-6.5 px-2 rounded-lg bg-red-600/15 hover:bg-red-600 hover:text-white text-red-400 border border-red-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                              title="Dismiss inquiry without ordering"
+                            >
+                              {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <X size={11} className="shrink-0" />}
+                              <span>Dismiss</span>
+                            </button>
+                          </>
+                        ) : group.overallStatus === 'Ready' ? (
                           <>
                             {(() => {
                               const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
@@ -2431,6 +2515,10 @@ export const QuickAssistSidebar = memo(({
                               </button>
                             );
                           })()
+                        ) : group.overallStatus === 'Inquiry' ? (
+                          <span className="text-[8.5px] text-amber-400 font-semibold uppercase px-1">
+                            Awaiting Approval
+                          </span>
                         ) : (
                           <span className="text-[9px] text-muted/60 uppercase font-mono px-1">
                             {group.overallStatus}

@@ -6332,7 +6332,7 @@ async function searchAndBroadcast(opts: {
         // shortage requests — they get copied raw into special_orders.phone downstream.
         customer_phone: String(customer?.phone || phone || '').replace(/\D/g, ''),
         customer_name: customer?.name || '',
-        source: 'whatsapp'
+        source: 'whatsapp_inquiry'
       }).catch(err => console.warn('[Intent Service] Shortage tracking failed:', err));
     } catch (trackErr) {
       console.warn('[Intent Service] Failed to import shortageReminderService:', trackErr);
