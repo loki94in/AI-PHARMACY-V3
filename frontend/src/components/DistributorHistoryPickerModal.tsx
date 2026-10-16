@@ -153,12 +153,12 @@ export const DistributorHistoryPickerModal: React.FC<DistributorHistoryPickerMod
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-bold text-text truncate">{r.medicine_name}</span>
                       {isTopMover && (
-                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
-                          <Star size={9} className="fill-amber-400" /> Top Bought
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
+                          <Star size={9} className="fill-current" /> Top Bought
                         </span>
                       )}
                       {isAlreadyAdded && (
-                        <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
                           ✓ On Bill
                         </span>
                       )}

@@ -391,7 +391,7 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
                 }`}
               >
                 <span>{tab.label}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
                   statusFilter === tab.id ? 'bg-primary/20 text-primary font-black' : 'bg-bg/60 text-muted'
                 }`}>
                   {tab.count}

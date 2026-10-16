@@ -3274,7 +3274,7 @@ router.get('/live-cart-summary', async (_req, res) => {
 
     const db = await dbManager.getConnection();
     const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
-      db.all("SELECT * FROM special_orders WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Waiting') ORDER BY id DESC"),
+      db.all("SELECT * FROM special_orders WHERE status IN ('Pending', 'Waiting') ORDER BY id DESC"),
       db.all("SELECT word FROM permanently_ignored_words").catch(() => []),
       db.all(`
         SELECT 
@@ -3557,37 +3557,58 @@ router.get('/sent-orders', async (req, res) => {
       [targetDate]
     );
 
-    // Real Pharmarack order numbers noticed by the order sync, grouped by distributor (read-only).
-    const syncedByStore = new Map<string, string[]>();
+    // Real Pharmarack order numbers noticed by the order sync (read-only)
     const syncedOrdersList: any[] = [];
+    const unattachedSyncedByStore = new Map<string, any[]>();
     try {
-      const synced = await db.all('SELECT * FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at', [targetDate]);
+      const synced = await db.all('SELECT * FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at ASC', [targetDate]);
       for (const o of synced) {
-        const k = String(o.store_name || '').toLowerCase().trim();
-        syncedByStore.set(k, [...(syncedByStore.get(k) || []), String(o.order_no)]);
         syncedOrdersList.push(o);
       }
     } catch (_) { /* table is optional */ }
 
-    const existingOrderNos = new Set(rows.map(r => String(r.order_no || '')).filter(Boolean));
+    // Build set of order numbers already assigned to placed order rows
+    const claimedOrderNos = new Set<string>();
+    rows.forEach(r => {
+      if (r.order_no) claimedOrderNos.add(String(r.order_no).trim());
+    });
+
+    // Populate unattached synced orders for store-level in-app matches (1-to-1 only)
+    for (const s of syncedOrdersList) {
+      const sNo = String(s.order_no || '').trim();
+      if (sNo && !claimedOrderNos.has(sNo)) {
+        const k = String(s.store_name || '').toLowerCase().trim();
+        unattachedSyncedByStore.set(k, [...(unattachedSyncedByStore.get(k) || []), s]);
+      }
+    }
+
     const parsedOrders = rows.map(r => {
       let items = [];
       let deliveryPersons = [];
       try { items = JSON.parse(r.items_json || '[]'); } catch (_) {}
       try { deliveryPersons = JSON.parse(r.delivery_persons_json || '[]'); } catch (_) {}
 
-      const storeNos = syncedByStore.get(String(r.store_name || '').toLowerCase().trim()) || [];
-      const orderNos = Array.from(new Set([
-        ...(r.order_no ? [String(r.order_no)] : []),
-        ...storeNos
-      ]));
+      let effectiveOrderNo = r.order_no ? String(r.order_no).trim() : null;
+
+      // If in-app order lacks order_no, claim exactly ONE unattached synced order for this store if available
+      if (!effectiveOrderNo) {
+        const k = String(r.store_name || '').toLowerCase().trim();
+        const unattached = unattachedSyncedByStore.get(k);
+        if (unattached && unattached.length > 0) {
+          const matched = unattached.shift(); // take the first unattached 1-to-1
+          effectiveOrderNo = String(matched.order_no).trim();
+          claimedOrderNos.add(effectiveOrderNo);
+        }
+      }
+
+      const orderNos = effectiveOrderNo ? [effectiveOrderNo] : [];
 
       return {
         id: r.id,
         order_date: r.order_date,
         store_id: r.store_id,
         store_name: r.store_name,
-        order_no: r.order_no || (orderNos[0] || null),
+        order_no: effectiveOrderNo,
         pharmarack_order_nos: orderNos,
         items,
         delivery_persons: deliveryPersons,
@@ -3598,29 +3619,25 @@ router.get('/sent-orders', async (req, res) => {
       };
     });
 
-    // Surface externally synced orders that lack placed_order entry
+    // Surface externally synced orders that lack placed_order entry as distinct cards
     for (const s of syncedOrdersList) {
-      if (s.order_no && !existingOrderNos.has(String(s.order_no))) {
-        const alreadyHasOrderNo = parsedOrders.some(p =>
-          (p.order_no && String(p.order_no) === String(s.order_no)) ||
-          (Array.isArray(p.pharmarack_order_nos) && p.pharmarack_order_nos.includes(String(s.order_no)))
-        );
-        if (!alreadyHasOrderNo) {
-          parsedOrders.push({
-            id: s.pharmarack_order_id || s.id || Date.now(),
-            order_date: s.order_date,
-            store_id: s.store_id,
-            store_name: s.store_name,
-            order_no: s.order_no,
-            pharmarack_order_nos: [String(s.order_no)],
-            items: [],
-            delivery_persons: [],
-            placed_at: s.first_seen_at || Date.now(),
-            batch_sent: false,
-            batch_sent_at: null,
-            source: 'pharmarack_external'
-          });
-        }
+      const sNo = String(s.order_no || '').trim();
+      if (sNo && !claimedOrderNos.has(sNo)) {
+        claimedOrderNos.add(sNo);
+        parsedOrders.push({
+          id: s.pharmarack_order_id || s.id || Date.now(),
+          order_date: s.order_date,
+          store_id: s.store_id,
+          store_name: s.store_name,
+          order_no: sNo,
+          pharmarack_order_nos: [sNo],
+          items: [],
+          delivery_persons: [],
+          placed_at: s.first_seen_at || Date.now(),
+          batch_sent: false,
+          batch_sent_at: null,
+          source: 'pharmarack_sync'
+        });
       }
     }
 
@@ -3650,16 +3667,17 @@ router.post('/sync-historical-orders', async (req, res) => {
 /**
  * GET /api/pharmarack/sent-orders/latest-map
  * Returns a map of the latest placed order info (placed_at timestamp + sent item codes/names) for each store.
+ * Checked over a 7-day window so placed items are not prematurely forgotten.
  */
 router.get('/sent-orders/latest-map', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
-    // Only check past orders placed within the last 1 day (24 hours)
-    const ONE_DAY_MS = 1 * 24 * 60 * 60 * 1000;
-    const cutoff = Date.now() - ONE_DAY_MS;
+    // Check past orders placed within the last 7 days
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - SEVEN_DAYS_MS;
     const rows = await db.all(
       `SELECT * FROM pharmarack_placed_orders 
-       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? 
+       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? OR order_date >= date('now', '-7 days')
        ORDER BY placed_at DESC`,
       [cutoff]
     );
@@ -3672,13 +3690,13 @@ router.get('/sent-orders/latest-map', async (_req, res) => {
 
       const storeKey = r.store_id ? String(r.store_id) : (r.store_name || '').toLowerCase().trim();
       const normNameKey = (r.store_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const placedAt = Number(r.placed_at || r.batch_sent_at || 0);
+      const placedAt = Number(r.placed_at || r.batch_sent_at || Date.now());
 
       const parsedItems = items.map((i: any) => ({
         productCode: i.productCode || i.product_code || '',
         productName: i.productName || i.product || i.name || '',
         qty: i.qty || i.quantity || 1,
-        placedAt: Number(i.placedAt || i.placed_at || placedAt || 0)
+        placedAt: Number(i.placedAt || i.placed_at || placedAt || Date.now())
       })).filter((i: any) => i.placedAt >= cutoff);
 
       if (parsedItems.length === 0) return;
@@ -3720,6 +3738,113 @@ router.get('/sent-orders/latest-map', async (_req, res) => {
   } catch (err: any) {
     console.error('Error fetching Pharmarack latest sent map:', err);
     res.status(500).json({ error: 'Failed to fetch latest sent map: ' + err.message });
+  }
+});
+
+// GET /api/pharmarack/skipped-medicines — Get list of persistent skipped medicines
+router.get('/skipped-medicines', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all('SELECT medicine_name_clean, original_name, skipped_at FROM live_cart_skipped_medicines ORDER BY skipped_at DESC');
+    res.json({ success: true, skipped: rows || [] });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch skipped medicines: ' + err.message });
+  }
+});
+
+// POST /api/pharmarack/skipped-medicines — Add a persistent skipped medicine until purchase
+router.post('/skipped-medicines', async (req, res) => {
+  try {
+    const { medicine_name } = req.body || {};
+    if (!medicine_name || !String(medicine_name).trim()) {
+      return res.status(400).json({ error: 'medicine_name is required' });
+    }
+    const orig = String(medicine_name).trim();
+    const clean = orig.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!clean) return res.status(400).json({ error: 'Invalid medicine name' });
+    const db = await dbManager.getConnection();
+    await db.run(
+      `INSERT INTO live_cart_skipped_medicines (medicine_name_clean, original_name, skipped_at)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(medicine_name_clean) DO UPDATE SET original_name = excluded.original_name, skipped_at = datetime('now')`,
+      [clean, orig]
+    );
+    res.json({ success: true, medicine_name_clean: clean, original_name: orig });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save skipped medicine: ' + err.message });
+  }
+});
+
+// DELETE /api/pharmarack/skipped-medicines/:name — Remove a persistent skipped medicine
+router.delete('/skipped-medicines/:name', async (req, res) => {
+  try {
+    const clean = String(req.params.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM live_cart_skipped_medicines WHERE medicine_name_clean = ?', [clean]);
+    res.json({ success: true, removed: clean });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to remove skipped medicine: ' + err.message });
+  }
+});
+
+// GET /api/pharmarack/distributor-purchased-check — Fuzzy match if distributor already has this medicine in saved purchases
+router.get('/distributor-purchased-check', async (req, res) => {
+  try {
+    const storeName = String(req.query.store_name || '').trim();
+    const medName = String(req.query.medicine_name || '').trim();
+    if (!medName) return res.json({ success: true, exists: false });
+
+    const db = await dbManager.getConnection();
+    const cleanMed = medName.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+    if (!cleanMed) return res.json({ success: true, exists: false });
+
+    let distId: number | null = null;
+    if (storeName) {
+      const normStore = storeName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const distRow = await db.get(
+        `SELECT id FROM distributors 
+         WHERE LOWER(REPLACE(name, ' ', '')) = ? OR LOWER(REPLACE(name, ' ', '')) LIKE ?
+         LIMIT 1`,
+        [normStore, `%${normStore}%`]
+      );
+      if (distRow) distId = distRow.id;
+    }
+
+    // Check recent purchases (last 6 months) for this medicine
+    let query = `
+      SELECT p.id as purchase_id, p.invoice_no, p.date, d.name as distributor_name, m.name as medicine_name
+      FROM purchase_items pi
+      JOIN purchases p ON p.id = pi.purchase_id
+      JOIN medicines m ON m.id = pi.medicine_id
+      LEFT JOIN distributors d ON d.id = p.distributor_id
+      WHERE date(p.date) >= date('now', '-180 days')
+    `;
+    const params: any[] = [];
+    if (distId) {
+      query += ' AND p.distributor_id = ?';
+      params.push(distId);
+    }
+    query += ' ORDER BY p.date DESC LIMIT 50';
+
+    const recentPurchases = await db.all(query, params);
+    for (const pur of recentPurchases) {
+      const purMedClean = (pur.medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+      if (purMedClean && (purMedClean === cleanMed || (cleanMed.length >= 4 && purMedClean.length >= 4 && (purMedClean.includes(cleanMed) || cleanMed.includes(purMedClean))))) {
+        return res.json({
+          success: true,
+          exists: true,
+          invoiceNo: pur.invoice_no,
+          purchaseDate: pur.date,
+          distributorName: pur.distributor_name,
+          matchedMedicineName: pur.medicine_name
+        });
+      }
+    }
+
+    res.json({ success: true, exists: false });
+  } catch (err: any) {
+    console.warn('Error in distributor-purchased-check:', err);
+    res.json({ success: true, exists: false });
   }
 });
 

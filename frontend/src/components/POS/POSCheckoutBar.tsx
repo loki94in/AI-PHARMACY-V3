@@ -80,7 +80,7 @@ export const POSCheckoutBar: React.FC<POSCheckoutBarProps> = ({
                   if (last && !last.disabled) { e.preventDefault(); last.focus(); last.select?.(); }
                 }
               }}
-              className="w-10 bg-bg border border-glass-border rounded px-1 py-0.2 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-5"
+              className="w-10 bg-bg border border-glass-border rounded px-1 py-0.5 font-mono font-bold text-center text-text text-xs focus:outline-none focus:border-primary/50 h-5"
             />
             <span className="text-[10px] text-amber-500 font-bold">%</span>
           </div>

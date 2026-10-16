@@ -3513,7 +3513,7 @@ const Purchases: React.FC = () => {
                   <Mail className="w-3 h-3 inline" /> Mail Date
                 </span>
               ) : !invoiceDate ? (
-                <span className="text-[10px] text-amber-400 font-bold">Required</span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold">Required</span>
               ) : null}
             </div>
             <input
@@ -3539,7 +3539,7 @@ const Purchases: React.FC = () => {
               }`}
             />
             {!invoiceDate && (
-              <p className="text-[10px] text-amber-400 mt-1">⚠️ Missing invoice date</p>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠️ Missing invoice date</p>
             )}
           </div>
 
@@ -3797,7 +3797,7 @@ const Purchases: React.FC = () => {
                             <div className="flex items-center gap-1 flex-wrap">
                               {item.manufacturer && (
                                 <span 
-                                  className="text-[9px] bg-blue-500/10 border border-blue-500/20 text-blue-400 px-1 py-0.2 rounded font-medium truncate max-w-[110px]"
+                                  className="text-[9px] bg-blue-500/10 border border-blue-500/20 text-blue-400 px-1 py-0.5 rounded font-medium truncate max-w-[110px]"
                                   title={`Manufacturer: ${item.manufacturer}`}
                                 >
                                   Mfg: {item.manufacturer}
@@ -3805,7 +3805,7 @@ const Purchases: React.FC = () => {
                               )}
                               {item.hsn_code && (
                                 <span 
-                                  className="text-[9px] bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1 py-0.2 rounded font-mono font-medium"
+                                  className="text-[9px] bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1 py-0.5 rounded font-mono font-medium"
                                   title={`HSN: ${item.hsn_code}`}
                                 >
                                   HSN: {item.hsn_code}
@@ -3978,12 +3978,12 @@ const Purchases: React.FC = () => {
                               return null;
                             })()}
                             {!hasOriginalName && item.manufacturer && (
-                              <span className="text-[9px] bg-blue-500/10 border border-blue-500/20 text-blue-400 px-1 py-0.2 rounded font-medium truncate max-w-[110px]" title={`Manufacturer: ${item.manufacturer}`}>
+                              <span className="text-[9px] bg-blue-500/10 border border-blue-500/20 text-blue-400 px-1 py-0.5 rounded font-medium truncate max-w-[110px]" title={`Manufacturer: ${item.manufacturer}`}>
                                 Mfg: {item.manufacturer}
                               </span>
                             )}
                             {!hasOriginalName && item.hsn_code && (
-                              <span className="text-[9px] bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1 py-0.2 rounded font-mono font-medium" title={`HSN: ${item.hsn_code}`}>
+                              <span className="text-[9px] bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1 py-0.5 rounded font-mono font-medium" title={`HSN: ${item.hsn_code}`}>
                                 HSN: {item.hsn_code}
                               </span>
                             )}
@@ -4295,7 +4295,7 @@ const Purchases: React.FC = () => {
                         {(() => {
                           const marginPercent = ((mrpVal - rateVal) / mrpVal) * 100;
                           return (
-                            <span className={`text-[9px] font-bold px-1 py-0.2 rounded border inline-block leading-none shadow-sm ${
+                            <span className={`text-[9px] font-bold px-1 py-0.5 rounded border inline-block leading-none shadow-sm ${
                               marginPercent > 20 
                                 ? 'bg-green-950/90 text-green-400 border-green-500/30' 
                                 : marginPercent > 10 
@@ -4352,7 +4352,7 @@ const Purchases: React.FC = () => {
                       return (
                         <div className="relative">
                           {isMrpMissing && (
-                            <span className="absolute -top-3 right-0 text-[8px] font-extrabold uppercase px-1 py-0.2 rounded bg-amber-500/20 text-amber-400 border border-amber-400/40 pointer-events-none whitespace-nowrap z-10">
+                            <span className="absolute -top-3 right-0 text-[8px] font-extrabold uppercase px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 pointer-events-none whitespace-nowrap z-10">
                               MRP required
                             </span>
                           )}

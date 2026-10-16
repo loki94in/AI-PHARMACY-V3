@@ -954,7 +954,7 @@ export default function WebsiteOrders() {
                                       <div className="font-bold text-text flex items-center gap-1.5">
                                         <span>{distName}</span>
                                         {opt.stock && (
-                                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold">
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
                                             Stock: {opt.stock}
                                           </span>
                                         )}
@@ -1051,7 +1051,7 @@ export default function WebsiteOrders() {
                                     <div className="font-bold text-text truncate text-xs flex items-center gap-1.5">
                                       <span>{distName}</span>
                                       {item.stock && (
-                                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold shrink-0">
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
                                           {item.stock}
                                         </span>
                                       )}
@@ -1437,7 +1437,7 @@ export default function WebsiteOrders() {
         const photos = parsePrescriptionUrls(selectedPrescription);
         const currentPhoto = photos[prescriptionPhotoIndex] || photos[0] || '';
         return (
-          <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+          <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
             <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col rounded-3xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden">
               <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
                 <div className="flex items-center gap-2">
@@ -1588,7 +1588,7 @@ export default function WebsiteOrders() {
 
       {/* Return Override Authorization Modal */}
       {overrideModalOrder && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
           <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
@@ -1654,7 +1654,7 @@ export default function WebsiteOrders() {
 
       {/* Staff Delivery ETA Override Modal */}
       {deliveryOverrideOrder && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
           <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left">
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
@@ -1730,7 +1730,7 @@ export default function WebsiteOrders() {
 
       {/* WhatsApp Payment Screenshot Review Modal (Human-in-the-Loop) */}
       {selectedScreenshot && (
-        <div className="fixed inset-0 z-global-modal bg-black/70-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-global-modal bg-black/70 flex items-center justify-center p-4">
           <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <div className="flex items-center gap-2">

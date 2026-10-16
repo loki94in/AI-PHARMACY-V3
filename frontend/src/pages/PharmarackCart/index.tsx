@@ -6,6 +6,7 @@ import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion,
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
 import { findBestCartMatchForOrder } from '../../utils/orderFuzzyMatcher';
 import { isStrictSameProduct } from '../../utils/strictProductName';
+import { isRefillFulfilledToday } from '../../utils/refillSettled';
 
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { sanitizePhoneInput } from '../../utils/phone';
@@ -391,6 +392,7 @@ interface LocalSentOrder {
   order_date?: string;
   store_id?: number;
   store_name?: string;
+  order_no?: string | null;
   pharmarack_order_nos?: string[];
   items: LocalSentOrderItem[];
   placed_at?: number;
@@ -808,6 +810,36 @@ export default function PharmarackCart() {
   const [sendingNotifId, setSendingNotifId] = useState<number | null>(null);
   const [pendingOrders, setPendingOrders] = useState<SpecialOrder[]>(() => cachedPendingOrders);
   const [pendingRefills, setPendingRefills] = useState<Refill[]>(() => cachedPendingRefills);
+  const [todaySoldMeds, setTodaySoldMeds] = useState<Set<string>>(() => new Set());
+
+  const isSoldAtPOSToday = useCallback((medName?: string): boolean => {
+    if (!medName) return false;
+    const clean = medName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!clean) return false;
+    const cleanMedKey = clean.replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+    for (const sold of todaySoldMeds) {
+      if (sold === clean || (cleanMedKey && sold.includes(cleanMedKey)) || (cleanMedKey && cleanMedKey.includes(sold))) {
+        return true;
+      }
+    }
+    return false;
+  }, [todaySoldMeds]);
+
+  const fetchTodaySoldMedicines = useCallback(async () => {
+    try {
+      const res = await api.getTodaySoldMedicines();
+      if (res && res.success && Array.isArray(res.medicines)) {
+        const soldSet = new Set<string>();
+        res.medicines.forEach((m: any) => {
+          if (m.clean_name) soldSet.add(m.clean_name);
+        });
+        setTodaySoldMeds(soldSet);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch today sold medicines:', err);
+    }
+  }, []);
+
   const [autoReconciledItems, setAutoReconciledItems] = useState<any[]>([]);
   const [showAddedItems] = useState<boolean>(false);
   const [reorderBannerCollapsed, setReorderBannerCollapsed] = useState<boolean>(false);
@@ -2068,7 +2100,9 @@ export default function PharmarackCart() {
           if (!patient.medicines || !Array.isArray(patient.medicines)) return;
 
           patient.medicines.forEach((m) => {
-            if (m.status === 'canceled' || m.status === 'ordered' || m.status === 'completed' || m.is_active === 0) return;
+            if (m.status === 'canceled' || m.status === 'ordered' || m.status === 'completed' || m.status === 'fulfilled' || m.is_active === 0) return;
+            if (isRefillFulfilledToday(m as any)) return;
+            if (isSoldAtPOSToday(m.medicine_name)) return;
 
             const dueDate = new Date(patient.next_refill_date);
             const diffMs = dueDate.getTime() - today.getTime();
@@ -2110,7 +2144,15 @@ export default function PharmarackCart() {
     try {
       const data = await api.getRefills();
       if (Array.isArray(data)) {
-        const filtered = data.filter(r => r.is_active !== 0 && r.status !== 'canceled' && r.status !== 'ordered' && r.status !== 'completed');
+        const filtered = data.filter(r => 
+          r.is_active !== 0 && 
+          r.status !== 'canceled' && 
+          r.status !== 'ordered' && 
+          r.status !== 'completed' && 
+          r.status !== 'fulfilled' && 
+          !isRefillFulfilledToday(r) && 
+          !isSoldAtPOSToday(r.medicine_name)
+        );
         setPendingRefills(filtered);
         cachedPendingRefills = filtered;
       }
@@ -2134,7 +2176,11 @@ export default function PharmarackCart() {
       const data = await api.getOrders();
       if (Array.isArray(data)) {
         // Show pending, confirmed, or waiting requests (placed orders are hidden from pending list)
-        const filtered = data.filter(o => ['Pending', 'Confirmed', 'Waiting'].includes(o.status) && o.status !== 'Ordered');
+        const filtered = data.filter(o => 
+          ['Pending', 'Confirmed', 'Waiting'].includes(o.status) && 
+          !['Ordered', 'Fulfilled', 'Completed', 'Cancelled', 'Ready'].includes(o.status) &&
+          !isSoldAtPOSToday(o.product)
+        );
         setPendingOrders(filtered);
         cachedPendingOrders = filtered;
       }
@@ -2202,19 +2248,22 @@ export default function PharmarackCart() {
   // unfiltered pending counts. Placed PO items are completely hidden.
   const visiblePendingOrders = React.useMemo(() => {
     return pendingOrders.filter(order => {
-      if (order.status === 'Ordered') return false;
+      if (order.status === 'Ordered' || order.status === 'Fulfilled' || order.status === 'Completed' || order.status === 'Cancelled' || order.status === 'Ready') return false;
       if (isMedicineInSentPO(order.product)) return false;
+      if (isSoldAtPOSToday(order.product)) return false;
       return showAddedItems ? true : !getOrderItemInCart(order);
     });
-  }, [pendingOrders, showAddedItems, isMedicineInSentPO]);
+  }, [pendingOrders, showAddedItems, isMedicineInSentPO, isSoldAtPOSToday]);
 
   const visiblePendingRefills = React.useMemo(() => {
     return pendingRefills.filter(refill => {
-      if (refill.status === 'ordered' || refill.status === 'completed') return false;
+      if (refill.status === 'ordered' || refill.status === 'completed' || refill.status === 'fulfilled' || refill.status === 'canceled') return false;
+      if (isRefillFulfilledToday(refill)) return false;
       if (isMedicineInSentPO(refill.medicine_name)) return false;
+      if (isSoldAtPOSToday(refill.medicine_name)) return false;
       return showAddedItems ? true : !getRefillItemInCart(refill);
     });
-  }, [pendingRefills, showAddedItems, isMedicineInSentPO]);
+  }, [pendingRefills, showAddedItems, isMedicineInSentPO, isSoldAtPOSToday]);
 
   // Reorder Hub search = the MEDICINE the user typed, nothing else. Every typed word must start a word of
   // the medicine name ("muchatac ocea" -> MUCHATAC OCEAN ...); a contiguous substring still matches.
@@ -2451,14 +2500,20 @@ export default function PharmarackCart() {
     setSingleDispatchTarget(dist);
     const initialBoyId = resolveInitialDeliveryBoyId(dist, distributorMappings, deliveryBoysList);
     setSingleDispatchBoyId(initialBoyId);
-    // Find matching order numbers from sentOrders (all of today's IDs, comma-separated)
-    const matchSent = sentOrders.find(so =>
-      (dist.storeId && so.store_id === dist.storeId) ||
-      (so.store_name && dist.storeName && so.store_name.toLowerCase().trim() === dist.storeName.toLowerCase().trim())
-    );
-    const detectedOrderNo = Array.isArray(matchSent?.pharmarack_order_nos) && matchSent.pharmarack_order_nos.length > 0
-      ? Array.from(new Set(matchSent.pharmarack_order_nos.map((n: string) => String(n).trim().replace(/^#+/, '')).filter(Boolean))).join(', ')
-      : '';
+    // Find matching order numbers from sentOrders
+    // If the cart has unsent items, this is a fresh dispatch batch: leave blank so new PO ID can be entered.
+    // Only pre-fill previous PO ID if all cart items were already sent.
+    const hasUnsentItems = dist.items.some(i => !isItemAlreadySent(i, dist));
+    let detectedOrderNo = '';
+    if (!hasUnsentItems) {
+      const matchSent = sentOrders.find(so =>
+        (dist.storeId && so.store_id === dist.storeId) ||
+        (so.store_name && dist.storeName && so.store_name.toLowerCase().trim() === dist.storeName.toLowerCase().trim())
+      );
+      detectedOrderNo = Array.isArray(matchSent?.pharmarack_order_nos) && matchSent.pharmarack_order_nos.length > 0
+        ? Array.from(new Set(matchSent.pharmarack_order_nos.map((n: string) => String(n).trim().replace(/^#+/, '')).filter(Boolean))).join(', ')
+        : (matchSent?.order_no ? String(matchSent.order_no).trim().replace(/^#+/, '') : '');
+    }
     setSingleDispatchOrderNo(detectedOrderNo);
   };
 
@@ -3994,7 +4049,8 @@ export default function PharmarackCart() {
     checkSession();
     fetchCartSilent();
     fetchLatestSentMap();
-  }, [pageActive, checkSession]);
+    fetchTodaySoldMedicines();
+  }, [pageActive, checkSession, fetchTodaySoldMedicines]);
 
   // Auto-refresh when switching internal sub-tabs back to the 'cart' tab
   const prevTabRef = useRef(currentTab);
@@ -4004,8 +4060,9 @@ export default function PharmarackCart() {
     if (currentTab === 'cart' && prevTab !== 'cart' && pageActive) {
       fetchCartSilent();
       fetchLatestSentMap();
+      fetchTodaySoldMedicines();
     }
-  }, [currentTab, pageActive]);
+  }, [currentTab, pageActive, fetchTodaySoldMedicines]);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowPendingTier(true), 300);
@@ -4021,7 +4078,8 @@ export default function PharmarackCart() {
     if (!showPendingTier) return;
     fetchPendingOrders();
     fetchPendingRefills();
-  }, [showPendingTier]);
+    fetchTodaySoldMedicines();
+  }, [showPendingTier, fetchTodaySoldMedicines]);
 
   useEffect(() => {
     if (!showSuggestionsTier) return;
@@ -4188,18 +4246,26 @@ export default function PharmarackCart() {
     const handleOrdersRefresh = () => {
       cachedPendingOrders = [];
       fetchPendingOrders();
+      fetchPendingRefills();
+      fetchTodaySoldMedicines();
     };
     window.addEventListener('refresh-pharmarack-cart', handleCartRefresh);
     window.addEventListener('pharmarack-auth-changed', handleCartRefresh);
     window.addEventListener('pharmarack-session-updated', handleCartRefresh);
     window.addEventListener('sse-pharmarack-refreshed', handleCartRefresh);
     window.addEventListener('refresh-special-orders', handleOrdersRefresh);
+    window.addEventListener('pharmarack_cart_changed', handleCartRefresh);
+    window.addEventListener('refill_updated', handleOrdersRefresh);
+    window.addEventListener('order_updated', handleOrdersRefresh);
     return () => {
       window.removeEventListener('refresh-pharmarack-cart', handleCartRefresh);
       window.removeEventListener('pharmarack-auth-changed', handleCartRefresh);
       window.removeEventListener('pharmarack-session-updated', handleCartRefresh);
       window.removeEventListener('sse-pharmarack-refreshed', handleCartRefresh);
       window.removeEventListener('refresh-special-orders', handleOrdersRefresh);
+      window.removeEventListener('pharmarack_cart_changed', handleCartRefresh);
+      window.removeEventListener('refill_updated', handleOrdersRefresh);
+      window.removeEventListener('order_updated', handleOrdersRefresh);
     };
   }, []);
 
@@ -4352,8 +4418,12 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {sentOrders.slice().sort((a, b) => (a.store_name || '').localeCompare(b.store_name || '', undefined, { sensitivity: 'base' })).map((order) => (
-                    <div key={order.id} className="p-4 rounded-2xl border border-glass-border/60 bg-bg/40 flex flex-col justify-between gap-3 shadow-md hover:border-glass-border transition-all">
+                  {sentOrders.slice().sort((a, b) => {
+                    const nameCompare = (a.store_name || '').localeCompare(b.store_name || '', undefined, { sensitivity: 'base' });
+                    if (nameCompare !== 0) return nameCompare;
+                    return (a.placed_at || 0) - (b.placed_at || 0);
+                  }).map((order) => (
+                    <div key={order.order_no ? `${order.id}-${order.order_no}` : order.id} className="p-4 rounded-2xl border border-glass-border/60 bg-bg/40 flex flex-col justify-between gap-3 shadow-md hover:border-glass-border transition-all">
                       <div>
                         <div className="flex items-center justify-between pb-2 border-b border-glass-border/30">
                           <div className="flex items-center gap-2 min-w-0">
@@ -4364,7 +4434,9 @@ export default function PharmarackCart() {
                               Order #{order.id}
                             </span>
                             {Array.isArray(order.pharmarack_order_nos) && order.pharmarack_order_nos.map((no: string) => (
-                              <span key={no} className="text-[10px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{no}</span>
+                              <span key={no} className="text-[10px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                                PO #{no.replace(/^#+/, '')}
+                              </span>
                             ))}
                           </div>
                           <div className="flex items-center gap-2">
@@ -4714,7 +4786,7 @@ export default function PharmarackCart() {
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <span className="font-extrabold text-xs text-text truncate">{highlightMatch(sug.medicineName, reorderSearchQuery)}</span>
                                   {sug.packaging && (
-                                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
                                       {sug.packaging}
                                     </span>
                                   )}
@@ -4776,7 +4848,7 @@ export default function PharmarackCart() {
                                       {highlightMatch(item.medicineName, reorderSearchQuery)}
                                     </div>
                                     {item.packaging && (
-                                      <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
+                                      <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
                                         {item.packaging}
                                       </span>
                                     )}
@@ -4984,7 +5056,7 @@ export default function PharmarackCart() {
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="font-extrabold text-xs text-text truncate">{highlightMatch(sug.medicineName, reorderSearchQuery)}</span>
                             {sug.packaging && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
                                 {sug.packaging}
                               </span>
                             )}
@@ -5075,7 +5147,7 @@ export default function PharmarackCart() {
                                 {highlightMatch(item.medicineName, reorderSearchQuery)}
                               </div>
                               {item.packaging && (
-                                <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.2 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
+                                <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
                                   {item.packaging}
                                 </span>
                               )}
@@ -5544,7 +5616,7 @@ export default function PharmarackCart() {
                       >
                         <ShoppingCart size={13} />
                         <span>Unsent Cart Orders</span>
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-primary/10 text-primary border border-primary/20 font-mono font-bold">
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-primary/10 text-primary border border-primary/20 font-mono font-bold">
                           {unsentCartDistributors.length}
                         </span>
                       </button>
@@ -5558,7 +5630,7 @@ export default function PharmarackCart() {
                       >
                         <Check size={13} className="text-emerald-400" />
                         <span>Sent Orders</span>
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-bold">
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-bold">
                           {sentCartDistributors.length}
                         </span>
                       </button>
@@ -5583,7 +5655,7 @@ export default function PharmarackCart() {
                       >
                         <AlertCircle size={13} className="text-red" />
                         <span>Failed</span>
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-red/10 text-red border border-red/20 font-mono font-bold">
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-red/10 text-red border border-red/20 font-mono font-bold">
                           {failedDistributors.length}
                         </span>
                       </button>
@@ -5597,7 +5669,7 @@ export default function PharmarackCart() {
                       >
                         <Phone size={13} className="text-amber-400" />
                         <span>Missing Phone</span>
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono font-bold">
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-mono font-bold">
                           {unmappedDistributors.length}
                         </span>
                       </button>
@@ -5618,7 +5690,7 @@ export default function PharmarackCart() {
                             <div>
                               <h4 className="text-xs font-bold text-text flex items-center gap-2">
                                 Auto-Reconciled Paid Orders
-                                <span className="px-2 py-0.2 rounded-full text-[10px] font-extrabold bg-sky-500/20 text-sky-400 border border-sky-500/30 font-mono">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500/20 text-sky-400 border border-sky-500/30 font-mono">
                                   {autoReconciledItems.length} Cleared
                                 </span>
                               </h4>
@@ -6407,11 +6479,11 @@ export default function PharmarackCart() {
                                                 >
                                                   {item.medicineName}
                                                 </span>
-                                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0" title="Verified link for this distributor">
+                                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0" title="Verified link for this distributor">
                                                   ✓ Verified
                                                 </span>
                                                 {item.billCount && item.billCount > 1 ? (
-                                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-0.5" title={`Purchased in ${item.billCount} bills`}>
+                                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-0.5" title={`Purchased in ${item.billCount} bills`}>
                                                     <Star size={8} className="fill-amber-400" /> ×{item.billCount}
                                                   </span>
                                                 ) : null}
@@ -6522,6 +6594,11 @@ export default function PharmarackCart() {
                                             <span className={`font-bold text-[11px] ${!isIncluded ? 'text-muted line-through opacity-80' : isSent ? 'text-muted' : 'text-text'}`}>
                                               {item.productName}
                                             </span>
+                                            {isSoldAtPOSToday(item.productName) && (
+                                              <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 select-none flex items-center gap-1" title="This medicine was already fulfilled/sold at POS today.">
+                                                <span>⚠️ FULFILLED AT POS</span>
+                                              </span>
+                                            )}
                                             {isYesterdayOrPast && (
                                               <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0 select-none flex items-center gap-1" title={`Ordered previously on ${pastInfo.placedDateStr}. Check box to include in today's order.`}>
                                                 <Clock size={9} />
@@ -7037,12 +7114,12 @@ export default function PharmarackCart() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-extrabold text-xs text-text">{prod.storeName}</span>
                               {isCurrentDist && (
-                                <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-primary/20 text-primary border border-primary/30">
+                                <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/30">
                                   Current Supplier
                                 </span>
                               )}
                               {prod.scheme && (
-                                <span className="text-[9px] font-bold text-green bg-green/10 px-1.5 py-0.2 rounded border border-green/20">
+                                <span className="text-[9px] font-bold text-green bg-green/10 px-1.5 py-0.5 rounded border border-green/20">
                                   {prod.scheme}
                                 </span>
                               )}

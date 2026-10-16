@@ -807,12 +807,14 @@ export interface PharmarackSentOrder {
   order_date: string;
   store_id: number | null;
   store_name: string;
+  order_no?: string | null;
   pharmarack_order_nos?: string[];
   items: PharmarackSentOrderItem[];
   delivery_persons: Array<Record<string, unknown>>;
   placed_at: number;
   batch_sent: boolean;
   batch_sent_at: number | null;
+  source?: string;
 }
 
 export interface PharmarackLatestSentMapEntry {
@@ -1510,6 +1512,11 @@ export const api = {
   getPharmarackAutoRefillSuggestions: () => apiClient.get('/pharmarack/auto-refill-suggestions').then(res => res.data),
   getPrecalculatedMetrics: (params?: { low_stock_only?: boolean; heavy_sell_only?: boolean; limit?: number }) => apiClient.get('/inventory/precalculated-metrics', { params }).then(res => res.data),
   getPharmarackLiveCartSummary: () => apiClient.get('/pharmarack/live-cart-summary').then(res => res.data),
+  getSkippedMedicines: () => apiClient.get('/pharmarack/skipped-medicines').then(res => res.data),
+  addSkippedMedicine: (medicine_name: string) => apiClient.post('/pharmarack/skipped-medicines', { medicine_name }).then(res => res.data),
+  removeSkippedMedicine: (medicine_name: string) => apiClient.delete(`/pharmarack/skipped-medicines/${encodeURIComponent(medicine_name)}`).then(res => res.data),
+  checkDistributorPurchased: (store_name: string, medicine_name: string) => apiClient.get('/pharmarack/distributor-purchased-check', { params: { store_name, medicine_name } }).then(res => res.data),
+  getTodaySoldMedicines: () => apiClient.get('/sales/today-medicines').then(res => res.data),
   getMarketClosureStatus: () => apiClient.get('/pharmarack/closure-status').then(res => res.data),
   saveMarketClosureStatus: (data: { enabled: boolean; type: 'market_closed' | 'pharmacy_closed'; startDate: string; endDate: string; reason?: string; lookaheadDays?: number }) => apiClient.post('/pharmarack/closure-status', data).then(res => res.data),
   getMarketClosureBuffer: () => apiClient.get('/pharmarack/closure-buffer').then(res => res.data),

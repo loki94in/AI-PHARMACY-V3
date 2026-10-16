@@ -459,11 +459,11 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                           <span className="text-xs font-black text-text tracking-tight truncate">
                             {ord.product}
                           </span>
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border font-mono font-bold">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg3 text-muted border border-border font-mono font-bold">
                             Qty: {ord.qty || 1}
                           </span>
                           {hasAdvance && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30 font-mono font-bold">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30 font-mono font-bold">
                               ₹{ord.advance_payment} Adv Paid
                             </span>
                           )}

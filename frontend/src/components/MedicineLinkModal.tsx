@@ -197,7 +197,7 @@ export const MedicineLinkModal: React.FC<{
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="font-bold text-text truncate">{p.storeName}</span>
                           {p.company && (
-                            <span className="px-1.5 py-0.2 rounded bg-bg3 text-[8.5px] font-medium text-muted border border-border shrink-0 truncate max-w-[110px]" title={p.company}>
+                            <span className="px-1.5 py-0.5 rounded bg-bg3 text-[8.5px] font-medium text-muted border border-border shrink-0 truncate max-w-[110px]" title={p.company}>
                               {p.company}
                             </span>
                           )}
@@ -321,7 +321,7 @@ export const MedicineLinkModal: React.FC<{
                                 </span>
                               )}
                               {c.company && (
-                                <span className="px-1.5 py-0.2 rounded bg-bg3 text-[9px] font-semibold text-text border border-border shrink-0 truncate max-w-[130px]" title={c.company}>
+                                <span className="px-1.5 py-0.5 rounded bg-bg3 text-[9px] font-semibold text-text border border-border shrink-0 truncate max-w-[130px]" title={c.company}>
                                   {c.company}
                                 </span>
                               )}
@@ -329,7 +329,7 @@ export const MedicineLinkModal: React.FC<{
                             <div className="flex items-center gap-1.5 text-[10px] text-muted truncate mt-0.5">
                               <span className="font-semibold text-text truncate">{c.storeName}</span>
                               {c.mapped === false && (
-                                <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-[8.5px] font-semibold text-amber-500 border border-amber-500/30 shrink-0">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[8.5px] font-semibold text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
                                   Unmapped
                                 </span>
                               )}

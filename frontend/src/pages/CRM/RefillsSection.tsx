@@ -1592,22 +1592,22 @@ export const RefillsSection: React.FC = () => {
                         <div className="text-xs font-bold text-text truncate flex items-center gap-1.5 flex-wrap">
                           <span className="truncate">{patient.patient_name || 'Unnamed Patient'}</span>
                           {patient.medicines?.some(m => m.patient_confirmed === 1) && (
-                            <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Patient confirmed refill via WhatsApp">
+                            <span className="px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Patient confirmed refill via WhatsApp">
                               WA Confirmed ✅
                             </span>
                           )}
                           {patient.medicines?.some(m => m.is_ready === 1 || m.quick_bill_id) && (
-                            <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Medicines packed and ready for pickup">
+                            <span className="px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Medicines packed and ready for pickup">
                               Ready for Pickup 📦
                             </span>
                           )}
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border/60 shrink-0 font-normal">
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg3 text-muted border border-border/60 shrink-0 font-normal">
                             {patient.language === 'hi' ? '🇮🇳 HI' : patient.language === 'mr' ? '🇮🇳 MR' : '🇬🇧 EN'}
                           </span>
                           <button
                             type="button"
                             onClick={(e) => handleTogglePatientReminderMode(patient, e)}
-                            className={`text-[9px] px-1.5 py-0.2 rounded border shrink-0 font-bold transition-all cursor-pointer ${
+                            className={`text-[9px] px-1.5 py-0.5 rounded border shrink-0 font-bold transition-all cursor-pointer ${
                               (patient.reminder_mode || 'manual') === 'auto'
                                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
                                 : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'

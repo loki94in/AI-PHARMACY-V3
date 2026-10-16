@@ -1047,11 +1047,11 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               {queueState?.nextItem ? (
                 <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-1 text-xs animate-fadeIn">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold text-amber-300 flex items-center gap-1">
+                    <span className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-300 flex items-center gap-1">
                       <Clock size={11} /> Next in Queue
                     </span>
                     {(queueState?.nextDispatchCountdownSeconds as number) > 0 ? (
-                      <span className="text-[10px] font-mono font-extrabold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded border border-amber-500/30 animate-pulse">
+                      <span className="text-[10px] font-mono font-extrabold text-amber-600 dark:text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30 animate-pulse">
                         Wait: {queueState!.nextDispatchCountdownSeconds}s
                       </span>
                     ) : (

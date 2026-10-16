@@ -1764,15 +1764,15 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                             {med.medicine_name || med.product_name}
                           </h4>
                           {isApproved ? (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold shrink-0">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold shrink-0">
                               Approved
                             </span>
                           ) : isHigh ? (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-400 font-bold shrink-0">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 font-bold shrink-0">
                               {med.confidence_score}%
                             </span>
                           ) : (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 font-bold shrink-0">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-bold shrink-0">
                               Review
                             </span>
                           )}

@@ -1200,7 +1200,7 @@ const Returns: React.FC = () => {
                   >
                     <Building2 size={13} className={isActive ? 'text-primary' : 'text-muted'} />
                     <span>{displayName}</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-extrabold ${isActive ? 'bg-primary/20 text-primary' : 'bg-bg/60 text-muted'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-extrabold ${isActive ? 'bg-primary/20 text-primary' : 'bg-bg/60 text-muted'}`}>
                       {count}
                     </span>
                     {bills.length > 1 && (
@@ -1529,7 +1529,7 @@ const Returns: React.FC = () => {
                                 <div className="flex items-center gap-1.5">
                                   <span>{it.expiry_date || '—'}</span>
                                   {urgency && (
-                                    <span className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded border font-mono ${urgency.className}`}>
+                                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border font-mono ${urgency.className}`}>
                                       {urgency.label}
                                     </span>
                                   )}
@@ -1721,7 +1721,7 @@ const Returns: React.FC = () => {
                                               <span>Batch: <strong className="text-text">{result.batch_no}</strong></span>
                                               <span>| Cost: ₹{result.cost_price}</span>
                                               {(result.invoice_no || result.app_invoice_no) && (
-                                                <span className="px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
+                                                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
                                                   Bill #: {result.invoice_no || 'N/A'}
                                                 </span>
                                               )}
@@ -1778,7 +1778,7 @@ const Returns: React.FC = () => {
                                           >
                                             <div className="flex items-center justify-between gap-1">
                                               <span className="font-bold text-text">{result.medicine_name}</span>
-                                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30 font-semibold shrink-0">
+                                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-semibold shrink-0">
                                                 {result.distributor_id ? 'Cross-Return' : 'Store Stock'}
                                               </span>
                                             </div>
@@ -1787,11 +1787,11 @@ const Returns: React.FC = () => {
                                               <span>| Exp: {result.expiry_date || '—'}</span>
                                               <span>| Cost: ₹{result.cost_price || 0}</span>
                                               {(result.invoice_no || result.app_invoice_no) ? (
-                                                <span className="px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
+                                                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
                                                   Orig Bill #: {result.invoice_no || result.app_invoice_no}
                                                 </span>
                                               ) : (
-                                                <span className="px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border/50 text-[9px]">
+                                                <span className="px-1.5 py-0.5 rounded bg-bg3 text-muted border border-border/50 text-[9px]">
                                                   Invoice not in app
                                                 </span>
                                               )}
@@ -1833,7 +1833,7 @@ const Returns: React.FC = () => {
                                   placeholder="MM/YY"
                                 />
                                 {urgency && (
-                                  <span className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded border text-center font-mono ${urgency.className}`}>
+                                  <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border text-center font-mono ${urgency.className}`}>
                                     {urgency.label}
                                   </span>
                                 )}
@@ -1885,7 +1885,7 @@ const Returns: React.FC = () => {
                                     }}
                                   />
                                 )}
-                                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border w-fit font-mono ${
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border w-fit font-mono ${
                                   item.return_type === 'expiry' || item.reason === 'Near Expiry / Expired'
                                     ? 'bg-red-500/10 text-red-500 border-red-500/20'
                                     : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'

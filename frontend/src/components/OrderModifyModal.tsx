@@ -271,7 +271,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-global-modal bg-black/70-xs flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-global-modal bg-black/70 flex items-center justify-center p-4">
       <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-150 flex flex-col text-left overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-border/60 pb-3 shrink-0">
@@ -393,7 +393,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
                       {item.product_name}
                     </span>
                     {item.isNew && (
-                      <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20 inline-block">
+                      <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 inline-block">
                         New
                       </span>
                     )}

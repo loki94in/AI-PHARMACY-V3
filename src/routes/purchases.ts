@@ -87,6 +87,30 @@ function formatExpiryToMMYY(val: string): string {
   return cleaned;
 }
 
+/**
+ * Remove items from live_cart_skipped_medicines when a purchase invoice is saved.
+ * Skips stay until user enters a purchase of that medicine.
+ */
+async function clearSkippedMedicinesOnPurchase(db: any, medicineNames: string[]) {
+  if (!medicineNames || !Array.isArray(medicineNames) || medicineNames.length === 0) return;
+  const cleanNames = Array.from(new Set(
+    medicineNames
+      .map(n => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, ''))
+      .filter(Boolean)
+  ));
+  if (cleanNames.length === 0) return;
+
+  const placeholders = cleanNames.map(() => '?').join(',');
+  try {
+    await db.run(
+      `DELETE FROM live_cart_skipped_medicines WHERE medicine_name_clean IN (${placeholders})`,
+      cleanNames
+    );
+  } catch (err) {
+    console.warn('[Purchases] Failed to clear skipped medicines:', err);
+  }
+}
+
 // Handle Invoice Uploads
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
@@ -810,6 +834,12 @@ router.post('/manual', async (req, res) => {
           } catch (ovErr) {
             console.warn('Overlap detection trigger warning in manual purchase:', ovErr);
           }
+
+          // 5. Clear live cart skipped medicines for purchased items
+          try {
+            const purchasedMedNames = items.map((it: any) => it.medicine || it.medicine_name || it.name).concat(masterMedItems.map((m: any) => m.name));
+            await clearSkippedMedicinesOnPurchase(bgDb, purchasedMedNames);
+          } catch (_) {}
         });
       } catch (bgTxErr) {
         console.warn('[Purchases] Background post-save task transaction warning:', bgTxErr);
@@ -3552,6 +3582,12 @@ router.post('/staged/:id/approve', async (req, res) => {
     if (touchedInvIds.size > 0) {
       triggerExpiryCacheRebuildDebounced(Array.from(touchedInvIds));
     }
+
+    // Clear live cart skipped medicines for approved purchase items
+    try {
+      const purchasedMedNames = itemsToProcess.map((it: any) => it.name || it.medicine_name || it.medicine);
+      await clearSkippedMedicinesOnPurchase(db, purchasedMedNames);
+    } catch (_) {}
 
     // P1 push events: staged approval created/updated stock
     try {

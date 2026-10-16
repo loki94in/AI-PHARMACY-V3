@@ -427,7 +427,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
 
   return (
     <div
-      className="fixed inset-0 z-global-modal bg-bg3/80 flex items-center justify-center p-4 animate-in fade-in"
+      className="fixed inset-0 z-global-modal bg-black/60 flex items-center justify-center p-4 animate-in fade-in"
       onClick={onClose}
     >
       <div
@@ -611,7 +611,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                             />
                             {/* Page Badge */}
-                            <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-bg/90-xs text-[10px] font-bold text-text border border-border">
+                            <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-bg/90 text-[10px] font-bold text-text border border-border">
                               Page {idx + 1}
                             </span>
                             {/* Delete Button */}

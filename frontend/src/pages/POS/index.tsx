@@ -4391,7 +4391,7 @@ const POS = () => {
                   {showPatientSuggestions && (
                     <div className="absolute left-0 right-0 top-full z-dropdown mt-1 bg-bg2 border border-border rounded-xl overflow-hidden max-h-48 flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
                       {isPatientFuzzyMatch && (
-                        <div className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5 shrink-0 select-none">
+                        <div className="px-3 py-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-bold border-b border-amber-500/20 flex items-center gap-1.5 shrink-0 select-none">
                           <span>🔍</span> No exact match. Did you mean:
                         </div>
                       )}
@@ -5052,7 +5052,7 @@ const POS = () => {
                                   {isAlt && <span className="text-[15px] bg-sky/20 text-sky px-1.5 py-0.5 rounded font-bold mr-1">ALT</span>}
                                   <span className="font-semibold text-text group-hover:text-primary transition-all">{item.medicine_name}</span>
                                   {isLowStockAlert && (
-                                    <span className="text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider">
+                                    <span className="text-xs font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider">
                                       ⚠️ Low Stock ({remainingPacks} Left • Refill Needed)
                                     </span>
                                   )}
@@ -5308,7 +5308,7 @@ const POS = () => {
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-bg2/90 hover:bg-sky/20 border border-sky/25 text-text hover:text-sky hover:border-sky/40 transition-all text-[13px] font-semibold whitespace-nowrap shrink-0 cursor-pointer shadow-xs group"
                   >
                     <span className="truncate max-w-[150px] group-hover:font-bold">{s.name}</span>
-                    <span className="font-mono text-primary bg-primary/10 border border-primary/20 px-1 py-0.2 rounded text-xs font-bold">
+                    <span className="font-mono text-primary bg-primary/10 border border-primary/20 px-1 py-0.5 rounded text-xs font-bold">
                       ×{s.most_common_qty || 1}{s.most_common_loose_qty ? `+${s.most_common_loose_qty}` : ''}
                     </span>
                   </button>
@@ -6137,7 +6137,7 @@ const POS = () => {
                                 }`}>
                                 <span>{remainingStock} / {remainingLoose}</span>
                                 {isFullStockInCart && (
-                                  <span className="text-xs uppercase font-bold text-amber-400 ml-0.5" title="100% of total medicine stock allocated to this bill">(All In Cart)</span>
+                                  <span className="text-xs uppercase font-bold text-amber-600 dark:text-amber-400 ml-0.5" title="100% of total medicine stock allocated to this bill">(All In Cart)</span>
                                 )}
                               </div>
                             );

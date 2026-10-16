@@ -81,7 +81,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                   <span>{chip.label}</span>
                   {chip.count !== undefined && (
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                         isActive ? 'bg-primary/25 text-primary' : 'bg-bg3 text-muted'
                       }`}
                     >

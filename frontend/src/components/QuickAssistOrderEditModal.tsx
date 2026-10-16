@@ -426,7 +426,7 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
                           key={preset}
                           type="button"
                           onClick={() => handleNoteChange(idx, preset)}
-                          className="px-1.5 py-0.2 rounded bg-bg2 hover:bg-bg3 border border-border text-[9px] text-muted hover:text-text transition-colors cursor-pointer"
+                          className="px-1.5 py-0.5 rounded bg-bg2 hover:bg-bg3 border border-border text-[9px] text-muted hover:text-text transition-colors cursor-pointer"
                         >
                           {preset}
                         </button>

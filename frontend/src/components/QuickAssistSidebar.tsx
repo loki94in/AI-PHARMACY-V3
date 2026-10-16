@@ -1433,22 +1433,22 @@ export const QuickAssistSidebar = memo(({
               {groupedActionableRefills.map(group => {
                 const isExpanded = expandedRefillKeys.has(group.key);
                 const timingBadge = group.timingCategory === 'Overdue' ? (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-300 border border-rose-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Overdue by ${Math.abs(group.diffDays)} days`}>
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Overdue by ${Math.abs(group.diffDays)} days`}>
                     <ClockIcon size={9} className="shrink-0" />
                     <span>{Math.abs(group.diffDays)}d</span>
                   </span>
                 ) : group.timingCategory === 'Today' ? (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Today">
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Today">
                     <ClockIcon size={9} className="shrink-0" />
                     <span>Today</span>
                   </span>
                 ) : group.timingCategory === 'Tomorrow' ? (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-300 border border-sky-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Tomorrow">
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Tomorrow">
                     <ClockIcon size={9} className="shrink-0" />
                     <span>Tmw</span>
                   </span>
                 ) : (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Due in ${group.diffDays} days`}>
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Due in ${group.diffDays} days`}>
                     <ClockIcon size={9} className="shrink-0" />
                     <span>{group.diffDays}d</span>
                   </span>
@@ -1473,7 +1473,7 @@ export const QuickAssistSidebar = memo(({
                       <div className="flex flex-col min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                           <span className="font-semibold text-xs text-text truncate">{group.patient_name}</span>
-                          <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20" title={`${group.medicines.length} medicine(s)`}>
+                          <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20" title={`${group.medicines.length} medicine(s)`}>
                             <Pill size={9} className="shrink-0" />
                             <span>{group.medicines.length}</span>
                           </span>
@@ -1493,7 +1493,7 @@ export const QuickAssistSidebar = memo(({
                                 handleConfirmRefillGroup(group);
                               }}
                               disabled={confirmingRefillKeys.has(group.key)}
-                              className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[8px] font-bold transition-all cursor-pointer shadow-xs shrink-0"
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[8px] font-bold transition-all cursor-pointer shadow-xs shrink-0"
                               title="1-Click Confirm refill & add directly to Live Cart"
                             >
                               {confirmingRefillKeys.has(group.key) ? (
@@ -1538,7 +1538,7 @@ export const QuickAssistSidebar = memo(({
                                   <span className="font-medium text-text text-[11px] truncate" title={med.medicine_name}>{med.medicine_name}</span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  <span className="px-1 py-0.2 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[9px] font-mono font-bold" title={`Quantity needed: ${med.quantity_needed}`}>
+                                  <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[9px] font-mono font-bold" title={`Quantity needed: ${med.quantity_needed}`}>
                                     x{med.quantity_needed}
                                   </span>
                                   <span className="text-[8.5px] text-muted font-mono" title={`Interval: ${med.refill_interval_days} days`}>{med.refill_interval_days}d</span>
@@ -1874,15 +1874,15 @@ export const QuickAssistSidebar = memo(({
                             {group.items[0]?.product || 'Medicine'}
                           </span>
                           {group.items.length > 1 ? (
-                            <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[8.5px] font-bold shrink-0 border border-cyan-500/20">
+                            <span className="px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[8.5px] font-bold shrink-0 border border-cyan-500/20">
                               +{group.items.length - 1} more
                             </span>
                           ) : (
-                            <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[8.5px] font-mono font-bold shrink-0 border border-cyan-500/20">
+                            <span className="px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[8.5px] font-mono font-bold shrink-0 border border-cyan-500/20">
                               x{group.items[0]?.qty || 1}
                             </span>
                           )}
-                          <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold shrink-0 border ${
+                          <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold shrink-0 border ${
                             group.deliveryMode === 'Home Delivery'
                               ? 'bg-amber-500/15 text-amber-300 border-amber-500/25'
                               : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
@@ -1908,7 +1908,7 @@ export const QuickAssistSidebar = memo(({
                           const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
                           return (
                             <span
-                              className={`flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8.5px] font-mono font-bold uppercase ${
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8.5px] font-mono font-bold uppercase ${
                                 group.overallStatus === 'Inquiry'
                                   ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                                   : group.overallStatus === 'Ready'
@@ -1948,7 +1948,7 @@ export const QuickAssistSidebar = memo(({
                               <span className="font-medium text-text truncate text-[11px]">{item.product}</span>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className="px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 text-[9px] font-mono font-bold shrink-0">
+                              <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 text-[9px] font-mono font-bold shrink-0">
                                 x{item.qty}
                               </span>
                               <button
@@ -2247,11 +2247,11 @@ export const QuickAssistSidebar = memo(({
                             {group.items[0]?.product || 'Special Medicine'}
                           </span>
                           {group.items.length > 1 ? (
-                            <span className="px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-300 text-[8.5px] font-bold shrink-0 border border-amber-500/20">
+                            <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[8.5px] font-bold shrink-0 border border-amber-500/20">
                               +{group.items.length - 1} more
                             </span>
                           ) : (
-                            <span className="px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-300 text-[8.5px] font-mono font-bold shrink-0 border border-amber-500/20">
+                            <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[8.5px] font-mono font-bold shrink-0 border border-amber-500/20">
                               x{group.items[0]?.qty || 1}
                             </span>
                           )}
@@ -2271,7 +2271,7 @@ export const QuickAssistSidebar = memo(({
                           const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
                           return (
                             <span
-                              className={`flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8.5px] font-mono font-bold uppercase ${
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8.5px] font-mono font-bold uppercase ${
                                 group.overallStatus === 'Inquiry'
                                   ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                                   : group.overallStatus === 'Ready'
@@ -2309,7 +2309,7 @@ export const QuickAssistSidebar = memo(({
                               <span className="font-medium text-text truncate text-[11px]">{item.product}</span>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/20 text-[9px] font-mono font-bold shrink-0">
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/20 text-[9px] font-mono font-bold shrink-0">
                                 x{item.qty}
                               </span>
                               <button
@@ -2576,7 +2576,7 @@ export const QuickAssistSidebar = memo(({
               <MessageSquareIcon size={13} className="text-purple-500 shrink-0" />
               <span className="truncate">Staged Messages ({groupedNotifications.length})</span>
               {dailySummary.sentTodayCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-400 text-[8.5px] font-mono font-bold shrink-0 border border-emerald-500/20">
+                <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[8.5px] font-mono font-bold shrink-0 border border-emerald-500/20">
                   {dailySummary.sentTodayCount} Sent
                 </span>
               )}
@@ -2635,18 +2635,18 @@ export const QuickAssistSidebar = memo(({
                             );
                             const totalMedsCount = matchedRefillGroup ? matchedRefillGroup.medicines.length : group.messages.length;
                             return totalMedsCount > 1 ? (
-                              <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20">
+                              <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20">
                                 <Pill size={8} className="shrink-0" />
                                 <span>{totalMedsCount}</span>
                               </span>
                             ) : (
-                              <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20">
+                              <span className="px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20">
                                 Refill
                               </span>
                             );
                           })()}
                           {alreadySent && (
-                            <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 text-[8.5px] font-bold shrink-0 border border-amber-500/25">
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[8.5px] font-bold shrink-0 border border-amber-500/25">
                               Sent
                             </span>
                           )}
@@ -2743,7 +2743,7 @@ export const QuickAssistSidebar = memo(({
                 <ShieldCheckIcon size={14} className="shrink-0" />
                 <span>Image Review Queue</span>
               </div>
-              <span className="px-1.5 py-0.2 rounded-md bg-sky-500/20 text-sky-300 text-[9.5px] font-black font-mono">
+              <span className="px-1.5 py-0.5 rounded-md bg-sky-500/20 text-sky-300 text-[9.5px] font-black font-mono">
                 {imageReviewCount}
               </span>
             </div>

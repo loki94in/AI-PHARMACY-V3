@@ -696,7 +696,7 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
                     <span className={idx < 2 ? 'text-sky font-semibold' : 'text-muted'}>{f.name}</span>
                     <span className="text-[9px] text-muted/80">({formatFileSize(f.sizeBytes)})</span>
                     {idx < 2 && (
-                      <span className="text-[8px] uppercase tracking-wider px-1 py-0.2 rounded bg-sky/15 text-sky font-bold">
+                      <span className="text-[8px] uppercase tracking-wider px-1 py-0.5 rounded bg-sky/15 text-sky font-bold">
                         Keep
                       </span>
                     )}

@@ -1194,7 +1194,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                                   <span className={`font-semibold flex items-center gap-1 ${ med.isPharmarack ? (med.mapped ? 'text-sky-400' : 'text-purple-400') : 'text-muted' }`}>
                                     <Store size={11} /> {med.isPharmarack ? (med.distributor || 'No Distributor') : 'Local Inventory'}
                                     {med.isPharmarack && med.mapped && (
-                                      <span className="text-[8.5px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/25 uppercase font-bold tracking-wider">
+                                      <span className="text-[8.5px] px-1 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/25 uppercase font-bold tracking-wider">
                                         Mapped
                                       </span>
                                     )}

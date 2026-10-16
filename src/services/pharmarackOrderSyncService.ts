@@ -160,36 +160,45 @@ async function fetchOrderLines(db: any, token: string, orderId: number | null, o
 
 /** Fills the product lines of today's distributor rows that were created empty by this sync. */
 async function fillOrderLines(db: any, token: string, orders: any[], todayIso: string): Promise<void> {
-  const byStore = new Map<string, any[]>();
   for (const o of orders) {
-    const k = String(o?.StoreName ?? '').toLowerCase().trim();
-    if (!k || !o?.OrderNo) continue;
+    const orderNo = String(o?.OrderNo ?? '').trim();
+    if (!orderNo) continue;
     const day = orderDayIso(o?.OrderDate);
     if (day && day !== todayIso) continue;
-    byStore.set(k, [...(byStore.get(k) || []), o]);
-  }
-  for (const [, list] of byStore) {
-    const row = await db.get(
-      `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
-      [todayIso, String(list[0].StoreName).trim()]
+
+    // Find the row for THIS specific order
+    let row = await db.get(
+      `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+      [orderNo]
     );
+    if (!row) {
+      // Fallback: check if an unassigned in-app placed order exists for this store today
+      row = await db.get(
+        `SELECT id, items_json FROM pharmarack_placed_orders 
+         WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '') 
+         ORDER BY id ASC LIMIT 1`,
+        [todayIso, String(o?.StoreName ?? '').trim()]
+      );
+      if (row) {
+        await db.run('UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?', [orderNo, row.id]);
+      }
+    }
     if (!row) continue;
+
     let existing: any[] = [];
-    try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { /* treat as empty */ }
+    try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { existing = []; }
     if (existing.length > 0) continue; // the app's own Send All lines are never overwritten
-    const lines: Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> = [];
-    for (const o of list) {
-      const got = await fetchOrderLines(db, token, Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null, String(o.OrderNo));
-      if (got) lines.push(...got);
-    }
-    if (lines.length === 0) continue;
-    if (existing.length === 0) {
-      await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
-    }
+
+    const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
+    const lines = await fetchOrderLines(db, token, orderId, orderNo);
+    if (!lines || lines.length === 0) continue;
+
+    await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
+
     // Auto-ingest lines into store-scoped distributor products
     try {
-      const storeId = Number(list[0]?.storeId || list[0]?.StoreId || 0);
-      const storeName = String(list[0]?.StoreName || '').trim();
+      const storeId = Number(o?.storeId || o?.StoreId || 0);
+      const storeName = String(o?.StoreName || '').trim();
       const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
       if (storeId > 0) {
         await upsertDistributorProducts(lines, storeId, storeName, 'synced_order', todayIso);
@@ -282,19 +291,29 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       [orderNo, orderId, storeId, storeName, amount, today.iso, Date.now()]
     );
 
-    // Make the distributor appear in today's dispatch reminders. If the app already logged an
-    // order for this store today (Send All via WhatsApp) nothing new is added: no double counting.
-    // Item lines are not invented: Pharmarack gives names only, so items_json stays empty.
-    const logged = await db.get(
-      `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
-      [today.iso, storeName]
+    // Check if an existing row in pharmarack_placed_orders matches this specific order_no
+    let logged = await db.get(
+      `SELECT id FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+      [orderNo]
     );
+    // If not matched by order_no, check if an in-app order was logged today for this store without an order_no
     if (!logged) {
-      await db.run(
-        `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-         VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
-        [today.iso, storeId, storeName, orderNo, Date.now()] // placed_at = when the app noticed it
+      const inAppPending = await db.get(
+        `SELECT id FROM pharmarack_placed_orders 
+         WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '') 
+         ORDER BY id ASC LIMIT 1`,
+        [today.iso, storeName]
       );
+      if (inAppPending) {
+        await db.run(`UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?`, [orderNo, inAppPending.id]);
+        logged = inAppPending;
+      } else {
+        await db.run(
+          `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, order_no, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+           VALUES (?, ?, ?, ?, '[]', NULL, ?, 0, NULL)`,
+          [today.iso, storeId, storeName, orderNo, Date.now()] // placed_at = when the app noticed it
+        );
+      }
     }
     fresh.push({ orderNo, storeName, amount, appAlreadySent: Boolean(logged) });
     await audit(db, orderNo, 'order_noticed', { storeName, amount, appAlreadySentOrderMessage: Boolean(logged) });
@@ -715,14 +734,17 @@ export async function syncHistoricalPharmarackOrders(days = 30): Promise<{ ok: b
         [orderNo, orderId, storeId, storeName, amount, orderDate, Date.now()]
       );
 
-      // Check if row in pharmarack_placed_orders exists for this order
+      // Check if row in pharmarack_placed_orders exists for this specific order
       let placedRow = await db.get(
-        `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
+        `SELECT id, items_json, order_no FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1`,
         [orderNo]
       );
       if (!placedRow) {
+        // Only attach to an in-app order on that day for that store IF it lacks an order_no
         placedRow = await db.get(
-          `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
+          `SELECT id, items_json, order_no FROM pharmarack_placed_orders 
+           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '') 
+           ORDER BY id ASC LIMIT 1`,
           [orderDate, storeName]
         );
       }
@@ -745,11 +767,16 @@ export async function syncHistoricalPharmarackOrders(days = 30): Promise<{ ok: b
           [orderDate, storeId, storeName, orderNo, JSON.stringify(lines), Date.now()]
         );
         importedCount++;
-      } else if (lines.length > 0 && (!placedRow.items_json || placedRow.items_json === '[]')) {
-        await db.run(
-          `UPDATE pharmarack_placed_orders SET items_json = ?, order_no = COALESCE(order_no, ?) WHERE id = ?`,
-          [JSON.stringify(lines), orderNo, placedRow.id]
-        );
+      } else {
+        if (!placedRow.order_no) {
+          await db.run(`UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?`, [orderNo, placedRow.id]);
+        }
+        if (lines.length > 0 && (!placedRow.items_json || placedRow.items_json === '[]')) {
+          await db.run(
+            `UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?`,
+            [JSON.stringify(lines), placedRow.id]
+          );
+        }
       }
 
       if (lines.length > 0 && storeId) {

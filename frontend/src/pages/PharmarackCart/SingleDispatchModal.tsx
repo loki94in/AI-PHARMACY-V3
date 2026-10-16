@@ -110,11 +110,11 @@ export const SingleDispatchModal: React.FC<SingleDispatchModalProps> = ({
             type="text"
             value={orderNo}
             onChange={(e) => setOrderNo?.(e.target.value)}
-            placeholder="e.g. 784512, 784519 (all of today's IDs, comma-separated)"
+            placeholder="e.g. 784512 (Official PO ID for this dispatch)"
             className="w-full text-xs px-3 py-2.5 rounded-xl bg-bg border border-glass-border text-text font-mono font-bold focus:outline-none focus:border-emerald-500 transition-all placeholder:text-muted/50"
           />
           <p className="text-[10px] text-muted">
-            All of today's Order IDs for this distributor are auto-included (old + new, comma-separated) so one WhatsApp reminder covers every same-day order. Individual medicine items are omitted for privacy and speed.
+            Enter the official Pharmarack PO number for this dispatch to keep each same-day order distinctly listed with its own medicines in Sent PO History.
           </p>
         </div>
 

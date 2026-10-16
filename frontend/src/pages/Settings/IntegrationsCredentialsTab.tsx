@@ -622,7 +622,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                   : waStatus.status === 'SLEEPING'
                     ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
-                    : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                 : waBusinessToken
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                   : 'bg-bg border border-border text-muted'
@@ -988,7 +988,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
               pharmarackUser && pharmarackPass
                 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
             }`}>
               <span className={`w-1.5 h-1.5 rounded-full ${pharmarackUser && pharmarackPass ? 'bg-emerald-400' : 'bg-amber-400'}`} />
               {pharmarackUser && pharmarackPass ? 'Live B2B Configured' : 'Credentials Missing'}
@@ -1063,7 +1063,7 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                 pharmarackUser && pharmarackPass
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                  : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
               }`}>
                 <span className={`w-2 h-2 rounded-full ${pharmarackUser && pharmarackPass ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                 {pharmarackUser && pharmarackPass ? 'Credentials Configured' : 'Credentials Missing'}

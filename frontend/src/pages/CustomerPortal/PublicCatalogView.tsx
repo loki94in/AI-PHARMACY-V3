@@ -290,7 +290,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                 <Icon className="w-3 h-3" />
                 <span>{cat.label}</span>
                 {typeof count === 'number' && count > 0 && (
-                  <span className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                  <span className={`text-[9px] px-1 py-0.5 rounded-full font-bold ${
                     isSelected ? 'bg-primary-hover text-white' : 'bg-bg text-muted'
                   }`}>
                     {count}
@@ -406,7 +406,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                         {med.category}
                       </span>
                       {currentAngle && gallery.length > 1 && (
-                        <span className="px-1 py-0.2 bg-sky/20 border border-sky/40 text-[8px] font-bold text-sky rounded shadow-xs flex items-center gap-0.5">
+                        <span className="px-1 py-0.5 bg-sky/20 border border-sky/40 text-[8px] font-bold text-sky rounded shadow-xs flex items-center gap-0.5">
                           {currentAngle.is_primary && <span>⭐</span>}
                           <span>{currentAngle.label}</span>
                         </span>
@@ -521,7 +521,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                     </div>
 
                     {hasDiscount && (
-                      <span className="text-[9px] px-1 py-0.2 bg-emerald-500/10 text-emerald-600 font-bold rounded">
+                      <span className="text-[9px] px-1 py-0.5 bg-emerald-500/10 text-emerald-600 font-bold rounded">
                         {discountPer}% OFF
                       </span>
                     )}
@@ -651,7 +651,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       {/* Multi-Angle Quick View Modal */}
       {quickViewMed && (
         <div
-          className="fixed inset-0 z-50 bg-bg3/85 flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-global-modal bg-black/60 flex items-center justify-center p-4 animate-in fade-in"
           onClick={() => setQuickViewMed(null)}
         >
           <div

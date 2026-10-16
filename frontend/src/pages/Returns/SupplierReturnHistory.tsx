@@ -485,11 +485,11 @@ export const SupplierReturnHistory: React.FC<SupplierReturnHistoryProps> = ({
                           {ret.return_no || `RET-${ret.id}`}
                         </span>
                         {ret.return_sub_type === 'good' ? (
-                          <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
+                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-mono">
                             Goods Return
                           </span>
                         ) : (
-                          <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-red-500/10 text-red-500 border border-red-500/20 font-mono">
+                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 border border-red-500/20 font-mono">
                             Expiry
                           </span>
                         )}

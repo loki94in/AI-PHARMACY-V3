@@ -70,7 +70,7 @@ export const CartPurchaseHistoryModal: React.FC<CartPurchaseHistoryModalProps> =
                       <div className="flex items-center gap-2">
                         <strong className="text-text font-bold">{h.distributor_name}</strong>
                         {h.invoice_no && (
-                          <span className="text-[10px] font-mono text-muted bg-bg px-1.5 py-0.2 rounded border border-glass-border">
+                          <span className="text-[10px] font-mono text-muted bg-bg px-1.5 py-0.5 rounded border border-glass-border">
                             Inv: {h.invoice_no}
                           </span>
                         )}

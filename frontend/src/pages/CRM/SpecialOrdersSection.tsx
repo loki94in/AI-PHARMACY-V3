@@ -1550,12 +1550,12 @@ export const SpecialOrdersSection: React.FC = () => {
               {order.pharmarack_rate ? (
                 <span className="text-green-400 font-mono text-[10px]">₹{order.pharmarack_rate}</span>
               ) : null}
-              <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-bold uppercase ${
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase ${
                 order.status === 'Ready' || order.status === 'Arrived'
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                   : order.status === 'Ordered'
                   ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
-                  : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
               }`}>
                 {order.status}
               </span>
@@ -1949,7 +1949,7 @@ export const SpecialOrdersSection: React.FC = () => {
                               {item.name} <span className="text-[10px] text-muted">({item.packaging})</span>
                             </span>
                             {item.scheme && (
-                              <span className="text-[8px] bg-amber-500/15 text-amber-400 border border-amber-500/30 px-1 py-0.2 rounded font-semibold uppercase">
+                              <span className="text-[8px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-1 py-0.5 rounded font-semibold uppercase">
                                 {item.scheme}
                               </span>
                             )}

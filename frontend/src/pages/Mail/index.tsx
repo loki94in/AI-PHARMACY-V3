@@ -896,7 +896,7 @@ const Mail = () => {
               }`}
             >
               <span>All Mails</span>
-              <span className="font-mono text-xs px-1.5 py-0.2 rounded-full bg-bg3 text-muted font-bold">{emails.length}</span>
+              <span className="font-mono text-xs px-1.5 py-0.5 rounded-full bg-bg3 text-muted font-bold">{emails.length}</span>
             </button>
             <button
               onClick={() => setStatusTabFilter('new')}
@@ -908,7 +908,7 @@ const Mail = () => {
             >
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>New (Unopened)</span>
-              <span className="font-mono text-xs px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
+              <span className="font-mono text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
                 {emails.filter(e => !e.isSaved && !e.isSeen).length}
               </span>
             </button>
@@ -922,7 +922,7 @@ const Mail = () => {
             >
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
               <span>Opened</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-bold">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold">
                 {emails.filter(e => !e.isSaved && e.isSeen).length}
               </span>
             </button>
@@ -936,7 +936,7 @@ const Mail = () => {
             >
               <span className="h-1.5 w-1.5 rounded-full bg-sky" />
               <span>Saved &amp; Processed</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-sky/20 text-sky font-bold">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-sky/20 text-sky font-bold">
                 {emails.filter(e => e.isSaved).length}
               </span>
             </button>

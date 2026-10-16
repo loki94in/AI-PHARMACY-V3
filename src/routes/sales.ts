@@ -3,7 +3,7 @@ import { INVENTORY_ACTIVE_WHERE, refreshInventoryActiveStatus } from '../utils/i
 import { calculateSalesGstAndTotals } from '../utils/saleTotals.js';
 import { nextSaleInvoiceNo, lastSaleInvoice } from '../utils/billNumber.js';
 import { applySaleBillEdit, SaleEditError } from '../services/saleBillEditService.js';
-import { normalizeToLocalSqlDateTime, toLocalSqlDateTime } from '../utils/localTime.js';
+import { normalizeToLocalSqlDateTime, toLocalSqlDateTime, SQL_LOCAL_NOW } from '../utils/localTime.js';
 import { Database } from 'sqlite';
 import { dbManager } from '../database/connection.js';
 import { productNameFilterService } from '../services/productNameFilterService.js';
@@ -123,6 +123,32 @@ router.get('/next-invoice', async (_req, res) => {
       timestamp: new Date().toISOString()
     }));
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/sales/today-medicines — returns medicines sold today at POS in shop local time
+router.get('/today-medicines', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(`
+      SELECT DISTINCT 
+        COALESCE(si.medicine_name_snapshot, m.name) as medicine_name,
+        m.id as medicine_id
+      FROM sale_items si
+      JOIN sales_invoices s ON s.id = si.invoice_id
+      LEFT JOIN inventory_master inv ON inv.id = si.inventory_id
+      LEFT JOIN medicines m ON m.id = inv.medicine_id
+      WHERE substr(s.date, 1, 10) = substr(${SQL_LOCAL_NOW}, 1, 10)
+    `);
+    const medicines = (rows || []).map((r: any) => ({
+      medicine_name: r.medicine_name,
+      medicine_id: r.medicine_id,
+      clean_name: String(r.medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    })).filter((m: any) => m.clean_name);
+
+    res.json({ success: true, medicines });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch today sold medicines: ' + err.message });
   }
 });
 
@@ -979,6 +1005,9 @@ router.post('/', async (req, res) => {
     // P1 push events: dashboards/reports/inventory update without polling
     eventService.broadcast('sale_created', { invoice_no, total: Number(total || 0) });
     eventService.broadcast('inventory_changed', { reason: 'sale', invoice_no });
+    eventService.broadcast('pharmarack_cart_changed', { reason: 'sale', invoice_no });
+    eventService.broadcast('refill_updated', { reason: 'sale' });
+    eventService.broadcast('order_updated', { reason: 'sale' });
 
     // Bill-to-learning feedback loop: confirm OCR scanned items in ocr_corrections
     (async () => {

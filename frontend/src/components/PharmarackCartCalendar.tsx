@@ -447,7 +447,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             <Clock size={13} className={currentTab === 'reorder' || reorderCount > 0 ? 'text-amber-500' : 'text-muted'} />
             <span>Reorder Hub</span>
             {reorderCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-500 border border-amber-500/40 font-mono font-bold">
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500/20 text-amber-500 border border-amber-500/40 font-mono font-bold">
                 {reorderCount}
               </span>
             )}
@@ -467,7 +467,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             <ShoppingCart size={13} className={currentTab === 'cart' || !currentTab ? 'text-primary' : 'text-muted'} />
             <span>Supplier PO Grouping</span>
             {activeCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-primary/15 text-primary border border-primary/20 font-mono font-bold">
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-primary/15 text-primary border border-primary/20 font-mono font-bold">
                 {activeCount}
               </span>
             )}
@@ -603,7 +603,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
               <Calendar size={11} className="text-emerald-600 shrink-0" />
               <span>{shopWeeklyOff}</span>
               {pharmacyClosedDates.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-rose-500/15 text-rose-600 border border-rose-500/30">
+                <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-rose-500/15 text-rose-600 border border-rose-500/30">
                   +{pharmacyClosedDates.length}
                 </span>
               )}

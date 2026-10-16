@@ -564,7 +564,7 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                     formData.waBotEnabled
                       ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                      : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                      : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                   }`}>
                     {formData.waBotEnabled ? 'AI Bot Active' : 'AI Bot Paused'}
                   </span>
@@ -798,7 +798,7 @@ export function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSetti
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                   formData.whatsappIdleSleepMin === '0'
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                 }`}>
                   {formData.whatsappIdleSleepMin === '0' ? '24/7 Always Awake' : `Sleeps after ${formData.whatsappIdleSleepMin}m`}
                 </span>

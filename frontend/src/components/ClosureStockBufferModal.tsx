@@ -163,7 +163,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60-xs p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-150">
       <div className="bg-bg border border-border w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-border/40 flex items-center justify-between bg-bg2 shrink-0">
@@ -299,11 +299,11 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                             <span className="text-muted"> / {item.quantity_needed} Str</span>
                           </div>
                           {isShortfall ? (
-                            <span className="text-[10px] text-rose-500 font-sans font-bold bg-rose-500/10 px-1.5 py-0.2 rounded-md">
+                            <span className="text-[10px] text-rose-500 font-sans font-bold bg-rose-500/10 px-1.5 py-0.5 rounded-md">
                               Short by {item.shortfall_packs}
                             </span>
                           ) : (
-                            <span className="text-[10px] text-emerald-500 font-sans font-bold bg-emerald-500/10 px-1.5 py-0.2 rounded-md">
+                            <span className="text-[10px] text-emerald-500 font-sans font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded-md">
                               In Stock
                             </span>
                           )}

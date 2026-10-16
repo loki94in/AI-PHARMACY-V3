@@ -290,7 +290,7 @@ export function MedicineVisualReferenceModal({
                       <div className="text-xs font-bold text-text flex items-center gap-2">
                         <span>{med.name}</span>
                         {med.strength && (
-                          <span className="text-[10px] px-1.5 py-0.2 bg-primary/10 text-primary font-mono rounded">
+                          <span className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary font-mono rounded">
                             {med.strength}
                           </span>
                         )}

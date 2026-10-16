@@ -525,6 +525,16 @@ async function ensureRefillCartLinkSchema(db: any) {
       WHERE store_id IS NOT NULL AND product_code IS NOT NULL AND product_code != ''
     `);
   } catch (_) { /* non-fatal backfill */ }
+
+  // Persistent skipped medicines for Live Cart (persists until a purchase invoice is recorded)
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS live_cart_skipped_medicines (
+      medicine_name_clean TEXT PRIMARY KEY,
+      original_name TEXT NOT NULL,
+      skipped_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_lc_skipped_meds_clean ON live_cart_skipped_medicines (medicine_name_clean)');
 }
 
 /**

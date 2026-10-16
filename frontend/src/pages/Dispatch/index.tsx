@@ -1296,7 +1296,7 @@ const Dispatch = () => {
 
       {/* Prescription Zoom Lightbox Modal */}
       {selectedPrescription && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 p-4">
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
           <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col rounded-3xl p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden">
             <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
               <div className="flex items-center gap-2">
@@ -1491,7 +1491,7 @@ const Dispatch = () => {
               >
                 <Package size={13} />
                 <span>Today's Orders Only</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/30 text-emerald-300 font-bold">
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-emerald-300 font-bold">
                   {distributorReminders.filter(r => r.has_order_today === 1).length}
                 </span>
               </button>
@@ -1506,7 +1506,7 @@ const Dispatch = () => {
               >
                 <Layers size={13} />
                 <span>All Distributors</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-bg3 text-muted font-bold">
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-bg3 text-muted font-bold">
                   {distributorReminders.length}
                 </span>
               </button>

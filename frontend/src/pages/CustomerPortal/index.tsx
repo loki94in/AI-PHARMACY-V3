@@ -2102,15 +2102,15 @@ export default function CustomerPortal() {
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="font-semibold block truncate">{item.product}</span>
                                 {item.itemType === 'special_order' ? (
-                                  <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/15 text-indigo-400 font-bold border border-indigo-500/30 shrink-0">
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-bold border border-indigo-500/30 shrink-0">
                                     Special
                                   </span>
                                 ) : item.itemType === 'new' ? (
-                                  <span className="text-[9px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-400 font-bold border border-sky-500/30 shrink-0">
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-sky-500/15 text-sky-400 font-bold border border-sky-500/30 shrink-0">
                                     New
                                   </span>
                                 ) : (
-                                  <span className="text-[9px] px-1 py-0.2 rounded bg-primary/15 text-primary font-bold border border-primary/30 shrink-0">
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-primary/15 text-primary font-bold border border-primary/30 shrink-0">
                                     Refill
                                   </span>
                                 )}
@@ -2190,7 +2190,7 @@ export default function CustomerPortal() {
 
       {/* Public Catalog Cart Checkout Modal */}
       {isCartModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-global-modal bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-bg2 border border-border rounded-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
