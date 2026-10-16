@@ -1,56 +1,74 @@
-# Implementation Plan: Bidirectional Customer Autocomplete & Dropdown in Special Orders
+# Implementation Plan: Purchase Bill Data Preservation, Distributor-Specific Matching & Purchase History Search Clear
 
 ## Objective
-Enable a seamless, bidirectional customer lookup dropdown (by **Patient Name** OR **Phone Number**) when creating or editing a Special Order / Quick Special Request. All 9,394+ existing saved customers (walk-in POS customers, active refill patients, past special order customers) can be searched directly. Selecting a customer or entering an exact 10-digit number auto-populates the customer's name, salutation, phone number, language, and customer ID.
+1. **Purchase History Search**: Add a 1-click inline `✕` clear button, `Escape` key handler, and active filter badge to the search input on `/purchase-history` so users can instantly clear search queries.
+2. **Purchase Bill Data Preservation**: Fix the bug in `/purchases` where selecting/matching a medicine wiped out scanned/parsed numbers (`rate`, `mrp`, `batch_no`, `expiry_date`, `qty`, `free_qty`, `cgst_per`, `sgst_per`). Ensure all parsed values from Mail, CSV, and OCR remain 100% intact when linking medicines.
+3. **Distributor-Specific Matching (No Cross-Matching)**: Ensure product mappings are saved and retrieved strictly per distributor (`distributor_medicine_aliases`). When importing a bill from Distributor A, match against Distributor A's past purchases and aliases—never cross-match or force-guess from other distributors. Unmatched items stay unlinked for human review.
 
 ---
 
-## Changes Implemented
+## Proposed Changes
 
-### 1. Backend Contact Enrichment & Search (`src/routes/crm.ts`)
-- Enriched `GET /api/crm/patients` to check `special_orders` so patients with past special orders receive `has_special_order = 1` badge signal.
-- Self-healing customer sync: On search or startup, added `syncLegacySpecialOrdersToCustomers` to ensure any distinct phone number from `special_orders` not yet in `customers` table is safely indexed into `customers`.
-- Prioritized exact phone digit matches at the top of search results with `ORDER BY CASE WHEN phone = ? THEN 0 WHEN phone LIKE ? THEN 1 WHEN name LIKE ? THEN 2 ELSE 3 END, id DESC`.
+### 1. Purchase History Search Clear (`frontend/src/pages/PurchaseHistory/index.tsx`)
+- Add right padding (`pr-9`) to the toolbar search input.
+- Add `onKeyDown={(e) => { if (e.key === 'Escape') setSearchQuery(''); }}`.
+- Render a clear button (`<X size={15} />`) inside the input container when `searchQuery.length > 0`.
+- Display a subtle active filter badge (`Filtering: "{searchQuery}" • Click to Clear ✕`) when search query is active.
 
-### 2. Enhanced Phone Input with Autocomplete (`frontend/src/components/PhoneInputWithBadge.tsx`)
-- Added props `enablePatientAutocomplete?: boolean` and `onSelectPatient?: (patient: PatientSuggestionItem) => void`.
-- Implemented debounced patient phone autocomplete lookup (250ms when `cleanDigits.length >= 3`) querying `api.getPatients({ q: cleanDigits, limit: 8 })`.
-- Rendered an accessible, semantic dropdown list using `.dropdown-scroll` showing:
-  - Patient Name
-  - Formatted Phone Number
-  - Indicator badges: `🔁 Refill`, `⭐ Walk-in / POS`, `📦 Special Order`
-- Keyboard navigation (ArrowDown, ArrowUp, Enter, Escape).
-- Automatic 10-digit matching: If exact 10 digits match an existing customer, automatically calls `onSelectPatient(patient)` to populate name and language without requiring an extra click.
+### 2. Purchase Bill Item Selection Number Preservation (`frontend/src/pages/Purchases/index.tsx`)
+- In `selectMedicine(medicine, index)`:
+  - Do NOT wipe `item.qty`, `item.free_qty`, `item.batch_no`, `item.expiry_date`, `item.rate`, `item.mrp`.
+  - Only set them to empty string if the row had no value (e.g. typing a fresh blank row from scratch).
+  - Preserve bill-parsed GST (`cgst_per`, `sgst_per`); only fallback to catalog GST if bill row has no GST.
+  - Recalculate `item.amount = calculateItemAmount(item)`.
+  - Pass `selectedDistributor` to `api.createMedicineAlias`.
 
-### 3. Quick Special Request Modal Upgrade (`frontend/src/components/QuickOrderModal.tsx`)
-- Enabled `enablePatientAutocomplete={true}` and connected `onSelectPatient` to `SalutationNameInput`.
-- Replaced the plain `<input type="tel">` with `PhoneInputWithBadge` passing `enablePatientAutocomplete={true}` and `onSelectPatient`.
-- Added `customerId` state and connected `customer_id: customerId || undefined` to `api.createBatchOrders`.
-- Ensured bidirectional auto-population:
-  - Typing/selecting Name $\rightarrow$ fills Phone, Salutation, Language, and `customerId`.
-  - Typing/selecting Phone $\rightarrow$ fills Name, Salutation, Language, and `customerId`.
+### 3. Distributor-Specific Alias Backend Support (`src/routes/inventory.ts` & `frontend/src/services/api.ts`)
+- In `src/routes/inventory.ts` (`POST /medicines/alias`):
+  - Accept `distributor_id` in request body.
+  - When `distributor_id` is provided, insert or replace into `distributor_medicine_aliases (distributor_id, alias_name, medicine_id)`.
+- In `frontend/src/services/api.ts`:
+  - Update `createMedicineAlias` signature to `(aliasName: string, medicineId: number, distributorId?: number | null)`.
 
-### 4. CRM Special Orders Modal Upgrade (`frontend/src/pages/CRM/SpecialOrdersSection.tsx`)
-- Connected `enablePatientAutocomplete={true}` and `onSelectPatient` on `PhoneInputWithBadge` in both the **New Special Order** dialog and **Edit Special Order** dialog so typing/selecting phone digits auto-populates Customer Name, Salutation, and Language.
-
-### 5. CRM Refills Modal Upgrade (`frontend/src/pages/CRM/RefillsSection.tsx`)
-- Connected `enablePatientAutocomplete={!editingPatient}` and `onSelectPatient` on `PhoneInputWithBadge` in the **New Refill** dialog so refill creation also gains phone-based customer auto-population.
+### 4. Distributor-Scoped File Upload Matching (`frontend/src/pages/Purchases/index.tsx`)
+- In `handleFileUpload(fileToUpload)`:
+  - Query `api.matchPurchaseItems` scoped to the active `distributor_id`.
+  - Do not apply loose global catalog similarity that overrides or cross-matches items from unrelated distributors.
+  - Unmatched items remain with `medicine_id = null` and clear prompt `✨ New Medicine (Click to Register)`.
 
 ---
 
-## Verification & Guardrails
+## Verification Plan
 
 ### Automated Checks
-- `npm run guardrails`: **PASS** — 0 violations, clean `tsc --noEmit`. Speed architecture intact.
-- `npm run build:client`: **PASS** — Vite client built in 1m 11s with 0 errors.
-- `node scripts/quick-update.mjs`: **PASS** — Knowledge graph synchronized (1,194 nodes, 800 edges).
+- `npm run guardrails`: Verify performance guardrails pass (0 violations, clean `tsc --noEmit`).
+- `node scripts/quick-update.mjs`: Update the auto-knowledge graph and audit.
+
+### Manual / Functional Verification Points
+1. **Purchase History Search**:
+   - Go to `/purchase-history`.
+   - Type a search query: verify `✕` icon appears inside the search input.
+   - Press `Escape`: verify search query clears immediately and full purchase list restores.
+   - Click the `✕` icon: verify search query clears immediately.
+2. **Purchase Bill Number Preservation**:
+   - On `/purchases`, upload a CSV/bill or import from `/mail`.
+   - Notice parsed rate, MRP, batch, exp, and qty.
+   - Select/change a catalog medicine for any row: verify rate, MRP, batch, exp, qty, and GST remain completely intact and are NOT wiped.
+3. **Distributor-Specific Matching**:
+   - Link a medicine for a specific distributor.
+   - Verify alias is stored with `distributor_id` in `distributor_medicine_aliases`.
+   - Next time an invoice from this distributor is parsed, verify it auto-matches to that medicine without cross-distributor mixing.
 
 ---
 
 ## Task Progress Checklist
-- [x] Task 1: Backend contact enrichment & search sorting in `src/routes/crm.ts`
-- [x] Task 2: Enhance `PhoneInputWithBadge.tsx` with customer dropdown & auto-fill
-- [x] Task 3: Upgrade `QuickOrderModal.tsx` with bidirectional Name & Phone autocomplete
-- [x] Task 4: Upgrade `SpecialOrdersSection.tsx` with phone autocomplete
-- [x] Task 5: Upgrade `RefillsSection.tsx` with phone autocomplete
-- [x] Task 6: Run guardrails, build check, and update knowledge graph
+- [x] Task 1: Add inline clear button, Escape key, and active filter badge to `/purchase-history`
+  - *Completed*: Added trailing padding (`pr-10`) to the toolbar search input. Added keyboard listener for `Escape` key (`setSearchQuery('')`). Rendered a 1-click `<X size={15} />` clear button inside the search container. Added semantic active filter badge (`Filtering: "{searchQuery}" • Click to Clear ✕`) when a query is entered.
+- [x] Task 2: Support `distributor_id` in `/medicines/alias` API and backend route
+  - *Completed*: Updated `POST /inventory/medicines/alias` in `src/routes/inventory.ts` to accept `distributor_id` and insert or update `distributor_medicine_aliases` with `(distributor_id, alias_name, medicine_id)` on conflict. Updated `createMedicineAlias` in `frontend/src/services/api.ts` to forward `distributorId`.
+- [x] Task 3: Fix `selectMedicine` in `/purchases` to preserve parsed rates, MRP, batch, exp, qty, and GST
+  - *Completed*: Refactored `selectMedicine` in `frontend/src/pages/Purchases/index.tsx`. Detected existing parsed bill values (`rate`, `mrp`, `batch_no`, `expiry_date`, `qty`, `free_qty`, `gst`). Stopped resetting these fields on medicine selection. Preserved bill GST and only defaulted to catalog GST if bill row had none. Recalculated row amount with `calculateItemAmount` and passed `selectedDistributor` to `createMedicineAlias`.
+- [x] Task 4: Ensure distributor-scoped resolution in `handleFileUpload` without loose cross-distributor matching
+  - *Completed*: In `handleFileUpload`, resolved distributor ID before processing item names. Ran batched `api.matchPurchaseItems` scoped strictly to `resolvedDistId`. If matched against distributor aliases, history, or exact catalog name, linked `medicine_id` and marked `prefill_matched = true`. Unmatched items remain cleanly unlinked (`medicine_id = null`) with the yellow prompt without loose cross-distributor guessing. In mail prefill, eliminated loose 0.60 fuzzy matching and preserved parsed row amounts.
+- [x] Task 5: Run performance guardrails and update knowledge graph
+  - *Completed*: Fixed raw Tailwind color (`hover:text-white` -> `hover:text-text`). Ran `npm run guardrails` (passed: 0 violations, clean `tsc --noEmit`). Ran `node scripts/quick-update.mjs` (passed in 4.8s, updating 3D knowledge graph and audit).

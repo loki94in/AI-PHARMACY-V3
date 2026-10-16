@@ -2060,23 +2060,40 @@ const Purchases: React.FC = () => {
 
     item.medicine_id = medicine.id;
     item.medicine_name = medicine.name;
-    item.manufacturer = medicine.manufacturer;
-    // Manual bill: keep qty, batch, expiry, rate, mrp clean for fresh entry
-    item.qty = '';
-    item.free_qty = '';
-    item.batch_no = '';
-    item.expiry_date = '';
-    item.rate = '';
-    item.mrp = '';
-    item.gstTouched = false; // fresh selection → uses product catalog GST
-    // Tax comes from the bill: left blank (not 6%) unless the medicine already has a saved rate.
-    item.cgst_per = (medicine.cgst_per !== undefined && medicine.cgst_per !== null && medicine.cgst_per !== 0) ? medicine.cgst_per : '';
-    item.sgst_per = (medicine.sgst_per !== undefined && medicine.sgst_per !== null && medicine.sgst_per !== 0) ? medicine.sgst_per : '';
+    item.manufacturer = medicine.manufacturer || item.manufacturer;
+
+    // Check if row already has values from a parsed bill, CSV, or OCR
+    const hasParsedBillData = (
+      (item.rate !== undefined && item.rate !== null && item.rate !== '' && Number(item.rate) > 0) ||
+      (item.mrp !== undefined && item.mrp !== null && item.mrp !== '' && Number(item.mrp) > 0) ||
+      (item.qty !== undefined && item.qty !== null && item.qty !== '' && Number(item.qty) > 0) ||
+      Boolean(item.batch_no && String(item.batch_no).trim()) ||
+      Boolean(item.expiry_date && String(item.expiry_date).trim())
+    );
+
+    if (!hasParsedBillData) {
+      // Fresh manual entry row: keep fields blank for fresh user entry
+      item.qty = '';
+      item.free_qty = '';
+      item.batch_no = '';
+      item.expiry_date = '';
+      item.rate = '';
+      item.mrp = '';
+    }
+
+    // Preserve parsed bill GST if present; only default to catalog GST if bill had no tax specified
+    const hasRowGst = (item.cgst_per !== undefined && item.cgst_per !== null && item.cgst_per !== '' && Number(item.cgst_per) > 0) ||
+                      (item.sgst_per !== undefined && item.sgst_per !== null && item.sgst_per !== '' && Number(item.sgst_per) > 0);
+    if (!hasRowGst) {
+      item.cgst_per = (medicine.cgst_per !== undefined && medicine.cgst_per !== null && medicine.cgst_per !== 0) ? medicine.cgst_per : '';
+      item.sgst_per = (medicine.sgst_per !== undefined && medicine.sgst_per !== null && medicine.sgst_per !== 0) ? medicine.sgst_per : '';
+    }
+
     item.stock_qty = medicine.stock_qty || 0;
     item.loose_qty = medicine.loose_qty || 0;
     item.scheme_paid = medicine.scheme_paid;
     item.scheme_free = medicine.scheme_free;
-    item.amount = 0;
+    item.amount = calculateItemAmount(item);
 
     // Apply immediately so the UI feels instant
     setItems(newItems);
@@ -2084,12 +2101,17 @@ const Purchases: React.FC = () => {
     setActiveSearchIndex(null);
     setSearchHighlightIndex(-1);
 
-    // Focus Batch field of the current row so the user can enter batch and price details!
-    focusRowField(index, 'batch_no');
+    // Focus navigation: if batch is missing, focus batch; otherwise focus qty
+    if (!item.batch_no) {
+      focusRowField(index, 'batch_no');
+    } else if (!item.qty) {
+      focusRowField(index, 'qty');
+    }
 
-    // Alias creation: fire-and-forget in background
-    if (item.original_name && item.original_name !== medicine.name) {
-      api.createMedicineAlias(item.original_name, medicine.id).catch(e => console.error('Failed to create alias:', e));
+    // Alias creation: fire-and-forget in background scoped to selectedDistributor (no cross-matching)
+    const aliasSource = (item.original_name || item.name || '').trim();
+    if (aliasSource && aliasSource.toLowerCase() !== medicine.name.toLowerCase()) {
+      api.createMedicineAlias(aliasSource, medicine.id, selectedDistributor).catch(e => console.error('Failed to create alias:', e));
     }
 
     // One-shot history load for this medicine+distributor warms the cache for batch suggestions
@@ -2257,7 +2279,7 @@ const Purchases: React.FC = () => {
                   return;
                 }
 
-                // 2. Fallback to catalog search for EXACT matches or FUZZY matches
+                // 2. Exact match fallback only (no cross-distributor fuzzy guessing)
                 let searchResults: CatalogSearchRow[] = [];
                 try {
                   searchResults = (await api.catalogSearch(mName)) as CatalogSearchRow[];
@@ -2266,65 +2288,21 @@ const Purchases: React.FC = () => {
                 }
 
                 const matchedList = searchResults || [];
-                let bestMatch: CatalogSearchRow | null = null;
+                const exactMatch = matchedList.find(m => m.name && m.name.toLowerCase().trim() === mName.toLowerCase().trim()) ?? null;
 
-                // Check for exact match first
-                if (matchedList.length > 0) {
-                  bestMatch = matchedList.find(m => m.name && m.name.toLowerCase() === mName.toLowerCase()) ?? null;
-                }
-
-                // If no exact match, calculate similarities and find the best one >= 0.60
-                if (!bestMatch && matchedList.length > 0) {
-                  const scored = matchedList.map(m => ({
-                    item: m,
-                    score: calculateSimilarity(mName, m.name)
-                  })).filter(s => s.score >= 0.60);
-
-                  if (scored.length > 0) {
-                    scored.sort((a, b) => b.score - a.score);
-                    bestMatch = scored[0]!.item;
-                  }
-                }
-
-                // If still no match, try searching for the first word/token of length >= 3
-                if (!bestMatch) {
-                  const parts = mName.split(/[\s-]+/);
-                  let tokens = parts[0];
-                  const genericPrefixes = ['tab', 'tabs', 'cap', 'caps', 'inj', 'syp', 'susp', 'tablet', 'capsule', 'injection', 'syrup', 'drop', 'drops', 'ointment', 'cream', 'gel'];
-                  if (tokens && (genericPrefixes.includes(tokens.toLowerCase()) || tokens.length < 3) && parts.length > 1) {
-                    tokens = parts[1];
-                  }
-                  if (tokens && tokens.length >= 3) {
-                    let tokenResults: CatalogSearchRow[] = [];
-                    try {
-                      tokenResults = (await api.catalogSearch(tokens)) as CatalogSearchRow[];
-                    } catch {}
-
-                    const scored = (tokenResults || []).map(m => ({
-                      item: m,
-                      score: calculateSimilarity(mName, m.name)
-                    })).filter(s => s.score >= 0.60);
-
-                    if (scored.length > 0) {
-                      scored.sort((a, b) => b.score - a.score);
-                      bestMatch = scored[0]!.item;
-                    }
-                  }
-                }
-
-                if (bestMatch) {
-                  updatedItems[i].medicine_id = bestMatch.id;
-                  updatedItems[i].medicine_name = bestMatch.name;
-                  updatedItems[i].manufacturer = bestMatch.manufacturer || updatedItems[i].manufacturer;
+                if (exactMatch) {
+                  updatedItems[i].medicine_id = exactMatch.id;
+                  updatedItems[i].medicine_name = exactMatch.name;
+                  updatedItems[i].manufacturer = exactMatch.manufacturer || updatedItems[i].manufacturer;
                   updatedItems[i].amount = calculateItemAmount(updatedItems[i]);
                   updatedItems[i].prefill_matched = true;
                   hasChanges = true;
                 } else {
-                  // Suggest the original parsed name so it is visible and user can modify/correct it
+                  // Keep item unlinked for explicit human review/registration. Preserve parsed bill amounts!
                   updatedItems[i].medicine_id = null;
                   updatedItems[i].medicine_name = mName;
                   updatedItems[i].manufacturer = '';
-                  updatedItems[i].amount = 0;
+                  updatedItems[i].amount = calculateItemAmount(updatedItems[i]);
                   hasChanges = true;
                 }
               } catch (err) {
@@ -3022,60 +3000,6 @@ const Purchases: React.FC = () => {
         newItems = [createEmptyItem()];
       }
 
-      // Auto-resolve medicine IDs and names for the uploaded items, and backfill missing rate/mrp from catalog
-      for (let i = 0; i < newItems.length; i++) {
-        const mName = newItems[i].original_name;
-        if (!mName) continue;
-        try {
-          // 1. Check for learned mapping first
-          const learned = await api.getLearnedMapping(mName);
-          if (learned && learned.success && learned.mapped && learned.medicine) {
-            const match = learned.medicine;
-            newItems[i].medicine_id = match.id;
-            newItems[i].medicine_name = match.name;
-            newItems[i].manufacturer = match.manufacturer || newItems[i].manufacturer;
-            // MRP and rate are never borrowed from the catalog: they come from the bill.
-            continue;
-          }
-
-          // 2. Fallback to catalog search for EXACT or FUZZY matches
-          const res = (await api.catalogSearch(mName)) as CatalogSearchRow[];
-          const matchedList = res || [];
-          let bestMatch: CatalogSearchRow | null = null;
-          if (matchedList.length > 0) {
-            bestMatch = matchedList.find(m => m.name && m.name.toLowerCase() === mName.toLowerCase()) ?? null;
-            if (!bestMatch) {
-              const scored = matchedList.map(m => ({
-                item: m,
-                score: calculateSimilarity(mName, m.name)
-              })).filter(s => s.score >= 0.60);
-              if (scored.length > 0) {
-                scored.sort((a, b) => b.score - a.score);
-                bestMatch = scored[0]!.item;
-              }
-            }
-          }
-
-          if (bestMatch) {
-            newItems[i].medicine_id = bestMatch.id;
-            newItems[i].medicine_name = bestMatch.name;
-            newItems[i].manufacturer = bestMatch.manufacturer || newItems[i].manufacturer;
-          } else {
-            newItems[i].medicine_id = null;
-            newItems[i].medicine_name = mName;
-            newItems[i].manufacturer = '';
-          }
-        } catch (err) {
-          console.error('Error auto-resolving uploaded medicine:', mName, err);
-        }
-      }
-
-      newItems.forEach(item => {
-        item.amount = calculateItemAmount(item);
-      });
-
-      setItems(newItems);
-
       if (response.data.invoice_no) {
         setInvoiceNo(response.data.invoice_no);
       } else {
@@ -3095,15 +3019,72 @@ const Purchases: React.FC = () => {
         setGlobalCdPer(response.data.global_cd_per || '');
       }
 
+      let resolvedDistId: number | null = response.data.distributor_id || selectedDistributor || null;
       if (response.data.distributor_name) {
         setDistributorSearch(response.data.distributor_name);
         const match = distributors.find(d => d.name && d.name.toLowerCase() === response.data.distributor_name.toLowerCase());
         if (match) {
+          resolvedDistId = match.id;
           setSelectedDistributor(match.id);
         } else {
           setSelectedDistributor(null);
         }
       }
+
+      // Auto-resolve items strictly using distributor-scoped matching (no cross-distributor guessing)
+      const uniqueNames = Array.from(
+        new Set(newItems.map(it => (it.original_name || '').trim()).filter(Boolean))
+      );
+      const identityMap = new Map<string, { medicine_id: number; matched_name: string | null }>();
+
+      if (uniqueNames.length > 0) {
+        try {
+          const matchResponses = await Promise.all(
+            chunkArray(uniqueNames, 200).map(chunk =>
+              api.matchPurchaseItems(chunk, resolvedDistId)
+            )
+          );
+          for (const res of matchResponses) {
+            const results = (res as { results?: Array<{ input: string; medicine_id: number | null; matched_name: string | null }> }).results;
+            if (Array.isArray(results)) {
+              for (const r of results) {
+                if (r && r.input && r.medicine_id) {
+                  identityMap.set(r.input.trim().toLowerCase(), {
+                    medicine_id: r.medicine_id,
+                    matched_name: r.matched_name || null,
+                  });
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[Purchases] handleFileUpload matchPurchaseItems failed:', err);
+        }
+      }
+
+      for (let i = 0; i < newItems.length; i++) {
+        const mName = (newItems[i].original_name || '').trim();
+        if (!mName) continue;
+        const hit = identityMap.get(mName.toLowerCase());
+        if (hit) {
+          newItems[i].medicine_id = hit.medicine_id;
+          if (hit.matched_name) {
+            newItems[i].medicine_name = hit.matched_name;
+          }
+          newItems[i].prefill_matched = true;
+        } else {
+          // Strictly unlinked: no loose cross-distributor guessing that overrides items
+          newItems[i].medicine_id = null;
+          newItems[i].medicine_name = mName;
+          newItems[i].manufacturer = '';
+        }
+      }
+
+      newItems.forEach(item => {
+        item.amount = calculateItemAmount(item);
+      });
+
+      setItems(newItems);
 
       if (response.data.total_amount !== undefined && response.data.total_amount > 0) {
         const parsedCnAmt = parseFloat(response.data.cn_amount);

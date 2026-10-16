@@ -1274,7 +1274,7 @@ export const api = {
   catalogSearch: (q: string, signal?: AbortSignal) =>
     apiClient.get('/inventory/catalog-search', { params: { q: (q || '').trim().replace(/\s+/g, ' ') }, signal, timeout: 8000 }).then(res => res.data),
   getBatchInfo: (medicineId: number, batchNo: string) => apiClient.get('/inventory/batch-info', { params: { medicine_id: medicineId, batch_no: batchNo } }).then(res => res.data),
-  createMedicineAlias: (aliasName: string, medicineId: number) => apiClient.post('/inventory/medicines/alias', { alias_name: aliasName, medicine_id: medicineId }).then(res => res.data),
+  createMedicineAlias: (aliasName: string, medicineId: number, distributorId?: number | null) => apiClient.post('/inventory/medicines/alias', { alias_name: aliasName, medicine_id: medicineId, distributor_id: distributorId }).then(res => res.data),
   getLearnedMapping: (name: string) => apiClient.get('/learning/mapping', { params: { name } }).then(res => res.data),
   getManufacturers: (q: string) => apiClient.get('/manufacturers', { params: { q } }).then(res => res.data),
   getMarketedBy: (q: string) => apiClient.get('/marketed-by', { params: { q } }).then(res => res.data),

@@ -613,18 +613,30 @@ router.post('/', async (req, res) => {
 });
 // Save a custom medicine alias (distributor name mapping)
 router.post('/medicines/alias', async (req, res) => {
-  const { alias_name, medicine_id } = req.body;
+  const { alias_name, medicine_id, distributor_id } = req.body;
   if (!alias_name || !medicine_id) {
     return res.status(400).json({ error: 'alias_name and medicine_id are required' });
   }
   let db;
   try {
     db = await dbManager.getConnection();
-    await db.run(
-      'INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)',
-      [alias_name, medicine_id]
-    );
-        res.json({ success: true, message: 'Alias saved successfully' });
+    const cleanAlias = String(alias_name).trim();
+    const distId = distributor_id ? Number(distributor_id) : null;
+
+    if (distId && !isNaN(distId)) {
+      await db.run(
+        `INSERT INTO distributor_medicine_aliases (distributor_id, alias_name, medicine_id)
+         VALUES (?, ?, ?)
+         ON CONFLICT(distributor_id, alias_name) DO UPDATE SET medicine_id = excluded.medicine_id`,
+        [distId, cleanAlias.toLowerCase(), medicine_id]
+      );
+    } else {
+      await db.run(
+        'INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)',
+        [cleanAlias, medicine_id]
+      );
+    }
+    res.json({ success: true, message: 'Alias saved successfully' });
   } catch (error: any) {
     console.error('Save alias error:', error.message);
     res.status(500).json({ error: 'Failed to save alias' });

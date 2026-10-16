@@ -1695,6 +1695,7 @@ export default function PharmarackCart() {
   const [selectedBatchDeliveryBoys, setSelectedBatchDeliveryBoys] = useState<Record<number, number | null>>({});
   const [bulkApplyDeliveryBoyId, setBulkApplyDeliveryBoyId] = useState<string>('');
   const [includeMedicineListInBatch, setIncludeMedicineListInBatch] = useState<boolean>(false);
+  const [selectedBatchStoreIds, setSelectedBatchStoreIds] = useState<Set<number>>(new Set());
   // Single WhatsApp order dispatch modal state
   const [singleDispatchTarget, setSingleDispatchTarget] = useState<Distributor | null>(null);
   const [singleDispatchBoyId, setSingleDispatchBoyId] = useState<number | null>(null);
@@ -1702,11 +1703,9 @@ export default function PharmarackCart() {
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
-    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d, isItemIncludedInDispatch).length > 0);
-    if (belowLimit.length > 0) {
-      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(d => getOrderLimitIssues(d, isItemIncludedInDispatch)).join(' | ')}`, 'error');
-      return;
-    }
+
+    // Default select all available cart distributors
+    setSelectedBatchStoreIds(new Set(distributors.map(d => d.storeId)));
     setIsValidatingBeforeSend(true);
     try {
       // 1. Force a live round-trip fresh fetch from upstream Pharmarack (?fresh=true)
@@ -1724,6 +1723,8 @@ export default function PharmarackCart() {
       });
       setSelectedBatchDeliveryBoys(initialMap);
       setBulkApplyDeliveryBoyId('');
+      // Refresh selected stores to include all post-refresh distributors
+      setSelectedBatchStoreIds(new Set(distributors.map(d => d.storeId)));
     } catch (err) {
       console.warn('Pre-send live cart sync failed:', err);
     } finally {
@@ -2640,7 +2641,8 @@ export default function PharmarackCart() {
   const handleSendAllWhatsAppOrders = async (
     bypassMissingBoyCheck = false,
     customDeliveryBoys?: Record<number, number | null>,
-    includeMedicineList = false
+    includeMedicineList = false,
+    targetStoreIds?: number[]
   ) => {
     if (isSendingBatchRef.current) {
       toastEvent.trigger('A WhatsApp batch send is already in progress.', 'info');
@@ -2666,29 +2668,37 @@ export default function PharmarackCart() {
       return;
     }
 
-    const mapped = distributors.filter(d => isDistributorMapped(d));
-    const unmapped = distributors.filter(d => !isDistributorMapped(d));
+    const activeStoreIdSet = targetStoreIds && targetStoreIds.length > 0
+      ? new Set(targetStoreIds)
+      : null;
 
-    if (distributors.length === 0) {
+    const targetDistributors = activeStoreIdSet
+      ? distributors.filter(d => activeStoreIdSet.has(d.storeId))
+      : distributors;
+
+    if (targetDistributors.length === 0) {
       isSendingBatchRef.current = false;
       setIsSendingBatchWhatsApp(false);
-      toastEvent.trigger('Your cart is empty.', 'error');
+      toastEvent.trigger('No distributors selected to order.', 'error');
       return;
     }
 
-    // Block the whole batch until every unsent store meets its Pharmarack ordering limits
-    const belowLimit = distributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d, isItemIncludedInDispatch).length > 0);
+    const mapped = targetDistributors.filter(d => isDistributorMapped(d));
+    const unmapped = targetDistributors.filter(d => !isDistributorMapped(d));
+
+    // Block the batch only if any SELECTED unsent store fails its ordering limits
+    const belowLimit = targetDistributors.filter(d => sentWaStatusMap[d.storeId] !== 'success' && getOrderLimitIssues(d, isItemIncludedInDispatch).length > 0);
     if (belowLimit.length > 0) {
       isSendingBatchRef.current = false;
       setIsSendingBatchWhatsApp(false);
-      toastEvent.trigger(`Send All blocked — fix these first: ${belowLimit.flatMap(d => getOrderLimitIssues(d, isItemIncludedInDispatch)).join(' | ')}`, 'error');
+      toastEvent.trigger(`Send blocked for selected stores — fix these first: ${belowLimit.flatMap(d => getOrderLimitIssues(d, isItemIncludedInDispatch)).join(' | ')}`, 'error');
       return;
     }
 
     if (mapped.length === 0) {
       isSendingBatchRef.current = false;
       setIsSendingBatchWhatsApp(false);
-      toastEvent.trigger('No distributor phone numbers linked. Please add phone numbers.', 'info');
+      toastEvent.trigger('No distributor phone numbers linked for selected stores. Please add phone numbers.', 'info');
       if (unmapped.length > 0) handleOpenEditModal(unmapped[0]);
       return;
     }
@@ -7272,6 +7282,8 @@ export default function PharmarackCart() {
         setBulkApplyDeliveryBoyId={setBulkApplyDeliveryBoyId}
         selectedBatchDeliveryBoys={selectedBatchDeliveryBoys}
         setSelectedBatchDeliveryBoys={setSelectedBatchDeliveryBoys}
+        selectedBatchStoreIds={selectedBatchStoreIds}
+        setSelectedBatchStoreIds={setSelectedBatchStoreIds}
         batchSummaryList={batchSummaryList}
         finalBatchTotalQty={finalBatchTotalQty}
         finalBatchTotalAmount={finalBatchTotalAmount}
@@ -7281,10 +7293,10 @@ export default function PharmarackCart() {
         limitIssuesMap={Object.fromEntries(
           distributors.map(d => [d.storeId, getOrderLimitIssues(d, isItemIncludedInDispatch)])
         )}
-        onConfirmSend={() => {
+        onConfirmSend={(selectedIds) => {
           if (isSendingBatchRef.current || isSendingBatchWhatsApp) return;
           setShowConfirmBatchModal(false);
-          handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys, includeMedicineListInBatch);
+          handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys, includeMedicineListInBatch, selectedIds);
         }}
       />
 

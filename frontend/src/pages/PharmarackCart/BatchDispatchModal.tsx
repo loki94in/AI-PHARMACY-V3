@@ -25,11 +25,13 @@ interface BatchDispatchModalProps {
   setBulkApplyDeliveryBoyId: (val: string) => void;
   selectedBatchDeliveryBoys: Record<number, number | null>;
   setSelectedBatchDeliveryBoys: React.Dispatch<React.SetStateAction<Record<number, number | null>>>;
+  selectedBatchStoreIds: Set<number>;
+  setSelectedBatchStoreIds: React.Dispatch<React.SetStateAction<Set<number>>>;
   batchSummaryList: BatchSummaryItem[];
-  finalBatchTotalQty: number;
-  finalBatchTotalAmount: number;
+  finalBatchTotalQty?: number;
+  finalBatchTotalAmount?: number;
   isSendingBatchWhatsApp: boolean;
-  onConfirmSend: () => void;
+  onConfirmSend: (selectedStoreIds: number[]) => void;
   includeMedicineList?: boolean;
   setIncludeMedicineList?: (val: boolean) => void;
   limitIssuesMap?: Record<number, string[]>;
@@ -43,14 +45,45 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
   setBulkApplyDeliveryBoyId,
   selectedBatchDeliveryBoys,
   setSelectedBatchDeliveryBoys,
+  selectedBatchStoreIds,
+  setSelectedBatchStoreIds,
   batchSummaryList,
-  finalBatchTotalQty,
-  finalBatchTotalAmount,
   isSendingBatchWhatsApp,
   onConfirmSend,
   limitIssuesMap = {},
 }) => {
-  const hasAnyLimitIssues = batchSummaryList.some(item => (limitIssuesMap[item.storeId]?.length || 0) > 0);
+  const allStoreIds = batchSummaryList.map(item => item.storeId);
+  const allSelected = allStoreIds.length > 0 && allStoreIds.every(id => selectedBatchStoreIds.has(id));
+  const someSelected = allStoreIds.some(id => selectedBatchStoreIds.has(id)) && !allSelected;
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedBatchStoreIds(new Set());
+    } else {
+      setSelectedBatchStoreIds(new Set(allStoreIds));
+    }
+  };
+
+  const toggleStore = (storeId: number) => {
+    setSelectedBatchStoreIds(prev => {
+      const next = new Set(prev);
+      if (next.has(storeId)) {
+        next.delete(storeId);
+      } else {
+        next.add(storeId);
+      }
+      return next;
+    });
+  };
+
+  // Dynamically calculate totals strictly for checked distributors
+  const selectedItems = batchSummaryList.filter(item => selectedBatchStoreIds.has(item.storeId));
+  const dynamicTotalQty = selectedItems.reduce((acc, item) => acc + item.totalQty, 0);
+  const dynamicTotalAmount = selectedItems.reduce((acc, item) => acc + item.totalAmount, 0);
+  const selectedCount = selectedItems.length;
+
+  // Shortfall / minimum order limit warning strictly evaluated for SELECTED distributors
+  const hasSelectedLimitIssues = selectedItems.some(item => (limitIssuesMap[item.storeId]?.length || 0) > 0);
 
   return (
     <BaseModal
@@ -61,17 +94,17 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
     >
       <div className="space-y-3 max-h-[75vh] flex flex-col">
         <p className="text-[11px] text-muted -mt-2">
-          Places official orders directly on retailers.pharmarack.com/cart, notifies delivery staff with clean pickup stores, and queues distributor dispatch reminders with genuine today's Order IDs.
+          Places official orders directly on retailers.pharmarack.com/cart for selected distributors, notifies delivery staff with clean pickup stores, and queues distributor dispatch reminders with genuine today's Order IDs.
         </p>
 
-        {/* Warning Banner if any distributor fails minimum requirements */}
-        {hasAnyLimitIssues && (
+        {/* Warning Banner if any selected distributor fails minimum requirements */}
+        {hasSelectedLimitIssues && (
           <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-2.5 flex items-start gap-2.5 text-xs text-rose-400 shrink-0">
             <AlertTriangle size={15} className="shrink-0 mt-0.5" />
             <div>
               <span className="font-bold">Minimum Order Requirements Not Met:</span>
               <p className="text-[11px] text-rose-300/80 mt-0.5">
-                One or more distributors have shortfall or order limit issues. Please fulfill these requirements in the live cart before placing official orders. Fake sends and premature dispatches are strictly blocked.
+                One or more selected distributors have shortfall or order limit issues. Please fulfill these requirements or uncheck those distributors to proceed with the ready ones.
               </p>
             </div>
           </div>
@@ -139,7 +172,26 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-glass-border bg-bg3/60 text-muted uppercase text-[10px] font-bold tracking-wider">
-                  <th className="py-2.5 px-3.5">Distributor Name</th>
+                  <th className="py-2.5 px-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={input => {
+                        if (input) input.indeterminate = someSelected;
+                      }}
+                      onChange={toggleSelectAll}
+                      className="rounded border-glass-border text-primary focus:ring-0 cursor-pointer w-3.5 h-3.5 accent-primary"
+                      title={allSelected ? 'Deselect All' : 'Select All'}
+                    />
+                  </th>
+                  <th className="py-2.5 px-3.5">
+                    <div className="flex items-center gap-2">
+                      <span>Distributor Name</span>
+                      <span className="text-[9px] font-mono font-bold bg-primary/10 text-primary px-1.5 py-0.5 rounded border border-primary/20 normal-case">
+                        {selectedCount} of {batchSummaryList.length} Selected
+                      </span>
+                    </div>
+                  </th>
                   <th className="py-2.5 px-3 text-center">Total Qty</th>
                   <th className="py-2.5 px-3.5 text-right">Cart Value</th>
                   <th className="py-2.5 px-3.5">Delivery Person</th>
@@ -148,16 +200,35 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
               <tbody className="divide-y divide-glass-border/30">
                 {batchSummaryList.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-muted">
+                    <td colSpan={5} className="py-8 text-center text-muted">
                       No order items currently ready to send.
                     </td>
                   </tr>
                 ) : (
                   batchSummaryList.map((item) => {
+                    const isSelected = selectedBatchStoreIds.has(item.storeId);
                     const issues = limitIssuesMap[item.storeId] || [];
-                    const hasIssues = issues.length > 0;
+                    const hasIssues = isSelected && issues.length > 0;
                     return (
-                      <tr key={item.storeId} className={`hover:bg-bg3/20 transition-colors ${hasIssues ? 'bg-rose-500/5' : ''}`}>
+                      <tr
+                        key={item.storeId}
+                        onClick={() => toggleStore(item.storeId)}
+                        className={`transition-colors cursor-pointer select-none ${
+                          !isSelected
+                            ? 'opacity-40 bg-bg/10'
+                            : hasIssues
+                            ? 'bg-rose-500/5 hover:bg-rose-500/10'
+                            : 'hover:bg-bg3/20'
+                        }`}
+                      >
+                        <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleStore(item.storeId)}
+                            className="rounded border-glass-border text-primary focus:ring-0 cursor-pointer w-3.5 h-3.5 accent-primary"
+                          />
+                        </td>
                         <td className="py-3 px-3.5 font-bold text-text">
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center gap-2">
@@ -172,8 +243,10 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
                                 </span>
                               )}
                             </div>
-                            {hasIssues && (
-                              <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 w-fit">
+                            {issues.length > 0 && (
+                              <div className={`flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded border w-fit ${
+                                isSelected ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-muted bg-bg3/50 border-glass-border'
+                              }`}>
                                 <AlertTriangle size={10} className="shrink-0" />
                                 <span>{issues[0]}</span>
                               </div>
@@ -186,7 +259,7 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
                         <td className="py-3 px-3.5 text-right font-mono font-black text-emerald-400">
                           ₹{item.totalAmount.toFixed(2)}
                         </td>
-                        <td className="py-2 px-3.5 min-w-[190px]">
+                        <td className="py-2 px-3.5 min-w-[190px]" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={selectedBatchDeliveryBoys[item.storeId] !== null && selectedBatchDeliveryBoys[item.storeId] !== undefined ? String(selectedBatchDeliveryBoys[item.storeId]) : ''}
                             onChange={(e) => {
@@ -220,14 +293,17 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
               {batchSummaryList.length > 0 && (
                 <tfoot>
                   <tr className="border-t-2 border-glass-border bg-bg3/70 font-black">
+                    <td className="py-3 px-3 text-center">
+                      <span className="text-[10px] font-mono text-muted">{selectedCount}</span>
+                    </td>
                     <td className="py-3 px-3.5 text-text uppercase text-[11px] tracking-wide">
-                      Final Total ({batchSummaryList.length} Distributors)
+                      Selected Total ({selectedCount} of {batchSummaryList.length} Distributors)
                     </td>
                     <td className="py-3 px-3 text-center font-mono text-sm text-text">
-                      {finalBatchTotalQty}
+                      {dynamicTotalQty}
                     </td>
                     <td className="py-3 px-3.5 text-right font-mono text-sm text-emerald-400">
-                      ₹{finalBatchTotalAmount.toFixed(2)}
+                      ₹{dynamicTotalAmount.toFixed(2)}
                     </td>
                     <td className="py-3 px-3.5 text-right text-[11px] text-muted font-normal">
                       {deliveryBoysList.length > 0 ? `${deliveryBoysList.length} staff available` : '—'}
@@ -251,10 +327,16 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
           </button>
           <button
             type="button"
-            onClick={onConfirmSend}
-            disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0 || hasAnyLimitIssues}
+            onClick={() => onConfirmSend(Array.from(selectedBatchStoreIds))}
+            disabled={isSendingBatchWhatsApp || selectedCount === 0 || hasSelectedLimitIssues}
             className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-            title={hasAnyLimitIssues ? 'Please fulfill minimum order requirements before placing orders' : 'Place official orders on Pharmarack & notify staff'}
+            title={
+              selectedCount === 0
+                ? 'Please select at least one distributor'
+                : hasSelectedLimitIssues
+                ? 'Please fulfill minimum order requirements for selected distributors, or deselect them'
+                : 'Place official orders on Pharmarack & notify staff'
+            }
           >
             {isSendingBatchWhatsApp ? (
               <>
@@ -264,7 +346,7 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
             ) : (
               <>
                 <Send size={13} />
-                <span>Place Official Orders &amp; Dispatch</span>
+                <span>Place Official Orders &amp; Dispatch ({selectedCount} Distributor{selectedCount !== 1 ? 's' : ''})</span>
               </>
             )}
           </button>

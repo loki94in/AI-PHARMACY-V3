@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api, apiClient } from '../../services/api';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { Download, Eye, CheckCircle, AlertCircle, RefreshCw, Trash2, Edit, Calendar, Loader2, QrCode, Printer, Clock } from 'lucide-react';
+import { Download, Eye, CheckCircle, AlertCircle, RefreshCw, Trash2, Edit, Calendar, Loader2, QrCode, Printer, Clock, X } from 'lucide-react';
 import { usePersistedDateRange } from '../../hooks/usePersistedDateRange';
 import { getTodayString, getNDaysAgoString, formatDisplayDate, toDateInputValue } from '../../utils/date';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
@@ -495,9 +495,38 @@ const PurchaseHistory = () => {
                 placeholder="Search by order ID, invoice number, or product name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full px-4 py-2 bg-bg3 border border-glass-border rounded-xl text-sm text-text placeholder:text-muted/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setSearchQuery('');
+                  }
+                }}
+                className="w-full pl-4 pr-10 py-2 bg-bg3 border border-glass-border rounded-xl text-sm text-text placeholder:text-muted/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted hover:text-text hover:bg-bg2 transition-colors"
+                  title="Clear search (Esc)"
+                  aria-label="Clear search"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </div>
+            {searchQuery.trim().length >= 2 && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary font-medium shrink-0">
+                <span>Filtering: &ldquo;{searchQuery}&rdquo;</span>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="ml-0.5 hover:text-text transition-colors"
+                  title="Clear filter"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center gap-1.5 bg-bg3 border border-glass-border rounded-xl px-3 py-1.5 text-sm text-text">
                 <Calendar size={15} className="text-muted" />

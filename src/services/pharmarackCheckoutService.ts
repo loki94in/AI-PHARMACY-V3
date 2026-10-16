@@ -181,6 +181,47 @@ export class PharmarackCheckoutService {
         const placedStores: string[] = [];
         const failedStores: { name: string; error: string }[] = [];
 
+        // 1. Sync distributor checkboxes on https://retailers.pharmarack.com/cart if targetNames provided
+        if (targetNames && targetNames.length > 0) {
+          try {
+            const potentialSections = Array.from(document.querySelectorAll(
+              '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel'
+            )) as HTMLElement[];
+
+            for (const section of potentialSections) {
+              const headerEl = section.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"], [class*="supplier-name"]');
+              if (!headerEl || !headerEl.textContent) continue;
+              const cardName = headerEl.textContent.trim();
+              if (cardName.length < 3 || cardName.toLowerCase().includes('cart') || cardName.toLowerCase().includes('total')) continue;
+
+              const normCard = cardName.toLowerCase().trim();
+              const shouldBeSelected = targetNames.some(t => {
+                const normT = t.toLowerCase().trim();
+                return normCard.includes(normT) || normT.includes(normCard);
+              });
+
+              // Locate checkbox associated with this distributor section
+              const chk = section.querySelector('input[type="checkbox"], [role="checkbox"], .ant-checkbox-input, .mat-checkbox-input') as HTMLInputElement | null;
+              if (chk) {
+                const isChecked = chk.checked || chk.getAttribute('aria-checked') === 'true' || chk.closest('.ant-checkbox-checked') !== null || chk.closest('.mat-checkbox-checked') !== null;
+                if (shouldBeSelected && !isChecked) {
+                  chk.scrollIntoView({ behavior: 'instant', block: 'center' });
+                  chk.click();
+                  logs.push(`Checked distributor checkbox on Pharmarack: ${cardName}`);
+                  await new Promise(r => setTimeout(r, 200));
+                } else if (!shouldBeSelected && isChecked) {
+                  chk.scrollIntoView({ behavior: 'instant', block: 'center' });
+                  chk.click();
+                  logs.push(`Unchecked distributor checkbox on Pharmarack: ${cardName}`);
+                  await new Promise(r => setTimeout(r, 200));
+                }
+              }
+            }
+          } catch (syncErr: any) {
+            logs.push(`Distributor checkbox sync warning: ${syncErr?.message || syncErr}`);
+          }
+        }
+
         // Search for all buttons on the cart page that indicate checkout/order placement
         const allButtons = Array.from(document.querySelectorAll('button, a[role="button"]')) as HTMLElement[];
         const placeOrderButtons = allButtons.filter(b => {
@@ -226,7 +267,11 @@ export class PharmarackCheckoutService {
             if (targetNames && targetNames.length > 0) {
               const normStore = storeName.toLowerCase().trim();
               const isMatch = targetNames.some(t => normStore.includes(t.toLowerCase().trim()) || t.toLowerCase().trim().includes(normStore));
-              if (!isMatch) continue;
+              // If it's a store-specific button and doesn't match target, skip it
+              if (storeName !== 'Distributor' && !isMatch) {
+                logs.push(`Skipped non-target store Place Order button: ${storeName}`);
+                continue;
+              }
             }
 
             // Click the Place Order button
