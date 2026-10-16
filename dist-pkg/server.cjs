@@ -34532,6 +34532,20 @@ async function lookupCustomer(phone, chatId) {
     return null;
   }
   try {
+    const orderRow = await db2.get(
+      `SELECT requester, phone FROM special_orders 
+       WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? 
+         AND requester IS NOT NULL AND requester != ''
+         AND created_at >= datetime('now', '-7 days')
+       ORDER BY id DESC LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (orderRow?.requester && isKnownCustomerName(orderRow.requester)) {
+      return { id: 0, name: orderRow.requester.trim(), phone: cleanDigits };
+    }
+  } catch (_) {
+  }
+  try {
     const row = await db2.get(
       `SELECT id, name, phone FROM customers 
        WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? 
@@ -34583,6 +34597,19 @@ async function lookupCustomer(phone, chatId) {
       } catch (_) {
         return { id: 0, name: saleRow.patient_name, phone: cleanDigits };
       }
+    }
+  } catch (_) {
+  }
+  try {
+    const olderOrderRow = await db2.get(
+      `SELECT requester, phone FROM special_orders 
+       WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? 
+         AND requester IS NOT NULL AND requester != ''
+       ORDER BY id DESC LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (olderOrderRow?.requester && isKnownCustomerName(olderOrderRow.requester)) {
+      return { id: 0, name: olderOrderRow.requester.trim(), phone: cleanDigits };
     }
   } catch (_) {
   }
@@ -38059,6 +38086,36 @@ async function handleInbound(msg) {
       console.log(`[Intent Service] AI Auto-Reply Bot is disabled in Settings. Skipping reply for ${chatId}.`);
       return;
     }
+    if (phone.endsWith("@lid")) {
+      try {
+        const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [phone]);
+        if (chatRow?.resolved_number) {
+          const digits = chatRow.resolved_number.replace(/\D/g, "");
+          if (digits.length >= 10) {
+            phone = `${digits.slice(-10)}@c.us`;
+          }
+        }
+      } catch (_) {
+      }
+      if (phone.endsWith("@lid")) {
+        try {
+          if (msg.client && typeof msg.client.getContactLidAndPhone === "function") {
+            const mapping = await msg.client.getContactLidAndPhone([phone]);
+            if (mapping && mapping[0] && mapping[0].pn) {
+              phone = `${mapping[0].pn}@c.us`;
+            }
+          }
+          if (phone.endsWith("@lid") && typeof msg.getContact === "function") {
+            const contact = await msg.getContact();
+            if (contact && contact.number) {
+              phone = `${contact.number}@c.us`;
+            }
+          }
+        } catch (e) {
+          console.warn("[Intent Service] Non-fatal LID resolution skipped:", e);
+        }
+      }
+    }
     let chatLang = "en";
     const cleanDigitsForLang = (phone || "").replace(/\D/g, "").slice(-10);
     try {
@@ -38138,39 +38195,17 @@ ${stepPrompt}${languageFooter(chatLang)}`;
           }
         } catch (_) {
         }
-        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker2.enqueue(phone, switchAck, "language_switch", "Customer");
-        return;
-      }
-    }
-    if (phone.endsWith("@lid")) {
-      try {
-        const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [phone]);
-        if (chatRow?.resolved_number) {
-          const digits = chatRow.resolved_number.replace(/\D/g, "");
-          if (digits.length >= 10) {
-            phone = `${digits.slice(-10)}@c.us`;
-          }
-        }
-      } catch (_) {
-      }
-      if (phone.endsWith("@lid")) {
         try {
-          if (msg.client && typeof msg.client.getContactLidAndPhone === "function") {
-            const mapping = await msg.client.getContactLidAndPhone([phone]);
-            if (mapping && mapping[0] && mapping[0].pn) {
-              phone = `${mapping[0].pn}@c.us`;
-            }
-          }
-          if (phone.endsWith("@lid") && typeof msg.getContact === "function") {
-            const contact = await msg.getContact();
-            if (contact && contact.number) {
-              phone = `${contact.number}@c.us`;
-            }
-          }
-        } catch (e) {
-          console.warn("[Intent Service] Non-fatal LID resolution skipped:", e);
+          const { sendMessage: sendMessage2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+          const targetRecipient = chatId || phone;
+          await sendMessage2(targetRecipient, void 0, switchAck);
+          console.log(`[Intent Service] Sent instant language confirmation to patient at ${targetRecipient} (${chatLang})`);
+        } catch (sendErr) {
+          console.warn("[Intent Service] Direct live language switch send failed, falling back to queue worker:", sendErr);
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, switchAck, "language_switch", "Customer");
         }
+        return;
       }
     }
     const isOwner = await checkIsOwnerPhone(phone || chatId, db2);
@@ -38390,13 +38425,14 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
           cleanDigits = chatRow.resolved_number.replace(/\D/g, "").slice(-10);
         }
       }
+      const targetRecipient = chatId || phone;
       await db2.run(
         `UPDATE whatsapp_chats SET session_mode = 'auto', session_status = 'idle', manual_active_until = 0 WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
         [chatId, `%${cleanDigits}%`]
       );
       await db2.run(
-        `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ?`,
-        [`%${cleanDigits}`, `%${cleanDigits}%`]
+        `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ? OR phone = ? OR phone = ?`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`, phone, chatId]
       );
       const { getStoreMedicalName: getStoreMedicalName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const storeName = await getStoreMedicalName2(db2) || "AI Pharmacy";
@@ -38413,7 +38449,7 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
           [cleanDigits, body, chatLang]
         );
         const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker3.enqueue(phone, askNameText, "customer_greeting", "Customer");
+        await whatsappQueueWorker3.enqueue(targetRecipient, askNameText, "customer_greeting", "Customer");
         console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name in ${chatLang}.`);
         return;
       }
@@ -38426,14 +38462,14 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         hoursNotice,
         hoursLine: hoursLineForGreet
       }) + languageFooter(chatLang);
-      if (!await allowBotPrompt(db2, cleanDigits, phone)) return;
+      if (!await allowBotPrompt(db2, cleanDigits, targetRecipient)) return;
       await db2.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
          VALUES (?, '', ?, 'awaiting_order_type', ?, ?, CURRENT_TIMESTAMP)`,
         [cleanDigits, body, customer.name, chatLang]
       );
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, greetingText, "customer_greeting", customer.name);
+      await whatsappQueueWorker2.enqueue(targetRecipient, greetingText, "customer_greeting", customer.name);
       console.log(`[Intent Service] Fresh greeting sent to known customer ${customer.name} (${cleanDigits}) in ${chatLang}.`);
       return;
     }
@@ -45510,6 +45546,33 @@ var init_tokenRefreshScheduler = __esm({
   }
 });
 
+// src/utils/localTime.ts
+var localTime_exports = {};
+__export(localTime_exports, {
+  SQL_LOCAL_NOW: () => SQL_LOCAL_NOW,
+  normalizeToLocalSqlDateTime: () => normalizeToLocalSqlDateTime,
+  toLocalSqlDateTime: () => toLocalSqlDateTime
+});
+function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function normalizeToLocalSqlDateTime(value) {
+  if (value === void 0 || value === null || value === "") return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
+}
+var SQL_LOCAL_NOW, pad;
+var init_localTime = __esm({
+  "src/utils/localTime.ts"() {
+    "use strict";
+    SQL_LOCAL_NOW = "datetime('now', 'localtime')";
+    pad = (n) => String(n).padStart(2, "0");
+  }
+});
+
 // src/services/waSmartReplyScheduler.ts
 var waSmartReplyScheduler_exports = {};
 __export(waSmartReplyScheduler_exports, {
@@ -45622,12 +45685,12 @@ var init_waSmartReplyScheduler = __esm({
         try {
           const db2 = await dbManager.getConnection();
           const row = await db2.get(
-            `SELECT id FROM whatsapp_messages
-         WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NOT NULL
-         ORDER BY pharmacist_opened_at DESC LIMIT 1`,
+            `SELECT pharmacist_opened_at FROM whatsapp_messages
+         WHERE chat_id = ? AND from_me = 0
+         ORDER BY timestamp DESC LIMIT 1`,
             [chatId]
           );
-          return !!row;
+          return Boolean(row?.pharmacist_opened_at);
         } catch {
           return false;
         }
@@ -46529,12 +46592,14 @@ async function ingestUnreadAndReply(chats, isIgnored2) {
   try {
     const db2 = await dbManager.getConnection();
     const nowSec = Math.floor(Date.now() / 1e3);
+    const offlineCustomerChatIds = [];
     for (const chat of chats) {
       const chatId = chat.id._serialized;
       if (chat.isGroup || await isIgnored2(chatId)) continue;
       if (!chat.unreadCount || chat.unreadCount <= 0) continue;
       if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
       const msgs = await chat.fetchMessages({ limit: Math.min(chat.unreadCount, 20) }).catch(() => []);
+      let chatIngested = 0;
       for (const m of msgs) {
         if (m.fromMe || m.timestamp && nowSec - m.timestamp > 24 * 3600) continue;
         const mid = m.id?._serialized || m.id?.id;
@@ -46544,10 +46609,71 @@ async function ingestUnreadAndReply(chats, isIgnored2) {
            VALUES (?, ?, ?, 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
           [mid, chatId, m.body || "", m.timestamp || nowSec, m.type || "text", m.hasMedia ? 1 : 0]
         );
-        if (r?.changes) ingested++;
+        if (r?.changes) {
+          ingested++;
+          chatIngested++;
+        }
+      }
+      if (chatIngested > 0) {
+        offlineCustomerChatIds.push(chatId);
       }
     }
     if (ingested > 0) {
+      try {
+        const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStorePhone: getStorePhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+        const { toLocalSqlDateTime: toLocalSqlDateTime2 } = await Promise.resolve().then(() => (init_localTime(), localTime_exports));
+        const sched = await getPharmacyOperatingSchedule2(db2);
+        const now = /* @__PURE__ */ new Date();
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const todayDayName = dayNames[now.getDay()];
+        const isWeeklyOff = (sched.weeklyOff || "").toLowerCase() === todayDayName.toLowerCase();
+        const todayDateStr = toLocalSqlDateTime2(now).slice(0, 10);
+        const isClosedDate = (sched.closedDates || []).includes(todayDateStr);
+        const nowHourMin = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        const isOpenHours = nowHourMin >= (sched.openTime || "09:00") && nowHourMin <= (sched.closeTime || "22:00");
+        const isStoreOpen = isOpenHours && !isWeeklyOff && !isClosedDate;
+        if (isStoreOpen && offlineCustomerChatIds.length > 0) {
+          const storePhone = await getStorePhone2(db2) || "8080888041";
+          for (const cId of offlineCustomerChatIds) {
+            const repliedRow = await db2.get(
+              `SELECT id FROM whatsapp_messages
+               WHERE chat_id = ? AND from_me = 1 AND timestamp >= (
+                 SELECT MAX(timestamp) FROM whatsapp_messages WHERE chat_id = ? AND from_me = 0
+               ) LIMIT 1`,
+              [cId, cId]
+            ).catch(() => null);
+            if (repliedRow) continue;
+            const readRow = await db2.get(
+              `SELECT id FROM whatsapp_messages WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NOT NULL LIMIT 1`,
+              [cId]
+            ).catch(() => null);
+            if (readRow) continue;
+            const chatRow = await db2.get(`SELECT language, resolved_number FROM whatsapp_chats WHERE id = ?`, [cId]).catch(() => null);
+            let lang = chatRow?.language;
+            if (!lang && chatRow?.resolved_number) {
+              const cust = await db2.get(`SELECT preferred_language FROM customers WHERE phone LIKE ?`, [`%${chatRow.resolved_number.slice(-10)}%`]).catch(() => null);
+              lang = cust?.preferred_language;
+            }
+            if (!lang) lang = "mr";
+            let catchUpMsg = "";
+            if (lang === "mr") {
+              catchUpMsg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930! \u0906\u092E\u094D\u0939\u0940 \u0906\u0924\u093E \u0909\u092A\u0932\u092C\u094D\u0927 \u0906\u0939\u094B\u0924. \u0915\u094B\u0923\u0924\u094D\u092F\u093E\u0939\u0940 \u0914\u0937\u0927\u093E\u0938\u093E\u0920\u0940 \u0915\u093F\u0902\u0935\u093E \u092E\u093E\u0939\u093F\u0924\u0940\u0938\u093E\u0920\u0940 \u0906\u092A\u0923 \u092F\u0947\u0925\u0947 \u092E\u0947\u0938\u0947\u091C \u0915\u0930\u0942 \u0936\u0915\u0924\u093E \u0915\u093F\u0902\u0935\u093E ${storePhone} \u0935\u0930 \u0915\u0949\u0932 \u0915\u0930\u0942 \u0936\u0915\u0924\u093E.`;
+            } else if (lang === "hi") {
+              catchUpMsg = `\u0928\u092E\u0938\u094D\u0924\u0947! \u0939\u092E \u0905\u092C \u0909\u092A\u0932\u092C\u094D\u0927 \u0939\u0948\u0902\u0964 \u0915\u093F\u0938\u0940 \u092D\u0940 \u0926\u0935\u093E \u092F\u093E \u0938\u0939\u093E\u092F\u0924\u093E \u0915\u0947 \u0932\u093F\u090F \u0906\u092A \u092F\u0939\u093E\u0902 \u092E\u0948\u0938\u0947\u091C \u0915\u0930 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902 \u092F\u093E ${storePhone} \u092A\u0930 \u0915\u0949\u0932 \u0915\u0930 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902\u0964`;
+            } else {
+              catchUpMsg = `Hello! We are available now. Feel free to message here or call us at ${storePhone} for your medicine orders or inquiries.`;
+            }
+            try {
+              await sendMessage(cId, void 0, catchUpMsg);
+              console.log(`[WhatsApp Catch-up] Sent availability notice to ${cId} in ${lang}`);
+            } catch (sendErr) {
+              console.warn(`[WhatsApp Catch-up] Failed to send availability notice to ${cId}:`, sendErr);
+            }
+          }
+        }
+      } catch (catchUpErr) {
+        console.warn("[WhatsApp Catch-up] Availability notice processing error:", catchUpErr);
+      }
       const { waSmartReplyScheduler: waSmartReplyScheduler2 } = await Promise.resolve().then(() => (init_waSmartReplyScheduler(), waSmartReplyScheduler_exports));
       const res = await waSmartReplyScheduler2.processOfflineBatch(true);
       console.log(`[WhatsApp Catch-up] ${ingested} message(s) pulled, ${res.processed} chat(s) scheduled, ${res.skipped_read} read, ${res.skipped_replied} replied.`);
@@ -48696,6 +48822,20 @@ var init_nonWaFallbackService = __esm({
         if (alertPhoneRow?.value && alertPhoneRow.value.trim() !== "") return alertPhoneRow.value.trim();
         return resolveAdminWhatsappNumber(db2);
       }
+      async resolveDisplayPhone(db2, phone) {
+        if (!phone) return "N/A";
+        let raw = String(phone).trim();
+        if (raw.includes("@lid")) {
+          const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [raw]).catch(() => null);
+          if (chatRow?.resolved_number) {
+            raw = String(chatRow.resolved_number);
+          }
+        }
+        const digits = raw.replace(/\D/g, "");
+        if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+        if (digits.length >= 10) return digits.slice(-10);
+        return raw || phone;
+      }
       buildOwnerAlertMessage(ctx, storeName) {
         const typeEmoji = ctx.taskType === "refill" ? "\u{1F48A}" : "\u{1F4B0}";
         const typeLabel = ctx.taskType === "refill" ? "REFILL DUE" : "CREDIT REMINDER";
@@ -48709,13 +48849,15 @@ var init_nonWaFallbackService = __esm({
           "SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name', 'store_name') AND value IS NOT NULL LIMIT 1"
         ).catch(() => null);
         const storeName = storeRow?.value || "AI Pharmacy";
+        const cleanDisplayPhone = await this.resolveDisplayPhone(db2, ctx.patientPhone);
+        const resolvedCtx = { ...ctx, patientPhone: cleanDisplayPhone };
         const recentTask = await db2.get(
           `SELECT id FROM patient_call_tasks
        WHERE task_type = ? AND patient_phone = ?
          AND status = 'pending'
          AND created_at > datetime('now', '-24 hours')
        LIMIT 1`,
-          [ctx.taskType, ctx.patientPhone]
+          [resolvedCtx.taskType, resolvedCtx.patientPhone]
         ).catch(() => null);
         let taskId = recentTask?.id ?? null;
         if (!recentTask && (mode === "both" || mode === "board")) {
@@ -48725,15 +48867,15 @@ var init_nonWaFallbackService = __esm({
              (task_type, patient_name, patient_phone, reference_id, details_json, status, owner_wa_sent)
            VALUES (?, ?, ?, ?, ?, 'pending', 0)`,
               [
-                ctx.taskType,
-                ctx.patientName,
-                ctx.patientPhone,
-                ctx.referenceId || null,
-                JSON.stringify(ctx.detailsJson ?? { details: ctx.details })
+                resolvedCtx.taskType,
+                resolvedCtx.patientName,
+                resolvedCtx.patientPhone,
+                resolvedCtx.referenceId || null,
+                JSON.stringify(resolvedCtx.detailsJson ?? { details: resolvedCtx.details })
               ]
             );
             taskId = result?.lastID ?? null;
-            console.log("[NonWaFallback] Created call task #" + taskId + " for " + ctx.patientName + " (" + ctx.taskType + ")");
+            console.log("[NonWaFallback] Created call task #" + taskId + " for " + resolvedCtx.patientName + " (" + resolvedCtx.taskType + ")");
           } catch (err) {
             console.warn("[NonWaFallback] Failed to create call task:", err);
           }
@@ -48745,7 +48887,7 @@ var init_nonWaFallbackService = __esm({
             if (alertPhone) {
               const cleanAlert = normalizeWhatsAppPhone(alertPhone);
               if (cleanAlert && cleanAlert.length >= 10) {
-                const alertMsg = this.buildOwnerAlertMessage(ctx, storeName);
+                const alertMsg = this.buildOwnerAlertMessage(resolvedCtx, storeName);
                 await sendMessage(cleanAlert, void 0, alertMsg);
                 ownerWaSent = true;
                 if (taskId) {
@@ -49564,9 +49706,17 @@ var init_whatsappQueueWorker = __esm({
                 continue;
               }
             }
-            const rawItemDigits = (item.number || "").replace(/\D/g, "");
+            const isLidRecipient = typeof item.number === "string" && item.number.includes("@lid");
+            let resolvedLidDigits = "";
+            if (isLidRecipient) {
+              const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [item.number]).catch(() => null);
+              if (chatRow?.resolved_number) {
+                resolvedLidDigits = chatRow.resolved_number.replace(/\D/g, "");
+              }
+            }
+            const rawItemDigits = resolvedLidDigits || (item.number || "").replace(/\D/g, "");
             const target10Digits = rawItemDigits.length === 12 && rawItemDigits.startsWith("91") ? rawItemDigits.slice(2) : rawItemDigits.length >= 10 ? rawItemDigits.slice(-10) : rawItemDigits;
-            if (!target10Digits || target10Digits.length !== 10) {
+            if (!isLidRecipient && (!target10Digits || target10Digits.length !== 10)) {
               console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: invalid phone number "${item.number}" (requires 10 digits).`);
               await db2.run(
                 "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
@@ -49649,7 +49799,7 @@ var init_whatsappQueueWorker = __esm({
                 }
               }
             }
-            if (!useBusiness && status.isReady) {
+            if (!useBusiness && status.isReady && !isLidRecipient) {
               const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
               if (regStatus === "NOT_AVAILABLE") {
                 console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: recipient ${target10Digits} (${item.target_name || "unknown"}) is NOT registered on WhatsApp.`);
@@ -49681,7 +49831,7 @@ var init_whatsappQueueWorker = __esm({
                 nonWaFallbackService.handleFallback({
                   taskType,
                   patientName: item.target_name || "Patient",
-                  patientPhone: item.number,
+                  patientPhone: target10Digits || item.number,
                   referenceId: String(item.id),
                   details: item.message ? item.message.slice(0, 200) : `${taskType} reminder`,
                   detailsJson: { queueItemId: item.id, type: item.type, message: item.message?.slice(0, 500) }
@@ -51288,26 +51438,6 @@ var init_packaging = __esm({
   "src/utils/packaging.ts"() {
     "use strict";
     COUNTABLE_UNIT_PATTERN = /^\s*(\d+)\s*(NO'?S|TAB|TABS|CAP|CAPS|PAD|PADS)?\b/i;
-  }
-});
-
-// src/utils/localTime.ts
-function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-function normalizeToLocalSqlDateTime(value) {
-  if (value === void 0 || value === null || value === "") return null;
-  const s = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
-}
-var pad;
-var init_localTime = __esm({
-  "src/utils/localTime.ts"() {
-    "use strict";
-    pad = (n) => String(n).padStart(2, "0");
   }
 });
 
@@ -58508,7 +58638,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.100";
+    APP_VERSION = "0.1.101";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });

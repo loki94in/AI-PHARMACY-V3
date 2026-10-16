@@ -1,47 +1,60 @@
-# Implementation Plan: WhatsApp Bot Reply for Booked Patients & Read-Check Suppression Fix
+# Implementation Plan: Automated Official Pharmarack Order Placement & Clean Order Dispatch
 
 ## Overview
-This plan fixes the issue where customers with recently booked orders (e.g. Special Orders or Refills) do not receive replies from the WhatsApp bot when they message "Hi", and ensures they receive their personalized Standard Greeting Menu.
+Currently, clicking "Send All via WhatsApp" in the Pharmarack Cart page only dispatches a pickup message to the delivery staff. The actual orders are never placed on Pharmarack (`https://retailers.pharmarack.com/cart`), leaving all products in the cart and requiring manual checkout. Furthermore, dispatch reminders must strictly only send today's genuine Order IDs (no duplicates, no old IDs), and delivery staff must receive a clean distributor list without medicine names or item counts. Additionally, any minimum order value/item shortfalls must strictly block order submission with clear warning indicators rather than allowing fake or premature sends.
 
 ---
 
 ## Root Causes Identified
-1. **`isAlreadyReadByPharmacist` Suppression Flaw**:
-   In `src/services/waSmartReplyScheduler.ts`, the check looked for ANY historical message with `pharmacist_opened_at IS NOT NULL`. Because the pharmacist viewed the chat in CRM during or after booking, all subsequent incoming messages from that customer were falsely classified as "already read by pharmacist" and permanently suppressed.
-2. **`lookupCustomer` Missing `special_orders`**:
-   In `src/services/whatsappIntentService.ts`, `lookupCustomer()` checked `customers`, `patient_refills`, and `sales_invoices`, but omitted `special_orders`. Booked patients (e.g., "Mr. PA") were not resolved by their latest booked name.
+1. **No Automated Order Submission Mechanism**:
+   The app previously only supported cart inspection (`GetUserCartDetails`), item adds, and deletes, providing an external link (`Proceed to Checkout`) to `https://retailers.pharmarack.com/cart` instead of executing automated checkout.
+2. **"Send All via WhatsApp" Decoupled from Order Placement**:
+   The batch send handler only triggered `/whatsapp/queue/enqueue-pharmarack-batch` with `dispatchDistributorsLater: true`, which only alerted delivery staff and waited for external order IDs that were never generated.
+3. **Missing Minimum Order Requirement Gate in Modal**:
+   `BatchDispatchModal.tsx` lacked prominent warning badges and button-disabling logic for distributors that failed `getOrderLimitIssues` (e.g. minimum amount/item count shortfalls).
+4. **Delivery Staff Messages Contained Unnecessary Detail**:
+   Staff messages optionally included itemized medicine lists or counts instead of a clean, focused pickup list with distributor names and phone numbers.
 
 ---
 
 ## Tasks
 
-- [x] **Task 1: Fix `isAlreadyReadByPharmacist` in `waSmartReplyScheduler.ts`**
-  - **File**: `src/services/waSmartReplyScheduler.ts`
-  - **Implementation**: Updated `isAlreadyReadByPharmacist(chatId)` to inspect only the latest inbound message (`ORDER BY timestamp DESC LIMIT 1`). If the latest message has `pharmacist_opened_at IS NULL`, it is an unread new message and is NOT suppressed.
-  - **Verification**: Unit test in `scratch/verify_booked_hi_fix.cjs` passed: confirmed that a new "Hi" message is not suppressed even after an older message was marked opened by the pharmacist.
+- [x] **Task 1: Build Automated Pharmarack Checkout Service (`src/services/pharmarackCheckoutService.ts`)**
+  - Use the app's authenticated session profile (`data/pharmarack_profile`) and single-flight browser mutex.
+  - Navigate to `https://retailers.pharmarack.com/cart`, trigger order submission for specified/verified distributors, and intercept the generated official `OrderNo`s.
+  - Return the results (placed distributor orders, order numbers, and any store-specific errors).
 
-- [x] **Task 2: Add `special_orders` Lookup to `lookupCustomer`**
-  - **File**: `src/services/whatsappIntentService.ts`
-  - **Implementation**: In `lookupCustomer()`, added priority lookup on `special_orders` created within the last 7 days (`ORDER BY id DESC LIMIT 1`) and a fallback for older orders. This resolves recently booked patient names (e.g. "Mr. PA") directly from active bookings.
-  - **Verification**: Integration test in `scratch/verify_booked_hi_fix.cjs` passed: phone `9307409630` resolved to `"Mr. PA"`.
+- [x] **Task 2: Implement Official Order Placement Route in Backend (`src/routes/pharmarack.ts`)**
+  - Add `POST /api/pharmarack/cart/place-official-orders`:
+    1. Pre-validates that no store has minimum limit shortfalls.
+    2. Runs `pharmarackCheckoutService.placeCartOrders()`.
+    3. Records successful `OrderNo`s in `pharmarack_placed_orders` and `pharmarack_synced_orders` strictly for today's date (`today.iso`).
+    4. Enqueues the clean Delivery Staff summary (Template 7A simplified) and the Distributor Dispatch Reminders (Template 1B with real `OrderNo`s).
+    5. Returns order results and status.
 
-- [x] **Task 3: Ensure Clean Session Reset on Greeting for Booked Patients**
-  - **File**: `src/services/whatsappIntentService.ts`
-  - **Implementation**:
-    - Ensured `DELETE FROM wa_pending_clarifications` in the greeting handler comprehensively matches across pure digits, `@lid`, and `@c.us` targets.
-    - Routed the response to `targetRecipient = chatId || phone` so `@lid` sessions deliver directly to the active chat thread.
-    - Enqueued the personalized Standard Greeting Menu using the customer's booked name (e.g. "Mr. PA").
-  - **Verification**: Validated that fresh "Hi" messages clear prior passive waiting states and deliver the personalized 1-2-3 welcome menu.
+- [x] **Task 3: Enforce Clean Delivery Staff Summary & Strict Today-Only Reminders (`src/routes/whatsappQueue.ts`)**
+  - Ensure the Delivery Boy pickup summary includes ONLY distributor name, phone number, and total assigned stores (no medicine names, no item counts).
+  - Enforce strict today-only date checks and deduplication in `whatsapp_send_queue` and `pharmarack_synced_orders` to guarantee no old IDs or duplicate messages are ever sent.
 
-- [x] **Task 4: Verification and Guardrails**
-  - Ran `scratch/verify_booked_hi_fix.cjs`: Both read-check and customer-lookup tests passed.
-  - Ran `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) succeeded with 0 errors; no performance guardrail violations.
-  - Ran `node scripts/quick-update.mjs`: Knowledge Graph refreshed (1,193 nodes, 798 edges).
+- [x] **Task 4: Update Frontend Modal & Gating (`BatchDispatchModal.tsx` & `PharmarackCart/index.tsx`)**
+  - In `BatchDispatchModal.tsx`:
+    - Display bold warning badges on any distributor not meeting minimum order limits.
+    - Strictly disable the "Place Official Orders & Dispatch" button if any selected distributor has a shortfall.
+    - Remove medicine itemization toggle to ensure clean distributor list for staff.
+  - In `PharmarackCart/index.tsx`:
+    - Upgrade the action to call `api.placeOfficialPharmarackOrders()`.
+    - Provide live progress indicators (*Checking limits...* -> *Placing official orders on Pharmarack...* -> *Dispatching reminders*).
+    - Provide a 1-click fallback button (*Open Official Cart Window*) if Pharmarack requires human review on any store.
 
-- [x] **Task 5: Production Release (v0.1.101)**
-  - Auto-bumped version to `0.1.101`.
-  - Executed `npm run release` which compiled frontend bundles (`vite build`), backend TypeScript (`tsc -p tsconfig.json`), SEA executables (`PharmacyBackend.exe`, `PharmacyOS.exe`), and packaged the installer with Inno Setup 6.
-  - Standalone installer generated: `dist\installer\AI-Pharmacy-OS-Portable-Setup-v0.1.101.exe`.
-  - Update ZIP generated: `dist\installer\AI-Pharmacy-OS-Update-v0.1.101.zip` (SHA-256: `9abe0d53a35bf9334e28fc4e92e7d61e23f4f5f24a647706e101db62bbc59acc`).
-  - Verified rollout target: `ALL` (Production).
+- [x] **Task 5: Verification & System Guardrails**
+  - Run `npm run guardrails` (`tsc --noEmit` and performance checks).
+  - Verify against test suites and run `node scripts/quick-update.mjs`.
 
+---
+
+## Task Completion Log
+- **Task 1 Completed**: Implemented `src/services/pharmarackCheckoutService.ts` providing `executeCartCheckout()` with single-flight mutex protection, DOM-based order placement and dialog confirmation on `https://retailers.pharmarack.com/cart`, official `OrderNo` network response interception, and `openAuthenticatedCartWindow()` for 1-click human review.
+- **Task 2 Completed**: Implemented `POST /api/pharmarack/cart/place-official-orders` and `POST /api/pharmarack/cart/open-official-window` in `src/routes/pharmarack.ts`, integrating order execution, cache invalidation, instant order sync, and staff/distributor dispatch queueing.
+- **Task 3 Completed**: In `src/routes/whatsappQueue.ts`, simplified the delivery staff pickup summary to clean distributor names and contact numbers (no medicine names or item counts), and enforced shop-local date formatting (`toLocalSqlDateTime`) with strict today-only deduplication.
+- **Task 4 Completed**: In `BatchDispatchModal.tsx`, added `limitIssuesMap` rendering prominent warning badges on shortfall distributors, strictly disabled the send button when any distributor has unmet minimum order requirements, and updated the modal to "Place Official Orders & Dispatch". In `PharmarackCart/index.tsx`, wired `api.placeOfficialPharmarackOrders()`, updated the footer buttons, and connected `api.openOfficialPharmarackCartWindow()`.
+- **Task 5 Completed**: Ran `npm run guardrails` (clean `tsc --noEmit`, 0 violations) and `npm run build:client` (clean client build in 45s, 0 errors). Syncing knowledge graph with `node scripts/quick-update.mjs`.

@@ -1,5 +1,5 @@
 import React from 'react';
-import { MessageSquare, Truck, Send } from 'lucide-react';
+import { Truck, Send, AlertTriangle } from 'lucide-react';
 import { BaseModal } from '../../components/common';
 
 export interface BatchSummaryItem {
@@ -32,6 +32,7 @@ interface BatchDispatchModalProps {
   onConfirmSend: () => void;
   includeMedicineList?: boolean;
   setIncludeMedicineList?: (val: boolean) => void;
+  limitIssuesMap?: Record<number, string[]>;
 }
 
 export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
@@ -47,20 +48,34 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
   finalBatchTotalAmount,
   isSendingBatchWhatsApp,
   onConfirmSend,
-  includeMedicineList = false,
-  setIncludeMedicineList,
+  limitIssuesMap = {},
 }) => {
+  const hasAnyLimitIssues = batchSummaryList.some(item => (limitIssuesMap[item.storeId]?.length || 0) > 0);
+
   return (
     <BaseModal
       isOpen={isOpen}
       onClose={onClose}
-      title="Confirm WhatsApp Order Dispatch"
+      title="Place Official Orders & Dispatch"
       maxWidth="max-w-2xl"
     >
       <div className="space-y-3 max-h-[75vh] flex flex-col">
         <p className="text-[11px] text-muted -mt-2">
-          Notifies delivery staff with assigned pickup stores. Distributor dispatch reminders will queue automatically when official Order IDs are detected.
+          Places official orders directly on retailers.pharmarack.com/cart, notifies delivery staff with clean pickup stores, and queues distributor dispatch reminders with genuine today's Order IDs.
         </p>
+
+        {/* Warning Banner if any distributor fails minimum requirements */}
+        {hasAnyLimitIssues && (
+          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-2.5 flex items-start gap-2.5 text-xs text-rose-400 shrink-0">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Minimum Order Requirements Not Met:</span>
+              <p className="text-[11px] text-rose-300/80 mt-0.5">
+                One or more distributors have shortfall or order limit issues. Please fulfill these requirements in the live cart before placing official orders. Fake sends and premature dispatches are strictly blocked.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Quick Bulk Staff Assignment Header */}
         {deliveryBoysList.length > 0 && (
@@ -107,33 +122,15 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
           </div>
         )}
 
-        {/* Itemized Medicine List Toggle (Template 7A) */}
-        <div className="bg-bg3/40 px-4 py-2.5 rounded-xl border border-glass-border flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
-              <MessageSquare size={14} />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-text flex items-center gap-2">
-                <span>Include Itemized Medicines in Staff Dispatch</span>
-                <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Template 7A
-                </span>
-              </div>
-              <p className="text-[10px] text-muted">
-                When enabled, delivery staff receives full medicine names, packs, and quantities for each store.
-              </p>
-            </div>
+        {/* Clean Staff Dispatch Information Badge */}
+        <div className="bg-bg3/40 px-4 py-2 rounded-xl border border-glass-border flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-text">🚚 Delivery Staff Pickup List:</span>
+            <span className="text-[11px] text-muted">Clean distributor list with contact numbers only (no medicine names or item counts).</span>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer shrink-0">
-            <input
-              type="checkbox"
-              checked={Boolean(includeMedicineList)}
-              onChange={(e) => setIncludeMedicineList?.(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-9 h-5 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-text after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-muted after:border-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-text border border-glass-border"></div>
-          </label>
+          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold shrink-0">
+            Clean Format
+          </span>
         </div>
 
         {/* Modal Body: Distributor Table */}
@@ -156,56 +153,68 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  batchSummaryList.map((item) => (
-                    <tr key={item.storeId} className="hover:bg-bg3/20 transition-colors">
-                      <td className="py-3 px-3.5 font-bold text-text">
-                        <div className="flex items-center gap-2">
-                          <span>{item.storeName}</span>
-                          {item.isMapped ? (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              Mapped
-                            </span>
-                          ) : (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                              No phone
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-center font-mono font-extrabold text-text">
-                        {item.totalQty}
-                      </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-black text-emerald-400">
-                        ₹{item.totalAmount.toFixed(2)}
-                      </td>
-                      <td className="py-2 px-3.5 min-w-[190px]">
-                        <select
-                          value={selectedBatchDeliveryBoys[item.storeId] !== null && selectedBatchDeliveryBoys[item.storeId] !== undefined ? String(selectedBatchDeliveryBoys[item.storeId]) : ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            const num = val === '' ? null : Number(val);
-                            setSelectedBatchDeliveryBoys((prev) => ({
-                              ...prev,
-                              [item.storeId]: num,
-                            }));
-                          }}
-                          className={`w-full text-xs px-2.5 py-1.5 rounded-xl border font-medium focus:outline-none transition-all cursor-pointer ${
-                            selectedBatchDeliveryBoys[item.storeId] === null || selectedBatchDeliveryBoys[item.storeId] === undefined
-                              ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 font-bold focus:border-amber-500'
-                              : 'bg-bg border-glass-border text-text focus:border-emerald-500'
-                          }`}
-                        >
-                          <option value="">⚠️ Missing Delivery Staff</option>
-                          <option value="0">👤 Admin / Store Owner (Store Contact)</option>
-                          {deliveryBoysList.map((b) => (
-                            <option key={b.id} value={b.id}>
-                              🚚 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))
+                  batchSummaryList.map((item) => {
+                    const issues = limitIssuesMap[item.storeId] || [];
+                    const hasIssues = issues.length > 0;
+                    return (
+                      <tr key={item.storeId} className={`hover:bg-bg3/20 transition-colors ${hasIssues ? 'bg-rose-500/5' : ''}`}>
+                        <td className="py-3 px-3.5 font-bold text-text">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span>{item.storeName}</span>
+                              {item.isMapped ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                  Mapped
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                  No phone
+                                </span>
+                              )}
+                            </div>
+                            {hasIssues && (
+                              <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 w-fit">
+                                <AlertTriangle size={10} className="shrink-0" />
+                                <span>{issues[0]}</span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-extrabold text-text">
+                          {item.totalQty}
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-mono font-black text-emerald-400">
+                          ₹{item.totalAmount.toFixed(2)}
+                        </td>
+                        <td className="py-2 px-3.5 min-w-[190px]">
+                          <select
+                            value={selectedBatchDeliveryBoys[item.storeId] !== null && selectedBatchDeliveryBoys[item.storeId] !== undefined ? String(selectedBatchDeliveryBoys[item.storeId]) : ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const num = val === '' ? null : Number(val);
+                              setSelectedBatchDeliveryBoys((prev) => ({
+                                ...prev,
+                                [item.storeId]: num,
+                              }));
+                            }}
+                            className={`w-full text-xs px-2.5 py-1.5 rounded-xl border font-medium focus:outline-none transition-all cursor-pointer ${
+                              selectedBatchDeliveryBoys[item.storeId] === null || selectedBatchDeliveryBoys[item.storeId] === undefined
+                                ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 font-bold focus:border-amber-500'
+                                : 'bg-bg border-glass-border text-text focus:border-emerald-500'
+                            }`}
+                          >
+                            <option value="">⚠️ Missing Delivery Staff</option>
+                            <option value="0">👤 Admin / Store Owner (Store Contact)</option>
+                            {deliveryBoysList.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                🚚 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
               {batchSummaryList.length > 0 && (
@@ -243,18 +252,19 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
           <button
             type="button"
             onClick={onConfirmSend}
-            disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0}
-            className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-50 cursor-pointer"
+            disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0 || hasAnyLimitIssues}
+            className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title={hasAnyLimitIssues ? 'Please fulfill minimum order requirements before placing orders' : 'Place official orders on Pharmarack & notify staff'}
           >
             {isSendingBatchWhatsApp ? (
               <>
                 <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                <span>Notifying staff…</span>
+                <span>Placing Orders &amp; Notifying Staff…</span>
               </>
             ) : (
               <>
                 <Send size={13} />
-                <span>Notify Staff &amp; Queue Dispatch</span>
+                <span>Place Official Orders &amp; Dispatch</span>
               </>
             )}
           </button>

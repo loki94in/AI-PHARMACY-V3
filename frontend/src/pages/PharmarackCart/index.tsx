@@ -2754,14 +2754,15 @@ export default function PharmarackCart() {
         return;
       }
 
-      // ENQUEUE DELIVERY BOY PICKUP SUMMARY & PREPARE DEFERRED DISTRIBUTOR DISPATCH
-      messageSendEvent.triggerSendProgress('Pharmarack Batch Orders', `Dispatching pickup summary for ${ordersPayload.length} stores...`, 10);
-      const res = await api.enqueuePharmarackBatch({
+      // 1. PLACE OFFICIAL ORDERS DIRECTLY ON PHARMARACK & QUEUE CLEAN DISPATCH
+      messageSendEvent.triggerSendProgress('Pharmarack Batch Orders', `Placing official orders on Pharmarack for ${ordersPayload.length} stores...`, 15);
+      const res = await api.placeOfficialPharmarackOrders({
+        targetStoreNames: mapped.map(d => d.storeName),
         orders: ordersPayload,
         deliveryBoyPhone,
         deliveryBoyName,
-        dispatchDistributorsLater: true,
-        includeMedicineList,
+        storeInfo,
+        bypassShortfallCheck: false
       });
 
       if (res && res.success) {
@@ -2784,13 +2785,16 @@ export default function PharmarackCart() {
         window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
 
         toastEvent.trigger(
-          `⚡ Delivery staff notified with pickup list! Official orders recorded. Distributor dispatch will trigger once Order IDs are confirmed.`,
+          `⚡ Official orders placed on Pharmarack (${res.placedCount} placed)! Clean pickup list sent to delivery staff and distributor reminders scheduled.`,
           'info'
         );
 
         // Resume UI immediately without waiting for background data refreshes
         isSendingBatchRef.current = false;
         setIsSendingBatchWhatsApp(false);
+
+        // Refresh live cart so newly placed orders disappear from the cart page
+        fetchCart(false);
 
         // Refresh orders and sent dates asynchronously in background without blocking UI
         Promise.allSettled([
@@ -2799,7 +2803,7 @@ export default function PharmarackCart() {
           loadSentDates()
         ]).catch(() => { });
       } else {
-        throw new Error(res?.message || 'Failed to enqueue WhatsApp batch orders');
+        throw new Error(res?.error || res?.message || 'Failed to place official orders on Pharmarack');
       }
 
       if (unmapped.length > 0) {
@@ -2809,22 +2813,11 @@ export default function PharmarackCart() {
     } catch (err: unknown) {
       const apiErr = err as LocalApiError;
       console.warn('Batch WhatsApp send error:', err);
-      toastEvent.trigger(apiErr?.message || 'Failed to send WhatsApp orders automatically.', 'error');
+      toastEvent.trigger(apiErr?.message || 'Failed to place official orders automatically.', 'error');
 
-      // Fallback: If background queue or backend service is unavailable, offer browser WhatsApp Web tabs for mapped distributors
+      // Fallback: If automated order placement encounters an issue, provide direct access to authenticated cart window
       try {
-        const mapped = distributors.filter(d => isDistributorMapped(d));
-        if (mapped.length > 0 && window.confirm('Automated background WhatsApp service is currently unavailable. Would you like to open WhatsApp Web tabs to send these orders directly in your browser?')) {
-          mapped.forEach((dist, idx) => {
-            setTimeout(() => {
-              const phoneNum = getDistributorPhoneNumber(dist);
-              const cleanPhone = toWaDigits(phoneNum);
-              const msg = buildDistributorOrderMessage(dist);
-              openOrReuseWhatsappTab('', cleanPhone, msg);
-              setSentWaStatusMap(prev => ({ ...prev, [dist.storeId]: 'success' }));
-            }, idx * 1500);
-          });
-        }
+        api.openOfficialPharmarackCartWindow().catch(() => {});
       } catch (tabErr) {
         console.warn('Tab fallback error:', tabErr);
       }
@@ -5398,16 +5391,19 @@ export default function PharmarackCart() {
                 </span>
               )}
 
-              <a
-                href="https://retailers.pharmarack.com/cart"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-bg3/30 border border-glass-border text-muted hover:text-text hover:bg-bg3 transition-all text-xs font-bold active:scale-95"
-                title="Open Cart on retailers.pharmarack.com"
+              <button
+                type="button"
+                onClick={() => {
+                  api.openOfficialPharmarackCartWindow().catch(() => {
+                    window.open('https://retailers.pharmarack.com/cart', '_blank');
+                  });
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-bg3/30 border border-glass-border text-muted hover:text-text hover:bg-bg3 transition-all text-xs font-bold active:scale-95 cursor-pointer"
+                title="Open Authenticated Cart on retailers.pharmarack.com"
               >
                 <ExternalLink size={13} />
-                <span>Open External</span>
-              </a>
+                <span>Open Cart Window</span>
+              </button>
             </div>
           </div>
 
@@ -6677,10 +6673,10 @@ export default function PharmarackCart() {
                   )}
                   <span>
                     {isSendingBatchWhatsApp
-                      ? 'Sending orders…'
+                      ? 'Placing orders…'
                       : isValidatingBeforeSend
                         ? 'Verifying live cart…'
-                        : `Send All via WhatsApp (${readyToSendDistributors.length})`}
+                        : `Place Official Orders & Dispatch (${readyToSendDistributors.length})`}
                   </span>
                 </button>
 
@@ -6707,15 +6703,19 @@ export default function PharmarackCart() {
                 </div>
               </div>
 
-              <a
-                href="https://retailers.pharmarack.com/cart"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full sm:w-auto premium-btn bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 px-6 rounded-xl flex items-center justify-center gap-2 active:scale-95 shadow-[0_4px_14px_rgba(16,185,129,0.4)] transition-all"
+              <button
+                type="button"
+                onClick={() => {
+                  api.openOfficialPharmarackCartWindow().catch(() => {
+                    window.open('https://retailers.pharmarack.com/cart', '_blank');
+                  });
+                }}
+                className="w-full sm:w-auto premium-btn bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 px-6 rounded-xl flex items-center justify-center gap-2 active:scale-95 shadow-[0_4px_14px_rgba(16,185,129,0.4)] transition-all cursor-pointer"
+                title="Open authenticated cart on retailers.pharmarack.com"
               >
                 <ExternalLink size={14} />
-                <span>Proceed to Checkout</span>
-              </a>
+                <span>Open Official Cart</span>
+              </button>
             </div>
           )}
         </div>
@@ -7266,6 +7266,9 @@ export default function PharmarackCart() {
         isSendingBatchWhatsApp={isSendingBatchWhatsApp}
         includeMedicineList={includeMedicineListInBatch}
         setIncludeMedicineList={setIncludeMedicineListInBatch}
+        limitIssuesMap={Object.fromEntries(
+          distributors.map(d => [d.storeId, getOrderLimitIssues(d, isItemIncludedInDispatch)])
+        )}
         onConfirmSend={() => {
           if (isSendingBatchRef.current || isSendingBatchWhatsApp) return;
           setShowConfirmBatchModal(false);

@@ -397,7 +397,7 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     }
   }
 
-  // 3. Delivery boys: notify assigned delivery staff of newly placed orders with medicine items
+  // 3. Delivery boys: record assignment for fresh orders (pickup alerts disabled per pharmacy policy)
   for (const f of fresh) {
     try {
       const alreadyNotifiedBoy = await db.get(
@@ -405,23 +405,6 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
         [f.orderNo]
       );
       if (alreadyNotifiedBoy) continue;
-
-      // Find order row in pharmarack_placed_orders to get items
-      const placedRow = await db.get(
-        `SELECT items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
-        [today.iso, f.storeName]
-      );
-      let orderItems: any[] = [];
-      try { orderItems = JSON.parse(placedRow?.items_json || '[]'); } catch (_) {}
-
-      // If items empty, try fetching live order lines
-      if (orderItems.length === 0 && token) {
-        const matchingOrder = (orders as any[]).find((o: any) => String(o?.OrderNo).trim() === f.orderNo);
-        if (matchingOrder && matchingOrder.OrderId) {
-          const lines = await fetchOrderLines(db, token, Number(matchingOrder.OrderId), f.orderNo);
-          if (lines && lines.length > 0) orderItems = lines;
-        }
-      }
 
       // Resolve distributor contact and assigned delivery boy
       const { resolveDistributorContact } = await import('../utils/distributorSyncHelper.js');
@@ -432,27 +415,16 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
         if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
       }
 
-      const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-        storeName: f.storeName,
-        storePhone: contact.distributor_phone,
-        orderNo: f.orderNo,
-        items: orderItems,
-        deliveryBoy: targetBoy,
-        distributorId: contact.distributor_id
-      });
-
-      if (boyRes.ok) {
-        await db.run(
-          `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
-          [Date.now(), targetBoy?.id || null, f.orderNo]
-        );
-        await db.run(
-          `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
-          [Date.now(), today.iso, f.storeName]
-        );
-      }
+      await db.run(
+        `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
+        [Date.now(), targetBoy?.id || null, f.orderNo]
+      );
+      await db.run(
+        `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+        [Date.now(), today.iso, f.storeName]
+      );
     } catch (boyErr: any) {
-      console.warn(`[PharmarackOrderSync] Failed to notify delivery boy for order ${f.orderNo}:`, boyErr?.message || boyErr);
+      console.warn(`[PharmarackOrderSync] Failed to update delivery boy record for order ${f.orderNo}:`, boyErr?.message || boyErr);
     }
   }
 
@@ -511,35 +483,14 @@ export async function recoverTodayUnnotifiedOrders(): Promise<{ unnotifiedOrders
 
     const { resolveDistributorContact } = await import('../utils/distributorSyncHelper.js');
 
-    // 2. Recover delivery boy notifications for placed orders
+    // 2. Recover delivery boy status for placed orders (per-order alerts disabled per pharmacy policy)
     for (const po of unnotifiedPlaced) {
       try {
-        let items = [];
-        try { items = JSON.parse(po.items_json || '[]'); } catch (_) {}
-        const contact = await resolveDistributorContact(db, po.store_name);
-
-        let targetBoy: any = null;
-        if (contact.delivery_boy_id) {
-          const b = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1', [contact.delivery_boy_id]);
-          if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
-        }
-
-        const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-          storeName: po.store_name,
-          storePhone: contact.distributor_phone,
-          orderNo: po.order_no || undefined,
-          items,
-          deliveryBoy: targetBoy,
-          distributorId: po.store_id || contact.distributor_id
-        });
-
-        if (boyRes.ok) {
-          await db.run(
-            `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE id = ?`,
-            [Date.now(), po.id]
-          );
-          result.notifiedBoys++;
-        }
+        await db.run(
+          `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE id = ?`,
+          [Date.now(), po.id]
+        );
+        result.notifiedBoys++;
       } catch (err: any) {
         console.warn(`[OrderRecovery] Failed to recover delivery boy for placed order #${po.id}:`, err?.message || err);
       }
@@ -564,37 +515,19 @@ export async function recoverTodayUnnotifiedOrders(): Promise<{ unnotifiedOrders
           }
         }
 
-        // B. If delivery boy was not notified, fetch items and send
+        // B. Mark synced order delivery boy status without sending itemized pickup alerts
         if (!so.delivery_boy_notified_at) {
-          const placedRow = await db.get(
-            `SELECT items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
-            [today.iso, so.store_name]
-          );
-          let items: any[] = [];
-          try { items = JSON.parse(placedRow?.items_json || '[]'); } catch (_) {}
-
           let targetBoy: any = null;
           if (contact.delivery_boy_id) {
             const b = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1', [contact.delivery_boy_id]);
             if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
           }
 
-          const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-            storeName: so.store_name,
-            storePhone: contact.distributor_phone,
-            orderNo: so.order_no,
-            items,
-            deliveryBoy: targetBoy,
-            distributorId: so.store_id || contact.distributor_id
-          });
-
-          if (boyRes.ok) {
-            await db.run(
-              `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
-              [Date.now(), targetBoy?.id || null, so.order_no]
-            );
-            result.notifiedBoys++;
-          }
+          await db.run(
+            `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
+            [Date.now(), targetBoy?.id || null, so.order_no]
+          );
+          result.notifiedBoys++;
         }
       } catch (err: any) {
         console.warn(`[OrderRecovery] Failed to recover synced order #${so.order_no}:`, err?.message || err);

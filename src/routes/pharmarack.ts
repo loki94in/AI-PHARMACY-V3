@@ -25,6 +25,8 @@ import {
 } from '../utils/chromeBrowser.js';
 import { marketClosureService } from '../services/marketClosureService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
+import { pharmarackCheckoutService } from '../services/pharmarackCheckoutService.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 
 // const execAsync = promisify(exec);
 
@@ -2847,6 +2849,71 @@ router.post('/cart/notify-delivery-boys-batch', async (req, res) => {
   }
 });
 
+// Official Pharmarack Checkout Routes
+router.post('/cart/place-official-orders', async (req, res) => {
+  const { targetStoreNames, orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
+  try {
+    const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
+    
+    // Invalidate local cart caches so UI sees fresh cart
+    invalidatePharmarackCartCache();
+
+    // Pull today's official orders placed/synced
+    const today = toLocalSqlDateTime(new Date()).slice(0, 10);
+    const db = await dbManager.getConnection();
+    const syncedToday = await db.all(
+      `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
+      [today]
+    );
+
+    // If orders provided from frontend, enqueue clean delivery boy summary
+    if (orders && Array.isArray(orders) && orders.length > 0) {
+      try {
+        const appPort = process.env.PORT || 3001;
+        await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orders,
+            deliveryBoyPhone,
+            deliveryBoyName,
+            storeInfo,
+            dispatchDistributorsLater: false, // Now that official orders were triggered
+            includeMedicineList: false // Clean distributor list only
+          })
+        }).catch(() => {});
+      } catch (queueErr) {
+        console.warn('[PharmarackRoute] Failed to enqueue batch summary post-checkout:', queueErr);
+      }
+    }
+
+    res.json({
+      success: checkoutResult.ok,
+      placedCount: checkoutResult.placedCount,
+      failedCount: checkoutResult.failedCount,
+      orders: checkoutResult.orders,
+      syncedOrders: syncedToday,
+      error: checkoutResult.error,
+      message: checkoutResult.ok 
+        ? `Successfully placed ${checkoutResult.placedCount} official order(s) on Pharmarack!`
+        : (checkoutResult.error || 'Failed to place official orders on Pharmarack')
+    });
+  } catch (err: any) {
+    console.error('Place official orders route error:', err);
+    res.status(500).json({ error: err.message || 'Failed to place official orders' });
+  }
+});
+
+router.post('/cart/open-official-window', async (_req, res) => {
+  try {
+    const result = await pharmarackCheckoutService.openAuthenticatedCartWindow();
+    res.json(result);
+  } catch (err: any) {
+    console.error('Open cart window route error:', err);
+    res.status(500).json({ ok: false, error: err.message || 'Failed to open cart window' });
+  }
+});
+
 /**
  * Auto-clears items from active distributor cart if the corresponding order:
  * 1. Has payment already confirmed ('PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED')
@@ -4129,27 +4196,8 @@ router.post('/log-placed-order', async (req, res) => {
     let boyNotified = Number(delivery_boy_notified || 0);
     let boyNotifiedAt: number | null = boyNotified ? placedAt : null;
 
-    if (isLate && !boyNotified) {
-      // Post-morning order placed: notify the delivery boy directly with itemized pickup alert
-      let targetBoy = delivery_persons?.[0];
-      if (!targetBoy && delivery_boy_id) {
-        const bRow = await db.get('SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ?', [delivery_boy_id]);
-        if (bRow) targetBoy = { id: bRow.id, name: bRow.name, phone: bRow.whatsapp_number };
-      }
-      const distContact = await resolveDistributorContact(db, store_name);
-      const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-        storeName: store_name,
-        storePhone: distContact.distributor_phone,
-        orderNo: order_no,
-        items: items || [],
-        deliveryBoy: targetBoy,
-        distributorId: store_id || distContact.distributor_id
-      });
-      if (boyRes.ok) {
-        boyNotified = 1;
-        boyNotifiedAt = Date.now();
-      }
-    }
+    // Delivery boy pickup alerts disabled per pharmacy policy:
+    // Delivery boys strictly receive the consolidated daily dispatch summary without itemized medicine lists.
 
     await db.run(
       `INSERT INTO pharmarack_placed_orders 

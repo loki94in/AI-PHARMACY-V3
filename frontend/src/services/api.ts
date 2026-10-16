@@ -1516,6 +1516,23 @@ export const api = {
   stageClosureNotices: (refillIds: number[], customTemplate?: string) => apiClient.post('/pharmarack/stage-closure-notices', { refillIds, customTemplate }).then(res => res.data),
   addClosureBufferToCart: (items: Array<{ medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>) => apiClient.post('/pharmarack/add-closure-buffer-to-cart', { items }).then(res => res.data),
   launchPharmarackLoginWindow: () => apiClient.post('/pharmarack/login-window').then(res => res.data),
+  openOfficialPharmarackCartWindow: () => apiClient.post<{ ok: boolean; message: string }>('/pharmarack/cart/open-official-window').then(res => res.data),
+  placeOfficialPharmarackOrders: (data: {
+    targetStoreNames?: string[];
+    orders?: any[];
+    deliveryBoyPhone?: string;
+    deliveryBoyName?: string;
+    storeInfo?: any;
+    bypassShortfallCheck?: boolean;
+  }) => apiClient.post<{
+    success: boolean;
+    placedCount: number;
+    failedCount: number;
+    orders: Array<{ storeId?: number; storeName: string; orderNo?: string; status: string; error?: string }>;
+    syncedOrders?: Array<{ order_no: string; store_name: string; order_amount: number }>;
+    message?: string;
+    error?: string;
+  }>('/pharmarack/cart/place-official-orders', data).then(res => res.data),
   logoutPharmarack: () => apiClient.post('/pharmarack/logout').then(res => res.data),
   getAffectedClosurePatients: (params: { startDate?: string; endDate?: string; date?: string }) =>
     apiClient.get('/pharmarack/affected-closure-patients', { params }).then(res => res.data),

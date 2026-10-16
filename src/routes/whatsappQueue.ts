@@ -5,6 +5,7 @@ import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { eventService } from '../services/eventService.js';
 import { whatsappDeliveryRegister } from '../services/whatsappDeliveryRegister.js';
 import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 
 const router = express.Router();
 
@@ -159,8 +160,6 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
     const headerShopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || 'AI Pharmacy';
 
     for (const [cleanBoyPhone, group] of boyGroups.entries()) {
-      const totalItems = group.orders.reduce((sum: number, o: any) => sum + (o.items?.length || 0), 0);
-
       let summaryMsg = `🏥 *${headerShopName}*\n📋 *TODAY DISTRIBUTOR SUMMARY & TOTALS — ${dateLabel}*\n`;
       if (group.boyName && group.boyName !== 'Delivery Staff') {
         summaryMsg += `👤 *Assigned Staff:* ${group.boyName}\n`;
@@ -171,7 +170,7 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
         const cleanP = normalizeWhatsAppPhone(o.phone || '');
         const last10 = cleanP.slice(-10);
         const phoneFormatted = last10.length === 10 ? `+91 ${last10.slice(0, 5)} ${last10.slice(5)}` : (o.phone || 'N/A');
-        summaryMsg += `${idx + 1}. *${o.storeName}* (${o.items?.length || 0} items)\n    📞 Contact: ${phoneFormatted}\n`;
+        summaryMsg += `${idx + 1}. *${o.storeName}*\n    📞 Contact: ${phoneFormatted}\n`;
         if (includeMedicineList && Array.isArray(o.items) && o.items.length > 0) {
           summaryMsg += `    📦 *Medicines List:*\n`;
           o.items.forEach((it: any) => {
@@ -184,7 +183,6 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
       });
       summaryMsg += `\n==================================\n`;
       summaryMsg += `🚚 *Total Assigned Distributors:* ${group.orders.length}\n`;
-      summaryMsg += `📦 *Total Order Items:* ${totalItems}\n`;
       summaryMsg += `==================================`;
 
       const boyQueueId = await whatsappQueueWorker.enqueue(
@@ -197,7 +195,7 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
     }
 
     // B. ENQUEUE EACH DISTRIBUTOR ORDER MESSAGE ONE BY ONE
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalSqlDateTime(new Date()).slice(0, 10);
     for (const order of orders) {
       if (!order.phone || !order.message) continue;
       const cleanPhone = normalizeWhatsAppPhone(order.phone);
@@ -245,7 +243,6 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
 
       // Log placed order to DB history
       try {
-        const today = new Date().toISOString().split('T')[0];
         const placedAt = Date.now();
         await db.run(
           `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
