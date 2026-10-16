@@ -12188,16 +12188,16 @@ var init_messages = __esm({
 });
 
 // src/i18n/getMessage.ts
-function getMessage(lang = "en", path60, values = {}) {
+function getMessage(lang = "en", path61, values = {}) {
   const targetLang = lang && typeof lang === "string" ? lang.toLowerCase() : "en";
-  let template = getTemplate(targetLang, path60);
+  let template = getTemplate(targetLang, path61);
   if (template === null && targetLang !== "en") {
-    template = getTemplate("en", path60);
+    template = getTemplate("en", path61);
   }
   if (template === null) {
     const resolveFromJson = (l) => {
       if (!ALL_MESSAGES || !ALL_MESSAGES[l]) return null;
-      const keys = path60.split(".");
+      const keys = path61.split(".");
       let segment = ALL_MESSAGES[l];
       for (const k of keys) {
         if (segment == null) return null;
@@ -12211,10 +12211,10 @@ function getMessage(lang = "en", path60, values = {}) {
     }
   }
   if (template === null) {
-    if (BOT_FALLBACK_DEFAULTS[path60]) {
-      template = BOT_FALLBACK_DEFAULTS[path60];
+    if (BOT_FALLBACK_DEFAULTS[path61]) {
+      template = BOT_FALLBACK_DEFAULTS[path61];
     } else {
-      return `[Missing: ${path60}]`;
+      return `[Missing: ${path61}]`;
     }
   }
   return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
@@ -15834,6 +15834,344 @@ function validate10DigitPhone(input, options = {}) {
 var init_phoneValidation = __esm({
   "src/utils/phoneValidation.ts"() {
     "use strict";
+  }
+});
+
+// src/services/pharmarackCheckoutService.ts
+var import_fs15, import_path15, checkoutPromise, PharmarackCheckoutService, pharmarackCheckoutService;
+var init_pharmarackCheckoutService = __esm({
+  "src/services/pharmarackCheckoutService.ts"() {
+    "use strict";
+    import_fs15 = __toESM(require("fs"), 1);
+    import_path15 = __toESM(require("path"), 1);
+    init_lazyPuppeteer();
+    init_connection();
+    init_config();
+    init_chromeBrowser();
+    init_pharmarackOrderSyncService();
+    checkoutPromise = null;
+    PharmarackCheckoutService = class _PharmarackCheckoutService {
+      static instance;
+      constructor() {
+      }
+      static getInstance() {
+        if (!_PharmarackCheckoutService.instance) {
+          _PharmarackCheckoutService.instance = new _PharmarackCheckoutService();
+        }
+        return _PharmarackCheckoutService.instance;
+      }
+      /**
+       * Places official orders on https://retailers.pharmarack.com/cart using the authenticated session profile.
+       * Single-flight execution prevents concurrent browser instances.
+       */
+      async executeCartCheckout(targetStoreNames) {
+        if (checkoutPromise) {
+          console.log("[PharmarackCheckout] Checkout already in flight. Awaiting existing run...");
+          return checkoutPromise;
+        }
+        checkoutPromise = this.runCheckoutInternal(targetStoreNames).finally(() => {
+          checkoutPromise = null;
+        });
+        return checkoutPromise;
+      }
+      async runCheckoutInternal(targetStoreNames) {
+        if (isShutdownInProgress()) {
+          return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "Application shutdown in progress" };
+        }
+        const chromePath = findChromePath();
+        if (!chromePath) {
+          return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "Google Chrome was not found on your system." };
+        }
+        const mainProfilePath = import_path15.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (!import_fs15.default.existsSync(mainProfilePath)) {
+          return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "No active Pharmarack profile found. Please log in first." };
+        }
+        let browser = null;
+        let headlessTrackId = null;
+        let tempProfilePathToDelete = "";
+        const puppeteer = await getPuppeteer();
+        const results = [];
+        try {
+          console.log("[PharmarackCheckout] Preparing Chrome profile for automated cart checkout...");
+          await killOrphanChromeProcesses("pharmarack_profile");
+          cleanTempProfileFolders();
+          try {
+            cleanProfileLockFiles(mainProfilePath);
+            browser = await puppeteer.launch({
+              executablePath: chromePath,
+              headless: true,
+              userDataDir: mainProfilePath,
+              args: getCommonHeadlessChromiumArgs([
+                "--no-zygote",
+                "--js-flags=--max-old-space-size=256",
+                "--window-position=-10000,-10000"
+              ])
+            });
+            headlessTrackId = trackHeadless(browser, "pharmarack_checkout_main");
+          } catch (launchErr) {
+            if (isShutdownInProgress()) {
+              return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "Application shutting down" };
+            }
+            console.log("[PharmarackCheckout] Main profile locked, falling back to temp profile copy...", launchErr.message);
+            const randomSuffix = Math.floor(Math.random() * 1e6);
+            const tempProfilePath = import_path15.default.resolve(getAppDataDir(), "data", `pharmarack_profile_checkout_${Date.now()}_${randomSuffix}`);
+            await copyProfileFolder(mainProfilePath, tempProfilePath, "[PharmarackCheckout]");
+            cleanProfileLockFiles(tempProfilePath);
+            browser = await puppeteer.launch({
+              executablePath: chromePath,
+              headless: true,
+              userDataDir: tempProfilePath,
+              args: getCommonHeadlessChromiumArgs([
+                "--no-zygote",
+                "--js-flags=--max-old-space-size=256",
+                "--window-position=-10000,-10000"
+              ])
+            });
+            headlessTrackId = trackHeadless(browser, "pharmarack_checkout_temp");
+            tempProfilePathToDelete = tempProfilePath;
+          }
+          const [page] = await browser.pages();
+          page.setDefaultNavigationTimeout(3e4);
+          page.setDefaultTimeout(15e3);
+          const networkOrderNos = /* @__PURE__ */ new Set();
+          page.on("response", async (response) => {
+            try {
+              const url = response.url();
+              if (url.includes("/order/") || url.includes("/cart/") || url.includes("Order")) {
+                const status = response.status();
+                if (status >= 200 && status < 300) {
+                  const text = await response.text().catch(() => "");
+                  if (text && text.includes("OrderNo")) {
+                    const matches = text.match(/"OrderNo"\s*:\s*"?([A-Za-z0-9_-]+)"?/g);
+                    if (matches) {
+                      for (const m of matches) {
+                        const cleanNo = m.replace(/"OrderNo"\s*:\s*"?/, "").replace(/"?$/, "").trim();
+                        if (cleanNo) networkOrderNos.add(cleanNo);
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (_) {
+            }
+          });
+          console.log("[PharmarackCheckout] Navigating to https://retailers.pharmarack.com/cart ...");
+          await page.goto("https://retailers.pharmarack.com/cart", { waitUntil: "domcontentloaded", timeout: 25e3 });
+          const currentUrl = page.url();
+          if (currentUrl.includes("/login") || currentUrl.includes("/auth") || currentUrl.includes("/signin")) {
+            console.warn("[PharmarackCheckout] Session expired: Redirected to login page.");
+            const db2 = await dbManager.getConnection();
+            await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')").catch(() => {
+            });
+            return {
+              ok: false,
+              placedCount: 0,
+              failedCount: 0,
+              orders: [],
+              error: "Pharmarack session expired. Please re-authenticate via Settings > External Integrations."
+            };
+          }
+          await new Promise((r) => setTimeout(r, 2500));
+          const checkoutExecution = await page.evaluate(async (targetNames) => {
+            const logs = [];
+            const placedStores = [];
+            const failedStores = [];
+            const allButtons = Array.from(document.querySelectorAll('button, a[role="button"]'));
+            const placeOrderButtons = allButtons.filter((b) => {
+              const txt = (b.innerText || b.textContent || "").trim().toLowerCase();
+              return txt.includes("place order") || txt.includes("confirm order") || txt.includes("checkout") || txt.includes("order now");
+            });
+            logs.push(`Found ${placeOrderButtons.length} potential place order button(s) on cart page.`);
+            if (placeOrderButtons.length === 0) {
+              const bodyText = (document.body.innerText || "").toLowerCase();
+              if (bodyText.includes("cart is empty") || bodyText.includes("no item") || bodyText.includes("no product")) {
+                return { emptyCart: true, logs, placedStores, failedStores };
+              }
+              return { noButtons: true, logs, placedStores, failedStores };
+            }
+            for (const btn of placeOrderButtons) {
+              try {
+                let storeName = "Distributor";
+                let container = btn;
+                for (let i = 0; i < 6; i++) {
+                  if (!container) break;
+                  const headerEl = container.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"]');
+                  if (headerEl && headerEl.textContent) {
+                    const cand = headerEl.textContent.trim();
+                    if (cand.length > 2 && !cand.toLowerCase().includes("cart") && !cand.toLowerCase().includes("order")) {
+                      storeName = cand;
+                      break;
+                    }
+                  }
+                  container = container.parentElement;
+                }
+                if (targetNames && targetNames.length > 0) {
+                  const normStore = storeName.toLowerCase().trim();
+                  const isMatch = targetNames.some((t) => normStore.includes(t.toLowerCase().trim()) || t.toLowerCase().trim().includes(normStore));
+                  if (!isMatch) continue;
+                }
+                btn.scrollIntoView({ behavior: "instant", block: "center" });
+                btn.click();
+                logs.push(`Clicked Place Order for store: ${storeName}`);
+                await new Promise((r) => setTimeout(r, 800));
+                const modalButtons = Array.from(document.querySelectorAll('.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn'));
+                for (const mBtn of modalButtons) {
+                  const mText = (mBtn.innerText || mBtn.textContent || "").trim().toLowerCase();
+                  if (mText.includes("confirm") || mText.includes("yes") || mText.includes("proceed") || mText.includes("place order")) {
+                    mBtn.click();
+                    logs.push(`Confirmed modal dialog for: ${storeName}`);
+                    break;
+                  }
+                }
+                placedStores.push(storeName);
+                await new Promise((r) => setTimeout(r, 1500));
+              } catch (btnErr) {
+                failedStores.push({ name: "Unknown Store", error: btnErr.message || "Button click failed" });
+              }
+            }
+            return { success: true, logs, placedStores, failedStores };
+          }, targetStoreNames || null);
+          console.log("[PharmarackCheckout] DOM Execution summary:", checkoutExecution);
+          await new Promise((r) => setTimeout(r, 3e3));
+          console.log("[PharmarackCheckout] Triggering immediate Pharmarack order sync to fetch official Order IDs...");
+          let syncRes = null;
+          try {
+            syncRes = await syncPharmarackOrders();
+            console.log("[PharmarackCheckout] Order sync complete:", syncRes);
+          } catch (sErr) {
+            console.warn("[PharmarackCheckout] Order sync error post-checkout:", sErr.message);
+          }
+          const placedNames = checkoutExecution.placedStores || [];
+          const capturedOrders = Array.from(networkOrderNos);
+          if (placedNames.length > 0) {
+            placedNames.forEach((sName, idx) => {
+              results.push({
+                storeName: sName,
+                orderNo: capturedOrders[idx] || void 0,
+                status: "placed"
+              });
+            });
+          } else if (capturedOrders.length > 0) {
+            capturedOrders.forEach((ordNo) => {
+              results.push({
+                storeName: "Pharmarack Distributor",
+                orderNo: ordNo,
+                status: "placed"
+              });
+            });
+          }
+          if (checkoutExecution.failedStores) {
+            checkoutExecution.failedStores.forEach((f) => {
+              results.push({
+                storeName: f.name,
+                status: "failed",
+                error: f.error
+              });
+            });
+          }
+          const placedCount = results.filter((r) => r.status === "placed").length;
+          const failedCount = results.filter((r) => r.status === "failed").length;
+          return {
+            ok: placedCount > 0 || checkoutExecution.placedStores && checkoutExecution.placedStores.length > 0,
+            placedCount,
+            failedCount,
+            orders: results
+          };
+        } catch (err) {
+          console.error("[PharmarackCheckout] Execution error:", err);
+          return {
+            ok: false,
+            placedCount: 0,
+            failedCount: 0,
+            orders: results,
+            error: err.message || "Automated checkout failed"
+          };
+        } finally {
+          if (headlessTrackId) {
+            untrackHeadless(headlessTrackId);
+          }
+          if (browser) {
+            try {
+              await browser.close();
+            } catch (_) {
+            }
+          }
+          if (tempProfilePathToDelete) {
+            try {
+              await copyProfileFolder(tempProfilePathToDelete, mainProfilePath, "[PharmarackCheckout]");
+              import_fs15.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
+            } catch (_) {
+            }
+          }
+        }
+      }
+      /**
+       * Spawns an authenticated Chrome browser window directly to https://retailers.pharmarack.com/cart
+       * for 1-click human-in-the-loop manual review or verification.
+       */
+      async openAuthenticatedCartWindow() {
+        if (isShutdownInProgress()) {
+          return { ok: false, message: "Application shutdown in progress" };
+        }
+        const chromePath = findChromePath();
+        if (!chromePath) {
+          return { ok: false, message: "Google Chrome was not found on your system." };
+        }
+        const mainProfilePath = import_path15.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        try {
+          await killOrphanChromeProcesses("pharmarack_profile");
+          if (!import_fs15.default.existsSync(mainProfilePath)) import_fs15.default.mkdirSync(mainProfilePath, { recursive: true });
+          cleanProfileLockFiles(mainProfilePath);
+          const { spawn: spawnProc } = await import("child_process");
+          const chromeProc = spawnProc(chromePath, [
+            `--user-data-dir=${mainProfilePath}`,
+            "--start-maximized",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+            "https://retailers.pharmarack.com/cart"
+          ], { detached: false, stdio: "ignore", windowsHide: false });
+          trackHeadless(chromeProc, "pharmarack_cart_window");
+          return { ok: true, message: "Opening official Pharmarack cart window..." };
+        } catch (err) {
+          console.error("[PharmarackCheckout] Failed to open cart window:", err);
+          return { ok: false, message: err.message || "Failed to open Chrome window" };
+        }
+      }
+    };
+    pharmarackCheckoutService = PharmarackCheckoutService.getInstance();
+  }
+});
+
+// src/utils/localTime.ts
+var localTime_exports = {};
+__export(localTime_exports, {
+  SQL_LOCAL_NOW: () => SQL_LOCAL_NOW,
+  normalizeToLocalSqlDateTime: () => normalizeToLocalSqlDateTime,
+  toLocalSqlDateTime: () => toLocalSqlDateTime
+});
+function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function normalizeToLocalSqlDateTime(value) {
+  if (value === void 0 || value === null || value === "") return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
+}
+var SQL_LOCAL_NOW, pad;
+var init_localTime = __esm({
+  "src/utils/localTime.ts"() {
+    "use strict";
+    SQL_LOCAL_NOW = "datetime('now', 'localtime')";
+    pad = (n) => String(n).padStart(2, "0");
   }
 });
 
@@ -20350,13 +20688,13 @@ async function ensureSchema(dbPath) {
             if (unpopulated.length > 0) {
               console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
               const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-              const fs67 = await import("fs");
+              const fs68 = await import("fs");
               for (const email of unpopulated) {
                 try {
                   const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
                   const parsedItems = [];
                   for (const att of attachments) {
-                    if (att.local_path && fs67.existsSync(att.local_path)) {
+                    if (att.local_path && fs68.existsSync(att.local_path)) {
                       try {
                         const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
                         if (resParse && resParse.success && resParse.items) {
@@ -21186,7 +21524,7 @@ async function loadReferenceData({ force } = {}) {
   } else {
     await db2.run("DELETE FROM medicine_reference");
   }
-  if (!import_fs15.default.existsSync(REFERENCE_CSV)) {
+  if (!import_fs16.default.existsSync(REFERENCE_CSV)) {
     await dbManager.close();
     console.warn("Reference CSV not found at:", REFERENCE_CSV);
     return { loaded: 0, skipped: 0 };
@@ -21194,7 +21532,7 @@ async function loadReferenceData({ force } = {}) {
   console.log("Loading medicine reference data from CSV...");
   const rows = [];
   await new Promise((resolve, reject) => {
-    import_fs15.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
+    import_fs16.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
       const name = (row["name"] || "").trim();
       const comp1 = (row["short_composition1"] || row["composition1"] || "").trim();
       const comp2 = (row["short_composition2"] || row["composition2"] || "").trim();
@@ -21247,7 +21585,7 @@ async function loadApiSubstances({ force } = {}) {
   } else {
     await db2.run("DELETE FROM api_substances");
   }
-  if (!import_fs15.default.existsSync(REFERENCE_CSV)) {
+  if (!import_fs16.default.existsSync(REFERENCE_CSV)) {
     await dbManager.close();
     console.warn("Reference CSV not found at:", REFERENCE_CSV);
     return { loaded: 0, skipped: 0 };
@@ -21255,7 +21593,7 @@ async function loadApiSubstances({ force } = {}) {
   console.log("Loading API substances from CSV...");
   const substanceSet = /* @__PURE__ */ new Set();
   await new Promise((resolve, reject) => {
-    import_fs15.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
+    import_fs16.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
       const comp1 = (row["short_composition1"] || row["composition1"] || "").trim();
       const comp2 = (row["short_composition2"] || row["composition2"] || "").trim();
       if (comp1) {
@@ -21306,9 +21644,9 @@ async function seedBundledReference(force = false) {
       if (count && count.c > 0) return { loaded: 0 };
     }
     let rows = [];
-    if (import_fs15.default.existsSync(BUNDLED_SEED)) {
+    if (import_fs16.default.existsSync(BUNDLED_SEED)) {
       try {
-        rows = JSON.parse(import_fs15.default.readFileSync(BUNDLED_SEED, "utf8"));
+        rows = JSON.parse(import_fs16.default.readFileSync(BUNDLED_SEED, "utf8"));
       } catch (err) {
         console.warn("[Seed] Failed to parse seed JSON file, using fallback array:", err);
         rows = DEFAULT_SEED_ROWS;
@@ -21666,18 +22004,18 @@ async function recordApiSubstance(apiReference) {
     await dbManager.close();
   }
 }
-var import_path15, import_fs15, import_csv_parser, DATA_DIR, REFERENCE_CSV, DOSAGE_FORMS2, DOSAGE_FORM_SET, NON_PHARMA_KEYWORDS, BUNDLED_SEED, DEFAULT_SEED_ROWS, isEnrichmentRunning, enrichmentStopRequested, autoEnrichedDate, autoEnrichedTodayCount;
+var import_path16, import_fs16, import_csv_parser, DATA_DIR, REFERENCE_CSV, DOSAGE_FORMS2, DOSAGE_FORM_SET, NON_PHARMA_KEYWORDS, BUNDLED_SEED, DEFAULT_SEED_ROWS, isEnrichmentRunning, enrichmentStopRequested, autoEnrichedDate, autoEnrichedTodayCount;
 var init_compositionEnricher = __esm({
   "src/worker/compositionEnricher.ts"() {
     "use strict";
-    import_path15 = __toESM(require("path"), 1);
-    import_fs15 = __toESM(require("fs"), 1);
+    import_path16 = __toESM(require("path"), 1);
+    import_fs16 = __toESM(require("fs"), 1);
     init_connection();
     import_csv_parser = __toESM(require("csv-parser"), 1);
     init_activityTracker();
     init_config();
-    DATA_DIR = import_path15.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV = import_path15.default.join(DATA_DIR, "reference_medicines.csv");
+    DATA_DIR = import_path16.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV = import_path16.default.join(DATA_DIR, "reference_medicines.csv");
     DOSAGE_FORMS2 = [
       "TABLET",
       "TAB",
@@ -21761,7 +22099,7 @@ var init_compositionEnricher = __esm({
       "VETERIN",
       "DENTAL PREPARATION"
     ];
-    BUNDLED_SEED = import_path15.default.join(DATA_DIR, "medicine_reference_seed.json");
+    BUNDLED_SEED = import_path16.default.join(DATA_DIR, "medicine_reference_seed.json");
     DEFAULT_SEED_ROWS = [
       { name: "PARACETAMOL 650 MG TABLET", composition1: "PARACETAMOL", manufacturer: "MICRO LABS" },
       { name: "DOLO 650 TABLET", composition1: "PARACETAMOL", manufacturer: "MICRO LABS" },
@@ -22976,7 +23314,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
     }
   }
   if (!distributor_name && filename) {
-    const base = import_path16.default.basename(filename).toLowerCase();
+    const base = import_path17.default.basename(filename).toLowerCase();
     if (base.includes("prakash_pharmaceuticals") || base.includes("prakashpharmaceuticals")) {
       distributor_name = "PRAKASH PHARMACEUTICALS";
     }
@@ -23399,11 +23737,11 @@ function extractTotalsFromText(text) {
   }
   return { subtotal, cgst, sgst, igst, total_amount, global_cd_per, total_discount, round_off, cn_amount, cn_number };
 }
-var import_path16, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN;
+var import_path17, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN;
 var init_emailInvoiceParsers = __esm({
   "src/services/emailInvoiceParsers.ts"() {
     "use strict";
-    import_path16 = __toESM(require("path"), 1);
+    import_path17 = __toESM(require("path"), 1);
     NET_BILL_AMOUNT_PATTERN = /(?:(?:net\s*(?:amt|amount|payable|value)|grand\s*total|final\s*(?:bill|amount)|bill\s*amount|inv(?:oice)?\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?))/i;
     BILL_AMOUNT_PATTERN = /(?:(?:grand\s*total|net\s*(?:amt|amount|payable|value)|bill\s*amount|inv(?:oice)?\s*amount|total\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*\s*(?!items|qty|quantity|units|pcs|medicines|rows)([\d,]+(?:\.\d{1,2})?)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))/i;
   }
@@ -23608,14 +23946,14 @@ function isNonMedicineNoise(name) {
   }
   return false;
 }
-var import_nodemailer, import_path17, import_fs16, import_sync, getDbPath, getUploadsDir, loadImap, loadSimpleParser, loadXlsx, loadAiCamera, emailSchemaReady, EmailService, emailService, emailService_default;
+var import_nodemailer, import_path18, import_fs17, import_sync, getDbPath, getUploadsDir, loadImap, loadSimpleParser, loadXlsx, loadAiCamera, emailSchemaReady, EmailService, emailService, emailService_default;
 var init_emailService = __esm({
   "src/services/emailService.ts"() {
     "use strict";
     init_connection();
     import_nodemailer = require("nodemailer");
-    import_path17 = __toESM(require("path"), 1);
-    import_fs16 = __toESM(require("fs"), 1);
+    import_path18 = __toESM(require("path"), 1);
+    import_fs17 = __toESM(require("fs"), 1);
     init_database();
     init_whatsappQueueWorker();
     init_telegramBot();
@@ -23630,7 +23968,7 @@ var init_emailService = __esm({
     init_messageClassifier();
     init_emailInvoiceParsers();
     getDbPath = () => config.dbPath;
-    getUploadsDir = () => process.env.UPLOADS_DIR || import_path17.default.resolve(getAppDataDir(), "uploads");
+    getUploadsDir = () => process.env.UPLOADS_DIR || import_path18.default.resolve(getAppDataDir(), "uploads");
     loadImap = () => import("imap-simple").then((m) => m.default ?? m);
     loadSimpleParser = () => import("mailparser").then((m) => (m.default ?? m).simpleParser);
     loadXlsx = () => import("xlsx").then((m) => m.default ?? m);
@@ -24310,14 +24648,14 @@ Arrival Time: ${arrivalTime}`;
               await this.processMedicineListAttachment(attachment);
               console.log("Medicine list attachment processed:", attachment.filename);
             }
-            const uploadsDir = process.env.UPLOADS_DIR || import_path17.default.join(getAppDataDir(), "uploads");
-            if (!import_fs16.default.existsSync(uploadsDir)) {
-              import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+            if (!import_fs17.default.existsSync(uploadsDir)) {
+              import_fs17.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            const sanitizedFilename = import_path17.default.basename(attachment.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
+            const sanitizedFilename = import_path18.default.basename(attachment.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
             const prefix = uid ? `att-${uid}-` : `${Date.now()}-`;
-            const filePath = import_path17.default.join(uploadsDir, `${prefix}${sanitizedFilename}`);
-            import_fs16.default.writeFileSync(filePath, attachment.content);
+            const filePath = import_path18.default.join(uploadsDir, `${prefix}${sanitizedFilename}`);
+            import_fs17.default.writeFileSync(filePath, attachment.content);
           }
         } catch (error) {
           console.error("Error processing email attachments:", error);
@@ -24492,19 +24830,19 @@ AI Pharmacy Team`
             });
             if (validEntry) {
               const uploadsDir = getUploadsDir();
-              const tempExt = import_path17.default.extname(validEntry.entryName);
-              const tempChildPath = import_path17.default.join(uploadsDir, `zip-extracted-${Date.now()}${tempExt}`);
-              import_fs16.default.writeFileSync(tempChildPath, validEntry.getData());
+              const tempExt = import_path18.default.extname(validEntry.entryName);
+              const tempChildPath = import_path18.default.join(uploadsDir, `zip-extracted-${Date.now()}${tempExt}`);
+              import_fs17.default.writeFileSync(tempChildPath, validEntry.getData());
               try {
                 const result = await this.parseAndImportAttachment(tempChildPath, importData);
                 try {
-                  import_fs16.default.unlinkSync(tempChildPath);
+                  import_fs17.default.unlinkSync(tempChildPath);
                 } catch {
                 }
                 return result;
               } catch (err) {
                 try {
-                  import_fs16.default.unlinkSync(tempChildPath);
+                  import_fs17.default.unlinkSync(tempChildPath);
                 } catch {
                 }
                 throw err;
@@ -24529,7 +24867,7 @@ AI Pharmacy Team`
           let mappingConfig = {};
           let rawHeaders = [];
           let needsReview = false;
-          const safeBasename = import_path17.default.basename(filePath);
+          const safeBasename = import_path18.default.basename(filePath);
           const db2 = await dbManager.getConnection();
           let distributor = null;
           let emailAttachment = await db2.get(
@@ -24559,7 +24897,7 @@ AI Pharmacy Team`
             let isRecordType = false;
             let recordData = null;
             if (nameLower.endsWith(".csv")) {
-              const fileBuffer = import_fs16.default.readFileSync(filePath);
+              const fileBuffer = import_fs17.default.readFileSync(filePath);
               const textContent = fileBuffer.toString("utf8");
               const firstLine = textContent.split("\n")[0]?.trim() || "";
               let delimiter = ",";
@@ -24592,7 +24930,7 @@ AI Pharmacy Team`
                 records = (0, import_sync.parse)(fileBuffer, { delimiter, from_line: fromLine, columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
               }
             } else {
-              const fileBuffer = import_fs16.default.readFileSync(filePath);
+              const fileBuffer = import_fs17.default.readFileSync(filePath);
               const XLSX4 = await loadXlsx();
               const workbook = XLSX4.read(fileBuffer, { type: "buffer" });
               const sheetName = workbook.SheetNames[0];
@@ -24757,7 +25095,7 @@ AI Pharmacy Team`
               }).filter((item) => item.name !== "Unknown CSV Item" && item.name !== distributor_name);
             }
           } else if (nameLower.endsWith(".dav") || nameLower.endsWith(".dac")) {
-            const text = import_fs16.default.readFileSync(filePath, "utf8");
+            const text = import_fs17.default.readFileSync(filePath, "utf8");
             const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
             const headerLine = lines.find((l) => l.startsWith("H,"));
             if (headerLine) {
@@ -24836,19 +25174,19 @@ AI Pharmacy Team`
             const isImage = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(nameLower);
             if (isPdf) {
               const { default: pdfParse2 } = await import("pdf-parse");
-              const fileBuffer = import_fs16.default.readFileSync(filePath);
+              const fileBuffer = import_fs17.default.readFileSync(filePath);
               const pdfData = await pdfParse2(fileBuffer);
               content = pdfData.text || "";
             } else if (isImage) {
-              const fileBuffer = import_fs16.default.readFileSync(filePath);
+              const fileBuffer = import_fs17.default.readFileSync(filePath);
               const ocrResult = await (await loadAiCamera()).processImage(fileBuffer, true);
               content = ocrResult?.text || "";
             } else {
-              content = import_fs16.default.readFileSync(filePath, "utf-8");
+              content = import_fs17.default.readFileSync(filePath, "utf-8");
             }
             const runPdfOcrFallback = async () => {
               console.log("[emailService] PDF jumbled or scanned. Falling back to page-by-page OCR rendering.");
-              const fileBuffer = import_fs16.default.readFileSync(filePath);
+              const fileBuffer = import_fs17.default.readFileSync(filePath);
               try {
                 const canvasPkg = await import("@napi-rs/canvas");
                 const { createCanvas: createCanvas3, Canvas, Image } = canvasPkg;
@@ -24995,7 +25333,7 @@ AI Pharmacy Team`
                 }
               }
               if (!invoice_no) {
-                const filename = import_path17.default.basename(filePath);
+                const filename = import_path18.default.basename(filePath);
                 const fileDigits = filename.replace(/\.[^/.]+$/, "").match(/\d+/);
                 if (fileDigits) {
                   invoice_no = fileDigits[0];
@@ -25204,7 +25542,7 @@ AI Pharmacy Team`
             };
           }
           if (importData) {
-            const filename = import_path17.default.basename(filePath);
+            const filename = import_path18.default.basename(filePath);
             const validDistName = distributor_name && isValidDistributorName(distributor_name) ? distributor_name.trim() : null;
             await db2.run(
               `INSERT INTO staged_purchases (distributor_name, invoice_no, date, total_amount, items_json, source_type) VALUES (?, ?, ?, ?, ?, 'email')`,
@@ -25249,17 +25587,17 @@ AI Pharmacy Team`
         try {
           await db2.run("BEGIN TRANSACTION");
           const uploadsDir = getUploadsDir();
-          const historicalDir = import_path17.default.join(uploadsDir, "historical");
-          if (!import_fs16.default.existsSync(historicalDir)) {
-            import_fs16.default.mkdirSync(historicalDir, { recursive: true });
+          const historicalDir = import_path18.default.join(uploadsDir, "historical");
+          if (!import_fs17.default.existsSync(historicalDir)) {
+            import_fs17.default.mkdirSync(historicalDir, { recursive: true });
           }
-          const srcPath = import_path17.default.isAbsolute(filename) ? filename : import_path17.default.join(uploadsDir, filename);
-          const safeBasename = import_path17.default.basename(filename);
-          const destPath = import_path17.default.join(historicalDir, safeBasename);
-          if (import_fs16.default.existsSync(srcPath) && srcPath !== destPath) {
-            import_fs16.default.copyFileSync(srcPath, destPath);
+          const srcPath = import_path18.default.isAbsolute(filename) ? filename : import_path18.default.join(uploadsDir, filename);
+          const safeBasename = import_path18.default.basename(filename);
+          const destPath = import_path18.default.join(historicalDir, safeBasename);
+          if (import_fs17.default.existsSync(srcPath) && srcPath !== destPath) {
+            import_fs17.default.copyFileSync(srcPath, destPath);
           }
-          const fileType = import_path17.default.extname(safeBasename).slice(1).toLowerCase();
+          const fileType = import_path18.default.extname(safeBasename).slice(1).toLowerCase();
           const headersJson = JSON.stringify(rawHeaders);
           const mappingJson = JSON.stringify(mappingConfig);
           const dataJson = JSON.stringify(extractedItems);
@@ -25274,9 +25612,9 @@ AI Pharmacy Team`
           if (historicalFiles.length > 5) {
             const toDelete = historicalFiles.slice(5);
             for (const fileToDelete of toDelete) {
-              if (fileToDelete.file_path && import_fs16.default.existsSync(fileToDelete.file_path)) {
+              if (fileToDelete.file_path && import_fs17.default.existsSync(fileToDelete.file_path)) {
                 try {
-                  import_fs16.default.unlinkSync(fileToDelete.file_path);
+                  import_fs17.default.unlinkSync(fileToDelete.file_path);
                 } catch (err) {
                   console.warn("Failed to delete old historical file:", fileToDelete.file_path, err);
                 }
@@ -25448,9 +25786,9 @@ AI Pharmacy Team`
           }
           const attachments = await db2.all("SELECT local_path FROM email_attachments WHERE uid = ?", [uid]);
           for (const att of attachments || []) {
-            if (att.local_path && import_fs16.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs17.default.existsSync(att.local_path)) {
               try {
-                import_fs16.default.unlinkSync(att.local_path);
+                import_fs17.default.unlinkSync(att.local_path);
               } catch (_) {
               }
             }
@@ -25611,8 +25949,8 @@ AI Pharmacy Team`
           newResults.sort((a, b) => a - b);
           const limitedResults = newResults.slice(0, 50);
           console.log(`[Sync] Found ${newResults.length} new email(s) to download.`);
-          const uploadsDir = process.env.UPLOADS_DIR || import_path17.default.join(getAppDataDir(), "uploads");
-          if (!import_fs16.default.existsSync(uploadsDir)) import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+          if (!import_fs17.default.existsSync(uploadsDir)) import_fs17.default.mkdirSync(uploadsDir, { recursive: true });
           for (const uid of limitedResults) {
             try {
               const fetchResult = await connection.search([["UID", uid]], { bodies: [""], struct: true });
@@ -25681,13 +26019,13 @@ AI Pharmacy Team`
                   ".ods": "application/vnd.oasis.opendocument.spreadsheet"
                 };
                 for (const att of processedEmail.attachments) {
-                  const sanitized = import_path17.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+                  const sanitized = import_path18.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
                   const finalFilename = `att-${uid}-${sanitized}`;
-                  const filePath = import_path17.default.join(uploadsDir, finalFilename);
-                  if (!import_fs16.default.existsSync(filePath)) {
-                    import_fs16.default.writeFileSync(filePath, att.content);
+                  const filePath = import_path18.default.join(uploadsDir, finalFilename);
+                  if (!import_fs17.default.existsSync(filePath)) {
+                    import_fs17.default.writeFileSync(filePath, att.content);
                   }
-                  const ext = import_path17.default.extname(sanitized).toLowerCase();
+                  const ext = import_path18.default.extname(sanitized).toLowerCase();
                   const contentType = contentTypes[ext] || att.contentType || "application/octet-stream";
                   const size = att.content ? att.content.length : 0;
                   await db2.run(
@@ -25858,17 +26196,17 @@ AI Pharmacy Team`
           if (!bodyPart) return this.getLocalAttachmentsForUid(uid);
           const parsed = await (await loadSimpleParser())(bodyPart.body);
           const attachments = parsed.attachments || [];
-          const uploadsDir = process.env.UPLOADS_DIR || import_path17.default.join(getAppDataDir(), "uploads");
-          if (!import_fs16.default.existsSync(uploadsDir)) {
-            import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+          if (!import_fs17.default.existsSync(uploadsDir)) {
+            import_fs17.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const savedList = [];
           for (const att of attachments) {
-            const sanitizedFilename = import_path17.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+            const sanitizedFilename = import_path18.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
             const finalFilename = `att-${uid}-${sanitizedFilename}`;
-            const filePath = import_path17.default.join(uploadsDir, finalFilename);
-            import_fs16.default.writeFileSync(filePath, att.content);
-            const ext = import_path17.default.extname(sanitizedFilename).toLowerCase();
+            const filePath = import_path18.default.join(uploadsDir, finalFilename);
+            import_fs17.default.writeFileSync(filePath, att.content);
+            const ext = import_path18.default.extname(sanitizedFilename).toLowerCase();
             const contentTypes = {
               ".pdf": "application/pdf",
               ".csv": "text/csv",
@@ -25902,9 +26240,9 @@ AI Pharmacy Team`
        */
       getLocalAttachmentsForUid(uid) {
         try {
-          const uploadsDir = process.env.UPLOADS_DIR || import_path17.default.join(getAppDataDir(), "uploads");
-          if (!import_fs16.default.existsSync(uploadsDir)) return [];
-          const files = import_fs16.default.readdirSync(uploadsDir);
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+          if (!import_fs17.default.existsSync(uploadsDir)) return [];
+          const files = import_fs17.default.readdirSync(uploadsDir);
           const prefix = `att-${uid}-`;
           const contentTypes = {
             ".pdf": "application/pdf",
@@ -25915,9 +26253,9 @@ AI Pharmacy Team`
             ".ods": "application/vnd.oasis.opendocument.spreadsheet"
           };
           return files.filter((file) => file.startsWith(prefix) && file.match(/\.(csv|txt|xlsx?|ods|pdf)$/i)).map((filename) => {
-            const filePath = import_path17.default.join(uploadsDir, filename);
-            const stats = import_fs16.default.statSync(filePath);
-            const ext = import_path17.default.extname(filename).toLowerCase();
+            const filePath = import_path18.default.join(uploadsDir, filename);
+            const stats = import_fs17.default.statSync(filePath);
+            const ext = import_path18.default.extname(filename).toLowerCase();
             return {
               filename,
               size: stats.size,
@@ -26115,7 +26453,7 @@ async function checkMailAgainstTodaysOrder(uid) {
   const atts = await db2.all("SELECT local_path FROM email_attachments WHERE uid = ?", [uid]);
   const billLines = [];
   for (const a of atts) {
-    if (!a.local_path || !import_fs17.default.existsSync(a.local_path)) continue;
+    if (!a.local_path || !import_fs18.default.existsSync(a.local_path)) continue;
     try {
       const res = await emailService2.parseAndImportAttachment(a.local_path, false);
       if (res?.success && Array.isArray(res.items)) billLines.push(...res.items.map((i) => ({ name: i.name, qty: i.quantity, mrp: i.mrp })));
@@ -26158,11 +26496,11 @@ async function checkMailAgainstTodaysOrder(uid) {
   } catch (_) {
   }
 }
-var import_fs17, alnum;
+var import_fs18, alnum;
 var init_orderMailCheckService = __esm({
   "src/services/orderMailCheckService.ts"() {
     "use strict";
-    import_fs17 = __toESM(require("fs"), 1);
+    import_fs18 = __toESM(require("fs"), 1);
     init_connection();
     init_orderNameMatcher();
     alnum = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -29374,13 +29712,13 @@ async function reconcilePaidAndFulfilledCartItems(distributors) {
   }
   return reconciledItems;
 }
-var import_express, import_path18, import_fs18, router, lastSearchOkAt, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
+var import_express, import_path19, import_fs19, router, lastSearchOkAt, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
     import_express = __toESM(require("express"), 1);
-    import_path18 = __toESM(require("path"), 1);
-    import_fs18 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
     init_connection();
     init_eventService();
     init_notificationService();
@@ -29395,6 +29733,8 @@ var init_pharmarack = __esm({
     init_chromeBrowser();
     init_marketClosureService();
     init_phoneValidation();
+    init_pharmarackCheckoutService();
+    init_localTime();
     init_activityTracker();
     init_orderNameMatcher();
     router = import_express.default.Router();
@@ -29623,11 +29963,11 @@ var init_pharmarack = __esm({
       tokenRefreshScheduler.isLoginWindowActive = true;
       res.json({ success: true, message: "Opening login window..." });
       (async () => {
-        const mainProfilePath = import_path18.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = import_path19.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
         try {
           console.log("[LoginWindow] Killing any orphan Chrome processes holding locks on pharmarack_profile...");
           await killOrphanChromeProcesses("pharmarack_profile");
-          if (!import_fs18.default.existsSync(mainProfilePath)) import_fs18.default.mkdirSync(mainProfilePath, { recursive: true });
+          if (!import_fs19.default.existsSync(mainProfilePath)) import_fs19.default.mkdirSync(mainProfilePath, { recursive: true });
           cleanProfileLockFiles(mainProfilePath);
           console.log("[LoginWindow] Spawning Chrome natively from:", chromePath);
           const { spawn: spawnProc } = await import("child_process");
@@ -29896,6 +30236,62 @@ var init_pharmarack = __esm({
       } catch (err) {
         console.error("Batch delivery boy notification error:", err);
         res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router.post("/cart/place-official-orders", async (req, res) => {
+      const { targetStoreNames, orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
+      try {
+        const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
+        invalidatePharmarackCartCache();
+        const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
+        const db2 = await dbManager.getConnection();
+        const syncedToday = await db2.all(
+          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
+          [today]
+        );
+        if (orders && Array.isArray(orders) && orders.length > 0) {
+          try {
+            const appPort = process.env.PORT || 3001;
+            await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                orders,
+                deliveryBoyPhone,
+                deliveryBoyName,
+                storeInfo,
+                dispatchDistributorsLater: false,
+                // Now that official orders were triggered
+                includeMedicineList: false
+                // Clean distributor list only
+              })
+            }).catch(() => {
+            });
+          } catch (queueErr) {
+            console.warn("[PharmarackRoute] Failed to enqueue batch summary post-checkout:", queueErr);
+          }
+        }
+        res.json({
+          success: checkoutResult.ok,
+          placedCount: checkoutResult.placedCount,
+          failedCount: checkoutResult.failedCount,
+          orders: checkoutResult.orders,
+          syncedOrders: syncedToday,
+          error: checkoutResult.error,
+          message: checkoutResult.ok ? `Successfully placed ${checkoutResult.placedCount} official order(s) on Pharmarack!` : checkoutResult.error || "Failed to place official orders on Pharmarack"
+        });
+      } catch (err) {
+        console.error("Place official orders route error:", err);
+        res.status(500).json({ error: err.message || "Failed to place official orders" });
+      }
+    });
+    router.post("/cart/open-official-window", async (_req, res) => {
+      try {
+        const result = await pharmarackCheckoutService.openAuthenticatedCartWindow();
+        res.json(result);
+      } catch (err) {
+        console.error("Open cart window route error:", err);
+        res.status(500).json({ ok: false, error: err.message || "Failed to open cart window" });
       }
     });
     router.get("/cart", async (req, res) => {
@@ -30293,9 +30689,9 @@ var init_pharmarack = __esm({
         Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.stopCatalogSyncCron()).catch(() => {
         });
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-        const pharmarackProfilePath = import_path18.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (import_fs18.default.existsSync(pharmarackProfilePath)) {
-          import_fs18.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
+        const pharmarackProfilePath = import_path19.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (import_fs19.default.existsSync(pharmarackProfilePath)) {
+          import_fs19.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
           console.log("Cleared Pharmarack Puppeteer profile directory.");
         }
         res.json({ success: true, message: "Logged out and cleared Pharmarack session successfully" });
@@ -30875,26 +31271,6 @@ var init_pharmarack = __esm({
         const isLate = await hasSentTodaysBatch2(db2);
         let boyNotified = Number(delivery_boy_notified || 0);
         let boyNotifiedAt = boyNotified ? placedAt : null;
-        if (isLate && !boyNotified) {
-          let targetBoy = delivery_persons?.[0];
-          if (!targetBoy && delivery_boy_id) {
-            const bRow = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ?", [delivery_boy_id]);
-            if (bRow) targetBoy = { id: bRow.id, name: bRow.name, phone: bRow.whatsapp_number };
-          }
-          const distContact = await resolveDistributorContact(db2, store_name);
-          const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-            storeName: store_name,
-            storePhone: distContact.distributor_phone,
-            orderNo: order_no,
-            items: items || [],
-            deliveryBoy: targetBoy,
-            distributorId: store_id || distContact.distributor_id
-          });
-          if (boyRes.ok) {
-            boyNotified = 1;
-            boyNotifiedAt = Date.now();
-          }
-        }
         await db2.run(
           `INSERT INTO pharmarack_placed_orders 
          (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at, order_no, delivery_boy_notified, delivery_boy_notified_at)
@@ -31356,12 +31732,12 @@ __export(paymentQrService_exports, {
   DEFAULT_QR_CONFIGS: () => DEFAULT_QR_CONFIGS,
   paymentQrService: () => paymentQrService
 });
-var import_path19, import_fs19, import_qrcode, import_canvas, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
+var import_path20, import_fs20, import_qrcode, import_canvas, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
 var init_paymentQrService = __esm({
   "src/services/paymentQrService.ts"() {
     "use strict";
-    import_path19 = __toESM(require("path"), 1);
-    import_fs19 = __toESM(require("fs"), 1);
+    import_path20 = __toESM(require("path"), 1);
+    import_fs20 = __toESM(require("fs"), 1);
     init_connection();
     init_storeSettingsService();
     init_config();
@@ -31505,12 +31881,12 @@ var init_paymentQrService = __esm({
        * high-resolution Level-H QR code, UPI ID banner, and supported apps footer.
        */
       async generatePaymentCard(options) {
-        const uploadsDir = import_path19.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs19.default.existsSync(uploadsDir)) {
-          import_fs19.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs20.default.existsSync(uploadsDir)) {
+          import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const cleanFilename = options.filename ? options.filename.endsWith(".png") ? options.filename : `${options.filename}.png` : `payment_card_${options.orderNumber.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
-        const fullPath = import_path19.default.join(uploadsDir, cleanFilename);
+        const fullPath = import_path20.default.join(uploadsDir, cleanFilename);
         const storeName = (options.storeName || await this.getStoreName()).toUpperCase();
         const qrBuffer = await import_qrcode.default.toBuffer(options.upiUri, {
           width: 380,
@@ -31595,7 +31971,7 @@ var init_paymentQrService = __esm({
         ctx.font = "13px sans-serif";
         ctx.fillText("Accepted on GPay \u2022 PhonePe \u2022 Paytm \u2022 Any UPI App", width / 2, 650);
         const buffer = canvas.toBuffer("image/png");
-        import_fs19.default.writeFileSync(fullPath, buffer);
+        import_fs20.default.writeFileSync(fullPath, buffer);
         return fullPath;
       }
       /**
@@ -31622,14 +31998,14 @@ var init_paymentQrService = __esm({
             filename
           });
         }
-        const uploadsDir = import_path19.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs19.default.existsSync(uploadsDir)) {
-          import_fs19.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs20.default.existsSync(uploadsDir)) {
+          import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const cleanFilename = filename.endsWith(".png") ? filename : `${filename}.png`;
-        const fullPath = import_path19.default.join(uploadsDir, cleanFilename);
+        const fullPath = import_path20.default.join(uploadsDir, cleanFilename);
         const buffer = await this.generateQrBuffer(upiUri);
-        import_fs19.default.writeFileSync(fullPath, buffer);
+        import_fs20.default.writeFileSync(fullPath, buffer);
         return fullPath;
       }
       /**
@@ -34053,14 +34429,14 @@ async function downloadMediaWithRetry(downloadFn, options = {}) {
   throw lastErr;
 }
 async function saveInboundMedia(msgId, buffer) {
-  await import_fs20.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
+  await import_fs21.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
   const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filePath = import_path20.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
-  await import_fs20.default.promises.writeFile(filePath, buffer);
+  const filePath = import_path21.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
+  await import_fs21.default.promises.writeFile(filePath, buffer);
   try {
-    const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
-    await import_fs20.default.promises.mkdir(uploadsDir, { recursive: true });
-    await import_fs20.default.promises.writeFile(import_path20.default.join(uploadsDir, `${safeId}.jpg`), buffer);
+    const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
+    await import_fs21.default.promises.mkdir(uploadsDir, { recursive: true });
+    await import_fs21.default.promises.writeFile(import_path21.default.join(uploadsDir, `${safeId}.jpg`), buffer);
   } catch (_) {
   }
   return filePath;
@@ -38507,12 +38883,12 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         let proofImagePath;
         if (media?.data) {
           try {
-            const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
-            if (!import_fs20.default.existsSync(uploadsDir)) {
-              import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
+            if (!import_fs21.default.existsSync(uploadsDir)) {
+              import_fs21.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            proofImagePath = import_path20.default.join(uploadsDir, `payment_proof_${soCode}.jpg`);
-            import_fs20.default.writeFileSync(proofImagePath, Buffer.from(media.data, "base64"));
+            proofImagePath = import_path21.default.join(uploadsDir, `payment_proof_${soCode}.jpg`);
+            import_fs21.default.writeFileSync(proofImagePath, Buffer.from(media.data, "base64"));
           } catch (saveErr) {
             console.error("[Intent Service] Failed to persist payment proof to disk:", saveErr);
           }
@@ -38716,7 +39092,7 @@ We will confirm your order shortly!`;
           if (pendingPayment && pendingPayment.special_order_id && imagePath) {
             const soId = pendingPayment.special_order_id;
             const soCode = pendingPayment.so_code || await generateStoreSpecialOrderCode(db2, 1, soId);
-            const webImagePath = imagePath ? `/uploads/${import_path20.default.basename(imagePath)}` : null;
+            const webImagePath = imagePath ? `/uploads/${import_path21.default.basename(imagePath)}` : null;
             await db2.run(
               `UPDATE special_orders
                SET payment_screenshot_path = ?, screenshot_amount = 50, payment_status = 'SCREENSHOT_RECEIVED', updated_at = datetime('now')
@@ -39499,7 +39875,7 @@ async function handleOcrComplete(data) {
             }
           }
         }
-        const safeWebPath = imagePath ? `/data/inbound_media/${import_path20.default.basename(imagePath)}` : null;
+        const safeWebPath = imagePath ? `/data/inbound_media/${import_path21.default.basename(imagePath)}` : null;
         await db2.run(
           `UPDATE special_orders
            SET payment_screenshot_path = ?,
@@ -39787,8 +40163,8 @@ Our registered pharmacist is reviewing it right now and will confirm available s
     }
     let visualBoostName = null;
     try {
-      if (imagePath && import_fs20.default.existsSync(imagePath)) {
-        const buf = import_fs20.default.readFileSync(imagePath);
+      if (imagePath && import_fs21.default.existsSync(imagePath)) {
+        const buf = import_fs21.default.readFileSync(imagePath);
         const ocrRawForVisual = [ocrResult?.text, messageBody].filter(Boolean).join(" ");
         const visualHits = await visualIndexService.fusedSearch(buf, ocrRawForVisual, { limit: 3, maxVisualDistance: 12 });
         if (visualHits.length > 0 && visualHits[0].fusedScore >= 75) {
@@ -39949,12 +40325,12 @@ We noticed we haven't received your \u20B950 booking advance payment for *${medN
     return 0;
   }
 }
-var import_fs20, import_path20, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, seenInboundMessageIds, seenInboundContentKeys, INBOUND_DEDUPE_WINDOW_MS, whatsappIntentService, whatsappIntentService_default;
+var import_fs21, import_path21, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, seenInboundMessageIds, seenInboundContentKeys, INBOUND_DEDUPE_WINDOW_MS, whatsappIntentService, whatsappIntentService_default;
 var init_whatsappIntentService = __esm({
   "src/services/whatsappIntentService.ts"() {
     "use strict";
-    import_fs20 = __toESM(require("fs"), 1);
-    import_path20 = __toESM(require("path"), 1);
+    import_fs21 = __toESM(require("fs"), 1);
+    import_path21 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     init_getMessage();
@@ -39971,7 +40347,7 @@ var init_whatsappIntentService = __esm({
     init_config();
     GATE_WITH_INTENT = 0.6;
     GATE_IMPLICIT = 0.72;
-    INBOUND_MEDIA_DIR = import_path20.default.resolve(process.cwd(), "data", "inbound_media");
+    INBOUND_MEDIA_DIR = import_path21.default.resolve(process.cwd(), "data", "inbound_media");
     clarificationsTableEnsured = false;
     seenInboundMessageIds = /* @__PURE__ */ new Map();
     seenInboundContentKeys = /* @__PURE__ */ new Map();
@@ -40398,11 +40774,11 @@ __export(prescriptionScannerService_exports, {
   default: () => prescriptionScannerService_default,
   prescriptionScannerService: () => prescriptionScannerService
 });
-var import_fs21, import_jimp7, import_tesseract2, PrescriptionScannerService, prescriptionScannerService, prescriptionScannerService_default;
+var import_fs22, import_jimp7, import_tesseract2, PrescriptionScannerService, prescriptionScannerService, prescriptionScannerService_default;
 var init_prescriptionScannerService = __esm({
   "src/services/prescriptionScannerService.ts"() {
     "use strict";
-    import_fs21 = __toESM(require("fs"), 1);
+    import_fs22 = __toESM(require("fs"), 1);
     import_jimp7 = require("jimp");
     import_tesseract2 = require("tesseract.js");
     init_connection();
@@ -40473,8 +40849,8 @@ var init_prescriptionScannerService = __esm({
             if (imageInput.startsWith("data:")) {
               const base64Data = imageInput.split(",")[1];
               rawBuffer = Buffer.from(base64Data, "base64");
-            } else if (import_fs21.default.existsSync(imageInput)) {
-              rawBuffer = await import_fs21.default.promises.readFile(imageInput);
+            } else if (import_fs22.default.existsSync(imageInput)) {
+              rawBuffer = await import_fs22.default.promises.readFile(imageInput);
             } else {
               rawBuffer = Buffer.from(imageInput, "base64");
             }
@@ -40530,8 +40906,8 @@ var init_prescriptionScannerService = __esm({
           if (imageInput.startsWith("data:")) {
             const base64Data = imageInput.split(",")[1];
             rawBuffer = Buffer.from(base64Data, "base64");
-          } else if (import_fs21.default.existsSync(imageInput)) {
-            rawBuffer = await import_fs21.default.promises.readFile(imageInput);
+          } else if (import_fs22.default.existsSync(imageInput)) {
+            rawBuffer = await import_fs22.default.promises.readFile(imageInput);
           } else {
             rawBuffer = Buffer.from(imageInput, "base64");
           }
@@ -40790,7 +41166,7 @@ __export(aiCameraService_exports, {
   aiCameraService: () => aiCameraService,
   default: () => aiCameraService_default
 });
-var import_tesseract3, import_jimp8, import_fs22, import_path21, AICameraService, aiCameraService, aiCameraService_default;
+var import_tesseract3, import_jimp8, import_fs23, import_path22, AICameraService, aiCameraService, aiCameraService_default;
 var init_aiCameraService = __esm({
   "src/services/aiCameraService.ts"() {
     "use strict";
@@ -40803,8 +41179,8 @@ var init_aiCameraService = __esm({
     init_onlineDataEnricher();
     init_visualIndexService();
     init_connection();
-    import_fs22 = __toESM(require("fs"), 1);
-    import_path21 = __toESM(require("path"), 1);
+    import_fs23 = __toESM(require("fs"), 1);
+    import_path22 = __toESM(require("path"), 1);
     AICameraService = class {
       worker = null;
       initialized = false;
@@ -42002,12 +42378,12 @@ var init_aiCameraService = __esm({
         const id = `audit_${timestamp}`;
         const filename = `${id}.jpg`;
         const rootDir = process.cwd();
-        const auditImagesDir = import_path21.default.resolve(rootDir, "data", "audit_images");
-        const auditQueuePath = import_path21.default.resolve(rootDir, "data", "audit_queue.json");
-        const imagePath = import_path21.default.join("data", "audit_images", filename);
-        const absoluteImagePath = import_path21.default.join(auditImagesDir, filename);
-        if (!import_fs22.default.existsSync(auditImagesDir)) {
-          import_fs22.default.mkdirSync(auditImagesDir, { recursive: true });
+        const auditImagesDir = import_path22.default.resolve(rootDir, "data", "audit_images");
+        const auditQueuePath = import_path22.default.resolve(rootDir, "data", "audit_queue.json");
+        const imagePath = import_path22.default.join("data", "audit_images", filename);
+        const absoluteImagePath = import_path22.default.join(auditImagesDir, filename);
+        if (!import_fs23.default.existsSync(auditImagesDir)) {
+          import_fs23.default.mkdirSync(auditImagesDir, { recursive: true });
         }
         let buffer;
         if (typeof imageData === "string") {
@@ -42035,15 +42411,15 @@ var init_aiCameraService = __esm({
             image.resize({ w: width, h: height });
           }
           const compressedBuffer = await image.getBuffer("image/jpeg");
-          await import_fs22.default.promises.writeFile(absoluteImagePath, compressedBuffer);
+          await import_fs23.default.promises.writeFile(absoluteImagePath, compressedBuffer);
         } catch (compressErr) {
           console.error("Failed to compress audit image with Jimp, saving original:", compressErr);
-          await import_fs22.default.promises.writeFile(absoluteImagePath, buffer);
+          await import_fs23.default.promises.writeFile(absoluteImagePath, buffer);
         }
         let queue2 = [];
-        if (import_fs22.default.existsSync(auditQueuePath)) {
+        if (import_fs23.default.existsSync(auditQueuePath)) {
           try {
-            const data = await import_fs22.default.promises.readFile(auditQueuePath, "utf8");
+            const data = await import_fs23.default.promises.readFile(auditQueuePath, "utf8");
             queue2 = JSON.parse(data || "[]");
           } catch (e) {
             console.error("Failed to read audit queue json:", e);
@@ -42062,11 +42438,11 @@ var init_aiCameraService = __esm({
         queue2.push(newEntry);
         try {
           const tempQueuePath = auditQueuePath + ".tmp";
-          await import_fs22.default.promises.writeFile(tempQueuePath, JSON.stringify(queue2, null, 2));
-          await import_fs22.default.promises.rename(tempQueuePath, auditQueuePath);
+          await import_fs23.default.promises.writeFile(tempQueuePath, JSON.stringify(queue2, null, 2));
+          await import_fs23.default.promises.rename(tempQueuePath, auditQueuePath);
         } catch (writeErr) {
           console.error("Failed to write audit queue atomically:", writeErr);
-          await import_fs22.default.promises.writeFile(auditQueuePath, JSON.stringify(queue2, null, 2));
+          await import_fs23.default.promises.writeFile(auditQueuePath, JSON.stringify(queue2, null, 2));
         }
         try {
           const db2 = await dbManager.getConnection();
@@ -42481,12 +42857,12 @@ __export(telegramBot_exports, {
   default: () => telegramBot_default,
   telegramBotService: () => telegramBotService
 });
-var import_path22, import_fs23, TelegramBotService, telegramBotService, telegramBot_default;
+var import_path23, import_fs24, TelegramBotService, telegramBotService, telegramBot_default;
 var init_telegramBot = __esm({
   "src/telegramBot.ts"() {
     "use strict";
-    import_path22 = __toESM(require("path"), 1);
-    import_fs23 = __toESM(require("fs"), 1);
+    import_path23 = __toESM(require("path"), 1);
+    import_fs24 = __toESM(require("fs"), 1);
     init_migrationValidation();
     init_nameNormalizer();
     init_connection();
@@ -42787,8 +43163,8 @@ Welcome back!`,
                 const imageBuffer = await response.arrayBuffer();
                 const buffer = Buffer.from(imageBuffer);
                 const tempFileName = `telegram_${Date.now()}_${msg.from?.id}.jpg`;
-                const tempFilePath = import_path22.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
-                import_fs23.default.writeFileSync(tempFilePath, buffer);
+                const tempFilePath = import_path23.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
+                import_fs24.default.writeFileSync(tempFilePath, buffer);
                 const { imageArchiveService: imageArchiveService2 } = await Promise.resolve().then(() => (init_imageArchiveService(), imageArchiveService_exports));
                 await imageArchiveService2.processAndRouteImage(tempFilePath);
                 const { aiCameraService: aiCameraService2 } = await Promise.resolve().then(() => (init_aiCameraService(), aiCameraService_exports));
@@ -43598,30 +43974,6 @@ Mobile: ${formatDisplayPhone(clean2)}
             const batchDb = await dbManager.getConnection();
             const effectiveOrderNo = options?.orderNo || syncedOrderNo;
             await recordPlacedOrder(batchDb, storeName, storeId, items || [], deliveryPersons || []);
-            const { hasSentTodaysBatch: hasSentTodaysBatch2 } = await Promise.resolve().then(() => (init_pharmarackDailyDispatchService(), pharmarackDailyDispatchService_exports));
-            const hasSentMorning = await hasSentTodaysBatch2(batchDb);
-            if (hasSentMorning) {
-              const boyRes = await this.notifyDeliveryBoyNewOrder({
-                storeName,
-                storePhone: rawPhone,
-                orderNo: effectiveOrderNo,
-                items: items || [],
-                deliveryBoy: resolvedDeliveryBoys?.[0],
-                distributorId: storeId
-              });
-              if (boyRes.ok) {
-                const pad2 = (n) => String(n).padStart(2, "0");
-                const now = /* @__PURE__ */ new Date();
-                const todayLocal = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-                await batchDb.run(
-                  `UPDATE pharmarack_placed_orders 
-               SET delivery_boy_notified = 1, delivery_boy_notified_at = ?, order_no = COALESCE(order_no, ?) 
-               WHERE store_name = ? AND order_date = ? 
-               ORDER BY id DESC LIMIT 1`,
-                  [Date.now(), effectiveOrderNo || null, storeName, todayLocal]
-                );
-              }
-            }
           } catch (recErr) {
             console.warn("[CartOrderNotif] Failed to record order or notify delivery boy:", recErr);
           }
@@ -44099,118 +44451,13 @@ ${message}`;
         }
       }
       /**
-       * Send dedicated, itemized WhatsApp alert to Delivery Boy when a new order is placed
-       * (e.g. after morning dispatch or during outage recovery).
-       * Strictly deduplicated: checks if this Order # was already queued/sent to this delivery boy.
+       * Disabled per pharmacy policy:
+       * Delivery boys strictly receive the single consolidated daily dispatch summary without itemized medicine lists.
+       * Individual "Pickup Alerts" with medicine names, quantities, and packaging are suppressed.
        */
       async notifyDeliveryBoyNewOrder(opts) {
-        try {
-          const db2 = await dbManager.getConnection();
-          const store = await this.getStoreSettings(db2);
-          let boyName = opts.deliveryBoy?.name;
-          let rawBoyPhone = opts.deliveryBoy?.phone || opts.deliveryBoy?.whatsapp_number;
-          let boyId = opts.deliveryBoy?.id;
-          if (!rawBoyPhone) {
-            if (opts.distributorId) {
-              const distRow = await db2.get("SELECT delivery_boy_id FROM distributors WHERE id = ?", [opts.distributorId]);
-              if (distRow?.delivery_boy_id) boyId = distRow.delivery_boy_id;
-            }
-            if (boyId) {
-              const boyRow = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [boyId]);
-              if (boyRow) {
-                boyName = boyRow.name;
-                rawBoyPhone = boyRow.whatsapp_number;
-              }
-            }
-          }
-          if (!rawBoyPhone) {
-            const firstActive = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' LIMIT 1");
-            if (firstActive) {
-              boyId = firstActive.id;
-              boyName = firstActive.name;
-              rawBoyPhone = firstActive.whatsapp_number;
-            }
-          }
-          if (!rawBoyPhone) {
-            const adminSetting = await db2.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
-            if (adminSetting?.value) {
-              boyName = "Admin / Store Owner";
-              rawBoyPhone = adminSetting.value;
-            }
-          }
-          const boyPhoneClean = (rawBoyPhone || "").replace(/\D/g, "").slice(-10);
-          if (boyPhoneClean.length !== 10) {
-            console.warn(`[DeliveryBoyNewOrder] No valid 10-digit phone number found for delivery boy (got "${rawBoyPhone}").`);
-            return { ok: false };
-          }
-          const distPhoneDisplay = opts.storePhone ? formatDisplayPhone(opts.storePhone) : "N/A";
-          const orderNoText = opts.orderNo ? `#${opts.orderNo}` : "New Order";
-          let msg = `\u{1F3E5} *${store.storeName}*
-`;
-          msg += `\u{1F4E6} *NEW ORDER PLACED (PICKUP ALERT)*
-
-`;
-          msg += `\u{1F3EC} *Distributor:* ${opts.storeName}
-`;
-          msg += `\u{1F4DE} *Distributor Contact:* ${distPhoneDisplay}
-`;
-          msg += `\u{1F4CB} *Order # / PO ID:* *${orderNoText}*
-`;
-          if (boyName && boyName !== "Delivery Staff") {
-            msg += `\u{1F464} *Assigned Collector:* ${boyName}
-`;
-          }
-          msg += `
-\u{1F4E6} *Medicines to Collect:*
-`;
-          const lines = opts.items || [];
-          if (lines.length > 0) {
-            lines.forEach((it, idx) => {
-              const name = it.productName || it.name || "Medicine";
-              const qty = it.qty || it.Quantity || 1;
-              const pack = it.packaging || it.packing ? ` (${it.packaging || it.packing})` : "";
-              msg += `${idx + 1}. *${name}* \u2014 Qty: *${qty}*${pack}
-`;
-            });
-          } else {
-            msg += `   (Items logged under PO ${orderNoText})
-`;
-          }
-          msg += `
-\u{1F4CA} *Total Items:* ${lines.length}
-`;
-          msg += `\u{1F4DD} *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
-          const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1e3;
-          const refId = opts.orderNo ? `order_${opts.orderNo}_boy_${boyPhoneClean}` : `order_pickup_${opts.storeName}_${Date.now()}`;
-          const alreadyQueued = await db2.get(
-            `SELECT id FROM whatsapp_send_queue
-         WHERE number = ? AND type = 'delivery_boy_new_order'
-           AND message LIKE ?
-           AND created_at >= ? AND status != 'cancelled'
-         LIMIT 1`,
-            [boyPhoneClean, `%${orderNoText}%`, sixHoursAgo]
-          );
-          if (alreadyQueued) {
-            console.log(`[DeliveryBoyNewOrder] Order ${orderNoText} already queued for ${boyName} (#${alreadyQueued.id}). Skipping duplicate.`);
-            return { ok: true, queueId: alreadyQueued.id };
-          }
-          const queueId = await whatsappQueueWorker.enqueue(
-            boyPhoneClean,
-            msg,
-            "delivery_boy_new_order",
-            boyName || "Delivery Staff"
-          );
-          await db2.run(
-            `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-            ["delivery_boy_new_order", boyName, boyPhoneClean, msg, queueId ? "pending" : "failed", refId]
-          );
-          console.log(`[DeliveryBoyNewOrder] Enqueued new order pickup notification for ${boyName} (${boyPhoneClean}) [Order ${orderNoText}]`);
-          return { ok: Boolean(queueId), queueId };
-        } catch (err) {
-          console.error("[DeliveryBoyNewOrder] Error sending delivery boy new order notification:", err);
-          return { ok: false };
-        }
+        console.log(`[DeliveryBoyNewOrder] Suppressed itemized pickup alert for order ${opts.orderNo || "N/A"} (${opts.storeName}) per pharmacy policy.`);
+        return { ok: true };
       }
     };
     notificationService = new NotificationService();
@@ -44560,22 +44807,6 @@ ${waiting.message}`;
         [f.orderNo]
       );
       if (alreadyNotifiedBoy) continue;
-      const placedRow = await db2.get(
-        `SELECT items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
-        [today.iso, f.storeName]
-      );
-      let orderItems = [];
-      try {
-        orderItems = JSON.parse(placedRow?.items_json || "[]");
-      } catch (_) {
-      }
-      if (orderItems.length === 0 && token) {
-        const matchingOrder = orders.find((o) => String(o?.OrderNo).trim() === f.orderNo);
-        if (matchingOrder && matchingOrder.OrderId) {
-          const lines = await fetchOrderLines(db2, token, Number(matchingOrder.OrderId), f.orderNo);
-          if (lines && lines.length > 0) orderItems = lines;
-        }
-      }
       const { resolveDistributorContact: resolveDistributorContact2 } = await Promise.resolve().then(() => (init_distributorSyncHelper(), distributorSyncHelper_exports));
       const contact = await resolveDistributorContact2(db2, f.storeName);
       let targetBoy = null;
@@ -44583,26 +44814,16 @@ ${waiting.message}`;
         const b = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [contact.delivery_boy_id]);
         if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
       }
-      const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-        storeName: f.storeName,
-        storePhone: contact.distributor_phone,
-        orderNo: f.orderNo,
-        items: orderItems,
-        deliveryBoy: targetBoy,
-        distributorId: contact.distributor_id
-      });
-      if (boyRes.ok) {
-        await db2.run(
-          `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
-          [Date.now(), targetBoy?.id || null, f.orderNo]
-        );
-        await db2.run(
-          `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
-          [Date.now(), today.iso, f.storeName]
-        );
-      }
+      await db2.run(
+        `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
+        [Date.now(), targetBoy?.id || null, f.orderNo]
+      );
+      await db2.run(
+        `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+        [Date.now(), today.iso, f.storeName]
+      );
     } catch (boyErr) {
-      console.warn(`[PharmarackOrderSync] Failed to notify delivery boy for order ${f.orderNo}:`, boyErr?.message || boyErr);
+      console.warn(`[PharmarackOrderSync] Failed to update delivery boy record for order ${f.orderNo}:`, boyErr?.message || boyErr);
     }
   }
   if (directOrderRemindersToNotifyBoy.length > 0) {
@@ -44645,32 +44866,11 @@ async function recoverTodayUnnotifiedOrders() {
     const { resolveDistributorContact: resolveDistributorContact2 } = await Promise.resolve().then(() => (init_distributorSyncHelper(), distributorSyncHelper_exports));
     for (const po of unnotifiedPlaced) {
       try {
-        let items = [];
-        try {
-          items = JSON.parse(po.items_json || "[]");
-        } catch (_) {
-        }
-        const contact = await resolveDistributorContact2(db2, po.store_name);
-        let targetBoy = null;
-        if (contact.delivery_boy_id) {
-          const b = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [contact.delivery_boy_id]);
-          if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
-        }
-        const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-          storeName: po.store_name,
-          storePhone: contact.distributor_phone,
-          orderNo: po.order_no || void 0,
-          items,
-          deliveryBoy: targetBoy,
-          distributorId: po.store_id || contact.distributor_id
-        });
-        if (boyRes.ok) {
-          await db2.run(
-            `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE id = ?`,
-            [Date.now(), po.id]
-          );
-          result.notifiedBoys++;
-        }
+        await db2.run(
+          `UPDATE pharmarack_placed_orders SET delivery_boy_notified = 1, delivery_boy_notified_at = ? WHERE id = ?`,
+          [Date.now(), po.id]
+        );
+        result.notifiedBoys++;
       } catch (err) {
         console.warn(`[OrderRecovery] Failed to recover delivery boy for placed order #${po.id}:`, err?.message || err);
       }
@@ -44691,35 +44891,16 @@ async function recoverTodayUnnotifiedOrders() {
           }
         }
         if (!so.delivery_boy_notified_at) {
-          const placedRow = await db2.get(
-            `SELECT items_json FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1`,
-            [today.iso, so.store_name]
-          );
-          let items = [];
-          try {
-            items = JSON.parse(placedRow?.items_json || "[]");
-          } catch (_) {
-          }
           let targetBoy = null;
           if (contact.delivery_boy_id) {
             const b = await db2.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [contact.delivery_boy_id]);
             if (b) targetBoy = { id: b.id, name: b.name, phone: b.whatsapp_number };
           }
-          const boyRes = await notificationService.notifyDeliveryBoyNewOrder({
-            storeName: so.store_name,
-            storePhone: contact.distributor_phone,
-            orderNo: so.order_no,
-            items,
-            deliveryBoy: targetBoy,
-            distributorId: so.store_id || contact.distributor_id
-          });
-          if (boyRes.ok) {
-            await db2.run(
-              `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
-              [Date.now(), targetBoy?.id || null, so.order_no]
-            );
-            result.notifiedBoys++;
-          }
+          await db2.run(
+            `UPDATE pharmarack_synced_orders SET delivery_boy_notified_at = ?, delivery_boy_id = ? WHERE order_no = ?`,
+            [Date.now(), targetBoy?.id || null, so.order_no]
+          );
+          result.notifiedBoys++;
         }
       } catch (err) {
         console.warn(`[OrderRecovery] Failed to recover synced order #${so.order_no}:`, err?.message || err);
@@ -44965,15 +45146,15 @@ __export(tokenRefreshScheduler_exports, {
 });
 function extractTokenFromProfile(profilePath) {
   try {
-    const levelDbDir = import_path23.default.resolve(profilePath, "Default", "Local Storage", "leveldb");
-    if (!import_fs24.default.existsSync(levelDbDir)) return null;
-    const files = import_fs24.default.readdirSync(levelDbDir);
+    const levelDbDir = import_path24.default.resolve(profilePath, "Default", "Local Storage", "leveldb");
+    if (!import_fs25.default.existsSync(levelDbDir)) return null;
+    const files = import_fs25.default.readdirSync(levelDbDir);
     let bestToken = null;
     let latestExp = 0;
     for (const file of files) {
       if (file.endsWith(".ldb") || file.endsWith(".log")) {
         try {
-          const buf = import_fs24.default.readFileSync(import_path23.default.join(levelDbDir, file));
+          const buf = import_fs25.default.readFileSync(import_path24.default.join(levelDbDir, file));
           const str = buf.toString("latin1");
           const matches = str.match(/eyJhbGciOiJIUzI1Ni[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g);
           if (matches) {
@@ -45003,12 +45184,12 @@ function extractTokenFromProfile(profilePath) {
     return null;
   }
 }
-var import_fs24, import_path23, TokenRefreshScheduler, tokenRefreshScheduler;
+var import_fs25, import_path24, TokenRefreshScheduler, tokenRefreshScheduler;
 var init_tokenRefreshScheduler = __esm({
   "src/services/tokenRefreshScheduler.ts"() {
     "use strict";
-    import_fs24 = __toESM(require("fs"), 1);
-    import_path23 = __toESM(require("path"), 1);
+    import_fs25 = __toESM(require("fs"), 1);
+    import_path24 = __toESM(require("path"), 1);
     init_lazyPuppeteer();
     init_connection();
     init_config();
@@ -45108,10 +45289,10 @@ var init_tokenRefreshScheduler = __esm({
         this.lastError = null;
         await killOrphanChromeProcesses("pharmarack_profile");
         cleanTempProfileFolders();
-        const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = import_path24.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
         try {
-          if (import_fs24.default.existsSync(mainProfilePath)) {
-            import_fs24.default.rmSync(mainProfilePath, { recursive: true, force: true });
+          if (import_fs25.default.existsSync(mainProfilePath)) {
+            import_fs25.default.rmSync(mainProfilePath, { recursive: true, force: true });
             console.log("[TokenRefreshScheduler] Main profile directory removed:", mainProfilePath);
           }
         } catch (err) {
@@ -45204,8 +45385,8 @@ var init_tokenRefreshScheduler = __esm({
           const db2 = await dbManager.getConnection();
           const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
           const token = tokenRow ? tokenRow.value : "";
-          const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-          const hasStoredProfile = import_fs24.default.existsSync(mainProfilePath) && import_fs24.default.readdirSync(mainProfilePath).length > 0;
+          const mainProfilePath = import_path24.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+          const hasStoredProfile = import_fs25.default.existsSync(mainProfilePath) && import_fs25.default.readdirSync(mainProfilePath).length > 0;
           if (!token && !hasStoredProfile && triggerType !== "manual_reauth") {
             if (!this.hasLoggedNoToken) {
               console.log("[TokenRefreshScheduler] No token or browser profile found. Skipping background auto-refresh until user logs in.");
@@ -45266,8 +45447,8 @@ var init_tokenRefreshScheduler = __esm({
           const db2 = await dbManager.getConnection();
           const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
           let token = tokenRow?.value || "";
-          const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-          const hasStoredProfile = import_fs24.default.existsSync(mainProfilePath) && import_fs24.default.readdirSync(mainProfilePath).length > 0;
+          const mainProfilePath = import_path24.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+          const hasStoredProfile = import_fs25.default.existsSync(mainProfilePath) && import_fs25.default.readdirSync(mainProfilePath).length > 0;
           if (!token && hasStoredProfile) {
             const extracted = extractTokenFromProfile(mainProfilePath);
             if (extracted) {
@@ -45386,9 +45567,9 @@ var init_tokenRefreshScheduler = __esm({
           console.error("[TokenRefreshScheduler] Chrome or Chromium browser path not found.");
           return null;
         }
-        const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (!import_fs24.default.existsSync(mainProfilePath)) {
-          import_fs24.default.mkdirSync(mainProfilePath, { recursive: true });
+        const mainProfilePath = import_path24.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (!import_fs25.default.existsSync(mainProfilePath)) {
+          import_fs25.default.mkdirSync(mainProfilePath, { recursive: true });
           console.log("[TokenRefreshScheduler] Initialized missing main profile folder at:", mainProfilePath);
         }
         const directToken = extractTokenFromProfile(mainProfilePath);
@@ -45430,7 +45611,7 @@ var init_tokenRefreshScheduler = __esm({
             if (isShutdownInProgress()) return null;
             console.log("[TokenRefreshScheduler] Main profile is locked. Copying to temp profile...", launchErr.message);
             const randomSuffix = Math.floor(Math.random() * 1e6);
-            const tempProfilePath = import_path23.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
+            const tempProfilePath = import_path24.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
             await copyProfileFolder(mainProfilePath, tempProfilePath, "[TokenRefreshScheduler]");
             cleanProfileLockFiles(tempProfilePath);
             browser = await puppeteer.launch({
@@ -45531,8 +45712,8 @@ var init_tokenRefreshScheduler = __esm({
               console.warn("[TokenRefreshScheduler] Could not copy temp profile back to main profile:", copyBackErr.message);
             }
             try {
-              if (import_fs24.default.existsSync(tempProfilePathToDelete)) {
-                import_fs24.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
+              if (import_fs25.default.existsSync(tempProfilePathToDelete)) {
+                import_fs25.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
                 console.log(`[TokenRefreshScheduler] Cleared temp profile directory at ${tempProfilePathToDelete}`);
               }
             } catch (rmErr) {
@@ -45543,33 +45724,6 @@ var init_tokenRefreshScheduler = __esm({
       }
     };
     tokenRefreshScheduler = TokenRefreshScheduler.getInstance();
-  }
-});
-
-// src/utils/localTime.ts
-var localTime_exports = {};
-__export(localTime_exports, {
-  SQL_LOCAL_NOW: () => SQL_LOCAL_NOW,
-  normalizeToLocalSqlDateTime: () => normalizeToLocalSqlDateTime,
-  toLocalSqlDateTime: () => toLocalSqlDateTime
-});
-function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-function normalizeToLocalSqlDateTime(value) {
-  if (value === void 0 || value === null || value === "") return null;
-  const s = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
-}
-var SQL_LOCAL_NOW, pad;
-var init_localTime = __esm({
-  "src/utils/localTime.ts"() {
-    "use strict";
-    SQL_LOCAL_NOW = "datetime('now', 'localtime')";
-    pad = (n) => String(n).padStart(2, "0");
   }
 });
 
@@ -46243,12 +46397,12 @@ function loadWwebjs() {
   return wwebjsPromise;
 }
 function hasSavedSession() {
-  const sessionPath = import_path24.default.join(WWEBJS_AUTH_DIR, "session");
-  if (!import_fs25.default.existsSync(sessionPath)) return false;
+  const sessionPath = import_path25.default.join(WWEBJS_AUTH_DIR, "session");
+  if (!import_fs26.default.existsSync(sessionPath)) return false;
   try {
-    const defaultDir = import_path24.default.join(sessionPath, "Default");
-    const targetDir = import_fs25.default.existsSync(defaultDir) ? defaultDir : sessionPath;
-    const files = import_fs25.default.readdirSync(targetDir);
+    const defaultDir = import_path25.default.join(sessionPath, "Default");
+    const targetDir = import_fs26.default.existsSync(defaultDir) ? defaultDir : sessionPath;
+    const files = import_fs26.default.readdirSync(targetDir);
     const meaningfulFiles = files.filter(
       (f) => !/^(devtoolsactiveport|singleton|lock|\.lock|lockfile)$/i.test(f)
     );
@@ -46303,29 +46457,29 @@ async function isWhatsAppAutoConnectAllowed() {
   return false;
 }
 function safeRemoveDirectorySync(dirPath) {
-  if (!import_fs25.default.existsSync(dirPath)) return;
+  if (!import_fs26.default.existsSync(dirPath)) return;
   try {
-    import_fs25.default.rmSync(dirPath, { recursive: true, force: true });
+    import_fs26.default.rmSync(dirPath, { recursive: true, force: true });
   } catch (err) {
     try {
-      const entries = import_fs25.default.readdirSync(dirPath, { withFileTypes: true });
+      const entries = import_fs26.default.readdirSync(dirPath, { withFileTypes: true });
       for (const entry of entries) {
-        const fullPath = import_path24.default.join(dirPath, entry.name);
+        const fullPath = import_path25.default.join(dirPath, entry.name);
         try {
-          import_fs25.default.chmodSync(fullPath, 438);
+          import_fs26.default.chmodSync(fullPath, 438);
         } catch {
         }
         if (entry.isDirectory()) {
           safeRemoveDirectorySync(fullPath);
         } else {
           try {
-            import_fs25.default.unlinkSync(fullPath);
+            import_fs26.default.unlinkSync(fullPath);
           } catch {
           }
         }
       }
       try {
-        import_fs25.default.rmdirSync(dirPath);
+        import_fs26.default.rmdirSync(dirPath);
       } catch {
       }
     } catch {
@@ -46550,9 +46704,9 @@ async function shouldRouteToBusiness() {
   }
 }
 async function cleanupProfileLocks() {
-  const sessionPath = import_path24.default.join(WWEBJS_AUTH_DIR, "session");
+  const sessionPath = import_path25.default.join(WWEBJS_AUTH_DIR, "session");
   const lockNames = ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"];
-  const hasLocks = import_fs25.default.existsSync(sessionPath) && lockNames.some((f) => import_fs25.default.existsSync(import_path24.default.join(sessionPath, f)));
+  const hasLocks = import_fs26.default.existsSync(sessionPath) && lockNames.some((f) => import_fs26.default.existsSync(import_path25.default.join(sessionPath, f)));
   if (hasLocks && process.platform === "win32") {
     try {
       const filterPattern = sessionPath.replace(/\\/g, "*").replace(/\//g, "*");
@@ -47094,9 +47248,9 @@ function launchClientInstance(forceQr) {
     const puppeteerArgs = getCommonHeadlessChromiumArgs([
       "--js-flags=--max-old-space-size=256"
     ]);
-    const sessionDir = import_path24.default.join(WWEBJS_AUTH_DIR, "session");
+    const sessionDir = import_path25.default.join(WWEBJS_AUTH_DIR, "session");
     cleanProfileLockFiles(sessionDir);
-    cleanProfileLockFiles(import_path24.default.join(sessionDir, "Default"));
+    cleanProfileLockFiles(import_path25.default.join(sessionDir, "Default"));
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
       puppeteer: {
@@ -47643,9 +47797,9 @@ async function forceReconnect() {
   const authPath = WWEBJS_AUTH_DIR;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (import_fs25.default.existsSync(authPath)) {
+      if (import_fs26.default.existsSync(authPath)) {
         safeRemoveDirectorySync(authPath);
-        if (!import_fs25.default.existsSync(authPath) || !hasSavedSession()) {
+        if (!import_fs26.default.existsSync(authPath) || !hasSavedSession()) {
           console.log("[WhatsApp] Old session data cleared from", authPath);
           break;
         }
@@ -47872,9 +48026,9 @@ async function sendMessage(to, mediaPath, caption, file) {
             let tempSavedPath = null;
             const safeName = (file.filename || "media.png").replace(/[^a-zA-Z0-9._-]/g, "_");
             try {
-              if (!import_fs25.default.existsSync(UPLOADS_DIR)) import_fs25.default.mkdirSync(UPLOADS_DIR, { recursive: true });
-              tempSavedPath = import_path24.default.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
-              import_fs25.default.writeFileSync(tempSavedPath, Buffer.from(file.data, "base64"));
+              if (!import_fs26.default.existsSync(UPLOADS_DIR)) import_fs26.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+              tempSavedPath = import_path25.default.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
+              import_fs26.default.writeFileSync(tempSavedPath, Buffer.from(file.data, "base64"));
               const media = MessageMedia.fromFilePath(tempSavedPath);
               const isPdf = safeName.toLowerCase().endsWith(".pdf");
               sentMsg = await targetClient.sendMessage(targetChatId, media, {
@@ -47883,7 +48037,7 @@ async function sendMessage(to, mediaPath, caption, file) {
               });
             } catch (mediaErr) {
               console.warn(`[WhatsApp] Media attachment send failed to ${targetChatId}, trying direct phone route ${chatId}:`, mediaErr?.message || mediaErr);
-              if (tempSavedPath && import_fs25.default.existsSync(tempSavedPath) && targetChatId !== chatId) {
+              if (tempSavedPath && import_fs26.default.existsSync(tempSavedPath) && targetChatId !== chatId) {
                 try {
                   const mediaAlt = MessageMedia.fromFilePath(tempSavedPath);
                   sentMsg = await targetClient.sendMessage(chatId, mediaAlt, {
@@ -47893,7 +48047,7 @@ async function sendMessage(to, mediaPath, caption, file) {
                 } catch (_) {
                 }
               }
-              if (!sentMsg && tempSavedPath && import_fs25.default.existsSync(tempSavedPath)) {
+              if (!sentMsg && tempSavedPath && import_fs26.default.existsSync(tempSavedPath)) {
                 try {
                   const mediaDoc = MessageMedia.fromFilePath(tempSavedPath);
                   sentMsg = await targetClient.sendMessage(chatId, mediaDoc, {
@@ -47910,9 +48064,9 @@ async function sendMessage(to, mediaPath, caption, file) {
                 throw mediaErr;
               }
             } finally {
-              if (tempSavedPath && import_fs25.default.existsSync(tempSavedPath)) {
+              if (tempSavedPath && import_fs26.default.existsSync(tempSavedPath)) {
                 try {
-                  import_fs25.default.unlinkSync(tempSavedPath);
+                  import_fs26.default.unlinkSync(tempSavedPath);
                 } catch (_) {
                 }
               }
@@ -47928,7 +48082,7 @@ async function sendMessage(to, mediaPath, caption, file) {
             } catch (mediaErr) {
               const errMsg = mediaErr?.stack || mediaErr?.message || String(mediaErr);
               try {
-                import_fs25.default.writeFileSync("data/last_media_error.txt", `[${targetChatId}] ${errMsg}`);
+                import_fs26.default.writeFileSync("data/last_media_error.txt", `[${targetChatId}] ${errMsg}`);
               } catch (_) {
               }
               console.warn(`[WhatsApp] Media file send failed to ${targetChatId}:`, errMsg);
@@ -48078,7 +48232,7 @@ async function sendMessage(to, mediaPath, caption, file) {
           recentSendsCache.set(`${lidUser}:${msgHash}:${fullMsg.length}`, Date.now());
         }
         try {
-          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path24.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
+          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path25.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
           const provTimestamp = Math.floor(Date.now() / 1e3);
           const provHasMedia = file || mediaPath ? 1 : 0;
           await db2.run(
@@ -48134,18 +48288,18 @@ async function sendMessage(to, mediaPath, caption, file) {
         continue;
       } else {
         if (file && file.mimetype && file.data) {
-          if (!import_fs25.default.existsSync(config.tempDir)) {
-            import_fs25.default.mkdirSync(config.tempDir, { recursive: true });
+          if (!import_fs26.default.existsSync(config.tempDir)) {
+            import_fs26.default.mkdirSync(config.tempDir, { recursive: true });
           }
-          const tempFilePath = import_path24.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
-          import_fs25.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
+          const tempFilePath = import_path25.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
+          import_fs26.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
           try {
             const result = await whatsappBusinessService.sendDocument(cleanPhone, tempFilePath, caption, file.filename);
             success = result.success;
             if (result.messageId) messageId = result.messageId;
           } finally {
-            if (import_fs25.default.existsSync(tempFilePath)) {
-              import_fs25.default.unlinkSync(tempFilePath);
+            if (import_fs26.default.existsSync(tempFilePath)) {
+              import_fs26.default.unlinkSync(tempFilePath);
             }
           }
         } else if (mediaPath) {
@@ -48169,7 +48323,7 @@ async function sendMessage(to, mediaPath, caption, file) {
       console.error("[WhatsApp Client Wrapper] Send failed:", err?.message || err);
       throw err;
     }
-    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path24.default.basename(mediaPath)} ${caption || ""}` : caption || "";
+    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path25.default.basename(mediaPath)} ${caption || ""}` : caption || "";
     const timestamp = Math.floor(Date.now() / 1e3);
     const hasMedia = file || mediaPath ? 1 : 0;
     try {
@@ -48384,21 +48538,21 @@ async function getChatMessages(chatId, limit = 500) {
 }
 async function getMessageMedia(chatId, messageId) {
   const safeId = String(messageId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const inboundDir = import_path24.default.resolve(process.cwd(), "data", "inbound_media");
-  if (safeId && import_fs25.default.existsSync(inboundDir)) {
+  const inboundDir = import_path25.default.resolve(process.cwd(), "data", "inbound_media");
+  if (safeId && import_fs26.default.existsSync(inboundDir)) {
     for (const ext2 of [".jpg", ".jpeg", ".png", ".pdf"]) {
-      const p = import_path24.default.join(inboundDir, `${safeId}${ext2}`);
-      if (import_fs25.default.existsSync(p)) {
-        const data2 = import_fs25.default.readFileSync(p).toString("base64");
+      const p = import_path25.default.join(inboundDir, `${safeId}${ext2}`);
+      if (import_fs26.default.existsSync(p)) {
+        const data2 = import_fs26.default.readFileSync(p).toString("base64");
         const mimetype2 = ext2 === ".png" ? "image/png" : ext2 === ".pdf" ? "application/pdf" : "image/jpeg";
         return { mimetype: mimetype2, data: data2, filename: `${safeId}${ext2}` };
       }
     }
   }
-  if (!import_fs25.default.existsSync(UPLOADS_DIR)) {
-    import_fs25.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+  if (!import_fs26.default.existsSync(UPLOADS_DIR)) {
+    import_fs26.default.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
-  const files = import_fs25.default.readdirSync(UPLOADS_DIR);
+  const files = import_fs26.default.readdirSync(UPLOADS_DIR);
   const matchedFile = files.find((f) => f.startsWith(messageId));
   if (!matchedFile) {
     try {
@@ -48408,11 +48562,11 @@ async function getMessageMedia(chatId, messageId) {
       const downloaded = await downloadMessageMediaReliably(messageId, { chatId, maxWaitMs: 15e3 });
       if (downloaded?.data) {
         const buffer = Buffer.from(downloaded.data, "base64");
-        if (!import_fs25.default.existsSync(inboundDir)) import_fs25.default.mkdirSync(inboundDir, { recursive: true });
-        const filePath2 = import_path24.default.join(inboundDir, `${safeId}.jpg`);
-        import_fs25.default.writeFileSync(filePath2, buffer);
+        if (!import_fs26.default.existsSync(inboundDir)) import_fs26.default.mkdirSync(inboundDir, { recursive: true });
+        const filePath2 = import_path25.default.join(inboundDir, `${safeId}.jpg`);
+        import_fs26.default.writeFileSync(filePath2, buffer);
         try {
-          import_fs25.default.writeFileSync(import_path24.default.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
+          import_fs26.default.writeFileSync(import_path25.default.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
         } catch (_) {
         }
         return {
@@ -48426,14 +48580,14 @@ async function getMessageMedia(chatId, messageId) {
     }
     throw new Error(`Media not found locally for message ID: ${messageId}`);
   }
-  const filePath = import_path24.default.join(UPLOADS_DIR, matchedFile);
-  const ext = import_path24.default.extname(matchedFile).toLowerCase();
+  const filePath = import_path25.default.join(UPLOADS_DIR, matchedFile);
+  const ext = import_path25.default.extname(matchedFile).toLowerCase();
   let mimetype = "image/jpeg";
   if (ext === ".png") mimetype = "image/png";
   else if (ext === ".pdf") mimetype = "application/pdf";
   else if (ext === ".mp3") mimetype = "audio/mp3";
   else if (ext === ".mp4") mimetype = "video/mp4";
-  const data = import_fs25.default.readFileSync(filePath).toString("base64");
+  const data = import_fs26.default.readFileSync(filePath).toString("base64");
   return {
     mimetype,
     data,
@@ -48731,12 +48885,12 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_fs25, import_path24, import_child_process3, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
+var import_fs26, import_path25, import_child_process3, import_util2, wwebjsPromise, execAsync2, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
-    import_fs25 = __toESM(require("fs"), 1);
-    import_path24 = __toESM(require("path"), 1);
+    import_fs26 = __toESM(require("fs"), 1);
+    import_path25 = __toESM(require("path"), 1);
     import_child_process3 = require("child_process");
     import_util2 = require("util");
     init_eventService();
@@ -48747,8 +48901,8 @@ var init_whatsappClient = __esm({
     init_chromeBrowser();
     wwebjsPromise = null;
     execAsync2 = (0, import_util2.promisify)(import_child_process3.exec);
-    UPLOADS_DIR = import_path24.default.resolve(getAppDataDir(), "uploads");
-    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path24.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path24.default.resolve(getAppDataDir(), ".wwebjs_auth");
+    UPLOADS_DIR = import_path25.default.resolve(getAppDataDir(), "uploads");
+    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path25.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path25.default.resolve(getAppDataDir(), ".wwebjs_auth");
     process.on("unhandledRejection", (reason) => {
       const msg = reason?.message || String(reason);
       if (isPuppeteerDetachedError(msg)) {
@@ -50721,11 +50875,11 @@ async function rebuildAllExpiryCaches(force = false) {
   }
   activeRebuildPromise = (async () => {
     try {
-      const cacheDir = import_path25.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-      const manifestPath = import_path25.default.join(cacheDir, "manifest.json");
-      if (!force && import_fs26.default.existsSync(manifestPath)) {
+      const cacheDir = import_path26.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const manifestPath = import_path26.default.join(cacheDir, "manifest.json");
+      if (!force && import_fs27.default.existsSync(manifestPath)) {
         try {
-          const rawManifest = await import_fs26.default.promises.readFile(manifestPath, "utf-8");
+          const rawManifest = await import_fs27.default.promises.readFile(manifestPath, "utf-8");
           const manifest = JSON.parse(rawManifest);
           if (manifest && typeof manifest.totalMonthFiles === "number") {
             console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
@@ -50755,8 +50909,8 @@ async function rebuildAllExpiryCaches(force = false) {
         WHERE ${INVENTORY_ACTIVE_WHERE}
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
-      if (!import_fs26.default.existsSync(cacheDir)) {
-        await import_fs26.default.promises.mkdir(cacheDir, { recursive: true });
+      if (!import_fs27.default.existsSync(cacheDir)) {
+        await import_fs27.default.promises.mkdir(cacheDir, { recursive: true });
       }
       const groups = {};
       for (const r of rows) {
@@ -50771,20 +50925,20 @@ async function rebuildAllExpiryCaches(force = false) {
         items.sort((a, b) => (a.medicine_name || "").localeCompare(b.medicine_name || "", void 0, { sensitivity: "base", numeric: true }));
         const fileName = `expiry_${ym}.json`;
         validMonthFiles.add(fileName);
-        const filePath = import_path25.default.join(cacheDir, fileName);
-        await import_fs26.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
+        const filePath = import_path26.default.join(cacheDir, fileName);
+        await import_fs27.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
         written++;
       }
-      const existingFiles = await import_fs26.default.promises.readdir(cacheDir);
+      const existingFiles = await import_fs27.default.promises.readdir(cacheDir);
       for (const file of existingFiles) {
         if (file.startsWith("expiry_") && file.endsWith(".json") && !validMonthFiles.has(file)) {
           try {
-            await import_fs26.default.promises.unlink(import_path25.default.join(cacheDir, file));
+            await import_fs27.default.promises.unlink(import_path26.default.join(cacheDir, file));
           } catch (_) {
           }
         }
       }
-      await import_fs26.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
+      await import_fs27.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
       lastRebuildTime = Date.now();
       console.log(`[ExpiryCache] Rebuilt: ${written} month file(s) with stock. Empty months auto-removed.`);
     } catch (err) {
@@ -50797,8 +50951,8 @@ async function rebuildAllExpiryCaches(force = false) {
 }
 async function patchExpiryCacheForInventoryItem(inventoryId) {
   try {
-    const cacheDir = import_path25.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-    if (!import_fs26.default.existsSync(cacheDir)) return;
+    const cacheDir = import_path26.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+    if (!import_fs27.default.existsSync(cacheDir)) return;
     const db2 = await dbManager.getConnection();
     const item = await db2.get(`
       SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date,
@@ -50821,11 +50975,11 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
     if (!item) return;
     const ym = getExpiryYearMonth(item.expiry_date);
     if (ym === "unknown") return;
-    const filePath = import_path25.default.join(cacheDir, `expiry_${ym}.json`);
+    const filePath = import_path26.default.join(cacheDir, `expiry_${ym}.json`);
     let monthItems = [];
-    if (import_fs26.default.existsSync(filePath)) {
+    if (import_fs27.default.existsSync(filePath)) {
       try {
-        monthItems = JSON.parse(await import_fs26.default.promises.readFile(filePath, "utf-8"));
+        monthItems = JSON.parse(await import_fs27.default.promises.readFile(filePath, "utf-8"));
       } catch {
         monthItems = [];
       }
@@ -50838,12 +50992,12 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
       );
     }
     if (monthItems.length === 0) {
-      if (import_fs26.default.existsSync(filePath)) {
-        await import_fs26.default.promises.unlink(filePath);
+      if (import_fs27.default.existsSync(filePath)) {
+        await import_fs27.default.promises.unlink(filePath);
         console.log(`[ExpiryCache] Patch: ${ym} file deleted (all items sold/returned).`);
       }
     } else {
-      await import_fs26.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
+      await import_fs27.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
       console.log(`[ExpiryCache] Patch: ${ym} updated for inventory #${inventoryId} (qty=${item.quantity}).`);
     }
   } catch (err) {
@@ -50878,14 +51032,14 @@ function triggerExpiryCacheRebuildDebounced(inventoryIds, options) {
     }
   }, 800);
 }
-var import_path25, import_fs26, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
+var import_path26, import_fs27, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
 var init_expiryAlertService = __esm({
   "src/services/expiryAlertService.ts"() {
     "use strict";
     init_connection();
     init_inventoryActive();
-    import_path25 = __toESM(require("path"), 1);
-    import_fs26 = __toESM(require("fs"), 1);
+    import_path26 = __toESM(require("path"), 1);
+    import_fs27 = __toESM(require("fs"), 1);
     init_config();
     activeRebuildPromise = null;
     lastRebuildTime = 0;
@@ -54575,15 +54729,15 @@ __export(nonMovingReportService_exports, {
 function invalidateNonMovingReportCache() {
   nonMovingCache.clear();
 }
-var import_path26, import_fs27, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
+var import_path27, import_fs28, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
 var init_nonMovingReportService = __esm({
   "src/services/nonMovingReportService.ts"() {
     "use strict";
     init_inventoryActive();
     init_connection();
     init_telegramBot();
-    import_path26 = __toESM(require("path"), 1);
-    import_fs27 = __toESM(require("fs"), 1);
+    import_path27 = __toESM(require("path"), 1);
+    import_fs28 = __toESM(require("fs"), 1);
     NON_MOVING_CACHE_TTL_MS = 5 * 6e4;
     nonMovingCache = /* @__PURE__ */ new Map();
     NonMovingReportService = class {
@@ -54719,13 +54873,13 @@ var init_nonMovingReportService = __esm({
        */
       async saveReportToFile(report, filename) {
         try {
-          const reportDir = import_path26.default.join(process.cwd(), "data", "reports");
-          if (!import_fs27.default.existsSync(reportDir)) {
-            import_fs27.default.mkdirSync(reportDir, { recursive: true });
+          const reportDir = import_path27.default.join(process.cwd(), "data", "reports");
+          if (!import_fs28.default.existsSync(reportDir)) {
+            import_fs28.default.mkdirSync(reportDir, { recursive: true });
           }
           const fileName = filename || `non_moving_report_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-          const filePath = import_path26.default.join(reportDir, fileName);
-          await import_fs27.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
+          const filePath = import_path27.default.join(reportDir, fileName);
+          await import_fs28.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
           console.log(`Non-moving inventory report saved to: ${filePath}`);
           return filePath;
         } catch (error) {
@@ -54948,7 +55102,7 @@ __export(monthlyReportService_exports, {
   MonthlyReportService: () => MonthlyReportService,
   monthlyReportService: () => monthlyReportService
 });
-var import_fs28, import_path27, TEMP_DIR2, MonthlyReportService, monthlyReportService;
+var import_fs29, import_path28, TEMP_DIR2, MonthlyReportService, monthlyReportService;
 var init_monthlyReportService = __esm({
   "src/services/monthlyReportService.ts"() {
     "use strict";
@@ -54956,9 +55110,9 @@ var init_monthlyReportService = __esm({
     init_whatsappQueueWorker();
     init_whatsappClient();
     init_config();
-    import_fs28 = __toESM(require("fs"), 1);
-    import_path27 = __toESM(require("path"), 1);
-    TEMP_DIR2 = import_path27.default.resolve(getAppDataDir(), "uploads", "temp");
+    import_fs29 = __toESM(require("fs"), 1);
+    import_path28 = __toESM(require("path"), 1);
+    TEMP_DIR2 = import_path28.default.resolve(getAppDataDir(), "uploads", "temp");
     MonthlyReportService = class {
       /**
        * Helper to compute date range for monthly, midmonth, quarterly, yearly, or custom date ranges.
@@ -55236,14 +55390,14 @@ var init_monthlyReportService = __esm({
        * Generate a PDF report document using pdfkit with customizable template themes.
        */
       async generateReportPdf(data, chartStyle = "standard", templateTheme = "executive", outputPath) {
-        if (!import_fs28.default.existsSync(TEMP_DIR2)) {
-          import_fs28.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs29.default.existsSync(TEMP_DIR2)) {
+          import_fs29.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path27.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
+        const finalPath = outputPath || import_path28.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
         const PDFDocument6 = await import("pdfkit").then((m) => m.default ?? m);
         return new Promise((resolve, reject) => {
           const doc = new PDFDocument6({ margin: 40, size: "A4" });
-          const stream = import_fs28.default.createWriteStream(finalPath);
+          const stream = import_fs29.default.createWriteStream(finalPath);
           doc.pipe(stream);
           const fmt = (n) => `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           let headerBg = "#0f172a";
@@ -55422,10 +55576,10 @@ Review this sample PDF report layout on your phone to choose your preferred desi
        * Generate an Excel spreadsheet report document.
        */
       async generateReportExcel(data, outputPath) {
-        if (!import_fs28.default.existsSync(TEMP_DIR2)) {
-          import_fs28.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs29.default.existsSync(TEMP_DIR2)) {
+          import_fs29.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path27.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
+        const finalPath = outputPath || import_path28.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
         const wsData = [
           [`${data.pharmacyName} - ${data.periodLabel}`],
           [`Period: ${data.startDate} to ${data.endDate}`],
@@ -56338,7 +56492,7 @@ __export(connection_exports, {
   requestTxStorage: () => requestTxStorage,
   txPriorityStorage: () => txPriorityStorage
 });
-var import_sqlite, import_sqlite32, import_sqlite2, import_path28, import_fs29, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, requestTxStorage, DatabaseManager, dbManager;
+var import_sqlite, import_sqlite32, import_sqlite2, import_path29, import_fs30, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, requestTxStorage, DatabaseManager, dbManager;
 var init_connection = __esm({
   "src/database/connection.ts"() {
     "use strict";
@@ -56346,8 +56500,8 @@ var init_connection = __esm({
     import_sqlite = require("sqlite");
     import_sqlite32 = __toESM(require("sqlite3"), 1);
     import_sqlite2 = require("sqlite");
-    import_path28 = __toESM(require("path"), 1);
-    import_fs29 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
+    import_fs30 = __toESM(require("fs"), 1);
     import_zlib = __toESM(require("zlib"), 1);
     import_promises = require("stream/promises");
     import_node_async_hooks = require("node:async_hooks");
@@ -56563,16 +56717,16 @@ var init_connection = __esm({
           const busyTimeout = isTest ? 5e3 : 3e4;
           const maxAttempts = 10;
           let lastError = null;
-          if (import_path28.default.basename(dbPath) === "app.dev.db" && !import_fs29.default.existsSync(dbPath)) {
-            const prodPath = import_path28.default.join(import_path28.default.dirname(dbPath), "app.db");
-            if (import_fs29.default.existsSync(prodPath)) {
+          if (import_path29.default.basename(dbPath) === "app.dev.db" && !import_fs30.default.existsSync(dbPath)) {
+            const prodPath = import_path29.default.join(import_path29.default.dirname(dbPath), "app.db");
+            if (import_fs30.default.existsSync(prodPath)) {
               try {
-                import_fs29.default.mkdirSync(import_path28.default.dirname(dbPath), { recursive: true });
-                import_fs29.default.copyFileSync(prodPath, dbPath);
+                import_fs30.default.mkdirSync(import_path29.default.dirname(dbPath), { recursive: true });
+                import_fs30.default.copyFileSync(prodPath, dbPath);
                 const prodWal = prodPath + "-wal";
                 const prodShm = prodPath + "-shm";
-                if (import_fs29.default.existsSync(prodWal)) import_fs29.default.copyFileSync(prodWal, dbPath + "-wal");
-                if (import_fs29.default.existsSync(prodShm)) import_fs29.default.copyFileSync(prodShm, dbPath + "-shm");
+                if (import_fs30.default.existsSync(prodWal)) import_fs30.default.copyFileSync(prodWal, dbPath + "-wal");
+                if (import_fs30.default.existsSync(prodShm)) import_fs30.default.copyFileSync(prodShm, dbPath + "-shm");
                 console.log(`[Database] Auto-provisioned isolated dev sandbox: ${dbPath} (cloned from ${prodPath})`);
               } catch (cloneErr) {
                 console.warn("[Database] Could not clone production database for dev sandbox; starting fresh:", cloneErr);
@@ -56798,37 +56952,37 @@ var init_connection = __esm({
           }
         }
         console.error("[DB] Database load failed. Starting silent self-healing database restoration...");
-        const logPath = import_path28.default.join(import_path28.default.dirname(dbPath), "self_healing.log");
+        const logPath = import_path29.default.join(import_path29.default.dirname(dbPath), "self_healing.log");
         const appendLog = (msg) => {
           const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-          import_fs29.default.appendFileSync(logPath, `[${timestamp}] ${msg}
+          import_fs30.default.appendFileSync(logPath, `[${timestamp}] ${msg}
 `);
         };
         appendLog(`[ERROR] DB_CORRUPT: ${initialErrorMsg}`);
         const backups = [];
-        const dataDir = import_path28.default.dirname(dbPath);
-        if (import_fs29.default.existsSync(dataDir)) {
-          import_fs29.default.readdirSync(dataDir).forEach((file) => {
+        const dataDir = import_path29.default.dirname(dbPath);
+        if (import_fs30.default.existsSync(dataDir)) {
+          import_fs30.default.readdirSync(dataDir).forEach((file) => {
             if (file.startsWith("app.db.bak_")) {
-              const fp = import_path28.default.join(dataDir, file);
+              const fp = import_path29.default.join(dataDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs29.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs30.default.statSync(fp).mtime.getTime(),
                 type: "bak"
               });
             }
           });
         }
-        const snapshotsDir = import_path28.default.join(getAppDataDir(), "backup", "snapshots");
-        if (import_fs29.default.existsSync(snapshotsDir)) {
-          import_fs29.default.readdirSync(snapshotsDir).forEach((file) => {
+        const snapshotsDir = import_path29.default.join(getAppDataDir(), "backup", "snapshots");
+        if (import_fs30.default.existsSync(snapshotsDir)) {
+          import_fs30.default.readdirSync(snapshotsDir).forEach((file) => {
             if (file.startsWith("snapshot_") && file.endsWith(".db.gz")) {
-              const fp = import_path28.default.join(snapshotsDir, file);
+              const fp = import_path29.default.join(snapshotsDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs29.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs30.default.statSync(fp).mtime.getTime(),
                 type: "gz"
               });
             }
@@ -56842,14 +56996,14 @@ var init_connection = __esm({
         const targetBackup = backups[0];
         appendLog(`[ACTION] RENAME: ${dbPath} -> ${dbPath}.corrupt`);
         try {
-          if (import_fs29.default.existsSync(dbPath)) {
-            if (import_fs29.default.existsSync(dbPath + ".corrupt")) {
-              import_fs29.default.unlinkSync(dbPath + ".corrupt");
+          if (import_fs30.default.existsSync(dbPath)) {
+            if (import_fs30.default.existsSync(dbPath + ".corrupt")) {
+              import_fs30.default.unlinkSync(dbPath + ".corrupt");
             }
-            import_fs29.default.renameSync(dbPath, dbPath + ".corrupt");
+            import_fs30.default.renameSync(dbPath, dbPath + ".corrupt");
           }
-          if (import_fs29.default.existsSync(dbPath + "-wal")) import_fs29.default.unlinkSync(dbPath + "-wal");
-          if (import_fs29.default.existsSync(dbPath + "-shm")) import_fs29.default.unlinkSync(dbPath + "-shm");
+          if (import_fs30.default.existsSync(dbPath + "-wal")) import_fs30.default.unlinkSync(dbPath + "-wal");
+          if (import_fs30.default.existsSync(dbPath + "-shm")) import_fs30.default.unlinkSync(dbPath + "-shm");
         } catch (err) {
           appendLog(`[ERROR] Failed to rename corrupt database or clean logs: ${err.message}`);
           throw new Error("DB_INTEGRITY_FAILURE");
@@ -56858,11 +57012,11 @@ var init_connection = __esm({
         try {
           if (targetBackup.type === "gz") {
             const gunzip = import_zlib.default.createGunzip();
-            const source = import_fs29.default.createReadStream(targetBackup.path);
-            const destination = import_fs29.default.createWriteStream(dbPath);
+            const source = import_fs30.default.createReadStream(targetBackup.path);
+            const destination = import_fs30.default.createWriteStream(dbPath);
             await (0, import_promises.pipeline)(source, gunzip, destination);
           } else {
-            import_fs29.default.copyFileSync(targetBackup.path, dbPath);
+            import_fs30.default.copyFileSync(targetBackup.path, dbPath);
           }
         } catch (err) {
           appendLog(`[ERROR] Failed to restore backup file: ${err.message}`);
@@ -57010,7 +57164,7 @@ function parseExtractedText(text, onProgress, progressStart = 10, progressEnd = 
   return extracted;
 }
 async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
-  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path29.default.basename(filePath)}. Falling back to OCR.`);
+  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path30.default.basename(filePath)}. Falling back to OCR.`);
   if (onProgress) onProgress(5);
   let getDocument;
   try {
@@ -57062,7 +57216,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
   return parseExtractedText(allText, onProgress, 80, 100);
 }
 async function extractFromPdf(filePath, onProgress) {
-  const data = await import_fs30.default.promises.readFile(filePath);
+  const data = await import_fs31.default.promises.readFile(filePath);
   const pdfData = await (0, import_pdf_parse.default)(data);
   const text = pdfData.text;
   const cleanedText = text.replace(/\s+/g, "").trim();
@@ -57072,7 +57226,7 @@ async function extractFromPdf(filePath, onProgress) {
   return parseExtractedText(text, onProgress);
 }
 async function extractFromCsv(filePath, onProgress) {
-  const content = await import_fs30.default.promises.readFile(filePath, "utf-8");
+  const content = await import_fs31.default.promises.readFile(filePath, "utf-8");
   const lines = content.split(/\r?\n/);
   let headerLineIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 30); i++) {
@@ -57147,12 +57301,12 @@ async function extractFromCsv(filePath, onProgress) {
 async function mergeIntoSuggestions(_newNames) {
   return [];
 }
-var import_fs30, import_path29, import_pdf_parse, import_sync2, MIN_TEXT_CHARS_THRESHOLD;
+var import_fs31, import_path30, import_pdf_parse, import_sync2, MIN_TEXT_CHARS_THRESHOLD;
 var init_extractor = __esm({
   "src/extractor.ts"() {
     "use strict";
-    import_fs30 = __toESM(require("fs"), 1);
-    import_path29 = __toESM(require("path"), 1);
+    import_fs31 = __toESM(require("fs"), 1);
+    import_path30 = __toESM(require("path"), 1);
     import_pdf_parse = __toESM(require("pdf-parse"), 1);
     import_sync2 = require("csv-parse/sync");
     init_aiCameraService();
@@ -57231,7 +57385,7 @@ async function preScanCsv(filePath, onProgress) {
   return new Promise((resolve, reject) => {
     let nameCol = "";
     let processedRows = 0;
-    const readStream = import_fs31.default.createReadStream(filePath);
+    const readStream = import_fs32.default.createReadStream(filePath);
     const parserStream = readStream.pipe((0, import_csv_parser2.default)());
     parserStream.on("headers", (headers) => {
       nameCol = headers.find((c) => /name|brand/i.test(c)) || headers.find((c) => /product|item|inn|title/i.test(c)) || headers[0] || "";
@@ -57298,9 +57452,9 @@ function parseCsvLine(line) {
 async function readCsvRawRows(filePath, maxRows = 20) {
   return new Promise((resolve) => {
     const rawRows = [];
-    if (!import_fs31.default.existsSync(filePath)) return resolve(rawRows);
+    if (!import_fs32.default.existsSync(filePath)) return resolve(rawRows);
     const rl = import_readline.default.createInterface({
-      input: import_fs31.default.createReadStream(filePath),
+      input: import_fs32.default.createReadStream(filePath),
       crlfDelay: Infinity
     });
     rl.on("line", (line) => {
@@ -57321,8 +57475,8 @@ async function readCsvPreview(filePath, maxRows = 10, skipRows = 0) {
   return new Promise((resolve, reject) => {
     const rows = [];
     let headers = [];
-    if (!import_fs31.default.existsSync(filePath)) return resolve({ headers, rows });
-    const stream = import_fs31.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
+    if (!import_fs32.default.existsSync(filePath)) return resolve({ headers, rows });
+    const stream = import_fs32.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
     stream.on("headers", (h) => {
       headers = h;
     });
@@ -57423,7 +57577,7 @@ async function runCatalogAnalysis(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path30.default.extname(job.file_path).toLowerCase();
+    const ext = import_path31.default.extname(job.file_path).toLowerCase();
     let headers = [];
     let previewData = [];
     let rawRows = [];
@@ -57715,7 +57869,7 @@ async function runCatalogImport(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path30.default.extname(job.file_path).toLowerCase();
+    const ext = import_path31.default.extname(job.file_path).toLowerCase();
     const mapping = JSON.parse(job.mapping_config || "{}");
     const filters = JSON.parse(job.data_filters || "{}");
     const skipRows = Math.max(0, parseInt(filters.skipRows || "0", 10));
@@ -57800,7 +57954,7 @@ async function runCatalogImport(jobId) {
     if (ext === ".csv") {
       totalToProcess = await new Promise((resolve) => {
         let count = 0;
-        const countStream = import_fs31.default.createReadStream(job.file_path);
+        const countStream = import_fs32.default.createReadStream(job.file_path);
         countStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows })).on("data", () => {
           count++;
         }).on("end", () => {
@@ -58023,7 +58177,7 @@ async function runCatalogImport(jobId) {
     };
     let lastProgressTime = Date.now();
     if (ext === ".csv") {
-      const readStream = import_fs31.default.createReadStream(job.file_path);
+      const readStream = import_fs32.default.createReadStream(job.file_path);
       const csvStream = readStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
       readStream.on("error", (err) => {
         csvStream.destroy(new Error(`Failed to read stream for import: ${err.message}`));
@@ -58200,12 +58354,12 @@ async function startWorker() {
   };
   jobPollTick();
 }
-var import_fs31, import_path30, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
+var import_fs32, import_path31, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
 var init_catalogWorker = __esm({
   "src/worker/catalogWorker.ts"() {
     "use strict";
-    import_fs31 = __toESM(require("fs"), 1);
-    import_path30 = __toESM(require("path"), 1);
+    import_fs32 = __toESM(require("fs"), 1);
+    import_path31 = __toESM(require("path"), 1);
     import_readline = __toESM(require("readline"), 1);
     init_config();
     init_connection();
@@ -58617,13 +58771,13 @@ async function reportCrashTelemetry(errorData) {
   } catch {
   }
 }
-var import_crypto4, import_fs32, import_path31, import_child_process4, import_os, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
+var import_crypto4, import_fs33, import_path32, import_child_process4, import_os, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
 var init_licenseService = __esm({
   "src/services/licenseService.ts"() {
     "use strict";
     import_crypto4 = __toESM(require("crypto"), 1);
-    import_fs32 = __toESM(require("fs"), 1);
-    import_path31 = __toESM(require("path"), 1);
+    import_fs33 = __toESM(require("fs"), 1);
+    import_path32 = __toESM(require("path"), 1);
     import_child_process4 = require("child_process");
     import_os = require("os");
     import_axios2 = __toESM(require("axios"), 1);
@@ -58631,14 +58785,14 @@ var init_licenseService = __esm({
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
     defaultAppVersion = "0.1.27";
     try {
-      const pkgJsonPath = import_path31.default.join(process.cwd(), "package.json");
-      if (import_fs32.default.existsSync(pkgJsonPath)) {
-        const pkgJson = JSON.parse(import_fs32.default.readFileSync(pkgJsonPath, "utf8"));
+      const pkgJsonPath = import_path32.default.join(process.cwd(), "package.json");
+      if (import_fs33.default.existsSync(pkgJsonPath)) {
+        const pkgJson = JSON.parse(import_fs33.default.readFileSync(pkgJsonPath, "utf8"));
         if (pkgJson?.version) defaultAppVersion = pkgJson.version;
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.101";
+    APP_VERSION = "0.1.102";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -59149,14 +59303,14 @@ __export(pdfInvoiceService_exports, {
   PdfInvoiceService: () => PdfInvoiceService,
   pdfInvoiceService: () => pdfInvoiceService
 });
-var import_pdfkit2, import_path32, import_fs33, PdfInvoiceService, pdfInvoiceService;
+var import_pdfkit2, import_path33, import_fs34, PdfInvoiceService, pdfInvoiceService;
 var init_pdfInvoiceService = __esm({
   "src/services/pdfInvoiceService.ts"() {
     "use strict";
     import_pdfkit2 = __toESM(require("pdfkit"), 1);
     init_connection();
-    import_path32 = __toESM(require("path"), 1);
-    import_fs33 = __toESM(require("fs"), 1);
+    import_path33 = __toESM(require("path"), 1);
+    import_fs34 = __toESM(require("fs"), 1);
     init_config();
     init_barcodeService();
     PdfInvoiceService = class {
@@ -59199,7 +59353,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs33.default.createWriteStream(outPath);
+            const stream = import_fs34.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -59306,9 +59460,9 @@ var init_pdfInvoiceService = __esm({
             } catch (bcErr) {
               console.warn("[PdfInvoice] Failed to embed barcode image in PDF:", bcErr);
             }
-            const uploadsDir = import_path32.default.resolve(getAppDataDir(), "uploads");
-            const customStampPath = import_path32.default.join(uploadsDir, "custom_stamp.png");
-            const customSigPath = import_path32.default.join(uploadsDir, "custom_signature.png");
+            const uploadsDir = import_path33.default.resolve(getAppDataDir(), "uploads");
+            const customStampPath = import_path33.default.join(uploadsDir, "custom_stamp.png");
+            const customSigPath = import_path33.default.join(uploadsDir, "custom_signature.png");
             if (includeStampAndSig) {
               const defaultStampX = 410;
               const defaultStampY = Math.min(Math.max(grandTotalY + 5, 540), 650);
@@ -59317,7 +59471,7 @@ var init_pdfInvoiceService = __esm({
               const stampScale = settings.stamp_scale ? parseFloat(settings.stamp_scale) : 100;
               const stampWidth = Math.round(80 * (stampScale / 100));
               const stampRot = settings.stamp_rotation !== void 0 ? parseFloat(settings.stamp_rotation) : -12;
-              if (import_fs33.default.existsSync(customStampPath)) {
+              if (import_fs34.default.existsSync(customStampPath)) {
                 doc.save();
                 if (stampRot !== 0) {
                   doc.rotate(stampRot, { origin: [stampX + stampWidth / 2, stampY + stampWidth / 2] });
@@ -59352,7 +59506,7 @@ var init_pdfInvoiceService = __esm({
               const sigY = settings.sig_pos_y ? Math.max(300, Math.min(720, parseFloat(settings.sig_pos_y))) : defaultSigY;
               const sigScale = settings.sig_scale ? parseFloat(settings.sig_scale) : 100;
               const sigWidth = Math.round(75 * (sigScale / 100));
-              if (import_fs33.default.existsSync(customSigPath)) {
+              if (import_fs34.default.existsSync(customSigPath)) {
                 doc.image(customSigPath, sigX, sigY, { width: sigWidth });
               }
               doc.moveTo(sigX - 10, sigY + 48).lineTo(sigX + sigWidth + 10, sigY + 48).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
@@ -59404,7 +59558,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs33.default.createWriteStream(outPath);
+            const stream = import_fs34.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -59519,7 +59673,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs33.default.createWriteStream(outPath);
+            const stream = import_fs34.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -59601,7 +59755,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs33.default.createWriteStream(outPath);
+            const stream = import_fs34.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -59670,7 +59824,7 @@ __export(creditReminderService_exports, {
   CreditReminderService: () => CreditReminderService,
   creditReminderService: () => creditReminderService
 });
-var import_path33, import_fs34, CreditReminderService, creditReminderService;
+var import_path34, import_fs35, CreditReminderService, creditReminderService;
 var init_creditReminderService = __esm({
   "src/services/creditReminderService.ts"() {
     "use strict";
@@ -59681,8 +59835,8 @@ var init_creditReminderService = __esm({
     init_whatsappQueueWorker();
     init_getMessage();
     init_config();
-    import_path33 = __toESM(require("path"), 1);
-    import_fs34 = __toESM(require("fs"), 1);
+    import_path34 = __toESM(require("path"), 1);
+    import_fs35 = __toESM(require("fs"), 1);
     CreditReminderService = class {
       /**
        * Build and dispatch an amount-specific UPI QR credit reminder for a customer.
@@ -59780,12 +59934,12 @@ var init_creditReminderService = __esm({
         }
         let pdfPath = void 0;
         try {
-          const uploadsDir = import_path33.default.resolve(getAppDataDir(), "uploads");
-          if (!import_fs34.default.existsSync(uploadsDir)) {
-            import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path34.default.resolve(getAppDataDir(), "uploads");
+          if (!import_fs35.default.existsSync(uploadsDir)) {
+            import_fs35.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const pdfFilename = `credit_statement_cust_${customerId}_${Date.now()}.pdf`;
-          const fullPdfPath = import_path33.default.join(uploadsDir, pdfFilename);
+          const fullPdfPath = import_path34.default.join(uploadsDir, pdfFilename);
           await pdfInvoiceService.generateCreditStatementPdf(Number(customerId), fullPdfPath);
           pdfPath = fullPdfPath;
         } catch (pdfErr) {
@@ -60833,12 +60987,12 @@ __export(backupRecoveryService_exports, {
   BackupRecoveryService: () => BackupRecoveryService,
   backupRecoveryService: () => backupRecoveryService
 });
-var import_fs35, import_path34, import_better_sqlite32, import_adm_zip2, import_axios3, import_zlib2, import_promises2, getDbPath3, BACKUP_DIR, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
+var import_fs36, import_path35, import_better_sqlite32, import_adm_zip2, import_axios3, import_zlib2, import_promises2, getDbPath3, BACKUP_DIR, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
 var init_backupRecoveryService = __esm({
   "src/services/backupRecoveryService.ts"() {
     "use strict";
-    import_fs35 = __toESM(require("fs"), 1);
-    import_path34 = __toESM(require("path"), 1);
+    import_fs36 = __toESM(require("fs"), 1);
+    import_path35 = __toESM(require("path"), 1);
     import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
     import_adm_zip2 = __toESM(require("adm-zip"), 1);
     import_axios3 = __toESM(require("axios"), 1);
@@ -60848,14 +61002,14 @@ var init_backupRecoveryService = __esm({
     import_promises2 = require("stream/promises");
     init_config();
     getDbPath3 = () => config.dbPath;
-    BACKUP_DIR = import_path34.default.join(getAppDataDir(), "backup");
-    SNAPSHOTS_DIR = import_path34.default.join(BACKUP_DIR, "snapshots");
-    ARCHIVES_DIR = import_path34.default.join(BACKUP_DIR, "archives");
-    if (!import_fs35.default.existsSync(SNAPSHOTS_DIR)) {
-      import_fs35.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    BACKUP_DIR = import_path35.default.join(getAppDataDir(), "backup");
+    SNAPSHOTS_DIR = import_path35.default.join(BACKUP_DIR, "snapshots");
+    ARCHIVES_DIR = import_path35.default.join(BACKUP_DIR, "archives");
+    if (!import_fs36.default.existsSync(SNAPSHOTS_DIR)) {
+      import_fs36.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
     }
-    if (!import_fs35.default.existsSync(ARCHIVES_DIR)) {
-      import_fs35.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
+    if (!import_fs36.default.existsSync(ARCHIVES_DIR)) {
+      import_fs36.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
     }
     BackupRecoveryService = class _BackupRecoveryService {
       static instance;
@@ -60909,23 +61063,23 @@ var init_backupRecoveryService = __esm({
         const dateStr = now.toISOString().split("T")[0];
         const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-");
         const filename = `snapshot_${dateStr}_${timeStr}.db.gz`;
-        const destPath = import_path34.default.join(SNAPSHOTS_DIR, filename);
+        const destPath = import_path35.default.join(SNAPSHOTS_DIR, filename);
         console.log(`[Backup] Generating database snapshot: ${filename}...`);
-        if (!import_fs35.default.existsSync(SNAPSHOTS_DIR)) {
-          import_fs35.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+        if (!import_fs36.default.existsSync(SNAPSHOTS_DIR)) {
+          import_fs36.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
         }
         const tempDbPath = destPath.replace(".gz", "");
         const tempDb = new import_better_sqlite32.default(getDbPath3());
         await tempDb.backup(tempDbPath);
         tempDb.close();
         const gzip = import_zlib2.default.createGzip();
-        const source = import_fs35.default.createReadStream(tempDbPath);
-        const destination = import_fs35.default.createWriteStream(destPath);
+        const source = import_fs36.default.createReadStream(tempDbPath);
+        const destination = import_fs36.default.createWriteStream(destPath);
         try {
           await (0, import_promises2.pipeline)(source, gzip, destination);
         } finally {
-          if (import_fs35.default.existsSync(tempDbPath)) {
-            import_fs35.default.unlinkSync(tempDbPath);
+          if (import_fs36.default.existsSync(tempDbPath)) {
+            import_fs36.default.unlinkSync(tempDbPath);
           }
         }
         try {
@@ -60938,16 +61092,16 @@ var init_backupRecoveryService = __esm({
         }
         try {
           const todayPrefix = `snapshot_${dateStr}_`;
-          const files = import_fs35.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
-            const fp = import_path34.default.join(SNAPSHOTS_DIR, f);
-            return { name: f, path: fp, time: import_fs35.default.statSync(fp).mtime.getTime() };
+          const files = import_fs36.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
+            const fp = import_path35.default.join(SNAPSHOTS_DIR, f);
+            return { name: f, path: fp, time: import_fs36.default.statSync(fp).mtime.getTime() };
           }).sort((a, b) => b.time - a.time);
           const MAX_TODAY_SNAPSHOTS = 5;
           if (files.length > MAX_TODAY_SNAPSHOTS) {
             const toDelete = files.slice(MAX_TODAY_SNAPSHOTS);
             for (const snap of toDelete) {
-              if (import_fs35.default.existsSync(snap.path)) {
-                import_fs35.default.unlinkSync(snap.path);
+              if (import_fs36.default.existsSync(snap.path)) {
+                import_fs36.default.unlinkSync(snap.path);
                 console.log(`[Backup] Same-day snapshot retention: deleted old snapshot ${snap.name}`);
               }
             }
@@ -60965,7 +61119,7 @@ var init_backupRecoveryService = __esm({
         const dailyCompressEnabled = await this.getSetting("backup_daily_compression", "true") === "true";
         if (!dailyCompressEnabled) return;
         try {
-          const files = import_fs35.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+          const files = import_fs36.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
           if (files.length === 0) return;
           const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
           const dateGroups = {};
@@ -60983,19 +61137,19 @@ var init_backupRecoveryService = __esm({
           }
           for (const [datePart, snapshotFiles] of Object.entries(dateGroups)) {
             const archiveName = `archive_${datePart}.zip`;
-            const archivePath = import_path34.default.join(ARCHIVES_DIR, archiveName);
+            const archivePath = import_path35.default.join(ARCHIVES_DIR, archiveName);
             console.log(`[Backup] Compressing previous day snapshots for ${datePart} into ${archiveName}...`);
             const zip = new import_adm_zip2.default();
             for (const file of snapshotFiles) {
-              const filePath = import_path34.default.join(SNAPSHOTS_DIR, file);
-              if (import_fs35.default.existsSync(filePath)) {
+              const filePath = import_path35.default.join(SNAPSHOTS_DIR, file);
+              if (import_fs36.default.existsSync(filePath)) {
                 zip.addLocalFile(filePath);
               }
             }
             zip.writeZip(archivePath);
-            if (import_fs35.default.existsSync(archivePath)) {
+            if (import_fs36.default.existsSync(archivePath)) {
               for (const file of snapshotFiles) {
-                import_fs35.default.unlinkSync(import_path34.default.join(SNAPSHOTS_DIR, file));
+                import_fs36.default.unlinkSync(import_path35.default.join(SNAPSHOTS_DIR, file));
               }
               console.log(`[Backup] Compressed ${snapshotFiles.length} snapshots into ${archiveName}. Original snapshots cleaned.`);
               await this.uploadArchive(archiveName);
@@ -61010,8 +61164,8 @@ var init_backupRecoveryService = __esm({
        * Uploads the daily archive to Google Drive and Telegram if configured.
        */
       async uploadArchive(filename) {
-        const archivePath = import_path34.default.join(ARCHIVES_DIR, filename);
-        if (!import_fs35.default.existsSync(archivePath)) return { gdrive: "off" };
+        const archivePath = import_path35.default.join(ARCHIVES_DIR, filename);
+        if (!import_fs36.default.existsSync(archivePath)) return { gdrive: "off" };
         const gdriveEnabled = await this.getSetting("backup_gdrive_enabled", "false") === "true";
         const telegramEnabled = await this.getSetting("backup_telegram_enabled", "false") === "true";
         const notifsEnabled = await this.getSetting("backup_notifications_enabled", "true") === "true";
@@ -61074,7 +61228,7 @@ var init_backupRecoveryService = __esm({
        */
       async retryPendingUploads() {
         try {
-          const archives = import_fs35.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
+          const archives = import_fs36.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
           if (archives.length === 0) return;
           console.log("[Backup] Scanning archives for pending cloud uploads...");
           for (const archive of archives) {
@@ -61176,7 +61330,7 @@ var init_backupRecoveryService = __esm({
        */
       async uploadFileToGoogleDrive(filePath, filename) {
         try {
-          if (!import_fs35.default.existsSync(filePath)) {
+          if (!import_fs36.default.existsSync(filePath)) {
             return { success: false, error: `File not found on disk: ${filePath}` };
           }
           const { accessToken, error: authError } = await this.getGoogleOAuthAccessToken();
@@ -61201,7 +61355,7 @@ var init_backupRecoveryService = __esm({
           if (folderId) {
             metadata.parents = [folderId];
           }
-          const fileBuffer = import_fs35.default.readFileSync(filePath);
+          const fileBuffer = import_fs36.default.readFileSync(filePath);
           const boundary = "foo_bar_boundary_" + Date.now();
           const multipartBody = Buffer.concat([
             Buffer.from(`--${boundary}\r
@@ -61299,7 +61453,7 @@ Content-Type: ${mimeType}\r
             service: "gmail",
             auth: { user: gmailUser, pass: gmailPass }
           });
-          const stats = import_fs35.default.statSync(filePath);
+          const stats = import_fs36.default.statSync(filePath);
           const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
           await transporter.sendMail({
             from: `"AI Pharmacy OS Backup" <${gmailUser}>`,
@@ -61344,7 +61498,7 @@ This backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inven
             console.warn("[Backup] Telegram upload skipped: bot credentials or chat ID missing.");
             return false;
           }
-          const fileBuffer = import_fs35.default.readFileSync(filePath);
+          const fileBuffer = import_fs36.default.readFileSync(filePath);
           const formData = new FormData();
           formData.append("chat_id", chatId);
           formData.append("document", new Blob([fileBuffer]), filename);
@@ -61372,16 +61526,16 @@ This backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inven
         const autoDelete = await this.getSetting("backup_auto_delete_old_archives", "true") === "true";
         if (!autoDelete) return;
         try {
-          const archives = import_fs35.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
-            const filePath = import_path34.default.join(ARCHIVES_DIR, f);
-            const stats = import_fs35.default.statSync(filePath);
+          const archives = import_fs36.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
+            const filePath = import_path35.default.join(ARCHIVES_DIR, f);
+            const stats = import_fs36.default.statSync(filePath);
             return { filename: f, path: filePath, mtime: stats.mtime };
           }).sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
           if (archives.length > 4) {
             const toDelete = archives.slice(4);
             for (const arch of toDelete) {
-              if (import_fs35.default.existsSync(arch.path)) {
-                import_fs35.default.unlinkSync(arch.path);
+              if (import_fs36.default.existsSync(arch.path)) {
+                import_fs36.default.unlinkSync(arch.path);
                 console.log(`[Backup] Retention cleanup: deleted old archive ${arch.filename}`);
               }
             }
@@ -61433,16 +61587,16 @@ This backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inven
         const items = [];
         const seen = /* @__PURE__ */ new Set();
         const scanForArchives = (dir) => {
-          if (!import_fs35.default.existsSync(dir)) return;
+          if (!import_fs36.default.existsSync(dir)) return;
           try {
-            const files = import_fs35.default.readdirSync(dir);
+            const files = import_fs36.default.readdirSync(dir);
             for (const filename of files) {
               if (seen.has(filename)) continue;
               if (!filename.endsWith(".zip") && !filename.endsWith(".db.gz") && !filename.endsWith(".db")) continue;
               if (!filename.startsWith("archive_") && !filename.startsWith("app_backup_") && !filename.startsWith("snapshot_")) continue;
               try {
-                const filePath = import_path34.default.join(dir, filename);
-                const stats = import_fs35.default.statSync(filePath);
+                const filePath = import_path35.default.join(dir, filename);
+                const stats = import_fs36.default.statSync(filePath);
                 if (!stats.isFile()) continue;
                 const dateMatch = filename.match(/(\d{4}-\d{2}-\d{2})/);
                 const date = dateMatch ? dateMatch[1] : stats.mtime.toISOString().split("T")[0];
@@ -61472,7 +61626,7 @@ This backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inven
       async restoreFromArchive(filename) {
         const { restoreBackup: restoreBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
         await restoreBackup2(filename);
-        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path34.default.basename(filename)}`);
+        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path35.default.basename(filename)}`);
       }
       /**
        * Delete a specific archive.
@@ -61480,7 +61634,7 @@ This backup includes 100% of Sales, Purchases, Patients, Refills, CRM, and Inven
       async deleteArchive(filename) {
         const { deleteBackup: deleteBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
         deleteBackup2(filename);
-        console.log(`[Backup] Deleted archive: ${import_path34.default.basename(filename)}`);
+        console.log(`[Backup] Deleted archive: ${import_path35.default.basename(filename)}`);
       }
       /**
        * Broadcast SSE Event / UI Notification.
@@ -61687,24 +61841,24 @@ async function createBackup(reason = "Manual") {
     console.log(`[Backup] Skipping ${reason} \u2014 server uptime ${Math.round(process.uptime())}s < 60s`);
     throw new Error("Backup deferred: server still starting up (retry after 60s)");
   }
-  if (!import_fs36.default.existsSync(BACKUP_DIR2)) {
-    import_fs36.default.mkdirSync(BACKUP_DIR2, { recursive: true });
+  if (!import_fs37.default.existsSync(BACKUP_DIR2)) {
+    import_fs37.default.mkdirSync(BACKUP_DIR2, { recursive: true });
   }
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const filename = `app_backup_${timestamp}.db.gz`;
-  const backupPath = import_path35.default.join(BACKUP_DIR2, filename);
+  const backupPath = import_path36.default.join(BACKUP_DIR2, filename);
   const tempDbPath = backupPath.replace(".gz", "");
   const tempDb = new import_better_sqlite33.default(DB_PATH2);
   await tempDb.backup(tempDbPath);
   tempDb.close();
   const gzip = import_zlib3.default.createGzip({ level: isShutdown ? import_zlib3.default.constants.Z_BEST_SPEED : 6 });
-  const source = import_fs36.default.createReadStream(tempDbPath);
-  const destination = import_fs36.default.createWriteStream(backupPath);
+  const source = import_fs37.default.createReadStream(tempDbPath);
+  const destination = import_fs37.default.createWriteStream(backupPath);
   try {
     await (0, import_promises3.pipeline)(source, gzip, destination);
   } finally {
-    if (import_fs36.default.existsSync(tempDbPath)) {
-      import_fs36.default.unlinkSync(tempDbPath);
+    if (import_fs37.default.existsSync(tempDbPath)) {
+      import_fs37.default.unlinkSync(tempDbPath);
     }
   }
   try {
@@ -61731,13 +61885,13 @@ async function createBackup(reason = "Manual") {
   return { filename };
 }
 async function uploadBackupFileToGoogleDrive(filename) {
-  const sanitized = import_path35.default.basename(filename);
-  let filePath = import_path35.default.join(BACKUP_DIR2, sanitized);
-  if (!import_fs36.default.existsSync(filePath)) {
-    const archivesPath = import_path35.default.join(BACKUP_DIR2, "archives", sanitized);
-    if (import_fs36.default.existsSync(archivesPath)) filePath = archivesPath;
+  const sanitized = import_path36.default.basename(filename);
+  let filePath = import_path36.default.join(BACKUP_DIR2, sanitized);
+  if (!import_fs37.default.existsSync(filePath)) {
+    const archivesPath = import_path36.default.join(BACKUP_DIR2, "archives", sanitized);
+    if (import_fs37.default.existsSync(archivesPath)) filePath = archivesPath;
   }
-  if (!import_fs36.default.existsSync(filePath)) {
+  if (!import_fs37.default.existsSync(filePath)) {
     return { success: false, error: "Backup file not found on disk" };
   }
   const { backupRecoveryService: backupRecoveryService2 } = await Promise.resolve().then(() => (init_backupRecoveryService(), backupRecoveryService_exports));
@@ -61748,18 +61902,18 @@ async function backupSessions(reason = "Manual") {
     const { default: AdmZip4 } = await import("adm-zip");
     const appData = getAppDataDir();
     const targets = [
-      { name: "wwebjs_auth", dir: import_path35.default.join(appData, ".wwebjs_auth") },
-      { name: "pharmarack_profile", dir: import_path35.default.join(appData, "data", "pharmarack_profile") }
-    ].filter((t) => import_fs36.default.existsSync(t.dir) && import_fs36.default.readdirSync(t.dir).length > 0);
+      { name: "wwebjs_auth", dir: import_path36.default.join(appData, ".wwebjs_auth") },
+      { name: "pharmarack_profile", dir: import_path36.default.join(appData, "data", "pharmarack_profile") }
+    ].filter((t) => import_fs37.default.existsSync(t.dir) && import_fs37.default.readdirSync(t.dir).length > 0);
     if (targets.length === 0) return null;
-    if (!import_fs36.default.existsSync(BACKUP_DIR2)) {
-      import_fs36.default.mkdirSync(BACKUP_DIR2, { recursive: true });
+    if (!import_fs37.default.existsSync(BACKUP_DIR2)) {
+      import_fs37.default.mkdirSync(BACKUP_DIR2, { recursive: true });
     }
     const zip = new AdmZip4();
     const addDirRecursive = (dir, zipPath) => {
-      for (const entry of import_fs36.default.readdirSync(dir, { withFileTypes: true })) {
-        const full = import_path35.default.join(dir, entry.name);
-        const rel = import_path35.default.join(zipPath, entry.name);
+      for (const entry of import_fs37.default.readdirSync(dir, { withFileTypes: true })) {
+        const full = import_path36.default.join(dir, entry.name);
+        const rel = import_path36.default.join(zipPath, entry.name);
         if (entry.isDirectory()) {
           if (SESSION_EXCLUDED_DIRS.has(entry.name)) continue;
           addDirRecursive(full, rel);
@@ -61774,13 +61928,13 @@ async function backupSessions(reason = "Manual") {
     for (const t of targets) addDirRecursive(t.dir, t.name);
     const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     const filename = `sessions_backup_${timestamp}.zip`;
-    zip.writeZip(import_path35.default.join(BACKUP_DIR2, filename));
+    zip.writeZip(import_path36.default.join(BACKUP_DIR2, filename));
     const sessionZips = listBackups().filter((b) => b.filename.startsWith("sessions_backup_"));
     for (const old of sessionZips.slice(MAX_SESSION_BACKUPS)) {
-      const p = import_path35.default.join(BACKUP_DIR2, old.filename);
-      if (import_fs36.default.existsSync(p)) {
+      const p = import_path36.default.join(BACKUP_DIR2, old.filename);
+      if (import_fs37.default.existsSync(p)) {
         try {
-          import_fs36.default.unlinkSync(p);
+          import_fs37.default.unlinkSync(p);
         } catch (_) {
         }
       }
@@ -61793,17 +61947,17 @@ async function backupSessions(reason = "Manual") {
   }
 }
 function listBackups() {
-  if (!import_fs36.default.existsSync(BACKUP_DIR2)) {
+  if (!import_fs37.default.existsSync(BACKUP_DIR2)) {
     return [];
   }
   const results = [];
   const scanDir = (dir) => {
-    if (!import_fs36.default.existsSync(dir)) return;
-    const files = import_fs36.default.readdirSync(dir);
+    if (!import_fs37.default.existsSync(dir)) return;
+    const files = import_fs37.default.readdirSync(dir);
     for (const filename of files) {
-      const filePath = import_path35.default.join(dir, filename);
+      const filePath = import_path36.default.join(dir, filename);
       try {
-        const stats = import_fs36.default.statSync(filePath);
+        const stats = import_fs37.default.statSync(filePath);
         if (stats.isFile() && (filename.endsWith(".db") || filename.endsWith(".db.gz") || filename.endsWith(".zip"))) {
           if (!results.some((r) => r.filename === filename)) {
             results.push({
@@ -61818,52 +61972,52 @@ function listBackups() {
     }
   };
   scanDir(BACKUP_DIR2);
-  scanDir(import_path35.default.join(BACKUP_DIR2, "archives"));
-  scanDir(import_path35.default.join(BACKUP_DIR2, "snapshots"));
+  scanDir(import_path36.default.join(BACKUP_DIR2, "archives"));
+  scanDir(import_path36.default.join(BACKUP_DIR2, "snapshots"));
   return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 function deleteBackup(filename) {
-  const sanitized = import_path35.default.basename(filename);
+  const sanitized = import_path36.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename");
   }
-  let filePath = import_path35.default.join(BACKUP_DIR2, sanitized);
-  if (!import_fs36.default.existsSync(filePath)) {
-    const archivesPath = import_path35.default.join(BACKUP_DIR2, "archives", sanitized);
-    const snapshotsPath = import_path35.default.join(BACKUP_DIR2, "snapshots", sanitized);
-    if (import_fs36.default.existsSync(archivesPath)) filePath = archivesPath;
-    else if (import_fs36.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
+  let filePath = import_path36.default.join(BACKUP_DIR2, sanitized);
+  if (!import_fs37.default.existsSync(filePath)) {
+    const archivesPath = import_path36.default.join(BACKUP_DIR2, "archives", sanitized);
+    const snapshotsPath = import_path36.default.join(BACKUP_DIR2, "snapshots", sanitized);
+    if (import_fs37.default.existsSync(archivesPath)) filePath = archivesPath;
+    else if (import_fs37.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
   }
-  const resolved = import_path35.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR2 + import_path35.default.sep) && resolved !== BACKUP_DIR2) {
+  const resolved = import_path36.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR2 + import_path36.default.sep) && resolved !== BACKUP_DIR2) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs36.default.existsSync(filePath)) {
+  if (!import_fs37.default.existsSync(filePath)) {
     throw new Error("Backup file not found");
   }
-  import_fs36.default.unlinkSync(filePath);
+  import_fs37.default.unlinkSync(filePath);
   invalidatePreupdateCache();
 }
 async function restoreBackup(filename) {
-  const sanitized = import_path35.default.basename(filename);
+  const sanitized = import_path36.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename. Must be .db, .db.gz, or .zip");
   }
-  let filePath = import_path35.default.join(BACKUP_DIR2, sanitized);
-  if (!import_fs36.default.existsSync(filePath)) {
-    const archivesPath = import_path35.default.join(BACKUP_DIR2, "archives", sanitized);
-    const snapshotsPath = import_path35.default.join(BACKUP_DIR2, "snapshots", sanitized);
-    if (import_fs36.default.existsSync(archivesPath)) {
+  let filePath = import_path36.default.join(BACKUP_DIR2, sanitized);
+  if (!import_fs37.default.existsSync(filePath)) {
+    const archivesPath = import_path36.default.join(BACKUP_DIR2, "archives", sanitized);
+    const snapshotsPath = import_path36.default.join(BACKUP_DIR2, "snapshots", sanitized);
+    if (import_fs37.default.existsSync(archivesPath)) {
       filePath = archivesPath;
-    } else if (import_fs36.default.existsSync(snapshotsPath)) {
+    } else if (import_fs37.default.existsSync(snapshotsPath)) {
       filePath = snapshotsPath;
     }
   }
-  const resolved = import_path35.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR2 + import_path35.default.sep) && resolved !== BACKUP_DIR2) {
+  const resolved = import_path36.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR2 + import_path36.default.sep) && resolved !== BACKUP_DIR2) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs36.default.existsSync(filePath)) {
+  if (!import_fs37.default.existsSync(filePath)) {
     throw new Error(`Backup file not found: ${sanitized}`);
   }
   const stagedPath = `${DB_PATH2}.restoring_${Date.now()}`;
@@ -61882,20 +62036,20 @@ async function restoreBackup(filename) {
     let dbSourcePath = filePath;
     if (sanitized.endsWith(".zip")) {
       const { default: AdmZip4 } = await import("adm-zip");
-      tempExtractDir = import_path35.default.join(BACKUP_DIR2, `temp_restore_${Date.now()}`);
-      import_fs36.default.mkdirSync(tempExtractDir, { recursive: true });
+      tempExtractDir = import_path36.default.join(BACKUP_DIR2, `temp_restore_${Date.now()}`);
+      import_fs37.default.mkdirSync(tempExtractDir, { recursive: true });
       const zip = new AdmZip4(filePath);
       zip.extractAllTo(tempExtractDir, true);
-      const dbFiles = import_fs36.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
+      const dbFiles = import_fs37.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
       if (dbFiles.length === 0) {
         throw new Error("No valid database file (.db or .db.gz) found inside the zip archive.");
       }
-      dbSourcePath = import_path35.default.join(tempExtractDir, dbFiles[0]);
+      dbSourcePath = import_path36.default.join(tempExtractDir, dbFiles[0]);
     }
     if (dbSourcePath.endsWith(".gz")) {
-      await (0, import_promises3.pipeline)(import_fs36.default.createReadStream(dbSourcePath), import_zlib3.default.createGunzip(), import_fs36.default.createWriteStream(stagedPath));
+      await (0, import_promises3.pipeline)(import_fs37.default.createReadStream(dbSourcePath), import_zlib3.default.createGunzip(), import_fs37.default.createWriteStream(stagedPath));
     } else {
-      import_fs36.default.copyFileSync(dbSourcePath, stagedPath);
+      import_fs37.default.copyFileSync(dbSourcePath, stagedPath);
     }
     const probe = new import_better_sqlite33.default(stagedPath, { readonly: true });
     try {
@@ -61914,42 +62068,42 @@ async function restoreBackup(filename) {
     await dbManager.close(true);
     for (const suffix of ["-wal", "-shm"]) {
       const sidecar = DB_PATH2 + suffix;
-      if (!import_fs36.default.existsSync(sidecar)) continue;
+      if (!import_fs37.default.existsSync(sidecar)) continue;
       try {
-        import_fs36.default.unlinkSync(sidecar);
+        import_fs37.default.unlinkSync(sidecar);
       } catch (err) {
-        throw new Error(`Could not clear ${import_path35.default.basename(sidecar)} before restore: ${err.message}`);
+        throw new Error(`Could not clear ${import_path36.default.basename(sidecar)} before restore: ${err.message}`);
       }
     }
     try {
-      import_fs36.default.renameSync(stagedPath, DB_PATH2);
+      import_fs37.default.renameSync(stagedPath, DB_PATH2);
     } catch (renameErr) {
       if (renameErr.code === "EPERM" || renameErr.code === "EBUSY" || renameErr.code === "EEXIST") {
-        import_fs36.default.copyFileSync(stagedPath, DB_PATH2);
+        import_fs37.default.copyFileSync(stagedPath, DB_PATH2);
         try {
-          import_fs36.default.unlinkSync(stagedPath);
+          import_fs37.default.unlinkSync(stagedPath);
         } catch (_) {
         }
       } else {
         throw renameErr;
       }
     } finally {
-      if (tempExtractDir && import_fs36.default.existsSync(tempExtractDir)) {
+      if (tempExtractDir && import_fs37.default.existsSync(tempExtractDir)) {
         try {
-          import_fs36.default.rmSync(tempExtractDir, { recursive: true, force: true });
+          import_fs37.default.rmSync(tempExtractDir, { recursive: true, force: true });
         } catch (_) {
         }
       }
     }
   } catch (err) {
-    if (tempExtractDir && import_fs36.default.existsSync(tempExtractDir)) {
+    if (tempExtractDir && import_fs37.default.existsSync(tempExtractDir)) {
       try {
-        import_fs36.default.rmSync(tempExtractDir, { recursive: true, force: true });
+        import_fs37.default.rmSync(tempExtractDir, { recursive: true, force: true });
       } catch (_) {
       }
     }
     try {
-      if (import_fs36.default.existsSync(stagedPath)) import_fs36.default.unlinkSync(stagedPath);
+      if (import_fs37.default.existsSync(stagedPath)) import_fs37.default.unlinkSync(stagedPath);
     } catch (_) {
     }
     try {
@@ -62056,17 +62210,17 @@ function stopScheduler() {
 }
 function enforceRetention() {
   try {
-    if (import_fs36.default.existsSync(BACKUP_DIR2)) {
-      const allFiles = import_fs36.default.readdirSync(BACKUP_DIR2);
+    if (import_fs37.default.existsSync(BACKUP_DIR2)) {
+      const allFiles = import_fs37.default.readdirSync(BACKUP_DIR2);
       for (const f of allFiles) {
         if (f.startsWith("app_backup_") && f.endsWith(".db")) {
           const gzEquivalent = f + ".gz";
-          const fullPath = import_path35.default.join(BACKUP_DIR2, f);
+          const fullPath = import_path36.default.join(BACKUP_DIR2, f);
           try {
-            const stats = import_fs36.default.statSync(fullPath);
+            const stats = import_fs37.default.statSync(fullPath);
             const ageMs = Date.now() - stats.mtimeMs;
-            if (import_fs36.default.existsSync(import_path35.default.join(BACKUP_DIR2, gzEquivalent)) || ageMs > 30 * 60 * 1e3) {
-              import_fs36.default.unlinkSync(fullPath);
+            if (import_fs37.default.existsSync(import_path36.default.join(BACKUP_DIR2, gzEquivalent)) || ageMs > 30 * 60 * 1e3) {
+              import_fs37.default.unlinkSync(fullPath);
               console.log(`[Backup] Cleaned uncompressed leftover database: ${f}`);
             }
           } catch (_) {
@@ -62096,14 +62250,14 @@ async function initBackupScheduler() {
 function getDirectorySize(dirPath) {
   let total = 0;
   try {
-    if (import_fs36.default.existsSync(dirPath)) {
-      const items = import_fs36.default.readdirSync(dirPath, { withFileTypes: true });
+    if (import_fs37.default.existsSync(dirPath)) {
+      const items = import_fs37.default.readdirSync(dirPath, { withFileTypes: true });
       for (const item of items) {
-        const itemPath = import_path35.default.join(dirPath, item.name);
+        const itemPath = import_path36.default.join(dirPath, item.name);
         if (item.isDirectory()) {
           total += getDirectorySize(itemPath);
         } else if (item.isFile()) {
-          total += import_fs36.default.statSync(itemPath).size;
+          total += import_fs37.default.statSync(itemPath).size;
         }
       }
     }
@@ -62123,20 +62277,20 @@ function getPreupdateBackupsInfo(force = false) {
   const folders = [];
   const searchDirs = /* @__PURE__ */ new Set();
   if (BACKUP_DIR2) searchDirs.add(BACKUP_DIR2);
-  const exeBackup = import_path35.default.join(import_path35.default.dirname(process.execPath), "backup");
-  if (import_fs36.default.existsSync(exeBackup)) searchDirs.add(exeBackup);
+  const exeBackup = import_path36.default.join(import_path36.default.dirname(process.execPath), "backup");
+  if (import_fs37.default.existsSync(exeBackup)) searchDirs.add(exeBackup);
   for (const dir of searchDirs) {
-    if (!import_fs36.default.existsSync(dir)) continue;
+    if (!import_fs37.default.existsSync(dir)) continue;
     try {
-      const entries = import_fs36.default.readdirSync(dir, { withFileTypes: true });
+      const entries = import_fs37.default.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         const isCurrentFolder = entry.isDirectory() && entry.name.startsWith("preupdate-");
         const isLegacyFile = entry.isFile() && LEGACY_PREUPGRADE_DB_RE.test(entry.name);
         if (!isCurrentFolder && !isLegacyFile) continue;
-        const fullPath = import_path35.default.join(dir, entry.name);
+        const fullPath = import_path36.default.join(dir, entry.name);
         if (folders.some((f) => f.fullPath === fullPath)) continue;
         try {
-          const stats = import_fs36.default.statSync(fullPath);
+          const stats = import_fs37.default.statSync(fullPath);
           const sizeBytes = isCurrentFolder ? getDirectorySize(fullPath) : stats.size;
           folders.push({
             name: entry.name,
@@ -62168,13 +62322,13 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
   if (info.folders.length > keepCount) {
     const toDelete = info.folders.slice(keepCount);
     for (const folder of toDelete) {
-      const safeName = import_path35.default.basename(folder.fullPath);
+      const safeName = import_path36.default.basename(folder.fullPath);
       const isCurrentFolder = safeName.startsWith("preupdate-");
       const isLegacyFile = LEGACY_PREUPGRADE_DB_RE.test(safeName);
       if (!isCurrentFolder && !isLegacyFile) continue;
       try {
-        if (import_fs36.default.existsSync(folder.fullPath)) {
-          import_fs36.default.rmSync(folder.fullPath, { recursive: true, force: true });
+        if (import_fs37.default.existsSync(folder.fullPath)) {
+          import_fs37.default.rmSync(folder.fullPath, { recursive: true, force: true });
           freedBytes += folder.sizeBytes;
           deletedCount++;
           console.log(`[Backup] Pruned old ${isLegacyFile ? "legacy pre-upgrade" : "pre-update"} backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
@@ -62201,12 +62355,12 @@ async function cleanOldPreupdateBackups(keepCount = 2) {
     remainingCount: Math.min(info.folders.length - deletedCount, keepCount)
   };
 }
-var import_fs36, import_path35, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, DB_PATH2, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask, LEGACY_PREUPGRADE_DB_RE, cachedPreupdateInfo, cachedPreupdateTimestamp, PREUPDATE_CACHE_TTL_MS;
+var import_fs37, import_path36, import_node_cron2, import_better_sqlite33, import_zlib3, import_promises3, DB_PATH2, BACKUP_DIR2, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask, LEGACY_PREUPGRADE_DB_RE, cachedPreupdateInfo, cachedPreupdateTimestamp, PREUPDATE_CACHE_TTL_MS;
 var init_backupService = __esm({
   "src/services/backupService.ts"() {
     "use strict";
-    import_fs36 = __toESM(require("fs"), 1);
-    import_path35 = __toESM(require("path"), 1);
+    import_fs37 = __toESM(require("fs"), 1);
+    import_path36 = __toESM(require("path"), 1);
     import_node_cron2 = __toESM(require("node-cron"), 1);
     init_connection();
     import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
@@ -62314,25 +62468,25 @@ async function seedMasterMedicines(force = false) {
       }
     }
     const candidateCsvPaths = [
-      import_path36.default.join(getAppDataDir(), "data", "reference_medicines.csv"),
-      import_path36.default.join(getAppDataDir(), "medicines.csv"),
-      import_path36.default.join(process.cwd(), "data", "reference_medicines.csv"),
-      import_path36.default.join(process.cwd(), "medicines.csv"),
-      import_path36.default.join(process.cwd(), "data", "medicines.csv"),
-      import_path36.default.join(import_path36.default.dirname(process.execPath), "data", "reference_medicines.csv"),
-      import_path36.default.join(import_path36.default.dirname(process.execPath), "medicines.csv"),
-      import_path36.default.join(import_path36.default.dirname(process.execPath), "..", "data", "reference_medicines.csv"),
-      import_path36.default.join(import_path36.default.dirname(process.execPath), "..", "medicines.csv")
+      import_path37.default.join(getAppDataDir(), "data", "reference_medicines.csv"),
+      import_path37.default.join(getAppDataDir(), "medicines.csv"),
+      import_path37.default.join(process.cwd(), "data", "reference_medicines.csv"),
+      import_path37.default.join(process.cwd(), "medicines.csv"),
+      import_path37.default.join(process.cwd(), "data", "medicines.csv"),
+      import_path37.default.join(import_path37.default.dirname(process.execPath), "data", "reference_medicines.csv"),
+      import_path37.default.join(import_path37.default.dirname(process.execPath), "medicines.csv"),
+      import_path37.default.join(import_path37.default.dirname(process.execPath), "..", "data", "reference_medicines.csv"),
+      import_path37.default.join(import_path37.default.dirname(process.execPath), "..", "medicines.csv")
     ];
-    const csvPath = candidateCsvPaths.find((p) => import_fs37.default.existsSync(p));
+    const csvPath = candidateCsvPaths.find((p) => import_fs38.default.existsSync(p));
     if (!csvPath) {
       const templateCandidates = [
-        import_path36.default.join(process.cwd(), "data", "app.db"),
-        import_path36.default.join(import_path36.default.dirname(process.execPath), "data", "app.db"),
-        import_path36.default.join(import_path36.default.dirname(process.execPath), "..", "data", "app.db")
+        import_path37.default.join(process.cwd(), "data", "app.db"),
+        import_path37.default.join(import_path37.default.dirname(process.execPath), "data", "app.db"),
+        import_path37.default.join(import_path37.default.dirname(process.execPath), "..", "data", "app.db")
       ];
       for (const tPath of templateCandidates) {
-        if (import_fs37.default.existsSync(tPath) && import_path36.default.resolve(tPath) !== import_path36.default.resolve(config.dbPath)) {
+        if (import_fs38.default.existsSync(tPath) && import_path37.default.resolve(tPath) !== import_path37.default.resolve(config.dbPath)) {
           try {
             const normalized = tPath.replace(/\\/g, "/");
             await db2.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
@@ -62378,7 +62532,7 @@ async function seedMasterMedicines(force = false) {
       console.warn("[MasterSeed] Reference CSV not found in any candidate path:", candidateCsvPaths);
       return { loaded: 0 };
     }
-    const fileStream = import_fs37.default.createReadStream(csvPath, { encoding: "utf8" });
+    const fileStream = import_fs38.default.createReadStream(csvPath, { encoding: "utf8" });
     const rl = import_readline2.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -62610,25 +62764,25 @@ async function enrichMasterMedicinesFromCsv() {
   } catch (_) {
   }
   const candidateCsvPaths = [
-    import_path36.default.join(getAppDataDir(), "data", "reference_medicines.csv"),
-    import_path36.default.join(getAppDataDir(), "medicines.csv"),
-    import_path36.default.join(process.cwd(), "medicines.csv"),
-    import_path36.default.join(process.cwd(), "data", "reference_medicines.csv"),
-    import_path36.default.join(process.cwd(), "data", "medicines.csv"),
-    import_path36.default.join(import_path36.default.dirname(process.execPath), "data", "reference_medicines.csv"),
-    import_path36.default.join(import_path36.default.dirname(process.execPath), "medicines.csv"),
-    import_path36.default.join(import_path36.default.dirname(process.execPath), "..", "data", "reference_medicines.csv"),
-    import_path36.default.join(import_path36.default.dirname(process.execPath), "..", "medicines.csv")
+    import_path37.default.join(getAppDataDir(), "data", "reference_medicines.csv"),
+    import_path37.default.join(getAppDataDir(), "medicines.csv"),
+    import_path37.default.join(process.cwd(), "medicines.csv"),
+    import_path37.default.join(process.cwd(), "data", "reference_medicines.csv"),
+    import_path37.default.join(process.cwd(), "data", "medicines.csv"),
+    import_path37.default.join(import_path37.default.dirname(process.execPath), "data", "reference_medicines.csv"),
+    import_path37.default.join(import_path37.default.dirname(process.execPath), "medicines.csv"),
+    import_path37.default.join(import_path37.default.dirname(process.execPath), "..", "data", "reference_medicines.csv"),
+    import_path37.default.join(import_path37.default.dirname(process.execPath), "..", "medicines.csv")
   ];
-  const csvPath = candidateCsvPaths.find((p) => import_fs37.default.existsSync(p));
+  const csvPath = candidateCsvPaths.find((p) => import_fs38.default.existsSync(p));
   if (!csvPath) {
     const templateCandidates = [
-      import_path36.default.join(process.cwd(), "data", "app.db"),
-      import_path36.default.join(import_path36.default.dirname(process.execPath), "data", "app.db"),
-      import_path36.default.join(import_path36.default.dirname(process.execPath), "..", "data", "app.db")
+      import_path37.default.join(process.cwd(), "data", "app.db"),
+      import_path37.default.join(import_path37.default.dirname(process.execPath), "data", "app.db"),
+      import_path37.default.join(import_path37.default.dirname(process.execPath), "..", "data", "app.db")
     ];
     for (const tPath of templateCandidates) {
-      if (import_fs37.default.existsSync(tPath) && import_path36.default.resolve(tPath) !== import_path36.default.resolve(config.dbPath)) {
+      if (import_fs38.default.existsSync(tPath) && import_path37.default.resolve(tPath) !== import_path37.default.resolve(config.dbPath)) {
         try {
           const normalized = tPath.replace(/\\/g, "/");
           await db2.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
@@ -62674,7 +62828,7 @@ async function enrichMasterMedicinesFromCsv() {
     console.warn("[MasterEnrich] medicines.csv not found in any candidate path \u2014 skipping enrichment.");
     return { enriched: 0 };
   }
-  const csvStat = import_fs37.default.statSync(csvPath);
+  const csvStat = import_fs38.default.statSync(csvPath);
   const csvFingerprint = `${csvStat.size}:${Math.round(csvStat.mtimeMs)}`;
   try {
     const done2 = await db2.get("SELECT value FROM app_settings WHERE key = 'master_enrich_csv_fingerprint'");
@@ -62692,7 +62846,7 @@ async function enrichMasterMedicinesFromCsv() {
     }
   } catch (_) {
   }
-  const fileStream = import_fs37.default.createReadStream(csvPath, { encoding: "utf8" });
+  const fileStream = import_fs38.default.createReadStream(csvPath, { encoding: "utf8" });
   const rl = import_readline2.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   let enriched = 0;
   let headerParsed = false;
@@ -62901,12 +63055,12 @@ async function upsertMasterMedicine(item) {
     console.warn("[MasterSeed] Failed to upsert master medicine:", cleanName, err.message);
   }
 }
-var import_fs37, import_path36, import_readline2, cancelEnrichmentRequested;
+var import_fs38, import_path37, import_readline2, cancelEnrichmentRequested;
 var init_masterMedicinesSeedService = __esm({
   "src/services/masterMedicinesSeedService.ts"() {
     "use strict";
-    import_fs37 = __toESM(require("fs"), 1);
-    import_path36 = __toESM(require("path"), 1);
+    import_fs38 = __toESM(require("fs"), 1);
+    import_path37 = __toESM(require("path"), 1);
     import_readline2 = __toESM(require("readline"), 1);
     init_connection();
     init_config();
@@ -63397,10 +63551,10 @@ var init_migrationMeta = __esm({
 async function validateStagingDatabaseFile(dbPath) {
   const errors = [];
   const tableCounts = {};
-  if (!import_fs38.default.existsSync(dbPath)) {
+  if (!import_fs39.default.existsSync(dbPath)) {
     return { valid: false, errors: ["Database file does not exist"], tableCounts };
   }
-  const stat = import_fs38.default.statSync(dbPath);
+  const stat = import_fs39.default.statSync(dbPath);
   if (stat.size < 1024) {
     errors.push("Database file is too small to be a valid SQLite backup");
   }
@@ -63457,11 +63611,11 @@ async function validateStagingDatabaseFile(dbPath) {
   }
   return { valid: errors.length === 0, errors, tableCounts };
 }
-var import_fs38, REQUIRED_TABLES;
+var import_fs39, REQUIRED_TABLES;
 var init_validateStagingDatabase = __esm({
   "src/utils/validateStagingDatabase.ts"() {
     "use strict";
-    import_fs38 = __toESM(require("fs"), 1);
+    import_fs39 = __toESM(require("fs"), 1);
     REQUIRED_TABLES = ["medicines", "inventory_master", "sales_invoices", "purchases"];
   }
 });
@@ -66138,8 +66292,8 @@ async function runManualMigrationQueue(tasks) {
         const task = migrationQueue.shift();
         const taskIndex = completedTasks;
         currentMsgPrefix = `[File ${taskIndex + 1}/${totalTasks}] `;
-        const filePath = import_path37.default.join(MIGRATION_DIR, task.fileName);
-        if (!import_fs39.default.existsSync(filePath)) {
+        const filePath = import_path38.default.join(MIGRATION_DIR, task.fileName);
+        if (!import_fs40.default.existsSync(filePath)) {
           throw new Error(`File ${task.fileName} does not exist in MIGRATION SAMPEL folder.`);
         }
         const lowerFileName = task.fileName.toLowerCase();
@@ -66211,11 +66365,11 @@ async function gunzipToFile(srcPath, destPath) {
         reject(err);
       }
     });
-    const writeStream = import_fs39.default.createWriteStream(destPath);
+    const writeStream = import_fs40.default.createWriteStream(destPath);
     writeStream.on("close", resolve);
     writeStream.on("finish", resolve);
     writeStream.on("error", reject);
-    import_fs39.default.createReadStream(srcPath).pipe(gzStream).pipe(writeStream);
+    import_fs40.default.createReadStream(srcPath).pipe(gzStream).pipe(writeStream);
   });
 }
 async function processMigrationFile(originalFilePath, dataType, mapping, skipLines = 0, sheetIndex = 0, filters, medicineActions, isIntermediate = false) {
@@ -66223,26 +66377,26 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
   let tempCsvPath = "";
   let tempProcessingPath = "";
   try {
-    const ext = import_path37.default.extname(originalFilePath).toLowerCase();
-    const basename = import_path37.default.basename(originalFilePath);
-    tempProcessingPath = import_path37.default.join(TEMP_DIR3, `proc_${Date.now()}_${basename}`);
-    import_fs39.default.copyFileSync(originalFilePath, tempProcessingPath);
+    const ext = import_path38.default.extname(originalFilePath).toLowerCase();
+    const basename = import_path38.default.basename(originalFilePath);
+    tempProcessingPath = import_path38.default.join(TEMP_DIR3, `proc_${Date.now()}_${basename}`);
+    import_fs40.default.copyFileSync(originalFilePath, tempProcessingPath);
     Object.assign(migrationStatus, { active: true, progress: 0, message: "Processing migration file...", file: basename, errorCount: 0 });
-    const archiveDir = import_path37.default.join(getAppDataDir(), "data", "archived_migrations");
-    if (!import_fs39.default.existsSync(archiveDir)) import_fs39.default.mkdirSync(archiveDir, { recursive: true });
+    const archiveDir = import_path38.default.join(getAppDataDir(), "data", "archived_migrations");
+    if (!import_fs40.default.existsSync(archiveDir)) import_fs40.default.mkdirSync(archiveDir, { recursive: true });
     try {
       const { closeAllStagingConnections: closeAllStagingConnections2 } = await Promise.resolve().then(() => (init_migration(), migration_exports));
       await closeAllStagingConnections2();
     } catch (_) {
     }
-    const stagingExists = import_fs39.default.existsSync(STAGING_DB_PATH);
+    const stagingExists = import_fs40.default.existsSync(STAGING_DB_PATH);
     if (!isIntermediate || !stagingExists) {
       if (stagingExists) {
         for (let retry = 0; retry < 5; retry++) {
           try {
-            if (import_fs39.default.existsSync(STAGING_DB_PATH)) import_fs39.default.unlinkSync(STAGING_DB_PATH);
-            if (import_fs39.default.existsSync(STAGING_DB_PATH + "-wal")) import_fs39.default.unlinkSync(STAGING_DB_PATH + "-wal");
-            if (import_fs39.default.existsSync(STAGING_DB_PATH + "-shm")) import_fs39.default.unlinkSync(STAGING_DB_PATH + "-shm");
+            if (import_fs40.default.existsSync(STAGING_DB_PATH)) import_fs40.default.unlinkSync(STAGING_DB_PATH);
+            if (import_fs40.default.existsSync(STAGING_DB_PATH + "-wal")) import_fs40.default.unlinkSync(STAGING_DB_PATH + "-wal");
+            if (import_fs40.default.existsSync(STAGING_DB_PATH + "-shm")) import_fs40.default.unlinkSync(STAGING_DB_PATH + "-shm");
             break;
           } catch (_) {
             await new Promise((r) => setTimeout(r, 100 * (retry + 1)));
@@ -66250,7 +66404,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         }
       }
       migrationStatus.message = "Creating staging database...";
-      if (import_fs39.default.existsSync(DB_PATH3)) {
+      if (import_fs40.default.existsSync(DB_PATH3)) {
         try {
           const Database6 = (await import("better-sqlite3")).default;
           const appDb = new Database6(DB_PATH3);
@@ -66262,7 +66416,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         let copySuccess = false;
         for (let copyRetry = 0; copyRetry < 5; copyRetry++) {
           try {
-            await import_fs39.default.promises.copyFile(DB_PATH3, STAGING_DB_PATH);
+            await import_fs40.default.promises.copyFile(DB_PATH3, STAGING_DB_PATH);
             copySuccess = true;
             break;
           } catch (copyErr) {
@@ -66316,11 +66470,11 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     let sqlFilePath = tempProcessingPath;
     if (ext === ".db") {
       migrationStatus.message = "Database backup detected \u2014 validating and loading into staging...";
-      import_fs39.default.copyFileSync(tempProcessingPath, STAGING_DB_PATH);
+      import_fs40.default.copyFileSync(tempProcessingPath, STAGING_DB_PATH);
       const validation = await validateStagingDatabaseFile(STAGING_DB_PATH);
       if (!validation.valid) {
         try {
-          import_fs39.default.unlinkSync(STAGING_DB_PATH);
+          import_fs40.default.unlinkSync(STAGING_DB_PATH);
         } catch (_) {
         }
         throw new Error(`Invalid database backup: ${validation.errors.join("; ")}`);
@@ -66334,7 +66488,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       });
       if (!originalFilePath.includes("archived_migrations")) {
         try {
-          import_fs39.default.copyFileSync(tempProcessingPath, import_path37.default.join(archiveDir, basename));
+          import_fs40.default.copyFileSync(tempProcessingPath, import_path38.default.join(archiveDir, basename));
         } catch (archiveErr) {
           console.warn("Failed to archive migration file:", archiveErr);
         }
@@ -66347,8 +66501,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       const sheetName = workbook.SheetNames[sheetIndex] || workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const csvContent = XLSX2.utils.sheet_to_csv(worksheet);
-      tempCsvPath = import_path37.default.join(TEMP_DIR3, `converted_${Date.now()}.csv`);
-      import_fs39.default.writeFileSync(tempCsvPath, csvContent);
+      tempCsvPath = import_path38.default.join(TEMP_DIR3, `converted_${Date.now()}.csv`);
+      import_fs40.default.writeFileSync(tempCsvPath, csvContent);
       actualFilePath = tempCsvPath;
     }
     if (ext === ".csv" || ext === ".xlsx" || ext === ".xls") {
@@ -66359,13 +66513,13 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       }
       if (!originalFilePath.includes("archived_migrations")) {
         try {
-          import_fs39.default.copyFileSync(tempProcessingPath, import_path37.default.join(archiveDir, basename));
+          import_fs40.default.copyFileSync(tempProcessingPath, import_path38.default.join(archiveDir, basename));
         } catch (archiveErr) {
           console.warn("Failed to archive migration file:", archiveErr);
         }
       }
-      if (tempCsvPath && import_fs39.default.existsSync(tempCsvPath)) {
-        import_fs39.default.unlinkSync(tempCsvPath);
+      if (tempCsvPath && import_fs40.default.existsSync(tempCsvPath)) {
+        import_fs40.default.unlinkSync(tempCsvPath);
       }
       return;
     } else if (ext === ".sql") {
@@ -66373,15 +66527,15 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     } else if (ext === ".gz" || tempProcessingPath.toLowerCase().endsWith(".sql.gz") || tempProcessingPath.toLowerCase().endsWith(".db.gz")) {
       const isDb = tempProcessingPath.toLowerCase().endsWith(".db.gz");
       migrationStatus.message = isDb ? "Decompressing database backup snapshot..." : "Decompressing GZIP file...";
-      extractPath = import_path37.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs39.default.mkdirSync(extractPath, { recursive: true });
-      sqlFilePath = isDb ? STAGING_DB_PATH : import_path37.default.join(extractPath, "decompressed_backup.sql");
+      extractPath = import_path38.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs40.default.mkdirSync(extractPath, { recursive: true });
+      sqlFilePath = isDb ? STAGING_DB_PATH : import_path38.default.join(extractPath, "decompressed_backup.sql");
       await gunzipToFile(tempProcessingPath, sqlFilePath);
       if (isDb) {
         const validation = await validateStagingDatabaseFile(STAGING_DB_PATH);
         if (!validation.valid) {
           try {
-            import_fs39.default.unlinkSync(STAGING_DB_PATH);
+            import_fs40.default.unlinkSync(STAGING_DB_PATH);
           } catch (_) {
           }
           throw new Error(`Invalid database backup: ${validation.errors.join("; ")}`);
@@ -66395,7 +66549,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         });
         if (!originalFilePath.includes("archived_migrations")) {
           try {
-            import_fs39.default.copyFileSync(tempProcessingPath, import_path37.default.join(archiveDir, basename));
+            import_fs40.default.copyFileSync(tempProcessingPath, import_path38.default.join(archiveDir, basename));
           } catch (archiveErr) {
             console.warn("Failed to archive migration file:", archiveErr);
           }
@@ -66403,20 +66557,20 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         return;
       }
     } else if (ext === ".zip") {
-      extractPath = import_path37.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs39.default.mkdirSync(extractPath, { recursive: true });
+      extractPath = import_path38.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs40.default.mkdirSync(extractPath, { recursive: true });
       const headerBuf = Buffer.alloc(2);
-      const fdCheck = import_fs39.default.openSync(tempProcessingPath, "r");
-      import_fs39.default.readSync(fdCheck, headerBuf, 0, 2, 0);
-      import_fs39.default.closeSync(fdCheck);
+      const fdCheck = import_fs40.default.openSync(tempProcessingPath, "r");
+      import_fs40.default.readSync(fdCheck, headerBuf, 0, 2, 0);
+      import_fs40.default.closeSync(fdCheck);
       const isActuallyGzip = headerBuf[0] === 31 && headerBuf[1] === 139;
       if (isActuallyGzip) {
         migrationStatus.message = "Decompressing GZIP backup (detected inside .zip container)...";
-        sqlFilePath = import_path37.default.join(extractPath, "decompressed_backup.sql");
+        sqlFilePath = import_path38.default.join(extractPath, "decompressed_backup.sql");
         await gunzipToFile(tempProcessingPath, sqlFilePath);
       } else {
         try {
-          await import_fs39.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
+          await import_fs40.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
         } catch (unzipError) {
           try {
             const { execSync: execSync8 } = await import("child_process");
@@ -66428,10 +66582,10 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         migrationStatus.message = "Scanning extracted files...";
         const findFileInDir = (dir, matcher) => {
           try {
-            const list = import_fs39.default.readdirSync(dir);
+            const list = import_fs40.default.readdirSync(dir);
             for (const item of list) {
-              const fullPath = import_path37.default.join(dir, item);
-              const stat = import_fs39.default.statSync(fullPath);
+              const fullPath = import_path38.default.join(dir, item);
+              const stat = import_fs40.default.statSync(fullPath);
               if (stat.isDirectory()) {
                 const found = findFileInDir(fullPath, matcher);
                 if (found) return found;
@@ -66449,12 +66603,12 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           if (dbFilePath.toLowerCase().endsWith(".gz")) {
             await gunzipToFile(dbFilePath, STAGING_DB_PATH);
           } else {
-            import_fs39.default.copyFileSync(dbFilePath, STAGING_DB_PATH);
+            import_fs40.default.copyFileSync(dbFilePath, STAGING_DB_PATH);
           }
           const zipDbValidation = await validateStagingDatabaseFile(STAGING_DB_PATH);
           if (!zipDbValidation.valid) {
             try {
-              import_fs39.default.unlinkSync(STAGING_DB_PATH);
+              import_fs40.default.unlinkSync(STAGING_DB_PATH);
             } catch (_) {
             }
             throw new Error(`Invalid database backup in ZIP: ${zipDbValidation.errors.join("; ")}`);
@@ -66468,7 +66622,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           });
           if (!originalFilePath.includes("archived_migrations")) {
             try {
-              import_fs39.default.copyFileSync(tempProcessingPath, import_path37.default.join(archiveDir, basename));
+              import_fs40.default.copyFileSync(tempProcessingPath, import_path38.default.join(archiveDir, basename));
             } catch (archiveErr) {
               console.warn("Failed to archive migration file:", archiveErr);
             }
@@ -66481,7 +66635,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         }
         if (foundSql.toLowerCase().endsWith(".gz")) {
           migrationStatus.message = "Decompressing .sql.gz found inside ZIP archive...";
-          sqlFilePath = import_path37.default.join(extractPath, "decompressed_nested_backup.sql");
+          sqlFilePath = import_path38.default.join(extractPath, "decompressed_nested_backup.sql");
           await gunzipToFile(foundSql, sqlFilePath);
         } else {
           sqlFilePath = foundSql;
@@ -66489,8 +66643,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       }
     } else if (ext === ".tar" || ext === ".tgz" || tempProcessingPath.toLowerCase().endsWith(".tar.gz")) {
       migrationStatus.message = "Extracting TAR archive...";
-      extractPath = import_path37.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs39.default.mkdirSync(extractPath, { recursive: true });
+      extractPath = import_path38.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs40.default.mkdirSync(extractPath, { recursive: true });
       const { execSync: execSync8 } = await import("child_process");
       try {
         execSync8(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
@@ -66498,10 +66652,10 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         throw new Error(`Failed to extract TAR archive: ${tarError.message}`);
       }
       const findSqlFile = (dir) => {
-        const list = import_fs39.default.readdirSync(dir);
+        const list = import_fs40.default.readdirSync(dir);
         for (const item of list) {
-          const fullPath = import_path37.default.join(dir, item);
-          const stat = import_fs39.default.statSync(fullPath);
+          const fullPath = import_path38.default.join(dir, item);
+          const stat = import_fs40.default.statSync(fullPath);
           if (stat.isDirectory()) {
             const found = findSqlFile(fullPath);
             if (found) return found;
@@ -66533,7 +66687,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     }
     if (!originalFilePath.includes("archived_migrations")) {
       try {
-        import_fs39.default.copyFileSync(tempProcessingPath, import_path37.default.join(archiveDir, basename));
+        import_fs40.default.copyFileSync(tempProcessingPath, import_path38.default.join(archiveDir, basename));
       } catch (archiveErr) {
         console.warn("Failed to archive migration file:", archiveErr);
       }
@@ -66543,16 +66697,16 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     Object.assign(migrationStatus, { active: false, progress: 0, message: `Failed: ${err.message}`, file: null });
     throw err;
   } finally {
-    if (tempProcessingPath && import_fs39.default.existsSync(tempProcessingPath)) {
+    if (tempProcessingPath && import_fs40.default.existsSync(tempProcessingPath)) {
       try {
-        import_fs39.default.unlinkSync(tempProcessingPath);
+        import_fs40.default.unlinkSync(tempProcessingPath);
       } catch (cleanupError) {
         console.warn("Failed to cleanup temp copy:", cleanupError);
       }
     }
-    if (extractPath && import_fs39.default.existsSync(extractPath)) {
+    if (extractPath && import_fs40.default.existsSync(extractPath)) {
       try {
-        import_fs39.default.rmSync(extractPath, { recursive: true, force: true });
+        import_fs40.default.rmSync(extractPath, { recursive: true, force: true });
       } catch (cleanupError) {
         console.warn("Failed to cleanup extraction directory:", cleanupError);
       }
@@ -66560,7 +66714,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
   }
 }
 async function detectDumpFormat(sqlPath) {
-  const fileStream = import_fs39.default.createReadStream(sqlPath, { encoding: "utf8" });
+  const fileStream = import_fs40.default.createReadStream(sqlPath, { encoding: "utf8" });
   const rl = import_readline3.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   const headerLines = [];
   for await (const line of rl) {
@@ -66915,7 +67069,7 @@ async function parseAndImportPgDump(sqlPath, targetDbPath) {
   }
 }
 async function streamPgDump(sqlPath, handlers, db2) {
-  const fileStream = import_fs39.default.createReadStream(sqlPath, { encoding: "utf8" });
+  const fileStream = import_fs40.default.createReadStream(sqlPath, { encoding: "utf8" });
   const rl = import_readline3.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   let currentTable = null;
   let currentColumns = [];
@@ -66991,8 +67145,8 @@ async function streamPgDump(sqlPath, handlers, db2) {
   fileStream.destroy();
 }
 async function generateMigrationReport(db2, stats) {
-  const reportsDir = import_path37.default.join(getAppDataDir(), "data", "migration_reports");
-  if (!import_fs39.default.existsSync(reportsDir)) import_fs39.default.mkdirSync(reportsDir, { recursive: true });
+  const reportsDir = import_path38.default.join(getAppDataDir(), "data", "migration_reports");
+  if (!import_fs40.default.existsSync(reportsDir)) import_fs40.default.mkdirSync(reportsDir, { recursive: true });
   await saveMigrationAuditSummary(db2);
   const auditSummary = await getMigrationAuditSummary(db2);
   const summary = {
@@ -67014,12 +67168,12 @@ async function generateMigrationReport(db2, stats) {
     },
     audit_summary: auditSummary
   };
-  import_fs39.default.writeFileSync(
-    import_path37.default.join(reportsDir, "migration_summary.json"),
+  import_fs40.default.writeFileSync(
+    import_path38.default.join(reportsDir, "migration_summary.json"),
     JSON.stringify(summary, null, 2)
   );
-  import_fs39.default.writeFileSync(
-    import_path37.default.join(reportsDir, "migration_audit_report.json"),
+  import_fs40.default.writeFileSync(
+    import_path38.default.join(reportsDir, "migration_audit_report.json"),
     JSON.stringify(auditSummary, null, 2)
   );
   const counts = {};
@@ -67032,8 +67186,8 @@ async function generateMigrationReport(db2, stats) {
       counts[tbl] = -1;
     }
   }
-  import_fs39.default.writeFileSync(
-    import_path37.default.join(reportsDir, "row_counts.json"),
+  import_fs40.default.writeFileSync(
+    import_path38.default.join(reportsDir, "row_counts.json"),
     JSON.stringify(counts, null, 2)
   );
   console.log("Migration reports saved to:", reportsDir);
@@ -67045,7 +67199,7 @@ async function parseAndImportLegacySQL(sqlPath, targetDbPath) {
     await db2.run("PRAGMA busy_timeout = 30000");
     await ensureStagingFts(db2);
     await ensureMigrationErrorsTable(db2);
-    const fileStream = import_fs39.default.createReadStream(sqlPath);
+    const fileStream = import_fs40.default.createReadStream(sqlPath);
     const rl = import_readline3.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -67079,7 +67233,7 @@ async function parseAndImportLegacySQL(sqlPath, targetDbPath) {
         const errMsg = err.message || "Unknown processing error";
         await db2.run(
           "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-          [import_path37.default.basename(sqlPath), linesProcessed2, trimmedLine.slice(0, 1e3), errMsg]
+          [import_path38.default.basename(sqlPath), linesProcessed2, trimmedLine.slice(0, 1e3), errMsg]
         );
       }
       if (migrated) {
@@ -67104,14 +67258,14 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     await ensureMigrationErrorsTable(db2);
     if (skipLines > 0) {
       try {
-        const content = import_fs39.default.readFileSync(csvPath, "utf8");
+        const content = import_fs40.default.readFileSync(csvPath, "utf8");
         const lines = content.split(/\r?\n/).slice(0, skipLines);
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           if (line) {
             await db2.run(
               "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-              [import_path37.default.basename(csvPath), i + 1, line, "Skipped Row (Header)"]
+              [import_path38.default.basename(csvPath), i + 1, line, "Skipped Row (Header)"]
             );
           }
         }
@@ -67228,7 +67382,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const errorMsg = validation.errors.join("; ");
         await db2.run(
           "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-          [import_path37.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), errorMsg]
+          [import_path38.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), errorMsg]
         );
         insertCount++;
         return;
@@ -67241,7 +67395,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path37.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Missing required medicine name"]
+            [import_path38.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Missing required medicine name"]
           );
           insertCount++;
           return;
@@ -67390,7 +67544,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const rawInvoiceNo = invoiceNoKey ? String(cleanRow[invoiceNoKey] || "").trim() : "";
         if (!rawInvoiceNo) {
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -67420,7 +67574,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (patientName) {
           customerId = null;
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: invoiceNo,
             entity_type: "customer",
@@ -67442,7 +67596,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (doctorName) {
           doctorId = null;
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: invoiceNo,
             entity_type: "doctor",
@@ -67524,7 +67678,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path37.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Sale item missing required medicine name"]
+            [import_path38.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Sale item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -67585,7 +67739,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const rawInvoiceNo = invoiceNoKey ? String(cleanRow[invoiceNoKey] || "").trim() : "";
         if (!rawInvoiceNo) {
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "purchase",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -67606,7 +67760,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (distributorName) {
           distributorId = null;
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "purchases",
             record_identifier: invoiceNo,
             entity_type: "distributor",
@@ -67667,7 +67821,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path37.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Purchase item missing required medicine name"]
+            [import_path38.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Purchase item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -67712,7 +67866,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const returnNo = returnNoKey ? String(cleanRow[returnNoKey] || "").trim() : "";
         if (!returnNo) {
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "return",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -67739,7 +67893,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (distributorName) {
           distributorId = null;
           queueMigrationAudit({
-            file_name: import_path37.default.basename(csvPath),
+            file_name: import_path38.default.basename(csvPath),
             record_type: "returns",
             record_identifier: returnNo,
             entity_type: "distributor",
@@ -67797,7 +67951,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path37.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Return item missing required medicine name"]
+            [import_path38.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Return item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -67842,7 +67996,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path37.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Skipped: Missing required customer name"]
+            [import_path38.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Skipped: Missing required customer name"]
           );
           insertCount++;
           return;
@@ -67905,7 +68059,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (patientName) {
             customerId = null;
             queueMigrationAudit({
-              file_name: import_path37.default.basename(csvPath),
+              file_name: import_path38.default.basename(csvPath),
               record_type: "sales_invoice",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "customer",
@@ -67931,7 +68085,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (doctorName) {
             doctorId = null;
             queueMigrationAudit({
-              file_name: import_path37.default.basename(csvPath),
+              file_name: import_path38.default.basename(csvPath),
               record_type: "sales_invoice",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "doctor",
@@ -67951,7 +68105,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (distributorName) {
             distributorId = null;
             queueMigrationAudit({
-              file_name: import_path37.default.basename(csvPath),
+              file_name: import_path38.default.basename(csvPath),
               record_type: "purchases",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "distributor",
@@ -68172,7 +68326,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
       }
     };
     await new Promise((resolve, reject) => {
-      const stream = import_fs39.default.createReadStream(csvPath).pipe((0, import_csv_parser3.default)({ skipLines })).on("headers", async (headers) => {
+      const stream = import_fs40.default.createReadStream(csvPath).pipe((0, import_csv_parser3.default)({ skipLines })).on("headers", async (headers) => {
         if (dataType === "inventory" || dataType === "combined") {
           for (const rawHeader of headers) {
             const rawColName = rawHeader.trim();
@@ -68265,12 +68419,12 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     await db2.close();
   }
 }
-var import_fs39, import_path37, import_unzipper, import_zlib4, import_sqlite6, import_sqlite35, import_readline3, import_csv_parser3, XLSX2, MIGRATION_DIR, TEMP_DIR3, DB_PATH3, STAGING_DB_PATH, currentMsgPrefix, migrationStatus, isQueueRunning, migrationQueue;
+var import_fs40, import_path38, import_unzipper, import_zlib4, import_sqlite6, import_sqlite35, import_readline3, import_csv_parser3, XLSX2, MIGRATION_DIR, TEMP_DIR3, DB_PATH3, STAGING_DB_PATH, currentMsgPrefix, migrationStatus, isQueueRunning, migrationQueue;
 var init_migrationWorker = __esm({
   "src/worker/migrationWorker.ts"() {
     "use strict";
-    import_fs39 = __toESM(require("fs"), 1);
-    import_path37 = __toESM(require("path"), 1);
+    import_fs40 = __toESM(require("fs"), 1);
+    import_path38 = __toESM(require("path"), 1);
     import_unzipper = __toESM(require("unzipper"), 1);
     import_zlib4 = __toESM(require("zlib"), 1);
     import_sqlite6 = require("sqlite");
@@ -68304,10 +68458,10 @@ var init_migrationWorker = __esm({
     init_returnsParser();
     init_inventoryParser();
     init_salesParser();
-    MIGRATION_DIR = import_path37.default.join(getAppDataDir(), "MIGRATION SAMPEL");
-    TEMP_DIR3 = import_path37.default.join(getAppDataDir(), "data", "temp_migration");
+    MIGRATION_DIR = import_path38.default.join(getAppDataDir(), "MIGRATION SAMPEL");
+    TEMP_DIR3 = import_path38.default.join(getAppDataDir(), "data", "temp_migration");
     DB_PATH3 = config.dbPath;
-    STAGING_DB_PATH = import_path37.default.join(import_path37.default.dirname(DB_PATH3), "staging.db");
+    STAGING_DB_PATH = import_path38.default.join(import_path38.default.dirname(DB_PATH3), "staging.db");
     currentMsgPrefix = "";
     migrationStatus = new Proxy({
       active: false,
@@ -68329,8 +68483,8 @@ var init_migrationWorker = __esm({
         return true;
       }
     });
-    if (!import_fs39.default.existsSync(MIGRATION_DIR)) import_fs39.default.mkdirSync(MIGRATION_DIR, { recursive: true });
-    if (!import_fs39.default.existsSync(TEMP_DIR3)) import_fs39.default.mkdirSync(TEMP_DIR3, { recursive: true });
+    if (!import_fs40.default.existsSync(MIGRATION_DIR)) import_fs40.default.mkdirSync(MIGRATION_DIR, { recursive: true });
+    if (!import_fs40.default.existsSync(TEMP_DIR3)) import_fs40.default.mkdirSync(TEMP_DIR3, { recursive: true });
     isQueueRunning = false;
     migrationQueue = [];
   }
@@ -68392,7 +68546,7 @@ async function readCsvHeaders(filePath, skipLines = 0) {
   const samples = [];
   let totalRows = 0;
   await new Promise((resolve, reject) => {
-    import_fs40.default.createReadStream(filePath).pipe((0, import_csv_parser4.default)({ skipLines })).on("headers", (h) => headers.push(...h)).on("data", (row) => {
+    import_fs41.default.createReadStream(filePath).pipe((0, import_csv_parser4.default)({ skipLines })).on("headers", (h) => headers.push(...h)).on("data", (row) => {
       totalRows++;
       if (samples.length < 100) samples.push(row);
     }).on("end", resolve).on("error", reject);
@@ -68420,7 +68574,7 @@ function readExcelHeaders(filePath, skipLines = 0, sheetIdx = 0) {
   }
   return { headers, samples, sheetNames: wb.SheetNames, totalRows };
 }
-var import_express7, import_sqlite7, import_sqlite36, import_path38, import_fs40, import_multer, XLSX3, import_csv_parser4, DB_PATH4, MIGRATION_DIR2, STAGING_DB_PATH2, openConnections, stagingDbLocked, ALLOWED_MIGRATION_EXTENSIONS, MAX_MIGRATION_SIZE, storage, upload, router7, migration_default;
+var import_express7, import_sqlite7, import_sqlite36, import_path39, import_fs41, import_multer, XLSX3, import_csv_parser4, DB_PATH4, MIGRATION_DIR2, STAGING_DB_PATH2, openConnections, stagingDbLocked, ALLOWED_MIGRATION_EXTENSIONS, MAX_MIGRATION_SIZE, storage, upload, router7, migration_default;
 var init_migration = __esm({
   "src/routes/migration.ts"() {
     "use strict";
@@ -68428,8 +68582,8 @@ var init_migration = __esm({
     import_sqlite7 = require("sqlite");
     import_sqlite36 = __toESM(require("sqlite3"), 1);
     init_connection();
-    import_path38 = __toESM(require("path"), 1);
-    import_fs40 = __toESM(require("fs"), 1);
+    import_path39 = __toESM(require("path"), 1);
+    import_fs41 = __toESM(require("fs"), 1);
     import_multer = __toESM(require("multer"), 1);
     XLSX3 = __toESM(require("xlsx"), 1);
     init_migrationWorker();
@@ -68442,9 +68596,9 @@ var init_migration = __esm({
     init_reportCutover();
     init_config();
     DB_PATH4 = config.dbPath;
-    MIGRATION_DIR2 = import_path38.default.join(getAppDataDir(), "MIGRATION SAMPEL");
-    STAGING_DB_PATH2 = import_path38.default.join(import_path38.default.dirname(DB_PATH4), "staging.db");
-    if (!import_fs40.default.existsSync(MIGRATION_DIR2)) import_fs40.default.mkdirSync(MIGRATION_DIR2, { recursive: true });
+    MIGRATION_DIR2 = import_path39.default.join(getAppDataDir(), "MIGRATION SAMPEL");
+    STAGING_DB_PATH2 = import_path39.default.join(import_path39.default.dirname(DB_PATH4), "staging.db");
+    if (!import_fs41.default.existsSync(MIGRATION_DIR2)) import_fs41.default.mkdirSync(MIGRATION_DIR2, { recursive: true });
     openConnections = /* @__PURE__ */ new Set();
     stagingDbLocked = false;
     ALLOWED_MIGRATION_EXTENSIONS = /\.(zip|sql|gz|tgz|csv|xlsx|xls|db)$/i;
@@ -68454,7 +68608,7 @@ var init_migration = __esm({
         cb(null, MIGRATION_DIR2);
       },
       filename: (_req, file, cb) => {
-        const sanitized = import_path38.default.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const sanitized = import_path39.default.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
         cb(null, `${Date.now()}-${sanitized}`);
       }
     });
@@ -68516,9 +68670,9 @@ var init_migration = __esm({
     router7.post("/analyze", async (req, res) => {
       const { fileName, skipLines } = req.body;
       if (!fileName) return res.status(400).json({ error: "fileName required" });
-      const filePath = import_path38.default.join(MIGRATION_DIR2, fileName);
-      if (!import_fs40.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
-      const ext = import_path38.default.extname(fileName).toLowerCase();
+      const filePath = import_path39.default.join(MIGRATION_DIR2, fileName);
+      if (!import_fs41.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+      const ext = import_path39.default.extname(fileName).toLowerCase();
       const skipCount = parseInt(skipLines) || 0;
       try {
         let headers = [];
@@ -68541,7 +68695,7 @@ var init_migration = __esm({
           sheetNames = r.sheetNames;
           totalRows = r.totalRows;
         }
-        const stat = import_fs40.default.statSync(filePath);
+        const stat = import_fs41.default.statSync(filePath);
         headers.map((h) => h.toLowerCase().trim());
         const detected = detectDataModules(headers);
         res.json({
@@ -68562,10 +68716,10 @@ var init_migration = __esm({
     router7.post("/pre-migration-analyze", async (req, res) => {
       const { fileName, skipLines, sheetIndex, userMapping } = req.body;
       if (!fileName) return res.status(400).json({ error: "fileName required" });
-      const filePath = import_path38.default.join(MIGRATION_DIR2, fileName);
-      if (!import_fs40.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+      const filePath = import_path39.default.join(MIGRATION_DIR2, fileName);
+      if (!import_fs41.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
       try {
-        const ext = import_path38.default.extname(fileName).toLowerCase().replace(".", "");
+        const ext = import_path39.default.extname(fileName).toLowerCase().replace(".", "");
         const skipCount = parseInt(skipLines) || 0;
         const sheetIdx = parseInt(sheetIndex) || 0;
         let headers = [];
@@ -68721,7 +68875,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/errors", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -68739,7 +68893,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/inventory", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -68759,7 +68913,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/sales", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -68779,7 +68933,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/purchases", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -68798,7 +68952,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/returns", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -68819,12 +68973,12 @@ var init_migration = __esm({
     router7.delete("/staging/rollback", async (_req, res) => {
       try {
         await closeAllStagingConnections();
-        if (import_fs40.default.existsSync(STAGING_DB_PATH2)) {
+        if (import_fs41.default.existsSync(STAGING_DB_PATH2)) {
           for (let retry = 0; retry < 5; retry++) {
             try {
-              if (import_fs40.default.existsSync(STAGING_DB_PATH2)) import_fs40.default.unlinkSync(STAGING_DB_PATH2);
-              if (import_fs40.default.existsSync(STAGING_DB_PATH2 + "-wal")) import_fs40.default.unlinkSync(STAGING_DB_PATH2 + "-wal");
-              if (import_fs40.default.existsSync(STAGING_DB_PATH2 + "-shm")) import_fs40.default.unlinkSync(STAGING_DB_PATH2 + "-shm");
+              if (import_fs41.default.existsSync(STAGING_DB_PATH2)) import_fs41.default.unlinkSync(STAGING_DB_PATH2);
+              if (import_fs41.default.existsSync(STAGING_DB_PATH2 + "-wal")) import_fs41.default.unlinkSync(STAGING_DB_PATH2 + "-wal");
+              if (import_fs41.default.existsSync(STAGING_DB_PATH2 + "-shm")) import_fs41.default.unlinkSync(STAGING_DB_PATH2 + "-shm");
               break;
             } catch (_) {
               await new Promise((r) => setTimeout(r, 100 * (retry + 1)));
@@ -68838,7 +68992,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/summary", async (_req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) {
         return res.json({ success: true, ready: false, stats: {}, errorCount: 0, conflictCount: 0 });
       }
       try {
@@ -68884,7 +69038,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/audit", async (_req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) {
         return res.json({
           unresolvedCustomers: 0,
           unresolvedDoctors: 0,
@@ -68905,7 +69059,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/audits", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -68918,7 +69072,7 @@ var init_migration = __esm({
       }
     });
     router7.get("/staging/conflicts", async (_req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.json([]);
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.json([]);
       try {
         const db2 = await openStagingDb();
         const rows = await db2.all(`
@@ -68948,7 +69102,7 @@ var init_migration = __esm({
       if (!conflictId || !resolution) {
         return res.status(400).json({ error: "conflictId and resolution are required" });
       }
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
       const allowed = ["merge", "overwrite", "skip", "keep_new"];
@@ -69030,7 +69184,7 @@ var init_migration = __esm({
     });
     router7.post("/staging/resolve-all-similar", async (req, res) => {
       const minScore = typeof req.body?.minScore === "number" ? req.body.minScore : 85;
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
       try {
@@ -69090,7 +69244,7 @@ var init_migration = __esm({
       try {
         const db2 = await dbManager.getConnection();
         const snap = await db2.get("SELECT * FROM migration_snapshots WHERE id = ?", [snapshotId]);
-        if (!snap?.backup_path || !import_fs40.default.existsSync(snap.backup_path)) {
+        if (!snap?.backup_path || !import_fs41.default.existsSync(snap.backup_path)) {
           return res.status(404).json({ error: "Snapshot backup file not found on disk" });
         }
         try {
@@ -69100,16 +69254,16 @@ var init_migration = __esm({
         }
         await closeAllStagingConnections();
         await dbManager.close(true);
-        if (import_fs40.default.existsSync(DB_PATH4)) {
+        if (import_fs41.default.existsSync(DB_PATH4)) {
           const emergency = DB_PATH4 + ".pre_restore_" + Date.now();
-          import_fs40.default.copyFileSync(DB_PATH4, emergency);
+          import_fs41.default.copyFileSync(DB_PATH4, emergency);
         }
-        import_fs40.default.copyFileSync(snap.backup_path, DB_PATH4);
+        import_fs41.default.copyFileSync(snap.backup_path, DB_PATH4);
         ["app.db-wal", "app.db-shm"].forEach((f) => {
-          const p = import_path38.default.join(import_path38.default.dirname(DB_PATH4), f);
-          if (import_fs40.default.existsSync(p)) {
+          const p = import_path39.default.join(import_path39.default.dirname(DB_PATH4), f);
+          if (import_fs41.default.existsSync(p)) {
             try {
-              import_fs40.default.unlinkSync(p);
+              import_fs41.default.unlinkSync(p);
             } catch (_) {
             }
           }
@@ -69138,7 +69292,7 @@ var init_migration = __esm({
       }
     });
     router7.post("/staging/finalize", async (req, res) => {
-      if (!import_fs40.default.existsSync(STAGING_DB_PATH2)) return res.status(400).json({ error: "No staging DB found" });
+      if (!import_fs41.default.existsSync(STAGING_DB_PATH2)) return res.status(400).json({ error: "No staging DB found" });
       const { regenerateInvoices, reportCutoverDate } = req.body;
       let backupPath = null;
       try {
@@ -69254,7 +69408,7 @@ var init_migration = __esm({
         await dbManager.close(true);
         dbManager.suspend();
         await new Promise((resolve) => setTimeout(resolve, 400));
-        if (import_fs40.default.existsSync(DB_PATH4)) {
+        if (import_fs41.default.existsSync(DB_PATH4)) {
           const Database6 = (await import("better-sqlite3")).default;
           let tempAppDb = null;
           try {
@@ -69278,18 +69432,18 @@ var init_migration = __esm({
         }
         const timestamp = Date.now();
         backupPath = DB_PATH4 + ".bak_" + timestamp;
-        if (import_fs40.default.existsSync(DB_PATH4)) {
+        if (import_fs41.default.existsSync(DB_PATH4)) {
           try {
-            import_fs40.default.copyFileSync(DB_PATH4, backupPath);
+            import_fs41.default.copyFileSync(DB_PATH4, backupPath);
           } catch (bakErr) {
             console.warn("[Migration Finalize] Active DB backup copy warning:", bakErr?.message);
           }
         }
         ["app.db-wal", "app.db-shm", "staging.db-wal", "staging.db-shm"].forEach((f) => {
-          const p = import_path38.default.join(import_path38.default.dirname(DB_PATH4), f);
-          if (import_fs40.default.existsSync(p)) {
+          const p = import_path39.default.join(import_path39.default.dirname(DB_PATH4), f);
+          if (import_fs41.default.existsSync(p)) {
             try {
-              import_fs40.default.unlinkSync(p);
+              import_fs41.default.unlinkSync(p);
             } catch (_) {
             }
           }
@@ -69298,7 +69452,7 @@ var init_migration = __esm({
         let swapError = null;
         for (let attempt = 1; attempt <= 5; attempt++) {
           try {
-            import_fs40.default.copyFileSync(STAGING_DB_PATH2, DB_PATH4);
+            import_fs41.default.copyFileSync(STAGING_DB_PATH2, DB_PATH4);
             swapSucceeded = true;
             break;
           } catch (err) {
@@ -69340,20 +69494,20 @@ var init_migration = __esm({
             throw new Error(`Integrity check failed: ${JSON.stringify(checkResult)}`);
           }
           try {
-            import_fs40.default.unlinkSync(STAGING_DB_PATH2);
+            import_fs41.default.unlinkSync(STAGING_DB_PATH2);
           } catch (_) {
           }
         } catch (integrityErr) {
           if (String(integrityErr?.message).includes("vtable constructor failed")) {
             console.warn("[Migration Finalize] Swapped app.db has a damaged search index; will rebuild index on connection boot.");
             try {
-              import_fs40.default.unlinkSync(STAGING_DB_PATH2);
+              import_fs41.default.unlinkSync(STAGING_DB_PATH2);
             } catch (_) {
             }
           } else {
             console.error("[Migration Finalize] Swapped app.db integrity check failed:", integrityErr);
-            if (backupPath && import_fs40.default.existsSync(backupPath)) {
-              import_fs40.default.copyFileSync(backupPath, DB_PATH4);
+            if (backupPath && import_fs41.default.existsSync(backupPath)) {
+              import_fs41.default.copyFileSync(backupPath, DB_PATH4);
             }
             throw new Error(`Swapped database integrity check failed. Restored from backup. Details: ${integrityErr.message}`);
           }
@@ -69431,8 +69585,8 @@ var init_migration = __esm({
         console.error("[Migration Finalize] Error during finalize:", e);
         dbManager.resume();
         try {
-          if (backupPath && import_fs40.default.existsSync(backupPath) && !import_fs40.default.existsSync(DB_PATH4)) {
-            import_fs40.default.copyFileSync(backupPath, DB_PATH4);
+          if (backupPath && import_fs41.default.existsSync(backupPath) && !import_fs41.default.existsSync(DB_PATH4)) {
+            import_fs41.default.copyFileSync(backupPath, DB_PATH4);
           }
           await dbManager.getConnection();
         } catch (restoreErr) {
@@ -69452,19 +69606,19 @@ var init_migration = __esm({
           { path: "D:\\redbook\\DGH_Backup", label: "DGH Backup Folder" },
           { path: "D:\\redbook", label: "RedBook Root" },
           { path: MIGRATION_DIR2, label: "Migration Sample Folder" },
-          { path: import_path38.default.resolve(getAppDataDir(), "data", "archived_migrations"), label: "Archived Migrations" }
+          { path: import_path39.default.resolve(getAppDataDir(), "data", "archived_migrations"), label: "Archived Migrations" }
         ];
         const backups = [];
         const ALLOWED_BACKUP_EXT = /\.(zip|sql|gz|tgz|db)$/i;
         for (const dirObj of backupDirs) {
-          if (import_fs40.default.existsSync(dirObj.path)) {
+          if (import_fs41.default.existsSync(dirObj.path)) {
             try {
-              const files = import_fs40.default.readdirSync(dirObj.path);
+              const files = import_fs41.default.readdirSync(dirObj.path);
               for (const f of files) {
                 if (ALLOWED_BACKUP_EXT.test(f)) {
-                  const fullPath = import_path38.default.join(dirObj.path, f);
+                  const fullPath = import_path39.default.join(dirObj.path, f);
                   try {
-                    const stat = import_fs40.default.statSync(fullPath);
+                    const stat = import_fs41.default.statSync(fullPath);
                     if (stat.isFile()) {
                       backups.push({
                         name: f,
@@ -69472,7 +69626,7 @@ var init_migration = __esm({
                         sourceLabel: dirObj.label,
                         sizeBytes: stat.size,
                         lastModified: stat.mtime.toISOString(),
-                        ext: import_path38.default.extname(f).toLowerCase().replace(".", ""),
+                        ext: import_path39.default.extname(f).toLowerCase().replace(".", ""),
                         isDbDump: true
                       });
                     }
@@ -69496,15 +69650,15 @@ var init_migration = __esm({
         let targetPath = fullPath;
         let targetName = fileName;
         if (!targetPath && targetName) {
-          targetPath = import_path38.default.join(MIGRATION_DIR2, targetName);
+          targetPath = import_path39.default.join(MIGRATION_DIR2, targetName);
         }
-        if (!targetPath || !import_fs40.default.existsSync(targetPath)) {
+        if (!targetPath || !import_fs41.default.existsSync(targetPath)) {
           return res.status(404).json({ error: "Local backup file not found at: " + targetPath });
         }
-        targetName = import_path38.default.basename(targetPath);
-        const destPath = import_path38.default.join(MIGRATION_DIR2, targetName);
-        if (import_path38.default.resolve(targetPath) !== import_path38.default.resolve(destPath)) {
-          import_fs40.default.copyFileSync(targetPath, destPath);
+        targetName = import_path39.default.basename(targetPath);
+        const destPath = import_path39.default.join(MIGRATION_DIR2, targetName);
+        if (import_path39.default.resolve(targetPath) !== import_path39.default.resolve(destPath)) {
+          import_fs41.default.copyFileSync(targetPath, destPath);
         }
         runManualMigration(targetName, "inventory").catch((err) => {
           console.error("Local backup background migration error:", err);
@@ -69610,11 +69764,11 @@ function invalidateBackupSizeCache() {
 async function calculateFolderSizeAsync(dir) {
   let size = 0;
   try {
-    const entries = await import_fs41.default.promises.readdir(dir, { withFileTypes: true });
+    const entries = await import_fs42.default.promises.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile()) {
         try {
-          const stats = await import_fs41.default.promises.stat(import_path39.default.join(dir, entry.name));
+          const stats = await import_fs42.default.promises.stat(import_path40.default.join(dir, entry.name));
           size += stats.size;
         } catch {
         }
@@ -69624,16 +69778,16 @@ async function calculateFolderSizeAsync(dir) {
   }
   return size;
 }
-var import_express8, import_path39, import_url5, import_fs41, import_pdfkit3, import_qrcode4, import_better_sqlite34, import_adm_zip3, __filename3, __dirname3, getDbPath4, router8, cachedBackupSizeTotal, cachedBackupSizeTimestamp, BACKUP_SIZE_CACHE_TTL_MS, utilities_default;
+var import_express8, import_path40, import_url5, import_fs42, import_pdfkit3, import_qrcode4, import_better_sqlite34, import_adm_zip3, __filename3, __dirname3, getDbPath4, router8, cachedBackupSizeTotal, cachedBackupSizeTimestamp, BACKUP_SIZE_CACHE_TTL_MS, utilities_default;
 var init_utilities = __esm({
   "src/routes/utilities.ts"() {
     "use strict";
     import_express8 = __toESM(require("express"), 1);
     init_connection();
-    import_path39 = __toESM(require("path"), 1);
+    import_path40 = __toESM(require("path"), 1);
     import_url5 = require("url");
     init_config();
-    import_fs41 = __toESM(require("fs"), 1);
+    import_fs42 = __toESM(require("fs"), 1);
     import_pdfkit3 = __toESM(require("pdfkit"), 1);
     import_qrcode4 = __toESM(require("qrcode"), 1);
     init_barcodeService();
@@ -69643,7 +69797,7 @@ var init_utilities = __esm({
     import_better_sqlite34 = __toESM(require("better-sqlite3"), 1);
     import_adm_zip3 = __toESM(require("adm-zip"), 1);
     __filename3 = (0, import_url5.fileURLToPath)(import_meta_url);
-    __dirname3 = import_path39.default.dirname(__filename3);
+    __dirname3 = import_path40.default.dirname(__filename3);
     getDbPath4 = () => config.dbPath;
     router8 = import_express8.default.Router();
     router8.post("/backup", async (_req, res) => {
@@ -69703,13 +69857,13 @@ var init_utilities = __esm({
         return res.status(400).json({ error: "Items array is required" });
       }
       try {
-        const uploadsDir = import_path39.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs41.default.existsSync(uploadsDir)) {
-          import_fs41.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path40.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs42.default.existsSync(uploadsDir)) {
+          import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit3.default({ margin: 30 });
-        const pdfPath = import_path39.default.join(uploadsDir, `barcodes_${Date.now()}.pdf`);
-        const stream = import_fs41.default.createWriteStream(pdfPath);
+        const pdfPath = import_path40.default.join(uploadsDir, `barcodes_${Date.now()}.pdf`);
+        const stream = import_fs42.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.fontSize(13).text("Medicine Barcode Stickers (QR + Code128)", { align: "center" });
         doc.moveDown(0.5);
@@ -69748,7 +69902,7 @@ var init_utilities = __esm({
         }
         doc.end();
         stream.on("finish", () => {
-          res.json({ success: true, pdfUrl: `/uploads/${import_path39.default.basename(pdfPath)}` });
+          res.json({ success: true, pdfUrl: `/uploads/${import_path40.default.basename(pdfPath)}` });
         });
       } catch (error) {
         console.error("Barcode generation failed:", error);
@@ -69758,13 +69912,13 @@ var init_utilities = __esm({
     router8.get("/barcode/:code", async (req, res) => {
       const { code } = req.params;
       try {
-        const uploadsDir = import_path39.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs41.default.existsSync(uploadsDir)) {
-          import_fs41.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path40.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs42.default.existsSync(uploadsDir)) {
+          import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit3.default();
-        const pdfPath = import_path39.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
-        const stream = import_fs41.default.createWriteStream(pdfPath);
+        const pdfPath = import_path40.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
+        const stream = import_fs42.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         const qrBuffer = await import_qrcode4.default.toBuffer(code, { width: 200, margin: 1 });
         doc.fontSize(20).text("Invoice / Bill Barcode Label", { align: "center", underline: true });
@@ -69776,7 +69930,7 @@ var init_utilities = __esm({
         doc.image(qrBuffer, xPos, doc.y, { width: imageWidth, height: imageWidth });
         doc.end();
         stream.on("finish", () => {
-          res.json({ success: true, pdfUrl: `/uploads/${import_path39.default.basename(pdfPath)}` });
+          res.json({ success: true, pdfUrl: `/uploads/${import_path40.default.basename(pdfPath)}` });
         });
       } catch (error) {
         console.error("Barcode generation failed:", error);
@@ -69789,7 +69943,7 @@ var init_utilities = __esm({
         const s3 = new AWS.S3();
         const bucketName = process.env.S3_BUCKET_NAME || "ai-pharmacy-backups";
         const key = `backups/app_${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db`;
-        const fileStream = import_fs41.default.createReadStream(getDbPath4());
+        const fileStream = import_fs42.default.createReadStream(getDbPath4());
         const uploadParams = {
           Bucket: bucketName,
           Key: key,
@@ -69888,8 +70042,8 @@ var init_utilities = __esm({
           totalSize = cachedBackupSizeTotal;
         } else {
           const BACKUP_DIR3 = config.backupDir;
-          const SNAPSHOTS_DIR2 = import_path39.default.join(BACKUP_DIR3, "snapshots");
-          const ARCHIVES_DIR2 = import_path39.default.join(BACKUP_DIR3, "archives");
+          const SNAPSHOTS_DIR2 = import_path40.default.join(BACKUP_DIR3, "snapshots");
+          const ARCHIVES_DIR2 = import_path40.default.join(BACKUP_DIR3, "archives");
           const [snapshotsSize, archivesSize] = await Promise.all([
             calculateFolderSizeAsync(SNAPSHOTS_DIR2),
             calculateFolderSizeAsync(ARCHIVES_DIR2)
@@ -70014,29 +70168,29 @@ var init_utilities = __esm({
     router8.post("/backup/manual", async (_req, res) => {
       try {
         const BACKUP_DIR3 = config.backupDir;
-        const SNAPSHOTS_DIR2 = import_path39.default.join(BACKUP_DIR3, "snapshots");
-        const ARCHIVES_DIR2 = import_path39.default.join(BACKUP_DIR3, "archives");
+        const SNAPSHOTS_DIR2 = import_path40.default.join(BACKUP_DIR3, "snapshots");
+        const ARCHIVES_DIR2 = import_path40.default.join(BACKUP_DIR3, "archives");
         const archiveName = `archive_manual_${(/* @__PURE__ */ new Date()).toISOString().split("T")[0]}_${Date.now()}.zip`;
-        const archivePath = import_path39.default.join(ARCHIVES_DIR2, archiveName);
+        const archivePath = import_path40.default.join(ARCHIVES_DIR2, archiveName);
         let upload5 = { gdrive: "off" };
-        const files = import_fs41.default.readdirSync(SNAPSHOTS_DIR2).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+        const files = import_fs42.default.readdirSync(SNAPSHOTS_DIR2).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
         if (files.length > 0) {
           const zip = new import_adm_zip3.default();
-          files.forEach((f) => zip.addLocalFile(import_path39.default.join(SNAPSHOTS_DIR2, f)));
+          files.forEach((f) => zip.addLocalFile(import_path40.default.join(SNAPSHOTS_DIR2, f)));
           zip.writeZip(archivePath);
-          files.forEach((f) => import_fs41.default.unlinkSync(import_path39.default.join(SNAPSHOTS_DIR2, f)));
+          files.forEach((f) => import_fs42.default.unlinkSync(import_path40.default.join(SNAPSHOTS_DIR2, f)));
           upload5 = await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
         } else {
           const tempDbFile = `snapshot_manual_${Date.now()}.db`;
-          const tempDbPath = import_path39.default.join(SNAPSHOTS_DIR2, tempDbFile);
+          const tempDbPath = import_path40.default.join(SNAPSHOTS_DIR2, tempDbFile);
           const tempDb = new import_better_sqlite34.default(getDbPath4());
           await tempDb.backup(tempDbPath);
           tempDb.close();
           const zip = new import_adm_zip3.default();
           zip.addLocalFile(tempDbPath);
           zip.writeZip(archivePath);
-          import_fs41.default.unlinkSync(tempDbPath);
+          import_fs42.default.unlinkSync(tempDbPath);
           upload5 = await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
           invalidateBackupSizeCache();
@@ -70090,7 +70244,7 @@ var init_utilities = __esm({
         const { createBackup: createBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
         const result = await createBackup2("Manual Drive Upload");
         const BACKUP_DIR3 = config.backupDir;
-        const filePath = import_path39.default.join(BACKUP_DIR3, result.filename);
+        const filePath = import_path40.default.join(BACKUP_DIR3, result.filename);
         const uploadRes = await backupRecoveryService.uploadFileToGoogleDrive(filePath, result.filename);
         if (!uploadRes.success) {
           return res.status(500).json({ error: uploadRes.error || "Google Drive upload failed" });
@@ -70414,35 +70568,35 @@ var init_utilities = __esm({
           } catch (_) {
           }
         }
-        const dataDir = import_path39.default.resolve(getAppDataDir(), "data");
-        const uploadsDir = import_path39.default.resolve(getAppDataDir(), "uploads");
-        const attachmentsDir = import_path39.default.resolve(getAppDataDir(), "attachments");
-        const reportsDir = import_path39.default.resolve(getAppDataDir(), "reports");
-        const dataUploadsDir = import_path39.default.resolve(getAppDataDir(), "data", "uploads");
-        const dataAttachmentsDir = import_path39.default.resolve(getAppDataDir(), "data", "attachments");
-        const dataReportsDir = import_path39.default.resolve(getAppDataDir(), "data", "reports");
-        const rawDir = import_path39.default.resolve(getAppDataDir(), "catalogue", "raw");
-        const migrationReportsDir = import_path39.default.resolve(getAppDataDir(), "data", "migration_reports");
-        const auditImagesDir = import_path39.default.resolve(getAppDataDir(), "data", "audit_images");
+        const dataDir = import_path40.default.resolve(getAppDataDir(), "data");
+        const uploadsDir = import_path40.default.resolve(getAppDataDir(), "uploads");
+        const attachmentsDir = import_path40.default.resolve(getAppDataDir(), "attachments");
+        const reportsDir = import_path40.default.resolve(getAppDataDir(), "reports");
+        const dataUploadsDir = import_path40.default.resolve(getAppDataDir(), "data", "uploads");
+        const dataAttachmentsDir = import_path40.default.resolve(getAppDataDir(), "data", "attachments");
+        const dataReportsDir = import_path40.default.resolve(getAppDataDir(), "data", "reports");
+        const rawDir = import_path40.default.resolve(getAppDataDir(), "catalogue", "raw");
+        const migrationReportsDir = import_path40.default.resolve(getAppDataDir(), "data", "migration_reports");
+        const auditImagesDir = import_path40.default.resolve(getAppDataDir(), "data", "audit_images");
         const clearDir = (dirPath, preserveFiles = []) => {
-          if (!import_fs41.default.existsSync(dirPath)) return;
+          if (!import_fs42.default.existsSync(dirPath)) return;
           try {
-            const files = import_fs41.default.readdirSync(dirPath);
+            const files = import_fs42.default.readdirSync(dirPath);
             for (const file of files) {
-              const filePath = import_path39.default.join(dirPath, file);
-              const stat = import_fs41.default.statSync(filePath);
+              const filePath = import_path40.default.join(dirPath, file);
+              const stat = import_fs42.default.statSync(filePath);
               if (stat.isDirectory()) {
                 clearDir(filePath, preserveFiles);
                 try {
-                  if (import_fs41.default.readdirSync(filePath).length === 0) {
-                    import_fs41.default.rmdirSync(filePath);
+                  if (import_fs42.default.readdirSync(filePath).length === 0) {
+                    import_fs42.default.rmdirSync(filePath);
                   }
                 } catch (_) {
                 }
               } else {
                 if (!preserveFiles.includes(file)) {
                   try {
-                    import_fs41.default.unlinkSync(filePath);
+                    import_fs42.default.unlinkSync(filePath);
                   } catch (_) {
                   }
                 }
@@ -70453,10 +70607,10 @@ var init_utilities = __esm({
           }
         };
         const removeDirWithRetry = async (dirPath, attempts = 3) => {
-          if (!import_fs41.default.existsSync(dirPath)) return;
+          if (!import_fs42.default.existsSync(dirPath)) return;
           for (let i = 0; i < attempts; i++) {
             try {
-              import_fs41.default.rmSync(dirPath, { recursive: true, force: true });
+              import_fs42.default.rmSync(dirPath, { recursive: true, force: true });
               return;
             } catch (err) {
               if (i === attempts - 1) {
@@ -70479,8 +70633,8 @@ var init_utilities = __esm({
         if (wipeAll) {
           clearDir(config.backupDir);
         }
-        const stagingDbPath = import_path39.default.join(dataDir, "staging.db");
-        if (import_fs41.default.existsSync(stagingDbPath)) {
+        const stagingDbPath = import_path40.default.join(dataDir, "staging.db");
+        if (import_fs42.default.existsSync(stagingDbPath)) {
           try {
             const { open: open6 } = await import("sqlite");
             const { default: sqlite37 } = await import("sqlite3");
@@ -70505,40 +70659,40 @@ var init_utilities = __esm({
         const stagingDbFiles = ["staging.db", "staging.db-wal", "staging.db-shm"];
         for (const f of stagingDbFiles) {
           try {
-            if (import_fs41.default.existsSync(import_path39.default.join(dataDir, f))) import_fs41.default.unlinkSync(import_path39.default.join(dataDir, f));
+            if (import_fs42.default.existsSync(import_path40.default.join(dataDir, f))) import_fs42.default.unlinkSync(import_path40.default.join(dataDir, f));
           } catch (_) {
           }
         }
-        clearDir(import_path39.default.resolve(getAppDataDir(), "MIGRATION SAMPEL"));
+        clearDir(import_path40.default.resolve(getAppDataDir(), "MIGRATION SAMPEL"));
         for (const d of [
-          import_path39.default.resolve(getAppDataDir(), "data", "temp_migration"),
-          import_path39.default.resolve(getAppDataDir(), "data", "temp_ocr"),
-          import_path39.default.resolve(getAppDataDir(), "data", "search_screenshots"),
-          import_path39.default.resolve(getAppDataDir(), "data", "archived_migrations")
+          import_path40.default.resolve(getAppDataDir(), "data", "temp_migration"),
+          import_path40.default.resolve(getAppDataDir(), "data", "temp_ocr"),
+          import_path40.default.resolve(getAppDataDir(), "data", "search_screenshots"),
+          import_path40.default.resolve(getAppDataDir(), "data", "archived_migrations")
         ]) {
           clearDir(d);
         }
-        await removeDirWithRetry(import_path39.default.resolve(getAppDataDir(), ".wwebjs_auth"));
-        await removeDirWithRetry(import_path39.default.resolve(getAppDataDir(), ".wwebjs_cache"));
-        await removeDirWithRetry(import_path39.default.resolve(getAppDataDir(), "data", "pharmarack_profile"));
-        if (import_fs41.default.existsSync(dataDir)) {
-          for (const entry of import_fs41.default.readdirSync(dataDir)) {
+        await removeDirWithRetry(import_path40.default.resolve(getAppDataDir(), ".wwebjs_auth"));
+        await removeDirWithRetry(import_path40.default.resolve(getAppDataDir(), ".wwebjs_cache"));
+        await removeDirWithRetry(import_path40.default.resolve(getAppDataDir(), "data", "pharmarack_profile"));
+        if (import_fs42.default.existsSync(dataDir)) {
+          for (const entry of import_fs42.default.readdirSync(dataDir)) {
             if (entry.startsWith("pharmarack_profile_temp_")) {
-              await removeDirWithRetry(import_path39.default.join(dataDir, entry));
+              await removeDirWithRetry(import_path40.default.join(dataDir, entry));
             }
           }
         }
-        await removeDirWithRetry(import_path39.default.resolve(getAppDataDir(), "data", "cache"));
-        if (import_fs41.default.existsSync(dataDir)) {
-          for (const f of import_fs41.default.readdirSync(dataDir)) {
+        await removeDirWithRetry(import_path40.default.resolve(getAppDataDir(), "data", "cache"));
+        if (import_fs42.default.existsSync(dataDir)) {
+          for (const f of import_fs42.default.readdirSync(dataDir)) {
             if (f.startsWith("app.db")) continue;
             if (f === "models") continue;
-            const fullPath = import_path39.default.join(dataDir, f);
+            const fullPath = import_path40.default.join(dataDir, f);
             try {
-              const stat = import_fs41.default.statSync(fullPath);
+              const stat = import_fs42.default.statSync(fullPath);
               if (!stat.isDirectory()) {
                 if (wipeAll || f.endsWith(".tmp") || f.endsWith(".log")) {
-                  import_fs41.default.unlinkSync(fullPath);
+                  import_fs42.default.unlinkSync(fullPath);
                 }
               }
             } catch (_) {
@@ -70546,14 +70700,14 @@ var init_utilities = __esm({
           }
         }
         if (wipeAll) {
-          clearDir(import_path39.default.resolve(getAppDataDir(), "catalogue"));
+          clearDir(import_path40.default.resolve(getAppDataDir(), "catalogue"));
         }
         const accidentalDirs = ["PHARMACY", "WORKING", "ON", "PROJECT"];
         for (const d of accidentalDirs) {
-          const fullPath = import_path39.default.resolve(__dirname3, "..", "..", d);
-          if (import_fs41.default.existsSync(fullPath)) {
+          const fullPath = import_path40.default.resolve(__dirname3, "..", "..", d);
+          if (import_fs42.default.existsSync(fullPath)) {
             try {
-              import_fs41.default.rmSync(fullPath, { recursive: true, force: true });
+              import_fs42.default.rmSync(fullPath, { recursive: true, force: true });
             } catch (_) {
             }
           }
@@ -70574,27 +70728,27 @@ var init_utilities = __esm({
     });
     router8.post("/clear-cache", async (_req, res) => {
       try {
-        const dataDir = import_path39.default.resolve(getAppDataDir(), "data");
-        const cachePath = import_path39.default.join(dataDir, "cache");
-        if (import_fs41.default.existsSync(cachePath)) {
+        const dataDir = import_path40.default.resolve(getAppDataDir(), "data");
+        const cachePath = import_path40.default.join(dataDir, "cache");
+        if (import_fs42.default.existsSync(cachePath)) {
           try {
-            import_fs41.default.rmSync(cachePath, { recursive: true, force: true });
+            import_fs42.default.rmSync(cachePath, { recursive: true, force: true });
           } catch (err) {
             console.warn("[Clear Cache] Failed to delete cache directory:", err);
           }
         }
         const tempDirs = [
-          import_path39.default.join(dataDir, "temp_migration"),
-          import_path39.default.join(dataDir, "temp_ocr"),
-          import_path39.default.join(dataDir, "search_screenshots")
+          import_path40.default.join(dataDir, "temp_migration"),
+          import_path40.default.join(dataDir, "temp_ocr"),
+          import_path40.default.join(dataDir, "search_screenshots")
         ];
         for (const d of tempDirs) {
-          if (import_fs41.default.existsSync(d)) {
+          if (import_fs42.default.existsSync(d)) {
             try {
-              const files = import_fs41.default.readdirSync(d);
+              const files = import_fs42.default.readdirSync(d);
               for (const file of files) {
                 try {
-                  import_fs41.default.unlinkSync(import_path39.default.join(d, file));
+                  import_fs42.default.unlinkSync(import_path40.default.join(d, file));
                 } catch (_) {
                 }
               }
@@ -70647,14 +70801,14 @@ var init_utilities = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path39.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs41.default.existsSync(uploadsDir)) {
-          import_fs41.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path40.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs42.default.existsSync(uploadsDir)) {
+          import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit3.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path39.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs41.default.createWriteStream(pdfPath);
+        const pdfPath = import_path40.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs42.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -70680,7 +70834,7 @@ var init_utilities = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path39.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path40.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -70927,20 +71081,20 @@ var email_exports = {};
 __export(email_exports, {
   default: () => email_default
 });
-var import_express11, import_path40, import_url6, import_fs42, __filename4, getUploadsDir2, router11, email_default;
+var import_express11, import_path41, import_url6, import_fs43, __filename4, getUploadsDir2, router11, email_default;
 var init_email = __esm({
   "src/routes/email.ts"() {
     "use strict";
     import_express11 = __toESM(require("express"), 1);
     init_connection();
-    import_path40 = __toESM(require("path"), 1);
+    import_path41 = __toESM(require("path"), 1);
     import_url6 = require("url");
     init_emailService();
     init_eventService();
     init_config();
-    import_fs42 = __toESM(require("fs"), 1);
+    import_fs43 = __toESM(require("fs"), 1);
     __filename4 = (0, import_url6.fileURLToPath)(import_meta_url);
-    getUploadsDir2 = () => process.env.UPLOADS_DIR || import_path40.default.resolve(getAppDataDir(), "uploads");
+    getUploadsDir2 = () => process.env.UPLOADS_DIR || import_path41.default.resolve(getAppDataDir(), "uploads");
     router11 = import_express11.default.Router();
     router11.post("/", async (req, res) => {
       const { subject, from, body, attachments } = req.body;
@@ -71099,13 +71253,13 @@ var init_email = __esm({
     router11.get("/attachments", async (_req, res) => {
       try {
         const uploadsDir = getUploadsDir2();
-        if (!import_fs42.default.existsSync(uploadsDir)) {
-          import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+        if (!import_fs43.default.existsSync(uploadsDir)) {
+          import_fs43.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const files = import_fs42.default.readdirSync(uploadsDir);
+        const files = import_fs43.default.readdirSync(uploadsDir);
         const attachments = files.map((filename) => {
-          const filePath = import_path40.default.join(uploadsDir, filename);
-          const stats = import_fs42.default.statSync(filePath);
+          const filePath = import_path41.default.join(uploadsDir, filename);
+          const stats = import_fs43.default.statSync(filePath);
           return {
             filename,
             size: stats.size,
@@ -71139,25 +71293,25 @@ var init_email = __esm({
       }
       try {
         const uploadsDir = getUploadsDir2();
-        const filePath = import_path40.default.resolve(uploadsDir, filename);
+        const filePath = import_path41.default.resolve(uploadsDir, filename);
         if (!filePath.startsWith(uploadsDir)) {
           return res.status(403).json({ error: "Access denied" });
         }
-        if (!import_fs42.default.existsSync(filePath)) {
+        if (!import_fs43.default.existsSync(filePath)) {
           return res.status(404).json({ error: "Attachment file not found" });
         }
-        const ext = import_path40.default.extname(filename).toLowerCase();
+        const ext = import_path41.default.extname(filename).toLowerCase();
         if (ext === ".txt" || ext === ".csv") {
-          const text = await import_fs42.default.promises.readFile(filePath, "utf-8");
+          const text = await import_fs43.default.promises.readFile(filePath, "utf-8");
           res.json({ success: true, type: "text", content: text.substring(0, 5e4) });
         } else if (ext === ".pdf") {
           const { default: pdfParse2 } = await import("pdf-parse");
-          const dataBuffer = await import_fs42.default.promises.readFile(filePath);
+          const dataBuffer = await import_fs43.default.promises.readFile(filePath);
           const data = await pdfParse2(dataBuffer);
           res.json({ success: true, type: "text", content: data.text });
         } else if (ext === ".xlsx" || ext === ".xls") {
           const { default: XLSX4 } = await import("xlsx");
-          const dataBuffer = await import_fs42.default.promises.readFile(filePath);
+          const dataBuffer = await import_fs43.default.promises.readFile(filePath);
           const workbook = XLSX4.read(dataBuffer, { type: "buffer" });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
@@ -71177,14 +71331,14 @@ var init_email = __esm({
         return res.status(400).json({ error: "filename is required" });
       }
       try {
-        let filePath = import_path40.default.resolve(getUploadsDir2(), filename);
-        if (!import_fs42.default.existsSync(filePath)) {
+        let filePath = import_path41.default.resolve(getUploadsDir2(), filename);
+        if (!import_fs43.default.existsSync(filePath)) {
           const db2 = await dbManager.getConnection();
           const att = await db2.get(
             "SELECT local_path FROM email_attachments WHERE filename = ? OR filename LIKE ? OR local_path LIKE ?",
             [filename, `%${filename}%`, `%${filename}%`]
           );
-          if (att && att.local_path && import_fs42.default.existsSync(att.local_path)) {
+          if (att && att.local_path && import_fs43.default.existsSync(att.local_path)) {
             filePath = att.local_path;
           } else {
             return res.status(404).json({ error: "Attachment file not found" });
@@ -71202,15 +71356,15 @@ var init_email = __esm({
     router11.delete("/attachments/cache", async (_req, res) => {
       try {
         const uploadsDir = getUploadsDir2();
-        if (!import_fs42.default.existsSync(uploadsDir)) {
+        if (!import_fs43.default.existsSync(uploadsDir)) {
           return res.json({ success: true, count: 0, message: "Uploads directory does not exist" });
         }
-        const files = import_fs42.default.readdirSync(uploadsDir);
+        const files = import_fs43.default.readdirSync(uploadsDir);
         let count = 0;
         for (const filename of files) {
           if (filename.startsWith("att-")) {
-            const filePath = import_path40.default.join(uploadsDir, filename);
-            import_fs42.default.unlinkSync(filePath);
+            const filePath = import_path41.default.join(uploadsDir, filename);
+            import_fs43.default.unlinkSync(filePath);
             count++;
           }
         }
@@ -72040,7 +72194,7 @@ __export(bouncedAlertService_exports, {
   BouncedAlertService: () => BouncedAlertService,
   bouncedAlertService: () => bouncedAlertService
 });
-var import_fs43, BouncedAlertService, bouncedAlertService;
+var import_fs44, BouncedAlertService, bouncedAlertService;
 var init_bouncedAlertService = __esm({
   "src/services/bouncedAlertService.ts"() {
     "use strict";
@@ -72048,7 +72202,7 @@ var init_bouncedAlertService = __esm({
     init_emailService();
     init_whatsappQueueWorker();
     init_reconciliationMatcher();
-    import_fs43 = __toESM(require("fs"), 1);
+    import_fs44 = __toESM(require("fs"), 1);
     BouncedAlertService = class {
       /**
        * Run the bounced products check for order emails received in the last 30 hours,
@@ -72126,7 +72280,7 @@ var init_bouncedAlertService = __esm({
             );
             let attachmentParsed = false;
             for (const att of attachments) {
-              if (att.local_path && import_fs43.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs44.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -73026,13 +73180,13 @@ var settings_exports = {};
 __export(settings_exports, {
   default: () => settings_default
 });
-var import_express13, import_path41, import_fs44, UPLOADS_DIR2, router13, settings_default;
+var import_express13, import_path42, import_fs45, UPLOADS_DIR2, router13, settings_default;
 var init_settings = __esm({
   "src/routes/settings.ts"() {
     "use strict";
     import_express13 = __toESM(require("express"), 1);
-    import_path41 = __toESM(require("path"), 1);
-    import_fs44 = __toESM(require("fs"), 1);
+    import_path42 = __toESM(require("path"), 1);
+    import_fs45 = __toESM(require("fs"), 1);
     init_connection();
     init_telegramBot();
     init_emailSanitizer();
@@ -73044,7 +73198,7 @@ var init_settings = __esm({
     init_medicineSalesMetricsService();
     init_paymentQrService();
     init_eventService();
-    UPLOADS_DIR2 = import_path41.default.resolve(getAppDataDir(), "uploads");
+    UPLOADS_DIR2 = import_path42.default.resolve(getAppDataDir(), "uploads");
     router13 = import_express13.default.Router();
     router13.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -73489,9 +73643,9 @@ var init_settings = __esm({
     });
     router13.get("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs44.default.existsSync(stampPath)) {
-          const data = import_fs44.default.readFileSync(stampPath);
+        const stampPath = import_path42.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs45.default.existsSync(stampPath)) {
+          const data = import_fs45.default.readFileSync(stampPath);
           const base64 = `data:image/png;base64,${data.toString("base64")}`;
           return res.json({ exists: true, dataUrl: base64 });
         }
@@ -73506,11 +73660,11 @@ var init_settings = __esm({
         if (!image) return res.status(400).json({ error: "Image data required" });
         const base64Data = image.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        if (!import_fs44.default.existsSync(UPLOADS_DIR2)) {
-          import_fs44.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs45.default.existsSync(UPLOADS_DIR2)) {
+          import_fs45.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         }
-        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        import_fs44.default.writeFileSync(stampPath, buffer);
+        const stampPath = import_path42.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        import_fs45.default.writeFileSync(stampPath, buffer);
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_stamp', 'true')");
         res.json({ success: true, message: "Custom stamp uploaded and enabled" });
@@ -73521,9 +73675,9 @@ var init_settings = __esm({
     });
     router13.delete("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs44.default.existsSync(stampPath)) {
-          import_fs44.default.unlinkSync(stampPath);
+        const stampPath = import_path42.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs45.default.existsSync(stampPath)) {
+          import_fs45.default.unlinkSync(stampPath);
         }
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_stamp', 'false')");
@@ -73534,9 +73688,9 @@ var init_settings = __esm({
     });
     router13.get("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs44.default.existsSync(sigPath)) {
-          const data = import_fs44.default.readFileSync(sigPath);
+        const sigPath = import_path42.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs45.default.existsSync(sigPath)) {
+          const data = import_fs45.default.readFileSync(sigPath);
           const base64 = `data:image/png;base64,${data.toString("base64")}`;
           return res.json({ exists: true, dataUrl: base64 });
         }
@@ -73551,11 +73705,11 @@ var init_settings = __esm({
         if (!image) return res.status(400).json({ error: "Image data required" });
         const base64Data = image.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        if (!import_fs44.default.existsSync(UPLOADS_DIR2)) {
-          import_fs44.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs45.default.existsSync(UPLOADS_DIR2)) {
+          import_fs45.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         }
-        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
-        import_fs44.default.writeFileSync(sigPath, buffer);
+        const sigPath = import_path42.default.join(UPLOADS_DIR2, "custom_signature.png");
+        import_fs45.default.writeFileSync(sigPath, buffer);
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_signature', 'true')");
         res.json({ success: true, message: "Custom signature uploaded and enabled" });
@@ -73566,9 +73720,9 @@ var init_settings = __esm({
     });
     router13.delete("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs44.default.existsSync(sigPath)) {
-          import_fs44.default.unlinkSync(sigPath);
+        const sigPath = import_path42.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs45.default.existsSync(sigPath)) {
+          import_fs45.default.unlinkSync(sigPath);
         }
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_signature', 'false')");
@@ -73959,9 +74113,9 @@ var init_settings = __esm({
     });
     router13.get("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs44.default.existsSync(stampPath)) {
-          const buffer = import_fs44.default.readFileSync(stampPath);
+        const stampPath = import_path42.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs45.default.existsSync(stampPath)) {
+          const buffer = import_fs45.default.readFileSync(stampPath);
           const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
           return res.json({ exists: true, dataUrl });
         }
@@ -73975,11 +74129,11 @@ var init_settings = __esm({
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
-        if (!import_fs44.default.existsSync(UPLOADS_DIR2)) import_fs44.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs45.default.existsSync(UPLOADS_DIR2)) import_fs45.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        import_fs44.default.writeFileSync(stampPath, buffer);
+        const stampPath = import_path42.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        import_fs45.default.writeFileSync(stampPath, buffer);
         res.json({ success: true, message: "Stamp uploaded successfully" });
       } catch (error) {
         console.error("Failed to upload stamp:", error);
@@ -73988,9 +74142,9 @@ var init_settings = __esm({
     });
     router13.delete("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs44.default.existsSync(stampPath)) {
-          import_fs44.default.unlinkSync(stampPath);
+        const stampPath = import_path42.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs45.default.existsSync(stampPath)) {
+          import_fs45.default.unlinkSync(stampPath);
         }
         res.json({ success: true, message: "Stamp deleted successfully" });
       } catch (error) {
@@ -74000,9 +74154,9 @@ var init_settings = __esm({
     });
     router13.get("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs44.default.existsSync(sigPath)) {
-          const buffer = import_fs44.default.readFileSync(sigPath);
+        const sigPath = import_path42.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs45.default.existsSync(sigPath)) {
+          const buffer = import_fs45.default.readFileSync(sigPath);
           const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
           return res.json({ exists: true, dataUrl });
         }
@@ -74016,11 +74170,11 @@ var init_settings = __esm({
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
-        if (!import_fs44.default.existsSync(UPLOADS_DIR2)) import_fs44.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs45.default.existsSync(UPLOADS_DIR2)) import_fs45.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
-        import_fs44.default.writeFileSync(sigPath, buffer);
+        const sigPath = import_path42.default.join(UPLOADS_DIR2, "custom_signature.png");
+        import_fs45.default.writeFileSync(sigPath, buffer);
         res.json({ success: true, message: "Signature uploaded successfully" });
       } catch (error) {
         console.error("Failed to upload signature:", error);
@@ -74029,9 +74183,9 @@ var init_settings = __esm({
     });
     router13.delete("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs44.default.existsSync(sigPath)) {
-          import_fs44.default.unlinkSync(sigPath);
+        const sigPath = import_path42.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs45.default.existsSync(sigPath)) {
+          import_fs45.default.unlinkSync(sigPath);
         }
         res.json({ success: true, message: "Signature deleted successfully" });
       } catch (error) {
@@ -74926,13 +75080,13 @@ var learning_exports = {};
 __export(learning_exports, {
   default: () => learning_default
 });
-var import_express15, import_fs45, router15, handleRetrainOrRefresh, learning_default;
+var import_express15, import_fs46, router15, handleRetrainOrRefresh, learning_default;
 var init_learning = __esm({
   "src/routes/learning.ts"() {
     "use strict";
     import_express15 = __toESM(require("express"), 1);
     init_connection();
-    import_fs45 = __toESM(require("fs"), 1);
+    import_fs46 = __toESM(require("fs"), 1);
     init_summaryCacheService();
     router15 = import_express15.default.Router();
     router15.post("/", async (req, res) => {
@@ -75271,9 +75425,9 @@ var init_learning = __esm({
         db2 = await dbManager.getConnection();
         const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [distId]);
         for (const f of files) {
-          if (f.file_path && import_fs45.default.existsSync(f.file_path)) {
+          if (f.file_path && import_fs46.default.existsSync(f.file_path)) {
             try {
-              import_fs45.default.unlinkSync(f.file_path);
+              import_fs46.default.unlinkSync(f.file_path);
             } catch (e) {
               console.warn("Failed to delete file:", f.file_path, e);
             }
@@ -75401,9 +75555,9 @@ var init_learning = __esm({
         db2 = await dbManager.getConnection();
         const fileRecord = await db2.get("SELECT file_path FROM distributor_historical_files WHERE id = ?", [fileId]);
         if (fileRecord) {
-          if (fileRecord.file_path && import_fs45.default.existsSync(fileRecord.file_path)) {
+          if (fileRecord.file_path && import_fs46.default.existsSync(fileRecord.file_path)) {
             try {
-              import_fs45.default.unlinkSync(fileRecord.file_path);
+              import_fs46.default.unlinkSync(fileRecord.file_path);
             } catch (e) {
               console.warn("Failed to delete file from disk:", fileRecord.file_path, e);
             }
@@ -75457,20 +75611,20 @@ function findChromePath3() {
   const paths = [
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    process.env.LOCALAPPDATA ? import_path42.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
-    process.env.PROGRAMFILES ? import_path42.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
+    process.env.LOCALAPPDATA ? import_path43.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
+    process.env.PROGRAMFILES ? import_path43.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-    process.env.LOCALAPPDATA ? import_path42.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
+    process.env.LOCALAPPDATA ? import_path43.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
   ].filter(Boolean);
   for (const p of paths) {
-    if (import_fs46.default.existsSync(p)) {
+    if (import_fs47.default.existsSync(p)) {
       return p;
     }
   }
   return null;
 }
-var import_express16, import_qrcode5, import_fs46, import_path42, router16, phoneCapabilityCache, PHONE_CACHE_TTL_MS, messaging_default;
+var import_express16, import_qrcode5, import_fs47, import_path43, router16, phoneCapabilityCache, PHONE_CACHE_TTL_MS, messaging_default;
 var init_messaging = __esm({
   "src/routes/messaging.ts"() {
     "use strict";
@@ -75479,8 +75633,8 @@ var init_messaging = __esm({
     import_qrcode5 = __toESM(require("qrcode"), 1);
     init_connection();
     init_whatsappQueueWorker();
-    import_fs46 = __toESM(require("fs"), 1);
-    import_path42 = __toESM(require("path"), 1);
+    import_fs47 = __toESM(require("fs"), 1);
+    import_path43 = __toESM(require("path"), 1);
     init_config();
     init_tokenRefreshScheduler();
     router16 = import_express16.default.Router();
@@ -75568,7 +75722,7 @@ var init_messaging = __esm({
           return res.status(400).json({ error: "WhatsApp is currently disabled in Settings. Enable WhatsApp before connecting." });
         }
         setLoginWindowActive(false);
-        const authPath = import_path42.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
+        const authPath = import_path43.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
         cleanProfileLockFiles(authPath);
         initClient({ forceQr: true, manual: true }).catch(console.error);
         res.json({ success: true, message: "Initializing WhatsApp QR code scan..." });
@@ -75591,8 +75745,8 @@ var init_messaging = __esm({
         try {
           await destroyClient();
           await new Promise((resolve) => setTimeout(resolve, 1e3));
-          const authPath = import_path42.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
-          if (!import_fs46.default.existsSync(authPath)) import_fs46.default.mkdirSync(authPath, { recursive: true });
+          const authPath = import_path43.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
+          if (!import_fs47.default.existsSync(authPath)) import_fs47.default.mkdirSync(authPath, { recursive: true });
           cleanProfileLockFiles(authPath);
           console.log("[WhatsApp] Spawning Chrome natively from:", chromePath);
           const { spawn: spawnProc } = await import("child_process");
@@ -75833,12 +75987,12 @@ var init_messaging = __esm({
         if (!safeId) {
           return res.status(400).json({ error: "Invalid media id" });
         }
-        const dir = import_path42.default.resolve(process.cwd(), "data", "inbound_media");
-        const filePath = import_path42.default.join(dir, `${safeId}.jpg`);
-        if (!import_fs46.default.existsSync(filePath)) {
+        const dir = import_path43.default.resolve(process.cwd(), "data", "inbound_media");
+        const filePath = import_path43.default.join(dir, `${safeId}.jpg`);
+        if (!import_fs47.default.existsSync(filePath)) {
           return res.status(404).json({ error: "Media not found" });
         }
-        const data = await import_fs46.default.promises.readFile(filePath);
+        const data = await import_fs47.default.promises.readFile(filePath);
         res.json({ mimetype: "image/jpeg", data: data.toString("base64") });
       } catch (err) {
         console.error("Error fetching WA inbound media:", err);
@@ -75996,26 +76150,26 @@ var init_messaging = __esm({
           id: row.id,
           hasMedia: !!row.has_media,
           downloadMedia: async () => {
-            const uploadsDir = import_path42.default.resolve(getAppDataDir(), "uploads");
-            if (import_fs46.default.existsSync(uploadsDir)) {
-              const files = import_fs46.default.readdirSync(uploadsDir);
+            const uploadsDir = import_path43.default.resolve(getAppDataDir(), "uploads");
+            if (import_fs47.default.existsSync(uploadsDir)) {
+              const files = import_fs47.default.readdirSync(uploadsDir);
               const matched = files.find((f) => f.startsWith(messageId));
               if (matched) {
-                const ext = import_path42.default.extname(matched).toLowerCase();
-                const data = import_fs46.default.readFileSync(import_path42.default.join(uploadsDir, matched)).toString("base64");
+                const ext = import_path43.default.extname(matched).toLowerCase();
+                const data = import_fs47.default.readFileSync(import_path43.default.join(uploadsDir, matched)).toString("base64");
                 let mimetype = "image/jpeg";
                 if (ext === ".png") mimetype = "image/png";
                 else if (ext === ".pdf") mimetype = "application/pdf";
                 return { mimetype, data };
               }
             }
-            const inboundDir = import_path42.default.resolve(process.cwd(), "data", "inbound_media");
+            const inboundDir = import_path43.default.resolve(process.cwd(), "data", "inbound_media");
             const safeId = String(messageId).replace(/[^a-zA-Z0-9_-]/g, "_");
-            if (import_fs46.default.existsSync(inboundDir)) {
+            if (import_fs47.default.existsSync(inboundDir)) {
               for (const ext of [".jpg", ".jpeg", ".png", ".pdf"]) {
-                const p = import_path42.default.join(inboundDir, `${safeId}${ext}`);
-                if (import_fs46.default.existsSync(p)) {
-                  const data = import_fs46.default.readFileSync(p).toString("base64");
+                const p = import_path43.default.join(inboundDir, `${safeId}${ext}`);
+                if (import_fs47.default.existsSync(p)) {
+                  const data = import_fs47.default.readFileSync(p).toString("base64");
                   const mimetype = ext === ".png" ? "image/png" : ext === ".pdf" ? "application/pdf" : "image/jpeg";
                   return { mimetype, data };
                 }
@@ -76051,13 +76205,13 @@ var init_messaging = __esm({
         }
         try {
           const safeId = String(messageId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
-          const inboundFile = import_path42.default.resolve(process.cwd(), "data", "inbound_media", `${safeId}.jpg`);
-          if (safeId && import_fs46.default.existsSync(inboundFile)) await import_fs46.default.promises.unlink(inboundFile).catch(() => {
+          const inboundFile = import_path43.default.resolve(process.cwd(), "data", "inbound_media", `${safeId}.jpg`);
+          if (safeId && import_fs47.default.existsSync(inboundFile)) await import_fs47.default.promises.unlink(inboundFile).catch(() => {
           });
-          const uploadsDir = import_path42.default.resolve(getAppDataDir(), "uploads");
-          if (import_fs46.default.existsSync(uploadsDir)) {
-            for (const f of import_fs46.default.readdirSync(uploadsDir)) {
-              if (f.startsWith(messageId)) await import_fs46.default.promises.unlink(import_path42.default.join(uploadsDir, f)).catch(() => {
+          const uploadsDir = import_path43.default.resolve(getAppDataDir(), "uploads");
+          if (import_fs47.default.existsSync(uploadsDir)) {
+            for (const f of import_fs47.default.readdirSync(uploadsDir)) {
+              if (f.startsWith(messageId)) await import_fs47.default.promises.unlink(import_path43.default.join(uploadsDir, f)).catch(() => {
               });
             }
           }
@@ -76220,26 +76374,26 @@ var aiCamera_exports = {};
 __export(aiCamera_exports, {
   default: () => aiCamera_default
 });
-var import_express17, import_path43, import_fs47, AUDIT_QUEUE_PATH, router17, aiCamera_default;
+var import_express17, import_path44, import_fs48, AUDIT_QUEUE_PATH, router17, aiCamera_default;
 var init_aiCamera = __esm({
   "src/routes/aiCamera.ts"() {
     "use strict";
     import_express17 = __toESM(require("express"), 1);
     init_connection();
-    import_path43 = __toESM(require("path"), 1);
-    import_fs47 = __toESM(require("fs"), 1);
+    import_path44 = __toESM(require("path"), 1);
+    import_fs48 = __toESM(require("fs"), 1);
     init_aiCameraService();
     init_prescriptionScannerService();
     init_productNameFilterService();
     init_config();
-    AUDIT_QUEUE_PATH = import_path43.default.resolve(getAppDataDir(), "data", "audit_queue.json");
+    AUDIT_QUEUE_PATH = import_path44.default.resolve(getAppDataDir(), "data", "audit_queue.json");
     router17 = import_express17.default.Router();
     router17.get("/audit/queue", async (_req, res) => {
       try {
-        if (!import_fs47.default.existsSync(AUDIT_QUEUE_PATH)) {
+        if (!import_fs48.default.existsSync(AUDIT_QUEUE_PATH)) {
           return res.json([]);
         }
-        const data = await import_fs47.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+        const data = await import_fs48.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
         const queue2 = JSON.parse(data || "[]");
         const pending2 = queue2.filter((item) => item.status === "pending_human_review");
         res.json(pending2);
@@ -76254,10 +76408,10 @@ var init_aiCamera = __esm({
         return res.status(400).json({ error: "Queue entry ID is required" });
       }
       try {
-        if (!import_fs47.default.existsSync(AUDIT_QUEUE_PATH)) {
+        if (!import_fs48.default.existsSync(AUDIT_QUEUE_PATH)) {
           return res.status(404).json({ error: "Audit queue not found" });
         }
-        const data = await import_fs47.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+        const data = await import_fs48.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
         const queue2 = JSON.parse(data || "[]");
         const index = queue2.findIndex((item) => item.id === id);
         if (index === -1) {
@@ -76287,8 +76441,8 @@ var init_aiCamera = __esm({
             );
           }
           try {
-            if (import_fs47.default.existsSync(AUDIT_QUEUE_PATH)) {
-              const auditData = await import_fs47.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+            if (import_fs48.default.existsSync(AUDIT_QUEUE_PATH)) {
+              const auditData = await import_fs48.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
               const auditQueue = JSON.parse(auditData || "[]");
               const auditEntry = auditQueue.find((item) => item.id === id);
               if (auditEntry && auditEntry.rawOcrText) {
@@ -76306,7 +76460,7 @@ var init_aiCamera = __esm({
         queue2[index].status = action === "dismiss" ? "dismissed" : "resolved";
         queue2[index].resolvedAt = (/* @__PURE__ */ new Date()).toISOString();
         queue2[index].resolvedWith = name || "";
-        await import_fs47.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
+        await import_fs48.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
         res.json({
           success: true,
           message: `Queue entry ${id} successfully ${queue2[index].status}`
@@ -76319,17 +76473,17 @@ var init_aiCamera = __esm({
     router17.delete("/audit/:id", async (req, res) => {
       const { id } = req.params;
       try {
-        if (!import_fs47.default.existsSync(AUDIT_QUEUE_PATH)) {
+        if (!import_fs48.default.existsSync(AUDIT_QUEUE_PATH)) {
           return res.status(404).json({ error: "Audit queue not found" });
         }
-        const data = await import_fs47.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+        const data = await import_fs48.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
         let queue2 = JSON.parse(data || "[]");
         const initialLen = queue2.length;
         queue2 = queue2.filter((item) => item.id !== id);
         if (queue2.length === initialLen) {
           return res.status(404).json({ error: "Queue entry not found" });
         }
-        await import_fs47.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
+        await import_fs48.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
         res.json({ success: true, message: `Queue entry ${id} deleted` });
       } catch (err) {
         res.status(500).json({ error: "Failed to delete entry" });
@@ -76384,17 +76538,17 @@ __export(whatsappInvoiceService_exports, {
   WhatsappInvoiceService: () => WhatsappInvoiceService,
   whatsappInvoiceService: () => whatsappInvoiceService
 });
-var import_path44, import_fs48, UPLOADS_DIR3, WhatsappInvoiceService, whatsappInvoiceService;
+var import_path45, import_fs49, UPLOADS_DIR3, WhatsappInvoiceService, whatsappInvoiceService;
 var init_whatsappInvoiceService = __esm({
   "src/services/whatsappInvoiceService.ts"() {
     "use strict";
     init_connection();
-    import_path44 = __toESM(require("path"), 1);
-    import_fs48 = __toESM(require("fs"), 1);
+    import_path45 = __toESM(require("path"), 1);
+    import_fs49 = __toESM(require("fs"), 1);
     init_pdfInvoiceService();
     init_whatsappQueueWorker();
     init_config();
-    UPLOADS_DIR3 = import_path44.default.resolve(getAppDataDir(), "uploads");
+    UPLOADS_DIR3 = import_path45.default.resolve(getAppDataDir(), "uploads");
     WhatsappInvoiceService = class {
       async sendInvoiceViaWhatsApp(invoiceId) {
         let db2;
@@ -76500,13 +76654,13 @@ var init_whatsappInvoiceService = __esm({
           caption += `\u2014 AI Pharmacy OS`;
           let pdfPath = void 0;
           try {
-            if (!import_fs48.default.existsSync(UPLOADS_DIR3)) {
-              import_fs48.default.mkdirSync(UPLOADS_DIR3, { recursive: true });
+            if (!import_fs49.default.existsSync(UPLOADS_DIR3)) {
+              import_fs49.default.mkdirSync(UPLOADS_DIR3, { recursive: true });
             }
             const pdfFilename = `invoice_${invoice.invoice_no.replace(/[^a-zA-Z0-9-]/g, "_")}_${Date.now()}.pdf`;
-            const fullPdfPath = import_path44.default.join(UPLOADS_DIR3, pdfFilename);
+            const fullPdfPath = import_path45.default.join(UPLOADS_DIR3, pdfFilename);
             await pdfInvoiceService.generateInvoicePdf(invoiceId, fullPdfPath);
-            if (import_fs48.default.existsSync(fullPdfPath)) {
+            if (import_fs49.default.existsSync(fullPdfPath)) {
               pdfPath = fullPdfPath;
             }
           } catch (pdfErr) {
@@ -77477,14 +77631,14 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
   }
   return { fulfilledCount: results.length, results };
 }
-var import_express19, import_path45, import_fs49, router19, refillsTableInitialized, handlePatientProfileUpdate, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
+var import_express19, import_path46, import_fs50, router19, refillsTableInitialized, handlePatientProfileUpdate, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
 var init_refills = __esm({
   "src/routes/refills.ts"() {
     "use strict";
     import_express19 = __toESM(require("express"), 1);
     init_connection();
-    import_path45 = __toESM(require("path"), 1);
-    import_fs49 = __toESM(require("fs"), 1);
+    import_path46 = __toESM(require("path"), 1);
+    import_fs50 = __toESM(require("fs"), 1);
     init_refillService();
     init_languageDetector();
     init_whatsappClient();
@@ -78948,12 +79102,12 @@ var init_refills = __esm({
         );
         let pdfPath = void 0;
         try {
-          const uploadsDir = import_path45.default.resolve(getAppDataDir(), "uploads");
-          if (!import_fs49.default.existsSync(uploadsDir)) {
-            import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path46.default.resolve(getAppDataDir(), "uploads");
+          if (!import_fs50.default.existsSync(uploadsDir)) {
+            import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const pdfFilename = `refill_slip_${id}_${Date.now()}.pdf`;
-          const fullPdfPath = import_path45.default.join(uploadsDir, pdfFilename);
+          const fullPdfPath = import_path46.default.join(uploadsDir, pdfFilename);
           await pdfInvoiceService.generateRefillSchedulePdf(Number(id), fullPdfPath);
           pdfPath = fullPdfPath;
         } catch (pdfErr) {
@@ -81543,22 +81697,22 @@ __export(autoUpdateService_exports, {
   autoUpdateService: () => autoUpdateService
 });
 function getStagingDir() {
-  const appDir = import_path46.default.dirname(process.execPath);
+  const appDir = import_path47.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
-  const baseDir = isSeaBinary ? appDir : import_path46.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
-  return import_path46.default.join(baseDir, "updates", "staging");
+  const baseDir = isSeaBinary ? appDir : import_path47.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
+  return import_path47.default.join(baseDir, "updates", "staging");
 }
 function getUpdaterPath() {
-  const appDir = import_path46.default.dirname(process.execPath);
+  const appDir = import_path47.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
-  if (isSeaBinary) return import_path46.default.join(appDir, "Updater.bat");
-  return import_path46.default.join(process.cwd(), "packaging", "Updater.bat");
+  if (isSeaBinary) return import_path47.default.join(appDir, "Updater.bat");
+  return import_path47.default.join(process.cwd(), "packaging", "Updater.bat");
 }
 function getLogPath() {
-  const appDir = import_path46.default.dirname(process.execPath);
+  const appDir = import_path47.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
-  const baseDir = isSeaBinary ? appDir : import_path46.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
-  return import_path46.default.join(baseDir, "logs", "updater.log");
+  const baseDir = isSeaBinary ? appDir : import_path47.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
+  return import_path47.default.join(baseDir, "logs", "updater.log");
 }
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
@@ -81575,13 +81729,13 @@ function downloadFile(url, dest) {
         if (res.statusCode !== 200) {
           return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
         }
-        const fileStream = import_fs50.default.createWriteStream(tempDest);
+        const fileStream = import_fs51.default.createWriteStream(tempDest);
         res.pipe(fileStream);
         fileStream.on("finish", () => {
           fileStream.close(() => {
             try {
-              if (import_fs50.default.existsSync(dest)) import_fs50.default.unlinkSync(dest);
-              import_fs50.default.renameSync(tempDest, dest);
+              if (import_fs51.default.existsSync(dest)) import_fs51.default.unlinkSync(dest);
+              import_fs51.default.renameSync(tempDest, dest);
               resolve();
             } catch (renameErr) {
               reject(renameErr);
@@ -81590,7 +81744,7 @@ function downloadFile(url, dest) {
         });
       }).on("error", (err) => {
         try {
-          if (import_fs50.default.existsSync(tempDest)) import_fs50.default.unlinkSync(tempDest);
+          if (import_fs51.default.existsSync(tempDest)) import_fs51.default.unlinkSync(tempDest);
         } catch (_) {
         }
         reject(new Error(`DOWNLOAD_FAILED: ${err.message}`));
@@ -81602,18 +81756,18 @@ function downloadFile(url, dest) {
 function computeSha256(filePath) {
   return new Promise((resolve, reject) => {
     const hash = import_crypto7.default.createHash("sha256");
-    const stream = import_fs50.default.createReadStream(filePath);
+    const stream = import_fs51.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("end", () => resolve(hash.digest("hex")));
     stream.on("error", reject);
   });
 }
-var import_fs50, import_path46, import_os2, import_https, import_http, import_crypto7, import_child_process6, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+var import_fs51, import_path47, import_os2, import_https, import_http, import_crypto7, import_child_process6, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
 var init_autoUpdateService = __esm({
   "src/services/autoUpdateService.ts"() {
     "use strict";
-    import_fs50 = __toESM(require("fs"), 1);
-    import_path46 = __toESM(require("path"), 1);
+    import_fs51 = __toESM(require("fs"), 1);
+    import_path47 = __toESM(require("path"), 1);
     import_os2 = __toESM(require("os"), 1);
     import_https = __toESM(require("https"), 1);
     import_http = __toESM(require("http"), 1);
@@ -81686,8 +81840,8 @@ var init_autoUpdateService = __esm({
           }
           const stagingDir = getStagingDir();
           const zipFileName = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
-          const zipPath = zipFileName ? import_path46.default.join(stagingDir, zipFileName) : null;
-          const alreadyDownloaded = zipPath ? import_fs50.default.existsSync(zipPath) : false;
+          const zipPath = zipFileName ? import_path47.default.join(stagingDir, zipFileName) : null;
+          const alreadyDownloaded = zipPath ? import_fs51.default.existsSync(zipPath) : false;
           this.lastResult = {
             ...result,
             downloading: false,
@@ -81742,7 +81896,7 @@ var init_autoUpdateService = __esm({
         const { url, dest, version, sha256: expectedSha256, changelog, reason = "auto" } = opts;
         try {
           const stagingDir = getStagingDir();
-          import_fs50.default.mkdirSync(stagingDir, { recursive: true });
+          import_fs51.default.mkdirSync(stagingDir, { recursive: true });
           console.log(`[AutoUpdate] Silently downloading update v${version} to staging...`);
           await downloadFile(url, dest);
           if (expectedSha256) {
@@ -81751,7 +81905,7 @@ var init_autoUpdateService = __esm({
             if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
               console.error(`[AutoUpdate] CHECKSUM_MISMATCH \u2014 aborting. Expected: ${expectedSha256}, got: ${actualSha256}`);
               try {
-                import_fs50.default.unlinkSync(dest);
+                import_fs51.default.unlinkSync(dest);
               } catch (_) {
               }
               this.isDownloading = false;
@@ -81775,7 +81929,7 @@ var init_autoUpdateService = __esm({
         } catch (err) {
           this.isDownloading = false;
           try {
-            if (import_fs50.default.existsSync(dest + ".tmp")) import_fs50.default.unlinkSync(dest + ".tmp");
+            if (import_fs51.default.existsSync(dest + ".tmp")) import_fs51.default.unlinkSync(dest + ".tmp");
           } catch (_) {
           }
           console.warn("[AutoUpdate] DOWNLOAD_FAILED:", err.message);
@@ -81799,15 +81953,15 @@ var init_autoUpdateService = __esm({
         }
         const stagingDir = getStagingDir();
         const zipFileName = `AI-Pharmacy-OS-Update-v${this.lastResult.latestVersion}.zip`;
-        const zipPath = import_path46.default.join(stagingDir, zipFileName);
-        if (!import_fs50.default.existsSync(zipPath)) {
+        const zipPath = import_path47.default.join(stagingDir, zipFileName);
+        if (!import_fs51.default.existsSync(zipPath)) {
           throw new Error("Update file has not finished downloading yet.");
         }
         const updaterPath = getUpdaterPath();
-        if (!import_fs50.default.existsSync(updaterPath)) {
+        if (!import_fs51.default.existsSync(updaterPath)) {
           throw new Error(`Updater.bat not found at: ${updaterPath}`);
         }
-        const installDir = import_path46.default.dirname(process.execPath);
+        const installDir = import_path47.default.dirname(process.execPath);
         const logPath = getLogPath();
         const sha256 = this.lastResult.sha256 || "";
         console.log("[AutoUpdate] Spawning dedicated Updater.bat...");
@@ -81839,12 +81993,12 @@ var init_autoUpdateService = __esm({
        */
       async checkFailedUpdate() {
         const stagingDir = getStagingDir();
-        const failurePath = import_path46.default.join(stagingDir, "failure.json");
-        if (!import_fs50.default.existsSync(failurePath)) return null;
+        const failurePath = import_path47.default.join(stagingDir, "failure.json");
+        if (!import_fs51.default.existsSync(failurePath)) return null;
         try {
-          const raw = import_fs50.default.readFileSync(failurePath, "utf8");
+          const raw = import_fs51.default.readFileSync(failurePath, "utf8");
           const info = JSON.parse(raw);
-          import_fs50.default.unlinkSync(failurePath);
+          import_fs51.default.unlinkSync(failurePath);
           const { reportCrashTelemetry: reportCrashTelemetry2 } = await Promise.resolve().then(() => (init_licenseService(), licenseService_exports));
           await reportCrashTelemetry2({
             errorType: "UPDATE_INSTALL_FAILED",
@@ -82999,8 +83153,8 @@ async function processPrescriptionAndNotifyPharmacy(input) {
       try {
         console.log(`[PrescriptionIntel] Scanning ${imagePaths.length} prescription photo(s) for Order #${orderId}...`);
         const { prescriptionOrchestratorService: prescriptionOrchestratorService2 } = await Promise.resolve().then(() => (init_prescriptionOrchestratorService(), prescriptionOrchestratorService_exports));
-        const existingPaths = imagePaths.filter((p) => import_fs51.default.existsSync(p));
-        const buffers = await Promise.all(existingPaths.map((p) => import_fs51.default.promises.readFile(p)));
+        const existingPaths = imagePaths.filter((p) => import_fs52.default.existsSync(p));
+        const buffers = await Promise.all(existingPaths.map((p) => import_fs52.default.promises.readFile(p)));
         if (buffers.length > 0) {
           const scanResult = buffers.length > 1 ? await prescriptionOrchestratorService2.scanPrescriptionBundle(buffers, { source: "website" }) : await prescriptionOrchestratorService2.scanPrescriptionImage({
             buffer: buffers[0],
@@ -83115,7 +83269,7 @@ async function processPrescriptionAndNotifyPharmacy(input) {
     if (pharmacyPhone) {
       console.log(`[PrescriptionIntel] Dispatching briefing for Order #${orderId} to Pharmacy WhatsApp: ${pharmacyPhone}`);
       try {
-        if (primaryImagePath && import_fs51.default.existsSync(primaryImagePath)) {
+        if (primaryImagePath && import_fs52.default.existsSync(primaryImagePath)) {
           await sendMessage(pharmacyPhone, primaryImagePath, briefingText);
         } else {
           await sendMessage(pharmacyPhone, void 0, briefingText);
@@ -83158,11 +83312,11 @@ async function processPrescriptionAndNotifyPharmacy(input) {
     console.error(`[PrescriptionIntel] Error processing prescription for Order #${orderId}:`, err);
   }
 }
-var import_fs51;
+var import_fs52;
 var init_prescriptionIntelService = __esm({
   "src/services/prescriptionIntelService.ts"() {
     "use strict";
-    import_fs51 = __toESM(require("fs"), 1);
+    import_fs52 = __toESM(require("fs"), 1);
     init_connection();
     init_pharmarack();
     init_whatsappClient();
@@ -83175,13 +83329,13 @@ var websiteOrders_exports = {};
 __export(websiteOrders_exports, {
   default: () => websiteOrders_default
 });
-var import_express29, import_fs52, import_path47, router27, broadcastOrdersChanged, websiteOrders_default;
+var import_express29, import_fs53, import_path48, router27, broadcastOrdersChanged, websiteOrders_default;
 var init_websiteOrders = __esm({
   "src/routes/websiteOrders.ts"() {
     "use strict";
     import_express29 = __toESM(require("express"), 1);
-    import_fs52 = __toESM(require("fs"), 1);
-    import_path47 = __toESM(require("path"), 1);
+    import_fs53 = __toESM(require("fs"), 1);
+    import_path48 = __toESM(require("path"), 1);
     init_config();
     init_connection();
     init_returnWindowService();
@@ -83567,13 +83721,13 @@ Please collect and pay at our pharmacy counter.`;
         if (screenshot_base64 && typeof screenshot_base64 === "string") {
           try {
             const cleanBase64 = screenshot_base64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "");
-            const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads");
-            if (!import_fs52.default.existsSync(uploadsDir)) {
-              import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = import_path48.default.resolve(getAppDataDir(), "uploads");
+            if (!import_fs53.default.existsSync(uploadsDir)) {
+              import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
             }
             const savedFileName = `payment_proof_SO-${orderId}.jpg`;
-            const diskPath = import_path47.default.join(uploadsDir, savedFileName);
-            import_fs52.default.writeFileSync(diskPath, Buffer.from(cleanBase64, "base64"));
+            const diskPath = import_path48.default.join(uploadsDir, savedFileName);
+            import_fs53.default.writeFileSync(diskPath, Buffer.from(cleanBase64, "base64"));
             proofImagePath = `/uploads/${savedFileName}`;
           } catch (saveErr) {
             console.error("[WebsiteOrdersRoute] Failed to save payment proof from portal:", saveErr);
@@ -84521,16 +84675,16 @@ We are preparing your order. Thank you!
         const savedUrls = [];
         const savedFilePaths = [];
         if (imageList.length > 0) {
-          const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-          if (!import_fs52.default.existsSync(uploadsDir)) {
-            import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path48.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+          if (!import_fs53.default.existsSync(uploadsDir)) {
+            import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
           }
           for (let i = 0; i < imageList.length; i++) {
             const rawImg = imageList[i];
             const base64Str = rawImg.replace(/^data:image\/\w+;base64,/, "");
             const buffer = Buffer.from(base64Str, "base64");
             const safeName = `Rx_Web_${Date.now()}_${i + 1}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-            const fullPath = import_path47.default.join(uploadsDir, safeName);
+            const fullPath = import_path48.default.join(uploadsDir, safeName);
             await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
             savedUrls.push(`/uploads/prescriptions/${safeName}`);
             savedFilePaths.push(fullPath);
@@ -84936,14 +85090,14 @@ __export(cloudflareTunnelService_exports, {
   cloudflareTunnelService: () => cloudflareTunnelService,
   default: () => cloudflareTunnelService_default
 });
-var import_child_process7, import_http2, import_fs53, import_path48, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
+var import_child_process7, import_http2, import_fs54, import_path49, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
 var init_cloudflareTunnelService = __esm({
   "src/services/cloudflareTunnelService.ts"() {
     "use strict";
     import_child_process7 = require("child_process");
     import_http2 = __toESM(require("http"), 1);
-    import_fs53 = __toESM(require("fs"), 1);
-    import_path48 = __toESM(require("path"), 1);
+    import_fs54 = __toESM(require("fs"), 1);
+    import_path49 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     init_config();
@@ -85007,21 +85161,21 @@ var init_cloudflareTunnelService = __esm({
         const isWindows = process.platform === "win32";
         if (isWindows) {
           const candidates = [
-            import_path48.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
-            import_path48.default.join(process.cwd(), "cloudflared.exe")
+            import_path49.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
+            import_path49.default.join(process.cwd(), "cloudflared.exe")
           ];
           for (const p of candidates) {
-            if (import_fs53.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
+            if (import_fs54.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
           }
           const localAppData = process.env.LOCALAPPDATA;
           if (localAppData) {
-            const npxDir = import_path48.default.join(localAppData, "npm-cache", "_npx");
-            if (import_fs53.default.existsSync(npxDir)) {
+            const npxDir = import_path49.default.join(localAppData, "npm-cache", "_npx");
+            if (import_fs54.default.existsSync(npxDir)) {
               try {
-                const dirs = import_fs53.default.readdirSync(npxDir);
+                const dirs = import_fs54.default.readdirSync(npxDir);
                 for (const d of dirs) {
-                  const binPath = import_path48.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
-                  if (import_fs53.default.existsSync(binPath)) {
+                  const binPath = import_path49.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
+                  if (import_fs54.default.existsSync(binPath)) {
                     return { binary: binPath, spawnArgsPrefix: [], useShell: false };
                   }
                 }
@@ -85970,9 +86124,9 @@ function loadCatalogAndImages() {
     return { catalog: catalogCache, images: imageStateCache };
   }
   try {
-    const csvPath = import_path49.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-    if (import_fs54.default.existsSync(csvPath)) {
-      const content = import_fs54.default.readFileSync(csvPath, "utf-8");
+    const csvPath = import_path50.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+    if (import_fs55.default.existsSync(csvPath)) {
+      const content = import_fs55.default.readFileSync(csvPath, "utf-8");
       const lines = content.split(/\r?\n/);
       const items = [];
       for (let i = 1; i < lines.length; i++) {
@@ -86004,9 +86158,9 @@ function loadCatalogAndImages() {
         });
       }
       try {
-        const clinicalCsvPath = import_path49.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
-        if (import_fs54.default.existsSync(clinicalCsvPath)) {
-          const clinContent = import_fs54.default.readFileSync(clinicalCsvPath, "utf-8");
+        const clinicalCsvPath = import_path50.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
+        if (import_fs55.default.existsSync(clinicalCsvPath)) {
+          const clinContent = import_fs55.default.readFileSync(clinicalCsvPath, "utf-8");
           const clinLines = clinContent.split(/\r?\n/);
           for (let j = 1; j < clinLines.length; j++) {
             const clinLine = clinLines[j].trim();
@@ -86037,9 +86191,9 @@ function loadCatalogAndImages() {
     catalogCache = [];
   }
   try {
-    const statePath = import_path49.default.resolve(process.cwd(), "data/image_download_state.json");
-    if (import_fs54.default.existsSync(statePath)) {
-      const stateData = JSON.parse(import_fs54.default.readFileSync(statePath, "utf-8"));
+    const statePath = import_path50.default.resolve(process.cwd(), "data/image_download_state.json");
+    if (import_fs55.default.existsSync(statePath)) {
+      const stateData = JSON.parse(import_fs55.default.readFileSync(statePath, "utf-8"));
       imageStateCache = stateData.products || {};
     }
   } catch (e) {
@@ -86048,14 +86202,14 @@ function loadCatalogAndImages() {
   lastCacheLoad = now;
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
-var import_express30, import_crypto12, import_fs54, import_path49, router28, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var import_express30, import_crypto12, import_fs55, import_path50, router28, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
     import_express30 = __toESM(require("express"), 1);
     import_crypto12 = __toESM(require("crypto"), 1);
-    import_fs54 = __toESM(require("fs"), 1);
-    import_path49 = __toESM(require("path"), 1);
+    import_fs55 = __toESM(require("fs"), 1);
+    import_path50 = __toESM(require("path"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_eventService();
@@ -87376,8 +87530,8 @@ ${upiUri}
       }
     });
     router28.get("/standalone-catalog", (_req, res) => {
-      const filePath = import_path49.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
-      if (import_fs54.default.existsSync(filePath)) {
+      const filePath = import_path50.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
+      if (import_fs55.default.existsSync(filePath)) {
         return res.sendFile(filePath);
       }
       res.status(404).send("Live catalog website file not found");
@@ -89372,7 +89526,7 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express36, import_path50, import_fs55, import_pdfkit4, router34, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express36, import_path51, import_fs56, import_pdfkit4, router34, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
@@ -89389,8 +89543,8 @@ var init_sales = __esm({
     init_verificationService();
     init_activityLogger();
     init_eventService();
-    import_path50 = __toESM(require("path"), 1);
-    import_fs55 = __toESM(require("fs"), 1);
+    import_path51 = __toESM(require("path"), 1);
+    import_fs56 = __toESM(require("fs"), 1);
     import_pdfkit4 = __toESM(require("pdfkit"), 1);
     init_barcodeService();
     init_config();
@@ -90342,13 +90496,13 @@ var init_sales = __esm({
                 waMsg += `\u2014 AI Pharmacy OS`;
                 let pdfPath = void 0;
                 try {
-                  const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads");
-                  if (!import_fs55.default.existsSync(uploadsDir)) {
-                    import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
+                  const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
+                  if (!import_fs56.default.existsSync(uploadsDir)) {
+                    import_fs56.default.mkdirSync(uploadsDir, { recursive: true });
                   }
                   const sanitizeNo = String(invoice_no || "").replace(/[^a-zA-Z0-9-]/g, "_");
                   const pdfFilename = `invoice_${sanitizeNo}_${Date.now()}.pdf`;
-                  const fullPdfPath = import_path50.default.join(uploadsDir, pdfFilename);
+                  const fullPdfPath = import_path51.default.join(uploadsDir, pdfFilename);
                   const { pdfInvoiceService: pdfInvoiceService2 } = await Promise.resolve().then(() => (init_pdfInvoiceService(), pdfInvoiceService_exports));
                   await pdfInvoiceService2.generateInvoicePdf(invoiceId, fullPdfPath);
                   pdfPath = fullPdfPath;
@@ -91508,14 +91662,14 @@ var init_sales = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs55.default.existsSync(uploadsDir)) {
-          import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs56.default.existsSync(uploadsDir)) {
+          import_fs56.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path50.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs55.default.createWriteStream(pdfPath);
+        const pdfPath = import_path51.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs56.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -91541,7 +91695,7 @@ var init_sales = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path50.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path51.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -92592,14 +92746,14 @@ var init_sales = __esm({
         if (!image) {
           return res.status(400).json({ error: "Image data (base64) is required" });
         }
-        const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-        if (!import_fs55.default.existsSync(uploadsDir)) {
-          import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+        if (!import_fs56.default.existsSync(uploadsDir)) {
+          import_fs56.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const base64Str = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Str, "base64");
         const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-        const fullPath = import_path50.default.join(uploadsDir, safeName);
+        const fullPath = import_path51.default.join(uploadsDir, safeName);
         await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
         const relativeUrl = `/uploads/prescriptions/${safeName}`;
         res.json({ success: true, image_path: relativeUrl });
@@ -93002,13 +93156,13 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios4, import_fs56, import_path51, import_tesseract4, InvoiceVisionService, invoiceVisionService;
+var import_axios4, import_fs57, import_path52, import_tesseract4, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
     import_axios4 = __toESM(require("axios"), 1);
-    import_fs56 = __toESM(require("fs"), 1);
-    import_path51 = __toESM(require("path"), 1);
+    import_fs57 = __toESM(require("fs"), 1);
+    import_path52 = __toESM(require("path"), 1);
     import_tesseract4 = require("tesseract.js");
     init_connection();
     init_nameNormalizer();
@@ -93019,14 +93173,14 @@ var init_invoiceVisionService = __esm({
        * Parse a purchase invoice from an image buffer (JPEG/PNG/WebP/PDF).
        */
       async parseInvoiceImage(buffer, mimeType = "image/jpeg", originalFilename = "invoice.jpg") {
-        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
-        if (!import_fs56.default.existsSync(uploadsDir)) {
-          import_fs56.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
+        if (!import_fs57.default.existsSync(uploadsDir)) {
+          import_fs57.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const ext = import_path51.default.extname(originalFilename) || ".jpg";
+        const ext = import_path52.default.extname(originalFilename) || ".jpg";
         const safeFilename = `PB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
-        const savedPath = import_path51.default.join(uploadsDir, safeFilename);
-        import_fs56.default.writeFileSync(savedPath, buffer);
+        const savedPath = import_path52.default.join(uploadsDir, safeFilename);
+        import_fs57.default.writeFileSync(savedPath, buffer);
         const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
         let geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
         if (!geminiKey || geminiKey.trim() === "") {
@@ -93578,21 +93732,21 @@ function invalidateReconciliationCache() {
   reconciliationCache = null;
   inFlightReconciliationPromise = null;
 }
-var import_express38, import_path52, import_multer2, import_fs57, router36, upload2, batchLastPurchaseCache, BATCH_LAST_PURCHASE_TTL_MS, reconciliationCache, inFlightReconciliationPromise, RECONCILIATION_CACHE_TTL_MS, purchases_default;
+var import_express38, import_path53, import_multer2, import_fs58, router36, upload2, batchLastPurchaseCache, BATCH_LAST_PURCHASE_TTL_MS, reconciliationCache, inFlightReconciliationPromise, RECONCILIATION_CACHE_TTL_MS, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
     import_express38 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
-    import_path52 = __toESM(require("path"), 1);
+    import_path53 = __toESM(require("path"), 1);
     import_multer2 = __toESM(require("multer"), 1);
     init_productNameFilterService();
     init_emailService();
     init_config();
     init_inventoryActive();
     init_inventoryCache();
-    import_fs57 = __toESM(require("fs"), 1);
+    import_fs58 = __toESM(require("fs"), 1);
     init_medicineService();
     init_orderFulfillmentService();
     init_summaryCacheService();
@@ -93626,17 +93780,17 @@ var init_purchases = __esm({
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const uploadsDir = process.env.UPLOADS_DIR || import_path52.default.join(getAppDataDir(), "uploads");
-        if (!import_fs57.default.existsSync(uploadsDir)) {
-          import_fs57.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = process.env.UPLOADS_DIR || import_path53.default.join(getAppDataDir(), "uploads");
+        if (!import_fs58.default.existsSync(uploadsDir)) {
+          import_fs58.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const sanitizedFilename = import_path52.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        const tempPath = import_path52.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
-        import_fs57.default.writeFileSync(tempPath, req.file.buffer);
+        const sanitizedFilename = import_path53.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const tempPath = import_path53.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
+        import_fs58.default.writeFileSync(tempPath, req.file.buffer);
         const result = await emailService.parseAndImportAttachment(tempPath, false);
         if (!result.success) {
           try {
-            import_fs57.default.unlinkSync(tempPath);
+            import_fs58.default.unlinkSync(tempPath);
           } catch {
           }
           return res.status(400).json({ error: "Failed to parse invoice file" });
@@ -95551,7 +95705,7 @@ var init_purchases = __esm({
         let parsedTotalAmount = 0;
         let parsedGlobalCdPer = 0;
         for (const att of dbAttachments) {
-          if (att.local_path && import_fs57.default.existsSync(att.local_path)) {
+          if (att.local_path && import_fs58.default.existsSync(att.local_path)) {
             try {
               const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
               if (resParse && resParse.success) {
@@ -95660,7 +95814,7 @@ var init_purchases = __esm({
         if (parsedItems.length === 0) {
           const dbAttachments = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachments) {
-            if (att.local_path && import_fs57.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs58.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -95696,7 +95850,7 @@ var init_purchases = __esm({
         if (!resolvedInvoiceDate) {
           const dbAttachmentsForDate = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachmentsForDate) {
-            if (!resolvedInvoiceDate && att.local_path && import_fs57.default.existsSync(att.local_path)) {
+            if (!resolvedInvoiceDate && att.local_path && import_fs58.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse?.success && resParse.invoice_date) {
@@ -95987,14 +96141,14 @@ var init_purchases = __esm({
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
         const { default: PDFDocument6 } = await import("pdfkit");
-        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs57.default.existsSync(uploadsDir)) {
-          import_fs57.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs58.default.existsSync(uploadsDir)) {
+          import_fs58.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new PDFDocument6({ size: [350, 220], margin: 15 });
         const sanitizeNo = billNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path52.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs57.default.createWriteStream(pdfPath);
+        const pdfPath = import_path53.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs58.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -96023,7 +96177,7 @@ var init_purchases = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path52.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path53.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -96482,14 +96636,14 @@ async function moveSupplierReturnStock(db2, returnId, oldLines, newLines, ledger
     });
   }
 }
-var import_express40, import_path53, import_fs58, import_pdfkit5, router38, RETURN_STOCK_LEDGER_TYPES, ReturnEditError, returns_default;
+var import_express40, import_path54, import_fs59, import_pdfkit5, router38, RETURN_STOCK_LEDGER_TYPES, ReturnEditError, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
     import_express40 = __toESM(require("express"), 1);
     init_connection();
-    import_path53 = __toESM(require("path"), 1);
-    import_fs58 = __toESM(require("fs"), 1);
+    import_path54 = __toESM(require("path"), 1);
+    import_fs59 = __toESM(require("fs"), 1);
     import_pdfkit5 = __toESM(require("pdfkit"), 1);
     init_aiCameraService();
     init_inventoryCache();
@@ -96704,8 +96858,8 @@ var init_returns = __esm({
         }
         pdfDoc = new import_pdfkit5.default();
         const filename = `financial-note-${Date.now()}.pdf`;
-        const outPath = import_path53.default.resolve(getAppDataDir(), "uploads", filename);
-        stream = import_fs58.default.createWriteStream(outPath);
+        const outPath = import_path54.default.resolve(getAppDataDir(), "uploads", filename);
+        stream = import_fs59.default.createWriteStream(outPath);
         pdfDoc.pipe(stream);
         pdfDoc.fontSize(20).text(`${type.charAt(0).toUpperCase() + type.slice(1)} Note`, { align: "center" });
         if (amount) {
@@ -98069,12 +98223,12 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   }
   let pdfPath = void 0;
   try {
-    const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads");
-    if (!import_fs59.default.existsSync(uploadsDir)) {
-      import_fs59.default.mkdirSync(uploadsDir, { recursive: true });
+    const uploadsDir = import_path55.default.resolve(getAppDataDir(), "uploads");
+    if (!import_fs60.default.existsSync(uploadsDir)) {
+      import_fs60.default.mkdirSync(uploadsDir, { recursive: true });
     }
     const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
-    const fullPdfPath = import_path54.default.join(uploadsDir, pdfFilename);
+    const fullPdfPath = import_path55.default.join(uploadsDir, pdfFilename);
     await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
     pdfPath = fullPdfPath;
   } catch (pdfErr) {
@@ -98143,14 +98297,14 @@ async function cancelPendingWhatsAppForOrder(db2, order) {
   } catch (_) {
   }
 }
-var import_express42, import_path54, import_fs59, router40, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, handleBatchStatusUpdate, orders_default;
+var import_express42, import_path55, import_fs60, router40, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, handleBatchStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
     import_express42 = __toESM(require("express"), 1);
     init_connection();
-    import_path54 = __toESM(require("path"), 1);
-    import_fs59 = __toESM(require("fs"), 1);
+    import_path55 = __toESM(require("path"), 1);
+    import_fs60 = __toESM(require("fs"), 1);
     init_whatsappClient();
     init_storeSettingsService();
     init_closureNotice();
@@ -100333,14 +100487,14 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express44, import_path55, import_fs60, router42, expiry_default;
+var import_express44, import_path56, import_fs61, router42, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
     import_express44 = __toESM(require("express"), 1);
     init_connection();
-    import_path55 = __toESM(require("path"), 1);
-    import_fs60 = __toESM(require("fs"), 1);
+    import_path56 = __toESM(require("path"), 1);
+    import_fs61 = __toESM(require("fs"), 1);
     init_reportExporter();
     init_config();
     router42 = import_express44.default.Router();
@@ -100351,11 +100505,11 @@ var init_expiry = __esm({
         const days = req.query.days ? parseInt(req.query.days, 10) : 90;
         date_to = getNDaysAheadString(days);
       }
-      const cacheDir = import_path55.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path56.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs60.default.existsSync(cacheDir);
-        const isInitialized = cacheDirExists && import_fs60.default.existsSync(import_path55.default.join(cacheDir, "manifest.json"));
+        const cacheDirExists = import_fs61.default.existsSync(cacheDir);
+        const isInitialized = cacheDirExists && import_fs61.default.existsSync(import_path56.default.join(cacheDir, "manifest.json"));
         if (!isInitialized) {
           console.log("[ExpiryCache] Cache directory or manifest missing. Using live SQL and triggering initial rebuild.");
           const db2 = await dbManager.getConnection();
@@ -100384,10 +100538,10 @@ var init_expiry = __esm({
         }
         let items = [];
         for (const ym of months) {
-          const filePath = import_path55.default.join(cacheDir, `expiry_${ym}.json`);
-          if (import_fs60.default.existsSync(filePath)) {
+          const filePath = import_path56.default.join(cacheDir, `expiry_${ym}.json`);
+          if (import_fs61.default.existsSync(filePath)) {
             try {
-              const raw = await import_fs60.default.promises.readFile(filePath, "utf-8");
+              const raw = await import_fs61.default.promises.readFile(filePath, "utf-8");
               items = items.concat(JSON.parse(raw));
             } catch (err) {
               console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -100410,12 +100564,12 @@ var init_expiry = __esm({
         date_to = getNDaysAheadString(days);
       }
       const format = req.query.format || "pdf";
-      const cacheDir = import_path55.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path56.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       let items = [];
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs60.default.existsSync(cacheDir);
-        const hasCacheFiles = cacheDirExists && import_fs60.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
+        const cacheDirExists = import_fs61.default.existsSync(cacheDir);
+        const hasCacheFiles = cacheDirExists && import_fs61.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
         if (!cacheDirExists || !hasCacheFiles) {
           const db2 = await dbManager.getConnection();
           items = await db2.all(`
@@ -100439,10 +100593,10 @@ var init_expiry = __esm({
           items = items.filter((item) => isDateInRange(item.expiry_date, date_from, date_to));
         } else {
           for (const ym of months) {
-            const filePath = import_path55.default.join(cacheDir, `expiry_${ym}.json`);
-            if (import_fs60.default.existsSync(filePath)) {
+            const filePath = import_path56.default.join(cacheDir, `expiry_${ym}.json`);
+            if (import_fs61.default.existsSync(filePath)) {
               try {
-                const raw = await import_fs60.default.promises.readFile(filePath, "utf-8");
+                const raw = await import_fs61.default.promises.readFile(filePath, "utf-8");
                 items = items.concat(JSON.parse(raw));
               } catch (err) {
                 console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -101264,28 +101418,28 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express48, import_crypto13, import_path56, import_fs61, import_multer3, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router46, upload_default;
+var import_express48, import_crypto13, import_path57, import_fs62, import_multer3, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router46, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
     import_express48 = __toESM(require("express"), 1);
     import_crypto13 = __toESM(require("crypto"), 1);
-    import_path56 = __toESM(require("path"), 1);
-    import_fs61 = __toESM(require("fs"), 1);
+    import_path57 = __toESM(require("path"), 1);
+    import_fs62 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
     init_connection();
     init_config();
-    UPLOAD_DIR = import_path56.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR4 = import_path56.default.join(UPLOAD_DIR, "temp");
-    RAW_DIR = import_path56.default.resolve(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs61.default.existsSync(UPLOAD_DIR)) {
-      import_fs61.default.mkdirSync(UPLOAD_DIR, { recursive: true });
+    UPLOAD_DIR = import_path57.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR4 = import_path57.default.join(UPLOAD_DIR, "temp");
+    RAW_DIR = import_path57.default.resolve(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs62.default.existsSync(UPLOAD_DIR)) {
+      import_fs62.default.mkdirSync(UPLOAD_DIR, { recursive: true });
     }
-    if (!import_fs61.default.existsSync(TEMP_DIR4)) {
-      import_fs61.default.mkdirSync(TEMP_DIR4, { recursive: true });
+    if (!import_fs62.default.existsSync(TEMP_DIR4)) {
+      import_fs62.default.mkdirSync(TEMP_DIR4, { recursive: true });
     }
-    if (!import_fs61.default.existsSync(RAW_DIR)) {
-      import_fs61.default.mkdirSync(RAW_DIR, { recursive: true });
+    if (!import_fs62.default.existsSync(RAW_DIR)) {
+      import_fs62.default.mkdirSync(RAW_DIR, { recursive: true });
     }
     ALLOWED_UPLOAD_EXTENSIONS = /\.(csv|xlsx?|pdf|zip|jpg|jpeg|png|gif|bmp|tiff?)$/i;
     MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
@@ -101316,18 +101470,18 @@ var init_upload = __esm({
           return res.status(400).json({ error: "No file uploaded" });
         }
         const tempPath = req.file.path;
-        const originalName = req.file.originalname || import_path56.default.basename(tempPath);
+        const originalName = req.file.originalname || import_path57.default.basename(tempPath);
         const timestamp = Date.now();
         const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const rawFileName = `${timestamp}-${sanitizedName}`;
-        const rawPath = import_path56.default.join(RAW_DIR, rawFileName);
-        import_fs61.default.copyFileSync(tempPath, rawPath);
+        const rawPath = import_path57.default.join(RAW_DIR, rawFileName);
+        import_fs62.default.copyFileSync(tempPath, rawPath);
         try {
-          import_fs61.default.unlinkSync(tempPath);
+          import_fs62.default.unlinkSync(tempPath);
         } catch (err) {
           console.warn("Failed to delete temporary upload file:", err);
         }
-        const ext = import_path56.default.extname(originalName).toLowerCase();
+        const ext = import_path57.default.extname(originalName).toLowerCase();
         if (![".csv", ".xlsx", ".xls", ".pdf"].includes(ext)) {
           return res.status(400).json({ error: "Unsupported file format. Please upload a CSV, PDF, or Excel file." });
         }
@@ -101361,13 +101515,13 @@ var catalogImages_exports = {};
 __export(catalogImages_exports, {
   default: () => catalogImages_default
 });
-var import_express49, import_path57, import_fs62, router47, catalogImages_default;
+var import_express49, import_path58, import_fs63, router47, catalogImages_default;
 var init_catalogImages = __esm({
   "src/routes/catalogImages.ts"() {
     "use strict";
     import_express49 = __toESM(require("express"), 1);
-    import_path57 = __toESM(require("path"), 1);
-    import_fs62 = __toESM(require("fs"), 1);
+    import_path58 = __toESM(require("path"), 1);
+    import_fs63 = __toESM(require("fs"), 1);
     init_catalogImageService();
     init_connection();
     init_whatsappQueueWorker();
@@ -101945,11 +102099,11 @@ var init_catalogImages = __esm({
         let usedImageRecord = null;
         if (livePhoto && livePhoto.data) {
           try {
-            const uploadsDir = import_path57.default.resolve(process.cwd(), "uploads/products");
-            if (!import_fs62.default.existsSync(uploadsDir)) import_fs62.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = import_path58.default.resolve(process.cwd(), "uploads/products");
+            if (!import_fs63.default.existsSync(uploadsDir)) import_fs63.default.mkdirSync(uploadsDir, { recursive: true });
             const filename = `counter-live-${medicineId}-${Date.now()}.jpg`;
-            const diskPath = import_path57.default.join(uploadsDir, filename);
-            import_fs62.default.writeFileSync(diskPath, Buffer.from(livePhoto.data, "base64"));
+            const diskPath = import_path58.default.join(uploadsDir, filename);
+            import_fs63.default.writeFileSync(diskPath, Buffer.from(livePhoto.data, "base64"));
             const webPath = `/uploads/products/${filename}`;
             const ins = await db2.run(
               `INSERT INTO catalog_images (medicine_id, image_path, thumbnail_path, image_source, verification_status, is_active, is_primary, match_source, created_at, updated_at)
@@ -101984,15 +102138,15 @@ var init_catalogImages = __esm({
               isPendingReview = true;
             }
             const relativePath = (usedImageRecord.image_path || usedImageRecord.thumbnail_path || "").replace(/^[/\\]+/, "");
-            const fullDiskPath = import_path57.default.resolve(process.cwd(), relativePath);
-            if (import_fs62.default.existsSync(fullDiskPath)) {
-              const buf = import_fs62.default.readFileSync(fullDiskPath);
-              const ext = import_path57.default.extname(fullDiskPath).toLowerCase();
+            const fullDiskPath = import_path58.default.resolve(process.cwd(), relativePath);
+            if (import_fs63.default.existsSync(fullDiskPath)) {
+              const buf = import_fs63.default.readFileSync(fullDiskPath);
+              const ext = import_path58.default.extname(fullDiskPath).toLowerCase();
               const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
               finalFileObj = {
                 mimetype: mime,
                 data: buf.toString("base64"),
-                filename: import_path57.default.basename(fullDiskPath)
+                filename: import_path58.default.basename(fullDiskPath)
               };
             }
           }
@@ -102080,12 +102234,12 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express50, import_fs63, router48, catalog_default;
+var import_express50, import_fs64, router48, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
     import_express50 = __toESM(require("express"), 1);
-    import_fs63 = __toESM(require("fs"), 1);
+    import_fs64 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
     router48 = import_express50.default.Router();
@@ -102291,9 +102445,9 @@ var init_catalog = __esm({
           await dbManager.close();
           return res.status(404).json({ error: "Job not found" });
         }
-        if (job.file_path && import_fs63.default.existsSync(job.file_path)) {
+        if (job.file_path && import_fs64.default.existsSync(job.file_path)) {
           try {
-            import_fs63.default.unlinkSync(job.file_path);
+            import_fs64.default.unlinkSync(job.file_path);
           } catch (err) {
             console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
           }
@@ -103830,20 +103984,20 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express53, import_fs64, import_path58, import_multer4, DATA_DIR2, REFERENCE_CSV2, router51, upload4, enrichment_default;
+var import_express53, import_fs65, import_path59, import_multer4, DATA_DIR2, REFERENCE_CSV2, router51, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
     import_express53 = __toESM(require("express"), 1);
-    import_fs64 = __toESM(require("fs"), 1);
-    import_path58 = __toESM(require("path"), 1);
+    import_fs65 = __toESM(require("fs"), 1);
+    import_path59 = __toESM(require("path"), 1);
     import_multer4 = __toESM(require("multer"), 1);
     init_connection();
     init_compositionEnricher();
     init_onlineDataEnricher();
     init_config();
-    DATA_DIR2 = import_path58.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV2 = import_path58.default.join(DATA_DIR2, "reference_medicines.csv");
+    DATA_DIR2 = import_path59.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV2 = import_path59.default.join(DATA_DIR2, "reference_medicines.csv");
     router51 = import_express53.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
     router51.get("/enrichment/status", async (_req, res) => {
@@ -103924,8 +104078,8 @@ var init_enrichment = __esm({
           return res.status(400).json({ error: "Only CSV files are accepted" });
         }
         const tmpPath = REFERENCE_CSV2 + ".tmp";
-        import_fs64.default.writeFileSync(tmpPath, req.file.buffer);
-        import_fs64.default.renameSync(tmpPath, REFERENCE_CSV2);
+        import_fs65.default.writeFileSync(tmpPath, req.file.buffer);
+        import_fs65.default.renameSync(tmpPath, REFERENCE_CSV2);
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
         res.json({
@@ -104442,12 +104596,12 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express55, import_fs65, router53, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express55, import_fs66, router53, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
     import_express55 = __toESM(require("express"), 1);
-    import_fs65 = __toESM(require("fs"), 1);
+    import_fs66 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
     init_distributorSyncHelper();
@@ -104561,9 +104715,9 @@ var init_distributors = __esm({
         try {
           const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [id]);
           for (const f of files) {
-            if (f.file_path && import_fs65.default.existsSync(f.file_path)) {
+            if (f.file_path && import_fs66.default.existsSync(f.file_path)) {
               try {
-                import_fs65.default.unlinkSync(f.file_path);
+                import_fs66.default.unlinkSync(f.file_path);
               } catch (e) {
                 console.warn("Failed to delete distributor file:", f.file_path, e);
               }
@@ -104842,15 +104996,15 @@ var init_notifications2 = __esm({
       }
     });
     router54.get("/notifications/download-apk", (_req, res) => {
-      const fs67 = require("fs");
-      const path60 = require("path");
+      const fs68 = require("fs");
+      const path61 = require("path");
       const candidatePaths = [
-        path60.join(process.cwd(), "data", "pharmacy-mobile.apk"),
-        path60.join(process.cwd(), "public", "pharmacy-mobile.apk"),
-        path60.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-        path60.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        path61.join(process.cwd(), "data", "pharmacy-mobile.apk"),
+        path61.join(process.cwd(), "public", "pharmacy-mobile.apk"),
+        path61.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
+        path61.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
       ];
-      const foundPath = candidatePaths.find((p) => fs67.existsSync(p));
+      const foundPath = candidatePaths.find((p) => fs68.existsSync(p));
       if (foundPath) {
         res.setHeader("Content-Type", "application/vnd.android.package-archive");
         return res.download(foundPath, "AI-Pharmacy-Mobile.apk");
@@ -105258,6 +105412,7 @@ var init_whatsappQueue2 = __esm({
     init_eventService();
     init_whatsappDeliveryRegister();
     init_distributorSyncHelper();
+    init_localTime();
     router55 = import_express57.default.Router();
     router55.get("/status", async (_req, res) => {
       try {
@@ -105376,7 +105531,6 @@ ${order.items || "Standard Pharmacy Order"}
         const shopRow = await db2.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
         const headerShopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || "AI Pharmacy";
         for (const [cleanBoyPhone, group] of boyGroups.entries()) {
-          const totalItems = group.orders.reduce((sum, o) => sum + (o.items?.length || 0), 0);
           let summaryMsg = `\u{1F3E5} *${headerShopName}*
 \u{1F4CB} *TODAY DISTRIBUTOR SUMMARY & TOTALS \u2014 ${dateLabel}*
 `;
@@ -105390,7 +105544,7 @@ ${order.items || "Standard Pharmacy Order"}
             const cleanP = normalizeWhatsAppPhone(o.phone || "");
             const last102 = cleanP.slice(-10);
             const phoneFormatted = last102.length === 10 ? `+91 ${last102.slice(0, 5)} ${last102.slice(5)}` : o.phone || "N/A";
-            summaryMsg += `${idx + 1}. *${o.storeName}* (${o.items?.length || 0} items)
+            summaryMsg += `${idx + 1}. *${o.storeName}*
     \u{1F4DE} Contact: ${phoneFormatted}
 `;
             if (includeMedicineList && Array.isArray(o.items) && o.items.length > 0) {
@@ -105410,8 +105564,6 @@ ${order.items || "Standard Pharmacy Order"}
 `;
           summaryMsg += `\u{1F69A} *Total Assigned Distributors:* ${group.orders.length}
 `;
-          summaryMsg += `\u{1F4E6} *Total Order Items:* ${totalItems}
-`;
           summaryMsg += `==================================`;
           const boyQueueId = await whatsappQueueWorker.enqueue(
             cleanBoyPhone,
@@ -105421,7 +105573,7 @@ ${order.items || "Standard Pharmacy Order"}
           );
           if (boyQueueId) enqueuedIds.push(boyQueueId);
         }
-        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
         for (const order of orders) {
           if (!order.phone || !order.message) continue;
           const cleanPhone = normalizeWhatsAppPhone(order.phone);
@@ -105462,13 +105614,12 @@ ${order.items || "Standard Pharmacy Order"}
             if (distQueueId) enqueuedIds.push(distQueueId);
           }
           try {
-            const today2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
             const placedAt = Date.now();
             await db2.run(
               `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
            VALUES (?, ?, ?, ?, ?, ?, 0, NULL)`,
               [
-                today2,
+                today,
                 order.storeId || null,
                 order.storeName,
                 JSON.stringify(order.items || []),
@@ -105482,7 +105633,7 @@ ${order.items || "Standard Pharmacy Order"}
                   `UPDATE distributor_dispatch_reminders
                SET delivery_boy_id = ?
                WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR distributor_id = ?)`,
-                  [order.deliveryBoyId, today2, order.storeName, order.storeId || null]
+                  [order.deliveryBoyId, today, order.storeName, order.storeId || null]
                 );
                 await syncDistributorPhoneAcrossTables(db2, {
                   id: order.storeId || void 0,
@@ -106202,9 +106353,9 @@ async function auditMigration(db2) {
 async function auditMobile() {
   const findings = [];
   try {
-    const botPath = import_path59.default.resolve(__dirname4, "..", "telegramBot.ts");
-    if (import_fs66.default.existsSync(botPath)) {
-      const src = import_fs66.default.readFileSync(botPath, "utf8");
+    const botPath = import_path60.default.resolve(__dirname4, "..", "telegramBot.ts");
+    if (import_fs67.default.existsSync(botPath)) {
+      const src = import_fs67.default.readFileSync(botPath, "utf8");
       const suspicious = /const\s+(FAKE|MOCK|DUMMY|SAMPLE)_?(STOCK|INVENTORY|MEDICINE)/i.test(src);
       if (suspicious) {
         findings.push(finding({
@@ -106420,12 +106571,12 @@ async function auditDatabaseIntegrity(db2) {
 }
 function readAppVersion() {
   const candidates = [
-    import_path59.default.resolve(__dirname4, "..", "..", "package.json"),
-    import_path59.default.resolve(process.cwd(), "package.json")
+    import_path60.default.resolve(__dirname4, "..", "..", "package.json"),
+    import_path60.default.resolve(process.cwd(), "package.json")
   ];
   for (const p of candidates) {
     try {
-      const pkg = JSON.parse(import_fs66.default.readFileSync(p, "utf8"));
+      const pkg = JSON.parse(import_fs67.default.readFileSync(p, "utf8"));
       if (pkg?.version) return String(pkg.version);
     } catch (_e) {
     }
@@ -106476,17 +106627,17 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs66, import_path59, import_url7, import_child_process8, __filename5, __dirname4;
+var import_fs67, import_path60, import_url7, import_child_process8, __filename5, __dirname4;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
-    import_fs66 = __toESM(require("fs"), 1);
-    import_path59 = __toESM(require("path"), 1);
+    import_fs67 = __toESM(require("fs"), 1);
+    import_path60 = __toESM(require("path"), 1);
     import_url7 = require("url");
     import_child_process8 = require("child_process");
     init_nameNormalizer();
     __filename5 = (0, import_url7.fileURLToPath)(import_meta_url);
-    __dirname4 = import_path59.default.dirname(__filename5);
+    __dirname4 = import_path60.default.dirname(__filename5);
   }
 });
 
@@ -107001,9 +107152,9 @@ async function startTieredPreWarm() {
 }
 function extractMedicinesWithPython(messageText) {
   return new Promise((resolve, reject) => {
-    const pythonExecutable = import_path60.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
-    const scriptPath = import_path60.default.resolve("python_scripts", "extract_medicine.py");
-    if (!import_fs67.default.existsSync(pythonExecutable) || !import_fs67.default.existsSync(scriptPath)) {
+    const pythonExecutable = import_path61.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
+    const scriptPath = import_path61.default.resolve("python_scripts", "extract_medicine.py");
+    if (!import_fs68.default.existsSync(pythonExecutable) || !import_fs68.default.existsSync(scriptPath)) {
       return resolve([]);
     }
     const pythonProcess = (0, import_child_process9.spawn)(pythonExecutable, [scriptPath, messageText]);
@@ -107253,7 +107404,7 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express60, import_compression, import_zlib5, import_cors, import_helmet, import_express_rate_limit, import_path60, import_child_process9, import_url8, import_fs67, import_axios5, __filename6, __dirname5, DB_PATH5, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express60, import_compression, import_zlib5, import_cors, import_helmet, import_express_rate_limit, import_path61, import_child_process9, import_url8, import_fs68, import_axios5, __filename6, __dirname5, DB_PATH5, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -107264,10 +107415,10 @@ var init_server = __esm({
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-    import_path60 = __toESM(require("path"), 1);
+    import_path61 = __toESM(require("path"), 1);
     import_child_process9 = require("child_process");
     import_url8 = require("url");
-    import_fs67 = __toESM(require("fs"), 1);
+    import_fs68 = __toESM(require("fs"), 1);
     import_axios5 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
@@ -107280,7 +107431,7 @@ var init_server = __esm({
     init_config();
     init_chromeBrowser();
     __filename6 = (0, import_url8.fileURLToPath)(import_meta_url);
-    __dirname5 = import_path60.default.dirname(__filename6);
+    __dirname5 = import_path61.default.dirname(__filename6);
     DB_PATH5 = config.dbPath;
     import_axios5.default.defaults.timeout = 2e4;
     schemaReady = false;
@@ -107318,15 +107469,15 @@ var init_server = __esm({
     });
     UPLOAD_DIR2 = config.uploadDir;
     TEMP_DIR5 = config.tempDir;
-    RAW_DIR2 = import_path60.default.join(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs67.default.existsSync(UPLOAD_DIR2)) {
-      import_fs67.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
+    RAW_DIR2 = import_path61.default.join(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs68.default.existsSync(UPLOAD_DIR2)) {
+      import_fs68.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
     }
-    if (!import_fs67.default.existsSync(TEMP_DIR5)) {
-      import_fs67.default.mkdirSync(TEMP_DIR5, { recursive: true });
+    if (!import_fs68.default.existsSync(TEMP_DIR5)) {
+      import_fs68.default.mkdirSync(TEMP_DIR5, { recursive: true });
     }
-    if (!import_fs67.default.existsSync(RAW_DIR2)) {
-      import_fs67.default.mkdirSync(RAW_DIR2, { recursive: true });
+    if (!import_fs68.default.existsSync(RAW_DIR2)) {
+      import_fs68.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
     app.use((0, import_compression.default)({
       brotli: {
@@ -107395,10 +107546,10 @@ var init_server = __esm({
       next(err);
     });
     app.use("/uploads", import_express60.default.static(UPLOAD_DIR2));
-    app.use("/products", import_express60.default.static(import_path60.default.resolve(process.cwd(), "frontend/public/products")));
-    app.use("/products", import_express60.default.static(import_path60.default.resolve(process.cwd(), "uploads/products")));
-    app.use("/data/search_screenshots", import_express60.default.static(import_path60.default.join(getAppDataDir(), "data", "search_screenshots")));
-    app.use("/data/inbound_media", import_express60.default.static(import_path60.default.resolve(process.cwd(), "data", "inbound_media")));
+    app.use("/products", import_express60.default.static(import_path61.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express60.default.static(import_path61.default.resolve(process.cwd(), "uploads/products")));
+    app.use("/data/search_screenshots", import_express60.default.static(import_path61.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express60.default.static(import_path61.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (_req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -107520,14 +107671,14 @@ var init_server = __esm({
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicineAvailability(), medicineAvailability_exports))));
     appDataDir2 = getAppDataDir();
     frontendCandidates = [
-      import_path60.default.resolve(appDataDir2, "frontend", "dist"),
-      import_path60.default.resolve(process.cwd(), "frontend", "dist"),
-      import_path60.default.resolve(__dirname5, "..", "frontend", "dist"),
-      import_path60.default.resolve(__dirname5, "..", "..", "frontend", "dist"),
-      import_path60.default.resolve(process.cwd(), "dist"),
-      import_path60.default.resolve(appDataDir2, "dist")
+      import_path61.default.resolve(appDataDir2, "frontend", "dist"),
+      import_path61.default.resolve(process.cwd(), "frontend", "dist"),
+      import_path61.default.resolve(__dirname5, "..", "frontend", "dist"),
+      import_path61.default.resolve(__dirname5, "..", "..", "frontend", "dist"),
+      import_path61.default.resolve(process.cwd(), "dist"),
+      import_path61.default.resolve(appDataDir2, "dist")
     ];
-    frontendDist = frontendCandidates.find((dir) => import_fs67.default.existsSync(import_path60.default.join(dir, "index.html"))) || frontendCandidates[0];
+    frontendDist = frontendCandidates.find((dir) => import_fs68.default.existsSync(import_path61.default.join(dir, "index.html"))) || frontendCandidates[0];
     app.use(import_express60.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
@@ -107543,8 +107694,8 @@ var init_server = __esm({
       if (req.path.startsWith("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff2?|ttf|map)$/i.test(req.path)) {
         return res.status(404).send("Asset not found");
       }
-      const indexPath = import_path60.default.join(frontendDist, "index.html");
-      if (import_fs67.default.existsSync(indexPath)) {
+      const indexPath = import_path61.default.join(frontendDist, "index.html");
+      if (import_fs68.default.existsSync(indexPath)) {
         res.setHeader("Cache-Control", "no-cache");
         return res.sendFile(indexPath);
       }
