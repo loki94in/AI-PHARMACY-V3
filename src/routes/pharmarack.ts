@@ -3552,11 +3552,17 @@ router.get('/sent-orders', async (req, res) => {
       targetDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     }
 
-    // Ensure any synced orders for targetDate with missing placed rows or missing items are backfilled
-    try {
-      const { backfillSyncedOrderLines } = await import('../services/pharmarackOrderSyncService.js');
-      await backfillSyncedOrderLines(targetDate);
-    } catch (_) {}
+    // Ensure any synced orders for targetDate with missing placed rows or missing items are backfilled in the background
+    void import('../services/pharmarackOrderSyncService.js')
+      .then(({ backfillSyncedOrderLines }) => backfillSyncedOrderLines(targetDate))
+      .then((res) => {
+        if (res && res.count > 0) {
+          try {
+            eventService.broadcast('pharmarack_orders_changed', { today: targetDate });
+          } catch (_) {}
+        }
+      })
+      .catch(() => {});
 
     const rows = await db.all(
       'SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC',

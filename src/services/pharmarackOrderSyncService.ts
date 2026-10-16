@@ -116,7 +116,7 @@ const QTY_KEYS = ['Quantity', 'quantity', 'OrderQty', 'orderQty', 'Qty', 'qty'];
  * Returns null when nothing readable came back: lines are never invented, and the response SHAPE (keys only)
  * is written to action_logs so the parser can be corrected.
  */
-export async function fetchOrderLines(db: any, token: string, orderId: number | null, orderNo: string): Promise<Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> | null> {
+export async function fetchOrderLines(db: any, token: string, orderId: number | null, orderNo: string): Promise<Array<{ productName: string; qty: number | null; productCode?: string; mrp?: number; rate?: number; packaging?: string }> | null | 'expired'> {
   if (orderId === null) return null;
   try {
     const res = await fetch(`${ORDER_DETAIL_URL}?OrderId=${orderId}`, {
@@ -128,8 +128,9 @@ export async function fetchOrderLines(db: any, token: string, orderId: number | 
         'Referer': 'https://retailers.pharmarack.com/',
         'Origin': 'https://retailers.pharmarack.com'
       },
-      signal: AbortSignal.timeout(15_000)
+      signal: AbortSignal.timeout(5_000)
     });
+    if (res.status === 401 || res.status === 403) return 'expired';
     if (!res.ok) { await audit(db, orderNo, 'detail_http_error', { status: res.status }); return null; }
     const json: any = await res.json();
     const rows = Array.isArray(json?.data?.invoicedItems) && json.data.invoicedItems.length ? json.data.invoicedItems : findLineArray(json);
@@ -200,6 +201,7 @@ async function fillOrderLines(db: any, token: string, orders: any[], todayIso: s
 
     const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
     const lines = await fetchOrderLines(db, token, orderId, orderNo);
+    if (lines === 'expired') break;
     if (!lines || lines.length === 0) continue;
 
     await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
@@ -771,7 +773,8 @@ export async function syncHistoricalPharmarackOrders(days = 30): Promise<{ ok: b
       let lines: any[] = [];
       if (!placedRow || !placedRow.items_json || placedRow.items_json === '[]') {
         const fetchedLines = await fetchOrderLines(db, token, orderId, orderNo);
-        if (fetchedLines && fetchedLines.length > 0) {
+        if (fetchedLines === 'expired') break;
+        if (Array.isArray(fetchedLines) && fetchedLines.length > 0) {
           lines = fetchedLines;
         }
       } else {
@@ -844,12 +847,28 @@ export async function backfillSyncedOrderLines(targetDate?: string): Promise<{ o
       const orderNo = String(c.order_no || '').trim();
       if (!orderNo) continue;
 
+      if (!c.placed_id) {
+        // Check if an existing unlinked placed order on this date and store has medicines
+        const storeMatch = await db.get(
+          `SELECT id, items_json FROM pharmarack_placed_orders
+           WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '')
+           ORDER BY id ASC LIMIT 1`,
+          [c.order_date, c.store_name]
+        );
+        if (storeMatch) {
+          await db.run('UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?', [orderNo, storeMatch.id]);
+          c.placed_id = storeMatch.id;
+          c.items_json = storeMatch.items_json;
+        }
+      }
+
       let items: any[] = [];
       try { items = JSON.parse(c.items_json || '[]'); } catch (_) { items = []; }
       if (items.length > 0) continue;
 
       const orderId = Number.isFinite(Number(c.pharmarack_order_id)) ? Number(c.pharmarack_order_id) : null;
       const lines = await fetchOrderLines(db, token, orderId, orderNo);
+      if (lines === 'expired') break;
       if (!lines || lines.length === 0) continue;
 
       if (c.placed_id) {
