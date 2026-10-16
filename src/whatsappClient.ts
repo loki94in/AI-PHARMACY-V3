@@ -581,12 +581,15 @@ async function ingestUnreadAndReply(chats: any[], isIgnored: (chatId: string) =>
   try {
     const db = await dbManager.getConnection();
     const nowSec = Math.floor(Date.now() / 1000);
+    const offlineCustomerChatIds: string[] = [];
+
     for (const chat of chats) {
       const chatId = chat.id._serialized;
       if (chat.isGroup || (await isIgnored(chatId))) continue;
       if (!chat.unreadCount || chat.unreadCount <= 0) continue;
       if (!chat.lastMessage || chat.lastMessage.fromMe) continue;
       const msgs: any[] = await chat.fetchMessages({ limit: Math.min(chat.unreadCount, 20) }).catch(() => []);
+      let chatIngested = 0;
       for (const m of msgs) {
         if (m.fromMe || (m.timestamp && nowSec - m.timestamp > 24 * 3600)) continue;
         const mid = m.id?._serialized || m.id?.id;
@@ -596,10 +599,81 @@ async function ingestUnreadAndReply(chats: any[], isIgnored: (chatId: string) =>
            VALUES (?, ?, ?, 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
           [mid, chatId, m.body || '', m.timestamp || nowSec, m.type || 'text', m.hasMedia ? 1 : 0]
         );
-        if (r?.changes) ingested++;
+        if (r?.changes) {
+          ingested++;
+          chatIngested++;
+        }
+      }
+      if (chatIngested > 0) {
+        offlineCustomerChatIds.push(chatId);
       }
     }
+
     if (ingested > 0) {
+      // Offline catch-up availability notification (gated to pharmacy open hours per user request)
+      try {
+        const { getPharmacyOperatingSchedule, getStorePhone } = await import('./services/storeSettingsService.js');
+        const { toLocalSqlDateTime } = await import('./utils/localTime.js');
+        const sched = await getPharmacyOperatingSchedule(db);
+        const now = new Date();
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const todayDayName = dayNames[now.getDay()];
+        const isWeeklyOff = (sched.weeklyOff || '').toLowerCase() === todayDayName.toLowerCase();
+        const todayDateStr = toLocalSqlDateTime(now).slice(0, 10);
+        const isClosedDate = (sched.closedDates || []).includes(todayDateStr);
+        const nowHourMin = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const isOpenHours = nowHourMin >= (sched.openTime || '09:00') && nowHourMin <= (sched.closeTime || '22:00');
+        const isStoreOpen = isOpenHours && !isWeeklyOff && !isClosedDate;
+
+        if (isStoreOpen && offlineCustomerChatIds.length > 0) {
+          const storePhone = (await getStorePhone(db)) || '8080888041';
+          for (const cId of offlineCustomerChatIds) {
+            // Check if already replied or opened by pharmacist
+            const repliedRow = await db.get(
+              `SELECT id FROM whatsapp_messages
+               WHERE chat_id = ? AND from_me = 1 AND timestamp >= (
+                 SELECT MAX(timestamp) FROM whatsapp_messages WHERE chat_id = ? AND from_me = 0
+               ) LIMIT 1`,
+              [cId, cId]
+            ).catch(() => null);
+            if (repliedRow) continue;
+
+            const readRow = await db.get(
+              `SELECT id FROM whatsapp_messages WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NOT NULL LIMIT 1`,
+              [cId]
+            ).catch(() => null);
+            if (readRow) continue;
+
+            // Resolve language
+            const chatRow = await db.get(`SELECT language, resolved_number FROM whatsapp_chats WHERE id = ?`, [cId]).catch(() => null);
+            let lang = chatRow?.language;
+            if (!lang && chatRow?.resolved_number) {
+              const cust = await db.get(`SELECT preferred_language FROM customers WHERE phone LIKE ?`, [`%${chatRow.resolved_number.slice(-10)}%`]).catch(() => null);
+              lang = cust?.preferred_language;
+            }
+            if (!lang) lang = 'mr';
+
+            let catchUpMsg = '';
+            if (lang === 'mr') {
+              catchUpMsg = `नमस्कार! आम्ही आता उपलब्ध आहोत. कोणत्याही औषधासाठी किंवा माहितीसाठी आपण येथे मेसेज करू शकता किंवा ${storePhone} वर कॉल करू शकता.`;
+            } else if (lang === 'hi') {
+              catchUpMsg = `नमस्ते! हम अब उपलब्ध हैं। किसी भी दवा या सहायता के लिए आप यहां मैसेज कर सकते हैं या ${storePhone} पर कॉल कर सकते हैं।`;
+            } else {
+              catchUpMsg = `Hello! We are available now. Feel free to message here or call us at ${storePhone} for your medicine orders or inquiries.`;
+            }
+
+            try {
+              await sendMessage(cId, undefined, catchUpMsg);
+              console.log(`[WhatsApp Catch-up] Sent availability notice to ${cId} in ${lang}`);
+            } catch (sendErr) {
+              console.warn(`[WhatsApp Catch-up] Failed to send availability notice to ${cId}:`, sendErr);
+            }
+          }
+        }
+      } catch (catchUpErr) {
+        console.warn('[WhatsApp Catch-up] Availability notice processing error:', catchUpErr);
+      }
+
       const { waSmartReplyScheduler } = await import('./services/waSmartReplyScheduler.js');
       const res = await waSmartReplyScheduler.processOfflineBatch(true);
       console.log(`[WhatsApp Catch-up] ${ingested} message(s) pulled, ${res.processed} chat(s) scheduled, ${res.skipped_read} read, ${res.skipped_replied} replied.`);

@@ -32791,7 +32791,11 @@ async function checkAllRefills(db2) {
   const outOfStockRefills = [];
   const today = /* @__PURE__ */ new Date();
   today.setHours(0, 0, 0, 0);
+  const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   for (const refill of activeRefills) {
+    if (refill.last_refill_date && refill.last_refill_date.slice(0, 10) === todayYmd) {
+      continue;
+    }
     const nextDate = new Date(refill.next_refill_date);
     nextDate.setHours(0, 0, 0, 0);
     const diffTime = nextDate.getTime() - today.getTime();
@@ -32927,6 +32931,7 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
        AND COALESCE(pr.patient_confirmed, 0) = 0
        AND pr.cart_store_name IS NULL
        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days'))
+       AND (pr.last_refill_date IS NULL OR substr(pr.last_refill_date, 1, 10) != date('now', 'localtime'))
      ORDER BY pr.id ASC`,
     [patientPhone, patientName]
   );
@@ -58503,7 +58508,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.99";
+    APP_VERSION = "0.1.100";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -77220,6 +77225,128 @@ ${medList}${timingSection}${cta}`;
   }
   return message;
 }
+async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
+  const results = [];
+  const fulfilledIds = [];
+  const fulfilledMedNames = [];
+  const phonesToPurge = /* @__PURE__ */ new Set();
+  const customerIdsToPurge = /* @__PURE__ */ new Set();
+  const localNow = toLocalSqlDateTime();
+  for (const refill of refills) {
+    const interval = refill.refill_interval_days || 30;
+    const nextDate = /* @__PURE__ */ new Date();
+    nextDate.setDate(nextDate.getDate() + interval);
+    const nextDateStr = toLocalSqlDateTime(nextDate);
+    const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : localNow.slice(0, 10);
+    const fulfilledQty = Number(refill.quantity_needed || 3);
+    const medName = refill.medicine_name || "Prescribed Medicine";
+    const existing = await db2.get(
+      `SELECT id FROM refill_fulfillments WHERE refill_id = ? AND cycle_due_date = ? LIMIT 1`,
+      [refill.id, cycleDueDate]
+    );
+    let alreadyFulfilled = false;
+    if (!existing) {
+      await db2.run(
+        `INSERT INTO refill_fulfillments (
+          refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
+          quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          refill.id,
+          refill.customer_id,
+          refill.patient_name,
+          refill.patient_phone,
+          refill.medicine_id,
+          medName,
+          fulfilledQty,
+          localNow,
+          cycleDueDate,
+          nextDateStr,
+          fulfilledVia
+        ]
+      );
+    } else {
+      alreadyFulfilled = true;
+    }
+    await db2.run(
+      `UPDATE patient_refills 
+       SET last_refill_date = ?,
+           next_refill_date = ?,
+           stock_verified_override = 0,
+           ordering_triggered = 0,
+           cart_product_code = NULL,
+           cart_store_name = NULL,
+           cart_qty = NULL,
+           patient_confirmed = 0,
+           confirmed_at = NULL,
+           is_ready = 0,
+           hold_for_stock = 0,
+           acknowledged = 0,
+           quick_bill_id = NULL,
+           status = 'pending',
+           reminder_status = 'NOT_SENT',
+           reminder_sent_at = NULL,
+           reminder_job_id = NULL,
+           reminder_occurrence_date = NULL,
+           auto_remind = 0,
+           last_collection_reminder_at = NULL,
+           collection_reminder_count = 0
+       WHERE id = ?`,
+      [localNow, nextDateStr, refill.id]
+    );
+    fulfilledIds.push(refill.id);
+    if (refill.medicine_name) fulfilledMedNames.push(refill.medicine_name.trim().toLowerCase());
+    if (refill.patient_phone) phonesToPurge.add(refill.patient_phone);
+    if (refill.customer_id) customerIdsToPurge.add(refill.customer_id);
+    results.push({
+      refillId: refill.id,
+      medicineName: medName,
+      nextRefillDate: nextDateStr,
+      alreadyFulfilled
+    });
+  }
+  if (fulfilledIds.length > 0) {
+    const idPlaceholders = fulfilledIds.map(() => "?").join(",");
+    const conditions = [`source_refill_id IN (${idPlaceholders})`];
+    const params = [...fulfilledIds];
+    for (const refill of refills) {
+      const cleanPhoneDigits = (refill.patient_phone || "").replace(/\D/g, "").slice(-10);
+      const mName = (refill.medicine_name || "").trim().toLowerCase();
+      if (cleanPhoneDigits.length >= 7 && mName) {
+        conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) = ?))`);
+        params.push(`%${cleanPhoneDigits}%`, mName);
+      } else if (cleanPhoneDigits.length >= 7) {
+        conditions.push(`(phone LIKE ? AND source = 'refill')`);
+        params.push(`%${cleanPhoneDigits}%`);
+      }
+      if (refill.customer_id) {
+        conditions.push(`(customer_id = ? AND source = 'refill')`);
+        params.push(refill.customer_id);
+      }
+    }
+    if (conditions.length > 0) {
+      const updateQuery = `UPDATE special_orders 
+                           SET status = 'Completed', updated_at = ?
+                           WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(" OR ")})`;
+      await db2.run(updateQuery, [localNow, ...params]).catch(() => {
+      });
+    }
+  }
+  for (const phone of phonesToPurge) {
+    await purgePendingCustomerReminders(db2, {
+      phone,
+      refillIds: fulfilledIds,
+      medicineNames: fulfilledMedNames.length > 0 ? fulfilledMedNames : void 0
+    });
+  }
+  if (phonesToPurge.size === 0 && fulfilledIds.length > 0) {
+    await purgePendingCustomerReminders(db2, {
+      refillIds: fulfilledIds,
+      medicineNames: fulfilledMedNames.length > 0 ? fulfilledMedNames : void 0
+    });
+  }
+  return { fulfilledCount: results.length, results };
+}
 var import_express19, import_path45, import_fs49, router19, refillsTableInitialized, handlePatientProfileUpdate, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
 var init_refills = __esm({
   "src/routes/refills.ts"() {
@@ -77588,7 +77715,7 @@ var init_refills = __esm({
         if (refill_interval_days !== void 0 && next_refill_date === void 0) {
           const nextDate = /* @__PURE__ */ new Date();
           nextDate.setDate(nextDate.getDate() + updatedInterval);
-          updatedNextDate = nextDate.toISOString().slice(0, 19).replace("T", " ");
+          updatedNextDate = toLocalSqlDateTime(nextDate);
         }
         const updatedStatus = status !== void 0 && (status === "pending" || status === "notified") ? status : refill.status;
         const updatedHold = hold_for_stock !== void 0 ? parseInt(hold_for_stock, 10) : refill.hold_for_stock;
@@ -77633,7 +77760,7 @@ var init_refills = __esm({
         }
         const nextDate = new Date(refill.next_refill_date || refill.last_refill_date || /* @__PURE__ */ new Date());
         nextDate.setDate(nextDate.getDate() + 1);
-        const nextDateStr = nextDate.toISOString().slice(0, 19).replace("T", " ");
+        const nextDateStr = toLocalSqlDateTime(nextDate);
         await db2.run(
           `UPDATE patient_refills 
        SET next_refill_date = ?, acknowledged = 0, ordering_triggered = 0, is_ready = 0, hold_for_stock = 0, stock_verified_override = 0,
@@ -77754,6 +77881,7 @@ var init_refills = __esm({
               language: row.language || "en",
               reminder_mode: row.reminder_mode || "manual",
               next_refill_date: row.next_refill_date,
+              last_refill_date: row.last_refill_date || null,
               reminder_status: "NOT_SENT",
               reminder_sent_at: null,
               medicines: []
@@ -77782,6 +77910,8 @@ var init_refills = __esm({
               id: row.id,
               medicine_id: row.medicine_id,
               medicine_name: row.medicine_name,
+              next_refill_date: row.next_refill_date,
+              last_refill_date: row.last_refill_date || null,
               quantity_needed: row.quantity_needed !== void 0 && row.quantity_needed !== null ? row.quantity_needed : 3,
               // default refill quantity: 3
               refill_interval_days: row.refill_interval_days || 30,
@@ -78396,6 +78526,7 @@ var init_refills = __esm({
     });
     router19.post("/:id/fulfill", async (req, res) => {
       const { id } = req.params;
+      const fulfilledVia = req.body?.fulfilled_via || "crm_complete";
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -78409,70 +78540,17 @@ var init_refills = __esm({
         if (!refill) {
           return res.status(404).json({ error: "Refill not found" });
         }
-        const interval = refill.refill_interval_days || 30;
-        const nextDate = /* @__PURE__ */ new Date();
-        nextDate.setDate(nextDate.getDate() + interval);
-        const nextDateStr = toLocalSqlDateTime(nextDate);
-        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
-        const fulfilledQty = Number(refill.quantity_needed || 3);
-        await db2.run(
-          `INSERT INTO refill_fulfillments (
-        refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-        quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'crm_complete')`,
-          [
-            refill.id,
-            refill.customer_id,
-            refill.patient_name,
-            refill.patient_phone,
-            refill.medicine_id,
-            refill.medicine_name || "Prescribed Medicine",
-            fulfilledQty,
-            cycleDueDate,
-            nextDateStr
-          ]
-        );
-        await db2.run(
-          `UPDATE patient_refills 
-       SET last_refill_date = datetime('now'),
-           next_refill_date = ?,
-           stock_verified_override = 0,
-           ordering_triggered = 0,
-           cart_product_code = NULL,
-           cart_store_name = NULL,
-           cart_qty = NULL,
-           patient_confirmed = 0,
-           confirmed_at = NULL,
-           is_ready = 0,
-           hold_for_stock = 0,
-           acknowledged = 0,
-           quick_bill_id = NULL,
-           status = 'pending',
-           reminder_status = 'NOT_SENT',
-           reminder_sent_at = NULL,
-           reminder_job_id = NULL,
-           reminder_occurrence_date = NULL,
-           auto_remind = 0,
-           last_collection_reminder_at = NULL,
-           collection_reminder_count = 0
-       WHERE id = ?`,
-          [nextDateStr, id]
-        );
-        const cleanDigits = (refill.patient_phone || "").replace(/\D/g, "").slice(-10);
-        await db2.run(
-          `UPDATE special_orders 
-       SET status = 'Completed', updated_at = datetime('now')
-       WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') 
-         AND (source_refill_id = ? OR (source = 'refill' AND length(?) >= 7 AND phone LIKE ? AND LOWER(TRIM(product)) = LOWER(TRIM(?))))`,
-          [id, cleanDigits, `%${cleanDigits}%`, refill.medicine_name || ""]
-        ).catch(() => {
-        });
-        await purgePendingCustomerReminders(db2, {
-          phone: refill.patient_phone,
-          refillIds: [Number(id)],
-          customerId: refill.customer_id,
-          medicineNames: refill.medicine_name ? [refill.medicine_name] : void 0
-        });
+        await db2.run("BEGIN TRANSACTION");
+        let outcome;
+        try {
+          outcome = await executeCloseRefillCycles(db2, [refill], fulfilledVia);
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK").catch(() => {
+          });
+          throw txErr;
+        }
+        const nextDateStr = outcome.results[0]?.nextRefillDate || toLocalSqlDateTime();
         setImmediate(() => {
           checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after fulfill:", e));
         });
@@ -78528,118 +78606,26 @@ var init_refills = __esm({
         if (!activeRefills || activeRefills.length === 0) {
           return res.status(404).json({ error: "No active refills found for this patient" });
         }
-        let fulfilledCount = 0;
-        const fulfilledIds = [];
         await db2.run("BEGIN TRANSACTION");
+        let outcome;
         try {
-          for (const refill of activeRefills) {
-            const interval = refill.refill_interval_days || 30;
-            const nextDate = /* @__PURE__ */ new Date();
-            nextDate.setDate(nextDate.getDate() + interval);
-            const nextDateStr = toLocalSqlDateTime(nextDate);
-            const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
-            const fulfilledQty = Number(refill.quantity_needed || 3);
-            await db2.run(
-              `INSERT INTO refill_fulfillments (
-            refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-            quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)`,
-              [
-                refill.id,
-                refill.customer_id,
-                refill.patient_name,
-                refill.patient_phone,
-                refill.medicine_id,
-                refill.medicine_name || "Prescribed Medicine",
-                fulfilledQty,
-                cycleDueDate,
-                nextDateStr,
-                fulfilledVia
-              ]
-            );
-            await db2.run(
-              `UPDATE patient_refills 
-           SET last_refill_date = datetime('now'),
-               next_refill_date = ?,
-               stock_verified_override = 0,
-               ordering_triggered = 0,
-               cart_product_code = NULL,
-               cart_store_name = NULL,
-               cart_qty = NULL,
-               patient_confirmed = 0,
-               confirmed_at = NULL,
-               is_ready = 0,
-               hold_for_stock = 0,
-               acknowledged = 0,
-               quick_bill_id = NULL,
-               status = 'pending',
-               reminder_status = 'NOT_SENT',
-               reminder_sent_at = NULL,
-               reminder_job_id = NULL,
-               reminder_occurrence_date = NULL,
-               auto_remind = 0,
-               last_collection_reminder_at = NULL,
-               collection_reminder_count = 0
-           WHERE id = ?`,
-              [nextDateStr, refill.id]
-            );
-            fulfilledCount++;
-            fulfilledIds.push(refill.id);
-          }
-          const fulfilledMedNames = activeRefills.map((r) => (r.medicine_name || "").trim().toLowerCase()).filter(Boolean);
-          const cleanPhoneDigits = (rawPhone || "").replace(/\D/g, "").slice(-10);
-          if (fulfilledIds.length > 0 || cleanPhoneDigits.length >= 7 && fulfilledMedNames.length > 0) {
-            const idPlaceholders = fulfilledIds.map(() => "?").join(",");
-            const medPlaceholders = fulfilledMedNames.map(() => "?").join(",");
-            const conditions = [];
-            const params = [];
-            if (fulfilledIds.length > 0) {
-              conditions.push(`source_refill_id IN (${idPlaceholders})`);
-              params.push(...fulfilledIds);
-            }
-            if (cleanPhoneDigits.length >= 7) {
-              if (fulfilledMedNames.length > 0) {
-                conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) IN (${medPlaceholders})))`);
-                params.push(`%${cleanPhoneDigits}%`, ...fulfilledMedNames);
-              } else {
-                conditions.push(`(phone LIKE ? AND source = 'refill')`);
-                params.push(`%${cleanPhoneDigits}%`);
-              }
-            }
-            if (customerId) {
-              conditions.push(`(customer_id = ? AND source = 'refill')`);
-              params.push(customerId);
-            }
-            if (conditions.length > 0) {
-              const updateQuery = `UPDATE special_orders 
-                               SET status = 'Completed', updated_at = datetime('now')
-                               WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(" OR ")})`;
-              await db2.run(updateQuery, params).catch(() => {
-              });
-            }
-          }
+          outcome = await executeCloseRefillCycles(db2, activeRefills, fulfilledVia);
           await db2.run("COMMIT");
         } catch (txErr) {
           await db2.run("ROLLBACK").catch(() => {
           });
           throw txErr;
         }
-        await purgePendingCustomerReminders(db2, {
-          phone: rawPhone || void 0,
-          refillIds: fulfilledIds,
-          customerId,
-          medicineNames: activeRefills.map((r) => r.medicine_name).filter(Boolean)
-        });
         setImmediate(() => {
           checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after fulfill-all:", e));
         });
-        eventService.broadcast("refill_updated", { at: Date.now(), fulfilled: true, count: fulfilledCount });
+        eventService.broadcast("refill_updated", { at: Date.now(), fulfilled: true, count: outcome.fulfilledCount });
         eventService.broadcast("app-refills-updated", { at: Date.now() });
         eventService.broadcast("order_updated", { at: Date.now(), source: "fulfill-all" });
         res.json({
           success: true,
-          fulfilledCount,
-          message: `Successfully fulfilled ${fulfilledCount} medicine schedule(s) for this patient and advanced to next cycle.`
+          fulfilledCount: outcome.fulfilledCount,
+          message: `Successfully fulfilled ${outcome.fulfilledCount} medicine schedule(s) for this patient and advanced to next cycle.`
         });
       } catch (err) {
         console.error("Failed to fulfill patient refills:", err);
@@ -78693,60 +78679,25 @@ var init_refills = __esm({
           return res.status(404).json({ error: "Refill not found" });
         }
         if (normalizedStatus === "completed" || normalizedStatus === "fulfilled") {
-          const interval = refill.refill_interval_days || 30;
-          const nextDate = /* @__PURE__ */ new Date();
-          nextDate.setDate(nextDate.getDate() + interval);
-          const nextDateStr = nextDate.toISOString().slice(0, 19).replace("T", " ");
-          const cycleDueDate = refill.next_refill_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-          const fulfilledQty = Number(refill.quantity_needed || 3);
           const medRow = await db2.get("SELECT name FROM medicines WHERE id = ?", [refill.medicine_id]);
-          const medName = medRow?.name || "Prescribed Medicine";
-          await db2.run(
-            `INSERT INTO refill_fulfillments (
-          refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
-          quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'status_update')`,
-            [
-              refill.id,
-              refill.customer_id,
-              refill.patient_name,
-              refill.patient_phone,
-              refill.medicine_id,
-              medName,
-              fulfilledQty,
-              cycleDueDate,
-              nextDateStr
-            ]
-          );
-          await db2.run(
-            `UPDATE patient_refills 
-         SET last_refill_date = datetime('now'),
-             next_refill_date = ?,
-             stock_verified_override = 0,
-             ordering_triggered = 0,
-             cart_product_code = NULL,
-             is_ready = 0,
-             hold_for_stock = 0,
-             acknowledged = 0,
-             quick_bill_id = NULL,
-             status = 'pending',
-             reminder_status = 'NOT_SENT',
-             reminder_sent_at = NULL,
-             reminder_job_id = NULL,
-             reminder_occurrence_date = NULL,
-             auto_remind = 0,
-             last_collection_reminder_at = NULL,
-             collection_reminder_count = 0
-         WHERE id = ?`,
-            [nextDateStr, id]
-          );
-          await purgePendingCustomerReminders(db2, {
-            phone: refill.patient_phone,
-            refillIds: [Number(id)],
-            customerId: refill.customer_id,
-            medicineNames: [medName]
+          refill.medicine_name = medRow?.name || refill.medicine_name || "Prescribed Medicine";
+          await db2.run("BEGIN TRANSACTION");
+          let outcome;
+          try {
+            outcome = await executeCloseRefillCycles(db2, [refill], "status_update");
+            await db2.run("COMMIT");
+          } catch (txErr) {
+            await db2.run("ROLLBACK").catch(() => {
+            });
+            throw txErr;
+          }
+          const nextDateStr = outcome.results[0]?.nextRefillDate || toLocalSqlDateTime();
+          setImmediate(() => {
+            checkAllRefills(db2).catch((e) => console.warn("[bg] checkAllRefills after status update:", e));
           });
-          await checkAllRefills(db2);
+          eventService.broadcast("refill_updated", { at: Date.now(), refillId: Number(id), fulfilled: true });
+          eventService.broadcast("app-refills-updated", { at: Date.now() });
+          eventService.broadcast("order_updated", { at: Date.now(), source: "status_update" });
           return res.json({ success: true, message: "Refill completed and advanced to next cycle", next_refill_date: nextDateStr });
         } else if (normalizedStatus === "notified" || normalizedStatus === "dismissed") {
           await db2.run(

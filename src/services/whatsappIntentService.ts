@@ -698,6 +698,21 @@ async function lookupCustomer(phone: string, chatId?: string): Promise<{ id: num
     return null;
   }
 
+  // 1b. Priority check: `special_orders` table for recent bookings (last 7 days take top priority for name)
+  try {
+    const orderRow = await db.get(
+      `SELECT requester, phone FROM special_orders 
+       WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? 
+         AND requester IS NOT NULL AND requester != ''
+         AND created_at >= datetime('now', '-7 days')
+       ORDER BY id DESC LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (orderRow?.requester && isKnownCustomerName(orderRow.requester)) {
+      return { id: 0, name: orderRow.requester.trim(), phone: cleanDigits };
+    }
+  } catch (_) {}
+
   // 2. Check primary `customers` table
   try {
     const row = await db.get(
@@ -753,6 +768,20 @@ async function lookupCustomer(phone: string, chatId?: string): Promise<{ id: num
       } catch (_) {
         return { id: 0, name: saleRow.patient_name, phone: cleanDigits };
       }
+    }
+  } catch (_) {}
+
+  // 5. Fallback: Check older `special_orders` table
+  try {
+    const olderOrderRow = await db.get(
+      `SELECT requester, phone FROM special_orders 
+       WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? 
+         AND requester IS NOT NULL AND requester != ''
+       ORDER BY id DESC LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (olderOrderRow?.requester && isKnownCustomerName(olderOrderRow.requester)) {
+      return { id: 0, name: olderOrderRow.requester.trim(), phone: cleanDigits };
     }
   } catch (_) {}
 
@@ -4660,6 +4689,38 @@ export async function handleInbound(msg: any): Promise<void> {
       return;
     }
 
+    // Resolve standard phone number if sender is an LID
+    if (phone.endsWith('@lid')) {
+      try {
+        const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [phone]);
+        if (chatRow?.resolved_number) {
+          const digits = chatRow.resolved_number.replace(/\D/g, '');
+          if (digits.length >= 10) {
+            phone = `${digits.slice(-10)}@c.us`;
+          }
+        }
+      } catch (_) {}
+
+      if (phone.endsWith('@lid')) {
+        try {
+          if (msg.client && typeof msg.client.getContactLidAndPhone === 'function') {
+            const mapping = await msg.client.getContactLidAndPhone([phone]);
+            if (mapping && mapping[0] && mapping[0].pn) {
+              phone = `${mapping[0].pn}@c.us`;
+            }
+          }
+          if (phone.endsWith('@lid') && typeof msg.getContact === 'function') {
+            const contact = await msg.getContact();
+            if (contact && contact.number) {
+              phone = `${contact.number}@c.us`;
+            }
+          }
+        } catch (e) {
+          console.warn('[Intent Service] Non-fatal LID resolution skipped:', e);
+        }
+      }
+    }
+
     // 1-lang. Resolve existing chat language & detect new language
     let chatLang: SupportedLanguage = 'en';
     const cleanDigitsForLang = (phone || '').replace(/\D/g, '').slice(-10);
@@ -4686,7 +4747,7 @@ export async function handleInbound(msg: any): Promise<void> {
         eventService.broadcast('wa_chat_updated', { chatId, language: chatLang });
       } catch (_) {}
 
-      // If user explicitly asked to change language, send confirmation and return
+      // If user explicitly asked to change language, send instant live confirmation and return
       if (explicitSwitch) {
         // Persist language choice across customers and patient_refills tables
         try {
@@ -4743,41 +4804,19 @@ export async function handleInbound(msg: any): Promise<void> {
             if (stepPrompt) switchAck += `\n\n${stepPrompt}${languageFooter(chatLang)}`;
           }
         } catch (_) {}
-        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, switchAck, 'language_switch', 'Customer');
-        return;
-      }
-    }
 
-    // Resolve standard phone number if sender is an LID
-    if (phone.endsWith('@lid')) {
-      try {
-        const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [phone]);
-        if (chatRow?.resolved_number) {
-          const digits = chatRow.resolved_number.replace(/\D/g, '');
-          if (digits.length >= 10) {
-            phone = `${digits.slice(-10)}@c.us`;
-          }
-        }
-      } catch (_) {}
-
-      if (phone.endsWith('@lid')) {
+        // Send instant live reply directly to the patient's active chat
         try {
-          if (msg.client && typeof msg.client.getContactLidAndPhone === 'function') {
-            const mapping = await msg.client.getContactLidAndPhone([phone]);
-            if (mapping && mapping[0] && mapping[0].pn) {
-              phone = `${mapping[0].pn}@c.us`;
-            }
-          }
-          if (phone.endsWith('@lid') && typeof msg.getContact === 'function') {
-            const contact = await msg.getContact();
-            if (contact && contact.number) {
-              phone = `${contact.number}@c.us`;
-            }
-          }
-        } catch (e) {
-          console.warn('[Intent Service] Non-fatal LID resolution skipped:', e);
+          const { sendMessage } = await import('../whatsappClient.js');
+          const targetRecipient = chatId || phone;
+          await sendMessage(targetRecipient, undefined, switchAck);
+          console.log(`[Intent Service] Sent instant language confirmation to patient at ${targetRecipient} (${chatLang})`);
+        } catch (sendErr) {
+          console.warn('[Intent Service] Direct live language switch send failed, falling back to queue worker:', sendErr);
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(phone, switchAck, 'language_switch', 'Customer');
         }
+        return;
       }
     }
 
@@ -5041,16 +5080,18 @@ export async function handleInbound(msg: any): Promise<void> {
         }
       }
 
+      const targetRecipient = chatId || phone;
+
       // Reset any manual session or idle session state on greeting
       await db.run(
         `UPDATE whatsapp_chats SET session_mode = 'auto', session_status = 'idle', manual_active_until = 0 WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
         [chatId, `%${cleanDigits}%`]
       );
 
-      // Clear old pending clarifications so the session is 100% fresh
+      // Clear old pending clarifications so the session is 100% fresh (across 10-digits, @lid, and @c.us)
       await db.run(
-        `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ?`,
-        [`%${cleanDigits}`, `%${cleanDigits}%`]
+        `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ? OR phone = ? OR phone = ?`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`, phone, chatId]
       );
 
       const { getStoreMedicalName } = await import('./storeSettingsService.js');
@@ -5072,7 +5113,7 @@ export async function handleInbound(msg: any): Promise<void> {
         );
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, askNameText, 'customer_greeting', 'Customer');
+        await whatsappQueueWorker.enqueue(targetRecipient, askNameText, 'customer_greeting', 'Customer');
         console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name in ${chatLang}.`);
         return;
       }
@@ -5088,7 +5129,7 @@ export async function handleInbound(msg: any): Promise<void> {
         hoursLine: hoursLineForGreet
       }) + languageFooter(chatLang);
 
-      if (!(await allowBotPrompt(db, cleanDigits, phone))) return;
+      if (!(await allowBotPrompt(db, cleanDigits, targetRecipient))) return;
 
       await db.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, created_at)
@@ -5097,7 +5138,7 @@ export async function handleInbound(msg: any): Promise<void> {
       );
 
       const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-      await whatsappQueueWorker.enqueue(phone, greetingText, 'customer_greeting', customer!.name);
+      await whatsappQueueWorker.enqueue(targetRecipient, greetingText, 'customer_greeting', customer!.name);
       console.log(`[Intent Service] Fresh greeting sent to known customer ${customer!.name} (${cleanDigits}) in ${chatLang}.`);
       return;
     }

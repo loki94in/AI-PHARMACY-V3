@@ -952,13 +952,21 @@ class WhatsAppQueueWorker {
         }
 
         // Extract sanitized digits for phone validation & registration check
-        const rawItemDigits = (item.number || '').replace(/\D/g, '');
+        const isLidRecipient = typeof item.number === 'string' && item.number.includes('@lid');
+        let resolvedLidDigits = '';
+        if (isLidRecipient) {
+          const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [item.number]).catch(() => null);
+          if (chatRow?.resolved_number) {
+            resolvedLidDigits = chatRow.resolved_number.replace(/\D/g, '');
+          }
+        }
+        const rawItemDigits = resolvedLidDigits || (item.number || '').replace(/\D/g, '');
         const target10Digits = rawItemDigits.length === 12 && rawItemDigits.startsWith('91')
           ? rawItemDigits.slice(2)
           : (rawItemDigits.length >= 10 ? rawItemDigits.slice(-10) : rawItemDigits);
 
         // 1. Invalid phone length guard: exactly 10 digits required for mobile dispatch
-        if (!target10Digits || target10Digits.length !== 10) {
+        if (!isLidRecipient && (!target10Digits || target10Digits.length !== 10)) {
           console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: invalid phone number "${item.number}" (requires 10 digits).`);
           await db.run(
             "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
@@ -1045,7 +1053,7 @@ class WhatsAppQueueWorker {
         }
 
         // 2. WhatsApp Registration Gate: verify number is registered on WhatsApp before dispatch
-        if (!useBusiness && status.isReady) {
+        if (!useBusiness && status.isReady && !isLidRecipient) {
           const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
           if (regStatus === 'NOT_AVAILABLE') {
             console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: recipient ${target10Digits} (${item.target_name || 'unknown'}) is NOT registered on WhatsApp.`);
@@ -1075,7 +1083,7 @@ class WhatsAppQueueWorker {
             nonWaFallbackService.handleFallback({
               taskType,
               patientName: item.target_name || 'Patient',
-              patientPhone: item.number,
+              patientPhone: target10Digits || item.number,
               referenceId: String(item.id),
               details: item.message ? item.message.slice(0, 200) : `${taskType} reminder`,
               detailsJson: { queueItemId: item.id, type: item.type, message: item.message?.slice(0, 500) }

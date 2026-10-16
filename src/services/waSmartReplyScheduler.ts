@@ -139,12 +139,12 @@ class WaSmartReplyScheduler {
     try {
       const db = await dbManager.getConnection();
       const row = await db.get(
-        `SELECT id FROM whatsapp_messages
-         WHERE chat_id = ? AND from_me = 0 AND pharmacist_opened_at IS NOT NULL
-         ORDER BY pharmacist_opened_at DESC LIMIT 1`,
+        `SELECT pharmacist_opened_at FROM whatsapp_messages
+         WHERE chat_id = ? AND from_me = 0
+         ORDER BY timestamp DESC LIMIT 1`,
         [chatId]
       );
-      return !!row;
+      return Boolean(row?.pharmacist_opened_at);
     } catch {
       return false;
     }

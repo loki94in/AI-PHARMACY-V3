@@ -47,6 +47,21 @@ export class NonWaFallbackService {
     return resolveAdminWhatsappNumber(db);
   }
 
+  private async resolveDisplayPhone(db: any, phone: string | undefined): Promise<string> {
+    if (!phone) return 'N/A';
+    let raw = String(phone).trim();
+    if (raw.includes('@lid')) {
+      const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [raw]).catch(() => null);
+      if (chatRow?.resolved_number) {
+        raw = String(chatRow.resolved_number);
+      }
+    }
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
+    if (digits.length >= 10) return digits.slice(-10);
+    return raw || phone;
+  }
+
   private buildOwnerAlertMessage(ctx: FallbackContext, storeName: string): string {
     const typeEmoji = ctx.taskType === 'refill' ? '\u{1F48A}' : '\u{1F4B0}';
     const typeLabel = ctx.taskType === 'refill' ? 'REFILL DUE' : 'CREDIT REMINDER';
@@ -71,6 +86,9 @@ export class NonWaFallbackService {
     ).catch(() => null);
     const storeName = storeRow?.value || 'AI Pharmacy';
 
+    const cleanDisplayPhone = await this.resolveDisplayPhone(db, ctx.patientPhone);
+    const resolvedCtx: FallbackContext = { ...ctx, patientPhone: cleanDisplayPhone };
+
     // Dedup: don't create duplicate pending task for same patient+type within 24h
     const recentTask = await db.get(
       `SELECT id FROM patient_call_tasks
@@ -78,7 +96,7 @@ export class NonWaFallbackService {
          AND status = 'pending'
          AND created_at > datetime('now', '-24 hours')
        LIMIT 1`,
-      [ctx.taskType, ctx.patientPhone]
+      [resolvedCtx.taskType, resolvedCtx.patientPhone]
     ).catch(() => null);
 
     let taskId: number | null = recentTask?.id ?? null;
@@ -90,15 +108,15 @@ export class NonWaFallbackService {
              (task_type, patient_name, patient_phone, reference_id, details_json, status, owner_wa_sent)
            VALUES (?, ?, ?, ?, ?, 'pending', 0)`,
           [
-            ctx.taskType,
-            ctx.patientName,
-            ctx.patientPhone,
-            ctx.referenceId || null,
-            JSON.stringify(ctx.detailsJson ?? { details: ctx.details })
+            resolvedCtx.taskType,
+            resolvedCtx.patientName,
+            resolvedCtx.patientPhone,
+            resolvedCtx.referenceId || null,
+            JSON.stringify(resolvedCtx.detailsJson ?? { details: resolvedCtx.details })
           ]
         );
         taskId = result?.lastID ?? null;
-        console.log('[NonWaFallback] Created call task #' + taskId + ' for ' + ctx.patientName + ' (' + ctx.taskType + ')');
+        console.log('[NonWaFallback] Created call task #' + taskId + ' for ' + resolvedCtx.patientName + ' (' + resolvedCtx.taskType + ')');
       } catch (err) {
         console.warn('[NonWaFallback] Failed to create call task:', err);
       }
@@ -111,7 +129,7 @@ export class NonWaFallbackService {
         if (alertPhone) {
           const cleanAlert = normalizeWhatsAppPhone(alertPhone);
           if (cleanAlert && cleanAlert.length >= 10) {
-            const alertMsg = this.buildOwnerAlertMessage(ctx, storeName);
+            const alertMsg = this.buildOwnerAlertMessage(resolvedCtx, storeName);
             await sendMessage(cleanAlert, undefined, alertMsg);
             ownerWaSent = true;
             if (taskId) {

@@ -819,12 +819,36 @@ export const QuickAssistSidebar = memo(({
     }
   };
 
+  // Flatten grouped patient medicines if RefillPatient objects are passed from getRefillsPanel
+  const flatRefills = useMemo(() => {
+    const list: any[] = [];
+    for (const item of (Array.isArray(refills) ? refills : [])) {
+      if (Array.isArray((item as any).medicines) && (item as any).medicines.length > 0) {
+        for (const med of (item as any).medicines) {
+          list.push({
+            ...med,
+            patient_name: med.patient_name || (item as any).patient_name,
+            patient_phone: med.patient_phone || (item as any).patient_phone,
+            customer_id: med.customer_id ?? (item as any).customer_id,
+            language: med.language || (item as any).language,
+            reminder_mode: med.reminder_mode || (item as any).reminder_mode,
+            next_refill_date: med.next_refill_date || (item as any).next_refill_date,
+            last_refill_date: med.last_refill_date || (item as any).last_refill_date,
+          });
+        }
+      } else {
+        list.push(item);
+      }
+    }
+    return list;
+  }, [refills]);
+
   // Filter actionable refills: active, non-completed, and due within today + upcoming 7 calendar days (diffDays <= 7)
   const actionableRefills = useMemo(() => {
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
 
-    return (Array.isArray(refills) ? refills : []).filter(r => {
+    return flatRefills.filter(r => {
       if (
         r.is_active !== 1 ||
         !r.next_refill_date ||
@@ -841,7 +865,7 @@ export const QuickAssistSidebar = memo(({
       const diffDays = Math.round((dueStart - todayStart) / 86400000);
       return diffDays <= 7;
     });
-  }, [refills]);
+  }, [flatRefills]);
 
   const groupedActionableRefills = useMemo(() => {
     const today = new Date();
