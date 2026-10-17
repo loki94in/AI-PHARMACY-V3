@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   RefreshCw, Send, Users, Phone,
   Calendar, CheckCircle2, Clock, Search,
   Repeat2, MessageCircle, Check, Copy,
   X, Plus, Trash2, ChevronDown,
   ChevronUp, ClipboardList, ShoppingCart, AlertTriangle,
-  Pencil, Edit3, RotateCcw, QrCode, Package
+  Pencil, Edit3, RotateCcw, QrCode, Package, HelpCircle
 } from 'lucide-react';
 import { apiClient, api } from '../../services/api';
 import { toastEvent, specialOrdersEvent, messageSendEvent, whatsappQueueEvent } from '../../services/events';
@@ -56,6 +56,7 @@ let cachedSpecialOrders: SpecialOrderItem[] = [];
 
 export const SpecialOrdersSection: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const pageActive = usePageActive();
   const pageActiveRef = useRef(pageActive);
   useEffect(() => {
@@ -67,6 +68,18 @@ export const SpecialOrdersSection: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const filterParam = params.get('filter');
+    if (filterParam === 'inquiries' || filterParam === 'Inquiries') {
+      setStatusFilter('Inquiries');
+    }
+  }, [location.search]);
+
+  const unapprovedInquiriesCount = useMemo(() => {
+    return orders.filter(o => o.status === 'Inquiry').length;
+  }, [orders]);
   const [arrivalModalData, setArrivalModalData] = useState<{
     customerName: string;
     customerPhone: string;
@@ -1098,7 +1111,8 @@ export const SpecialOrdersSection: React.FC = () => {
     if (!matchesSearch) return false;
 
     let matchesStatus = true;
-    if (statusFilter === 'Inquiries') matchesStatus = o.status === 'Inquiry';
+    if (statusFilter === 'All') matchesStatus = o.status !== 'Inquiry';
+    else if (statusFilter === 'Inquiries') matchesStatus = o.status === 'Inquiry';
     else if (statusFilter === 'Pending') matchesStatus = o.status === 'Pending';
     else if (statusFilter === 'Ordered') matchesStatus = o.status === 'Ordered';
     else if (statusFilter === 'Waiting') matchesStatus = o.status === 'Waiting';
@@ -1601,11 +1615,16 @@ export const SpecialOrdersSection: React.FC = () => {
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
                   statusFilter === st ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-text'
                 }`}
               >
-                {st}
+                <span>{st}</span>
+                {st === 'Inquiries' && unapprovedInquiriesCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {unapprovedInquiriesCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -1710,6 +1729,23 @@ export const SpecialOrdersSection: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Review Banner for Inquiries when viewing All */}
+      {statusFilter === 'All' && unapprovedInquiriesCount > 0 && (
+        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs shrink-0 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} className="text-amber-400 shrink-0" />
+            <span>You have <strong>{unapprovedInquiriesCount}</strong> customer {unapprovedInquiriesCount === 1 ? 'inquiry' : 'inquiries'} awaiting approval.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('Inquiries')}
+            className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 font-semibold text-[11px] transition-colors cursor-pointer"
+          >
+            Review Inquiries
+          </button>
+        </div>
+      )}
 
       {/* Orders List Container - Grouped by Customer with Collapsible Fold/Unfold */}
       <div className="flex-1 overflow-y-auto pr-1 space-y-3">

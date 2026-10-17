@@ -1139,7 +1139,10 @@ async function lookupCustomer(phone: string, chatId?: string): Promise<{ id: num
  * patient_refills has no customer_id — it is keyed by patient_phone, so we
  * join by the customer's last-10-digit phone (same trick as lookupCustomer).
  */
-async function getCustomerHistory(customer: { id: number; phone: string }): Promise<any[]> {
+async function getCustomerHistory(
+  customer: { id: number; phone: string },
+  options?: { includeSpecialOrders?: boolean }
+): Promise<any[]> {
   const db = await dbManager.getConnection();
   const last10 = (customer.phone || '').replace(/\D/g, '').slice(-10);
   if (!last10) return [];
@@ -1164,24 +1167,26 @@ async function getCustomerHistory(customer: { id: number; phone: string }): Prom
     }
   } catch (_) {}
 
-  // 2. Special Orders (out-of-stock custom procurement requests)
-  try {
-    const soRows = await db.all(
-      `SELECT so.product AS medicine_name, so.qty AS quantity_needed, 30 AS refill_interval_days,
-              COALESCE(so.date, so.created_at) AS last_refill_date, NULL AS next_refill_date,
-              'special_order' AS source_type, so.pharmarack_mrp AS estimated_mrp, so.pharmarack_distributor
-       FROM special_orders so
-       WHERE so.phone LIKE ? AND so.product IS NOT NULL AND TRIM(so.product) != ''
-       ORDER BY so.id DESC LIMIT 15`,
-      [`%${last10}`]
-    );
-    for (const s of soRows) {
-      const key = (s.medicine_name || '').toLowerCase().trim();
-      if (key && !combinedMeds.has(key)) {
-        combinedMeds.set(key, { ...s, quantity_needed: s.quantity_needed || 1 });
+  // 2. Special Orders (only included when explicitly requested)
+  if (options?.includeSpecialOrders) {
+    try {
+      const soRows = await db.all(
+        `SELECT so.product AS medicine_name, so.qty AS quantity_needed, 30 AS refill_interval_days,
+                COALESCE(so.date, so.created_at) AS last_refill_date, NULL AS next_refill_date,
+                'special_order' AS source_type, so.pharmarack_mrp AS estimated_mrp, so.pharmarack_distributor
+         FROM special_orders so
+         WHERE so.phone LIKE ? AND so.product IS NOT NULL AND TRIM(so.product) != ''
+         ORDER BY so.id DESC LIMIT 15`,
+        [`%${last10}`]
+      );
+      for (const s of soRows) {
+        const key = (s.medicine_name || '').toLowerCase().trim();
+        if (key && !combinedMeds.has(key)) {
+          combinedMeds.set(key, { ...s, quantity_needed: s.quantity_needed || 1 });
+        }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
 
   // 3. Counter Sales (recent prescription medicines)
   try {
@@ -2612,19 +2617,18 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       }
 
       if (isThree) {
-        // Refill & Past Special Orders — look up unified history for this phone
+        // Refill — look up chronic refill medicines for this phone
         const last10 = cleanDigits;
         let refillRows: any[] = [];
         try {
-          refillRows = await getCustomerHistory({ id: customer?.id || 0, phone: last10 });
+          refillRows = await getCustomerHistory({ id: customer?.id || 0, phone: last10 }, { includeSpecialOrders: false });
         } catch (_) {}
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
 
         if (refillRows && refillRows.length > 0) {
           const itemListText = refillRows.slice(0, 6).map((r: any, idx: number) => {
-            const tag = r.source_type === 'special_order' ? ' _(Past Request)_' : r.source_type === 'refill' ? ' _(Refill)_' : '';
-            return `${idx + 1}️⃣ *${r.medicine_name}* × ${r.quantity_needed || 1} strip${tag}`;
+            return `${idx + 1}️⃣ *${r.medicine_name}* × ${r.quantity_needed || 1} strip`;
           }).join('\n');
 
           await db.run(
@@ -2801,14 +2805,13 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         let refillRowsForYes: any[] = [];
         try {
-          refillRowsForYes = await getCustomerHistory({ id: customer?.id || 0, phone: cleanDigits });
+          refillRowsForYes = await getCustomerHistory({ id: customer?.id || 0, phone: cleanDigits }, { includeSpecialOrders: false });
         } catch (_) {}
 
         if (refillRowsForYes && refillRowsForYes.length > 0) {
           // Has past history → treat "yes" as selecting refill (same as pressing 3)
           const itemListText = refillRowsForYes.slice(0, 6).map((r: any, idx: number) => {
-            const tag = r.source_type === 'special_order' ? ' _(Past Request)_' : r.source_type === 'refill' ? ' _(Refill)_' : '';
-            return `${idx + 1}️⃣ *${r.medicine_name}* × ${r.quantity_needed || 1} strip${tag}`;
+            return `${idx + 1}️⃣ *${r.medicine_name}* × ${r.quantity_needed || 1} strip`;
           }).join('\n');
 
           await db.run(
@@ -2993,7 +2996,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           );
 
           const confirmMsg =
-            `✅ *Please confirm your combined order:*\n\n${itemListText}\n\n` +
+            `✅ *Please confirm your order:*\n\n${itemListText}\n\n` +
             `Reply *YES* to confirm or *NO* to cancel.`;
           await whatsappQueueWorker.enqueue(phone, confirmMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
           return true;
@@ -3106,21 +3109,23 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           );
           if (confirmedRefills.length > 0) {
             const primary = confirmedRefills[0];
-            try {
-              const { refillOrderReconciler } = await import('./refillOrderReconciler.js');
-              await refillOrderReconciler.upsertForPhone({
-                phone: cleanDigits,
-                customer_name: primary.patient_name,
-                items: confirmedRefills.map((r: any) => ({
-                  medicine_name: r.medicine_name,
-                  qty: Number(r.quantity_needed || 1)
-                })),
-                source: isCombineBoth ? 'whatsapp' : 'whatsapp_refill_confirm',
-                source_refill_id: primary.id,
-                dbInstance: db
-              });
-            } catch (recErr) {
-              console.warn('[Intent Service] Reconciler upsert warning:', recErr);
+            if (isCombineBoth) {
+              try {
+                const { refillOrderReconciler } = await import('./refillOrderReconciler.js');
+                await refillOrderReconciler.upsertForPhone({
+                  phone: cleanDigits,
+                  customer_name: primary.patient_name,
+                  items: confirmedRefills.map((r: any) => ({
+                    medicine_name: r.medicine_name,
+                    qty: Number(r.quantity_needed || 1)
+                  })),
+                  source: 'whatsapp',
+                  source_refill_id: primary.id,
+                  dbInstance: db
+                });
+              } catch (recErr) {
+                console.warn('[Intent Service] Reconciler upsert warning:', recErr);
+              }
             }
 
             try {
@@ -5524,83 +5529,6 @@ export async function handleInbound(msg: any): Promise<void> {
         );
 
         if (pendingRefills && pendingRefills.length > 0) {
-          // Check if customer also has an active special order under this phone
-          const activeSpecialOrders = await db.all(
-            `SELECT id, product, qty, status FROM special_orders 
-             WHERE (phone LIKE ? OR phone LIKE ?) 
-               AND status IN ('Pending', 'Ordered', 'Confirmed', 'Arrived', 'Ready')
-               AND product IS NOT NULL AND TRIM(product) != ''
-             ORDER BY id DESC LIMIT 5`,
-            [`%${cleanDigits}`, `%${cleanDigits}%`]
-          );
-
-          if (activeSpecialOrders && activeSpecialOrders.length > 0) {
-            const primaryRefill = pendingRefills[0];
-            const refillList = pendingRefills.map((r: any) => `• *${r.medicine_name}* (Qty: ${r.quantity_needed || 1})`).join('\n');
-            const soList = activeSpecialOrders.map((s: any) => `• *${s.product}* (Qty: ${s.qty || 1})`).join('\n');
-
-            const { getStoreMedicalName } = await import('./storeSettingsService.js');
-            const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
-
-            let disambiguationMsg =
-              `🔔 *${storeName} — Order Options*\n\n` +
-              `Hello ${primaryRefill.patient_name || 'Customer'}! We noticed you have both regular refills and a special order on file:\n\n` +
-              `📋 *Regular Refill:* \n${refillList}\n\n` +
-              `📦 *Special Order:* \n${soList}\n\n` +
-              `👉 *What would you like us to prepare?*\n` +
-              `1️⃣ *Refill Only* (Reply *1* or *Refill*)\n` +
-              `2️⃣ *Special Order Only* (Reply *2* or *Special*)\n` +
-              `3️⃣ *Combine Both* into one delivery (Reply *3* or *Both*)`;
-
-            if (chatLang === 'mr') {
-              disambiguationMsg =
-                `🔔 *${storeName} — ऑर्डर पर्याय*\n\n` +
-                `नमस्कार ${primaryRefill.patient_name || 'ग्राहक'}! आपल्याकडे नियमित रिफिल आणि स्पेशल ऑर्डर दोन्ही नोंदी आहेत:\n\n` +
-                `📋 *नियमित रिफिल:* \n${refillList}\n\n` +
-                `📦 *स्पेशल ऑर्डर:* \n${soList}\n\n` +
-                `👉 *आपल्याला काय मागवायचे आहे?*\n` +
-                `1️⃣ *फक्त रिफिल* (पाठवा *1* किंवा *रिफिल*)\n` +
-                `2️⃣ *फक्त स्पेशल ऑर्डर* (पाठवा *2* किंवा *स्पेशल*)\n` +
-                `3️⃣ *दोन्ही एकत्र (Combine)* (पाठवा *3* किंवा *दोन्ही*)`;
-            } else if (chatLang === 'hi') {
-              disambiguationMsg =
-                `🔔 *${storeName} — ऑर्डर विकल्प*\n\n` +
-                `नमस्ते ${primaryRefill.patient_name || 'ग्राहक'}! आपके रिकॉर्ड में नियमित रिफिल और स्पेशल ऑर्डर दोनों उपलब्ध हैं:\n\n` +
-                `📋 *नियमित रिफिल:* \n${refillList}\n\n` +
-                `📦 *स्पेशल ऑर्डर:* \n${soList}\n\n` +
-                `👉 *आप क्या तैयार करवाना चाहते हैं?*\n` +
-                `1️⃣ *सिर्फ रिफिल* (भेजें *1* या *रिफिल*)\n` +
-                `2️⃣ *सिर्फ स्पेशल ऑर्डर* (भेजें *2* या *स्पेशल*)\n` +
-                `3️⃣ *दोनों एक साथ (Combine)* (भेजें *3* या *दोनों*)`;
-            }
-
-            await db.run(
-              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, items_json, created_at)
-               VALUES (?, '', ?, 'awaiting_order_disambiguation', ?, ?, ?, CURRENT_TIMESTAMP)
-               ON CONFLICT(phone) DO UPDATE SET
-                 step = 'awaiting_order_disambiguation',
-                 original_query = excluded.original_query,
-                 customer_name = excluded.customer_name,
-                 language = excluded.language,
-                 items_json = excluded.items_json,
-                 created_at = CURRENT_TIMESTAMP`,
-              [
-                cleanDigits,
-                body,
-                primaryRefill.patient_name,
-                chatLang,
-                JSON.stringify({
-                  refillIds: pendingRefills.map((r: any) => r.id),
-                  specialOrderIds: activeSpecialOrders.map((s: any) => s.id)
-                })
-              ]
-            );
-
-            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-            await whatsappQueueWorker.enqueue(phone, disambiguationMsg, 'customer_medicine_clarification', primaryRefill.patient_name || 'Customer');
-            return;
-          }
-
           const primaryRefill = pendingRefills[0];
           const refillIds = pendingRefills.map((r: any) => r.id);
           const placeholders = refillIds.map(() => '?').join(',');
@@ -5633,24 +5561,6 @@ export async function handleInbound(msg: any): Promise<void> {
             patient_name: primaryRefill.patient_name,
             refill_count: pendingRefills.length
           });
-
-          // Reconcile and stage as special order with exact quantity
-          try {
-            const { refillOrderReconciler } = await import('./refillOrderReconciler.js');
-            await refillOrderReconciler.upsertForPhone({
-              phone: cleanDigits,
-              customer_name: primaryRefill.patient_name,
-              items: pendingRefills.map((r: any) => ({
-                medicine_name: r.medicine_name,
-                qty: Number(r.quantity_needed || 3)
-              })),
-              source: 'whatsapp_refill_confirm',
-              source_refill_id: primaryRefill.id,
-              dbInstance: db
-            });
-          } catch (recErr) {
-            console.warn('[Intent Service] Reconciler upsert note on refill confirm:', recErr);
-          }
 
           // Automatically add confirmed refill medicines directly to Pharmarack Live Cart
           // (same workflow as manual CRM "Order to Cart": processRefillCartItem ->

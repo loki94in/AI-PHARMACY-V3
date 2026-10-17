@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MessageSquare,
   Search,
@@ -14,6 +14,8 @@ import { api } from '../../services/api';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { toastEvent } from '../../services/events';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
+import { useModalEscape } from '../../services/keyboardShortcuts';
+import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 
 let cachedEnquiriesPatients: any[] | null = null;
 
@@ -36,6 +38,19 @@ export const EnquiriesSection: React.FC = () => {
   const [formMrp, setFormMrp] = useState<number | null>(null);
   const [formNotes, setFormNotes] = useState('');
   const [browseSuggestions, setBrowseSuggestions] = useState<any[]>([]);
+
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const hasBrowseSuggestions = browseSuggestions.length > 0 && !formMedId;
+
+  useOnClickOutside(suggestionsRef, () => {
+    if (hasBrowseSuggestions) setBrowseSuggestions([]);
+  });
+
+  useModalEscape(hasBrowseSuggestions, () => setBrowseSuggestions([]), 10);
+  useModalEscape(isNewModalOpen && !hasBrowseSuggestions, () => {
+    setIsNewModalOpen(false);
+    setBrowseSuggestions([]);
+  }, 0);
 
   const fetchEnquiries = useCallback(async () => {
     try {
@@ -379,7 +394,10 @@ export const EnquiriesSection: React.FC = () => {
               </h3>
               <button
                 type="button"
-                onClick={() => setIsNewModalOpen(false)}
+                onClick={() => {
+                  setIsNewModalOpen(false);
+                  setBrowseSuggestions([]);
+                }}
                 className="p-1 rounded-lg hover:bg-bg2 text-muted hover:text-text cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -436,7 +454,7 @@ export const EnquiriesSection: React.FC = () => {
               </div>
 
               {/* Medicine Autocomplete & Browse */}
-              <div className="space-y-1">
+              <div ref={suggestionsRef} className="space-y-1 relative">
                 <label className="text-[11px] font-bold text-text">Medicine Name *</label>
                 <input
                   type="text"
@@ -513,7 +531,10 @@ export const EnquiriesSection: React.FC = () => {
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
                 <button
                   type="button"
-                  onClick={() => setIsNewModalOpen(false)}
+                  onClick={() => {
+                    setIsNewModalOpen(false);
+                    setBrowseSuggestions([]);
+                  }}
                   className="px-3 py-1.5 rounded-xl border border-border text-xs font-semibold text-muted hover:text-text cursor-pointer"
                 >
                   Cancel

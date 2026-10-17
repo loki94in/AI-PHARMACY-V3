@@ -22,6 +22,31 @@ export const isRefillReminded = (m: RefillLike) => m.reminder_status === 'SENT' 
 export const isRefillSettled = (m: RefillLike) =>
   m.status === 'completed' || m.status === 'fulfilled' || m.status === 'canceled' || isRefillFulfilledToday(m);
 
+// Returns true if this refill medicine is considered handled/settled today (either fulfilled today or status completed/fulfilled)
+export const isRefillHandledToday = (m: RefillLike | undefined | null): boolean => {
+  if (!m) return false;
+  return isRefillFulfilledToday(m) || m.status === 'completed' || m.status === 'fulfilled';
+};
+
+export const isPatientHandledToday = (meds: RefillLike[] | undefined | null): boolean => {
+  if (!meds || meds.length === 0) return false;
+  return meds.some(isRefillHandledToday);
+};
+
+// Shared comparator/sort helper: handled-today groups sorted LAST, active groups sorted by diffDays ascending
+export function compareRefillGroups<T extends { diffDays?: number; handled?: boolean }>(a: T, b: T): number {
+  const handledA = a.handled ? 1 : 0;
+  const handledB = b.handled ? 1 : 0;
+  if (handledA !== handledB) {
+    return handledA - handledB; // 0 (unhandled/active) first, 1 (handled) last
+  }
+  return (a.diffDays || 0) - (b.diffDays || 0);
+}
+
+export function sortRefillGroups<T extends { diffDays?: number; handled?: boolean }>(list: T[]): T[] {
+  return [...list].sort(compareRefillGroups);
+}
+
 // True when the patient has medicines and every one is settled — nothing left to act on.
 export const isPatientRefillsSettled = (meds: RefillLike[] | undefined | null) =>
   !!meds && meds.length > 0 && meds.every(isRefillSettled);

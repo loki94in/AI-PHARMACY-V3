@@ -1,4 +1,4 @@
-import { isPatientRefillsSettled, getRefillStage, isRefillFulfilledToday, checkPatientRefillCycleBooking } from '../../utils/refillSettled';
+import { isPatientRefillsSettled, getRefillStage, isRefillFulfilledToday, checkPatientRefillCycleBooking, sortRefillGroups, isPatientHandledToday } from '../../utils/refillSettled';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +12,7 @@ import {
 import { apiClient, api, getCompactInventoryCache, getCompactInventoryIndex } from '../../services/api';
 import { toastEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
@@ -245,6 +246,40 @@ export const RefillsSection: React.FC = () => {
     }
   }, []);
 
+  // CRM Refills Dropdowns & Action Menus Auto-Close (Outside Click & Esc key)
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const unlinkedRef = useRef<HTMLDivElement>(null);
+  const stagedDetailsRef = useRef<HTMLDivElement>(null);
+
+  useOnClickOutside(moreMenuRef, () => setShowMoreMenu(false));
+  useModalEscape(showMoreMenu, () => setShowMoreMenu(false), 20);
+
+  useOnClickOutside(unlinkedRef, () => setShowUnlinked(false));
+  useModalEscape(showUnlinked, () => setShowUnlinked(false), 20);
+
+  useOnClickOutside(stagedDetailsRef, () => {
+    if (showStagedDetails) setShowStagedDetails(false);
+  });
+  useModalEscape(showStagedDetails, () => setShowStagedDetails(false), 20);
+
+  useModalEscape(priorityDropdownMedId !== null, () => setPriorityDropdownMedId(null), 20);
+
+  const isAnyMedicineRowOpen = medicineRows.some(r => r.isOpen);
+  useModalEscape(showAddModal && isAnyMedicineRowOpen, () => {
+    setMedicineRows(prev => prev.map(r => r.isOpen ? { ...r, isOpen: false } : r));
+  }, 10);
+  useModalEscape(showAddModal && !isAnyMedicineRowOpen, () => {
+    setShowAddModal(false);
+    setEditingPatient(null);
+  }, 0);
+
+  useModalEscape(Boolean(viewInvoice), () => setViewInvoice(null), 0);
+  useModalEscape(Boolean(editingRefill), () => setEditingRefill(null), 0);
+  useModalEscape(Boolean(linkingMedicine), () => setLinkingMedicine(null), 0);
+  useModalEscape(showDelayModal, () => setShowDelayModal(false), 0);
+  useModalEscape(Boolean(orderingPatient), () => setOrderingPatient(null), 0);
+  useModalEscape(Boolean(earlyBookingConfirm), () => setEarlyBookingConfirm(null), 0);
+
   // Resizable panel width state (persisted in localStorage, matching WhatsApp layout)
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = localStorage.getItem('crm_refills_sidebar_width');
@@ -401,6 +436,10 @@ export const RefillsSection: React.FC = () => {
   }, []);
 
   const selectPatientAndLoadDetails = useCallback((pat: RefillPatient) => {
+    setShowMoreMenu(false);
+    setShowUnlinked(false);
+    setShowStagedDetails(false);
+    setPriorityDropdownMedId(null);
     setSelectedPatient(pat);
     loadPatientFulfillments(pat.patient_phone, pat.customer_id);
     loadPatientInvoices(pat.patient_phone, pat.customer_id);
@@ -1193,37 +1232,50 @@ export const RefillsSection: React.FC = () => {
     } finally { setSubmitting(false); }
   };
 
-  // Filter calculation
-  const filtered = data.filter(p => {
-    const q = search.toLowerCase().trim();
-    const matchesSearch = !q || (p.patient_name?.toLowerCase().includes(q)) || (p.patient_phone?.includes(q));
-    if (!matchesSearch) return false;
+  // Filter calculation with stable handled-today ordering (sink handled-today patients to the bottom)
+  const filtered = useMemo(() => {
+    const list = data.filter(p => {
+      const q = search.toLowerCase().trim();
+      const matchesSearch = !q || (p.patient_name?.toLowerCase().includes(q)) || (p.patient_phone?.includes(q));
+      if (!matchesSearch) return false;
 
-    const today = new Date();
-    const dueDate = new Date(p.next_refill_date);
-    const isOverdue = dueDate < today;
-    const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
-    const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
+      const today = new Date();
+      const dueDate = new Date(p.next_refill_date);
+      const isOverdue = dueDate < today;
+      const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+      const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
 
-    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
-    const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
+      const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
+      const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
 
-    // Action tabs hide patients already fully handled (ordered + reminder sent, or fulfilled today); master tabs keep everyone
-    if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday)) return false;
-    if (filterTab === 'lead' && (isSettled || isFulfilledToday)) return false;
-    if (filterTab === 'overdue') return isOverdue;
-    if (filterTab === 'lead') return isLeadWindow;
-    if (filterTab === 'active') {
-      return p.medicines.some(m => m.is_active !== 0 && m.status !== 'canceled');
-    }
-    if (filterTab === 'paused') {
-      return p.medicines.some(m => m.is_active === 0 || m.status === 'paused');
-    }
-    if (filterTab === 'canceled') {
-      return p.medicines.some(m => m.status === 'canceled');
-    }
-    return true; // 'all'
-  });
+      // Action tabs hide patients already fully handled (ordered + reminder sent, or fulfilled today); master tabs keep everyone
+      if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday)) return false;
+      if (filterTab === 'lead' && (isSettled || isFulfilledToday)) return false;
+      if (filterTab === 'overdue') return isOverdue;
+      if (filterTab === 'lead') return isLeadWindow;
+      if (filterTab === 'active') {
+        return p.medicines.some(m => m.is_active !== 0 && m.status !== 'canceled');
+      }
+      if (filterTab === 'paused') {
+        return p.medicines.some(m => m.is_active === 0 || m.status === 'paused');
+      }
+      if (filterTab === 'canceled') {
+        return p.medicines.some(m => m.status === 'canceled');
+      }
+      return true; // 'all'
+    }).map(p => {
+      const today = new Date();
+      const dueDate = new Date(p.next_refill_date);
+      const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+      const handled = isPatientHandledToday(p.medicines);
+      return {
+        ...p,
+        diffDays,
+        handled
+      };
+    });
+    return sortRefillGroups(list);
+  }, [data, search, filterTab, showSettledOverdue]);
 
   // Top metric stats
   const totalPrescriptions = data.reduce((sum, p) => sum + (p.medicines?.length || 0), 0);
@@ -1314,7 +1366,7 @@ export const RefillsSection: React.FC = () => {
         </div>
 
         {unlinkedPatients.length > 0 && (
-          <div className="relative">
+          <div ref={unlinkedRef} className="relative">
             <button
               type="button"
               onClick={() => setShowUnlinked(v => !v)}
@@ -1394,7 +1446,7 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Staged Reminders & Pharmacy Alert Banner ── */}
       {stagedSummary && stagedSummary.total_staged > 0 && (
-        <div className="p-3 bg-bg2 border border-primary/30 rounded-2xl flex flex-col gap-2 shadow-sm shrink-0">
+        <div ref={stagedDetailsRef} className="p-3 bg-bg2 border border-primary/30 rounded-2xl flex flex-col gap-2 shadow-sm shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="flex h-2.5 w-2.5 relative">
@@ -1875,7 +1927,7 @@ export const RefillsSection: React.FC = () => {
                   })()}
 
                   {/* Overflow: advanced lifecycle actions */}
-                  <div className="relative">
+                  <div ref={moreMenuRef} className="relative">
                     <button
                       type="button"
                       onClick={() => setShowMoreMenu(prev => !prev)}
@@ -2505,6 +2557,7 @@ export const RefillsSection: React.FC = () => {
                 onClick={() => {
                   setShowAddModal(false);
                   setEditingPatient(null);
+                  setMedicineRows(prev => prev.map(r => ({ ...r, isOpen: false })));
                 }}
                 className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors"
               >

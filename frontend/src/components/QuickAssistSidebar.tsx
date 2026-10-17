@@ -1,4 +1,4 @@
-import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, checkPatientRefillCycleBooking } from '../utils/refillSettled';
+import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, isRefillHandledToday, checkPatientRefillCycleBooking, sortRefillGroups } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -8,7 +8,7 @@ import {
   Zap, Globe, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon,
   Activity as ActivityIcon, ShieldCheck as ShieldCheckIcon, Clock as ClockIcon,
   MessageSquare as MessageSquareIcon, Send as SendIcon, Calendar, RotateCw,
-  CheckCheck, Receipt, Phone, Pill, AlertTriangle, CheckCircle2
+  CheckCheck, Receipt, Phone, Pill, AlertTriangle, CheckCircle2, HelpCircle
 } from 'lucide-react';
 import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, quickOrderEvent, automationHubEvent } from '../services/events';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
@@ -109,9 +109,19 @@ export const QuickAssistSidebar = memo(({
   const [expandedRefillKeys, setExpandedRefillKeys] = useState<Set<string>>(new Set());
   const [expandedWebsiteOrderKeys, setExpandedWebsiteOrderKeys] = useState<Set<string>>(new Set());
   const [expandedSpecialOrderKeys, setExpandedSpecialOrderKeys] = useState<Set<string>>(new Set());
+  const [expandedInquiryKeys, setExpandedInquiryKeys] = useState<Set<string>>(new Set());
   const [expandedStagedKeys, setExpandedStagedKeys] = useState<Set<string>>(new Set());
   const [snoozingKeys, setSnoozingKeys] = useState<Set<string>>(new Set());
   const [fulfillingRefillKeys, setFulfillingRefillKeys] = useState<Set<string>>(new Set());
+
+  const toggleInquiryKey = (key: string) => {
+    setExpandedInquiryKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // Master auto-remind toggle state & optimistic overrides for orders
   const [autoRemindMaster, setAutoRemindMaster] = useState<boolean>(true);
@@ -477,6 +487,47 @@ export const QuickAssistSidebar = memo(({
       is_active?: number | null;
     }>;
   }, isConfirmedEarly = false) => {
+    // 0. If already handled/dispensed today, open POS directly for billing without re-triggering fulfillAllRefills
+    if ((group as any).handled) {
+      toastEvent.trigger(`Opening POS for "${group.patient_name}"...`, 'info', '/pos');
+      setExpanded(false);
+      navigate('/pos', {
+        state: {
+          prefill: {
+            patientName: group.patient_name,
+            patientPhone: group.patient_phone,
+            customerId: group.customer_id || group.medicines[0]?.customer_id || undefined,
+            refillPatient: true,
+            isRefillBooking: true,
+            refillDueDate: (group as any).next_refill_date,
+            refillDays: group.medicines[0]?.refill_interval_days || 30,
+            refillIds: group.medicines.map(m => m.id),
+            medicines: group.medicines.map(m => ({
+              id: m.id,
+              medicine_id: m.medicine_id,
+              medicineId: m.medicine_id,
+              medicineName: m.medicine_name,
+              medicine_name: m.medicine_name,
+              quantity_needed: m.quantity_needed || 1,
+              quantity: m.quantity_needed || 1,
+              inventory_id: m.inventory_id,
+              batch_no: m.batch_no,
+              expiry_date: m.expiry_date,
+              mrp: m.mrp,
+              sell_price: m.sell_price,
+              unit_price: m.unit_price || m.sell_price || m.mrp || 0,
+              packaging: m.packaging,
+              pack_size: m.pack_size,
+              in_stock_qty: m.in_stock_qty || 0,
+              stock_qty: m.batch_quantity || m.in_stock_qty || 0,
+              loose_quantity: m.batch_loose_quantity || 0
+            }))
+          }
+        }
+      });
+      return;
+    }
+
     // 1. One per cycle guard: block if already dispensed
     const cycleStatus = checkPatientRefillCycleBooking(group.medicines);
     if (cycleStatus.alreadyDispensed) {
@@ -880,7 +931,7 @@ export const QuickAssistSidebar = memo(({
     return list;
   }, [refills]);
 
-  // Filter actionable refills: active, non-completed, and due within today + upcoming 7 calendar days (diffDays <= 7)
+  // Filter actionable refills: active, non-canceled, and either due within upcoming 7 days, ordered early, or handled today
   const actionableRefills = useMemo(() => {
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
@@ -889,18 +940,20 @@ export const QuickAssistSidebar = memo(({
       if (
         r.is_active !== 1 ||
         !r.next_refill_date ||
-        r.status === 'completed' ||
-        r.status === 'fulfilled' ||
-        r.status === 'canceled' ||
-        isRefillFulfilledToday(r)
+        r.status === 'canceled'
       ) {
+        return false;
+      }
+      const handledToday = isRefillHandledToday(r);
+      // Completed/fulfilled on a previous day are not handled today, so exclude them
+      if ((r.status === 'completed' || r.status === 'fulfilled') && !handledToday) {
         return false;
       }
       const d = new Date(r.next_refill_date);
       if (isNaN(d.getTime())) return false;
       const dueStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const diffDays = Math.round((dueStart - todayStart) / 86400000);
-      return diffDays <= 7;
+      return diffDays <= 7 || r.status === 'ordered' || Boolean(r.cart_store_name) || handledToday;
     });
   }, [flatRefills]);
 
@@ -915,7 +968,7 @@ export const QuickAssistSidebar = memo(({
       customer_id?: number | null;
       next_refill_date: string;
       diffDays: number;
-      timingCategory: 'Overdue' | 'Today' | 'Tomorrow' | 'Within 7 Days';
+      timingCategory: 'Overdue' | 'Today' | 'Tomorrow' | 'Within 7 Days' | 'Early';
       hasHoldStock: boolean;
       isPatientConfirmed: boolean;
       reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
@@ -924,6 +977,7 @@ export const QuickAssistSidebar = memo(({
       collection_reminder_count?: number;
       last_collection_reminder_at?: string | null;
       isReady?: boolean;
+      handled?: boolean;
       medicines: Array<{
         id: number;
         medicine_id: number;
@@ -934,6 +988,7 @@ export const QuickAssistSidebar = memo(({
         is_ready?: number;
         quick_bill_id?: number | null;
         next_refill_date: string;
+        last_refill_date?: string | null;
         diffDays: number;
         reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
         reminder_sent_at?: string | null;
@@ -981,10 +1036,11 @@ export const QuickAssistSidebar = memo(({
           customer_id: r.customer_id ?? null,
           next_refill_date: r.next_refill_date,
           diffDays,
-          timingCategory: diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : 'Within 7 Days',
+          timingCategory: diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : diffDays <= 7 ? 'Within 7 Days' : 'Early',
           hasHoldStock: false,
           isPatientConfirmed: false,
           isReady: false,
+          handled: isRefillHandledToday(r),
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
           auto_remind: 0,
@@ -995,12 +1051,13 @@ export const QuickAssistSidebar = memo(({
         map.set(key, existing);
         list.push(existing);
       }
+      if (isRefillHandledToday(r)) existing.handled = true;
       if (r.hold_for_stock === 1) existing.hasHoldStock = true;
       if ((r as any).patient_confirmed === 1) existing.isPatientConfirmed = true;
       if (r.next_refill_date && (!existing.next_refill_date || new Date(r.next_refill_date) < new Date(existing.next_refill_date))) {
         existing.next_refill_date = r.next_refill_date;
         existing.diffDays = diffDays;
-        existing.timingCategory = diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : 'Within 7 Days';
+        existing.timingCategory = diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : diffDays <= 7 ? 'Within 7 Days' : 'Early';
       }
       const medReminderStatus: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' = r.reminder_status || (r.status === 'notified' ? 'SENT' : 'NOT_SENT');
       existing.medicines.push({
@@ -1013,6 +1070,7 @@ export const QuickAssistSidebar = memo(({
         is_ready: (r as any).is_ready ?? 0,
         quick_bill_id: (r as any).quick_bill_id ?? null,
         next_refill_date: r.next_refill_date,
+        last_refill_date: r.last_refill_date || null,
         diffDays,
         reminder_status: medReminderStatus,
         reminder_sent_at: r.reminder_sent_at || null,
@@ -1068,12 +1126,9 @@ export const QuickAssistSidebar = memo(({
       }
     }
 
-    // Sort by diffDays ascending (most urgent first)
-    list.sort((a, b) => a.diffDays - b.diffDays);
-    // 3-button workflow: settled (ordered + reminded) patients STAY visible as
-    // Stage-C [Re-Send Reminder] [POS] until POS fulfillment removes them via
-    // status completed/fulfilled. Do not re-add the settled filter here.
-    return list.filter(g => {
+    // Sort: handled-today patients stay visible at the bottom; active patients sorted by diffDays ascending
+    const sorted = sortRefillGroups(list);
+    return sorted.filter(g => {
       if (optimisticHiddenRefillKeys.has(g.key)) return false;
       if (g.patient_phone && optimisticHiddenRefillKeys.has(g.patient_phone)) return false;
       const gDigits = (g.patient_phone || '').replace(/\D/g, '').slice(-10);
@@ -1090,7 +1145,7 @@ export const QuickAssistSidebar = memo(({
   // Group active special orders by requester
   const activeSpecialOrders = useMemo(() => {
     return Array.isArray(specialOrders)
-      ? specialOrders.filter(s => s.status !== 'Completed' && s.status !== 'Fulfilled' && s.status !== 'Cancelled' && !optimisticHiddenOrderIds.has(s.id))
+      ? specialOrders.filter(s => s.status !== 'Completed' && s.status !== 'Fulfilled' && s.status !== 'Cancelled' && s.status !== 'Inquiry' && !optimisticHiddenOrderIds.has(s.id))
       : [];
   }, [specialOrders, optimisticHiddenOrderIds]);
 
@@ -1241,6 +1296,69 @@ export const QuickAssistSidebar = memo(({
     return list.filter(g => !isOrderGroupSettled(g.items));
   }, [activeLocalSpecialOrders]);
 
+  const inquirySpecialOrders = useMemo(() => {
+    return Array.isArray(specialOrders)
+      ? specialOrders.filter(s => s.status === 'Inquiry' && !optimisticHiddenOrderIds.has(s.id))
+      : [];
+  }, [specialOrders, optimisticHiddenOrderIds]);
+
+  const groupedInquiries = useMemo(() => {
+    const list: Array<{
+      key: string;
+      requester: string;
+      phone: string;
+      overallStatus: string;
+      auto_remind?: number;
+      collection_reminder_count?: number;
+      last_collection_reminder_at?: string | null;
+      items: Array<{
+        id: number;
+        product: string;
+        qty: number;
+        status: string;
+        priority: string;
+        notification_count?: number;
+        auto_remind?: number;
+        collection_reminder_count?: number;
+        last_collection_reminder_at?: string | null;
+      }>;
+    }> = [];
+
+    const map = new Map<string, (typeof list)[0]>();
+
+    for (const order of inquirySpecialOrders) {
+      const key = (order.phone || order.requester || String(order.id)).trim();
+      let existing = map.get(key);
+      if (!existing) {
+        existing = {
+          key,
+          requester: order.requester || 'Customer',
+          phone: order.phone || '',
+          overallStatus: 'Inquiry',
+          auto_remind: 0,
+          collection_reminder_count: 0,
+          last_collection_reminder_at: null,
+          items: [],
+        };
+        map.set(key, existing);
+        list.push(existing);
+      }
+      existing.items.push({
+        id: order.id,
+        product: order.product || 'Item',
+        qty: Number(order.qty || 1),
+        status: order.status || 'Inquiry',
+        priority: order.priority || 'Normal',
+        notification_count: Number((order as any).notification_count || 0),
+        auto_remind: Number(order.auto_remind || 0),
+        collection_reminder_count: Number(order.collection_reminder_count || 0),
+        last_collection_reminder_at: order.last_collection_reminder_at || null,
+      });
+    }
+
+    return list;
+  }, [inquirySpecialOrders]);
+
   const groupedNotifications = useMemo(() => {
     if (!Array.isArray(notifications)) return [];
     const map = new Map<string, {
@@ -1323,9 +1441,10 @@ export const QuickAssistSidebar = memo(({
   }, [notifications, optimisticDismissedIds, groupedActionableRefills, groupedSpecialOrders]);
 
   if (!expanded) {
-    const activeRefillsCount = groupedActionableRefills.length;
+    const activeRefillsCount = groupedActionableRefills.filter(g => !g.handled).length;
     const activeWebsiteOrdersCount = groupedWebsiteOrders.length;
     const activeSpecialOrdersCount = groupedSpecialOrders.length;
+    const inquiryOrdersCount = groupedInquiries.length;
     const stagedNotificationsCount = groupedNotifications.length;
 
     return (
@@ -1369,6 +1488,16 @@ export const QuickAssistSidebar = memo(({
               title={`Quick Special Requests: ${activeSpecialOrdersCount} customer(s)`}
             >
               {activeSpecialOrdersCount}
+            </div>
+          )}
+
+          {/* 3b. Customer Inquiries Needing Review (Violet) */}
+          {inquiryOrdersCount > 0 && (
+            <div
+              className="flex items-center justify-center min-w-[17px] h-4 px-1 rounded-full bg-violet-500/15 text-violet-300 text-[8.5px] font-black font-mono border border-violet-500/30 shadow-xs"
+              title={`Inquiries Needing Review: ${inquiryOrdersCount} customer(s)`}
+            >
+              {inquiryOrdersCount}
             </div>
           )}
 
@@ -1445,61 +1574,73 @@ export const QuickAssistSidebar = memo(({
       {/* Main content scroll */}
       <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-4 scrollbar-thin bg-bg">
         {/* Actionable Refills (Due within 7 Calendar Days) */}
-        <div>
-          <div className="flex items-center justify-between mb-2 text-xs font-bold uppercase tracking-wider text-purple-300">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <BellRing size={13} className="text-purple-500 shrink-0" />
-              <span className="truncate">Refills Due Soon ({groupedActionableRefills.length})</span>
-            </div>
-            <button
-              onClick={() => {
-                setExpanded(false);
-                navigate('/crm?tab=refills');
-              }}
-              className="text-[9px] font-black text-sky-300 hover:underline uppercase tracking-widest cursor-pointer shrink-0 ml-1"
-            >
-              Manage
-            </button>
-          </div>
-          {groupedActionableRefills.length === 0 ? (
-            <p className="text-xs text-muted/60 italic pl-2 py-1">No refills due within 7 days</p>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {groupedActionableRefills.map(group => {
-                const isExpanded = expandedRefillKeys.has(group.key);
-                const timingBadge = group.timingCategory === 'Overdue' ? (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Overdue by ${Math.abs(group.diffDays)} days`}>
-                    <ClockIcon size={9} className="shrink-0" />
-                    <span>{Math.abs(group.diffDays)}d</span>
-                  </span>
-                ) : group.timingCategory === 'Today' ? (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Today">
-                    <ClockIcon size={9} className="shrink-0" />
-                    <span>Today</span>
-                  </span>
-                ) : group.timingCategory === 'Tomorrow' ? (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Tomorrow">
-                    <ClockIcon size={9} className="shrink-0" />
-                    <span>Tmw</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Due in ${group.diffDays} days`}>
-                    <ClockIcon size={9} className="shrink-0" />
-                    <span>{group.diffDays}d</span>
-                  </span>
-                );
+        {(() => {
+          const activeRefills = groupedActionableRefills.filter(g => !g.handled);
+          const handledRefills = groupedActionableRefills.filter(g => g.handled);
 
-                return (
-                  <div
-                    key={group.key}
-                    className={`p-2.5 rounded-xl bg-bg2/95 border border-border flex flex-col gap-2 shadow-xs min-w-0 overflow-hidden transition-all hover:border-purple-500/30 ${
-                      group.timingCategory === 'Overdue'
-                        ? 'border-l-4 border-l-rose-500'
-                        : group.timingCategory === 'Today'
-                        ? 'border-l-4 border-l-emerald-500'
-                        : 'border-l-4 border-l-purple-500'
-                    }`}
-                  >
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-2 text-xs font-bold uppercase tracking-wider text-purple-300">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <BellRing size={13} className="text-purple-500 shrink-0" />
+                  <span className="truncate">Refills Due Soon ({activeRefills.length})</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setExpanded(false);
+                    navigate('/crm?tab=refills');
+                  }}
+                  className="text-[9px] font-black text-sky-300 hover:underline uppercase tracking-widest cursor-pointer shrink-0 ml-1"
+                >
+                  Manage
+                </button>
+              </div>
+              {activeRefills.length === 0 && handledRefills.length === 0 ? (
+                <p className="text-xs text-muted/60 italic pl-2 py-1">No refills due within 7 days</p>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  {activeRefills.map(group => {
+                    const isExpanded = expandedRefillKeys.has(group.key);
+                    const timingBadge = group.timingCategory === 'Overdue' ? (
+                      <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Overdue by ${Math.abs(group.diffDays)} days`}>
+                        <ClockIcon size={9} className="shrink-0" />
+                        <span>{Math.abs(group.diffDays)}d</span>
+                      </span>
+                    ) : group.timingCategory === 'Today' ? (
+                      <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Today">
+                        <ClockIcon size={9} className="shrink-0" />
+                        <span>Today</span>
+                      </span>
+                    ) : group.timingCategory === 'Tomorrow' ? (
+                      <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/25 text-[8.5px] font-mono font-bold shrink-0" title="Due Tomorrow">
+                        <ClockIcon size={9} className="shrink-0" />
+                        <span>Tmw</span>
+                      </span>
+                    ) : group.timingCategory === 'Early' ? (
+                      <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Early refill · Due in ${group.diffDays} days`}>
+                        <ClockIcon size={9} className="shrink-0" />
+                        <span>Early · {group.diffDays}d</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 text-[8.5px] font-mono font-bold shrink-0" title={`Due in ${group.diffDays} days`}>
+                        <ClockIcon size={9} className="shrink-0" />
+                        <span>{group.diffDays}d</span>
+                      </span>
+                    );
+
+                    return (
+                      <div
+                        key={group.key}
+                        className={`p-2.5 rounded-xl bg-bg2/95 border border-border flex flex-col gap-2 shadow-xs min-w-0 overflow-hidden transition-all hover:border-purple-500/30 ${
+                          group.timingCategory === 'Overdue'
+                            ? 'border-l-4 border-l-rose-500'
+                            : group.timingCategory === 'Today'
+                            ? 'border-l-4 border-l-emerald-500'
+                            : group.timingCategory === 'Early'
+                            ? 'border-l-4 border-l-sky-500'
+                            : 'border-l-4 border-l-purple-500'
+                        }`}
+                      >
                     {/* Patient Header (Click to toggle expansion / fold & unfold) */}
                     <div
                       onClick={() => toggleRefillKey(group.key)}
@@ -1868,9 +2009,96 @@ export const QuickAssistSidebar = memo(({
                   </div>
                 );
               })}
+
+                  {/* Completed Today — Awaiting POS */}
+                  {handledRefills.length > 0 && (
+                    <div className="pt-2.5 mt-1 border-t border-dashed border-border/80 flex flex-col gap-2">
+                      <div className="flex items-center gap-1.5 px-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                        <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />
+                        <span>Completed today — awaiting POS ({handledRefills.length})</span>
+                      </div>
+                      {handledRefills.map(group => {
+                        const isExpanded = expandedRefillKeys.has(group.key);
+                        return (
+                          <div
+                            key={group.key}
+                            className="p-2.5 rounded-xl bg-bg2/95 border border-border flex flex-col gap-2 shadow-xs min-w-0 overflow-hidden transition-all hover:border-emerald-500/30 border-l-4 border-l-emerald-500/50 opacity-95"
+                          >
+                            {/* Patient Header */}
+                            <div
+                              onClick={() => toggleRefillKey(group.key)}
+                              className="flex items-start justify-between gap-1.5 min-w-0 cursor-pointer select-none"
+                            >
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                  <span className="font-semibold text-xs text-text truncate">{group.patient_name}</span>
+                                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 text-[8.5px] font-bold shrink-0 border border-purple-500/20">
+                                    <Pill size={9} className="shrink-0" />
+                                    <span>{group.medicines.length}</span>
+                                  </span>
+                                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 text-[8.5px] font-bold shrink-0" title="Refill cycle handled today — awaiting POS billing">
+                                    <CheckCircle2 size={9} className="shrink-0" />
+                                    <span>Done Today</span>
+                                  </span>
+                                </div>
+                                {group.patient_phone && (
+                                  <div className="flex items-center gap-1 text-[9.5px] text-muted truncate font-mono mt-0.5">
+                                    <Phone size={9} className="shrink-0 text-muted/70" />
+                                    <span>{group.patient_phone}</span>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <ChevronDown size={13} className={`text-muted transition-transform duration-200 ${isExpanded ? 'rotate-180 text-purple-500' : ''}`} />
+                              </div>
+                            </div>
+
+                            {/* Unfolded Medicine Names */}
+                            {isExpanded && (
+                              <div className="flex flex-col gap-1.5 pt-1 border-t border-border">
+                                {group.medicines.map((med) => (
+                                  <div
+                                    key={med.id}
+                                    className="flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg bg-bg3/80 border border-border text-[11px] min-w-0"
+                                  >
+                                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                                      <Package size={10} className="text-purple-400 shrink-0" />
+                                      <span className="font-medium text-text text-[11px] truncate" title={med.medicine_name}>{med.medicine_name}</span>
+                                    </div>
+                                    <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[9px] font-mono font-bold shrink-0">
+                                      x{med.quantity_needed}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* 1-click POS Button */}
+                            <div className="pt-1.5 border-t border-border min-w-0">
+                              <button
+                                type="button"
+                                disabled={fulfillingRefillKeys.has(group.key)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCompleteRefillGroup(group);
+                                }}
+                                className="w-full h-6.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                                title={`Open POS to bill today's completed refill for ${group.patient_name}`}
+                              >
+                                <ShoppingCart size={11} className="shrink-0" />
+                                <span>POS (Bill Walk-in)</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          );
+        })()}
 
         {/* Online Orders — website + WhatsApp */}
         <div>
@@ -2616,6 +2844,126 @@ export const QuickAssistSidebar = memo(({
             </div>
           )}
         </div>
+
+        {/* Customer Inquiries (Needs Approval) */}
+        {groupedInquiries.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-2 text-xs font-bold uppercase tracking-wider text-violet-300">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <HelpCircle size={13} className="text-violet-400 shrink-0" />
+                <span className="truncate">Inquiries (Needs Approval) · {groupedInquiries.length}</span>
+              </div>
+              <button
+                onClick={() => {
+                  setExpanded(false);
+                  navigate('/crm?tab=special_orders&filter=inquiries');
+                }}
+                className="text-[9px] font-black text-violet-300 hover:underline uppercase tracking-widest cursor-pointer shrink-0 ml-1"
+              >
+                Review
+              </button>
+            </div>
+            <div className="flex flex-col gap-2.5">
+              {groupedInquiries.map(group => {
+                const isExpanded = expandedInquiryKeys.has(group.key);
+                const isProcessing = group.items.some(i => processingOrderIds.has(i.id));
+
+                return (
+                  <div
+                    key={group.key}
+                    className="p-2.5 rounded-xl bg-bg2/95 border border-border flex flex-col gap-2 shadow-xs min-w-0 overflow-hidden transition-all hover:border-violet-500/30 border-l-4 border-l-violet-500"
+                  >
+                    {/* Header */}
+                    <div
+                      onClick={() => toggleInquiryKey(group.key)}
+                      className="flex items-start justify-between gap-1.5 min-w-0 cursor-pointer select-none"
+                    >
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className="font-semibold text-xs text-text truncate">{group.requester}</span>
+                          <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 text-[8.5px] font-mono font-bold shrink-0 border border-violet-500/20">
+                            {group.items.length > 1 ? `x${group.items.length} items` : `x${group.items[0]?.qty || 1}`}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[8.5px] font-bold shrink-0 border bg-violet-500/15 text-violet-300 border-violet-500/30">
+                            Inquiry
+                          </span>
+                        </div>
+                        {group.phone && (
+                          <div className="flex items-center gap-1 text-[9.5px] text-muted truncate font-mono mt-0.5">
+                            <Phone size={9} className="shrink-0 text-muted/70" />
+                            <span>{group.phone}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <ChevronDown size={13} className={`text-muted transition-transform duration-200 ${isExpanded ? 'rotate-180 text-violet-400' : ''}`} />
+                      </div>
+                    </div>
+
+                    {/* Unfolded Medicine Names */}
+                    {isExpanded && (
+                      <div className="flex flex-col gap-1.5 pt-1 border-t border-border">
+                        {group.items.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-bg3/80 border border-border text-[11px] min-w-0"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <Package size={10} className="text-violet-400 shrink-0" />
+                              <span className="font-medium text-text truncate text-[11px]">{item.product}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/20 text-[9px] font-mono font-bold shrink-0">
+                                x{item.qty}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <button
+                          disabled={isProcessing}
+                          onClick={() => handleUpdateGroupStatus(group, 'Pending')}
+                          className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                          title="Approve this WhatsApp customer inquiry and convert to active Special Order"
+                        >
+                          {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
+                          <span className="truncate">Approve & Order</span>
+                        </button>
+                        <button
+                          disabled={isProcessing}
+                          onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                          className="h-6.5 px-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
+                          title="Open POS to bill directly"
+                        >
+                          {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <Receipt size={11} className="shrink-0" />}
+                          <span className="truncate">POS</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUpdateGroupStatus(group, 'Cancelled');
+                          }}
+                          className="h-6.5 px-2 rounded-lg bg-red-600/15 hover:bg-red-600 hover:text-white text-red-400 border border-red-500/30 text-[9.5px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                          title="Dismiss and ignore this inquiry (will not place an order)"
+                        >
+                          {isProcessing ? <Loader2 size={10} className="animate-spin shrink-0" /> : <X size={11} className="shrink-0" />}
+                          <span>Dismiss</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Staged Messages */}
         <div>

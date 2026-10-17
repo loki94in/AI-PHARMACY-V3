@@ -209,3 +209,17 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 - Distributor add/edit modal (`components/Purchases/DistributorModal.tsx`) carries optional Min Order ₹ / Min Items inputs (blank = no warning, preserved on settings-page saves since those send `undefined`). Saving goes through the existing `saveDistributor` in `pages/Purchases/index.tsx`.
 - The Purchases totals bar shows an amber `⚠ Min order: …` flag when the selected distributor's bill is below either minimum (`minOrderWarning` memo over `memoizedTotals.grandTotal` + valid-line count). Advisory only — it never blocks `PurchaseSaveVerificationModal` Confirm.
 - The BookOpen button in the items-table header opens `components/DistributorHistoryPickerModal.tsx` (requires a selected distributor): ONE `api.getDistributorFrequent` fetch per open (90 days, 100 rows, frequency + recency), local ≥2-char filter, checkbox list with `×N bills` chips on a `.dropdown-scroll` scroller. **Add to bill** hydrates via ONE `api.batchLastPurchase` call (real last rate/MRP/batch/expiry/GST); quantity always stays blank and already-billed medicines are skipped. Query key `distributor-frequent` is mark-stale mapped under `invoice_saved` / `purchase_sync` / `purchases_sync` in `SSE_QUERY_MAP`.
+
+## Refill Queue Ordering & Customer Inquiry Isolation Contract (added 2026-10-17)
+- `utils/refillSettled.ts` exports `compareRefillGroups` and `sortRefillGroups`. Active patients sort by `diffDays` ascending (most urgent first). Patients handled/settled today (`isRefillHandledToday` / `isPatientHandledToday`) ALWAYS sink to the bottom.
+- In `QuickAssistSidebar`:
+  - Active refills render with their respective stage buttons and an `'Early'` timing chip (`Early · due in Nd`) when confirmed early or placed into cart with `diffDays > 7`.
+  - Handled-today refills are partitioned into a dedicated bottom section: `Completed today — awaiting POS (N)` with a 1-click POS billing button that directly navigates to POS prefilled with medicines.
+  - WhatsApp customer inquiries (`status === 'Inquiry'`) are strictly excluded from `activeSpecialOrders` and rendered in their own dedicated accordion section `Inquiries (Needs Approval) · N` with `Approve & Order`, `POS`, and `Dismiss` actions, plus a violet badge in the collapsed sidebar.
+- In `SpecialOrdersSection.tsx`:
+  - When `statusFilter === 'All'`, `o.status === 'Inquiry'` is excluded so unapproved inquiries do not appear in the active special requests table.
+  - The tab strip renders an amber count badge on the `Inquiries` button when pending inquiries exist.
+  - A prominent top banner alerts the pharmacist on the `All` tab: `"You have N customer inquiries awaiting approval." [Review Inquiries]`.
+  - URL parameter `?filter=inquiries` auto-selects the Inquiries tab upon navigation from Quick Assist.
+- In `RefillsSection.tsx`:
+  - `filtered` patients are stably sorted via `sortRefillGroups`, keeping active overdue/due patients at the top and sinking handled-today patients to the bottom.
