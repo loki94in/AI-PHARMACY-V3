@@ -13727,7 +13727,7 @@ function parseMinOrderItems(raw) {
 }
 function normalizeDistributorName2(rawName) {
   if (!rawName) return "";
-  return rawName.toLowerCase().trim().replace(/\(.*?\)/g, "").replace(/pvt|ltd|limited|private|distributors|distributor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics/gi, "").replace(/[^a-z0-9]/g, "");
+  return rawName.toLowerCase().trim().replace(/\(.*?\)/g, "").replace(/pvt|ltd|limited|private|distributors|distributor|distribitors|distribitor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics/gi, "").replace(/[^a-z0-9]/g, "");
 }
 async function resolveDistributorContact(db2, storeOrDistName) {
   const rawName = (storeOrDistName || "").trim();
@@ -14230,6 +14230,7 @@ __export(distributorDispatchReminderWorker_exports, {
   allocateDynamicReminderTimes: () => allocateDynamicReminderTimes,
   checkAndSendAfternoonDeliveryBoyReminder: () => checkAndSendAfternoonDeliveryBoyReminder,
   checkAndSendAutoReminders: () => checkAndSendAutoReminders,
+  getCanonicalDistributorKey: () => getCanonicalDistributorKey,
   getTodayDistributorRemindersFast: () => getTodayDistributorRemindersFast,
   purgeStaleOfflineReminders: () => purgeStaleOfflineReminders,
   resolveDeliveryBoyForDistributor: () => resolveDeliveryBoyForDistributor,
@@ -14237,6 +14238,13 @@ __export(distributorDispatchReminderWorker_exports, {
   stopDistributorDispatchReminderWorker: () => stopDistributorDispatchReminderWorker,
   syncTodayActiveDistributors: () => syncTodayActiveDistributors
 });
+function getCanonicalDistributorKey(distributorId, name) {
+  if (distributorId && Number(distributorId) > 0) {
+    return `id:${distributorId}`;
+  }
+  const norm3 = normalizeDistributorName2(name);
+  return norm3 ? `norm:${norm3}` : `raw:${(name || "").toLowerCase().trim()}`;
+}
 async function ensureReminderSchema(db2) {
   if (reminderSchemaEnsured) return;
   try {
@@ -14402,11 +14410,12 @@ async function getTodayDistributorRemindersFast(customDateStr) {
       }
       r.synced_order_nos = syncedOrdersMap.get(normDistName) || [];
       const distId = r.distributor_id;
+      const targetNorm = normalizeDistributorName2(r.distributor_name);
       const matchingPlaced = todayPlacedOrders.filter(
-        (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId
+        (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId || targetNorm && po.store_name && normalizeDistributorName2(po.store_name) === targetNorm
       );
       const matchingPurchases = todayPurchases.filter(
-        (p) => p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName || distId && p.distributor_id === distId
+        (p) => p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName || distId && p.distributor_id === distId || targetNorm && p.distributor_name && normalizeDistributorName2(p.distributor_name) === targetNorm
       );
       const ordersList = [];
       let totalItems = 0;
@@ -14460,14 +14469,44 @@ async function syncTodayActiveDistributors() {
   const todayStr2 = getTodayDateString();
   try {
     await ensureReminderSchema(db2);
-    await db2.run(
-      `DELETE FROM distributor_dispatch_reminders 
-       WHERE id NOT IN (
-         SELECT MAX(id) 
-         FROM distributor_dispatch_reminders 
-         GROUP BY date, LOWER(TRIM(distributor_name))
-       )`
+    const existingRemindersForDate = await db2.all(
+      `SELECT id, distributor_id, distributor_name, distributor_phone, status, order_source, delivery_boy_id, created_at
+       FROM distributor_dispatch_reminders
+       WHERE date = ?
+       ORDER BY (CASE WHEN distributor_id IS NOT NULL THEN 0 ELSE 1 END), (CASE WHEN distributor_phone != '' THEN 0 ELSE 1 END), id ASC`,
+      [todayStr2]
     );
+    const canonicalSeen = /* @__PURE__ */ new Map();
+    const idsToDelete = [];
+    for (const row of existingRemindersForDate) {
+      let canonKey = getCanonicalDistributorKey(row.distributor_id, row.distributor_name);
+      if (!row.distributor_id && row.distributor_name) {
+        const resDist = await resolveDistributorContact(db2, row.distributor_name);
+        if (resDist.distributor_id) {
+          canonKey = getCanonicalDistributorKey(resDist.distributor_id, resDist.distributor_name || row.distributor_name);
+        }
+      }
+      if (canonicalSeen.has(canonKey)) {
+        const primary = canonicalSeen.get(canonKey);
+        const phoneToKeep = primary.distributor_phone || row.distributor_phone || "";
+        const idToKeep = primary.distributor_id || row.distributor_id || null;
+        const boyToKeep = primary.delivery_boy_id || row.delivery_boy_id || null;
+        const statusToKeep = primary.status === "Dispatched" || row.status === "Dispatched" ? "Dispatched" : primary.status;
+        await db2.run(
+          `UPDATE distributor_dispatch_reminders 
+           SET distributor_phone = ?, distributor_id = ?, delivery_boy_id = ?, status = ?
+           WHERE id = ?`,
+          [phoneToKeep, idToKeep, boyToKeep, statusToKeep, primary.id]
+        );
+        idsToDelete.push(row.id);
+      } else {
+        canonicalSeen.set(canonKey, row);
+      }
+    }
+    if (idsToDelete.length > 0) {
+      const qMarks = idsToDelete.map(() => "?").join(",");
+      await db2.run(`DELETE FROM distributor_dispatch_reminders WHERE id IN (${qMarks})`, idsToDelete);
+    }
     const pharmarackOrders = await db2.all(
       `SELECT DISTINCT po.store_name as store_name
        FROM pharmarack_placed_orders po
@@ -14482,7 +14521,7 @@ async function syncTodayActiveDistributors() {
       pharmarackDistributors.push({
         store_name: storeName,
         distributor_id: contact.distributor_id,
-        distributor_name: storeName,
+        distributor_name: contact.distributor_name || storeName,
         distributor_phone: contact.distributor_phone || ""
       });
     }
@@ -14526,8 +14565,14 @@ async function syncTodayActiveDistributors() {
     const distMap = /* @__PURE__ */ new Map();
     for (const d of [...pharmarackDistributors, ...purchaseDistributors]) {
       const name = d.distributor_name || d.store_name;
-      if (name && !distMap.has(name.toLowerCase().trim())) {
-        distMap.set(name.toLowerCase().trim(), {
+      if (!name) continue;
+      const key = getCanonicalDistributorKey(d.distributor_id, name);
+      const existing = distMap.get(key);
+      if (existing) {
+        if (!existing.id && d.distributor_id) existing.id = d.distributor_id;
+        if (!existing.phone && d.distributor_phone) existing.phone = d.distributor_phone;
+      } else {
+        distMap.set(key, {
           id: d.distributor_id || null,
           name: name.trim(),
           phone: d.distributor_phone || "",
@@ -14538,11 +14583,12 @@ async function syncTodayActiveDistributors() {
     for (const d of emailDistributors) {
       const name = d.distributor_name;
       if (name) {
-        const key = name.toLowerCase().trim();
+        const key = getCanonicalDistributorKey(d.distributor_id, name);
         const existing = distMap.get(key);
         const p = (d.distributor_phone || d.distributor_contact || "").replace(/\D/g, "").slice(-10);
         if (existing) {
           existing.hasEmailToday = true;
+          if (!existing.id && d.distributor_id) existing.id = d.distributor_id;
           if (!existing.phone && p) existing.phone = p;
         } else {
           distMap.set(key, {
@@ -14557,17 +14603,20 @@ async function syncTodayActiveDistributors() {
     for (const dist of distMap.values()) {
       let activePhone = dist.phone;
       let activeId = dist.id;
-      if (!activePhone) {
+      if (!activePhone || !activeId) {
         const resolved = await resolveDistributorContact(db2, dist.name);
-        if (resolved.distributor_phone) {
-          activePhone = resolved.distributor_phone;
-          activeId = activeId || resolved.distributor_id;
-        }
+        if (resolved.distributor_phone && !activePhone) activePhone = resolved.distributor_phone;
+        if (resolved.distributor_id && !activeId) activeId = resolved.distributor_id;
       }
-      const existing = await db2.get(
-        `SELECT id, status, distributor_phone, distributor_id, delivery_boy_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
-        [dist.name, todayStr2]
+      const allTodayReminders = await db2.all(
+        `SELECT id, status, distributor_phone, distributor_id, delivery_boy_id, distributor_name
+         FROM distributor_dispatch_reminders WHERE date = ?`,
+        [todayStr2]
       );
+      const targetNorm = normalizeDistributorName2(dist.name);
+      const existing = allTodayReminders.find(
+        (r) => activeId && r.distributor_id === activeId || r.distributor_name && r.distributor_name.toLowerCase().trim() === dist.name.toLowerCase().trim() || targetNorm && normalizeDistributorName2(r.distributor_name) === targetNorm
+      ) || null;
       const boyContact = await resolveDeliveryBoyForDistributor(db2, activeId, dist.name);
       if (!existing) {
         const initialStatus = dist.hasEmailToday ? "Dispatched" : "Pending";
@@ -14606,23 +14655,19 @@ async function syncTodayActiveDistributors() {
         );
       }
     }
-    const activeNames = Array.from(distMap.values()).map((d) => d.name.toLowerCase().trim());
-    if (activeNames.length > 0) {
-      const placeholders = activeNames.map(() => "?").join(",");
-      await db2.run(
-        `DELETE FROM distributor_dispatch_reminders
-         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
-           AND NOT (status = 'Dispatched' AND order_source != 'email')
-           AND LOWER(TRIM(distributor_name)) NOT IN (${placeholders})`,
-        [todayStr2, ...activeNames]
-      );
-    } else {
-      await db2.run(
-        `DELETE FROM distributor_dispatch_reminders
-         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
-           AND NOT (status = 'Dispatched' AND order_source != 'email')`,
-        [todayStr2]
-      );
+    const activeCanonKeys = new Set(Array.from(distMap.values()).map((d) => getCanonicalDistributorKey(d.id, d.name)));
+    const allRemindersBeforePurge = await db2.all(
+      `SELECT id, distributor_id, distributor_name, order_source, status 
+       FROM distributor_dispatch_reminders WHERE date = ?`,
+      [todayStr2]
+    );
+    for (const rem of allRemindersBeforePurge) {
+      if (rem.order_source === "phone_call" || rem.status === "Collected") continue;
+      if (rem.status === "Dispatched" && rem.order_source !== "email") continue;
+      const remKey = getCanonicalDistributorKey(rem.distributor_id, rem.distributor_name);
+      if (!activeCanonKeys.has(remKey)) {
+        await db2.run("DELETE FROM distributor_dispatch_reminders WHERE id = ?", [rem.id]);
+      }
     }
     const todayEmailDistributors = await db2.all(
       `SELECT DISTINCT d.id as dist_id, LOWER(TRIM(d.name)) as dist_name
@@ -14722,9 +14767,14 @@ async function syncTodayActiveDistributors() {
         }
       }
     }
-    const existingNamesSet = /* @__PURE__ */ new Set();
+    const existingCanonicalSet = /* @__PURE__ */ new Set();
     for (const tr of todayReminders) {
-      if (tr.distributor_name) existingNamesSet.add(tr.distributor_name.toLowerCase().trim());
+      if (tr.distributor_id) existingCanonicalSet.add(`id:${tr.distributor_id}`);
+      if (tr.distributor_name) {
+        existingCanonicalSet.add(`raw:${tr.distributor_name.toLowerCase().trim()}`);
+        const norm3 = normalizeDistributorName2(tr.distributor_name);
+        if (norm3) existingCanonicalSet.add(`norm:${norm3}`);
+      }
     }
     try {
       const allMasterDistributors = await db2.all(
@@ -14735,9 +14785,14 @@ async function syncTodayActiveDistributors() {
       );
       let syntheticCounter = 8e5;
       for (const md of allMasterDistributors) {
-        const normName = md.name.toLowerCase().trim();
-        if (!existingNamesSet.has(normName)) {
-          existingNamesSet.add(normName);
+        const normName = normalizeDistributorName2(md.name);
+        const hasId = md.id && existingCanonicalSet.has(`id:${md.id}`);
+        const hasNorm = normName && existingCanonicalSet.has(`norm:${normName}`);
+        const hasRaw = existingCanonicalSet.has(`raw:${md.name.toLowerCase().trim()}`);
+        if (!hasId && !hasNorm && !hasRaw) {
+          if (md.id) existingCanonicalSet.add(`id:${md.id}`);
+          if (normName) existingCanonicalSet.add(`norm:${normName}`);
+          existingCanonicalSet.add(`raw:${md.name.toLowerCase().trim()}`);
           const phone = (md.phone || md.contact || "").replace(/\D/g, "").slice(-10);
           todayReminders.push({
             id: md.id ? 8e5 + md.id : ++syntheticCounter,
@@ -14764,9 +14819,14 @@ async function syncTodayActiveDistributors() {
         `SELECT distributor_id, store_name, phone FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL AND store_name != ''`
       );
       for (const pm of pharmarackMappings) {
-        const normName = pm.store_name.toLowerCase().trim();
-        if (!existingNamesSet.has(normName)) {
-          existingNamesSet.add(normName);
+        const normName = normalizeDistributorName2(pm.store_name);
+        const hasId = pm.distributor_id && existingCanonicalSet.has(`id:${pm.distributor_id}`);
+        const hasNorm = normName && existingCanonicalSet.has(`norm:${normName}`);
+        const hasRaw = existingCanonicalSet.has(`raw:${pm.store_name.toLowerCase().trim()}`);
+        if (!hasId && !hasNorm && !hasRaw) {
+          if (pm.distributor_id) existingCanonicalSet.add(`id:${pm.distributor_id}`);
+          if (normName) existingCanonicalSet.add(`norm:${normName}`);
+          existingCanonicalSet.add(`raw:${pm.store_name.toLowerCase().trim()}`);
           const phone = (pm.phone || "").replace(/\D/g, "").slice(-10);
           todayReminders.push({
             id: ++syntheticCounter,
@@ -50973,18 +51033,28 @@ var init_whatsappQueueWorker = __esm({
         }
       }
       /** Dismiss / Clear all failed items permanently */
-      async clearAllFailed() {
+      async clearAllFailed(options) {
         const db2 = await dbManager.getConnection();
         let totalCleared = 0;
         try {
           const res1 = await db2.run("DELETE FROM whatsapp_send_queue WHERE status IN ('failed_offline', 'failed_perm', 'review_required', 'skipped_invalid_phone', 'skipped_not_on_whatsapp', 'skipped_offline')");
           totalCleared += res1.changes || 0;
-          const res2 = await db2.run("DELETE FROM automation_notifications WHERE status IN ('failed', 'error') OR status LIKE 'failed%'");
+          if (options?.includeStalledPending) {
+            const resPending = await db2.run("DELETE FROM whatsapp_send_queue WHERE status = 'pending'");
+            totalCleared += resPending.changes || 0;
+            const resNotifPending = await db2.run("DELETE FROM automation_notifications WHERE status IN ('pending', 'cancelled', 'staged')");
+            totalCleared += resNotifPending.changes || 0;
+          } else {
+            const resStalled = await db2.run("DELETE FROM whatsapp_send_queue WHERE (retry_count >= 1 OR error_message IS NOT NULL) AND status != 'sent'");
+            totalCleared += resStalled.changes || 0;
+          }
+          const res2 = await db2.run("DELETE FROM automation_notifications WHERE status IN ('failed', 'error', 'cancelled') OR status LIKE 'failed%' OR error_message IS NOT NULL");
           totalCleared += res2.changes || 0;
           if (totalCleared > 0) {
             this.broadcastQueueState(this.isProcessing);
             try {
               eventService.broadcast("automation_hub_updated", { type: "cleared" });
+              eventService.broadcast("wa_queue_updated", { type: "cleared" });
             } catch (_) {
             }
           }
@@ -59308,7 +59378,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.110";
+    APP_VERSION = "0.1.111";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -106673,10 +106743,11 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router55.post("/clear-failed", async (_req, res) => {
+    router55.post("/clear-failed", async (req, res) => {
       try {
-        const cleared = await whatsappQueueWorker.clearAllFailed();
-        res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} failed item(s)` });
+        const includePending = req.body?.includePending === true || req.query?.includePending === "true";
+        const cleared = await whatsappQueueWorker.clearAllFailed({ includeStalledPending: includePending });
+        res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} item(s)` });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to clear failed items" });
       }
