@@ -1,5 +1,6 @@
-import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday } from '../utils/refillSettled';
+import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, checkPatientRefillCycleBooking } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -97,6 +98,11 @@ export const QuickAssistSidebar = memo(({
   const [refillOrderModalGroup, setRefillOrderModalGroup] = useState<{
     patient_name: string;
     medicines: Array<any>;
+  } | null>(null);
+  const [earlyBookingConfirm, setEarlyBookingConfirm] = useState<{
+    group: any;
+    daysEarly: number;
+    nextDueDate: string | null;
   } | null>(null);
 
   // Expand / collapse state for grouped patients (collapsed by default)
@@ -446,6 +452,7 @@ export const QuickAssistSidebar = memo(({
     patient_name: string;
     patient_phone: string;
     customer_id?: number | null;
+    next_refill_date?: string | null;
     medicines: Array<{
       id: number;
       medicine_id?: number;
@@ -463,8 +470,30 @@ export const QuickAssistSidebar = memo(({
       batch_quantity?: number;
       batch_loose_quantity?: number;
       customer_id?: number | null;
+      refill_interval_days?: number | null;
+      last_refill_date?: string | null;
+      next_refill_date?: string | null;
+      status?: string | null;
+      is_active?: number | null;
     }>;
-  }) => {
+  }, isConfirmedEarly = false) => {
+    // 1. One per cycle guard: block if already dispensed
+    const cycleStatus = checkPatientRefillCycleBooking(group.medicines);
+    if (cycleStatus.alreadyDispensed) {
+      toastEvent.trigger(cycleStatus.message || 'This refill cycle was already dispensed.', 'error');
+      return;
+    }
+
+    // 2. Early booking confirmation: prompt user if due in future
+    if (cycleStatus.isEarly && !isConfirmedEarly) {
+      setEarlyBookingConfirm({
+        group,
+        daysEarly: cycleStatus.daysEarly,
+        nextDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate
+      });
+      return;
+    }
+
     if (fulfillingRefillKeys.has(group.key)) return;
     setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
 
@@ -524,6 +553,11 @@ export const QuickAssistSidebar = memo(({
             patientPhone: group.patient_phone,
             customerId: group.customer_id || group.medicines[0]?.customer_id || undefined,
             refillPatient: true,
+            isRefillBooking: true,
+            isEarlyRefill: cycleStatus.isEarly,
+            daysEarly: cycleStatus.daysEarly,
+            refillDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate,
+            refillDays: group.medicines[0]?.refill_interval_days || 30,
             refillIds: group.medicines.map(m => m.id),
             medicines: group.medicines.map(m => ({
               id: m.id,
@@ -548,6 +582,7 @@ export const QuickAssistSidebar = memo(({
           }
         }
       });
+
     } catch (err: unknown) {
       console.error('Failed to complete refill cycle:', err);
       const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to complete refill cycle';
@@ -1652,6 +1687,19 @@ export const QuickAssistSidebar = memo(({
                             return (
                               <>
                                 {confirmBtn}
+                                <button
+                                  type="button"
+                                  disabled={isFulfillingGroup}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCompleteRefillGroup(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                                  title={`Book & bill refill for ${group.patient_name} in POS`}
+                                >
+                                  <ShoppingCart size={10} className="shrink-0" />
+                                  <span>POS</span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -2831,8 +2879,85 @@ export const QuickAssistSidebar = memo(({
             }}
           />
         )}
+        {earlyBookingConfirm && createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <div className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                    <RotateCw size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-text text-sm">Early Refill Booking</h3>
+                    <p className="text-xs text-muted">Confirming early medicine dispensing</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEarlyBookingConfirm(null)}
+                  className="text-muted hover:text-text p-1 rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="bg-bg3/70 rounded-xl p-3 border border-border flex flex-col gap-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Patient:</span>
+                  <span className="font-semibold text-text">{earlyBookingConfirm.group.patient_name}</span>
+                </div>
+                {earlyBookingConfirm.group.patient_phone && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted">Phone:</span>
+                    <span className="font-mono text-text">{earlyBookingConfirm.group.patient_phone}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Scheduled Due Date:</span>
+                  <span className="font-semibold text-purple-400">
+                    {earlyBookingConfirm.nextDueDate ? new Date(earlyBookingConfirm.nextDueDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Days Early:</span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold text-[11px]">
+                    {earlyBookingConfirm.daysEarly} day(s) before schedule
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-muted leading-relaxed">
+                This refill is not yet due. Booking it now will load the prescribed medicines into POS and advance the schedule upon billing to prevent next-month reminder spam.
+              </p>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setEarlyBookingConfirm(null)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const group = earlyBookingConfirm.group;
+                    setEarlyBookingConfirm(null);
+                    handleCompleteRefillGroup(group, true);
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                >
+                  <ShoppingCart size={13} />
+                  <span>Confirm & Open POS</span>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
       </div>
     );
+
   });
 
 export default QuickAssistSidebar;

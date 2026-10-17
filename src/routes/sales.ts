@@ -804,6 +804,9 @@ router.post('/', async (req, res) => {
     }
 
     if (Array.isArray(matchingRefills) && matchingRefills.length > 0) {
+      const advanceRefillCycle = req.body.advanceRefillCycle !== false;
+      const isEarlyRefill = Boolean(req.body.isEarlyRefill);
+
       for (const refill of matchingRefills) {
         // Match either by explicit refill ID, or if the sold items contain this refill's medicine (by ID or name)
         const refillNameLower = (refill.medicine_name || '').trim().toLowerCase();
@@ -815,11 +818,14 @@ router.post('/', async (req, res) => {
         }
 
         const interval = Number(refill.refill_interval_days || 30);
-        const nextDate = new Date();
+        // Base the next due date calculation starting from the invoice's local date
+        const baseDate = new Date(invoiceDateValue.replace(' ', 'T'));
+        const nextDate = new Date(!isNaN(baseDate.getTime()) ? baseDate : Date.now());
         nextDate.setDate(nextDate.getDate() + interval);
         const nextDateStr = toLocalSqlDateTime(nextDate);
-        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+        const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : invoiceDateValue.slice(0, 10);
         const fulfilledQty = Number(refill.quantity_needed || 1);
+        const fulfillmentVia = isEarlyRefill ? 'pos_sale_early' : (advanceRefillCycle ? 'pos_sale' : 'pos_sale_extra_supply');
 
         // Check if recently auto-fulfilled when opening POS or completed via Quick Assist (within last 30 minutes)
         const recentPosOpened = await db.get(
@@ -834,9 +840,9 @@ router.post('/', async (req, res) => {
           // Idempotent: Attach this sale invoice to the existing fulfillment record without double-advancing the cycle
           await db.run(
             `UPDATE refill_fulfillments 
-             SET invoice_id = ?, invoice_no = ?, fulfilled_via = 'pos_sale' 
+             SET invoice_id = ?, invoice_no = ?, fulfilled_via = ?, next_due_date = ? 
              WHERE id = ?`,
-            [invoiceId, invoice_no, recentPosOpened.id]
+            [invoiceId, invoice_no, fulfillmentVia, advanceRefillCycle ? nextDateStr : (refill.next_refill_date || nextDateStr), recentPosOpened.id]
           );
         } else {
           // 1. Record persistent fulfillment occurrence linked to invoice
@@ -844,7 +850,7 @@ router.post('/', async (req, res) => {
             `INSERT INTO refill_fulfillments (
               refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
               quantity_fulfilled, fulfilled_at, invoice_id, invoice_no, cycle_due_date, next_due_date, fulfilled_via
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 'pos_sale')`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               refill.id,
               refill.customer_id || customerId,
@@ -853,17 +859,20 @@ router.post('/', async (req, res) => {
               refill.medicine_id,
               refill.medicine_name || 'Prescribed Medicine',
               fulfilledQty,
+              invoiceDateValue,
               invoiceId,
               invoice_no,
               cycleDueDate,
-              nextDateStr
+              advanceRefillCycle ? nextDateStr : (refill.next_refill_date || nextDateStr),
+              fulfillmentVia
             ]
           );
 
-          // 2. Advance the same persistent schedule in-place
+          // 2. Advance the same persistent schedule in-place (or preserve next_refill_date if advanceRefillCycle is false)
+          const targetNextRefillDate = advanceRefillCycle ? nextDateStr : (refill.next_refill_date || nextDateStr);
           await db.run(
             `UPDATE patient_refills 
-             SET last_refill_date = datetime('now'), 
+             SET last_refill_date = ?, 
                  next_refill_date = ?, 
                  acknowledged = 0, 
                  ordering_triggered = 0,
@@ -881,7 +890,7 @@ router.post('/', async (req, res) => {
                  last_collection_reminder_at = NULL,
                  collection_reminder_count = 0
              WHERE id = ?`,
-            [nextDateStr, refill.id]
+            [invoiceDateValue, targetNextRefillDate, refill.id]
           );
         }
 

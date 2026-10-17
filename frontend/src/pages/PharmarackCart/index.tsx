@@ -1017,13 +1017,21 @@ export default function PharmarackCart() {
     if (syncingExternalOrders) return;
     setSyncingExternalOrders(true);
     try {
-      toastEvent.trigger('Syncing orders from Pharmarack portal...', 'info');
-      const res = await api.syncHistoricalOrders(30);
-      if (res && res.success) {
-        toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.imported} new imported.`, 'success');
-        const datesRes = await api.getPharmarackSentDates();
-        if (datesRes?.dates) setSentDates(datesRes.dates);
-        if (selectedSentDate) loadSentOrdersForDate(selectedSentDate);
+      toastEvent.trigger("Syncing today's orders from Pharmarack portal...", 'info');
+      const res = await api.syncPharmarackOrders();
+      if (res && res.ok) {
+        toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.newOrders} new recorded.`, 'success');
+        const todayStr = getTodayDateKey();
+        delete cachedSentOrdersMap[todayStr];
+        if (selectedSentDate) {
+          delete cachedSentOrdersMap[selectedSentDate];
+        }
+        cachedSentDates = [];
+        await loadSentDates();
+      } else if (res?.skipped === 'session_expired' || res?.skipped === 'no_session') {
+        toastEvent.trigger('Pharmarack session expired or not logged in. Please re-authenticate.', 'error');
+      } else if (res?.skipped === 'throttled') {
+        toastEvent.trigger('Sync throttled. Please wait a moment before trying again.', 'info');
       } else {
         toastEvent.trigger(res?.error || 'Failed to sync orders from Pharmarack', 'error');
       }
@@ -4376,7 +4384,7 @@ export default function PharmarackCart() {
                   onClick={handleSyncExternalOrders}
                   disabled={syncingExternalOrders}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-glass-bg border border-glass-border text-text text-xs font-bold shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  title="Sync official Pharmarack portal/app orders and auto-learn distributor products"
+                  title="Sync today's official Pharmarack portal orders and record new POs"
                 >
                   <RotateCw size={12} className={syncingExternalOrders ? "animate-spin text-primary" : "text-muted"} />
                   <span>{syncingExternalOrders ? 'Syncing...' : 'Sync Pharmarack'}</span>

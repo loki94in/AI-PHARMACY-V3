@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback, useD
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2 } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
@@ -368,6 +368,10 @@ interface PosPrefill {
   refillPatient?: boolean;
   refillId?: number;
   refillDays?: number;
+  isRefillBooking?: boolean;
+  isEarlyRefill?: boolean;
+  daysEarly?: number;
+  refillDueDate?: string | null;
   doctorName?: string;
   doctor?: string;
   medicines?: PrefillMed[];
@@ -380,6 +384,16 @@ interface PosPrefill {
   refillIds?: number[];
   onlineOrderId?: number | string;
   orderId?: number | string;
+}
+
+interface RefillBookingBannerInfo {
+  patientName: string;
+  patientPhone?: string;
+  refillDueDate?: string | null;
+  isEarlyRefill?: boolean;
+  daysEarly?: number;
+  refillDays?: number;
+  advanceCycle: boolean;
 }
 
 interface PosLocationState {
@@ -1174,6 +1188,8 @@ const POS = () => {
   const [activeRefillId, setActiveRefillId] = useState<number | null>(null);
   const [matchedRefill, setMatchedRefill] = useState<MatchedRefill | null>(null);
   const [dismissedRefillId, setDismissedRefillId] = useState<number | null>(null);
+  const [refillBookingBanner, setRefillBookingBanner] = useState<RefillBookingBannerInfo | null>(null);
+  const advanceRefillCycleRef = useRef<boolean>(true);
 
   const productSearchRef = useRef<HTMLDivElement>(null);
   const activeRowRef = useRef<HTMLDivElement>(null);
@@ -1491,12 +1507,22 @@ const POS = () => {
       if (doctorName || docName) {
         setDoctor(doctorName || docName || '');
       }
-      if (refillPatient || refillId || (Array.isArray(prefill.refillIds) && prefill.refillIds.length > 0)) {
+      if (refillPatient || refillId || (Array.isArray(prefill.refillIds) && prefill.refillIds.length > 0) || prefill.isRefillBooking) {
         setRefillEnabled(true);
         if (refillId) setActiveRefillId(Number(refillId));
         if (rDays) setRefillDays(Number(rDays));
         setMatchedRefill(null);
         setDismissedRefillId(Number(refillId || (Array.isArray(prefill.refillIds) && prefill.refillIds[0]) || 999999));
+        writeRef(advanceRefillCycleRef, true);
+        setRefillBookingBanner({
+          patientName: name || 'Customer',
+          patientPhone: phone || '',
+          refillDueDate: prefill.refillDueDate || null,
+          isEarlyRefill: Boolean(prefill.isEarlyRefill),
+          daysEarly: Number(prefill.daysEarly) || 0,
+          refillDays: Number(rDays) || 30,
+          advanceCycle: true
+        });
       }
       if (advancePayment && Number(advancePayment) > 0) {
         setDiscount((prev: number) => prev + Number(advancePayment));
@@ -3828,6 +3854,8 @@ const POS = () => {
         refillDays: refillDays,
         refillId: activeRefillId || undefined,
         refill_ids: pendingRefillIdsRef.current.length > 0 ? [...pendingRefillIdsRef.current] : undefined,
+        advanceRefillCycle: refillBookingBanner ? refillBookingBanner.advanceCycle : advanceRefillCycleRef.current !== false,
+        isEarlyRefill: Boolean(refillBookingBanner?.isEarlyRefill),
         online_order_id: pendingOnlineOrderIdRef.current || undefined,
         special_order_id: pendingSpecialOrderIdRef.current || undefined,
         special_order_ids: pendingSpecialOrderIdsRef.current.length > 0 ? [...pendingSpecialOrderIdsRef.current] : undefined,
@@ -3868,6 +3896,8 @@ const POS = () => {
         result = await api.createSale(payload as Parameters<typeof api.createSale>[0]);
       }
       const invoiceNo = result!.invoice_no || result!.invoiceNo || 'SAVED';
+      setRefillBookingBanner(null);
+      writeRef(advanceRefillCycleRef, true);
 
       // Verification Layer Check: Post-save history validation — fire-and-forget so it never
       // blocks the cashier UI. The invoice is already committed; this is a sanity log only.
@@ -4252,6 +4282,49 @@ const POS = () => {
 
           {/* Top Control Ribbon: Patient, WhatsApp, Doctor, Date, Tabs */}
           <div className="glass-panel p-2.5 bg-glass-bg border-glass-border shrink-0 relative z-40 shadow-sm rounded-2xl w-full min-w-0 flex flex-col gap-2">
+            {refillBookingBanner && (
+              <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 text-sm font-semibold flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 shadow-sm animate-fade-in">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider uppercase bg-purple-600 text-white shrink-0 flex items-center gap-1">
+                    <Repeat2 size={12} className="shrink-0" />
+                    <span>{refillBookingBanner.isEarlyRefill ? '⚡ EARLY REFILL BOOKING' : 'REFILL BOOKING'}</span>
+                  </span>
+                  <span className="truncate">
+                    <strong className="text-text">{refillBookingBanner.patientName}</strong>
+                    {refillBookingBanner.refillDueDate && (
+                      <span className="text-muted text-xs ml-1.5">
+                        (Scheduled: <strong className="text-purple-300">{refillBookingBanner.refillDueDate}</strong>
+                        {refillBookingBanner.isEarlyRefill && refillBookingBanner.daysEarly ? ` · ${refillBookingBanner.daysEarly} days early` : ''})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <label className="flex items-center gap-1.5 text-xs text-text font-bold cursor-pointer select-none bg-bg2/80 px-2.5 py-1 rounded-lg border border-purple-500/30 hover:border-purple-500/50 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={refillBookingBanner.advanceCycle}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        writeRef(advanceRefillCycleRef, checked);
+                        setRefillBookingBanner(prev => prev ? { ...prev, advanceCycle: checked } : null);
+                      }}
+                      className="rounded border-border text-purple-600 focus:ring-purple-500 cursor-pointer"
+                    />
+                    <span>[✓] Advance Next Due Date</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setRefillBookingBanner(null)}
+                    className="px-2 py-1 text-xs text-muted hover:text-text hover:bg-bg3 rounded-lg transition-colors cursor-pointer"
+                    title="Dismiss banner (cycle advance setting is preserved)"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
             {matchedRefill && (
               <div className="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-300 text-sm font-semibold flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 shadow-sm animate-fade-in">
                 <div className="flex items-center gap-2 min-w-0">

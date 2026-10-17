@@ -1,4 +1,4 @@
-import { isPatientRefillsSettled, getRefillStage, isRefillFulfilledToday } from '../../utils/refillSettled';
+import { isPatientRefillsSettled, getRefillStage, isRefillFulfilledToday, checkPatientRefillCycleBooking } from '../../utils/refillSettled';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -67,6 +67,12 @@ export const RefillsSection: React.FC = () => {
   const [viewInvoice, setViewInvoice] = useState<SalesHistoryInvoice | null>(null);
   const [fulfillingId, setFulfillingId] = useState<number | null>(null);
   const [fulfillingAll, setFulfillingAll] = useState(false);
+  const [earlyBookingConfirm, setEarlyBookingConfirm] = useState<{
+    patient: RefillPatient;
+    sellableMeds: any[];
+    daysEarly: number;
+    nextDueDate: string | null;
+  } | null>(null);
 
   // ── Add / Edit Refill modal state ──────────────────────────────────────────
   const [showAddModal, setShowAddModal] = useState(false);
@@ -792,21 +798,21 @@ export const RefillsSection: React.FC = () => {
   };
 
   // ── Sell Refill Patient → POS ─────────────────────────────────────────────
-  const handleSellRefillPatient = (patient: RefillPatient) => {
+  const proceedSellRefillPatient = (
+    patient: RefillPatient,
+    sellableMeds: any[],
+    isEarly: boolean,
+    daysEarly: number,
+    nextDueDate: string | null
+  ) => {
     const activeMeds = patient.medicines.filter(m => m.is_active !== 0 && m.status !== 'canceled');
-    const sellableMeds = activeMeds.filter(m => Number(m.in_stock_qty || 0) > 0 || m.stock_verified_override === 1);
     const outOfStockMeds = activeMeds.filter(m => !(Number(m.in_stock_qty || 0) > 0 || m.stock_verified_override === 1));
-
-    if (sellableMeds.length === 0) {
-      toastEvent.trigger(`No medicines currently in stock for ${patient.patient_name}. Please record a purchase first.`, 'error', '/crm');
-      return;
-    }
 
     api.notifyCounterSession({
       phone: patient.patient_phone || '',
       customerId: patient.customer_id || undefined,
       refillIds: sellableMeds.map(m => m.id),
-      autoFulfill: true
+      autoFulfill: false
     });
 
     navigate('/pos', {
@@ -816,6 +822,11 @@ export const RefillsSection: React.FC = () => {
           patientPhone: patient.patient_phone,
           customerId: patient.customer_id || undefined,
           refillPatient: true,
+          isRefillBooking: true,
+          isEarlyRefill: isEarly,
+          daysEarly: daysEarly,
+          refillDueDate: nextDueDate,
+          refillDays: sellableMeds[0]?.refill_interval_days || 30,
           refillIds: sellableMeds.map(m => m.id),
           medicines: sellableMeds.map(m => ({
             medicineId: m.medicine_id,
@@ -843,8 +854,41 @@ export const RefillsSection: React.FC = () => {
     const skipNote = outOfStockMeds.length > 0
       ? ` (skipped ${outOfStockMeds.length} out-of-stock: ${outOfStockMeds.map(m => m.medicine_name).join(', ')})`
       : '';
-    toastEvent.trigger(`Transferring ${sellableMeds.length} prescribed medicine(s) for ${patient.patient_name} to POS...${skipNote}`, 'info', '/pos');
+    const earlyTag = isEarly ? ` [Early Booking: ${daysEarly}d early]` : '';
+    toastEvent.trigger(`Transferring ${sellableMeds.length} prescribed medicine(s) for ${patient.patient_name} to POS...${earlyTag}${skipNote}`, 'info', '/pos');
   };
+
+  const handleSellRefillPatient = (patient: RefillPatient) => {
+    const activeMeds = patient.medicines.filter(m => m.is_active !== 0 && m.status !== 'canceled');
+    const sellableMeds = activeMeds.filter(m => Number(m.in_stock_qty || 0) > 0 || m.stock_verified_override === 1);
+
+    if (sellableMeds.length === 0) {
+      toastEvent.trigger(`No medicines currently in stock for ${patient.patient_name}. Please record a purchase first.`, 'error', '/crm');
+      return;
+    }
+
+    // 1. One per cycle: check if already dispensed in current cycle
+    const cycleStatus = checkPatientRefillCycleBooking(patient.medicines);
+    if (cycleStatus.alreadyDispensed) {
+      toastEvent.trigger(cycleStatus.message || 'This refill cycle was already dispensed.', 'error', '/crm');
+      return;
+    }
+
+    // 2. Early booking confirmation: prompt user if due in future
+    if (cycleStatus.isEarly) {
+      setEarlyBookingConfirm({
+        patient,
+        sellableMeds,
+        daysEarly: cycleStatus.daysEarly,
+        nextDueDate: cycleStatus.nextDueDate
+      });
+      return;
+    }
+
+    // 3. Normal booking: transfer directly to POS
+    proceedSellRefillPatient(patient, sellableMeds, false, 0, cycleStatus.nextDueDate);
+  };
+
 
   // Refill → Live Cart review & order workflow (RefillOrderModal + refillCartJobs.ts background runner)
   const handleOrderRefillShortages = (patient: RefillPatient) => {
@@ -1780,6 +1824,7 @@ export const RefillsSection: React.FC = () => {
                         <>
                           {confirmBtn}
                           {addToCartBtn}
+                          {posBtn}
                           <button
                             onClick={() => handleMarkAllOrdered(selectedPatient)}
                             disabled={markingOrdered}
@@ -3217,6 +3262,83 @@ export const RefillsSection: React.FC = () => {
         document.body
       )}
 
+      {/* Early Refill Booking Confirmation Modal */}
+      {earlyBookingConfirm && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                  <Repeat2 size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-text text-sm">Early Refill Booking</h3>
+                  <p className="text-xs text-muted">Confirming early medicine dispensing</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEarlyBookingConfirm(null)}
+                className="text-muted hover:text-text p-1 rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="bg-bg3/70 rounded-xl p-3 border border-border flex flex-col gap-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Patient:</span>
+                <span className="font-semibold text-text">{earlyBookingConfirm.patient.patient_name}</span>
+              </div>
+              {earlyBookingConfirm.patient.patient_phone && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Phone:</span>
+                  <span className="font-mono text-text">{earlyBookingConfirm.patient.patient_phone}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Scheduled Due Date:</span>
+                <span className="font-semibold text-purple-400">
+                  {earlyBookingConfirm.nextDueDate ? formatDate(earlyBookingConfirm.nextDueDate) : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Days Early:</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold text-[11px]">
+                  {earlyBookingConfirm.daysEarly} day(s) before schedule
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted leading-relaxed">
+              This refill is not yet due. Booking it now will load the prescribed medicines into POS and advance the schedule by {earlyBookingConfirm.sellableMeds[0]?.refill_interval_days || 30} days upon billing to prevent next-month reminder spam.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setEarlyBookingConfirm(null)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const data = earlyBookingConfirm;
+                  setEarlyBookingConfirm(null);
+                  proceedSellRefillPatient(data.patient, data.sellableMeds, true, data.daysEarly, data.nextDueDate);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+              >
+                <ShoppingCart size={13} />
+                <span>Confirm & Open POS</span>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Delay Notice Modal */}
       {showDelayModal && (
         <DelayNoticeModal
@@ -3226,5 +3348,6 @@ export const RefillsSection: React.FC = () => {
         />
       )}
     </div>
+
   );
 };

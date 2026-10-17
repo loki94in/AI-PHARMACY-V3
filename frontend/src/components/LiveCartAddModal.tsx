@@ -490,19 +490,23 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   // Persistent backend + session skip handlers
   const [skippedItemKeys, setSkippedItemKeys] = useState<Set<string>>(() => new Set(cachedSkippedItemKeys));
   const [todaySoldMeds, setTodaySoldMeds] = useState<Set<string>>(() => new Set());
+  const todaySoldMedsRef = useRef<Set<string>>(todaySoldMeds);
+  useEffect(() => {
+    todaySoldMedsRef.current = todaySoldMeds;
+  }, [todaySoldMeds]);
 
   const isSoldAtPOSToday = useCallback((medName?: string): boolean => {
     if (!medName) return false;
     const clean = medName.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!clean) return false;
     const cleanMedKey = clean.replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
-    for (const sold of todaySoldMeds) {
+    for (const sold of todaySoldMedsRef.current) {
       if (sold === clean || (cleanMedKey && sold.includes(cleanMedKey)) || (cleanMedKey && cleanMedKey.includes(sold))) {
         return true;
       }
     }
     return false;
-  }, [todaySoldMeds]);
+  }, []);
 
   const fetchSkippedMedicines = useCallback(async () => {
     try {
@@ -592,7 +596,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [ignoredWords, setIgnoredWords] = useState<Array<{ id: number; word: string; source: string; created_at: string }>>(cachedIgnoredWords);
   const [showIgnoredList, setShowIgnoredList] = useState(false);
 
-  const fetchIgnoredWords = async () => {
+  const fetchIgnoredWords = useCallback(async () => {
     try {
       const data = await api.getIgnoredWords();
       if (Array.isArray(data)) {
@@ -616,7 +620,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } catch (err) {
       console.error('Failed to fetch ignored words in modal:', err);
     }
-  };
+  }, []);
 
   const handleIgnoreWord = async (word: string) => {
     if (!word || !word.trim()) return;
@@ -708,7 +712,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     }
   };
 
-  const fetchPendingOrders = async () => {
+  const fetchPendingOrders = useCallback(async () => {
     try {
       const data = await api.getOrders();
       if (Array.isArray(data)) {
@@ -724,9 +728,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } catch (err) {
       console.error('Failed to fetch pending special orders in modal:', err);
     }
-  };
+  }, [isSoldAtPOSToday]);
 
-  const fetchPendingRefills = async () => {
+  const fetchPendingRefills = useCallback(async () => {
     try {
       const data = await api.getRefillsPanel();
       if (Array.isArray(data)) {
@@ -797,9 +801,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } catch (err) {
       console.error('Failed to fetch pending refills in modal:', err);
     }
-  };
+  }, [isSoldAtPOSToday]);
 
-  const fetchReconOrders = async () => {
+  const fetchReconOrders = useCallback(async () => {
     try {
       const data = await api.getReconciliationList();
       if (Array.isArray(data)) {
@@ -817,7 +821,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } catch (err) {
       console.warn('Failed to fetch reconcile orders in modal (non-fatal):', err);
     }
-  };
+  }, []);
 
   const cartLookup = useMemo(() => {
     const exactNameMap = new Map<string, any>();
@@ -903,7 +907,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
 
   // fetchCart logic
-  const fetchCart = async (silent?: boolean) => {
+  const fetchCart = useCallback(async (silent?: boolean) => {
     const isSilent = typeof silent === 'boolean' ? silent : false;
     if (!isSilent) {
       setCartLoading(true);
@@ -932,9 +936,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } finally {
       setCartLoading(false);
     }
-  };
+  }, []);
 
-  const fetchLiveCartSummary = async (silent?: boolean) => {
+  const fetchLiveCartSummary = useCallback(async (silent?: boolean) => {
     const isSilent = typeof silent === 'boolean' ? silent : false;
     if (!isSilent && cachedCartDistributors.length === 0) {
       setCartLoading(true);
@@ -976,7 +980,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } finally {
       setCartLoading(false);
     }
-  };
+  }, [fetchCart, isSoldAtPOSToday]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -1055,16 +1059,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     }
   };
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleCartChanged = () => {
-      fetchLiveCartSummary(true);
-    };
-    window.addEventListener('refresh-pharmarack-cart', handleCartChanged);
-    return () => {
-      window.removeEventListener('refresh-pharmarack-cart', handleCartChanged);
-    };
-  }, [isOpen]);
+
 
   const checkSession = useCallback(async () => {
     try {
@@ -1137,7 +1132,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
       return () => clearTimeout(staggerTimer);
     }
-  }, [isOpen, checkSession, fetchPendingOrders, fetchSkippedMedicines, fetchTodaySoldMedicines]);
+  }, [isOpen, checkSession, fetchCart, fetchIgnoredWords, fetchLatestSentMap, fetchLiveCartSummary, fetchPendingOrders, fetchPendingRefills, fetchReconOrders, fetchSkippedMedicines, fetchTodaySoldMedicines]);
 
   useEffect(() => {
     if (!isOpen) return;

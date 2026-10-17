@@ -197,7 +197,16 @@ async function fillOrderLines(db: any, token: string, orders: any[], todayIso: s
 
     let existing: any[] = [];
     try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { existing = []; }
-    if (existing.length > 0) continue; // the app's own Send All lines are never overwritten
+
+    // Check if this store has multiple orders today
+    const sameStoreOrders = orders.filter(
+      x => String(x?.StoreName || '').trim().toLowerCase() === String(o?.StoreName || '').trim().toLowerCase()
+    );
+    const isMultiOrderStore = sameStoreOrders.length > 1;
+
+    // Single-order stores keep their existing in-app Send All lines to avoid unnecessary re-fetch.
+    // Multi-order stores must fetch exact lines for this PO to prevent duplicate medicines across cards.
+    if (existing.length > 0 && !isMultiOrderStore) continue;
 
     const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
     const lines = await fetchOrderLines(db, token, orderId, orderNo);
@@ -342,6 +351,8 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
   result.newOrders = fresh.length;
   // Product names for Sent History (also back-fills today's rows that earlier syncs left empty).
   try { await fillOrderLines(db, token, orders, today.iso); } catch (_) { /* lines are optional; never break the sync */ }
+  // Auto-deduplicate any multi-order line overlaps so medicines are never duplicated across cards
+  try { await deduplicateSameStoreMultiOrderLines(db); } catch (_) { }
   if (fresh.length === 0) return result;
 
   // 2. Announce, under the same switches as the daily reminders.
@@ -864,7 +875,14 @@ export async function backfillSyncedOrderLines(targetDate?: string): Promise<{ o
 
       let items: any[] = [];
       try { items = JSON.parse(c.items_json || '[]'); } catch (_) { items = []; }
-      if (items.length > 0) continue;
+
+      const sameStoreCandidates = candidates.filter(
+        x => String(x?.store_name || '').trim().toLowerCase() === String(c?.store_name || '').trim().toLowerCase() && x?.order_date === c?.order_date
+      );
+      const isMultiOrderStore = sameStoreCandidates.length > 1;
+
+      // Single-order stores keep their existing lines; multi-order stores fetch true lines per PO
+      if (items.length > 0 && !isMultiOrderStore) continue;
 
       const orderId = Number.isFinite(Number(c.pharmarack_order_id)) ? Number(c.pharmarack_order_id) : null;
       const lines = await fetchOrderLines(db, token, orderId, orderNo);
@@ -895,11 +913,97 @@ export async function backfillSyncedOrderLines(targetDate?: string): Promise<{ o
       } catch (_) {}
     }
 
+    // Auto-prune duplicate items across same-store multi-orders
+    try { await deduplicateSameStoreMultiOrderLines(db); } catch (_) { }
+
     return { ok: true, count: updatedCount };
   } catch (err: any) {
     console.error('[PharmarackOrderSync] Error in backfillSyncedOrderLines:', err);
     return { ok: false, count: 0 };
   }
 }
+
+/**
+ * Automatically cleans up same-day multi-orders for the same distributor
+ * where an earlier in-app cart snapshot mistakenly contained the medicines of both orders.
+ *
+ * For example:
+ * Row A has 6 items (Amount 2,240.45)
+ * Row B has 3 items (Amount 763.03)
+ * If Row B's items are a subset of Row A's items, prunes Row B's items from Row A
+ * so Row A has only its own true 3 items (Amount 1,477.42).
+ */
+export async function deduplicateSameStoreMultiOrderLines(db: any): Promise<number> {
+  try {
+    const multiStoreDates = await db.all(`
+      SELECT order_date, LOWER(TRIM(store_name)) as store_norm, count(*) as cnt
+      FROM pharmarack_placed_orders
+      GROUP BY order_date, LOWER(TRIM(store_name))
+      HAVING count(*) > 1
+    `);
+
+    if (!multiStoreDates || multiStoreDates.length === 0) return 0;
+
+    let fixedCount = 0;
+
+    for (const group of multiStoreDates) {
+      const rows = await db.all(`
+        SELECT id, order_no, items_json
+        FROM pharmarack_placed_orders
+        WHERE order_date = ? AND LOWER(TRIM(store_name)) = ?
+        ORDER BY id ASC
+      `, [group.order_date, group.store_norm]);
+
+      if (rows.length < 2) continue;
+
+      const parsedRows = rows.map((r: any) => {
+        let items: any[] = [];
+        try { items = JSON.parse(r.items_json || '[]'); } catch (_) { items = []; }
+        return { ...r, items };
+      });
+
+      for (let i = 0; i < parsedRows.length; i++) {
+        for (let j = 0; j < parsedRows.length; j++) {
+          if (i === j) continue;
+          const rowA = parsedRows[i];
+          const rowB = parsedRows[j];
+
+          // If rowA has more items than rowB, and rowB items appear in rowA:
+          if (rowA.items.length > rowB.items.length && rowB.items.length > 0) {
+            const bKeys = new Set(rowB.items.map((it: any) =>
+              String(it.productCode || it.productName || it.name || '').trim().toLowerCase()
+            ));
+
+            const hasOverlap = rowA.items.some((it: any) =>
+              bKeys.has(String(it.productCode || it.productName || it.name || '').trim().toLowerCase())
+            );
+
+            if (hasOverlap) {
+              const prunedItems = rowA.items.filter((it: any) =>
+                !bKeys.has(String(it.productCode || it.productName || it.name || '').trim().toLowerCase())
+              );
+
+              if (prunedItems.length > 0 && prunedItems.length < rowA.items.length) {
+                await db.run(
+                  'UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?',
+                  [JSON.stringify(prunedItems), rowA.id]
+                );
+                rowA.items = prunedItems;
+                fixedCount++;
+                console.log(`[PharmarackSync] Pruned ${bKeys.size} duplicate items from placed order #${rowA.id} (${rowA.order_no || 'in_app'}) belonging to #${rowB.id} (${rowB.order_no || 'in_app'})`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return fixedCount;
+  } catch (err: any) {
+    console.warn('[PharmarackSync] Error in deduplicateSameStoreMultiOrderLines:', err?.message || err);
+    return 0;
+  }
+}
+
 
 

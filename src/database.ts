@@ -1545,6 +1545,10 @@ export async function ensureSchema(dbPath: string) {
         await autoHealDistributorPhoneMappings(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
+        try {
+          const { deduplicateSameStoreMultiOrderLines } = await import('./services/pharmarackOrderSyncService.js');
+          await deduplicateSameStoreMultiOrderLines(db);
+        } catch (_) { }
         return;
       }
     } catch (_) {
@@ -4826,6 +4830,10 @@ export async function ensureSchema(dbPath: string) {
       await autoHealDistributorPhoneMappings(db);
       await ensureMedicinesFts(db);
       await ensureMedicineSearchSummaryTriggers(db);
+      try {
+        const { deduplicateSameStoreMultiOrderLines } = await import('./services/pharmarackOrderSyncService.js');
+        await deduplicateSameStoreMultiOrderLines(db);
+      } catch (_) { }
     } catch (postErr: any) {
       console.warn('[Boot] Post-DDL migration note:', postErr.message);
     }

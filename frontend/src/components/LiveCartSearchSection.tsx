@@ -153,6 +153,41 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
   const lastToastedQueryRef = useRef<string>('');
   const searchAbortControllerRef = useRef<AbortController | null>(null);
 
+  const cartDistributorsRef = useRef(cartDistributors);
+  const lastAddedDistributorRef = useRef(lastAddedDistributor);
+  useEffect(() => {
+    cartDistributorsRef.current = cartDistributors;
+    lastAddedDistributorRef.current = lastAddedDistributor;
+
+    // Update in-cart badges on currently visible suggestions without re-fetching network
+    setSuggestions(prev => {
+      if (prev.length === 0) return prev;
+      const activeCartMap = new Map<string, { count: number; total: number }>();
+      cartDistributors.forEach(d => {
+        if (d.items && d.items.length > 0) {
+          const count = d.items.length;
+          const total = d.lineTotal || d.items.reduce((sum, item) => sum + (item.amount || 0), 0);
+          if (d.storeId) activeCartMap.set(String(d.storeId), { count, total });
+          if (d.storeName) activeCartMap.set(d.storeName.toLowerCase().trim(), { count, total });
+        }
+      });
+      return prev.map(s => {
+        const info = (s.storeId && activeCartMap.get(String(s.storeId))) ||
+                     (s.distributor && activeCartMap.get(s.distributor.toLowerCase().trim()));
+        const newCount = info ? info.count : undefined;
+        const newTotal = info ? info.total : undefined;
+        if (s.cartItemCount === newCount && s.cartTotalAmount === newTotal) {
+          return s;
+        }
+        return {
+          ...s,
+          cartItemCount: newCount,
+          cartTotalAmount: newTotal
+        };
+      });
+    });
+  }, [cartDistributors, lastAddedDistributor]);
+
   useDropdownAutoScroll(suggestionsListRef, activeSuggestionIndex, showSuggestions);
 
   // Pre-warm distributor priority once on mount
@@ -265,7 +300,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
         if (prData && !(prData as LocalPrSearchFallback).isError && Array.isArray(prData) && prData.length > 0) {
           onSessionActive?.();
           const activeCartMap = new Map<string, { storeId: number; count: number; total: number; name: string }>();
-          cartDistributors.forEach(d => {
+          cartDistributorsRef.current.forEach(d => {
             if (d.items && d.items.length > 0) {
               const count = d.items.length;
               const total = d.lineTotal || d.items.reduce((sum, item) => sum + (item.amount || 0), 0);
@@ -311,7 +346,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
           });
 
           const distPrio = await loadDistributorPriority();
-          const lastDist = (lastAddedDistributor || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
+          const lastDist = (lastAddedDistributorRef.current || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
           const cleanQ = cleanQuery.toLowerCase().trim();
 
           if (mergedList.length > 1) {
@@ -422,7 +457,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
     return () => {
       clearTimeout(delayDebounce);
     };
-  }, [product, cartDistributors, lastAddedDistributor, restrictStoreId]);
+  }, [product, restrictStoreId]);
 
   const handleProductChange = (val: string) => {
     isSelectingRef.current = false;

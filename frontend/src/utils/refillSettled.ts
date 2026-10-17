@@ -46,3 +46,170 @@ export const isOrderItemSettled = (i: OrderItemLike) =>
 export const isOrderGroupSettled = (items: OrderItemLike[] | undefined | null) =>
   !!items && items.length > 0 && items.every(isOrderItemSettled);
 
+export interface RefillCycleBookingStatus {
+  canBook: boolean;
+  isEarly: boolean;
+  daysEarly: number;
+  alreadyDispensed: boolean;
+  lastDispensedDate: string | null;
+  nextDueDate: string | null;
+  message?: string;
+}
+
+/**
+ * Checks whether a single refill medicine can be booked for the current cycle:
+ * 1. Blocks re-booking if the current running cycle was already dispensed (last_refill_date within cycle).
+ * 2. Flags early booking if next_refill_date is in the future.
+ * 3. Allows direct booking if due now or overdue.
+ */
+export const checkRefillCycleBooking = (med: {
+  next_refill_date?: string | null;
+  last_refill_date?: string | null;
+  refill_interval_days?: number | null;
+  status?: string | null;
+}): RefillCycleBookingStatus => {
+  const intervalDays = Number(med.refill_interval_days || 30);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const nextDueDate = med.next_refill_date || null;
+  const lastDispensedDate = med.last_refill_date || null;
+
+  if (isRefillFulfilledToday(med)) {
+    return {
+      canBook: false,
+      isEarly: false,
+      daysEarly: 0,
+      alreadyDispensed: true,
+      lastDispensedDate,
+      nextDueDate,
+      message: 'This refill cycle was already dispensed today.'
+    };
+  }
+
+  const nextDue = nextDueDate ? new Date(nextDueDate) : null;
+  const lastDisp = lastDispensedDate ? new Date(lastDispensedDate) : null;
+
+  if (lastDisp) {
+    const lastDispDay = new Date(lastDisp);
+    lastDispDay.setHours(0, 0, 0, 0);
+    const daysSinceDispense = Math.round((now.getTime() - lastDispDay.getTime()) / (1000 * 60 * 60 * 24));
+    const minCycleDays = Math.max(7, Math.floor(intervalDays * 0.6));
+
+    if (daysSinceDispense === 0 || (nextDue && nextDue.getTime() > now.getTime() && daysSinceDispense < minCycleDays)) {
+      const lastDispFormatted = lastDisp.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+      const nextDueFormatted = nextDue ? nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+      return {
+        canBook: false,
+        isEarly: false,
+        daysEarly: 0,
+        alreadyDispensed: true,
+        lastDispensedDate,
+        nextDueDate,
+        message: `Refill already dispensed for this cycle on ${lastDispFormatted}. Next refill is due on ${nextDueFormatted}.`
+      };
+    }
+  }
+
+  if (nextDue) {
+    const nextDueDay = new Date(nextDue);
+    nextDueDay.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((nextDueDay.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      const nextDueFormatted = nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+      return {
+        canBook: true,
+        isEarly: true,
+        daysEarly: diffDays,
+        alreadyDispensed: false,
+        lastDispensedDate,
+        nextDueDate,
+        message: `This refill is due in ${diffDays} day(s) on ${nextDueFormatted}. Allow early booking?`
+      };
+    }
+  }
+
+  return {
+    canBook: true,
+    isEarly: false,
+    daysEarly: 0,
+    alreadyDispensed: false,
+    lastDispensedDate,
+    nextDueDate
+  };
+};
+
+/**
+ * Checks whether an entire patient's refill group can be booked:
+ * Returns alreadyDispensed if all active medicines are fulfilled for this cycle.
+ * Flags isEarly if any bookable medicine is due in the future.
+ */
+export const checkPatientRefillCycleBooking = (meds: Array<{
+  next_refill_date?: string | null;
+  last_refill_date?: string | null;
+  refill_interval_days?: number | null;
+  status?: string | null;
+  is_active?: number | null;
+}> | undefined | null): RefillCycleBookingStatus => {
+  if (!meds || meds.length === 0) {
+    return {
+      canBook: false,
+      isEarly: false,
+      daysEarly: 0,
+      alreadyDispensed: false,
+      lastDispensedDate: null,
+      nextDueDate: null,
+      message: 'No medicines in refill schedule.'
+    };
+  }
+
+  const activeMeds = meds.filter(m => m.is_active !== 0 && m.status !== 'canceled');
+  if (activeMeds.length === 0) {
+    return {
+      canBook: false,
+      isEarly: false,
+      daysEarly: 0,
+      alreadyDispensed: false,
+      lastDispensedDate: null,
+      nextDueDate: null,
+      message: 'No active prescribed medicines.'
+    };
+  }
+
+  const statuses = activeMeds.map(checkRefillCycleBooking);
+
+  if (statuses.every(s => s.alreadyDispensed)) {
+    return statuses[0];
+  }
+
+  const bookable = statuses.filter(s => s.canBook);
+  if (bookable.length === 0) {
+    return statuses[0];
+  }
+
+  const earlyStatuses = bookable.filter(s => s.isEarly);
+  if (earlyStatuses.length > 0) {
+    const maxEarly = earlyStatuses.reduce((prev, curr) => (curr.daysEarly > prev.daysEarly ? curr : prev), earlyStatuses[0]);
+    return {
+      canBook: true,
+      isEarly: true,
+      daysEarly: maxEarly.daysEarly,
+      alreadyDispensed: false,
+      lastDispensedDate: maxEarly.lastDispensedDate,
+      nextDueDate: maxEarly.nextDueDate,
+      message: maxEarly.message
+    };
+  }
+
+  return {
+    canBook: true,
+    isEarly: false,
+    daysEarly: 0,
+    alreadyDispensed: false,
+    lastDispensedDate: bookable[0].lastDispensedDate,
+    nextDueDate: bookable[0].nextDueDate
+  };
+};
+
+

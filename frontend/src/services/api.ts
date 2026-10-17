@@ -2114,6 +2114,9 @@ export const api = {
   syncHistoricalOrders: (days?: number) =>
     apiClient.post<{ success: boolean; fetched: number; imported: number; error?: string }>('/pharmarack/sync-historical-orders', { days: days || 30 }).then(res => res.data),
 
+  syncPharmarackOrders: () =>
+    apiClient.post<{ ok: boolean; fetched: number; newOrders: number; followUps: number; error?: string; skipped?: string }>('/pharmarack/sync-orders', {}, { timeout: 45000 }).then(res => res.data),
+
   getPharmarackOrderById: (orderId: number | string) =>
     apiClient.get<{ success: boolean; order: any }>(`/pharmarack/order-by-id/${orderId}`).then(res => res.data),
 
