@@ -676,10 +676,11 @@ router.delete('/item/:id', async (req, res) => {
 });
 
 // POST clear all failed messages permanently (Dismiss All Failed)
-router.post('/clear-failed', async (_req, res) => {
+router.post('/clear-failed', async (req, res) => {
   try {
-    const cleared = await whatsappQueueWorker.clearAllFailed();
-    res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} failed item(s)` });
+    const includePending = req.body?.includePending === true || req.query?.includePending === 'true';
+    const cleared = await whatsappQueueWorker.clearAllFailed({ includeStalledPending: includePending });
+    res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} item(s)` });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to clear failed items' });
   }

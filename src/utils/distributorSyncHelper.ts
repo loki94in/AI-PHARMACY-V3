@@ -39,7 +39,7 @@ export function normalizeDistributorName(rawName: string): string {
     .toLowerCase()
     .trim()
     .replace(/\(.*?\)/g, '')
-    .replace(/pvt|ltd|limited|private|distributors|distributor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics/gi, '')
+    .replace(/pvt|ltd|limited|private|distributors|distributor|distribitors|distribitor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics/gi, '')
     .replace(/[^a-z0-9]/g, '');
 }
 

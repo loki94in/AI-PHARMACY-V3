@@ -18342,6 +18342,11 @@ async function ensureSchema(dbPath) {
         await autoHealDistributorPhoneMappings(db2);
         await ensureMedicinesFts(db2);
         await ensureMedicineSearchSummaryTriggers(db2);
+        try {
+          const { deduplicateSameStoreMultiOrderLines: deduplicateSameStoreMultiOrderLines2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
+          await deduplicateSameStoreMultiOrderLines2(db2);
+        } catch (_) {
+        }
         return;
       }
     } catch (_) {
@@ -21491,6 +21496,11 @@ async function ensureSchema(dbPath) {
       await autoHealDistributorPhoneMappings(db2);
       await ensureMedicinesFts(db2);
       await ensureMedicineSearchSummaryTriggers(db2);
+      try {
+        const { deduplicateSameStoreMultiOrderLines: deduplicateSameStoreMultiOrderLines2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
+        await deduplicateSameStoreMultiOrderLines2(db2);
+      } catch (_) {
+      }
     } catch (postErr) {
       console.warn("[Boot] Post-DDL migration note:", postErr.message);
     }
@@ -44693,6 +44703,7 @@ ${message}`;
 var pharmarackOrderSyncService_exports = {};
 __export(pharmarackOrderSyncService_exports, {
   backfillSyncedOrderLines: () => backfillSyncedOrderLines,
+  deduplicateSameStoreMultiOrderLines: () => deduplicateSameStoreMultiOrderLines,
   dryRunOrderSync: () => dryRunOrderSync,
   fetchOrderLines: () => fetchOrderLines,
   getOrderSyncAudit: () => getOrderSyncAudit,
@@ -44854,7 +44865,11 @@ async function fillOrderLines(db2, token, orders, todayIso) {
     } catch (_) {
       existing = [];
     }
-    if (existing.length > 0) continue;
+    const sameStoreOrders = orders.filter(
+      (x) => String(x?.StoreName || "").trim().toLowerCase() === String(o?.StoreName || "").trim().toLowerCase()
+    );
+    const isMultiOrderStore = sameStoreOrders.length > 1;
+    if (existing.length > 0 && !isMultiOrderStore) continue;
     const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
     const lines = await fetchOrderLines(db2, token, orderId, orderNo);
     if (lines === "expired") break;
@@ -44987,6 +45002,10 @@ async function runSync() {
   result.newOrders = fresh.length;
   try {
     await fillOrderLines(db2, token, orders, today.iso);
+  } catch (_) {
+  }
+  try {
+    await deduplicateSameStoreMultiOrderLines(db2);
   } catch (_) {
   }
   if (fresh.length === 0) return result;
@@ -45433,7 +45452,11 @@ async function backfillSyncedOrderLines(targetDate) {
       } catch (_) {
         items = [];
       }
-      if (items.length > 0) continue;
+      const sameStoreCandidates = candidates.filter(
+        (x) => String(x?.store_name || "").trim().toLowerCase() === String(c?.store_name || "").trim().toLowerCase() && x?.order_date === c?.order_date
+      );
+      const isMultiOrderStore = sameStoreCandidates.length > 1;
+      if (items.length > 0 && !isMultiOrderStore) continue;
       const orderId = Number.isFinite(Number(c.pharmarack_order_id)) ? Number(c.pharmarack_order_id) : null;
       const lines = await fetchOrderLines(db2, token, orderId, orderNo);
       if (lines === "expired") break;
@@ -45461,10 +45484,77 @@ async function backfillSyncedOrderLines(targetDate) {
       } catch (_) {
       }
     }
+    try {
+      await deduplicateSameStoreMultiOrderLines(db2);
+    } catch (_) {
+    }
     return { ok: true, count: updatedCount };
   } catch (err) {
     console.error("[PharmarackOrderSync] Error in backfillSyncedOrderLines:", err);
     return { ok: false, count: 0 };
+  }
+}
+async function deduplicateSameStoreMultiOrderLines(db2) {
+  try {
+    const multiStoreDates = await db2.all(`
+      SELECT order_date, LOWER(TRIM(store_name)) as store_norm, count(*) as cnt
+      FROM pharmarack_placed_orders
+      GROUP BY order_date, LOWER(TRIM(store_name))
+      HAVING count(*) > 1
+    `);
+    if (!multiStoreDates || multiStoreDates.length === 0) return 0;
+    let fixedCount = 0;
+    for (const group of multiStoreDates) {
+      const rows = await db2.all(`
+        SELECT id, order_no, items_json
+        FROM pharmarack_placed_orders
+        WHERE order_date = ? AND LOWER(TRIM(store_name)) = ?
+        ORDER BY id ASC
+      `, [group.order_date, group.store_norm]);
+      if (rows.length < 2) continue;
+      const parsedRows = rows.map((r) => {
+        let items = [];
+        try {
+          items = JSON.parse(r.items_json || "[]");
+        } catch (_) {
+          items = [];
+        }
+        return { ...r, items };
+      });
+      for (let i = 0; i < parsedRows.length; i++) {
+        for (let j = 0; j < parsedRows.length; j++) {
+          if (i === j) continue;
+          const rowA = parsedRows[i];
+          const rowB = parsedRows[j];
+          if (rowA.items.length > rowB.items.length && rowB.items.length > 0) {
+            const bKeys = new Set(rowB.items.map(
+              (it) => String(it.productCode || it.productName || it.name || "").trim().toLowerCase()
+            ));
+            const hasOverlap = rowA.items.some(
+              (it) => bKeys.has(String(it.productCode || it.productName || it.name || "").trim().toLowerCase())
+            );
+            if (hasOverlap) {
+              const prunedItems = rowA.items.filter(
+                (it) => !bKeys.has(String(it.productCode || it.productName || it.name || "").trim().toLowerCase())
+              );
+              if (prunedItems.length > 0 && prunedItems.length < rowA.items.length) {
+                await db2.run(
+                  "UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?",
+                  [JSON.stringify(prunedItems), rowA.id]
+                );
+                rowA.items = prunedItems;
+                fixedCount++;
+                console.log(`[PharmarackSync] Pruned ${bKeys.size} duplicate items from placed order #${rowA.id} (${rowA.order_no || "in_app"}) belonging to #${rowB.id} (${rowB.order_no || "in_app"})`);
+              }
+            }
+          }
+        }
+      }
+    }
+    return fixedCount;
+  } catch (err) {
+    console.warn("[PharmarackSync] Error in deduplicateSameStoreMultiOrderLines:", err?.message || err);
+    return 0;
   }
 }
 var ORDER_LIST_URL, MIN_GAP_MS, inFlight, lastRunAt, ORDER_DETAIL_URL, NAME_KEYS, QTY_KEYS;
@@ -59218,7 +59308,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.109";
+    APP_VERSION = "0.1.110";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -90718,6 +90808,8 @@ var init_sales = __esm({
           );
         }
         if (Array.isArray(matchingRefills) && matchingRefills.length > 0) {
+          const advanceRefillCycle = req.body.advanceRefillCycle !== false;
+          const isEarlyRefill = Boolean(req.body.isEarlyRefill);
           for (const refill of matchingRefills) {
             const refillNameLower = (refill.medicine_name || "").trim().toLowerCase();
             const isMedicineSold = soldMedicineIds.includes(refill.medicine_id) || explicitRefillIds.includes(refill.id) || refillNameLower && soldMedicineNames.includes(refillNameLower);
@@ -90725,11 +90817,13 @@ var init_sales = __esm({
               continue;
             }
             const interval = Number(refill.refill_interval_days || 30);
-            const nextDate = /* @__PURE__ */ new Date();
+            const baseDate = new Date(invoiceDateValue.replace(" ", "T"));
+            const nextDate = new Date(!isNaN(baseDate.getTime()) ? baseDate : Date.now());
             nextDate.setDate(nextDate.getDate() + interval);
             const nextDateStr = toLocalSqlDateTime(nextDate);
-            const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : toLocalSqlDateTime().slice(0, 10);
+            const cycleDueDate = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : invoiceDateValue.slice(0, 10);
             const fulfilledQty = Number(refill.quantity_needed || 1);
+            const fulfillmentVia = isEarlyRefill ? "pos_sale_early" : advanceRefillCycle ? "pos_sale" : "pos_sale_extra_supply";
             const recentPosOpened = await db2.get(
               `SELECT id FROM refill_fulfillments 
            WHERE refill_id = ? AND fulfilled_via IN ('pos_opened', 'quick_assist_complete') 
@@ -90740,16 +90834,16 @@ var init_sales = __esm({
             if (recentPosOpened) {
               await db2.run(
                 `UPDATE refill_fulfillments 
-             SET invoice_id = ?, invoice_no = ?, fulfilled_via = 'pos_sale' 
+             SET invoice_id = ?, invoice_no = ?, fulfilled_via = ?, next_due_date = ? 
              WHERE id = ?`,
-                [invoiceId, invoice_no, recentPosOpened.id]
+                [invoiceId, invoice_no, fulfillmentVia, advanceRefillCycle ? nextDateStr : refill.next_refill_date || nextDateStr, recentPosOpened.id]
               );
             } else {
               await db2.run(
                 `INSERT INTO refill_fulfillments (
               refill_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, 
               quantity_fulfilled, fulfilled_at, invoice_id, invoice_no, cycle_due_date, next_due_date, fulfilled_via
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, 'pos_sale')`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                   refill.id,
                   refill.customer_id || customerId,
@@ -90758,15 +90852,18 @@ var init_sales = __esm({
                   refill.medicine_id,
                   refill.medicine_name || "Prescribed Medicine",
                   fulfilledQty,
+                  invoiceDateValue,
                   invoiceId,
                   invoice_no,
                   cycleDueDate,
-                  nextDateStr
+                  advanceRefillCycle ? nextDateStr : refill.next_refill_date || nextDateStr,
+                  fulfillmentVia
                 ]
               );
+              const targetNextRefillDate = advanceRefillCycle ? nextDateStr : refill.next_refill_date || nextDateStr;
               await db2.run(
                 `UPDATE patient_refills 
-             SET last_refill_date = datetime('now'), 
+             SET last_refill_date = ?, 
                  next_refill_date = ?, 
                  acknowledged = 0, 
                  ordering_triggered = 0,
@@ -90784,7 +90881,7 @@ var init_sales = __esm({
                  last_collection_reminder_at = NULL,
                  collection_reminder_count = 0
              WHERE id = ?`,
-                [nextDateStr, refill.id]
+                [invoiceDateValue, targetNextRefillDate, refill.id]
               );
             }
             if (refill.quick_bill_id) {

@@ -361,7 +361,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const handleClearAllFailed = async () => {
     try {
       setClearingFailed(true);
-      const res = await api.clearFailedWhatsAppQueue();
+      const res = await api.clearFailedWhatsAppQueue({ includePending: true });
       toastEvent.trigger(res.message || 'Cleared failed notifications permanently', 'success');
       whatsappQueueEvent.triggerUpdated();
       automationHubEvent.triggerUpdated();

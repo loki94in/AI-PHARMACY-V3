@@ -1630,18 +1630,31 @@ class WhatsAppQueueWorker {
   }
 
   /** Dismiss / Clear all failed items permanently */
-  public async clearAllFailed(): Promise<number> {
+  public async clearAllFailed(options?: { includeStalledPending?: boolean }): Promise<number> {
     const db = await dbManager.getConnection();
     let totalCleared = 0;
     try {
       const res1 = await db.run("DELETE FROM whatsapp_send_queue WHERE status IN ('failed_offline', 'failed_perm', 'review_required', 'skipped_invalid_phone', 'skipped_not_on_whatsapp', 'skipped_offline')");
       totalCleared += (res1.changes || 0);
-      const res2 = await db.run("DELETE FROM automation_notifications WHERE status IN ('failed', 'error') OR status LIKE 'failed%'");
+
+      if (options?.includeStalledPending) {
+        const resPending = await db.run("DELETE FROM whatsapp_send_queue WHERE status = 'pending'");
+        totalCleared += (resPending.changes || 0);
+        const resNotifPending = await db.run("DELETE FROM automation_notifications WHERE status IN ('pending', 'cancelled', 'staged')");
+        totalCleared += (resNotifPending.changes || 0);
+      } else {
+        const resStalled = await db.run("DELETE FROM whatsapp_send_queue WHERE (retry_count >= 1 OR error_message IS NOT NULL) AND status != 'sent'");
+        totalCleared += (resStalled.changes || 0);
+      }
+
+      const res2 = await db.run("DELETE FROM automation_notifications WHERE status IN ('failed', 'error', 'cancelled') OR status LIKE 'failed%' OR error_message IS NOT NULL");
       totalCleared += (res2.changes || 0);
+
       if (totalCleared > 0) {
         this.broadcastQueueState(this.isProcessing);
         try {
           eventService.broadcast('automation_hub_updated', { type: 'cleared' });
+          eventService.broadcast('wa_queue_updated', { type: 'cleared' });
         } catch (_) {}
       }
     } catch (err) {

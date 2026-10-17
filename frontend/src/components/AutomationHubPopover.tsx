@@ -64,6 +64,7 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState<boolean>(false);
 
   // Live in-flight animation state for currently sending WhatsApp message
   const [activeSending, setActiveSending] = useState<{
@@ -245,6 +246,24 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
     }
   };
 
+  const handleClearAllFailed = async () => {
+    setClearingAll(true);
+    try {
+      await api.clearFailedWhatsAppQueue({ includePending: true });
+      cachedActivity = [];
+      cachedUnresolvedCount = 0;
+      setActivity([]);
+      setUnresolvedCount(0);
+      automationHubEvent.triggerUpdated();
+      whatsappQueueEvent.triggerUpdated();
+      await loadData(true);
+    } catch (err) {
+      console.error('Failed to clear failed notifications:', err);
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
   const handleDeleteItem = async (item: AutomationHubActivityItem) => {
     const itemKey = item.id || String(item.rawId);
     setDeletingId(itemKey);
@@ -257,6 +276,11 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
         await api.deleteWhatsAppQueueItem(targetId);
       }
       const updatedActivity = activity.filter(a => a.id !== item.id && (!item.rawId || a.rawId !== item.rawId));
+      if (item.status.startsWith('failed') && item.acknowledged === 0) {
+        const nextUnresolved = Math.max(0, unresolvedCount - 1);
+        setUnresolvedCount(nextUnresolved);
+        cachedUnresolvedCount = nextUnresolved;
+      }
       setActivity(updatedActivity);
       cachedActivity = updatedActivity;
       automationHubEvent.triggerUpdated();
@@ -308,14 +332,27 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
           </div>
           <div className="flex items-center gap-1.5">
             {unresolvedCount > 0 && (
-              <button
-                onClick={handleResolveAll}
-                disabled={resolvingId === 'all'}
-                className="text-[10px] font-semibold px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition-colors"
-                title="Mark all failed messages as acknowledged"
-              >
-                Resolve All
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleClearAllFailed}
+                  disabled={clearingAll}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Permanently remove / delete all failed notifications"
+                >
+                  <Trash2 size={10} className={clearingAll ? "animate-spin" : ""} />
+                  <span>Delete All</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResolveAll}
+                  disabled={resolvingId === 'all'}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-lg bg-bg2 hover:bg-bg3 text-text border border-border transition-colors cursor-pointer"
+                  title="Mark all failed messages as acknowledged"
+                >
+                  Resolve All
+                </button>
+              </>
             )}
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-bg3/60 text-muted hover:text-text" aria-label="Close">
               <X size={16} />
@@ -480,13 +517,13 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {statusPill(item.status)}
-                        {item.status === 'pending' && (
+                        {(item.status === 'pending' || isFailed) && (
                           <button
                             type="button"
                             onClick={() => handleDeleteItem(item)}
                             disabled={deletingId === (item.id || String(item.rawId))}
                             className="p-1 text-muted hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                            title="Delete / Cancel pending message"
+                            title={item.status === 'pending' ? "Delete / Cancel pending message" : "Permanently delete notification"}
                           >
                             <Trash2 size={13} className={deletingId === (item.id || String(item.rawId)) ? "animate-spin" : ""} />
                           </button>
@@ -511,8 +548,18 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
                         </div>
 
                         {isUnresolved && (
-                          <div className="flex justify-end pt-0.5">
+                          <div className="flex items-center justify-end gap-2 pt-0.5">
                             <button
+                              type="button"
+                              onClick={() => handleDeleteItem(item)}
+                              disabled={deletingId === (item.id || String(item.rawId))}
+                              className="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                              title="Permanently delete notification from database"
+                            >
+                              <Trash2 size={10} className={deletingId === (item.id || String(item.rawId)) ? "animate-spin" : ""} /> Delete
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleResolve(item)}
                               disabled={resolvingId === (item.id || String(item.rawId))}
                               className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-white flex items-center gap-1 transition-colors cursor-pointer"
