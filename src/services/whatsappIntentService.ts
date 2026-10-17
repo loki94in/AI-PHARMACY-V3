@@ -865,12 +865,15 @@ async function maybeSendGuidancePrompt(
               : `I received: "${trimmedOriginal.slice(0, 80)}"\n\n`))
       : '';
 
-    const greetingText = receivedPrefix + getMessage(chatLang, 'whatsapp.bot.welcomeMenu', {
+    const welcomeResult = await buildCustomerWelcomeMenu(db, cleanDigits, {
       name: customerName,
       storeName,
       hoursNotice,
-      hoursLine
-    }) + languageFooter(chatLang);
+      hoursLine,
+      lang: chatLang
+    });
+
+    const greetingText = receivedPrefix + welcomeResult.text + languageFooter(chatLang);
 
     await db.run(
       `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
@@ -891,6 +894,94 @@ async function maybeSendGuidancePrompt(
   } catch (err) {
     console.warn('[Intent Service] Failed to send guidance prompt:', err);
   }
+}
+
+/**
+ * Builds context-aware welcome menu for WhatsApp customer:
+ * Dynamically includes Special Orders option (4) if customer has past/pending special order requests,
+ * and preserves standard options otherwise.
+ */
+export async function buildCustomerWelcomeMenu(
+  db: any,
+  cleanDigits: string,
+  params: {
+    name: string;
+    storeName: string;
+    hoursNotice: string;
+    hoursLine: string;
+    lang: string;
+  }
+): Promise<{ text: string; hasSpecialOrders: boolean; lastSpecialOrderProduct?: string }> {
+  let hasSpecialOrders = false;
+  let lastSpecialOrderProduct: string | undefined = undefined;
+  try {
+    const last10 = cleanDigits.slice(-10);
+    const soRow = await db.get(
+      `SELECT product, status FROM special_orders 
+       WHERE (phone LIKE ? OR phone LIKE ?) 
+         AND product IS NOT NULL AND TRIM(product) != ''
+       ORDER BY id DESC LIMIT 1`,
+      [`%${last10}`, `%${cleanDigits}%`]
+    );
+    if (soRow && soRow.product) {
+      hasSpecialOrders = true;
+      lastSpecialOrderProduct = soRow.product.trim();
+    }
+  } catch (_) {}
+
+  if (hasSpecialOrders) {
+    let msg = '';
+    const prodSnippet = lastSpecialOrderProduct ? ` _(${lastSpecialOrderProduct.slice(0, 25)})_` : '';
+    if (params.lang === 'mr') {
+      msg = `👋 नमस्कार *${params.name}*! ${params.storeName} मध्ये आपले स्वागत आहे।${params.hoursNotice}\n\n` +
+        `*सोप्या पायऱ्यांमध्ये आपली ऑर्डर द्या:*\n\n` +
+        `*पायरी 1:* पर्याय निवडा —\n` +
+        `  1️⃣ एक औषध (Single Medicine)\n` +
+        `  2️⃣ एकापेक्षा जास्त औषधे (किंवा फोटो 📸)\n` +
+        `  3️⃣ रिफिल — माझी नेहमीची नियमित औषधे पुन्हा मागवा\n` +
+        `  4️⃣ स्पेशल ऑर्डर — माझी पूर्वीची स्पेशल ऑर्डर पुन्हा मागवा${prodSnippet}\n` +
+        `  5️⃣ दुकानाची वेळ, पत्ता आणि फार्मासिस्टशी बोला 📞\n\n` +
+        `*पायरी 2:* आम्ही आपल्याला पर्याय आणि MRP दाखवू 💰\n` +
+        `*पायरी 3:* आपण होकार दिला की ऑर्डर बुक होईल 🚀\n\n` +
+        `${params.hoursLine}\n\n` +
+        `*सुरुवात करण्यासाठी 1, 2, 3, 4 किंवा 5 पाठवा (किंवा थेट औषधाचे नाव लिहा).*`;
+    } else if (params.lang === 'hi') {
+      msg = `👋 नमस्ते *${params.name}*! ${params.storeName} में आपका स्वागत है।${params.hoursNotice}\n\n` +
+        `*सरल चरणों में अपना ऑर्डर दें:*\n\n` +
+        `*चरण 1:* विकल्प चुनें —\n` +
+        `  1️⃣ एक दवा (Single Medicine)\n` +
+        `  2️⃣ एक से अधिक दवाएं (या पर्चे का फोटो 📸)\n` +
+        `  3️⃣ रिफिल — मेरी नियमित दवाएं दोहराएं\n` +
+        `  4️⃣ स्पेशल ऑर्डर — पिछली स्पेशल ऑर्डर दोबारा मंगाएं${prodSnippet}\n` +
+        `  5️⃣ दुकान का समय, पता और फार्मासिस्ट से बात 📞\n\n` +
+        `*चरण 2:* हम आपको विकल्प और MRP दिखाएंगे 💰\n` +
+        `*चरण 3:* आप पुष्टि करेंगे और हम बुक करेंगे 🚀\n\n` +
+        `${params.hoursLine}\n\n` +
+        `*शुरू करने के लिए 1, 2, 3, 4 या 5 लिखकर भेजें (या सीधे दवा का नाम लिखें)।*`;
+    } else {
+      msg = `👋 Hello *${params.name}*! Welcome to ${params.storeName}.${params.hoursNotice}\n\n` +
+        `*Place your order in simple steps:*\n\n` +
+        `*Step 1:* Choose an option —\n` +
+        `  1️⃣ Single Medicine\n` +
+        `  2️⃣ Multiple Medicines (or send prescription photo 📸)\n` +
+        `  3️⃣ Refill — Repeat regular prescription\n` +
+        `  4️⃣ Special Order — Reorder / check previous special requests${prodSnippet}\n` +
+        `  5️⃣ Store Hours, Location & Call Pharmacist 📞\n\n` +
+        `*Step 2:* We show you options & MRP 💰\n` +
+        `*Step 3:* You confirm & we book 🚀\n\n` +
+        `${params.hoursLine}\n\n` +
+        `*Reply 1, 2, 3, 4, or 5 to begin (or type medicine name directly).*`;
+    }
+    return { text: msg, hasSpecialOrders, lastSpecialOrderProduct };
+  }
+
+  const defaultText = getMessage(params.lang, 'whatsapp.bot.welcomeMenu', {
+    name: params.name,
+    storeName: params.storeName,
+    hoursNotice: params.hoursNotice,
+    hoursLine: params.hoursLine
+  });
+  return { text: defaultText, hasSpecialOrders: false };
 }
 
 /**
@@ -2386,12 +2477,14 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const schedForWelcome = await getSchedForWelcome(db);
       const hoursLineForWelcome = `🕐 Open: ${schedForWelcome.openTime} – ${schedForWelcome.closeTime}${schedForWelcome.weeklyOff ? ` | Off: ${schedForWelcome.weeklyOff}` : ''}`;
 
-      const welcomeMsg = getMessage(stepLang, 'whatsapp.bot.welcomeMenu', {
+      const welcomeResult = await buildCustomerWelcomeMenu(db, cleanDigits, {
         name: formattedName,
         storeName,
         hoursNotice,
-        hoursLine: hoursLineForWelcome
-      }) + languageFooter(stepLang);
+        hoursLine: hoursLineForWelcome,
+        lang: stepLang
+      });
+      const welcomeMsg = welcomeResult.text + languageFooter(stepLang);
 
       if (!(await allowBotPrompt(db, cleanDigits, phone))) return true;
 
@@ -2461,14 +2554,35 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       return true;
     }
 
-    // Step: awaiting_order_type (Customer was greeted, now picks 1 / 2 / 3)
+    // Step: awaiting_order_type (Customer was greeted, now picks 1 / 2 / 3 / 4 / 5)
     if (pending.step === 'awaiting_order_type') {
       const picked = body.trim();
       const isOne   = /^1$/.test(picked);
       const isTwo   = /^2$/.test(picked);
       const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
-      const isFour  = /^(4|info|hours|time|address|location|call|help|pharmacist|timing|पत्ता|वेळ|कॉल|मदत)$/i.test(picked);
-      if (isOne || isTwo || isThree || isFour) {
+      const isFour  = /^4$/.test(picked);
+      const isFive  = /^5$/.test(picked);
+      const isInfoKeyword = /^(info|hours|time|address|location|call|help|pharmacist|timing|पत्ता|वेळ|कॉल|मदत)$/i.test(picked);
+      const isSpecialOrderWord = /^(special|special order|special_order|खास|स्पेशल)$/i.test(picked);
+
+      // Check if user has special orders on record
+      let customerSpecialOrders: any[] = [];
+      try {
+        const last10 = cleanDigits;
+        customerSpecialOrders = await db.all(
+          `SELECT id, product AS medicine_name, qty AS quantity_needed, status, pharmarack_mrp AS estimated_mrp
+           FROM special_orders
+           WHERE (phone LIKE ? OR phone LIKE ?) AND product IS NOT NULL AND TRIM(product) != ''
+           ORDER BY id DESC LIMIT 5`,
+          [`%${last10}`, `%${cleanDigits}%`]
+        );
+      } catch (_) {}
+
+      const hasSoHistory = customerSpecialOrders && customerSpecialOrders.length > 0;
+      const isSpecialPick = (isFour && hasSoHistory) || isSpecialOrderWord;
+      const isStoreInfoPick = (isFour && !hasSoHistory) || isFive || isInfoKeyword;
+
+      if (isOne || isTwo || isThree || isSpecialPick || isStoreInfoPick) {
         const { resetBotStrikes } = await import('./waBotSilence.js');
         await resetBotStrikes(db, String(pending.phone || cleanDigits));
       }
@@ -2591,7 +2705,55 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         return true;
       }
 
-      if (isFour) {
+      if (isSpecialPick) {
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+
+        const soListText = customerSpecialOrders.map((r: any, idx: number) => {
+          return `${idx + 1}️⃣ *${r.medicine_name}* × ${r.quantity_needed || 1} strip _(Status: ${r.status})_`;
+        }).join('\n');
+
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_refill_choice', items_json = ?, unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [JSON.stringify(customerSpecialOrders.map(r => ({ ...r, source_type: 'special_order' }))), pending.phone]
+        );
+
+        let soMsg =
+          `📦 *Your Special Orders on record:*\n${soListText}\n\n` +
+          `*How would you like to reorder?*\n` +
+          `1️⃣ *ALL* — Reorder all above special items\n` +
+          `🔢 *Select* — Reply with number (e.g. *1*)\n` +
+          `➕ *Combine* — e.g. *1 and also refill my regular medicines*\n` +
+          `2️⃣ Change quantities\n` +
+          `3️⃣ Completely new medicine list\n` +
+          `4️⃣ Talk to pharmacist 📞`;
+
+        if (stepLang === 'mr') {
+          soMsg =
+            `📦 *नोंदीमधील आपल्या स्पेशल ऑर्डर्स:*\n${soListText}\n\n` +
+            `*आपण पुन्हा कशी ऑर्डर करू इच्छिता?*\n` +
+            `1️⃣ *सर्व (ALL)* — वरील स्पेशल औषधे पुन्हा मागवा\n` +
+            `🔢 *निवडा* — औषधाचा नंबर पाठवा (उदा. *1*)\n` +
+            `➕ *एकत्रित* — उदा. *1 आणि माझी नियमित औषधे पण पाठवा*\n` +
+            `2️⃣ प्रमाण बदला\n` +
+            `3️⃣ नवीन औषध\n` +
+            `4️⃣ फार्मासिस्टशी बोला 📞`;
+        } else if (stepLang === 'hi') {
+          soMsg =
+            `📦 *रिकॉर्ड में आपकी स्पेशल ऑर्डर्स:*\n${soListText}\n\n` +
+            `*आप दोबारा कैसे ऑर्डर करना चाहेंगे?*\n` +
+            `1️⃣ *सभी (ALL)* — ऊपर दी गई स्पेशल दवाएं दोबारा मंगवाएं\n` +
+            `🔢 *चुनें* — नंबर लिखकर भेजें (उदा. *1*)\n` +
+            `➕ *जोड़ें* — उदा. *1 और मेरी नियमित दवाएं भी भेजें*\n` +
+            `2️⃣ मात्रा बदलें\n` +
+            `3️⃣ नई दवा\n` +
+            `4️⃣ फार्मासिस्ट से बात करें 📞`;
+        }
+
+        await whatsappQueueWorker.enqueue(phone, soMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      if (isStoreInfoPick) {
         const { getPharmacyOperatingSchedule, getStoreAddress, getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
         const sched = await getPharmacyOperatingSchedule(db);
         const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
@@ -2769,6 +2931,29 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
 
       const hasNewMedText = picked.length > 2 && !/^[1-4,\s]+$/.test(picked);
 
+      // Check for opt-out (e.g. "without Dolo", "except Pan D", "nahi chahiye Metformin", "Dolo sodun")
+      const optOutMatch = picked.match(/\b(?:without|except|leaving|excluding|nahi chahiye|nako|mat bhejo|sodun|vaghalun)\s+([a-zA-Z0-9\s]+)/i);
+      if (optOutMatch && bundle.length > 1) {
+        const excludeTerm = optOutMatch[1].trim().toLowerCase();
+        const filtered = bundle.filter((item: any) => !(item.medicine_name || item.name || '').toLowerCase().includes(excludeTerm));
+        if (filtered.length > 0 && filtered.length < bundle.length) {
+          const itemListText = filtered.map((item: any, idx: number) => {
+            return `${idx + 1}. *${item.medicine_name || item.name}* × ${item.quantity_needed || 1} strip`;
+          }).join('\n');
+
+          await db.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_confirmation', items_json = ?, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [JSON.stringify(filtered), pending.phone]
+          );
+
+          const confirmMsg =
+            `✅ *Updated Order (excluding ${optOutMatch[1].trim()}):*\n\n${itemListText}\n\n` +
+            `Reply *YES* to confirm or *NO* to cancel.`;
+          await whatsappQueueWorker.enqueue(phone, confirmMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+          return true;
+        }
+      }
+
       if (isOne || (numberPicks.length > 0 && !isTwo && !isThree && !isFour)) {
         let finalItems: any[] = [];
         if (isOne && numberPicks.length <= 1) {
@@ -2888,6 +3073,121 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             `_Customer could not select refill item after 2 attempts. Please take over in the WhatsApp chat._`;
           await whatsappQueueWorker.enqueue(adminWhatsapp, escalateMsg, 'admin_escalation', 'Owner');
         }
+      }
+      return true;
+    }
+
+    // Step: awaiting_order_disambiguation (Customer has both Refill and Special Order, picks 1: Refill, 2: Special Order, 3: Combine Both)
+    if (pending.step === 'awaiting_order_disambiguation') {
+      const picked = body.trim().toLowerCase();
+      const isRefillOnly = /^(1|refill|regular|dawai|ausadh|रिफिल|औषध)$/i.test(picked);
+      const isSpecialOnly = /^(2|special|special order|so|खास|स्पेशल)$/i.test(picked);
+      const isCombineBoth = /^(3|both|combine|all|sab|dono|ek sath|एकत्र|दोन्ही|सब|दोनों)$/i.test(picked);
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+
+      let savedData: { refillIds?: number[]; specialOrderIds?: number[] } = {};
+      try {
+        savedData = JSON.parse(pending.items_json || '{}');
+      } catch (_) {}
+
+      if (isRefillOnly || isCombineBoth) {
+        const refillIds = savedData.refillIds || [];
+        if (refillIds.length > 0) {
+          const placeholders = refillIds.map(() => '?').join(',');
+          await db.run(
+            `UPDATE patient_refills SET patient_confirmed = 1, confirmed_at = datetime('now') WHERE id IN (${placeholders})`,
+            refillIds
+          );
+          const confirmedRefills = await db.all(
+            `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+             FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+             WHERE pr.id IN (${placeholders})`,
+            refillIds
+          );
+          if (confirmedRefills.length > 0) {
+            const primary = confirmedRefills[0];
+            try {
+              const { refillOrderReconciler } = await import('./refillOrderReconciler.js');
+              await refillOrderReconciler.upsertForPhone({
+                phone: cleanDigits,
+                customer_name: primary.patient_name,
+                items: confirmedRefills.map((r: any) => ({
+                  medicine_name: r.medicine_name,
+                  qty: Number(r.quantity_needed || 1)
+                })),
+                source: isCombineBoth ? 'whatsapp' : 'whatsapp_refill_confirm',
+                source_refill_id: primary.id,
+                dbInstance: db
+              });
+            } catch (recErr) {
+              console.warn('[Intent Service] Reconciler upsert warning:', recErr);
+            }
+
+            try {
+              const { processRefillCartItem } = await import('./refillCartService.js');
+              for (const r of confirmedRefills) {
+                await processRefillCartItem(r.id, { qty: Math.max(1, Number(r.quantity_needed || 1)), dryRun: false }).catch(() => null);
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      if (isSpecialOnly || isCombineBoth) {
+        const soIds = savedData.specialOrderIds || [];
+        if (soIds.length > 0) {
+          const placeholders = soIds.map(() => '?').join(',');
+          await db.run(
+            `UPDATE special_orders SET status = 'Confirmed', notified = 1, updated_at = datetime('now') WHERE id IN (${placeholders})`,
+            soIds
+          );
+          if (isCombineBoth) {
+            await db.run(
+              `UPDATE special_orders SET customer_order_source = 'whatsapp_combined' WHERE id IN (${placeholders})`,
+              soIds
+            );
+          }
+        }
+      }
+
+      if (isRefillOnly || isSpecialOnly || isCombineBoth) {
+        await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
+        const { getStoreMedicalName } = await import('./storeSettingsService.js');
+        const storeLabel = (await getStoreMedicalName(db)) || 'AI Pharmacy';
+        const custName = pending.customer_name || 'Customer';
+
+        let confirmMsg = '';
+        if (isCombineBoth) {
+          confirmMsg = `✅ *Combined Order Confirmed — ${storeLabel}*\n\nThank you ${custName}! Both your regular Refill medicines and Special Order items have been confirmed and added to our cart for a single combined delivery.`;
+          if (stepLang === 'mr') confirmMsg = `✅ *एकत्रित ऑर्डर कन्फर्म — ${storeLabel}*\n\nधन्यवाद ${custName}! आपली नियमित रिफिल औषधे आणि स्पेशल ऑर्डर दोन्ही कन्फर्म झाली असून एकाच डिलिव्हरीसाठी जोडली गेली आहेत.`;
+          else if (stepLang === 'hi') confirmMsg = `✅ *संयुक्त ऑर्डर कन्फर्म — ${storeLabel}*\n\nधन्यवाद ${custName}! आपकी नियमित रिफिल दवाएं और स्पेशल ऑर्डर दोनों कन्फर्म हो गए हैं और एक ही डिलीवरी के लिए जोड़ दिए गए हैं।`;
+        } else if (isRefillOnly) {
+          confirmMsg = `✅ *Refill Confirmed — ${storeLabel}*\n\nThank you ${custName}! Your regular prescription refill has been confirmed and added to our live cart.`;
+          if (stepLang === 'mr') confirmMsg = `✅ *रिफिल कन्फर्म — ${storeLabel}*\n\nधन्यवाद ${custName}! आपली नियमित औषधे कन्फर्म झाली असून कार्टमध्ये जोडली गेली आहेत.`;
+          else if (stepLang === 'hi') confirmMsg = `✅ *रिफिल कन्फर्म — ${storeLabel}*\n\nधन्यवाद ${custName}! आपकी नियमित रिफिल दवाएं कन्फर्म हो गई हैं और कार्ट में जोड़ दी गई हैं।`;
+        } else {
+          confirmMsg = `✅ *Special Order Confirmed — ${storeLabel}*\n\nThank you ${custName}! Your special order has been confirmed and placed with our distributor.`;
+          if (stepLang === 'mr') confirmMsg = `✅ *स्पेशल ऑर्डर कन्फर्म — ${storeLabel}*\n\nधन्यवाद ${custName}! आपली स्पेशल ऑर्डर कन्फर्म झाली असून वितरकाकडे नोंदवली गेली आहे.`;
+          else if (stepLang === 'hi') confirmMsg = `✅ *स्पेशल ऑर्डर कन्फर्म — ${storeLabel}*\n\nधन्यवाद ${custName}! आपकी स्पेशल ऑर्डर कन्फर्म हो गई है और डिस्ट्रीब्यूटर को भेज दी गई है।`;
+        }
+
+        await whatsappQueueWorker.enqueue(phone, confirmMsg, 'customer_medicine_clarification', custName);
+        return true;
+      }
+
+      // If unrecognized, strike circuit breaker
+      const count = Number(pending.unrecognized_count || 0);
+      if (count < 1) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const retryMsg = `Please choose what you would like to book:\nReply *1* for Refill only\nReply *2* for Special Order only\nReply *3* to Combine Both into 1 delivery.`;
+        await whatsappQueueWorker.enqueue(phone, retryMsg, 'customer_medicine_clarification', pending.customer_name || 'Customer');
+      } else {
+        await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
+        const silenceMsg = `I've shared your request with our counter pharmacist. They'll assist you right here in a moment 🙏`;
+        await whatsappQueueWorker.enqueue(phone, silenceMsg, 'customer_medicine_clarification', pending.customer_name || 'Customer');
       }
       return true;
     }
@@ -5224,6 +5524,83 @@ export async function handleInbound(msg: any): Promise<void> {
         );
 
         if (pendingRefills && pendingRefills.length > 0) {
+          // Check if customer also has an active special order under this phone
+          const activeSpecialOrders = await db.all(
+            `SELECT id, product, qty, status FROM special_orders 
+             WHERE (phone LIKE ? OR phone LIKE ?) 
+               AND status IN ('Pending', 'Ordered', 'Confirmed', 'Arrived', 'Ready')
+               AND product IS NOT NULL AND TRIM(product) != ''
+             ORDER BY id DESC LIMIT 5`,
+            [`%${cleanDigits}`, `%${cleanDigits}%`]
+          );
+
+          if (activeSpecialOrders && activeSpecialOrders.length > 0) {
+            const primaryRefill = pendingRefills[0];
+            const refillList = pendingRefills.map((r: any) => `• *${r.medicine_name}* (Qty: ${r.quantity_needed || 1})`).join('\n');
+            const soList = activeSpecialOrders.map((s: any) => `• *${s.product}* (Qty: ${s.qty || 1})`).join('\n');
+
+            const { getStoreMedicalName } = await import('./storeSettingsService.js');
+            const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
+
+            let disambiguationMsg =
+              `🔔 *${storeName} — Order Options*\n\n` +
+              `Hello ${primaryRefill.patient_name || 'Customer'}! We noticed you have both regular refills and a special order on file:\n\n` +
+              `📋 *Regular Refill:* \n${refillList}\n\n` +
+              `📦 *Special Order:* \n${soList}\n\n` +
+              `👉 *What would you like us to prepare?*\n` +
+              `1️⃣ *Refill Only* (Reply *1* or *Refill*)\n` +
+              `2️⃣ *Special Order Only* (Reply *2* or *Special*)\n` +
+              `3️⃣ *Combine Both* into one delivery (Reply *3* or *Both*)`;
+
+            if (chatLang === 'mr') {
+              disambiguationMsg =
+                `🔔 *${storeName} — ऑर्डर पर्याय*\n\n` +
+                `नमस्कार ${primaryRefill.patient_name || 'ग्राहक'}! आपल्याकडे नियमित रिफिल आणि स्पेशल ऑर्डर दोन्ही नोंदी आहेत:\n\n` +
+                `📋 *नियमित रिफिल:* \n${refillList}\n\n` +
+                `📦 *स्पेशल ऑर्डर:* \n${soList}\n\n` +
+                `👉 *आपल्याला काय मागवायचे आहे?*\n` +
+                `1️⃣ *फक्त रिफिल* (पाठवा *1* किंवा *रिफिल*)\n` +
+                `2️⃣ *फक्त स्पेशल ऑर्डर* (पाठवा *2* किंवा *स्पेशल*)\n` +
+                `3️⃣ *दोन्ही एकत्र (Combine)* (पाठवा *3* किंवा *दोन्ही*)`;
+            } else if (chatLang === 'hi') {
+              disambiguationMsg =
+                `🔔 *${storeName} — ऑर्डर विकल्प*\n\n` +
+                `नमस्ते ${primaryRefill.patient_name || 'ग्राहक'}! आपके रिकॉर्ड में नियमित रिफिल और स्पेशल ऑर्डर दोनों उपलब्ध हैं:\n\n` +
+                `📋 *नियमित रिफिल:* \n${refillList}\n\n` +
+                `📦 *स्पेशल ऑर्डर:* \n${soList}\n\n` +
+                `👉 *आप क्या तैयार करवाना चाहते हैं?*\n` +
+                `1️⃣ *सिर्फ रिफिल* (भेजें *1* या *रिफिल*)\n` +
+                `2️⃣ *सिर्फ स्पेशल ऑर्डर* (भेजें *2* या *स्पेशल*)\n` +
+                `3️⃣ *दोनों एक साथ (Combine)* (भेजें *3* या *दोनों*)`;
+            }
+
+            await db.run(
+              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, items_json, created_at)
+               VALUES (?, '', ?, 'awaiting_order_disambiguation', ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(phone) DO UPDATE SET
+                 step = 'awaiting_order_disambiguation',
+                 original_query = excluded.original_query,
+                 customer_name = excluded.customer_name,
+                 language = excluded.language,
+                 items_json = excluded.items_json,
+                 created_at = CURRENT_TIMESTAMP`,
+              [
+                cleanDigits,
+                body,
+                primaryRefill.patient_name,
+                chatLang,
+                JSON.stringify({
+                  refillIds: pendingRefills.map((r: any) => r.id),
+                  specialOrderIds: activeSpecialOrders.map((s: any) => s.id)
+                })
+              ]
+            );
+
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(phone, disambiguationMsg, 'customer_medicine_clarification', primaryRefill.patient_name || 'Customer');
+            return;
+          }
+
           const primaryRefill = pendingRefills[0];
           const refillIds = pendingRefills.map((r: any) => r.id);
           const placeholders = refillIds.map(() => '?').join(',');
@@ -5433,12 +5810,15 @@ export async function handleInbound(msg: any): Promise<void> {
       const schedForGreet = await getSchedForGreet(db);
       const hoursLineForGreet = `🕐 Open: ${schedForGreet.openTime} – ${schedForGreet.closeTime}${schedForGreet.weeklyOff ? ` | Off: ${schedForGreet.weeklyOff}` : ''}`;
 
-      const greetingText = getMessage(chatLang, 'whatsapp.bot.welcomeMenu', {
+      const welcomeResult = await buildCustomerWelcomeMenu(db, cleanDigits, {
         name: customer!.name,
         storeName,
         hoursNotice,
-        hoursLine: hoursLineForGreet
-      }) + languageFooter(chatLang);
+        hoursLine: hoursLineForGreet,
+        lang: chatLang
+      });
+
+      const greetingText = welcomeResult.text + languageFooter(chatLang);
 
       if (!(await allowBotPrompt(db, cleanDigits, targetRecipient))) return;
 
