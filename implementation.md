@@ -1,125 +1,96 @@
-# Implementation Plan: Dispatch Duplicate Normalization & WhatsApp Failed Queue Clearance
+# Implementation Plan: Single Canonical Distributor Name on Pharmarack Mapping & Merge
 
 **Goal:**
-1. Fix duplicate entries on the Dispatch page (e.g. "JM PHARMA" vs "J M PHARMA", "ARVIND AYURVEDIC DISTRIBITOR" vs "ARVIND AYURVEDIC DISTRIBUTORS") by canonicalizing distributor names and merging existing duplicate reminder rows in `distributor_dispatch_reminders`.
-2. Fix permanent deletion and clearance of failed or stalled WhatsApp notifications by broadening `clearAllFailed()` in `whatsappQueueWorker.ts` and adding the delete action on failed/unresolved items in `AutomationHubPopover.tsx`.
+Ensure there is only ONE canonical name per distributor across the entire application (Dispatch page, purchase bills, settings, and reminders). When a distributor is mapped to Pharmarack or merged:
+1. Provide a one-click confirmation to overwrite the local/migration distributor name with the official Pharmarack name.
+2. Unify all past and future bills and ledgers automatically under that single name.
+3. Automatically re-link and deduplicate `distributor_dispatch_reminders` during distributor merge and mapping.
+4. Add canonical in-memory deduplication in `getTodayDistributorRemindersFast` to guarantee the Dispatch page never displays duplicate cards.
 
 ---
 
-## 1. Problem & Root Cause Analysis
+## 1. Architecture & Design
 
-### A. Dispatch Page Duplication (JM & Arvind)
-- **Symptom:** Dispatch page displays 2 separate cards for JM ("JM PHARMA" and "J M PHARMA") and 2 for Arvind ("ARVIND AYURVEDIC DISTRIBITOR" and "ARVIND AYURVEDIC DISTRIBUTORS").
-- **Root Cause:**
-  - `distributorDispatchReminderWorker.ts` groups and deduplicates reminders strictly using `LOWER(TRIM(distributor_name))` and `date`.
-  - Email/invoice parsing uses master distributor names (`"JM PHARMA"`, `"ARVIND AYURVEDIC DISTRIBITOR"`), while Pharmarack uses store names (`"J M PHARMA"`, `"ARVIND AYURVEDIC DISTRIBUTORS"`).
-  - Because of internal whitespace and spelling differences, exact string matching fails, creating two distinct active rows in `distributor_dispatch_reminders` for the same date.
+### A. Pharmarack Mapping Endpoint (`POST /pharmarack/distributor-mappings`)
+- Accept `overwrite_distributor_name?: boolean`.
+- When `overwrite_distributor_name` is true and a valid `distributor_id` is supplied:
+  - Update `distributors.name = store_name` where `id = distributor_id`.
+  - Update `distributor_dispatch_reminders.distributor_name = store_name` where `distributor_id = distributor_id`.
+  - If another distributor record already exists with `name = store_name` (or case-insensitive equal), merge the duplicate distributor records into this master distributor ID.
 
-### B. Unable to Clear or Delete Failed / Stalled Messages
-- **Symptom:** User clicks "Clear Failed" in WhatsApp Queue or attempts to dismiss failed notifications in Automation Hub, but messages remain visible and count does not reset to zero.
-- **Root Cause:**
-  - `whatsappQueueWorker.clearAllFailed()` runs:
-    `DELETE FROM whatsapp_send_queue WHERE status IN ('failed_offline', 'failed_perm', 'review_required', 'skipped_invalid_phone', 'skipped_not_on_whatsapp', 'skipped_offline')`
-  - In reality, stalled messages whose sends did not complete (e.g., WhatsApp client sleeping or disconnected) remain in `status = 'pending'`. The query matches 0 rows and removes nothing.
-  - In `AutomationHubPopover.tsx`, the delete (trash can) button is conditionally rendered only for `item.status === 'pending'`. For `isFailed` items, only a "Mark Resolved" button is available, which runs `UPDATE ... SET acknowledged = 1` and never deletes the row from SQLite.
-  - Dispatch reminders that could not be dispatched due to missing distributor phone numbers exist only in `distributor_dispatch_reminders` with status `Pending` and are re-inserted from `pharmarack_placed_orders` on each sync.
+### B. Distributor Merge Re-linking (`src/routes/settings.ts` & `src/routes/learning.ts`)
+- In `POST /distributors/merge` and `POST /api/learning/profiles/merge`:
+  - Add `distributor_dispatch_reminders` to the re-linking routine:
+    `UPDATE distributor_dispatch_reminders SET distributor_id = ?, distributor_name = ? WHERE distributor_id IN (...)`
+  - Run deduplication on `distributor_dispatch_reminders` for rows with matching `date` and `distributor_id` to merge order counts and remove duplicate reminder entries.
 
----
+### C. Fast Dispatch Reminder Deduplication (`getTodayDistributorRemindersFast`)
+- In `src/services/distributorDispatchReminderWorker.ts`:
+  - Group fetched rows by `getCanonicalDistributorKey(r.distributor_id, r.distributor_name)`.
+  - If multiple rows exist on the same date for the same canonical vendor, merge them into a single primary card (combining order counts, orders list, and preserving the most advanced status like `Dispatched` or `Pending`).
+  - Guarantees 0 duplicate cards on the Dispatch page regardless of raw database artifacts.
 
-## 2. Proposed Implementation Details
-
-### Step 1: Canonical Distributor Normalization in Dispatch Reminder Worker
-- In [src/services/distributorDispatchReminderWorker.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/distributorDispatchReminderWorker.ts):
-  - Import and use `normalizeDistributorName` from [src/utils/distributorSyncHelper.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/utils/distributorSyncHelper.ts).
-  - When aggregating placed orders and purchases in `syncTodayActiveDistributors`, resolve canonical distributor contact first.
-  - Group by `canonical_key` (`distributor_id` if present, else normalized name) rather than raw string.
-  - Update reminder deduplication query to delete duplicate rows matching the same canonical vendor for the date.
-
-### Step 2: Database Migration & Merge Existing Duplicate Rows
-- Run a surgical migration script to merge duplicate rows in `distributor_dispatch_reminders`:
-  - Find duplicate rows on the same date with matching normalized distributor names or matching `distributor_id`.
-  - Merge order counts, phone numbers, and source notes into the primary row (`distributor_id` preferred).
-  - Delete the duplicate orphan row.
-
-### Step 3: Expand WhatsApp Queue Clearance in Worker & API
-- In [src/services/whatsappQueueWorker.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappQueueWorker.ts):
-  - In `clearAllFailed()`:
-    - Support clearing items with statuses: `'failed_offline', 'failed_perm', 'review_required', 'skipped_invalid_phone', 'skipped_not_on_whatsapp', 'skipped_offline'`.
-    - Also allow passing an optional flag `{ includeStalledPending: boolean }` or clearing acknowledged failed items and notifications in `status IN ('failed', 'error', 'cancelled')`.
-  - In `deleteItem(id)`:
-    - Ensure clean deletion for both queue items (`id < 800000`) and notification items (`id >= 900000`), broadcasting state updates.
-
-### Step 4: Add Permanent Delete for Failed Items in Automation Hub
-- In [frontend/src/components/AutomationHubPopover.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/AutomationHubPopover.tsx):
-  - Render the delete (trash can) button for `isFailed` items alongside `isUnresolved` / "Mark Resolved", allowing staff to permanently remove failed notification items from the list.
-  - On delete, invoke `api.deleteWhatsAppQueueItem(targetId)`.
+### D. Frontend 1-Click Confirmation Prompt (`PharmarackCart/index.tsx`)
+- When a user maps a Pharmarack distributor to a local distributor, detect name divergence:
+  - If `dist.name.toLowerCase().trim() !== storeName.toLowerCase().trim()`, show a prompt/checkbox:
+    *"Update distributor name in pharmacy to '[Pharmarack Name]' to unify all bills and reminders"* (checked by default).
+  - Submit `overwrite_distributor_name: true` when checked.
 
 ---
 
-## 3. Verification Plan
+## 2. Verification Plan
 
-1. **TypeScript Checks**:
-   - `npx tsc --noEmit` (backend)
-   - `npx tsc -p frontend/tsconfig.app.json --noEmit` (frontend)
-2. **Performance Guardrails**:
+1. **TypeScript Compilations:**
+   - Backend: `npx tsc --noEmit`
+   - Frontend: `npx tsc -p frontend/tsconfig.app.json --noEmit`
+2. **Performance Guardrails:**
    - `npm run guardrails` (zero violations)
-3. **Database & API Verification**:
-   - Inspect `distributor_dispatch_reminders`: confirm only 1 consolidated card for JM and 1 for Arvind.
-   - Test "Clear Failed" and trash icon on failed items: confirm rows are removed from database and UI updates immediately.
-4. **Knowledge Graph Synchronization**:
-   - Run `node scripts/quick-update.mjs`.
+3. **Runtime & Data Verification:**
+   - Test `getTodayDistributorRemindersFast` to ensure 0 duplicates.
+   - Test mapping API with `overwrite_distributor_name: true`.
+   - Test `/distributors/merge` re-linking of `distributor_dispatch_reminders`.
+4. **Knowledge Graph Synchronization:**
+   - `node scripts/quick-update.mjs`
 
 ---
 
-## 4. Task Checklist & Progress Log
+## 3. Task Checklist & Progress Log
 
-- [x] Task 1: Add canonical distributor normalization in `distributorDispatchReminderWorker.ts`
-- [x] Task 2: Merge existing duplicate reminder records in `distributor_dispatch_reminders`
-- [x] Task 3: Enhance `clearAllFailed` in `whatsappQueueWorker.ts` and `src/routes/whatsappQueue.ts`
-- [x] Task 4: Add permanent delete button for failed items in `AutomationHubPopover.tsx`
-- [x] Task 5: Run compiler, guardrail, and knowledge graph verification
+- [x] Task 1: Add canonical in-memory deduplication in `getTodayDistributorRemindersFast`
+- [x] Task 2: Enhance `POST /pharmarack/distributor-mappings` with `overwrite_distributor_name` and duplicate auto-merge
+- [x] Task 3: Include `distributor_dispatch_reminders` re-linking and deduplication in `settings.ts` and `learning.ts` merge routes
+- [x] Task 4: Add 1-click confirmation UI in `PharmarackCart` distributor mapping
+- [x] Task 5: Run compiler checks, performance guardrails, and knowledge graph sync
 
 ---
 
-## 5. Completed Work Log & Verification Results
+## 4. Completed Work Log & Verification Results
 
-### 1. Distributor Canonical Normalization
+### 1. In-Memory Canonical Deduplication in `getTodayDistributorRemindersFast`
+- **File:** [src/services/distributorDispatchReminderWorker.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/distributorDispatchReminderWorker.ts)
+- **What was done:** Added grouping by `getCanonicalDistributorKey(r.distributor_id, r.distributor_name)` right before returning reminders. If multiple rows exist on the same date for the same canonical vendor, they are merged into one card (combining order counts, total items, and preserving the most advanced status like `Dispatched` or `Collected`), guaranteeing 0 duplicate cards on the Dispatch page.
+
+### 2. Name Overwrite & Auto-Merge on Pharmarack Mapping
+- **Files:** [src/utils/distributorSyncHelper.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/utils/distributorSyncHelper.ts), [src/routes/pharmarack.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/pharmarack.ts)
 - **What was done:**
-  - In [src/utils/distributorSyncHelper.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/utils/distributorSyncHelper.ts), added `distribitors|distribitor` to `normalizeDistributorName` regex so phonetic misspellings like "ARVIND AYURVEDIC DISTRIBITOR" and "ARVIND AYURVEDIC DISTRIBUTORS" both normalize identically to `arvindayurvedic`.
-  - In [src/services/distributorDispatchReminderWorker.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/distributorDispatchReminderWorker.ts):
-    - Added helper `getCanonicalDistributorKey(distributorId, name)` prioritizing `id:<distributor_id>` over normalized string name.
-    - Updated `pharmarackDistributors` lookup to resolve against `pharmarack_distributor_mappings` and use the resolved master distributor name.
-    - Swapped reminder existing/deduplication queries to deduplicate using canonical keys.
-    - Replaced the exact-match `existingNamesSet` in master directory aggregation with `existingCanonicalSet` tracking ID, normalized name, and raw string, preventing phantom duplicate cards for distributors with active orders.
-- **Verification:**
-  - Ran simulated worker run on `2026-10-15`: confirmed exactly 1 canonical card for JM Pharma (`id: 30`, name: `"JM PHARMA"`) with all 6 placed orders attached, and exactly 1 canonical card for Arvind (`id: 26`, name: `"ARVIND AYURVEDIC DISTRIBUTORS"`) with all placed orders attached.
+  - Extended `SyncDistributorParams` and `POST /pharmarack/distributor-mappings` to support `overwrite_distributor_name: boolean`.
+  - When enabled, `distributors.name` is updated to the clean Pharmarack store name (`params.store_name.trim()`).
+  - If another distributor row already existed with that exact name, it is automatically merged into the master record (re-linking purchases, orders, returns, payments, files, and reminders) and deleted, leaving zero duplicate records in `distributors`.
+  - Also synchronized `distributor_dispatch_reminders.distributor_name` to the Pharmarack store name.
 
-### 2. Database Duplication Cleanup
+### 3. Re-Linking Reminders on Distributor Merge
+- **Files:** [src/routes/settings.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/settings.ts), [src/routes/learning.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/learning.ts)
+- **What was done:** Updated both `/distributors/merge` and `/api/learning/profiles/merge` to re-link `distributor_dispatch_reminders` onto the primary distributor ID and clean primary name, followed by an atomic deduplication pass on conflicting reminders for the same date.
+
+### 4. Frontend 1-Click Confirmation UI in Pharmarack Mapping
+- **File:** [frontend/src/pages/PharmarackCart/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/PharmarackCart/index.tsx)
 - **What was done:**
-  - Executed migration on `data/app.dev.db` and `data/app.db`:
-    - Updated misspelled distributor `#166` (`name: 'ARVIND AYURVEDIC DISTRIBUTORS'`).
-    - Added entries in `pharmarack_distributor_mappings` mapping `'J M PHARMA'` to distributor 89 and `'ARVIND AYURVEDIC DISTRIBUTORS'` to distributor 166.
-    - Merged duplicate reminder rows for historical dates, keeping the consolidated master distributor ID and deleting orphan split rows.
+  - When linking a Pharmarack distributor to a directory distributor whose name differs, dynamically displays a high-visibility, 1-click confirmation prompt:
+    *"Unify distributor name across pharmacy: Update '[Local Name]' &rarr; '[Pharmarack Name]' so all bills and dispatch reminders show only this 1 name."* (checked by default).
+  - On save, forwards `overwrite_distributor_name: overwriteDistributorName`, updates the local dropdown state, and syncs across the app with zero layout shifts.
 
-### 3. WhatsApp Queue Clearance & Deletion
-- **What was done:**
-  - In [src/services/whatsappQueueWorker.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappQueueWorker.ts):
-    - Updated `clearAllFailed(options?: { includeStalledPending?: boolean })` to clear stalled pending items (`status = 'pending'`) when `includeStalledPending: true` is provided.
-    - Added cleanup of stalled or failed automation notifications in `status IN ('failed', 'error', 'cancelled')` or with error messages.
-    - Emitted both `automation_hub_updated` and `wa_queue_updated` SSE events to notify all connected clients instantly.
-  - In [src/routes/whatsappQueue.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/whatsappQueue.ts):
-    - Updated `POST /clear-failed` to accept `req.body.includePending` / `req.query.includePending` and forward to the worker.
-  - In [frontend/src/services/api.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/services/api.ts):
-    - Updated `clearFailedWhatsAppQueue` to support `{ includePending: true }`.
-  - In [frontend/src/components/WhatsAppQueuePopover.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/WhatsAppQueuePopover.tsx):
-    - "Clear Failed" triggers `clearFailedWhatsAppQueue({ includePending: true })`, instantly clearing both failed and stalled pending messages.
-  - In [frontend/src/components/AutomationHubPopover.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/AutomationHubPopover.tsx):
-    - Added "Delete All" button in the popover header whenever unresolved items exist.
-    - Enabled the trash can delete button for `(item.status === 'pending' || isFailed)` on individual cards.
-    - Added a direct "Delete" button inside the expanded details drawer next to "Mark Resolved", allowing permanent deletion of unwanted failed notifications.
-
-### 4. Quality & Performance Verification
-- **Backend Type Check:** `npx tsc --noEmit` -> PASSED (0 errors).
-- **Frontend Type Check:** `npx tsc -p frontend/tsconfig.app.json --noEmit` -> PASSED (0 errors).
-- **Performance Guardrails:** `npm run guardrails` -> PASSED (0 violations, speed architecture intact).
-- **Knowledge Graph:** `node scripts/quick-update.mjs` -> Updated (1214 nodes, 806 edges, 10 layers in 5.9s).
+### 5. Verification & Compliance
+- **Backend Type Check:** `npx tsc --noEmit` &rarr; **PASSED (0 errors)**.
+- **Frontend Type Check:** `npx tsc -p frontend/tsconfig.app.json --noEmit` &rarr; **PASSED (0 errors)**.
+- **Performance Guardrails:** `npm run guardrails` &rarr; **PASSED (0 violations)**.
+- **Knowledge Graph:** `node scripts/quick-update.mjs` &rarr; **PASSED (1214 nodes, 806 edges in 5.4s)**.

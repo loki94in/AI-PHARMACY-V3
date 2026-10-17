@@ -15,6 +15,7 @@ export interface SyncDistributorParams {
   preferred_file_format?: string;
   notes?: string;
   delivery_boy_id?: number | null;
+  overwrite_distributor_name?: boolean;
   min_order_value?: number | string | null;
   min_order_items?: number | string | null;
 }
@@ -478,12 +479,37 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
       );
     } catch (_) {}
 
+    if (params.overwrite_distributor_name && params.store_name && targetId) {
+      const cleanStoreName = params.store_name.trim();
+      if (cleanStoreName) {
+        // Check if another distributor row exists with this exact name and merge it
+        const duplicateDist = await db.get(
+          'SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?',
+          [cleanStoreName, targetId]
+        );
+        if (duplicateDist?.id) {
+          const dupId = duplicateDist.id;
+          await db.run('UPDATE purchases SET distributor_id = ? WHERE distributor_id = ?', [targetId, dupId]);
+          await db.run('UPDATE purchase_orders SET distributor_id = ? WHERE distributor_id = ?', [targetId, dupId]);
+          await db.run('UPDATE returns SET distributor_id = ? WHERE distributor_id = ?', [targetId, dupId]);
+          await db.run('UPDATE distributor_payments SET distributor_id = ? WHERE distributor_id = ?', [targetId, dupId]);
+          await db.run('UPDATE distributor_payment_details SET distributor_id = ? WHERE distributor_id = ?', [targetId, dupId]);
+          await db.run('UPDATE distributor_historical_files SET distributor_id = ? WHERE distributor_id = ?', [targetId, dupId]);
+          await db.run('UPDATE distributor_dispatch_reminders SET distributor_id = ?, distributor_name = ? WHERE distributor_id = ?', [targetId, cleanStoreName, dupId]);
+          await db.run('DELETE FROM distributors WHERE id = ?', [dupId]);
+        }
+        await db.run('UPDATE distributors SET name = ? WHERE id = ?', [cleanStoreName, targetId]);
+        await db.run('UPDATE distributor_dispatch_reminders SET distributor_name = ? WHERE distributor_id = ?', [cleanStoreName, targetId]);
+      }
+    }
+
     const finalDistributor = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
     const effectiveName = finalDistributor?.name || distName;
     const effectivePhone = finalDistributor?.phone || finalDistributor?.contact || cleanPhone;
+    const storeMappingKey = (params.store_name || effectiveName || '').trim();
 
     // 2. Update/Insert 'pharmarack_distributor_mappings' atomically
-    if (effectiveName) {
+    if (storeMappingKey) {
       const boyId = params.delivery_boy_id !== undefined ? params.delivery_boy_id : null;
       await db.run(
         `INSERT INTO pharmarack_distributor_mappings (store_name, distributor_id, phone, delivery_boy_id, updated_at)
@@ -493,7 +519,7 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
            phone = CASE WHEN EXCLUDED.phone != '' THEN EXCLUDED.phone ELSE pharmarack_distributor_mappings.phone END,
            delivery_boy_id = CASE WHEN ? IS NOT NULL THEN ? ELSE pharmarack_distributor_mappings.delivery_boy_id END,
            updated_at = CURRENT_TIMESTAMP`,
-        [effectiveName.trim(), targetId, effectivePhone || '', boyId, boyId, boyId]
+        [storeMappingKey, targetId, effectivePhone || '', boyId, boyId, boyId]
       );
 
       if (effectivePhone) {

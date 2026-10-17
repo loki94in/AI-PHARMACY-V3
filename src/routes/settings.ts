@@ -832,6 +832,38 @@ router.post('/distributors/merge', async (req, res) => {
     await db.run(`UPDATE distributor_payment_details SET distributor_id = ? WHERE distributor_id IN (${placeholders})`, params);
     await db.run(`UPDATE distributor_historical_files SET distributor_id = ? WHERE distributor_id IN (${placeholders})`, params);
 
+    // Re-link and deduplicate distributor_dispatch_reminders to prevent split dispatch cards
+    await db.run(
+      `UPDATE distributor_dispatch_reminders 
+       SET distributor_id = ?, distributor_name = ? 
+       WHERE distributor_id IN (${placeholders})`,
+      [cleanPrimaryId, primary.name, ...secondaryIds]
+    );
+
+    try {
+      const dups = await db.all(
+        `SELECT date, COUNT(*) as cnt FROM distributor_dispatch_reminders 
+         WHERE distributor_id = ? GROUP BY date HAVING cnt > 1`,
+        [cleanPrimaryId]
+      );
+      for (const d of dups) {
+        const rows = await db.all(
+          `SELECT id, order_count FROM distributor_dispatch_reminders 
+           WHERE distributor_id = ? AND date = ? ORDER BY id ASC`,
+          [cleanPrimaryId, d.date]
+        );
+        if (rows.length > 1) {
+          const keep = rows[0];
+          let totalOrders = keep.order_count || 0;
+          for (let i = 1; i < rows.length; i++) {
+            totalOrders += (rows[i].order_count || 0);
+            await db.run('DELETE FROM distributor_dispatch_reminders WHERE id = ?', [rows[i].id]);
+          }
+          await db.run('UPDATE distributor_dispatch_reminders SET order_count = ? WHERE id = ?', [totalOrders, keep.id]);
+        }
+      }
+    } catch (_) {}
+
     // Safe re-linking for distributor_medicine_aliases (has UNIQUE(distributor_id, alias_name))
     try {
       await db.run(

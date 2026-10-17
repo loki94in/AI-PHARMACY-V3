@@ -1522,6 +1522,7 @@ export default function PharmarackCart() {
   const [savedDistributorsList, setSavedDistributorsList] = useState<LocalDistributorRecord[]>([]);
   const [distributorMappings, setDistributorMappings] = useState<Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>>({});
   const [modalDeliveryBoyId, setModalDeliveryBoyId] = useState<number | null>(null);
+  const [overwriteDistributorName, setOverwriteDistributorName] = useState(true);
 
   const fetchSavedDistributors = async () => {
     try {
@@ -2946,6 +2947,7 @@ export default function PharmarackCart() {
     setModalSearchTerm(dist.storeName || '');
     setIsAddingNewDistributor(false);
     setNewDistNameInput(dist.storeName || '');
+    setOverwriteDistributorName(true);
 
     const normName = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
     const storedMap = distributorMappings[normName];
@@ -3038,9 +3040,10 @@ export default function PharmarackCart() {
       } else if (selectedSavedDistId) {
         // Updating an existing selected distributor from directory
         const foundSaved = savedDistributorsList.find((d) => d.id === selectedSavedDistId);
+        const targetName = (overwriteDistributorName && distName) ? distName : (foundSaved?.name || distName);
         try {
           const updateRes = await apiClient.put(`/distributors/${selectedSavedDistId}`, {
-            name: foundSaved?.name || distName,
+            name: targetName,
             phone: cleanPhone
           });
           if (updateRes.data && updateRes.data.id) {
@@ -3049,12 +3052,15 @@ export default function PharmarackCart() {
         } catch (e) {
           console.warn('PUT distributor by ID failed, falling back to post upsert:', e);
           const fallbackRes = await apiClient.post('/distributors', {
-            name: foundSaved?.name || distName,
+            name: targetName,
             phone: cleanPhone
           });
           if (fallbackRes.data && fallbackRes.data.id) {
             targetDistId = fallbackRes.data.id;
           }
+        }
+        if (overwriteDistributorName && distName) {
+          setSavedDistributorsList(prev => prev.map(d => d.id === selectedSavedDistId ? { ...d, name: distName } : d));
         }
       } else if (cleanPhone) {
         // Direct mobile number without directory selection -> create/upsert distributor for this store
@@ -3073,7 +3079,8 @@ export default function PharmarackCart() {
           store_name: distName,
           distributor_id: targetDistId || null,
           phone: cleanPhone,
-          delivery_boy_id: modalDeliveryBoyId ?? null
+          delivery_boy_id: modalDeliveryBoyId ?? null,
+          overwrite_distributor_name: overwriteDistributorName
         });
       }
 
@@ -6953,6 +6960,31 @@ export default function PharmarackCart() {
                     ))}
                   </select>
                 )}
+
+                {selectedSavedDistId && (() => {
+                  const foundSaved = savedDistributorsList.find((d) => d.id === selectedSavedDistId);
+                  if (foundSaved && foundSaved.name && editingDistributor?.storeName && foundSaved.name.toLowerCase().trim() !== editingDistributor.storeName.toLowerCase().trim()) {
+                    return (
+                      <div className="mt-2.5 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 animate-in fade-in zoom-in-95 duration-150">
+                        <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={overwriteDistributorName}
+                            onChange={(e) => setOverwriteDistributorName(e.target.checked)}
+                            className="mt-0.5 rounded border-glass-border text-emerald-500 focus:ring-0 focus:outline-none cursor-pointer"
+                          />
+                          <div className="text-[11px] leading-snug">
+                            <span className="font-bold text-text">Unify distributor name across pharmacy:</span>
+                            <p className="text-muted mt-0.5">
+                              Update <strong className="text-emerald-400">"{foundSaved.name}"</strong> &rarr; <strong className="text-emerald-300">"{editingDistributor.storeName}"</strong> (Pharmarack name) so all bills and dispatch reminders show only this 1 name.
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               {/* WhatsApp Mobile Number Input */}

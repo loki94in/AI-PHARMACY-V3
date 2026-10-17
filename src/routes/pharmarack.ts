@@ -674,7 +674,7 @@ router.get('/distributor-mappings', async (_req, res) => {
 
 // Save or update a Pharmarack store-to-distributor mapping
 router.post('/distributor-mappings', async (req, res) => {
-  const { store_name, distributor_id, phone, delivery_boy_id } = req.body;
+  const { store_name, distributor_id, phone, delivery_boy_id, overwrite_distributor_name } = req.body;
   if (!store_name) {
     return res.status(400).json({ error: 'store_name is required' });
   }
@@ -694,11 +694,15 @@ router.post('/distributor-mappings', async (req, res) => {
       id: distributor_id ? Number(distributor_id) : undefined,
       store_name,
       phone: phoneVal.cleanPhone || phone,
-      delivery_boy_id: resolvedBoyId
+      delivery_boy_id: resolvedBoyId,
+      overwrite_distributor_name: overwrite_distributor_name === true
     });
 
     eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'mapping_update', store_name });
     eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+    if (overwrite_distributor_name) {
+      eventService.broadcast('contact_data_changed', { type: 'distributor_renamed', store_name });
+    }
 
     res.json({ success: true, message: 'Store mapping saved successfully' });
   } catch (error: any) {

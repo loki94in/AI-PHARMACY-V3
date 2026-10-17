@@ -272,8 +272,44 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
       r.orders_list = ordersList;
       r.total_items_count = totalItems;
     }
+    // Deduplicate in-memory by canonical distributor key to guarantee 0 duplicate cards on Dispatch page
+    const deduplicatedReminders: any[] = [];
+    const seenCanonKeys = new Map<string, any>();
 
-    return todayReminders || [];
+    for (const r of todayReminders || []) {
+      const canonKey = getCanonicalDistributorKey(r.distributor_id, r.distributor_name);
+      if (!seenCanonKeys.has(canonKey)) {
+        seenCanonKeys.set(canonKey, r);
+        deduplicatedReminders.push(r);
+      } else {
+        const existing = seenCanonKeys.get(canonKey);
+        existing.order_count = (existing.order_count || 0) + (r.order_count || 0);
+        existing.total_items_count = (existing.total_items_count || 0) + (r.total_items_count || 0);
+        if (Array.isArray(r.orders_list) && r.orders_list.length > 0) {
+          existing.orders_list = [...(existing.orders_list || []), ...r.orders_list];
+        }
+        if (Array.isArray(r.synced_order_nos) && r.synced_order_nos.length > 0) {
+          existing.synced_order_nos = Array.from(new Set([...(existing.synced_order_nos || []), ...r.synced_order_nos]));
+        }
+        const statusPriority: Record<string, number> = {
+          'Collected': 5,
+          'Dispatched': 4,
+          'Pending': 3,
+          'No Order Today': 1
+        };
+        if ((statusPriority[r.status] || 0) > (statusPriority[existing.status] || 0)) {
+          existing.status = r.status;
+        }
+        if (!existing.distributor_phone && r.distributor_phone) existing.distributor_phone = r.distributor_phone;
+        if (!existing.delivery_boy_id && r.delivery_boy_id) {
+          existing.delivery_boy_id = r.delivery_boy_id;
+          existing.delivery_boy_name = r.delivery_boy_name;
+          existing.delivery_boy_phone = r.delivery_boy_phone;
+        }
+      }
+    }
+
+    return deduplicatedReminders;
   } catch (err: any) {
     console.error('[DistributorReminderWorker] Error in fast read today active distributors:', err.message);
     return [];
