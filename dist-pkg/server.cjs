@@ -14108,10 +14108,33 @@ async function syncDistributorPhoneAcrossTables(db2, params) {
       );
     } catch (_) {
     }
+    if (params.overwrite_distributor_name && params.store_name && targetId) {
+      const cleanStoreName = params.store_name.trim();
+      if (cleanStoreName) {
+        const duplicateDist = await db2.get(
+          "SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?",
+          [cleanStoreName, targetId]
+        );
+        if (duplicateDist?.id) {
+          const dupId = duplicateDist.id;
+          await db2.run("UPDATE purchases SET distributor_id = ? WHERE distributor_id = ?", [targetId, dupId]);
+          await db2.run("UPDATE purchase_orders SET distributor_id = ? WHERE distributor_id = ?", [targetId, dupId]);
+          await db2.run("UPDATE returns SET distributor_id = ? WHERE distributor_id = ?", [targetId, dupId]);
+          await db2.run("UPDATE distributor_payments SET distributor_id = ? WHERE distributor_id = ?", [targetId, dupId]);
+          await db2.run("UPDATE distributor_payment_details SET distributor_id = ? WHERE distributor_id = ?", [targetId, dupId]);
+          await db2.run("UPDATE distributor_historical_files SET distributor_id = ? WHERE distributor_id = ?", [targetId, dupId]);
+          await db2.run("UPDATE distributor_dispatch_reminders SET distributor_id = ?, distributor_name = ? WHERE distributor_id = ?", [targetId, cleanStoreName, dupId]);
+          await db2.run("DELETE FROM distributors WHERE id = ?", [dupId]);
+        }
+        await db2.run("UPDATE distributors SET name = ? WHERE id = ?", [cleanStoreName, targetId]);
+        await db2.run("UPDATE distributor_dispatch_reminders SET distributor_name = ? WHERE distributor_id = ?", [cleanStoreName, targetId]);
+      }
+    }
     const finalDistributor = await db2.get("SELECT * FROM distributors WHERE id = ?", [targetId]);
     const effectiveName = finalDistributor?.name || distName;
     const effectivePhone = finalDistributor?.phone || finalDistributor?.contact || cleanPhone;
-    if (effectiveName) {
+    const storeMappingKey = (params.store_name || effectiveName || "").trim();
+    if (storeMappingKey) {
       const boyId = params.delivery_boy_id !== void 0 ? params.delivery_boy_id : null;
       await db2.run(
         `INSERT INTO pharmarack_distributor_mappings (store_name, distributor_id, phone, delivery_boy_id, updated_at)
@@ -14121,7 +14144,7 @@ async function syncDistributorPhoneAcrossTables(db2, params) {
            phone = CASE WHEN EXCLUDED.phone != '' THEN EXCLUDED.phone ELSE pharmarack_distributor_mappings.phone END,
            delivery_boy_id = CASE WHEN ? IS NOT NULL THEN ? ELSE pharmarack_distributor_mappings.delivery_boy_id END,
            updated_at = CURRENT_TIMESTAMP`,
-        [effectiveName.trim(), targetId, effectivePhone || "", boyId, boyId, boyId]
+        [storeMappingKey, targetId, effectivePhone || "", boyId, boyId, boyId]
       );
       if (effectivePhone) {
         await db2.run(
@@ -14451,7 +14474,41 @@ async function getTodayDistributorRemindersFast(customDateStr) {
       r.orders_list = ordersList;
       r.total_items_count = totalItems;
     }
-    return todayReminders || [];
+    const deduplicatedReminders = [];
+    const seenCanonKeys = /* @__PURE__ */ new Map();
+    for (const r of todayReminders || []) {
+      const canonKey = getCanonicalDistributorKey(r.distributor_id, r.distributor_name);
+      if (!seenCanonKeys.has(canonKey)) {
+        seenCanonKeys.set(canonKey, r);
+        deduplicatedReminders.push(r);
+      } else {
+        const existing = seenCanonKeys.get(canonKey);
+        existing.order_count = (existing.order_count || 0) + (r.order_count || 0);
+        existing.total_items_count = (existing.total_items_count || 0) + (r.total_items_count || 0);
+        if (Array.isArray(r.orders_list) && r.orders_list.length > 0) {
+          existing.orders_list = [...existing.orders_list || [], ...r.orders_list];
+        }
+        if (Array.isArray(r.synced_order_nos) && r.synced_order_nos.length > 0) {
+          existing.synced_order_nos = Array.from(/* @__PURE__ */ new Set([...existing.synced_order_nos || [], ...r.synced_order_nos]));
+        }
+        const statusPriority = {
+          "Collected": 5,
+          "Dispatched": 4,
+          "Pending": 3,
+          "No Order Today": 1
+        };
+        if ((statusPriority[r.status] || 0) > (statusPriority[existing.status] || 0)) {
+          existing.status = r.status;
+        }
+        if (!existing.distributor_phone && r.distributor_phone) existing.distributor_phone = r.distributor_phone;
+        if (!existing.delivery_boy_id && r.delivery_boy_id) {
+          existing.delivery_boy_id = r.delivery_boy_id;
+          existing.delivery_boy_name = r.delivery_boy_name;
+          existing.delivery_boy_phone = r.delivery_boy_phone;
+        }
+      }
+    }
+    return deduplicatedReminders;
   } catch (err) {
     console.error("[DistributorReminderWorker] Error in fast read today active distributors:", err.message);
     return [];
@@ -31342,7 +31399,7 @@ var init_pharmarack = __esm({
       }
     });
     router.post("/distributor-mappings", async (req, res) => {
-      const { store_name, distributor_id, phone, delivery_boy_id } = req.body;
+      const { store_name, distributor_id, phone, delivery_boy_id, overwrite_distributor_name } = req.body;
       if (!store_name) {
         return res.status(400).json({ error: "store_name is required" });
       }
@@ -31357,10 +31414,14 @@ var init_pharmarack = __esm({
           id: distributor_id ? Number(distributor_id) : void 0,
           store_name,
           phone: phoneVal.cleanPhone || phone,
-          delivery_boy_id: resolvedBoyId
+          delivery_boy_id: resolvedBoyId,
+          overwrite_distributor_name: overwrite_distributor_name === true
         });
         eventService.broadcast("dispatch_updated", { at: Date.now(), source: "mapping_update", store_name });
         eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
+        if (overwrite_distributor_name) {
+          eventService.broadcast("contact_data_changed", { type: "distributor_renamed", store_name });
+        }
         res.json({ success: true, message: "Store mapping saved successfully" });
       } catch (error) {
         console.error("Failed to save distributor mapping:", error);
@@ -59378,7 +59439,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.111";
+    APP_VERSION = "0.1.112";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -74510,6 +74571,36 @@ var init_settings = __esm({
         await db2.run(`UPDATE distributor_payments SET distributor_id = ? WHERE distributor_id IN (${placeholders})`, params);
         await db2.run(`UPDATE distributor_payment_details SET distributor_id = ? WHERE distributor_id IN (${placeholders})`, params);
         await db2.run(`UPDATE distributor_historical_files SET distributor_id = ? WHERE distributor_id IN (${placeholders})`, params);
+        await db2.run(
+          `UPDATE distributor_dispatch_reminders 
+       SET distributor_id = ?, distributor_name = ? 
+       WHERE distributor_id IN (${placeholders})`,
+          [cleanPrimaryId, primary.name, ...secondaryIds]
+        );
+        try {
+          const dups = await db2.all(
+            `SELECT date, COUNT(*) as cnt FROM distributor_dispatch_reminders 
+         WHERE distributor_id = ? GROUP BY date HAVING cnt > 1`,
+            [cleanPrimaryId]
+          );
+          for (const d of dups) {
+            const rows = await db2.all(
+              `SELECT id, order_count FROM distributor_dispatch_reminders 
+           WHERE distributor_id = ? AND date = ? ORDER BY id ASC`,
+              [cleanPrimaryId, d.date]
+            );
+            if (rows.length > 1) {
+              const keep = rows[0];
+              let totalOrders = keep.order_count || 0;
+              for (let i = 1; i < rows.length; i++) {
+                totalOrders += rows[i].order_count || 0;
+                await db2.run("DELETE FROM distributor_dispatch_reminders WHERE id = ?", [rows[i].id]);
+              }
+              await db2.run("UPDATE distributor_dispatch_reminders SET order_count = ? WHERE id = ?", [totalOrders, keep.id]);
+            }
+          }
+        } catch (_) {
+        }
         try {
           await db2.run(
             `DELETE FROM distributor_medicine_aliases 
@@ -76101,6 +76192,36 @@ var init_learning = __esm({
             }
           } catch (_e) {
           }
+        }
+        await db2.run(
+          `UPDATE distributor_dispatch_reminders 
+       SET distributor_id = ?, distributor_name = ? 
+       WHERE distributor_id IN (${placeholders})`,
+          [cleanPrimaryId, primary.name, ...secondaryIds]
+        );
+        try {
+          const dups = await db2.all(
+            `SELECT date, COUNT(*) as cnt FROM distributor_dispatch_reminders 
+         WHERE distributor_id = ? GROUP BY date HAVING cnt > 1`,
+            [cleanPrimaryId]
+          );
+          for (const d of dups) {
+            const rows = await db2.all(
+              `SELECT id, order_count FROM distributor_dispatch_reminders 
+           WHERE distributor_id = ? AND date = ? ORDER BY id ASC`,
+              [cleanPrimaryId, d.date]
+            );
+            if (rows.length > 1) {
+              const keep = rows[0];
+              let totalOrders = keep.order_count || 0;
+              for (let i = 1; i < rows.length; i++) {
+                totalOrders += rows[i].order_count || 0;
+                await db2.run("DELETE FROM distributor_dispatch_reminders WHERE id = ?", [rows[i].id]);
+              }
+              await db2.run("UPDATE distributor_dispatch_reminders SET order_count = ? WHERE id = ?", [totalOrders, keep.id]);
+            }
+          }
+        } catch (_) {
         }
         try {
           await db2.run(
