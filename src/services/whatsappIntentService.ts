@@ -594,67 +594,300 @@ async function allowBotPrompt(db: any, cleanDigits: string, phone: string): Prom
   return false;
 }
 
-async function maybeSendGuidancePrompt(phone: string, customerName: string, db: any, originalMessage?: string): Promise<void> {
+async function maybeSendGuidancePrompt(
+  phone: string,
+  customerName: string,
+  db: any,
+  originalMessage?: string,
+  chatLang: SupportedLanguage = 'en',
+  chatId?: string
+): Promise<void> {
   const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
 
   try {
-    const { getStoreMedicalName } = await import('./storeSettingsService.js');
+    const { getStoreMedicalName, getPharmacyOperatingSchedule, getStoreAddress, getStorePhone } = await import('./storeSettingsService.js');
     const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
-
     const trimmedOriginal = (originalMessage || '').trim();
+    const lower = trimmedOriginal.toLowerCase();
+    const targetRecipient = chatId || phone;
 
-    const echoLine = trimmedOriginal
-      ? `We received your message: "${trimmedOriginal.slice(0, 200)}"\n\n`
-      : '';
-
-    const guidanceMsg =
-      echoLine +
-      `Namaste! Welcome to *${storeName}* 🏥\n\n` +
-      `*Place your order in simple steps:*\n\n` +
-      `*Step 1:* Choose your order type —\n` +
-      `  1️⃣ Single Medicine\n` +
-      `  2️⃣ Multiple Medicines\n` +
-      `  3️⃣ Refill — Repeat my regular prescription\n\n` +
-      `*Step 2:* We show you options & MRP 💰\n` +
-      `*Step 3:* You confirm & we book 🚀\n\n` +
-      `*Reply 1, 2, or 3 to begin.*`;
-
-    // Initialize session state so customer's subsequent message is actively tracked
     await ensureClarificationsTable(db);
 
-    // 20-minute per-phone guard to prevent burst flush on multiple rapid messages
+    // 15-second per-phone guard to prevent burst flush on rapid duplicate incoming messages
     const recentPrompt = await db.get(
       `SELECT 1 FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
-         AND created_at > datetime('now', '-20 minutes') 
+         AND created_at > datetime('now', '-15 seconds') 
        LIMIT 1`,
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
     );
     if (recentPrompt) {
-      console.log(`[Intent Service] Suppressed duplicate guidance prompt for ${cleanDigits} (within 20m burst window).`);
+      console.log(`[Intent Service] Suppressed rapid guidance prompt for ${cleanDigits} (within 15s burst window).`);
       return;
     }
 
-    if (!(await allowBotPrompt(db, cleanDigits, phone))) return;
+    if (!(await allowBotPrompt(db, cleanDigits, targetRecipient))) return;
+
+    // Check for General Inquiries first (Timing, Address, Pharmacist Callback)
+    const isTimingQuery  = /\b(time|timing|open|close|hours|kab|khula|band|baje|schedule|available|वेळ|केव्हा|उघडे|कधी)\b/i.test(lower);
+    const isAddressQuery = /\b(address|location|where|kahan|shop|store|map|area|near|galli|road|street|पत्ता|कुठे|ठिकाण)\b/i.test(lower);
+    const isCallRequest  = /\b(call|phone|contact|talk|baat|karo|speak|pharmacist|human|operator|direct|फोन|कॉल|बोला|संपर्क)\b/i.test(lower);
+
+    if (isTimingQuery && !isAddressQuery && !isCallRequest) {
+      const sched = await getPharmacyOperatingSchedule(db);
+      let timingMsg = '';
+      if (chatLang === 'mr') {
+        timingMsg =
+          `🕐 *${storeName} — दुकानाची वेळ*\n\n` +
+          `⏰ उघडे: *${sched.openTime}* ते *${sched.closeTime}*\n` +
+          (sched.weeklyOff ? `🗓️ साप्ताहिक सुट्टी: *${sched.weeklyOff}*\n` : '') +
+          `\nऔषध मागवण्यासाठी 1 (एक औषध), 2 (एकापेक्षा जास्त किंवा फोटो 📸), अथवा 3 (रिफिल) पाठवा.`;
+      } else if (chatLang === 'hi') {
+        timingMsg =
+          `🕐 *${storeName} — स्टोर का समय*\n\n` +
+          `⏰ खुला: *${sched.openTime}* से *${sched.closeTime}*\n` +
+          (sched.weeklyOff ? `🗓️ साप्ताहिक अवकाश: *${sched.weeklyOff}*\n` : '') +
+          `\nदवा ऑर्डर करने के लिए 1 (एक दवा), 2 (कई दवाएं या पर्चा 📸), अथवा 3 (रिफिल) लिखकर भेजें।`;
+      } else {
+        timingMsg =
+          `🕐 *${storeName} — Store Hours*\n\n` +
+          `⏰ Open: *${sched.openTime}* – *${sched.closeTime}*\n` +
+          (sched.weeklyOff ? `🗓️ Closed on: *${sched.weeklyOff}*\n` : '') +
+          `\nTo place an order, reply *1* (single), *2* (multiple or photo 📸), or *3* (refill).`;
+      }
+
+      await db.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_order_type',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           unrecognized_count = 0,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, customerName || 'Customer', chatLang]
+      );
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(targetRecipient, timingMsg, 'customer_medicine_clarification', customerName || 'Customer');
+      return;
+    }
+
+    if (isAddressQuery && !isTimingQuery && !isCallRequest) {
+      const addr = await getStoreAddress(db);
+      let addrMsg = '';
+      if (chatLang === 'mr') {
+        addrMsg =
+          `📍 *${storeName} — पत्ता*\n\n` +
+          (addr ? `${addr}\n\n` : '') +
+          `औषध मागवण्यासाठी 1 (एक औषध), 2 (एकापेक्षा जास्त किंवा फोटो 📸), अथवा 3 (रिफिल) पाठवा.`;
+      } else if (chatLang === 'hi') {
+        addrMsg =
+          `📍 *${storeName} — पता*\n\n` +
+          (addr ? `${addr}\n\n` : '') +
+          `दवा ऑर्डर करने के लिए 1 (एक दवा), 2 (कई दवाएं या पर्चा 📸), अथवा 3 (रिफिल) लिखकर भेजें।`;
+      } else {
+        addrMsg =
+          `📍 *${storeName} — Address & Location*\n\n` +
+          (addr ? `${addr}\n\n` : '') +
+          `To place an order, reply *1* (single), *2* (multiple or photo 📸), or *3* (refill).`;
+      }
+
+      await db.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_order_type',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           unrecognized_count = 0,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, customerName || 'Customer', chatLang]
+      );
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(targetRecipient, addrMsg, 'customer_medicine_clarification', customerName || 'Customer');
+      return;
+    }
+
+    if (isCallRequest) {
+      const storePhone = await getStorePhone(db);
+      const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+      if (adminWhatsapp) {
+        const alertMsg = `📞 *Callback Request*\n\n👤 Customer: ${customerName || 'Unknown'} (+91 ${cleanDigits})\n💬 Message: "${trimmedOriginal}"\n\n_Customer requested to speak with a pharmacist._`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(adminWhatsapp, alertMsg, 'admin_escalation', 'Owner');
+      }
+
+      let callMsg = '';
+      if (chatLang === 'mr') {
+        callMsg =
+          `📞 *${storeName} — संपर्क*\n\n` +
+          (storePhone ? `आपण थेट आमच्या फार्मासिस्टशी संपर्क करू शकता:\n📱 *${storePhone}*\n\n` : '') +
+          `आम्ही आमच्या टीमला आपल्याला त्वरित संपर्क करण्यासाठी कळवले आहे 🙏\n\n` +
+          `औषध मागवण्यासाठी 1 (एक औषध), 2 (एकापेक्षा जास्त किंवा फोटो 📸), अथवा 3 (रिफिल) पाठवा.`;
+      } else if (chatLang === 'hi') {
+        callMsg =
+          `📞 *${storeName} — संपर्क*\n\n` +
+          (storePhone ? `आप सीधे हमारे फार्मासिस्ट से संपर्क कर सकते हैं:\n📱 *${storePhone}*\n\n` : '') +
+          `हमने अपनी टीम को आपको तुरंत कॉल करने के लिए सूचित कर दिया है 🙏\n\n` +
+          `दवा ऑर्डर करने के लिए 1 (एक दवा), 2 (कई दवाएं या पर्चा 📸), अथवा 3 (रिफिल) लिखकर भेजें।`;
+      } else {
+        callMsg =
+          `📞 *${storeName} — Contact Pharmacist*\n\n` +
+          (storePhone ? `You can reach our pharmacist directly at:\n📱 *${storePhone}*\n\n` : '') +
+          `We've also notified our counter team to call you shortly 🙏\n\n` +
+          `To place an order, reply *1* (single), *2* (multiple or photo 📸), or *3* (refill).`;
+      }
+
+      await db.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_order_type',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           unrecognized_count = 0,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, customerName || 'Customer', chatLang]
+      );
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(targetRecipient, callMsg, 'customer_medicine_clarification', customerName || 'Customer');
+      return;
+    }
+
+    const hasKnownName = isKnownCustomerName(customerName);
+
+    // If new customer without known name -> Ask for their name first per user preference
+    if (!hasKnownName) {
+      const hoursNotice = await getStoreHoursNotice(db);
+      const askNameText = getMessage(chatLang, 'whatsapp.bot.askName', {
+        storeName,
+        hoursNotice
+      });
+
+      await db.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, language, created_at)
+         VALUES (?, '', ?, 'awaiting_customer_name', ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_customer_name',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, chatLang]
+      );
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(targetRecipient, askNameText, 'customer_greeting', 'Customer');
+      console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name in ${chatLang} from random message.`);
+      return;
+    }
+
+    // Check if the customer already received the onboarding guide recently (last 6 hours)
+    const existingSession = await db.get(
+      `SELECT step, unrecognized_count, created_at FROM wa_pending_clarifications 
+       WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?)
+         AND created_at > datetime('now', '-6 hours')
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+    );
+
+    if (existingSession && existingSession.step === 'awaiting_order_type') {
+      const strike = Number(existingSession.unrecognized_count || 0) + 1;
+
+      if (strike < 2) {
+        // Strike 1: Short, non-spammy 1-line reminder instead of the entire 15-line menu
+        await db.run(
+          `UPDATE wa_pending_clarifications 
+           SET unrecognized_count = ?, original_query = ?, created_at = CURRENT_TIMESTAMP 
+           WHERE phone LIKE ? OR phone LIKE ? OR phone = ?`,
+          [strike, trimmedOriginal, `%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+        );
+
+        let shortPrompt = '';
+        const shortName = customerName.split(' ')[0] || '';
+        if (chatLang === 'mr') {
+          shortPrompt = `नमस्कार ${shortName}! 😊 औषध मागवण्यासाठी *1* (एक औषध), *2* (एकापेक्षा जास्त), *3* (रिफिल), किंवा *4* (मदत) पाठवा, किंवा थेट औषधाचे नाव लिहा.`;
+        } else if (chatLang === 'hi') {
+          shortPrompt = `नमस्ते ${shortName}! 😊 दवा ऑर्डर करने के लिए *1* (एक दवा), *2* (कई दवाएं), *3* (रिफिल), अथवा *4* (मदद) लिखें, या सीधे दवा का नाम भेजें।`;
+        } else {
+          shortPrompt = `Hi ${shortName}! 😊 Would you like to order a medicine? Reply *1* (single), *2* (multiple), *3* (refill), or *4* (help), or type the medicine name directly.`;
+        }
+
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(targetRecipient, shortPrompt, 'customer_medicine_clarification', customerName);
+        console.log(`[Intent Service] Sent compact 1-line prompt (strike 1) to ${cleanDigits}. Avoided full menu spam.`);
+        return;
+      } else {
+        // Strike 2: Halts bot replies, silence session, notify pharmacist counter
+        await db.run(
+          `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ? OR phone = ?`,
+          [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+        );
+
+        const silenceMsg =
+          chatLang === 'mr'
+            ? `आपला संदेश आमच्या काउंटर फार्मासिस्टकडे पाठवला आहे. ते लवकरच आपल्याशी येथे संपर्क करतील 🙏`
+            : (chatLang === 'hi'
+              ? `आपका संदेश हमारे काउंटर फार्मासिस्ट को भेज दिया गया है। वे जल्द ही आपसे यहाँ संपर्क करेंगे 🙏`
+              : `I've shared your message with our counter pharmacist. They'll assist you right here in a moment 🙏`);
+
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(targetRecipient, silenceMsg, 'customer_medicine_clarification', customerName);
+
+        // Alert store owner on WhatsApp
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+        if (adminWhatsapp) {
+          const alertMsg =
+            `⚠️ *Bot Escalation — Customer Assistance Needed*\n\n` +
+            `👤 Customer: ${customerName} (+91 ${cleanDigits})\n` +
+            `💬 Last message: "${trimmedOriginal.slice(0, 120)}"\n\n` +
+            `_Customer sent multiple unparsed messages. Bot is now silenced for this conversation so you can assist directly._`;
+          await whatsappQueueWorker.enqueue(adminWhatsapp, alertMsg, 'admin_escalation', 'Owner');
+        }
+        console.log(`[Intent Service] Escalated to pharmacist and silenced bot for ${cleanDigits} after 2 unparsed messages.`);
+        return;
+      }
+    }
+
+    // Customer name is known & first time in session -> Send Quick-Start Onboarding Guide & advance to awaiting_order_type
+    const sched = await getPharmacyOperatingSchedule(db);
+    const hoursLine = `🕐 Open: ${sched.openTime} – ${sched.closeTime}${sched.weeklyOff ? ` | Off: ${sched.weeklyOff}` : ''}`;
+    const hoursNotice = await getStoreHoursNotice(db);
+
+    const receivedPrefix = trimmedOriginal
+      ? (chatLang === 'mr'
+          ? `मला आपला संदेश मिळाला: "${trimmedOriginal.slice(0, 80)}"\n\n`
+          : (chatLang === 'hi'
+              ? `मुझे आपका संदेश मिला: "${trimmedOriginal.slice(0, 80)}"\n\n`
+              : `I received: "${trimmedOriginal.slice(0, 80)}"\n\n`))
+      : '';
+
+    const greetingText = receivedPrefix + getMessage(chatLang, 'whatsapp.bot.welcomeMenu', {
+      name: customerName,
+      storeName,
+      hoursNotice,
+      hoursLine
+    }) + languageFooter(chatLang);
 
     await db.run(
-      `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
-       VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)
+      `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+       VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
        ON CONFLICT(phone) DO UPDATE SET
-         step = 'awaiting_medicine',
+         step = 'awaiting_order_type',
+         original_query = excluded.original_query,
+         customer_name = excluded.customer_name,
+         language = excluded.language,
+         unrecognized_count = 0,
          created_at = CURRENT_TIMESTAMP`,
-      [cleanDigits, trimmedOriginal, customerName || 'Customer']
+      [cleanDigits, trimmedOriginal, customerName, chatLang]
     );
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-    await whatsappQueueWorker.enqueue(
-      phone,
-      guidanceMsg,
-      'customer_guidance_prompt',
-      customerName || 'Customer'
-    );
-    console.log(`[Intent Service] Sent medicine ordering guidance prompt to ${cleanDigits}. Session initialized to awaiting_medicine.`);
+    await whatsappQueueWorker.enqueue(targetRecipient, greetingText, 'customer_guidance_prompt', customerName);
+    console.log(`[Intent Service] Sent Quick-Start onboarding menu to ${customerName} (${cleanDigits}). Advanced to awaiting_order_type.`);
   } catch (err) {
     console.warn('[Intent Service] Failed to send guidance prompt:', err);
   }
@@ -1480,7 +1713,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     if (!cleanDigits) return false;
 
     const pending = await db.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp, language
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp, language, unrecognized_count
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
@@ -2234,7 +2467,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isOne   = /^1$/.test(picked);
       const isTwo   = /^2$/.test(picked);
       const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
-      if (isOne || isTwo || isThree) {
+      const isFour  = /^(4|info|hours|time|address|location|call|help|pharmacist|timing|पत्ता|वेळ|कॉल|मदत)$/i.test(picked);
+      if (isOne || isTwo || isThree || isFour) {
         const { resetBotStrikes } = await import('./waBotSilence.js');
         await resetBotStrikes(db, String(pending.phone || cleanDigits));
       }
@@ -2357,6 +2591,48 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         return true;
       }
 
+      if (isFour) {
+        const { getPharmacyOperatingSchedule, getStoreAddress, getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+        const sched = await getPharmacyOperatingSchedule(db);
+        const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
+        const addr = await getStoreAddress(db);
+        const storePhone = await getStorePhone(db);
+
+        // Keep session at awaiting_order_type so user can continue ordering
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+
+        let infoMsg = '';
+        if (stepLang === 'mr') {
+          infoMsg =
+            `🏥 *${storeName} — माहिती व मदत*\n\n` +
+            `⏰ *वेळ:* ${sched.openTime} ते ${sched.closeTime}${sched.weeklyOff ? ` (साप्ताहिक सुट्टी: ${sched.weeklyOff})` : ''}\n` +
+            (addr ? `📍 *पत्ता:* ${addr}\n` : '') +
+            (storePhone ? `📞 *थेट फोन:* ${storePhone}\n\n` : '\n') +
+            `*औषध मागवण्यासाठी:* reply *1* (एक औषध), *2* (एकापेक्षा जास्त किंवा फोटो 📸), किंवा *3* (रिफिल).`;
+        } else if (stepLang === 'hi') {
+          infoMsg =
+            `🏥 *${storeName} — जानकारी एवं सहायता*\n\n` +
+            `⏰ *समय:* ${sched.openTime} से ${sched.closeTime}${sched.weeklyOff ? ` (साप्ताहिक अवकाश: ${sched.weeklyOff})` : ''}\n` +
+            (addr ? `📍 *पता:* ${addr}\n` : '') +
+            (storePhone ? `📞 *सीधा फोन:* ${storePhone}\n\n` : '\n') +
+            `*दवा ऑर्डर करने के लिए:* reply *1* (एक दवा), *2* (कई दवाएं या पर्चा 📸), अथवा *3* (रिफिल).`;
+        } else {
+          infoMsg =
+            `🏥 *${storeName} — Store Info & Help*\n\n` +
+            `⏰ *Hours:* ${sched.openTime} – ${sched.closeTime}${sched.weeklyOff ? ` (Closed: ${sched.weeklyOff})` : ''}\n` +
+            (addr ? `📍 *Address:* ${addr}\n` : '') +
+            (storePhone ? `📞 *Pharmacist Phone:* ${storePhone}\n\n` : '\n') +
+            `*To place an order:* reply *1* (single medicine), *2* (multiple medicines or prescription photo 📸), or *3* (refill).`;
+        }
+
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, infoMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
       // ── TASK 3: Affirmative "yes/haan/ok" → Smart Context Resolution ─────────
       // Instead of re-prompting the menu, check refill history and route intelligently.
       if (isAffirmative) {
@@ -2401,10 +2677,27 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       // ── TASK 4: Direct Medicine Name Bypass ──────────────────────────────────
       // If customer types a medicine name instead of 1/2/3, skip the menu and search.
       const directMedCandidates = extractMedicineCandidates(picked);
-      const hasMedicineIntent = directMedCandidates.length > 0 && isPlausibleMedicineName(directMedCandidates[0]?.medicineName || '');
-      if (hasMedicineIntent) {
-        const detectedName = directMedCandidates[0].medicineName;
-//         const _detectedQty  = directMedCandidates[0].quantity || 1;
+      let isVerifiedMedicineBypass = false;
+      let detectedName = '';
+      if (directMedCandidates.length > 0 && isPlausibleMedicineName(directMedCandidates[0]?.medicineName || '')) {
+        detectedName = directMedCandidates[0].medicineName;
+        const hasDosageOrForm = /\d+\s*(mg|ml|gm|g|mcg|iu|%)\b/i.test(detectedName) ||
+          /\b(tab|tabs|tablet|tablets|cap|caps|capsule|capsules|syp|syrup|inj|injection|drops|cream|gel|suspension)\b/i.test(detectedName);
+        if (hasDosageOrForm) {
+          isVerifiedMedicineBypass = true;
+        } else {
+          const brandTokens = detectedName.replace(/[^a-zA-Z0-9\s]/g, ' ').trim().split(/\s+/).filter(w => w.length >= 3);
+          for (const tok of brandTokens) {
+            const hit = await db.get(`SELECT 1 FROM medicines WHERE name LIKE ? LIMIT 1`, [`${tok}%`]);
+            if (hit) {
+              isVerifiedMedicineBypass = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (isVerifiedMedicineBypass && detectedName) {
         // Notify customer we caught it and are searching
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         const searchingMsg = `🔍 Searching for *${detectedName}* — one moment! 💊`;
@@ -2434,8 +2727,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         );
         const gentleMsg =
           activeCustomerName
-            ? `Hi ${activeCustomerName.split(' ')[0]}! 😊 Would you like to *order a medicine* or *repeat your last prescription*? Just type the medicine name or reply *1* (single) / *3* (refill).`
-            : `Hi! 😊 Would you like to order a medicine? Just type the medicine name or reply *1* (single) or *3* (refill / repeat prescription).`;
+            ? `Hi ${activeCustomerName.split(' ')[0]}! 😊 Would you like to *order a medicine* or *repeat your last prescription*? Just type the medicine name or reply *1* (single), *2* (multiple), *3* (refill), or *4* (store info & pharmacist).`
+            : `Hi! 😊 Would you like to order a medicine? Just type the medicine name or reply *1* (single), *2* (multiple), *3* (refill), or *4* (store info & pharmacist).`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, gentleMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
       } else {
@@ -4862,16 +5155,34 @@ export async function handleInbound(msg: any): Promise<void> {
       return;
     }
 
+    // 1c-2. SILENT REACTION & CASUAL CHIT-CHAT FILTER (No bot reply / No spam)
+    const isEmojiOnly = /^[\p{Emoji}\p{Extended_Pictographic}\s.,!?:;~*\-_()]+$/u.test(body.trim()) && !/[a-zA-Z0-9\u0900-\u097F]/.test(body);
+    const isCasualFiller = /^(hmm+|hmmm+|acha+|accha+|achha+|k|kk|cool|sahi|understood|samjha|samajh gaya|got it|noted|nice|great|superb|waah|wah|mast|badhiya)$/i.test(cleanBodyForSignOff);
+    if (!hasMedia && (isEmojiOnly || isCasualFiller)) {
+      console.log(`[Intent Service] Silent reaction/filler ("${body.trim()}") from ${chatId}. Stored silently without automated bot reply.`);
+      return;
+    }
+
     // 1d. HUMAN TAKEOVER / ACTIVE SESSION CHECK
     const chatSessionRow = await db.get(
       'SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?',
       [chatId]
     );
     const nowMs = Date.now();
+    const manualUntil = chatSessionRow?.manual_active_until;
+    let manualUntilMs = 0;
+    if (manualUntil) {
+      manualUntilMs = typeof manualUntil === 'number' ? manualUntil : (Number(manualUntil) || new Date(manualUntil).getTime() || 0);
+    }
     const isManualSession = Boolean(
       chatSessionRow?.session_mode === 'manual' &&
-      Number(chatSessionRow?.manual_active_until || 0) > nowMs
+      manualUntilMs > nowMs
     );
+
+    if (isManualSession) {
+      console.log(`[Intent Service] Chat ${chatId} is in manual pharmacist takeover mode. Bot staying silent.`);
+      return;
+    }
 
     // 2. CUSTOMER LOOKUP
     const customer = await lookupCustomer(phone, chatId);
@@ -5689,7 +6000,7 @@ export async function handleInbound(msg: any): Promise<void> {
         if (!hasMedia && !isStale && phone && !isManualSession) {
           const cleanBody = body.trim();
           if (cleanBody.length >= 2) {
-            await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db, cleanBody);
+            await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db, cleanBody, chatLang, chatId);
           }
         }
         return;
@@ -5795,7 +6106,7 @@ export async function handleInbound(msg: any): Promise<void> {
     } else if (!hasMedia && !isStale && phone && !isManualSession) {
       const cleanBody = body.trim();
       if (cleanBody.length >= 2) {
-        await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db, cleanBody);
+        await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db, cleanBody, chatLang, chatId);
       }
     }
 

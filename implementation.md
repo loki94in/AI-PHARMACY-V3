@@ -1,40 +1,31 @@
-# Implementation Plan: Single Canonical Distributor Name on Pharmarack Mapping & Merge
+# Implementation Plan: WhatsApp Chatbot Anti-Spam & Failure-Proof Onboarding Shield
 
 **Goal:**
-Ensure there is only ONE canonical name per distributor across the entire application (Dispatch page, purchase bills, settings, and reminders). When a distributor is mapped to Pharmarack or merged:
-1. Provide a one-click confirmation to overwrite the local/migration distributor name with the official Pharmarack name.
-2. Unify all past and future bills and ledgers automatically under that single name.
-3. Automatically re-link and deduplicate `distributor_dispatch_reminders` during distributor merge and mapping.
-4. Add canonical in-memory deduplication in `getTodayDistributorRemindersFast` to guarantee the Dispatch page never displays duplicate cards.
+Prevent unnecessary spam messages, infinite bot loops, and onboarding failures by:
+1. Silently accepting reactions, emojis (👍, 🙏, ❤️, etc.), and casual filler words without firing bot menus.
+2. Restricting the full Quick-Start Onboarding Guide to once per day/session so existing customers never get spammed with repetitive long menus.
+3. Enforcing progressive 2-strike escalation (Strike 1 = short 1-line prompt; Strike 2 = pharmacist escalation + silence) without counter resets.
+4. Ensuring human-in-the-loop and active chat preservation at all times.
 
 ---
 
-## 1. Architecture & Design
+## 1. Architecture & Design Decisions
 
-### A. Pharmarack Mapping Endpoint (`POST /pharmarack/distributor-mappings`)
-- Accept `overwrite_distributor_name?: boolean`.
-- When `overwrite_distributor_name` is true and a valid `distributor_id` is supplied:
-  - Update `distributors.name = store_name` where `id = distributor_id`.
-  - Update `distributor_dispatch_reminders.distributor_name = store_name` where `distributor_id = distributor_id`.
-  - If another distributor record already exists with `name = store_name` (or case-insensitive equal), merge the duplicate distributor records into this master distributor ID.
+### A. Silent Reaction & Chit-Chat Shield (`src/services/whatsappIntentService.ts`)
+- In `handleInbound`, detect emojis (👍, 🙏, 👌, ✌️, ❤️, 😊, 🆗, etc.) and casual conversational filler words (`"hmm"`, `"hmmm"`, `"acha"`, `"accha"`, `"ok"`, `"k"`, `"sure"`, `"cool"`, `"sahi"`, `"theek"`, `"understood"`, etc.).
+- Mark chat session as active/healthy, record message in `whatsapp_messages`, and **silently return** without firing any bot reply or error.
 
-### B. Distributor Merge Re-linking (`src/routes/settings.ts` & `src/routes/learning.ts`)
-- In `POST /distributors/merge` and `POST /api/learning/profiles/merge`:
-  - Add `distributor_dispatch_reminders` to the re-linking routine:
-    `UPDATE distributor_dispatch_reminders SET distributor_id = ?, distributor_name = ? WHERE distributor_id IN (...)`
-  - Run deduplication on `distributor_dispatch_reminders` for rows with matching `date` and `distributor_id` to merge order counts and remove duplicate reminder entries.
+### B. Once-Per-Session Onboarding Guard (`maybeSendGuidancePrompt`)
+- Check if the customer already received the full onboarding guide within the current session window (last 6 hours):
+  `SELECT 1 FROM wa_pending_clarifications WHERE phone LIKE ? AND created_at > datetime('now', '-6 hours') AND step = 'awaiting_order_type'`
+- If already onboarded, **do NOT send the full 15-line welcome guide again**.
+- Instead, treat the unrecognized text as Strike 1 (send a compact 1-liner: *"Would you like to order a medicine? Reply 1–4 or type medicine name."*) or advance to Strike 2 (escalate to counter pharmacist and silence bot).
 
-### C. Fast Dispatch Reminder Deduplication (`getTodayDistributorRemindersFast`)
-- In `src/services/distributorDispatchReminderWorker.ts`:
-  - Group fetched rows by `getCanonicalDistributorKey(r.distributor_id, r.distributor_name)`.
-  - If multiple rows exist on the same date for the same canonical vendor, merge them into a single primary card (combining order counts, orders list, and preserving the most advanced status like `Dispatched` or `Pending`).
-  - Guarantees 0 duplicate cards on the Dispatch page regardless of raw database artifacts.
-
-### D. Frontend 1-Click Confirmation Prompt (`PharmarackCart/index.tsx`)
-- When a user maps a Pharmarack distributor to a local distributor, detect name divergence:
-  - If `dist.name.toLowerCase().trim() !== storeName.toLowerCase().trim()`, show a prompt/checkbox:
-    *"Update distributor name in pharmacy to '[Pharmarack Name]' to unify all bills and reminders"* (checked by default).
-  - Submit `overwrite_distributor_name: true` when checked.
+### C. Progressive 2-Strike Escalation Without Reset
+- Increment `unrecognized_count` across unrecognized messages:
+  - Strike 1: Short 1-line clarification.
+  - Strike 2: Halts bot replies, sends reassurance to customer, and alerts pharmacist with customer phone and last message.
+- Prevents infinite loops where an unparsed message resets the counter to 0.
 
 ---
 
@@ -42,13 +33,12 @@ Ensure there is only ONE canonical name per distributor across the entire applic
 
 1. **TypeScript Compilations:**
    - Backend: `npx tsc --noEmit`
-   - Frontend: `npx tsc -p frontend/tsconfig.app.json --noEmit`
 2. **Performance Guardrails:**
    - `npm run guardrails` (zero violations)
-3. **Runtime & Data Verification:**
-   - Test `getTodayDistributorRemindersFast` to ensure 0 duplicates.
-   - Test mapping API with `overwrite_distributor_name: true`.
-   - Test `/distributors/merge` re-linking of `distributor_dispatch_reminders`.
+3. **Behavioral Checks:**
+   - Test emoji reactions (👍, 🙏) -> silently handled with 0 bot replies.
+   - Test casual chit-chat ("acha", "hmm") -> silently handled with 0 bot replies.
+   - Test repeated unparsed messages -> receives full menu only once, then 1-line prompt, then pharmacist escalation.
 4. **Knowledge Graph Synchronization:**
    - `node scripts/quick-update.mjs`
 
@@ -56,41 +46,57 @@ Ensure there is only ONE canonical name per distributor across the entire applic
 
 ## 3. Task Checklist & Progress Log
 
-- [x] Task 1: Add canonical in-memory deduplication in `getTodayDistributorRemindersFast`
-- [x] Task 2: Enhance `POST /pharmarack/distributor-mappings` with `overwrite_distributor_name` and duplicate auto-merge
-- [x] Task 3: Include `distributor_dispatch_reminders` re-linking and deduplication in `settings.ts` and `learning.ts` merge routes
-- [x] Task 4: Add 1-click confirmation UI in `PharmarackCart` distributor mapping
-- [x] Task 5: Run compiler checks, performance guardrails, and knowledge graph sync
+- [x] Task 1: Implement silent reaction and casual chit-chat filter in `handleInbound`
+- [x] Task 2: Implement Once-Per-Session onboarding check and progressive 2-strike escalation in `maybeSendGuidancePrompt`
+- [x] Task 3: Run TypeScript typecheck, performance guardrails, and knowledge graph sync
+- [x] Task 4: Verify behavior and update implementation completion log
 
 ---
 
 ## 4. Completed Work Log & Verification Results
 
-### 1. In-Memory Canonical Deduplication in `getTodayDistributorRemindersFast`
-- **File:** [src/services/distributorDispatchReminderWorker.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/distributorDispatchReminderWorker.ts)
-- **What was done:** Added grouping by `getCanonicalDistributorKey(r.distributor_id, r.distributor_name)` right before returning reminders. If multiple rows exist on the same date for the same canonical vendor, they are merged into one card (combining order counts, total items, and preserving the most advanced status like `Dispatched` or `Collected`), guaranteeing 0 duplicate cards on the Dispatch page.
-
-### 2. Name Overwrite & Auto-Merge on Pharmarack Mapping
-- **Files:** [src/utils/distributorSyncHelper.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/utils/distributorSyncHelper.ts), [src/routes/pharmarack.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/pharmarack.ts)
+### 1. Silent Reaction & Casual Filler Filter
+- **File:** [src/services/whatsappIntentService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappIntentService.ts)
 - **What was done:**
-  - Extended `SyncDistributorParams` and `POST /pharmarack/distributor-mappings` to support `overwrite_distributor_name: boolean`.
-  - When enabled, `distributors.name` is updated to the clean Pharmarack store name (`params.store_name.trim()`).
-  - If another distributor row already existed with that exact name, it is automatically merged into the master record (re-linking purchases, orders, returns, payments, files, and reminders) and deleted, leaving zero duplicate records in `distributors`.
-  - Also synchronized `distributor_dispatch_reminders.distributor_name` to the Pharmarack store name.
+  - Added filter in `handleInbound` right after natural sign-off detection for:
+    - Pure emojis and symbols (👍, 🙏, 👌, ❤️, 😊, 🆗, etc.) via `/\p{Emoji}/u` check ensuring no alphanumeric tokens are present.
+    - Pure casual conversational filler words (`"hmm"`, `"acha"`, `"accha"`, `"k"`, `"cool"`, `"sahi"`, `"understood"`, `"noted"`, `"badhiya"`, etc.).
+  - Silently logs and returns without firing automated menus, guidance prompts, or error replies.
+  - The message remains recorded in `whatsapp_messages` and visible to the counter pharmacist.
 
-### 3. Re-Linking Reminders on Distributor Merge
-- **Files:** [src/routes/settings.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/settings.ts), [src/routes/learning.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/learning.ts)
-- **What was done:** Updated both `/distributors/merge` and `/api/learning/profiles/merge` to re-link `distributor_dispatch_reminders` onto the primary distributor ID and clean primary name, followed by an atomic deduplication pass on conflicting reminders for the same date.
-
-### 4. Frontend 1-Click Confirmation UI in Pharmarack Mapping
-- **File:** [frontend/src/pages/PharmarackCart/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/PharmarackCart/index.tsx)
+### 2. Once-Per-Session Onboarding Guard & Progressive 2-Strike Escalation
+- **File:** [src/services/whatsappIntentService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappIntentService.ts)
 - **What was done:**
-  - When linking a Pharmarack distributor to a directory distributor whose name differs, dynamically displays a high-visibility, 1-click confirmation prompt:
-    *"Unify distributor name across pharmacy: Update '[Local Name]' &rarr; '[Pharmarack Name]' so all bills and dispatch reminders show only this 1 name."* (checked by default).
-  - On save, forwards `overwrite_distributor_name: overwriteDistributorName`, updates the local dropdown state, and syncs across the app with zero layout shifts.
+  - Before sending the full 15-line welcome guide, checks if the customer already received the guide in the current 6-hour session window.
+  - If already onboarded, the full menu is **never re-sent**. Instead:
+    - **Strike 1:** Sends a concise 1-line reminder in their language (*"Hi [Name]! Would you like to order a medicine? Reply 1-4 or type medicine name."*).
+    - **Strike 2:** Halts automated bot replies, silences the session, notifies the customer (*"I've shared your message with our counter pharmacist. They'll assist you right here in a moment 🙏"*), and triggers an immediate WhatsApp escalation alert to the store owner's number.
+  - Eliminates infinite loops and repetitive menu spam completely.
+
+### 3. Comprehensive Automated Test Suite
+- **File:** [tests/whatsappOnboardingSpamShield.test.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/tests/whatsappOnboardingSpamShield.test.ts)
+- **Config:** [jest.config.js](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/jest.config.js)
+- **What was done:**
+  - Created a dedicated 8-case end-to-end integration test suite verifying all spam, onboarding, routing, and escalation requirements:
+    1. **Emoji Reaction Shield:** Pure emoji messages (`👍`, `🙏`, `❤️`) are silently stored without triggering bot menus (`expect(enqueueMock).not.toHaveBeenCalled()`).
+    2. **Casual Fillers Shield:** Conversational chit-chat (`"accha"`, `"hmm"`, `"mast"`, `"ok"`) are stored silently without automated replies.
+    3. **New Customer Name-First Onboarding:** Unknown contact sending random query is prompted for their name first (`awaiting_customer_name`), preserving their original query.
+    4. **Name Registration & 4-Choice Quick-Start Menu:** Replying with name registers customer in `customers` table and enqueues the 4-choice guide.
+    5. **Option 4 Store Info & Help:** Replying `4` (or "store hours", "timing", "address") returns hours, address, pharmacist direct phone, keeping session active for subsequent medicine orders.
+    6. **Strike 1 Compact Reminder:** Unrecognized message during active session sends a compact 1-line gentle reminder instead of repeating the full 15-line menu.
+    7. **Strike 2 Circuit Breaker & Owner Escalation:** Consecutive unrecognized input silences the bot, reassures the customer with a pharmacist handover notice, and dispatches an admin WhatsApp alert to the store owner.
+    8. **Human-in-the-Loop Takeover Protection:** When a pharmacist sets a chat to manual mode (`session_mode = 'manual'`), all bot automated replies are completely suppressed.
+
+### 4. Root Causes Discovered & Permanently Fixed During Testing
+1. **Human Takeover Bot Silence:** `handleInbound` evaluated `isManualSession`, but did not return early before customer lookup/clarification handling. Added explicit early return when `isManualSession` is active.
+2. **Awaiting Order Type Medicine Bypass False Positives:** When a user asked an ambiguous question like `"what is this system?"`, `extractMedicineCandidates` extracted `"what this system"`, triggering a premature medicine search. Gated direct medicine bypass in `awaiting_order_type` so only items with dosage/form or matching the `medicines` table bypass the menu; all other ambiguous text correctly falls into the 2-strike circuit breaker.
+3. **Pending Clarification Missing Column:** `checkMedicineClarificationResponse`'s SQL query did not include `unrecognized_count` in its `SELECT` list, causing `pending.unrecognized_count` to evaluate to `undefined` (0), preventing Strike 2 escalation from triggering. Added `unrecognized_count` to the `SELECT` clause.
 
 ### 5. Verification & Compliance
-- **Backend Type Check:** `npx tsc --noEmit` &rarr; **PASSED (0 errors)**.
-- **Frontend Type Check:** `npx tsc -p frontend/tsconfig.app.json --noEmit` &rarr; **PASSED (0 errors)**.
+- **Test Suite Execution:**
+  - `node --experimental-vm-modules node_modules/jest/bin/jest.js tests/whatsappOnboardingSpamShield.test.ts --forceExit` &rarr; **PASSED (8 passed, 8 total)**.
+  - `node --experimental-vm-modules node_modules/jest/bin/jest.js tests/whatsappGuidancePrompt.test.ts --forceExit` &rarr; **PASSED (2 passed, 2 total)**.
+- **TypeScript Compiler Check:** `npx tsc --noEmit` &rarr; **PASSED (0 errors)**.
 - **Performance Guardrails:** `npm run guardrails` &rarr; **PASSED (0 violations)**.
-- **Knowledge Graph:** `node scripts/quick-update.mjs` &rarr; **PASSED (1214 nodes, 806 edges in 5.4s)**.
+- **Knowledge Graph Synchronization:** `node scripts/quick-update.mjs` &rarr; **PASSED (1215 files, 1215 nodes, 807 edges)**.
+

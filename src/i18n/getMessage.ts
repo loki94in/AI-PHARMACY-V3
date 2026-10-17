@@ -32,7 +32,7 @@ if (!ALL_MESSAGES || Object.keys(ALL_MESSAGES).length === 0) {
 const BOT_FALLBACK_DEFAULTS: Record<string, string> = {
   'whatsapp.bot.askName': '👋 Hello! Welcome to {{storeName}}.{{hoursNotice}}\n\nBefore we begin, *may I please know your name?*',
   'whatsapp.bot.retryName': 'Could you please tell us your name so we can assist you with your order?',
-  'whatsapp.bot.welcomeMenu': '👋 Hello *{{name}}*! Welcome to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose your order type —\n  1️⃣ Single Medicine\n  2️⃣ Multiple Medicines\n  3️⃣ Refill — Repeat regular prescription\n\n*Reply 1, 2, or 3 to begin.*',
+  'whatsapp.bot.welcomeMenu': '👋 Hello *{{name}}*! Welcome to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose an option —\n  1️⃣ Single Medicine\n  2️⃣ Multiple Medicines (or send prescription photo 📸)\n  3️⃣ Refill — Repeat regular prescription\n  4️⃣ Store Hours, Location & Call Pharmacist 📞\n\n*Step 2:* We show you options & MRP 💰\n*Step 3:* You confirm & we book 🚀\n\n{{hoursLine}}\n\n*Reply 1, 2, 3, or 4 to begin (or type medicine name directly).*',
   'whatsapp.bot.orderTypeSinglePrompt': 'Please send the name of the medicine you need (e.g., *Dolo 650*, *Telma 40*).',
   'whatsapp.bot.orderTypeMultiPrompt': 'Please send the list of medicines you need, each on a new line (or send a clear photo of your prescription 📸).',
   'whatsapp.bot.askQuantity': 'How many units of *{{medicine}}* do you need? (e.g. 1, 2, 5)',

@@ -9,7 +9,7 @@
       "bot": {
         "askName": "👋 Hello! Welcome to {{storeName}}.{{hoursNotice}}\n\nBefore we begin, *may I please know your name?*",
         "retryName": "Could you please tell us your name so we can assist you with your order?",
-        "welcomeMenu": "👋 Hello *{{name}}*! Welcome back to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose your order type —\n  1️⃣ Single Medicine\n  2️⃣ Multiple Medicines\n  3️⃣ Refill — Repeat my regular prescription\n\n*Step 2:* We show you options & MRP 💰\n*Step 3:* You confirm & we book 🚀\n\n{{hoursLine}}\n\n*Reply 1, 2, or 3 to begin.*",
+        "welcomeMenu": "👋 Hello *{{name}}*! Welcome to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose an option —\n  1️⃣ Single Medicine\n  2️⃣ Multiple Medicines (or send prescription photo 📸)\n  3️⃣ Refill — Repeat regular prescription\n  4️⃣ Store Hours, Location & Call Pharmacist 📞\n\n*Step 2:* We show you options & MRP 💰\n*Step 3:* You confirm & we book 🚀\n\n{{hoursLine}}\n\n*Reply 1, 2, 3, or 4 to begin (or type medicine name directly).* ",
         "orderTypeSinglePrompt": "Please send the name of the medicine you need (e.g., *Dolo 650*, *Telma 40*).",
         "orderTypeMultiPrompt": "Please send the list of medicines you need, each on a new line or separated by commas (or send a clear photo of your prescription 📸).",
         "askQuantity": "How many {{unit}}s of *{{medicine}}* do you need? (e.g. 1, 2, 5)",
@@ -104,7 +104,7 @@
       "bot": {
         "askName": "👋 नमस्ते! {{storeName}} में आपका स्वागत है।{{hoursNotice}}\n\nशुरू करने से पहले, *कृपया अपना शुभ नाम बताएं?*",
         "retryName": "क्या आप कृपया अपना नाम बता सकते हैं ताकि हम आपके ऑर्डर में सहायता कर सकें?",
-        "welcomeMenu": "👋 नमस्ते *{{name}}*! {{storeName}} में आपका फिर से स्वागत है।{{hoursNotice}}\n\n*सरल चरणों में अपना ऑर्डर दें:*\n\n*चरण 1:* ऑर्डर का प्रकार चुनें —\n  1️⃣ एक दवा (Single Medicine)\n  2️⃣ एक से अधिक दवाएं (Multiple Medicines)\n  3️⃣ रिफिल — मेरी नियमित दवाएं दोहराएं\n\n*चरण 2:* हम आपको विकल्प और MRP दिखाएंगे 💰\n*चरण 3:* आप पुष्टि करेंगे और हम बुक करेंगे 🚀\n\n{{hoursLine}}\n\n*शुरू करने के लिए 1, 2 या 3 लिखकर भेजें।*",
+        "welcomeMenu": "👋 नमस्ते *{{name}}*! {{storeName}} में आपका स्वागत है।{{hoursNotice}}\n\n*सरल चरणों में अपना ऑर्डर दें:*\n\n*चरण 1:* विकल्प चुनें —\n  1️⃣ एक दवा (Single Medicine)\n  2️⃣ एक से अधिक दवाएं (या पर्चे का फोटो 📸)\n  3️⃣ रिफिल — मेरी नियमित दवाएं दोहराएं\n  4️⃣ दुकान का समय, पता और फार्मासिस्ट से बात 📞\n\n*चरण 2:* हम आपको विकल्प और MRP दिखाएंगे 💰\n*चरण 3:* आप पुष्टि करेंगे और हम बुक करेंगे 🚀\n\n{{hoursLine}}\n\n*शुरू करने के लिए 1, 2, 3 या 4 लिखकर भेजें (या सीधे दवा का नाम लिखें)।*",
         "orderTypeSinglePrompt": "कृपया आपको जो दवा चाहिए उसका नाम लिखकर भेजें (उदा., *Dolo 650*, *Telma 40*)।",
         "orderTypeMultiPrompt": "कृपया आवश्यक दवाओं की सूची भेजें, प्रत्येक दवा नई लाइन में या कॉमा लगाकर (या अपने पर्चे की साफ़ फोटो भेजें 📸)।",
         "askQuantity": "*{{medicine}}* के कितने {{unit}} चाहिए? (उदा. 1, 2, 5)",
@@ -199,7 +199,7 @@
       "bot": {
         "askName": "👋 नमस्कार! {{storeName}} मध्ये आपले सहर्ष स्वागत आहे.{{hoursNotice}}\n\nसुरुवात करण्यापूर्वी, *कृपया आपले नाव सांगू शकाल का?*",
         "retryName": "आम्ही आपल्या ऑर्डरमध्ये मदत करू शकू यासाठी कृपया आपले नाव सांगू शकाल का?",
-        "welcomeMenu": "👋 नमस्कार *{{name}}*! {{storeName}} मध्ये आपले पुन्हा स्वागत आहे.{{hoursNotice}}\n\n*सोप्या पायऱ्यांमध्ये आपली ऑर्डर द्या:*\n\n*पायरी 1:* ऑर्डरचा प्रकार निवडा —\n  1️⃣ एक औषध (Single Medicine)\n  2️⃣ एकापेक्षा जास्त औषधे (Multiple Medicines)\n  3️⃣ रिफिल — माझी नेहमीची नियमित औषधे पुन्हा मागवा\n\n*पायरी 2:* आम्ही आपल्याला पर्याय आणि MRP दाखवू 💰\n*पायरी 3:* आपण होकार दिला की ऑर्डर बुक होईल 🚀\n\n{{hoursLine}}\n\n*सुरुवात करण्यासाठी 1, 2 किंवा 3 पाठवा.*",
+        "welcomeMenu": "👋 नमस्कार *{{name}}*! {{storeName}} मध्ये आपले स्वागत आहे।{{hoursNotice}}\n\n*सोप्या पायऱ्यांमध्ये आपली ऑर्डर द्या:*\n\n*पायरी 1:* पर्याय निवडा —\n  1️⃣ एक औषध (Single Medicine)\n  2️⃣ एकापेक्षा जास्त औषधे (किंवा फोटो 📸)\n  3️⃣ रिफिल — माझी नेहमीची नियमित औषधे पुन्हा मागवा\n  4️⃣ दुकानाची वेळ, पत्ता आणि फार्मासिस्टशी बोला 📞\n\n*पायरी 2:* आम्ही आपल्याला पर्याय आणि MRP दाखवू 💰\n*पायरी 3:* आपण होकार दिला की ऑर्डर बुक होईल 🚀\n\n{{hoursLine}}\n\n*सुरुवात करण्यासाठी 1, 2, 3 किंवा 4 पाठवा (किंवा थेट औषधाचे नाव लिहा).*",
         "orderTypeSinglePrompt": "कृपया आपल्याला हव्या असलेल्या औषधाचे नाव पाठवा (उदा., *Dolo 650*, *Telma 40*).",
         "orderTypeMultiPrompt": "कृपया आपल्याला हव्या असलेल्या औषधांची यादी पाठवा, प्रत्येक औषध नवीन ओळीवर (किंवा आपल्या डॉक्टरांच्या चिठ्ठीचा स्पष्ट फोटो पाठवा 📸).",
         "askQuantity": "*{{medicine}}* चे किती {{unit}} हवे आहेत? (उदा. 1, 2, 5)",

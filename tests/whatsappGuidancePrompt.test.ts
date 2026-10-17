@@ -63,6 +63,12 @@ describe('WhatsApp guidance prompt — echoes unparsed messages instead of a bar
   });
 
   test('unparsable text (no medicine candidates) is echoed back in the guidance prompt', async () => {
+    const { dbManager } = await import('../src/database/connection.js');
+    const db = await dbManager.getConnection();
+    await db.run(
+      "INSERT INTO customers (id, name, phone) VALUES (200, 'Test User', '917000000001')"
+    );
+
     // Every token here is in the noise-word set, so extractMedicineCandidates()
     // yields zero candidates and the code falls into maybeSendGuidancePrompt().
     const originalText = 'thank you so much sir please ok bhai';
