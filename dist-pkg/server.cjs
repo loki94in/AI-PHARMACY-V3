@@ -11908,7 +11908,7 @@ var init_messages = __esm({
           bot: {
             askName: "\u{1F44B} Hello! Welcome to {{storeName}}.{{hoursNotice}}\n\nBefore we begin, *may I please know your name?*",
             retryName: "Could you please tell us your name so we can assist you with your order?",
-            welcomeMenu: "\u{1F44B} Hello *{{name}}*! Welcome back to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose your order type \u2014\n  1\uFE0F\u20E3 Single Medicine\n  2\uFE0F\u20E3 Multiple Medicines\n  3\uFE0F\u20E3 Refill \u2014 Repeat my regular prescription\n\n*Step 2:* We show you options & MRP \u{1F4B0}\n*Step 3:* You confirm & we book \u{1F680}\n\n{{hoursLine}}\n\n*Reply 1, 2, or 3 to begin.*",
+            welcomeMenu: "\u{1F44B} Hello *{{name}}*! Welcome to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose an option \u2014\n  1\uFE0F\u20E3 Single Medicine\n  2\uFE0F\u20E3 Multiple Medicines (or send prescription photo \u{1F4F8})\n  3\uFE0F\u20E3 Refill \u2014 Repeat regular prescription\n  4\uFE0F\u20E3 Store Hours, Location & Call Pharmacist \u{1F4DE}\n\n*Step 2:* We show you options & MRP \u{1F4B0}\n*Step 3:* You confirm & we book \u{1F680}\n\n{{hoursLine}}\n\n*Reply 1, 2, 3, or 4 to begin (or type medicine name directly).* ",
             orderTypeSinglePrompt: "Please send the name of the medicine you need (e.g., *Dolo 650*, *Telma 40*).",
             orderTypeMultiPrompt: "Please send the list of medicines you need, each on a new line or separated by commas (or send a clear photo of your prescription \u{1F4F8}).",
             askQuantity: "How many {{unit}}s of *{{medicine}}* do you need? (e.g. 1, 2, 5)",
@@ -12003,7 +12003,7 @@ var init_messages = __esm({
           bot: {
             askName: "\u{1F44B} \u0928\u092E\u0938\u094D\u0924\u0947! {{storeName}} \u092E\u0947\u0902 \u0906\u092A\u0915\u093E \u0938\u094D\u0935\u093E\u0917\u0924 \u0939\u0948\u0964{{hoursNotice}}\n\n\u0936\u0941\u0930\u0942 \u0915\u0930\u0928\u0947 \u0938\u0947 \u092A\u0939\u0932\u0947, *\u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u093E \u0936\u0941\u092D \u0928\u093E\u092E \u092C\u0924\u093E\u090F\u0902?*",
             retryName: "\u0915\u094D\u092F\u093E \u0906\u092A \u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u093E \u0928\u093E\u092E \u092C\u0924\u093E \u0938\u0915\u0924\u0947 \u0939\u0948\u0902 \u0924\u093E\u0915\u093F \u0939\u092E \u0906\u092A\u0915\u0947 \u0911\u0930\u094D\u0921\u0930 \u092E\u0947\u0902 \u0938\u0939\u093E\u092F\u0924\u093E \u0915\u0930 \u0938\u0915\u0947\u0902?",
-            welcomeMenu: "\u{1F44B} \u0928\u092E\u0938\u094D\u0924\u0947 *{{name}}*! {{storeName}} \u092E\u0947\u0902 \u0906\u092A\u0915\u093E \u092B\u093F\u0930 \u0938\u0947 \u0938\u094D\u0935\u093E\u0917\u0924 \u0939\u0948\u0964{{hoursNotice}}\n\n*\u0938\u0930\u0932 \u091A\u0930\u0923\u094B\u0902 \u092E\u0947\u0902 \u0905\u092A\u0928\u093E \u0911\u0930\u094D\u0921\u0930 \u0926\u0947\u0902:*\n\n*\u091A\u0930\u0923 1:* \u0911\u0930\u094D\u0921\u0930 \u0915\u093E \u092A\u094D\u0930\u0915\u093E\u0930 \u091A\u0941\u0928\u0947\u0902 \u2014\n  1\uFE0F\u20E3 \u090F\u0915 \u0926\u0935\u093E (Single Medicine)\n  2\uFE0F\u20E3 \u090F\u0915 \u0938\u0947 \u0905\u0927\u093F\u0915 \u0926\u0935\u093E\u090F\u0902 (Multiple Medicines)\n  3\uFE0F\u20E3 \u0930\u093F\u092B\u093F\u0932 \u2014 \u092E\u0947\u0930\u0940 \u0928\u093F\u092F\u092E\u093F\u0924 \u0926\u0935\u093E\u090F\u0902 \u0926\u094B\u0939\u0930\u093E\u090F\u0902\n\n*\u091A\u0930\u0923 2:* \u0939\u092E \u0906\u092A\u0915\u094B \u0935\u093F\u0915\u0932\u094D\u092A \u0914\u0930 MRP \u0926\u093F\u0916\u093E\u090F\u0902\u0917\u0947 \u{1F4B0}\n*\u091A\u0930\u0923 3:* \u0906\u092A \u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0930\u0947\u0902\u0917\u0947 \u0914\u0930 \u0939\u092E \u092C\u0941\u0915 \u0915\u0930\u0947\u0902\u0917\u0947 \u{1F680}\n\n{{hoursLine}}\n\n*\u0936\u0941\u0930\u0942 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F 1, 2 \u092F\u093E 3 \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902\u0964*",
+            welcomeMenu: "\u{1F44B} \u0928\u092E\u0938\u094D\u0924\u0947 *{{name}}*! {{storeName}} \u092E\u0947\u0902 \u0906\u092A\u0915\u093E \u0938\u094D\u0935\u093E\u0917\u0924 \u0939\u0948\u0964{{hoursNotice}}\n\n*\u0938\u0930\u0932 \u091A\u0930\u0923\u094B\u0902 \u092E\u0947\u0902 \u0905\u092A\u0928\u093E \u0911\u0930\u094D\u0921\u0930 \u0926\u0947\u0902:*\n\n*\u091A\u0930\u0923 1:* \u0935\u093F\u0915\u0932\u094D\u092A \u091A\u0941\u0928\u0947\u0902 \u2014\n  1\uFE0F\u20E3 \u090F\u0915 \u0926\u0935\u093E (Single Medicine)\n  2\uFE0F\u20E3 \u090F\u0915 \u0938\u0947 \u0905\u0927\u093F\u0915 \u0926\u0935\u093E\u090F\u0902 (\u092F\u093E \u092A\u0930\u094D\u091A\u0947 \u0915\u093E \u092B\u094B\u091F\u094B \u{1F4F8})\n  3\uFE0F\u20E3 \u0930\u093F\u092B\u093F\u0932 \u2014 \u092E\u0947\u0930\u0940 \u0928\u093F\u092F\u092E\u093F\u0924 \u0926\u0935\u093E\u090F\u0902 \u0926\u094B\u0939\u0930\u093E\u090F\u0902\n  4\uFE0F\u20E3 \u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u0938\u092E\u092F, \u092A\u0924\u093E \u0914\u0930 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F \u0938\u0947 \u092C\u093E\u0924 \u{1F4DE}\n\n*\u091A\u0930\u0923 2:* \u0939\u092E \u0906\u092A\u0915\u094B \u0935\u093F\u0915\u0932\u094D\u092A \u0914\u0930 MRP \u0926\u093F\u0916\u093E\u090F\u0902\u0917\u0947 \u{1F4B0}\n*\u091A\u0930\u0923 3:* \u0906\u092A \u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0930\u0947\u0902\u0917\u0947 \u0914\u0930 \u0939\u092E \u092C\u0941\u0915 \u0915\u0930\u0947\u0902\u0917\u0947 \u{1F680}\n\n{{hoursLine}}\n\n*\u0936\u0941\u0930\u0942 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F 1, 2, 3 \u092F\u093E 4 \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902 (\u092F\u093E \u0938\u0940\u0927\u0947 \u0926\u0935\u093E \u0915\u093E \u0928\u093E\u092E \u0932\u093F\u0916\u0947\u0902)\u0964*",
             orderTypeSinglePrompt: "\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0915\u094B \u091C\u094B \u0926\u0935\u093E \u091A\u093E\u0939\u093F\u090F \u0909\u0938\u0915\u093E \u0928\u093E\u092E \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902 (\u0909\u0926\u093E., *Dolo 650*, *Telma 40*)\u0964",
             orderTypeMultiPrompt: "\u0915\u0943\u092A\u092F\u093E \u0906\u0935\u0936\u094D\u092F\u0915 \u0926\u0935\u093E\u0913\u0902 \u0915\u0940 \u0938\u0942\u091A\u0940 \u092D\u0947\u091C\u0947\u0902, \u092A\u094D\u0930\u0924\u094D\u092F\u0947\u0915 \u0926\u0935\u093E \u0928\u0908 \u0932\u093E\u0907\u0928 \u092E\u0947\u0902 \u092F\u093E \u0915\u0949\u092E\u093E \u0932\u0917\u093E\u0915\u0930 (\u092F\u093E \u0905\u092A\u0928\u0947 \u092A\u0930\u094D\u091A\u0947 \u0915\u0940 \u0938\u093E\u092B\u093C \u092B\u094B\u091F\u094B \u092D\u0947\u091C\u0947\u0902 \u{1F4F8})\u0964",
             askQuantity: "*{{medicine}}* \u0915\u0947 \u0915\u093F\u0924\u0928\u0947 {{unit}} \u091A\u093E\u0939\u093F\u090F? (\u0909\u0926\u093E. 1, 2, 5)",
@@ -12098,7 +12098,7 @@ var init_messages = __esm({
           bot: {
             askName: "\u{1F44B} \u0928\u092E\u0938\u094D\u0915\u093E\u0930! {{storeName}} \u092E\u0927\u094D\u092F\u0947 \u0906\u092A\u0932\u0947 \u0938\u0939\u0930\u094D\u0937 \u0938\u094D\u0935\u093E\u0917\u0924 \u0906\u0939\u0947.{{hoursNotice}}\n\n\u0938\u0941\u0930\u0941\u0935\u093E\u0924 \u0915\u0930\u0923\u094D\u092F\u093E\u092A\u0942\u0930\u094D\u0935\u0940, *\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u0947 \u0928\u093E\u0935 \u0938\u093E\u0902\u0917\u0942 \u0936\u0915\u093E\u0932 \u0915\u093E?*",
             retryName: "\u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E \u0911\u0930\u094D\u0921\u0930\u092E\u0927\u094D\u092F\u0947 \u092E\u0926\u0924 \u0915\u0930\u0942 \u0936\u0915\u0942 \u092F\u093E\u0938\u093E\u0920\u0940 \u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u0947 \u0928\u093E\u0935 \u0938\u093E\u0902\u0917\u0942 \u0936\u0915\u093E\u0932 \u0915\u093E?",
-            welcomeMenu: "\u{1F44B} \u0928\u092E\u0938\u094D\u0915\u093E\u0930 *{{name}}*! {{storeName}} \u092E\u0927\u094D\u092F\u0947 \u0906\u092A\u0932\u0947 \u092A\u0941\u0928\u094D\u0939\u093E \u0938\u094D\u0935\u093E\u0917\u0924 \u0906\u0939\u0947.{{hoursNotice}}\n\n*\u0938\u094B\u092A\u094D\u092F\u093E \u092A\u093E\u092F\u0931\u094D\u092F\u093E\u0902\u092E\u0927\u094D\u092F\u0947 \u0906\u092A\u0932\u0940 \u0911\u0930\u094D\u0921\u0930 \u0926\u094D\u092F\u093E:*\n\n*\u092A\u093E\u092F\u0930\u0940 1:* \u0911\u0930\u094D\u0921\u0930\u091A\u093E \u092A\u094D\u0930\u0915\u093E\u0930 \u0928\u093F\u0935\u0921\u093E \u2014\n  1\uFE0F\u20E3 \u090F\u0915 \u0914\u0937\u0927 (Single Medicine)\n  2\uFE0F\u20E3 \u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0914\u0937\u0927\u0947 (Multiple Medicines)\n  3\uFE0F\u20E3 \u0930\u093F\u092B\u093F\u0932 \u2014 \u092E\u093E\u091D\u0940 \u0928\u0947\u0939\u092E\u0940\u091A\u0940 \u0928\u093F\u092F\u092E\u093F\u0924 \u0914\u0937\u0927\u0947 \u092A\u0941\u0928\u094D\u0939\u093E \u092E\u093E\u0917\u0935\u093E\n\n*\u092A\u093E\u092F\u0930\u0940 2:* \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u092A\u0930\u094D\u092F\u093E\u092F \u0906\u0923\u093F MRP \u0926\u093E\u0916\u0935\u0942 \u{1F4B0}\n*\u092A\u093E\u092F\u0930\u0940 3:* \u0906\u092A\u0923 \u0939\u094B\u0915\u093E\u0930 \u0926\u093F\u0932\u093E \u0915\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0939\u094B\u0908\u0932 \u{1F680}\n\n{{hoursLine}}\n\n*\u0938\u0941\u0930\u0941\u0935\u093E\u0924 \u0915\u0930\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 1, 2 \u0915\u093F\u0902\u0935\u093E 3 \u092A\u093E\u0920\u0935\u093E.*",
+            welcomeMenu: "\u{1F44B} \u0928\u092E\u0938\u094D\u0915\u093E\u0930 *{{name}}*! {{storeName}} \u092E\u0927\u094D\u092F\u0947 \u0906\u092A\u0932\u0947 \u0938\u094D\u0935\u093E\u0917\u0924 \u0906\u0939\u0947\u0964{{hoursNotice}}\n\n*\u0938\u094B\u092A\u094D\u092F\u093E \u092A\u093E\u092F\u0931\u094D\u092F\u093E\u0902\u092E\u0927\u094D\u092F\u0947 \u0906\u092A\u0932\u0940 \u0911\u0930\u094D\u0921\u0930 \u0926\u094D\u092F\u093E:*\n\n*\u092A\u093E\u092F\u0930\u0940 1:* \u092A\u0930\u094D\u092F\u093E\u092F \u0928\u093F\u0935\u0921\u093E \u2014\n  1\uFE0F\u20E3 \u090F\u0915 \u0914\u0937\u0927 (Single Medicine)\n  2\uFE0F\u20E3 \u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0914\u0937\u0927\u0947 (\u0915\u093F\u0902\u0935\u093E \u092B\u094B\u091F\u094B \u{1F4F8})\n  3\uFE0F\u20E3 \u0930\u093F\u092B\u093F\u0932 \u2014 \u092E\u093E\u091D\u0940 \u0928\u0947\u0939\u092E\u0940\u091A\u0940 \u0928\u093F\u092F\u092E\u093F\u0924 \u0914\u0937\u0927\u0947 \u092A\u0941\u0928\u094D\u0939\u093E \u092E\u093E\u0917\u0935\u093E\n  4\uFE0F\u20E3 \u0926\u0941\u0915\u093E\u0928\u093E\u091A\u0940 \u0935\u0947\u0933, \u092A\u0924\u094D\u0924\u093E \u0906\u0923\u093F \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F\u0936\u0940 \u092C\u094B\u0932\u093E \u{1F4DE}\n\n*\u092A\u093E\u092F\u0930\u0940 2:* \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u092A\u0930\u094D\u092F\u093E\u092F \u0906\u0923\u093F MRP \u0926\u093E\u0916\u0935\u0942 \u{1F4B0}\n*\u092A\u093E\u092F\u0930\u0940 3:* \u0906\u092A\u0923 \u0939\u094B\u0915\u093E\u0930 \u0926\u093F\u0932\u093E \u0915\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0939\u094B\u0908\u0932 \u{1F680}\n\n{{hoursLine}}\n\n*\u0938\u0941\u0930\u0941\u0935\u093E\u0924 \u0915\u0930\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 1, 2, 3 \u0915\u093F\u0902\u0935\u093E 4 \u092A\u093E\u0920\u0935\u093E (\u0915\u093F\u0902\u0935\u093E \u0925\u0947\u091F \u0914\u0937\u0927\u093E\u091A\u0947 \u0928\u093E\u0935 \u0932\u093F\u0939\u093E).*",
             orderTypeSinglePrompt: "\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0939\u0935\u094D\u092F\u093E \u0905\u0938\u0932\u0947\u0932\u094D\u092F\u093E \u0914\u0937\u0927\u093E\u091A\u0947 \u0928\u093E\u0935 \u092A\u093E\u0920\u0935\u093E (\u0909\u0926\u093E., *Dolo 650*, *Telma 40*).",
             orderTypeMultiPrompt: "\u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0939\u0935\u094D\u092F\u093E \u0905\u0938\u0932\u0947\u0932\u094D\u092F\u093E \u0914\u0937\u0927\u093E\u0902\u091A\u0940 \u092F\u093E\u0926\u0940 \u092A\u093E\u0920\u0935\u093E, \u092A\u094D\u0930\u0924\u094D\u092F\u0947\u0915 \u0914\u0937\u0927 \u0928\u0935\u0940\u0928 \u0913\u0933\u0940\u0935\u0930 (\u0915\u093F\u0902\u0935\u093E \u0906\u092A\u0932\u094D\u092F\u093E \u0921\u0949\u0915\u094D\u091F\u0930\u093E\u0902\u091A\u094D\u092F\u093E \u091A\u093F\u0920\u094D\u0920\u0940\u091A\u093E \u0938\u094D\u092A\u0937\u094D\u091F \u092B\u094B\u091F\u094B \u092A\u093E\u0920\u0935\u093E \u{1F4F8}).",
             askQuantity: "*{{medicine}}* \u091A\u0947 \u0915\u093F\u0924\u0940 {{unit}} \u0939\u0935\u0947 \u0906\u0939\u0947\u0924? (\u0909\u0926\u093E. 1, 2, 5)",
@@ -12252,7 +12252,7 @@ var init_getMessage = __esm({
     BOT_FALLBACK_DEFAULTS = {
       "whatsapp.bot.askName": "\u{1F44B} Hello! Welcome to {{storeName}}.{{hoursNotice}}\n\nBefore we begin, *may I please know your name?*",
       "whatsapp.bot.retryName": "Could you please tell us your name so we can assist you with your order?",
-      "whatsapp.bot.welcomeMenu": "\u{1F44B} Hello *{{name}}*! Welcome to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose your order type \u2014\n  1\uFE0F\u20E3 Single Medicine\n  2\uFE0F\u20E3 Multiple Medicines\n  3\uFE0F\u20E3 Refill \u2014 Repeat regular prescription\n\n*Reply 1, 2, or 3 to begin.*",
+      "whatsapp.bot.welcomeMenu": "\u{1F44B} Hello *{{name}}*! Welcome to {{storeName}}.{{hoursNotice}}\n\n*Place your order in simple steps:*\n\n*Step 1:* Choose an option \u2014\n  1\uFE0F\u20E3 Single Medicine\n  2\uFE0F\u20E3 Multiple Medicines (or send prescription photo \u{1F4F8})\n  3\uFE0F\u20E3 Refill \u2014 Repeat regular prescription\n  4\uFE0F\u20E3 Store Hours, Location & Call Pharmacist \u{1F4DE}\n\n*Step 2:* We show you options & MRP \u{1F4B0}\n*Step 3:* You confirm & we book \u{1F680}\n\n{{hoursLine}}\n\n*Reply 1, 2, 3, or 4 to begin (or type medicine name directly).*",
       "whatsapp.bot.orderTypeSinglePrompt": "Please send the name of the medicine you need (e.g., *Dolo 650*, *Telma 40*).",
       "whatsapp.bot.orderTypeMultiPrompt": "Please send the list of medicines you need, each on a new line (or send a clear photo of your prescription \u{1F4F8}).",
       "whatsapp.bot.askQuantity": "How many units of *{{medicine}}* do you need? (e.g. 1, 2, 5)",
@@ -35183,58 +35183,269 @@ _The bot sent this number several menus with no reply to any option, so it has s
   }
   return false;
 }
-async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage) {
+async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage, chatLang = "en", chatId) {
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
   try {
-    const { getStoreMedicalName: getStoreMedicalName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const { getStoreMedicalName: getStoreMedicalName2, getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreAddress: getStoreAddress2, getStorePhone: getStorePhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
     const storeName = await getStoreMedicalName2(db2) || "AI Pharmacy";
     const trimmedOriginal = (originalMessage || "").trim();
-    const echoLine = trimmedOriginal ? `We received your message: "${trimmedOriginal.slice(0, 200)}"
-
-` : "";
-    const guidanceMsg = echoLine + `Namaste! Welcome to *${storeName}* \u{1F3E5}
-
-*Place your order in simple steps:*
-
-*Step 1:* Choose your order type \u2014
-  1\uFE0F\u20E3 Single Medicine
-  2\uFE0F\u20E3 Multiple Medicines
-  3\uFE0F\u20E3 Refill \u2014 Repeat my regular prescription
-
-*Step 2:* We show you options & MRP \u{1F4B0}
-*Step 3:* You confirm & we book \u{1F680}
-
-*Reply 1, 2, or 3 to begin.*`;
+    const lower = trimmedOriginal.toLowerCase();
+    const targetRecipient = chatId || phone;
     await ensureClarificationsTable(db2);
     const recentPrompt = await db2.get(
       `SELECT 1 FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
-         AND created_at > datetime('now', '-20 minutes') 
+         AND created_at > datetime('now', '-15 seconds') 
        LIMIT 1`,
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
     );
     if (recentPrompt) {
-      console.log(`[Intent Service] Suppressed duplicate guidance prompt for ${cleanDigits} (within 20m burst window).`);
+      console.log(`[Intent Service] Suppressed rapid guidance prompt for ${cleanDigits} (within 15s burst window).`);
       return;
     }
-    if (!await allowBotPrompt(db2, cleanDigits, phone)) return;
+    if (!await allowBotPrompt(db2, cleanDigits, targetRecipient)) return;
+    const isTimingQuery = /\b(time|timing|open|close|hours|kab|khula|band|baje|schedule|available|वेळ|केव्हा|उघडे|कधी)\b/i.test(lower);
+    const isAddressQuery = /\b(address|location|where|kahan|shop|store|map|area|near|galli|road|street|पत्ता|कुठे|ठिकाण)\b/i.test(lower);
+    const isCallRequest = /\b(call|phone|contact|talk|baat|karo|speak|pharmacist|human|operator|direct|फोन|कॉल|बोला|संपर्क)\b/i.test(lower);
+    if (isTimingQuery && !isAddressQuery && !isCallRequest) {
+      const sched2 = await getPharmacyOperatingSchedule2(db2);
+      let timingMsg = "";
+      if (chatLang === "mr") {
+        timingMsg = `\u{1F550} *${storeName} \u2014 \u0926\u0941\u0915\u093E\u0928\u093E\u091A\u0940 \u0935\u0947\u0933*
+
+\u23F0 \u0909\u0918\u0921\u0947: *${sched2.openTime}* \u0924\u0947 *${sched2.closeTime}*
+` + (sched2.weeklyOff ? `\u{1F5D3}\uFE0F \u0938\u093E\u092A\u094D\u0924\u093E\u0939\u093F\u0915 \u0938\u0941\u091F\u094D\u091F\u0940: *${sched2.weeklyOff}*
+` : "") + `
+\u0914\u0937\u0927 \u092E\u093E\u0917\u0935\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 1 (\u090F\u0915 \u0914\u0937\u0927), 2 (\u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0915\u093F\u0902\u0935\u093E \u092B\u094B\u091F\u094B \u{1F4F8}), \u0905\u0925\u0935\u093E 3 (\u0930\u093F\u092B\u093F\u0932) \u092A\u093E\u0920\u0935\u093E.`;
+      } else if (chatLang === "hi") {
+        timingMsg = `\u{1F550} *${storeName} \u2014 \u0938\u094D\u091F\u094B\u0930 \u0915\u093E \u0938\u092E\u092F*
+
+\u23F0 \u0916\u0941\u0932\u093E: *${sched2.openTime}* \u0938\u0947 *${sched2.closeTime}*
+` + (sched2.weeklyOff ? `\u{1F5D3}\uFE0F \u0938\u093E\u092A\u094D\u0924\u093E\u0939\u093F\u0915 \u0905\u0935\u0915\u093E\u0936: *${sched2.weeklyOff}*
+` : "") + `
+\u0926\u0935\u093E \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F 1 (\u090F\u0915 \u0926\u0935\u093E), 2 (\u0915\u0908 \u0926\u0935\u093E\u090F\u0902 \u092F\u093E \u092A\u0930\u094D\u091A\u093E \u{1F4F8}), \u0905\u0925\u0935\u093E 3 (\u0930\u093F\u092B\u093F\u0932) \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902\u0964`;
+      } else {
+        timingMsg = `\u{1F550} *${storeName} \u2014 Store Hours*
+
+\u23F0 Open: *${sched2.openTime}* \u2013 *${sched2.closeTime}*
+` + (sched2.weeklyOff ? `\u{1F5D3}\uFE0F Closed on: *${sched2.weeklyOff}*
+` : "") + `
+To place an order, reply *1* (single), *2* (multiple or photo \u{1F4F8}), or *3* (refill).`;
+      }
+      await db2.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_order_type',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           unrecognized_count = 0,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, customerName || "Customer", chatLang]
+      );
+      const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker3.enqueue(targetRecipient, timingMsg, "customer_medicine_clarification", customerName || "Customer");
+      return;
+    }
+    if (isAddressQuery && !isTimingQuery && !isCallRequest) {
+      const addr = await getStoreAddress2(db2);
+      let addrMsg = "";
+      if (chatLang === "mr") {
+        addrMsg = `\u{1F4CD} *${storeName} \u2014 \u092A\u0924\u094D\u0924\u093E*
+
+` + (addr ? `${addr}
+
+` : "") + `\u0914\u0937\u0927 \u092E\u093E\u0917\u0935\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 1 (\u090F\u0915 \u0914\u0937\u0927), 2 (\u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0915\u093F\u0902\u0935\u093E \u092B\u094B\u091F\u094B \u{1F4F8}), \u0905\u0925\u0935\u093E 3 (\u0930\u093F\u092B\u093F\u0932) \u092A\u093E\u0920\u0935\u093E.`;
+      } else if (chatLang === "hi") {
+        addrMsg = `\u{1F4CD} *${storeName} \u2014 \u092A\u0924\u093E*
+
+` + (addr ? `${addr}
+
+` : "") + `\u0926\u0935\u093E \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F 1 (\u090F\u0915 \u0926\u0935\u093E), 2 (\u0915\u0908 \u0926\u0935\u093E\u090F\u0902 \u092F\u093E \u092A\u0930\u094D\u091A\u093E \u{1F4F8}), \u0905\u0925\u0935\u093E 3 (\u0930\u093F\u092B\u093F\u0932) \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902\u0964`;
+      } else {
+        addrMsg = `\u{1F4CD} *${storeName} \u2014 Address & Location*
+
+` + (addr ? `${addr}
+
+` : "") + `To place an order, reply *1* (single), *2* (multiple or photo \u{1F4F8}), or *3* (refill).`;
+      }
+      await db2.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_order_type',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           unrecognized_count = 0,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, customerName || "Customer", chatLang]
+      );
+      const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker3.enqueue(targetRecipient, addrMsg, "customer_medicine_clarification", customerName || "Customer");
+      return;
+    }
+    if (isCallRequest) {
+      const storePhone = await getStorePhone2(db2);
+      const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+      if (adminWhatsapp) {
+        const alertMsg = `\u{1F4DE} *Callback Request*
+
+\u{1F464} Customer: ${customerName || "Unknown"} (+91 ${cleanDigits})
+\u{1F4AC} Message: "${trimmedOriginal}"
+
+_Customer requested to speak with a pharmacist._`;
+        const { whatsappQueueWorker: whatsappQueueWorker4 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker4.enqueue(adminWhatsapp, alertMsg, "admin_escalation", "Owner");
+      }
+      let callMsg = "";
+      if (chatLang === "mr") {
+        callMsg = `\u{1F4DE} *${storeName} \u2014 \u0938\u0902\u092A\u0930\u094D\u0915*
+
+` + (storePhone ? `\u0906\u092A\u0923 \u0925\u0947\u091F \u0906\u092E\u091A\u094D\u092F\u093E \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F\u0936\u0940 \u0938\u0902\u092A\u0930\u094D\u0915 \u0915\u0930\u0942 \u0936\u0915\u0924\u093E:
+\u{1F4F1} *${storePhone}*
+
+` : "") + `\u0906\u092E\u094D\u0939\u0940 \u0906\u092E\u091A\u094D\u092F\u093E \u091F\u0940\u092E\u0932\u093E \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0924\u094D\u0935\u0930\u093F\u0924 \u0938\u0902\u092A\u0930\u094D\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 \u0915\u0933\u0935\u0932\u0947 \u0906\u0939\u0947 \u{1F64F}
+
+\u0914\u0937\u0927 \u092E\u093E\u0917\u0935\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 1 (\u090F\u0915 \u0914\u0937\u0927), 2 (\u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0915\u093F\u0902\u0935\u093E \u092B\u094B\u091F\u094B \u{1F4F8}), \u0905\u0925\u0935\u093E 3 (\u0930\u093F\u092B\u093F\u0932) \u092A\u093E\u0920\u0935\u093E.`;
+      } else if (chatLang === "hi") {
+        callMsg = `\u{1F4DE} *${storeName} \u2014 \u0938\u0902\u092A\u0930\u094D\u0915*
+
+` + (storePhone ? `\u0906\u092A \u0938\u0940\u0927\u0947 \u0939\u092E\u093E\u0930\u0947 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F \u0938\u0947 \u0938\u0902\u092A\u0930\u094D\u0915 \u0915\u0930 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902:
+\u{1F4F1} *${storePhone}*
+
+` : "") + `\u0939\u092E\u0928\u0947 \u0905\u092A\u0928\u0940 \u091F\u0940\u092E \u0915\u094B \u0906\u092A\u0915\u094B \u0924\u0941\u0930\u0902\u0924 \u0915\u0949\u0932 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F \u0938\u0942\u091A\u093F\u0924 \u0915\u0930 \u0926\u093F\u092F\u093E \u0939\u0948 \u{1F64F}
+
+\u0926\u0935\u093E \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F 1 (\u090F\u0915 \u0926\u0935\u093E), 2 (\u0915\u0908 \u0926\u0935\u093E\u090F\u0902 \u092F\u093E \u092A\u0930\u094D\u091A\u093E \u{1F4F8}), \u0905\u0925\u0935\u093E 3 (\u0930\u093F\u092B\u093F\u0932) \u0932\u093F\u0916\u0915\u0930 \u092D\u0947\u091C\u0947\u0902\u0964`;
+      } else {
+        callMsg = `\u{1F4DE} *${storeName} \u2014 Contact Pharmacist*
+
+` + (storePhone ? `You can reach our pharmacist directly at:
+\u{1F4F1} *${storePhone}*
+
+` : "") + `We've also notified our counter team to call you shortly \u{1F64F}
+
+To place an order, reply *1* (single), *2* (multiple or photo \u{1F4F8}), or *3* (refill).`;
+      }
+      await db2.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+         VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_order_type',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           unrecognized_count = 0,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, customerName || "Customer", chatLang]
+      );
+      const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker3.enqueue(targetRecipient, callMsg, "customer_medicine_clarification", customerName || "Customer");
+      return;
+    }
+    const hasKnownName = isKnownCustomerName(customerName);
+    if (!hasKnownName) {
+      const hoursNotice2 = await getStoreHoursNotice(db2);
+      const askNameText = getMessage(chatLang, "whatsapp.bot.askName", {
+        storeName,
+        hoursNotice: hoursNotice2
+      });
+      await db2.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, language, created_at)
+         VALUES (?, '', ?, 'awaiting_customer_name', ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(phone) DO UPDATE SET
+           step = 'awaiting_customer_name',
+           original_query = excluded.original_query,
+           language = excluded.language,
+           created_at = CURRENT_TIMESTAMP`,
+        [cleanDigits, trimmedOriginal, chatLang]
+      );
+      const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker3.enqueue(targetRecipient, askNameText, "customer_greeting", "Customer");
+      console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name in ${chatLang} from random message.`);
+      return;
+    }
+    const existingSession = await db2.get(
+      `SELECT step, unrecognized_count, created_at FROM wa_pending_clarifications 
+       WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?)
+         AND created_at > datetime('now', '-6 hours')
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+    );
+    if (existingSession && existingSession.step === "awaiting_order_type") {
+      const strike = Number(existingSession.unrecognized_count || 0) + 1;
+      if (strike < 2) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications 
+           SET unrecognized_count = ?, original_query = ?, created_at = CURRENT_TIMESTAMP 
+           WHERE phone LIKE ? OR phone LIKE ? OR phone = ?`,
+          [strike, trimmedOriginal, `%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+        );
+        let shortPrompt = "";
+        const shortName = customerName.split(" ")[0] || "";
+        if (chatLang === "mr") {
+          shortPrompt = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${shortName}! \u{1F60A} \u0914\u0937\u0927 \u092E\u093E\u0917\u0935\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940 *1* (\u090F\u0915 \u0914\u0937\u0927), *2* (\u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924), *3* (\u0930\u093F\u092B\u093F\u0932), \u0915\u093F\u0902\u0935\u093E *4* (\u092E\u0926\u0924) \u092A\u093E\u0920\u0935\u093E, \u0915\u093F\u0902\u0935\u093E \u0925\u0947\u091F \u0914\u0937\u0927\u093E\u091A\u0947 \u0928\u093E\u0935 \u0932\u093F\u0939\u093E.`;
+        } else if (chatLang === "hi") {
+          shortPrompt = `\u0928\u092E\u0938\u094D\u0924\u0947 ${shortName}! \u{1F60A} \u0926\u0935\u093E \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F *1* (\u090F\u0915 \u0926\u0935\u093E), *2* (\u0915\u0908 \u0926\u0935\u093E\u090F\u0902), *3* (\u0930\u093F\u092B\u093F\u0932), \u0905\u0925\u0935\u093E *4* (\u092E\u0926\u0926) \u0932\u093F\u0916\u0947\u0902, \u092F\u093E \u0938\u0940\u0927\u0947 \u0926\u0935\u093E \u0915\u093E \u0928\u093E\u092E \u092D\u0947\u091C\u0947\u0902\u0964`;
+        } else {
+          shortPrompt = `Hi ${shortName}! \u{1F60A} Would you like to order a medicine? Reply *1* (single), *2* (multiple), *3* (refill), or *4* (help), or type the medicine name directly.`;
+        }
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(targetRecipient, shortPrompt, "customer_medicine_clarification", customerName);
+        console.log(`[Intent Service] Sent compact 1-line prompt (strike 1) to ${cleanDigits}. Avoided full menu spam.`);
+        return;
+      } else {
+        await db2.run(
+          `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ? OR phone = ?`,
+          [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+        );
+        const silenceMsg = chatLang === "mr" ? `\u0906\u092A\u0932\u093E \u0938\u0902\u0926\u0947\u0936 \u0906\u092E\u091A\u094D\u092F\u093E \u0915\u093E\u0909\u0902\u091F\u0930 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F\u0915\u0921\u0947 \u092A\u093E\u0920\u0935\u0932\u093E \u0906\u0939\u0947. \u0924\u0947 \u0932\u0935\u0915\u0930\u091A \u0906\u092A\u0932\u094D\u092F\u093E\u0936\u0940 \u092F\u0947\u0925\u0947 \u0938\u0902\u092A\u0930\u094D\u0915 \u0915\u0930\u0924\u0940\u0932 \u{1F64F}` : chatLang === "hi" ? `\u0906\u092A\u0915\u093E \u0938\u0902\u0926\u0947\u0936 \u0939\u092E\u093E\u0930\u0947 \u0915\u093E\u0909\u0902\u091F\u0930 \u092B\u093E\u0930\u094D\u092E\u093E\u0938\u093F\u0938\u094D\u091F \u0915\u094B \u092D\u0947\u091C \u0926\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0935\u0947 \u091C\u0932\u094D\u0926 \u0939\u0940 \u0906\u092A\u0938\u0947 \u092F\u0939\u093E\u0901 \u0938\u0902\u092A\u0930\u094D\u0915 \u0915\u0930\u0947\u0902\u0917\u0947 \u{1F64F}` : `I've shared your message with our counter pharmacist. They'll assist you right here in a moment \u{1F64F}`;
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(targetRecipient, silenceMsg, "customer_medicine_clarification", customerName);
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+        if (adminWhatsapp) {
+          const alertMsg = `\u26A0\uFE0F *Bot Escalation \u2014 Customer Assistance Needed*
+
+\u{1F464} Customer: ${customerName} (+91 ${cleanDigits})
+\u{1F4AC} Last message: "${trimmedOriginal.slice(0, 120)}"
+
+_Customer sent multiple unparsed messages. Bot is now silenced for this conversation so you can assist directly._`;
+          await whatsappQueueWorker3.enqueue(adminWhatsapp, alertMsg, "admin_escalation", "Owner");
+        }
+        console.log(`[Intent Service] Escalated to pharmacist and silenced bot for ${cleanDigits} after 2 unparsed messages.`);
+        return;
+      }
+    }
+    const sched = await getPharmacyOperatingSchedule2(db2);
+    const hoursLine = `\u{1F550} Open: ${sched.openTime} \u2013 ${sched.closeTime}${sched.weeklyOff ? ` | Off: ${sched.weeklyOff}` : ""}`;
+    const hoursNotice = await getStoreHoursNotice(db2);
+    const receivedPrefix = trimmedOriginal ? chatLang === "mr" ? `\u092E\u0932\u093E \u0906\u092A\u0932\u093E \u0938\u0902\u0926\u0947\u0936 \u092E\u093F\u0933\u093E\u0932\u093E: "${trimmedOriginal.slice(0, 80)}"
+
+` : chatLang === "hi" ? `\u092E\u0941\u091D\u0947 \u0906\u092A\u0915\u093E \u0938\u0902\u0926\u0947\u0936 \u092E\u093F\u0932\u093E: "${trimmedOriginal.slice(0, 80)}"
+
+` : `I received: "${trimmedOriginal.slice(0, 80)}"
+
+` : "";
+    const greetingText = receivedPrefix + getMessage(chatLang, "whatsapp.bot.welcomeMenu", {
+      name: customerName,
+      storeName,
+      hoursNotice,
+      hoursLine
+    }) + languageFooter(chatLang);
     await db2.run(
-      `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
-       VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)
+      `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, language, unrecognized_count, created_at)
+       VALUES (?, '', ?, 'awaiting_order_type', ?, ?, 0, CURRENT_TIMESTAMP)
        ON CONFLICT(phone) DO UPDATE SET
-         step = 'awaiting_medicine',
+         step = 'awaiting_order_type',
+         original_query = excluded.original_query,
+         customer_name = excluded.customer_name,
+         language = excluded.language,
+         unrecognized_count = 0,
          created_at = CURRENT_TIMESTAMP`,
-      [cleanDigits, trimmedOriginal, customerName || "Customer"]
+      [cleanDigits, trimmedOriginal, customerName, chatLang]
     );
     const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    await whatsappQueueWorker2.enqueue(
-      phone,
-      guidanceMsg,
-      "customer_guidance_prompt",
-      customerName || "Customer"
-    );
-    console.log(`[Intent Service] Sent medicine ordering guidance prompt to ${cleanDigits}. Session initialized to awaiting_medicine.`);
+    await whatsappQueueWorker2.enqueue(targetRecipient, greetingText, "customer_guidance_prompt", customerName);
+    console.log(`[Intent Service] Sent Quick-Start onboarding menu to ${customerName} (${cleanDigits}). Advanced to awaiting_order_type.`);
   } catch (err) {
     console.warn("[Intent Service] Failed to send guidance prompt:", err);
   }
@@ -35926,7 +36137,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId,
     }
     if (!cleanDigits) return false;
     const pending2 = await db2.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp, language
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp, language, unrecognized_count
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
@@ -36618,7 +36829,8 @@ Would you like us to check availability & book this for you?
       const isOne = /^1$/.test(picked);
       const isTwo = /^2$/.test(picked);
       const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
-      if (isOne || isTwo || isThree) {
+      const isFour = /^(4|info|hours|time|address|location|call|help|pharmacist|timing|पत्ता|वेळ|कॉल|मदत)$/i.test(picked);
+      if (isOne || isTwo || isThree || isFour) {
         const { resetBotStrikes: resetBotStrikes2 } = await Promise.resolve().then(() => (init_waBotSilence(), waBotSilence_exports));
         await resetBotStrikes2(db2, String(pending2.phone || cleanDigits));
       }
@@ -36725,6 +36937,46 @@ Would you like to:
         }
         return true;
       }
+      if (isFour) {
+        const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreAddress: getStoreAddress2, getStoreMedicalName: getStoreMedicalName2, getStorePhone: getStorePhone2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+        const sched = await getPharmacyOperatingSchedule2(db2);
+        const storeName = await getStoreMedicalName2(db2) || "AI Pharmacy";
+        const addr = await getStoreAddress2(db2);
+        const storePhone = await getStorePhone2(db2);
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', unrecognized_count = 0, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending2.phone]
+        );
+        let infoMsg = "";
+        if (stepLang === "mr") {
+          infoMsg = `\u{1F3E5} *${storeName} \u2014 \u092E\u093E\u0939\u093F\u0924\u0940 \u0935 \u092E\u0926\u0924*
+
+\u23F0 *\u0935\u0947\u0933:* ${sched.openTime} \u0924\u0947 ${sched.closeTime}${sched.weeklyOff ? ` (\u0938\u093E\u092A\u094D\u0924\u093E\u0939\u093F\u0915 \u0938\u0941\u091F\u094D\u091F\u0940: ${sched.weeklyOff})` : ""}
+` + (addr ? `\u{1F4CD} *\u092A\u0924\u094D\u0924\u093E:* ${addr}
+` : "") + (storePhone ? `\u{1F4DE} *\u0925\u0947\u091F \u092B\u094B\u0928:* ${storePhone}
+
+` : "\n") + `*\u0914\u0937\u0927 \u092E\u093E\u0917\u0935\u0923\u094D\u092F\u093E\u0938\u093E\u0920\u0940:* reply *1* (\u090F\u0915 \u0914\u0937\u0927), *2* (\u090F\u0915\u093E\u092A\u0947\u0915\u094D\u0937\u093E \u091C\u093E\u0938\u094D\u0924 \u0915\u093F\u0902\u0935\u093E \u092B\u094B\u091F\u094B \u{1F4F8}), \u0915\u093F\u0902\u0935\u093E *3* (\u0930\u093F\u092B\u093F\u0932).`;
+        } else if (stepLang === "hi") {
+          infoMsg = `\u{1F3E5} *${storeName} \u2014 \u091C\u093E\u0928\u0915\u093E\u0930\u0940 \u090F\u0935\u0902 \u0938\u0939\u093E\u092F\u0924\u093E*
+
+\u23F0 *\u0938\u092E\u092F:* ${sched.openTime} \u0938\u0947 ${sched.closeTime}${sched.weeklyOff ? ` (\u0938\u093E\u092A\u094D\u0924\u093E\u0939\u093F\u0915 \u0905\u0935\u0915\u093E\u0936: ${sched.weeklyOff})` : ""}
+` + (addr ? `\u{1F4CD} *\u092A\u0924\u093E:* ${addr}
+` : "") + (storePhone ? `\u{1F4DE} *\u0938\u0940\u0927\u093E \u092B\u094B\u0928:* ${storePhone}
+
+` : "\n") + `*\u0926\u0935\u093E \u0911\u0930\u094D\u0921\u0930 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F:* reply *1* (\u090F\u0915 \u0926\u0935\u093E), *2* (\u0915\u0908 \u0926\u0935\u093E\u090F\u0902 \u092F\u093E \u092A\u0930\u094D\u091A\u093E \u{1F4F8}), \u0905\u0925\u0935\u093E *3* (\u0930\u093F\u092B\u093F\u0932).`;
+        } else {
+          infoMsg = `\u{1F3E5} *${storeName} \u2014 Store Info & Help*
+
+\u23F0 *Hours:* ${sched.openTime} \u2013 ${sched.closeTime}${sched.weeklyOff ? ` (Closed: ${sched.weeklyOff})` : ""}
+` + (addr ? `\u{1F4CD} *Address:* ${addr}
+` : "") + (storePhone ? `\u{1F4DE} *Pharmacist Phone:* ${storePhone}
+
+` : "\n") + `*To place an order:* reply *1* (single medicine), *2* (multiple medicines or prescription photo \u{1F4F8}), or *3* (refill).`;
+        }
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, infoMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
+        return true;
+      }
       if (isAffirmative) {
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         let refillRowsForYes = [];
@@ -36765,9 +37017,25 @@ Example: *Dolo 650 - 2 strips*`;
         return true;
       }
       const directMedCandidates = extractMedicineCandidates(picked);
-      const hasMedicineIntent = directMedCandidates.length > 0 && isPlausibleMedicineName(directMedCandidates[0]?.medicineName || "");
-      if (hasMedicineIntent) {
-        const detectedName = directMedCandidates[0].medicineName;
+      let isVerifiedMedicineBypass = false;
+      let detectedName = "";
+      if (directMedCandidates.length > 0 && isPlausibleMedicineName(directMedCandidates[0]?.medicineName || "")) {
+        detectedName = directMedCandidates[0].medicineName;
+        const hasDosageOrForm = /\d+\s*(mg|ml|gm|g|mcg|iu|%)\b/i.test(detectedName) || /\b(tab|tabs|tablet|tablets|cap|caps|capsule|capsules|syp|syrup|inj|injection|drops|cream|gel|suspension)\b/i.test(detectedName);
+        if (hasDosageOrForm) {
+          isVerifiedMedicineBypass = true;
+        } else {
+          const brandTokens = detectedName.replace(/[^a-zA-Z0-9\s]/g, " ").trim().split(/\s+/).filter((w) => w.length >= 3);
+          for (const tok of brandTokens) {
+            const hit = await db2.get(`SELECT 1 FROM medicines WHERE name LIKE ? LIMIT 1`, [`${tok}%`]);
+            if (hit) {
+              isVerifiedMedicineBypass = true;
+              break;
+            }
+          }
+        }
+      }
+      if (isVerifiedMedicineBypass && detectedName) {
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         const searchingMsg = `\u{1F50D} Searching for *${detectedName}* \u2014 one moment! \u{1F48A}`;
         await whatsappQueueWorker2.enqueue(phone, searchingMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
@@ -36787,7 +37055,7 @@ Example: *Dolo 650 - 2 strips*`;
           `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending2.phone]
         );
-        const gentleMsg = activeCustomerName ? `Hi ${activeCustomerName.split(" ")[0]}! \u{1F60A} Would you like to *order a medicine* or *repeat your last prescription*? Just type the medicine name or reply *1* (single) / *3* (refill).` : `Hi! \u{1F60A} Would you like to order a medicine? Just type the medicine name or reply *1* (single) or *3* (refill / repeat prescription).`;
+        const gentleMsg = activeCustomerName ? `Hi ${activeCustomerName.split(" ")[0]}! \u{1F60A} Would you like to *order a medicine* or *repeat your last prescription*? Just type the medicine name or reply *1* (single), *2* (multiple), *3* (refill), or *4* (store info & pharmacist).` : `Hi! \u{1F60A} Would you like to order a medicine? Just type the medicine name or reply *1* (single), *2* (multiple), *3* (refill), or *4* (store info & pharmacist).`;
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, gentleMsg, "customer_medicine_clarification", activeCustomerName || customer?.name || "Customer");
       } else {
@@ -38970,14 +39238,29 @@ ${stepPrompt}${languageFooter(chatLang)}`;
       console.log(`[Intent Service] Natural sign-off ("${body.trim()}") from ${chatId}. Session marked as ended.`);
       return;
     }
+    const isEmojiOnly = /^[\p{Emoji}\p{Extended_Pictographic}\s.,!?:;~*\-_()]+$/u.test(body.trim()) && !/[a-zA-Z0-9\u0900-\u097F]/.test(body);
+    const isCasualFiller = /^(hmm+|hmmm+|acha+|accha+|achha+|k|kk|cool|sahi|understood|samjha|samajh gaya|got it|noted|nice|great|superb|waah|wah|mast|badhiya)$/i.test(cleanBodyForSignOff);
+    if (!hasMedia && (isEmojiOnly || isCasualFiller)) {
+      console.log(`[Intent Service] Silent reaction/filler ("${body.trim()}") from ${chatId}. Stored silently without automated bot reply.`);
+      return;
+    }
     const chatSessionRow = await db2.get(
       "SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?",
       [chatId]
     );
     const nowMs = Date.now();
+    const manualUntil = chatSessionRow?.manual_active_until;
+    let manualUntilMs = 0;
+    if (manualUntil) {
+      manualUntilMs = typeof manualUntil === "number" ? manualUntil : Number(manualUntil) || new Date(manualUntil).getTime() || 0;
+    }
     const isManualSession = Boolean(
-      chatSessionRow?.session_mode === "manual" && Number(chatSessionRow?.manual_active_until || 0) > nowMs
+      chatSessionRow?.session_mode === "manual" && manualUntilMs > nowMs
     );
+    if (isManualSession) {
+      console.log(`[Intent Service] Chat ${chatId} is in manual pharmacist takeover mode. Bot staying silent.`);
+      return;
+    }
     const customer = await lookupCustomer(phone, chatId);
     const isNewCustomer = !customer;
     const cleanDigitsForRefill = (phone || "").replace(/\D/g, "").slice(-10);
@@ -39664,7 +39947,7 @@ We received your photo, but the image is taking longer to process.
         if (!hasMedia && !isStale && phone && !isManualSession) {
           const cleanBody = body.trim();
           if (cleanBody.length >= 2) {
-            await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2, cleanBody);
+            await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2, cleanBody, chatLang, chatId);
           }
         }
         return;
@@ -39760,7 +40043,7 @@ Reply *YES* to confirm or *NO* to cancel.`;
     } else if (!hasMedia && !isStale && phone && !isManualSession) {
       const cleanBody = body.trim();
       if (cleanBody.length >= 2) {
-        await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2, cleanBody);
+        await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2, cleanBody, chatLang, chatId);
       }
     }
   } catch (err) {
@@ -59439,7 +59722,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.112";
+    APP_VERSION = "0.1.113";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
