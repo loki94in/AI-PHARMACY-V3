@@ -2869,7 +2869,7 @@ export default function PharmarackCart() {
       }
 
       // 1. PLACE OFFICIAL ORDERS DIRECTLY ON PHARMARACK & QUEUE CLEAN DISPATCH
-      messageSendEvent.triggerSendProgress('Pharmarack Batch Orders', `Placing official orders on Pharmarack for ${ordersPayload.length} stores...`, 15);
+      messageSendEvent.triggerSendProgress('Pharmarack Batch Orders', `Executing paced order placement (notifying delivery staff, processing cart, capturing Order IDs)...`, 20);
       const res = await api.placeOfficialPharmarackOrders({
         targetStoreNames: mapped.map(d => d.storeName),
         orders: ordersPayload,
@@ -2899,7 +2899,7 @@ export default function PharmarackCart() {
         window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
 
         toastEvent.trigger(
-          `⚡ Official orders placed on Pharmarack (${res.placedCount} placed)! Clean pickup list sent to delivery staff and distributor reminders scheduled.`,
+          `⚡ Official orders placed on Pharmarack (${res.placedCount} placed)! Delivery staff notified & confirmed Order IDs shared with distributors.`,
           'info'
         );
 
@@ -2927,11 +2927,12 @@ export default function PharmarackCart() {
     } catch (err: unknown) {
       const apiErr = err as LocalApiError;
       console.warn('Batch WhatsApp send error:', err);
-      toastEvent.trigger(apiErr?.message || 'Failed to place official orders automatically.', 'error');
+      toastEvent.trigger(apiErr?.message || 'Automated placement encountered an issue. Opening live cart window...', 'error');
 
       // Fallback: If automated order placement encounters an issue, provide direct access to authenticated cart window
       try {
         api.openOfficialPharmarackCartWindow().catch(() => {});
+        toastEvent.trigger('Opened live cart window for 1-click manual verification / completion.', 'info');
       } catch (tabErr) {
         console.warn('Tab fallback error:', tabErr);
       }

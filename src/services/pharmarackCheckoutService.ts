@@ -137,16 +137,19 @@ export class PharmarackCheckoutService {
       page.on('response', async (response: any) => {
         try {
           const url = response.url();
-          if (url.includes('/order/') || url.includes('/cart/') || url.includes('Order')) {
+          if (url.includes('/order') || url.includes('/cart') || url.includes('Order') || url.includes('checkout') || url.includes('Checkout') || url.includes('retailer')) {
             const status = response.status();
             if (status >= 200 && status < 300) {
               const text = await response.text().catch(() => '');
-              if (text && text.includes('OrderNo')) {
-                const matches = text.match(/"OrderNo"\s*:\s*"?([A-Za-z0-9_-]+)"?/g);
+              if (text) {
+                const matches = text.match(/"(?:OrderNo|orderNo|OrderId|orderId|po_number|poNumber|OrderNumber)"\s*:\s*"?([A-Za-z0-9_-]+)"?/gi);
                 if (matches) {
                   for (const m of matches) {
-                    const cleanNo = m.replace(/"OrderNo"\s*:\s*"?/, '').replace(/"?$/, '').trim();
-                    if (cleanNo) networkOrderNos.add(cleanNo);
+                    const cleanNo = m.replace(/"(?:OrderNo|orderNo|OrderId|orderId|po_number|poNumber|OrderNumber)"\s*:\s*"?/i, '').replace(/"?$/, '').trim();
+                    if (cleanNo && cleanNo !== '0' && cleanNo.toLowerCase() !== 'null' && cleanNo.length >= 3) {
+                      networkOrderNos.add(cleanNo);
+                      console.log('[PharmarackCheckout] Captured official Order ID from network response:', cleanNo);
+                    }
                   }
                 }
               }
@@ -156,7 +159,7 @@ export class PharmarackCheckoutService {
       });
 
       console.log('[PharmarackCheckout] Navigating to https://retailers.pharmarack.com/cart ...');
-      await page.goto('https://retailers.pharmarack.com/cart', { waitUntil: 'domcontentloaded', timeout: 25000 });
+      await page.goto('https://retailers.pharmarack.com/cart', { waitUntil: 'domcontentloaded', timeout: 35000 });
 
       const currentUrl = page.url();
       if (currentUrl.includes('/login') || currentUrl.includes('/auth') || currentUrl.includes('/signin')) {
@@ -172,14 +175,51 @@ export class PharmarackCheckoutService {
         };
       }
 
-      // Wait a moment for dynamic SPA content to hydrate
-      await new Promise(r => setTimeout(r, 2500));
+      // Wait 10-12s buffer for dynamic Angular SPA to finish loading GetUserCartDetails & rendering cards
+      console.log('[PharmarackCheckout] Waiting 10-12s for Pharmarack cart page SPA hydration and network calls...');
+      const hydrationStart = Date.now();
+      while (Date.now() - hydrationStart < 12000) {
+        const isReady = await page.evaluate(() => {
+          const hasCards = document.querySelectorAll(
+            '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel, tbody tr'
+          ).length > 0;
+          const hasButtons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]')).some(b => {
+            const txt = (b.textContent || '').trim().toLowerCase();
+            return txt.includes('place order') || txt.includes('confirm order') || txt.includes('checkout') || txt.includes('order now');
+          });
+          const isEmpty = (document.body.innerText || '').toLowerCase().includes('cart is empty');
+          return (hasCards && hasButtons) || isEmpty;
+        }).catch(() => false);
+
+        if (isReady && (Date.now() - hydrationStart >= 8000)) {
+          // If elements are rendered and at least 8s have elapsed, proceed
+          break;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
 
       // Attempt to identify distributor cards and trigger official "Place Order" actions
       const checkoutExecution = await page.evaluate(async (targetNames: string[] | null) => {
         const logs: string[] = [];
         const placedStores: string[] = [];
         const failedStores: { name: string; error: string }[] = [];
+
+        const normalizeStr = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+        const matchesTargetStore = (candidateName: string, targets: string[]): boolean => {
+          const normCand = normalizeStr(candidateName);
+          const stopWords = new Set(['pvt', 'ltd', 'pharmaceuticals', 'distributors', 'agencies', 'enterprise', 'pharma', 'medical', 'distributor', 'agency']);
+          const candTokens = normCand.split(' ').filter(w => w.length > 2 && !stopWords.has(w));
+
+          return targets.some(t => {
+            const normT = normalizeStr(t);
+            if (normCand.includes(normT) || normT.includes(normCand)) return true;
+            const tTokens = normT.split(' ').filter(w => w.length > 2 && !stopWords.has(w));
+            if (candTokens.length > 0 && tTokens.length > 0) {
+              return candTokens.some(ct => tTokens.includes(ct));
+            }
+            return false;
+          });
+        };
 
         // 1. Sync distributor checkboxes on https://retailers.pharmarack.com/cart if targetNames provided
         if (targetNames && targetNames.length > 0) {
@@ -194,11 +234,7 @@ export class PharmarackCheckoutService {
               const cardName = headerEl.textContent.trim();
               if (cardName.length < 3 || cardName.toLowerCase().includes('cart') || cardName.toLowerCase().includes('total')) continue;
 
-              const normCard = cardName.toLowerCase().trim();
-              const shouldBeSelected = targetNames.some(t => {
-                const normT = t.toLowerCase().trim();
-                return normCard.includes(normT) || normT.includes(normCard);
-              });
+              const shouldBeSelected = matchesTargetStore(cardName, targetNames);
 
               // Locate checkbox associated with this distributor section
               const chk = section.querySelector('input[type="checkbox"], [role="checkbox"], .ant-checkbox-input, .mat-checkbox-input') as HTMLInputElement | null;
@@ -208,12 +244,12 @@ export class PharmarackCheckoutService {
                   chk.scrollIntoView({ behavior: 'instant', block: 'center' });
                   chk.click();
                   logs.push(`Checked distributor checkbox on Pharmarack: ${cardName}`);
-                  await new Promise(r => setTimeout(r, 200));
+                  await new Promise(r => setTimeout(r, 400));
                 } else if (!shouldBeSelected && isChecked) {
                   chk.scrollIntoView({ behavior: 'instant', block: 'center' });
                   chk.click();
                   logs.push(`Unchecked distributor checkbox on Pharmarack: ${cardName}`);
-                  await new Promise(r => setTimeout(r, 200));
+                  await new Promise(r => setTimeout(r, 400));
                 }
               }
             }
@@ -223,15 +259,27 @@ export class PharmarackCheckoutService {
         }
 
         // Search for all buttons on the cart page that indicate checkout/order placement
-        const allButtons = Array.from(document.querySelectorAll('button, a[role="button"]')) as HTMLElement[];
+        const allButtons = Array.from(document.querySelectorAll(
+          'button, [role="button"], a[role="button"], input[type="button"], input[type="submit"], .btn, .ant-btn, .mat-button, .mat-raised-button, [class*="checkout"], [class*="place-order"]'
+        )) as HTMLElement[];
+
         const placeOrderButtons = allButtons.filter(b => {
-          const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
-          return (
+          const txt = (b.innerText || b.textContent || (b as HTMLInputElement).value || '').trim().toLowerCase();
+          const isActionText = (
             txt.includes('place order') ||
             txt.includes('confirm order') ||
             txt.includes('checkout') ||
-            txt.includes('order now')
+            txt.includes('order now') ||
+            txt.includes('review & place') ||
+            txt.includes('proceed to buy')
           );
+          if (!isActionText) return false;
+          try {
+            const style = window.getComputedStyle(b);
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          } catch (_) {
+            return true;
+          }
         });
 
         logs.push(`Found ${placeOrderButtons.length} potential place order button(s) on cart page.`);
@@ -250,12 +298,12 @@ export class PharmarackCheckoutService {
             // Find parent store name if possible
             let storeName = 'Distributor';
             let container: HTMLElement | null = btn;
-            for (let i = 0; i < 6; i++) {
+            for (let i = 0; i < 7; i++) {
               if (!container) break;
               const headerEl = container.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"]');
               if (headerEl && headerEl.textContent) {
                 const cand = headerEl.textContent.trim();
-                if (cand.length > 2 && !cand.toLowerCase().includes('cart') && !cand.toLowerCase().includes('order')) {
+                if (cand.length > 2 && !cand.toLowerCase().includes('cart') && !cand.toLowerCase().includes('order') && !cand.toLowerCase().includes('checkout')) {
                   storeName = cand;
                   break;
                 }
@@ -265,8 +313,7 @@ export class PharmarackCheckoutService {
 
             // If target store names filter provided, check match
             if (targetNames && targetNames.length > 0) {
-              const normStore = storeName.toLowerCase().trim();
-              const isMatch = targetNames.some(t => normStore.includes(t.toLowerCase().trim()) || t.toLowerCase().trim().includes(normStore));
+              const isMatch = matchesTargetStore(storeName, targetNames);
               // If it's a store-specific button and doesn't match target, skip it
               if (storeName !== 'Distributor' && !isMatch) {
                 logs.push(`Skipped non-target store Place Order button: ${storeName}`);
@@ -276,25 +323,33 @@ export class PharmarackCheckoutService {
 
             // Click the Place Order button
             btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+            if ((btn as any).disabled) {
+              (btn as any).disabled = false;
+            }
             btn.click();
             logs.push(`Clicked Place Order for store: ${storeName}`);
 
             // Brief delay to allow confirmation dialog to appear if any
-            await new Promise(r => setTimeout(r, 800));
-
-            // Check if confirmation modal appeared (e.g. "Yes", "Confirm", "Place Order" modal button)
-            const modalButtons = Array.from(document.querySelectorAll('.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn')) as HTMLElement[];
-            for (const mBtn of modalButtons) {
-              const mText = (mBtn.innerText || mBtn.textContent || '').trim().toLowerCase();
-              if (mText.includes('confirm') || mText.includes('yes') || mText.includes('proceed') || mText.includes('place order')) {
-                mBtn.click();
-                logs.push(`Confirmed modal dialog for: ${storeName}`);
-                break;
+            for (let waitStep = 0; waitStep < 6; waitStep++) {
+              await new Promise(r => setTimeout(r, 600));
+              const modalButtons = Array.from(document.querySelectorAll(
+                '.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn, [class*="modal"] button, [class*="dialog"] button'
+              )) as HTMLElement[];
+              let confirmed = false;
+              for (const mBtn of modalButtons) {
+                const mText = (mBtn.innerText || mBtn.textContent || '').trim().toLowerCase();
+                if (mText.includes('confirm') || mText.includes('yes') || mText.includes('proceed') || mText.includes('place order') || mText.includes('ok')) {
+                  mBtn.click();
+                  logs.push(`Confirmed modal dialog for: ${storeName} (button: ${mText})`);
+                  confirmed = true;
+                  break;
+                }
               }
+              if (confirmed) break;
             }
 
             placedStores.push(storeName);
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 2000));
           } catch (btnErr: any) {
             failedStores.push({ name: 'Unknown Store', error: btnErr.message || 'Button click failed' });
           }
@@ -305,8 +360,9 @@ export class PharmarackCheckoutService {
 
       console.log('[PharmarackCheckout] DOM Execution summary:', checkoutExecution);
 
-      // Wait a moment for network calls to finish and capture any Order IDs
-      await new Promise(r => setTimeout(r, 3000));
+      // Wait 10-12s buffer for network API calls to settle and capture official Order IDs
+      console.log('[PharmarackCheckout] Waiting 10-12s buffer for Pharmarack server to commit orders and emit Order IDs in network stream...');
+      await new Promise(r => setTimeout(r, 11000));
 
       // Trigger order sync immediately to pull official Order IDs from Pharmarack backend
       console.log('[PharmarackCheckout] Triggering immediate Pharmarack order sync to fetch official Order IDs...');

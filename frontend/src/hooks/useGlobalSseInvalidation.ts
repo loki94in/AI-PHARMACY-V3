@@ -31,7 +31,8 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   purchases_sync: [['purchase-history-list'], ['investigation-list'], ['distributor-frequent']],
   purchase_sync: [['purchases'], ['purchase-history-list'], ['investigation-list'], ['medicine-last-by-distributor'], ['distributor-frequent']],
   inventory_sync: [['inventory'], ['inventory-list'], ['compact-inventory'], ['pos-inventory'], ['investigation-list']],
-  pharmarack_cart_changed: [['pharmarack-cart']],
+  pharmarack_cart_changed: [['pharmarack-cart'], ['refills'], ['crm-refills']],
+  live_cart_updated: [['pharmarack-cart'], ['refills'], ['crm-refills']],
   customers_changed: [['customers'], ['crm-customers'], ['pos-customers']],
   distributors_updated: [['distributors'], ['distributor-list'], ['master-distributors']],
   stores_updated: [['stores'], ['stores-list']],
@@ -50,6 +51,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   website_order_created: ['sse-website-order-created', 'refresh-special-orders'],
   customers_changed: ['app-customers-updated', 'refresh-special-orders'],
   refill_updated: ['app-refills-updated', 'refresh-refills'],
+  live_cart_updated: ['refresh-refills'],
   enquiry_updated: ['sse-enquiry-updated', 'app-enquiries-updated'],
   prescription_scan_complete: ['sse-prescription-scan-complete'],
   return_created: ['sse-return-created'],
@@ -65,7 +67,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   pharmarack_session_refreshed: ['sse-pharmarack-refreshed'],
   // Reuses the page's existing DOM event name — PharmarackCart, LiveCartAddModal
   // and Layout already listen for 'refresh-pharmarack-cart'.
-  pharmarack_cart_changed: ['refresh-pharmarack-cart'],
+  pharmarack_cart_changed: ['refresh-pharmarack-cart', 'refresh-refills'],
   pharmarack_orders_changed: ['refresh-sent-orders', 'refresh-pharmarack-cart'],
   dispatch_updated: ['sse-dispatch-updated'],
   email_new: ['sse-email-new'],

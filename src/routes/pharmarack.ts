@@ -27,6 +27,7 @@ import { marketClosureService } from '../services/marketClosureService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
 import { pharmarackCheckoutService } from '../services/pharmarackCheckoutService.js';
 import { toLocalSqlDateTime } from '../utils/localTime.js';
+import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 
 // const execAsync = promisify(exec);
 
@@ -2857,23 +2858,13 @@ router.post('/cart/notify-delivery-boys-batch', async (req, res) => {
 router.post('/cart/place-official-orders', async (req, res) => {
   const { targetStoreNames, orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
   try {
-    const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
-    
-    // Invalidate local cart caches so UI sees fresh cart
-    invalidatePharmarackCartCache();
-
-    // Pull today's official orders placed/synced
     const today = toLocalSqlDateTime(new Date()).slice(0, 10);
     const db = await dbManager.getConnection();
-    const syncedToday = await db.all(
-      `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
-      [today]
-    );
+    const appPort = process.env.PORT || 3001;
 
-    // If orders provided from frontend, enqueue clean delivery boy summary
+    // STEP 1: Enqueue clean delivery boy pickup list FIRST so delivery staff receives their route immediately
     if (orders && Array.isArray(orders) && orders.length > 0) {
       try {
-        const appPort = process.env.PORT || 3001;
         await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2882,14 +2873,32 @@ router.post('/cart/place-official-orders', async (req, res) => {
             deliveryBoyPhone,
             deliveryBoyName,
             storeInfo,
-            dispatchDistributorsLater: false, // Now that official orders were triggered
+            dispatchDistributorsLater: true, // Hold distributor messages until official Order IDs are captured
             includeMedicineList: false // Clean distributor list only
           })
         }).catch(() => {});
+        console.log('[PharmarackRoute] Step 1: Delivery staff pickup summary enqueued successfully.');
       } catch (queueErr) {
-        console.warn('[PharmarackRoute] Failed to enqueue batch summary post-checkout:', queueErr);
+        console.warn('[PharmarackRoute] Failed to enqueue delivery boy summary pre-checkout:', queueErr);
       }
     }
+
+    // Brief settling pause before launching headless checkout
+    await new Promise(r => setTimeout(r, 1200));
+
+    // STEP 2: Execute official headless cart checkout on Pharmarack
+    // (pharmarackCheckoutService has 10-12s hydration wait, tokenized store matching, resilient clicks, and 10-12s network settling)
+    console.log('[PharmarackRoute] Step 2: Executing automated cart checkout with 10-12s buffers...');
+    const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
+    
+    // Invalidate local cart caches so UI sees fresh cart
+    invalidatePharmarackCartCache();
+
+    // STEP 3: Reconcile today's official orders placed/synced from DB
+    const syncedToday = await db.all(
+      `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
+      [today]
+    );
 
     // Attach any confirmed order numbers directly to placed orders for today
     if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
@@ -2907,8 +2916,78 @@ router.post('/cart/place-official-orders', async (req, res) => {
       }
     }
 
+    // STEP 4: Automatically share confirmed official Order ID with saved distributor numbers with anti-flush pacing
+    if (orders && Array.isArray(orders) && orders.length > 0) {
+      const placedOrders = checkoutResult.orders?.filter(o => o.status === 'placed') || [];
+      const shopRow = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
+      const shopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || 'AI Pharmacy';
+      const shopPhone = storeInfo?.phone || storeInfo?.adminPhone || '';
+      const shopAddress = storeInfo?.address || '';
+      const shopEmail = storeInfo?.email || '';
+      const invoiceFormat = storeInfo?.invoiceFileFormat ? storeInfo.invoiceFileFormat.replace(' File Format', '') : 'CSV';
+      const orderDateFormatted = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+      for (const ord of orders) {
+        if (!ord.phone) continue;
+        const normOrdStore = (ord.storeName || '').toLowerCase().trim();
+        
+        // Find if this store was placed and what official orderNo it received
+        const matchedPlaced = placedOrders.find(p => {
+          const normP = (p.storeName || '').toLowerCase().trim();
+          return normOrdStore.includes(normP) || normP.includes(normOrdStore);
+        });
+        const matchedSynced = syncedToday.find((s: any) => {
+          const normS = (s.store_name || '').toLowerCase().trim();
+          return normOrdStore.includes(normS) || normS.includes(normOrdStore);
+        });
+
+        const resolvedOrderNo = matchedPlaced?.orderNo || matchedSynced?.order_no || '';
+
+        // If checkout placed orders or overall checkout completed
+        if (checkoutResult.ok || matchedPlaced || matchedSynced) {
+          let distMsg = resolvedOrderNo 
+            ? `📦 *Pharmarack Order #${resolvedOrderNo}* has been placed.\n`
+            : `📦 *Pharmarack Order* has been placed.\n`;
+          distMsg += `Please pack and dispatch as soon as possible.\n\n`;
+          distMsg += `🚚 *Delivery / Pickup Staff:*\n`;
+          distMsg += `  👤 *${ord.deliveryBoyName || 'Delivery Staff'}*\n`;
+          distMsg += `  📞 *${ord.deliveryBoyPhone || 'N/A'}*\n\n`;
+          distMsg += `🏥 *${shopName}*\n`;
+          if (shopAddress && shopAddress !== 'N/A') distMsg += `📍 *Delivery Location:* ${shopAddress}\n`;
+          if (shopPhone) distMsg += `📞 *Pharmacy Contact:* ${shopPhone}\n`;
+          distMsg += `📅 *Order Date:* ${orderDateFormatted}\n\n`;
+          if (shopEmail) distMsg += `📝 *Note:* Please send invoice bill (${invoiceFormat}) to ${shopEmail}.`;
+
+          const cleanDistPhone = ord.phone.replace(/\D/g, '');
+          if (cleanDistPhone && cleanDistPhone.length >= 10) {
+            try {
+              await whatsappQueueWorker.enqueue(
+                cleanDistPhone,
+                distMsg.trim(),
+                'pharmarack_distributor_order',
+                ord.storeName
+              );
+              console.log(`[PharmarackRoute] Step 4: Enqueued official Order ID dispatch message for ${ord.storeName} (Order #${resolvedOrderNo || 'N/A'})`);
+              // Update pharmarack_placed_orders batch_sent status
+              await db.run(
+                `UPDATE pharmarack_placed_orders 
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = COALESCE(NULLIF(?, ''), order_no)
+                 WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+                [toLocalSqlDateTime(new Date()), resolvedOrderNo, today, ord.storeName]
+              );
+              // Paced 1.5s gap between enqueuing successive distributor reminders to prevent fast-flush bursts
+              await new Promise(r => setTimeout(r, 1500));
+            } catch (distMsgErr) {
+              console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);
+            }
+          }
+        }
+      }
+    }
+
     try {
       eventService.broadcast('pharmarack_orders_changed', { today });
+      eventService.broadcast('whatsapp_queue_updated', {});
     } catch (_) {}
 
     res.json({

@@ -1097,8 +1097,9 @@ export const QuickAssistSidebar = memo(({
       });
     }
 
-    // Compute aggregate patient group reminder status & latest sent timestamp
+    // Sort medicines by urgency (soonest due first) and compute aggregate group status
     for (const group of list) {
+      group.medicines.sort((a, b) => (a.diffDays ?? 0) - (b.diffDays ?? 0));
       if (group.medicines.length > 0) {
         if (group.medicines.every(m => m.reminder_status === 'SENT')) {
           group.reminder_status = 'SENT';
@@ -1707,7 +1708,7 @@ export const QuickAssistSidebar = memo(({
                         {(() => {
                           const stage = getRefillStage(group.medicines);
                           const isPatientJobRunning = cartJobs.some(j => j.patientName === group.patient_name && isRefillJobRunning(j));
-                          const unaddedMeds = group.medicines.filter(m => !m.cart_store_name && m.status !== 'ordered');
+                          const unaddedMeds = group.medicines.filter(m => !m.cart_store_name && !m.in_live_cart && m.status !== 'ordered');
                           const isMarkingGroup = group.medicines.some(m => markingOrderedRefillIds.has(m.id));
                           const isMarkingReady = markingReadyRefillPhones.has(group.patient_phone);
                           const isFulfillingGroup = fulfillingRefillKeys.has(group.key);

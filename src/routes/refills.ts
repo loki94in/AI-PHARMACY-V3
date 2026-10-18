@@ -817,12 +817,24 @@ router.get('/panel', async (req, res) => {
         // Resolve active live cart line
         let liveCartHit: { storeName: string; qty: number } | undefined;
         if (cachedCartLines.length > 0) {
-          const normName = String(row.medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const rawName = String(row.medicine_name || '').toLowerCase();
+          const normName = rawName.replace(/[^a-z0-9]/g, '');
+          const words = rawName.split(/\s+/).filter(w => w.length >= 2 && !['tab', 'cap', 'syp', 'inj', 'ointment', 'gel', 'drop'].includes(w));
+
           if (row.cart_product_code) {
-            liveCartHit = cachedCartLines.find(c => c.storeId === Number(row.cart_store_id) && c.productCode === String(row.cart_product_code));
+            liveCartHit = cachedCartLines.find(c => (row.cart_store_id ? c.storeId === Number(row.cart_store_id) : true) && c.productCode === String(row.cart_product_code));
           }
           if (!liveCartHit && normName) {
-            liveCartHit = cachedCartLines.find(c => String(c.productName || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normName);
+            liveCartHit = cachedCartLines.find(c => {
+              const cNorm = String(c.productName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              return cNorm === normName || (normName.length >= 5 && (cNorm.includes(normName) || normName.includes(cNorm)));
+            });
+          }
+          if (!liveCartHit && words.length > 0) {
+            liveCartHit = cachedCartLines.find(c => {
+              const cRaw = String(c.productName || '').toLowerCase();
+              return words.every(w => cRaw.includes(w));
+            });
           }
         }
         const finalCartStoreName = liveCartHit ? liveCartHit.storeName : (row.cart_store_name || null);
