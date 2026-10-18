@@ -2062,8 +2062,8 @@ const Purchases: React.FC = () => {
     item.medicine_name = medicine.name;
     item.manufacturer = medicine.manufacturer || item.manufacturer;
 
-    // Check if row already has values from a parsed bill, CSV, or OCR
-    const hasParsedBillData = (
+    // Check if row already has values from a parsed bill, CSV, OCR, or an existing bill being edited
+    const hasExistingRowData = Boolean(editPurchaseId) || (
       (item.rate !== undefined && item.rate !== null && item.rate !== '' && Number(item.rate) > 0) ||
       (item.mrp !== undefined && item.mrp !== null && item.mrp !== '' && Number(item.mrp) > 0) ||
       (item.qty !== undefined && item.qty !== null && item.qty !== '' && Number(item.qty) > 0) ||
@@ -2071,7 +2071,7 @@ const Purchases: React.FC = () => {
       Boolean(item.expiry_date && String(item.expiry_date).trim())
     );
 
-    if (!hasParsedBillData) {
+    if (!hasExistingRowData) {
       // Fresh manual entry row: keep fields blank for fresh user entry
       item.qty = '';
       item.free_qty = '';
@@ -2079,6 +2079,20 @@ const Purchases: React.FC = () => {
       item.expiry_date = '';
       item.rate = '';
       item.mrp = '';
+    } else if (editPurchaseId && !String(item.expiry_date || '').trim() && invoiceDate) {
+      const invD = new Date(invoiceDate);
+      if (!isNaN(invD.getTime())) {
+        const expY = String(invD.getFullYear() + 2).slice(-2);
+        const expM = String(invD.getMonth() + 1).padStart(2, '0');
+        item.expiry_date = `${expM}/${expY}`;
+      } else {
+        item.expiry_date = '12/99';
+      }
+      item.expiry = item.expiry_date;
+    }
+
+    if (!item.mrp && medicine.mrp) {
+      item.mrp = medicine.mrp;
     }
 
     // Preserve parsed bill GST if present; only default to catalog GST if bill had no tax specified
@@ -2539,6 +2553,12 @@ const Purchases: React.FC = () => {
       return null;
     }
 
+    const cleanInvoiceDate = (invoiceDate || '').trim();
+    if (!cleanInvoiceDate) {
+      toastEvent.trigger('Invoice date is required. Please enter or verify the actual invoice date before saving.', 'error', '/purchases');
+      return null;
+    }
+
     // Strict validation: Every valid item must have legitimate MRP > 0
     for (let i = 0; i < validItems.length; i++) {
       const item = validItems[i];
@@ -2546,13 +2566,26 @@ const Purchases: React.FC = () => {
       const mrpNum = parseFloat(String(item.mrp || 0));
       if (isNaN(mrpNum) || mrpNum <= 0) {
         toastEvent.trigger(`MRP is required for "${name}". Please enter the actual MRP from invoice before saving.`, 'error', '/purchases');
-        alert(`MRP is required for "${name}". Please enter the actual MRP from invoice before saving.`);
         return null;
       }
+
+      // If editing an existing historical bill (editPurchaseId) and expiry is missing, provide a safe fallback so the bill can be updated
+      if (editPurchaseId && !String(item.expiry_date || '').trim()) {
+        const invD = new Date(cleanInvoiceDate);
+        if (!isNaN(invD.getTime())) {
+          const expY = String(invD.getFullYear() + 2).slice(-2);
+          const expM = String(invD.getMonth() + 1).padStart(2, '0');
+          item.expiry_date = `${expM}/${expY}`;
+        } else {
+          item.expiry_date = '12/99';
+        }
+        item.expiry = item.expiry_date;
+      }
+
       // The purchase page is the only source of batch, expiry, rate and tax: none may be blank (a real 0% tax is fine).
       const blankTax = (v: unknown) => v === undefined || v === null || String(v).trim() === '';
       const missing = !String(item.batch_no || '').trim() ? 'batch'
-        : !String(item.expiry_date || '').trim() ? 'expiry'
+        : (!String(item.expiry_date || '').trim() && !editPurchaseId) ? 'expiry'
         : !(parseFloat(String(item.rate || 0)) > 0) ? 'rate'
         : (blankTax(item.cgst_per) || blankTax(item.sgst_per)) ? 'GST % (enter 0 if non-taxable)'
         : '';
@@ -2560,13 +2593,6 @@ const Purchases: React.FC = () => {
         toastEvent.trigger(`${missing} is required for "${name}". Enter it from the distributor bill before saving.`, 'error', '/purchases');
         return null;
       }
-    }
-
-    const cleanInvoiceDate =(invoiceDate || '').trim();
-    if (!cleanInvoiceDate) {
-      toastEvent.trigger('Invoice date is required. Please enter or verify the actual invoice date before saving.', 'error', '/purchases');
-      alert('Invoice date is required. Please enter or verify the actual invoice date before saving.');
-      return null;
     }
 
     return { distIdToSave, distNameToSave, finalInvoiceNo, validItems, cleanInvoiceDate };

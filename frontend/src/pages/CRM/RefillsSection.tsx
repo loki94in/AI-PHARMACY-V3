@@ -537,7 +537,7 @@ export const RefillsSection: React.FC = () => {
     if (!editingRefill) return;
     setUpdatingFreq(true);
     try {
-      await apiClient.put(`/refills/${editingRefill.id}/frequency`, { refill_interval_days: editIntervalVal });
+      await apiClient.put(`/refills/${editingRefill.id}/frequency`, { refill_interval_days: editIntervalVal, update_all: false });
       toastEvent.trigger(`Updated refill frequency to ${editIntervalVal} days for "${editingRefill.name}"`, 'success', '/crm');
       setEditingRefill(null);
       refillEvent.triggerRefresh();

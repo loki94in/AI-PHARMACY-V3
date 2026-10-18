@@ -825,9 +825,9 @@ router.get('/panel', async (req, res) => {
             liveCartHit = cachedCartLines.find(c => String(c.productName || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normName);
           }
         }
-        const finalCartStoreName = liveCartHit ? liveCartHit.storeName : (row.cart_product_code ? row.cart_store_name : null);
-        const finalCartQty = liveCartHit ? liveCartHit.qty : (row.cart_product_code ? row.cart_qty : null);
-        const inLiveCart = !!liveCartHit || (!!row.cart_product_code && !!row.cart_store_name);
+        const finalCartStoreName = liveCartHit ? liveCartHit.storeName : (row.cart_store_name || null);
+        const finalCartQty = liveCartHit ? liveCartHit.qty : (row.cart_qty || null);
+        const inLiveCart = !!liveCartHit || Boolean(row.cart_store_name);
 
         patientGroups[phone].medicines.push({
           id: row.id,
@@ -1004,7 +1004,11 @@ router.post('/:id/add-to-cart', async (req, res) => {
   try {
     const pick = Array.isArray(req.body?.pick) ? req.body.pick : undefined;
     const result = await processRefillCartItem(id, { qty: req.body?.qty, pick, dryRun: req.body?.dryRun === true });
-    res.json({ success: result.status === 'added', ...result });
+    if (result.status === 'added' || result.status === 'in_cart') {
+      eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+      eventService.broadcast('live_cart_updated', { at: Date.now(), source: 'refill_add_to_cart', refillId: id });
+    }
+    res.json({ success: result.status === 'added' || result.status === 'in_cart', ...result });
   } catch (err: any) {
     console.error('Refill add-to-cart failed:', err);
     res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to add refill to live cart' });
@@ -1495,10 +1499,10 @@ router.delete('/:id', async (req, res) => {
 // Update refill frequency / interval days & recalculate next due date
 router.put('/:id/frequency', async (req, res) => {
   const { id } = req.params;
-  const { refill_interval_days, update_all = true } = req.body;
+  const { refill_interval_days, update_all = false, next_refill_date } = req.body;
   const interval = parseInt(refill_interval_days, 10);
-  if (!interval || interval <= 0) {
-    return res.status(400).json({ error: 'Valid refill interval days required' });
+  if ((!interval || interval <= 0) && !next_refill_date) {
+    return res.status(400).json({ error: 'Valid refill interval days or next_refill_date required' });
   }
 
   let db;
@@ -1509,25 +1513,31 @@ router.put('/:id/frequency', async (req, res) => {
       return res.status(404).json({ error: 'Refill record not found' });
     }
 
-    const nextDate = new Date();
-    nextDate.setDate(nextDate.getDate() + interval);
-    const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
+    let nextDateStr = next_refill_date;
+    const finalInterval = (interval && interval > 0) ? interval : (refill.refill_interval_days || 30);
+    if (!nextDateStr) {
+      const nextDate = new Date();
+      nextDate.setDate(nextDate.getDate() + finalInterval);
+      nextDateStr = toLocalSqlDateTime(nextDate);
+    }
 
-    if (update_all && refill.patient_phone) {
+    if (update_all === true && refill.patient_phone) {
       await db.run(
         'UPDATE patient_refills SET refill_interval_days = ?, next_refill_date = ? WHERE patient_phone = ? AND is_active = 1',
-        [interval, nextDateStr, refill.patient_phone]
+        [finalInterval, nextDateStr, refill.patient_phone]
       );
     } else {
       await db.run(
         'UPDATE patient_refills SET refill_interval_days = ?, next_refill_date = ? WHERE id = ?',
-        [interval, nextDateStr, id]
+        [finalInterval, nextDateStr, id]
       );
     }
 
     await checkAllRefills(db);
 
-    res.json({ success: true, message: `Refill frequency updated to ${interval} days (due on ${nextDateStr.substring(0, 10)})`, next_refill_date: nextDateStr });
+    eventService.broadcast('refill_updated', { at: Date.now(), id: Number(id), next_refill_date: nextDateStr });
+
+    res.json({ success: true, message: `Refill frequency updated to ${finalInterval} days (due on ${nextDateStr.substring(0, 10)})`, next_refill_date: nextDateStr });
   } catch (err: any) {
     console.error('Failed to update refill frequency:', err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });

@@ -1615,7 +1615,27 @@ export const QuickAssistSidebar = memo(({
                     {isExpanded && (
                       <div className="flex flex-col gap-1.5 pt-1 border-t border-border">
                         {group.medicines.map((med) => {
-                          const isMedInCart = !!med.cart_store_name || med.status === 'ordered';
+                          const isMedInCart = !!med.cart_store_name || !!med.in_live_cart || med.status === 'ordered';
+                          const medTimingBadge = med.diffDays !== undefined ? (
+                            med.diffDays < 0 ? (
+                              <span className="px-1 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/20 text-[8px] font-mono font-bold shrink-0" title={`Overdue by ${Math.abs(med.diffDays)} days`}>
+                                Overdue {Math.abs(med.diffDays)}d
+                              </span>
+                            ) : med.diffDays === 0 ? (
+                              <span className="px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 text-[8px] font-mono font-bold shrink-0" title="Due Today">
+                                Today
+                              </span>
+                            ) : med.diffDays === 1 ? (
+                              <span className="px-1 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/20 text-[8px] font-mono font-bold shrink-0" title="Due Tomorrow">
+                                Tmw
+                              </span>
+                            ) : (
+                              <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[8px] font-mono font-bold shrink-0" title={`Due in ${med.diffDays} days`}>
+                                {med.diffDays}d
+                              </span>
+                            )
+                          ) : null;
+
                           return (
                             <div
                               key={med.id}
@@ -1627,14 +1647,14 @@ export const QuickAssistSidebar = memo(({
                                   <span className="font-medium text-text text-[11px] truncate" title={med.medicine_name}>{med.medicine_name}</span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
+                                  {medTimingBadge}
                                   <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[9px] font-mono font-bold" title={`Quantity needed: ${med.quantity_needed}`}>
                                     x{med.quantity_needed}
                                   </span>
-                                  <span className="text-[8.5px] text-muted font-mono" title={`Interval: ${med.refill_interval_days} days`}>{med.refill_interval_days}d</span>
                                   {isMedInCart ? (
                                     <span
                                       className="h-5 px-1.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0"
-                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'Ordered'})`}
+                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'In Live Cart'})`}
                                     >
                                       <Check size={9} className="shrink-0" />
                                       <span>In Cart</span>
@@ -1659,9 +1679,11 @@ export const QuickAssistSidebar = memo(({
                                 </div>
                               </div>
                               {isMedInCart && (
-                                <div className="pl-4 text-[9.5px] text-muted break-words">
-                                  Distributor: <span className="font-semibold text-text">{med.cart_store_name || 'Ordered manually'}</span>
-                                  {med.cart_qty ? ` · Qty ${med.cart_qty}` : ''}
+                                <div className="flex items-center justify-between gap-1 text-[9px] bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded text-emerald-400 min-w-0">
+                                  <span className="truncate">
+                                    Distributor: <strong className="text-text font-semibold">{med.cart_store_name || 'In Live Cart'}</strong>
+                                  </span>
+                                  {med.cart_qty ? <span className="font-mono text-[8.5px] opacity-80 shrink-0">Qty {med.cart_qty}</span> : null}
                                 </div>
                               )}
                             </div>

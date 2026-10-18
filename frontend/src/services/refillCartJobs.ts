@@ -1,5 +1,6 @@
 import { api, type RefillCartCandidate, type RefillCartResult } from './api';
-import { toastEvent } from './events';
+import { toastEvent, refillEvent } from './events';
+import { queryClient } from '../lib/queryClient';
 
 /**
  * Refill → Live Cart runs, kept OUTSIDE React so closing the popup never stops
@@ -120,11 +121,18 @@ function runRow(jobId: number, row: RefillCartRow, mode: 'add' | 'plan'): void {
       patchRow(jobId, row.refillId, {
         state: res.status, message: res.message, linked: res.linked || [], line: res.line, candidates: res.candidates || []
       });
+      if (res.status === 'added' || res.status === 'in_cart') {
+        refillEvent.triggerRefresh();
+        queryClient.invalidateQueries({ queryKey: ['refills'] });
+        queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
+      }
     } catch (err) {
       const e = err as LocalApiError;
       patchRow(jobId, row.refillId, { state: 'failed', message: e.response?.data?.error || e.message || 'Request failed. Retry.' });
     }
     await sendSummaryIfDone(jobId);
+    refillEvent.triggerRefresh();
+    queryClient.invalidateQueries({ queryKey: ['refills'] });
   });
 }
 
