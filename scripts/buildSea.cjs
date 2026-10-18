@@ -40,6 +40,7 @@ if (fs.existsSync(postjectCli)) {
   execFileSync(
     process.execPath,
     [
+      '--max-old-space-size=4096',
       postjectCli,
       backendExe,
       'NODE_SEA_BLOB',
