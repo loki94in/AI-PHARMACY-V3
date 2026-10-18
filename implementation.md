@@ -1,128 +1,96 @@
-# Implementation Plan: Dynamic Greeting & Disambiguated Refill / Special Order WhatsApp Flow
+# Implementation Plan: Quick Assist Refill Task Permanent Removal & Early Booking Popup Fix
 
 **Goal:**
-Enable WhatsApp bot to distinguish whether a customer with the same phone number wants to book a **Refill**, a **Special Order**, or a **Combined Order** of both. Dynamically present contextual options (Single Medicine, Multiple Medicines, Refill, Special Order, Store Details) in the greeting and reminders, while reusing the existing, proven order and cart-addition pipelines.
+Ensure that when a user marks a refill patient task complete (even early / before schedule), the task is immediately and permanently removed from the Quick Assist panel. Fix the broken Early Refill Booking popup in Quick Assist so it is fully usable, dismissible, shielded from sidebar auto-collapse, and allows direct task completion as well as POS transfer.
 
 ---
 
-## 1. Architecture & Design Decisions
+## 1. Problem & Root Cause Analysis
 
-### A. Dynamic Context-Aware Greeting Menu (`src/services/whatsappIntentService.ts`)
-- When generating the welcome greeting for a known customer:
-  - Query active/past records from `patient_refills` and `special_orders` for the customer's phone number.
-  - If customer has **Special Order history**:
-    - Dynamically include **Special Order** as a distinct option in the menu (e.g. `4️⃣ Special Order — Reorder / check your previous special requests`).
-    - Adjust Store Details to `5️⃣ Store Hours, Location & Call Pharmacist 📞`.
-  - If customer has **Refill history**:
-    - Include `3️⃣ Refill — Repeat regular prescription`.
-  - If new / no history:
-    - Keep standard clean options (1: Single, 2: Multiple, 3: Store Info).
+1. **Popup Event Bubble & Sudden Sidebar Collapse**:
+   - The `earlyBookingConfirm` modal in `QuickAssistSidebar.tsx` was rendered via `createPortal(..., document.body)` without modal identification attributes (`role="dialog"`, `aria-modal="true"`, `data-modal="true"`, or `.z-modal`).
+   - Clicking anywhere inside the early booking popup or its buttons triggered `useOnClickOutside(sidebarRef)` on the parent sidebar.
+   - This immediately invoked `setExpanded(false)`, abruptly closing the Quick Assist sidebar before the user could confirm or complete the action.
+   - The task was never fulfilled or removed, leaving it stuck in Quick Assist.
 
-### B. Dual-Record Inbound Disambiguation (`src/services/whatsappIntentService.ts`)
-- In step `2b. REFILL CONFIRMATION CHECK`:
-  - When customer sends an affirmative confirmation (`"1"`, `"yes"`, `"confirm"`, `"order"`, `"bhej do"`) and has active `patient_refills`:
-  - Check if the customer ALSO has an active/pending `special_orders` record (status in `'Pending'`, `'Ordered'`, `'Confirmed'`, `'Arrived'`, `'Ready'`).
-  - If **BOTH** exist:
-    - Do NOT blindly confirm refills.
-    - Instead, prompt with a clear 3-choice disambiguation menu:
-      - `1️⃣ Refill Only` *(lists refill medicines)*
-      - `2️⃣ Special Order Only` *(lists special order product)*
-      - `3️⃣ Combine Both` *(merges both into a single order)*
-    - Set `wa_pending_clarifications` step to `awaiting_order_disambiguation`.
+2. **Early Booking Trap on "Complete"**:
+   - For any refill due in upcoming days (e.g., due in 1 to 7 days), clicking "Complete" checked `cycleStatus.isEarly`.
+   - Instead of completing the task, it interrupted the workflow by forcing the early booking popup. Because the popup collapsed the sidebar on click, the user was unable to complete the task.
 
-### C. Processing Selection & Reusing Existing Workflows
-- When user chooses:
-  - **Option 1 (Refill Only)**: Executes existing `patient_refills` confirmation & calls `processRefillCartItem` to stage into Pharmarack Live Cart.
-  - **Option 2 (Special Order Only)**: Confirms the `special_orders` record and stages into the Live Cart.
-  - **Option 3 (Combine Both)**: Executes both handlers sequentially, staging all selected items into the Live Cart.
-  - **"Without [Med Name]" (Opt-Out)**: Filters the `pendingRefills` list, confirming only the requested medicines.
-
-### D. Human-in-the-Loop (HITL) Safeguard
-- All added items land in the **Pharmarack Live Cart** and **Quick Assist / CRM**.
-- Pharmacist has immediate visibility and total authority to adjust quantities, remove items, or approve for final dispatch.
+3. **Incomplete Settled Filtering in Quick Assist**:
+   - `actionableRefills` only checked `isRefillFulfilledToday(r)`. If a patient's refill cycle was already dispensed or marked fulfilled for the current cycle window (or before today), it was not excluded unless `isRefillFulfilledToday` matched.
+   - Additionally, companion staged notifications for completed patients lingered in Quick Assist.
 
 ---
 
-## 2. Verification Plan
+## 2. Solution Architecture & Changes
 
-1. **Unit & Integration Tests:**
-   - Test dynamic greeting generation for customers with special orders vs customers without.
-   - Test dual-record disambiguation when customer has both active Refills and Special Orders.
-   - Test "Combined" option adds both refill and special order medicines to the cart.
-   - Test "without [Medicine Name]" opt-out filters out the specified medicine.
-2. **TypeScript Compilation:**
-   - `npx tsc --noEmit`
-3. **Performance Guardrails:**
-   - `npm run guardrails`
-4. **Knowledge Graph Sync:**
-   - `node scripts/quick-update.mjs`
+### A. Fix Early Refill Booking Modal in Quick Assist (`frontend/src/components/QuickAssistSidebar.tsx`)
+1. **Modal DOM Shielding**:
+   - Add `role="dialog"`, `aria-modal="true"`, `data-modal="true"`, and class `z-modal` to the modal container.
+   - Update `useOnClickOutside` check to explicitly exempt `earlyBookingConfirm`.
+2. **Lifecycle Cleanup**:
+   - Ensure `setEarlyBookingConfirm(null)` is called if the sidebar collapses, preventing ghost/orphaned modals.
+   - Add Escape key handling via `useModalEscape` prioritized for the modal before the sidebar.
+3. **Modal Actions**:
+   - **Confirm & Open POS**: Closes modal and transfers prefill to POS.
+   - **Mark Complete & Remove**: Directly fulfills the refill cycle, advances to next month, and hides the task immediately without forcing POS navigation.
+   - **Cancel / Close**: Dismisses the modal cleanly without closing the Quick Assist sidebar.
+
+### B. Direct One-Click Task Completion & Permanent Removal (`frontend/src/components/QuickAssistSidebar.tsx`)
+1. In Stage B ("Ordered") and Stage C ("Ready / Reminded"), clicking **`[Complete]`**:
+   - Calls `api.fulfillAllRefills()`.
+   - Advances `patient_refills` in SQLite to the next month's due date.
+   - Sets `last_refill_date = toLocalSqlDateTime()`.
+   - Purges scheduled WhatsApp reminder jobs and dismisses companion staged notifications.
+   - **Optimistically hides** the patient group immediately from Quick Assist using phone, name, and medicine IDs.
+   - Triggers `refillEvent.triggerRefresh()`, `automationHubEvent.triggerUpdated()`, and `onActionComplete()`.
+   - Shows a success toast: `"Refill task completed and removed for [Patient Name]"`.
+   - Does **NOT** force navigation away to POS unless the user specifically clicked the `[POS]` button.
+
+### C. Bulletproof Refill Filtering for Quick Assist (`frontend/src/components/QuickAssistSidebar.tsx`)
+1. Update `actionableRefills` filter:
+   - Exclude any refill where `isRefillSettled(r)` is true.
+   - Exclude any refill where `checkRefillCycleBooking(r).alreadyDispensed` is true (even if completed earlier before the 7 days).
+   - Only include active, unfulfilled refills with `diffDays <= 7`.
+
+### D. Human-in-the-Loop Workflow
+- Pharmacist has complete control:
+  - Click `[POS]` to bill and dispense through the point-of-sale register.
+  - Click `[Complete]` to mark the task completed immediately and dismiss it.
+  - In the Early Booking popup: choose either to open POS or mark complete directly.
 
 ---
 
-## 3. Task Checklist & Progress Log
+## 3. Verification Plan
 
-- [x] Task 1: Add dynamic greeting menu builder supporting Special Order option in `whatsappIntentService.ts` and i18n
-- [x] Task 2: Implement dual-record disambiguation in `handleInbound` (step 2b) to prevent blind refill capture
-- [x] Task 3: Support `awaiting_order_disambiguation` and refill opt-out (`"without [Med]"`) routing in `checkMedicineClarificationResponse`
-- [x] Task 4: Write comprehensive automated integration tests for dynamic greeting, dual-record disambiguation, and combined order flows
-- [x] Task 5: Run TypeScript checks, performance guardrails, and knowledge graph sync
+1. **Modal Usability Test**:
+   - Open Quick Assist, locate an upcoming refill (due in 1–7 days).
+   - Trigger early booking: confirm popup opens smoothly in the center of the screen.
+   - Click inside the popup: verify the sidebar stays open and does NOT collapse.
+   - Click "Cancel": verify the modal closes and sidebar remains expanded.
+2. **Instant Removal Verification**:
+   - Click "Complete" on a refill task.
+   - Verify task is removed immediately from Quick Assist (0 second delay, no ghost rows).
+   - Verify that reopening Quick Assist or restarting the page does not resurrect the completed task.
+3. **POS Flow Verification**:
+   - Click `[POS]` on a refill: verify POS opens with the prescribed medicines prefilled and the REFILL banner active.
+4. **Code Quality & Guardrails**:
+   - `npx tsc -p frontend/tsconfig.app.json --noEmit` (exit 0)
+   - `npm run guardrails` (exit 0, 0 violations)
+   - `node scripts/quick-update.mjs` (knowledge graph sync)
 
 ---
 
-## 4. Completed Work Log & Verification Results
+## 4. Task Checklist & Completion Log
 
-### 1. Dynamic Greeting Menu with Special Orders
-- **File:** [src/services/whatsappIntentService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappIntentService.ts)
-- **What was done:**
-  - Implemented `buildCustomerWelcomeMenu`: checks `special_orders` for the incoming phone number.
-  - If the customer has ever booked a special order, the menu dynamically presents:
-    - 1️⃣ Single Medicine
-    - 2️⃣ Multiple Medicines (or send prescription photo 📸)
-    - 3️⃣ Refill — Repeat regular prescription
-    - 4️⃣ Special Order — Reorder / check previous special requests (with snippet of last item)
-    - 5️⃣ Store Hours, Location & Call Pharmacist 📞
-  - Integrated across onboarding guidance, name registration, and direct greeting paths.
-  - If the customer selects 4 (or types "special"), they are shown their special orders on file with options to reorder all, pick individual items, or combine with regular refills.
-  - If the customer does not have special orders, option 4 seamlessly routes to Store Information and Help.
-
-### 2. Dual-Record Inbound Disambiguation (Step 2b)
-- **File:** [src/services/whatsappIntentService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappIntentService.ts)
-- **What was done:**
-  - In `handleInbound` under step `2b. REFILL CONFIRMATION CHECK`, when an affirmative confirmation ("yes", "confirm", "1", "bhej do") arrives:
-  - The system checks both `patient_refills` and `special_orders`.
-  - If **both** active Refills and active Special Orders exist on that phone number, the bot intercepts the message before auto-confirming refills.
-  - Sends a clean 3-choice interactive menu:
-    - 1️⃣ Refill Only *(lists refill medicines)*
-    - 2️⃣ Special Order Only *(lists special order product)*
-    - 3️⃣ Combine Both into one delivery
-  - Sets step to `awaiting_order_disambiguation` in `wa_pending_clarifications`.
-
-### 3. Disambiguation & Refill Opt-Out Handler
-- **File:** [src/services/whatsappIntentService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/whatsappIntentService.ts)
-- **What was done:**
-  - Added `awaiting_order_disambiguation` handling:
-    - Choice 1: Confirms refills via existing `patient_refills` confirmation and stages to cart via `processRefillCartItem`.
-    - Choice 2: Confirms special orders and marks status `'Confirmed'`.
-    - Choice 3: Confirms both sequentially, tagging special orders as `customer_order_source = 'whatsapp_combined'`.
-  - Added opt-out detection in `awaiting_refill_choice`: detects phrases like `"without [Med Name]"`, `"except [Med Name]"`, `"nahi chahiye [Med Name]"` and excludes that medicine while confirming the remaining list.
-
-### 4. Automated Integration Test Suite
-- **File:** [tests/whatsappDualRefillSpecialOrderFlow.test.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/tests/whatsappDualRefillSpecialOrderFlow.test.ts)
-- **Config:** [jest.config.js](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/jest.config.js)
-- **Test cases executed:**
-  1. Dynamic greeting includes Special Order (Option 4) when customer has past special orders.
-  2. Replying 4 for customer with special orders presents special order reorder choices.
-  3. When customer has BOTH active Refills and Special Orders, affirmative reply triggers 3-way disambiguation.
-  4. Disambiguation selection: Reply "3" combines both Refill and Special Order into cart.
-  5. Refill opt-out: Customer replies "without [Med Name]" excludes that item.
-- **Results:** 5 passed, 5 total.
-
-### 5. Verification & Performance Guardrails
-- **Test Suites:**
-  - `tests/whatsappDualRefillSpecialOrderFlow.test.ts`: **PASSED (5/5)**
-  - `tests/whatsappOnboardingSpamShield.test.ts`: **PASSED (8/8)**
-  - Combined: **13 tests passed, 0 failed**.
-- **TypeScript Compiler:** `npx tsc --noEmit` &rarr; **PASSED (0 errors)**.
-- **Performance Guardrails:** `npm run guardrails` &rarr; **PASSED (0 violations)**.
-- **Knowledge Graph:** `node scripts/quick-update.mjs` &rarr; **Updated successfully (1216 nodes, 807 edges)**.
-
+- [x] Task 1: Shield `earlyBookingConfirm` modal in `frontend/src/components/QuickAssistSidebar.tsx` and `frontend/src/pages/CRM/RefillsSection.tsx`
+  - *Completed:* Added `role="dialog"`, `aria-modal="true"`, `data-modal="true"`, and class `z-modal` to modal container. Exempted `earlyBookingConfirm` in `useOnClickOutside` so clicking inside popup or its buttons never collapses Quick Assist. Added `useModalEscape` with priority 10 so `Escape` dismisses the modal without closing the sidebar. Added backdrop click dismiss and stopPropagation on card.
+- [x] Task 2: Implement direct `[Complete]` action that fulfills cycle and immediately removes the refill task from Quick Assist without forcing navigation away
+  - *Completed:* Separated `handleCompleteRefillGroup` from `handleBookRefillToPos`. Clicking `[Complete]` marks the refill fulfilled via `api.fulfillAllRefills()`, advances `next_refill_date` by 30 days, invalidates query cache, triggers refresh events, and optimistically removes the patient group immediately from Quick Assist. Retained dedicated `[POS]` button across stages so billing in POS remains easily accessible when needed.
+- [x] Task 3: Strengthen `actionableRefills` filtering in `QuickAssistSidebar.tsx` with `checkRefillCycleBooking(r).alreadyDispensed` and `isRefillSettled(r)`
+  - *Completed:* Updated both `actionableRefills` and `groupedActionableRefills` filters. Any refill group or medicine that is already dispensed in the current cycle (or settled even days before the 7-day schedule) is permanently hidden and excluded from the Quick Assist panel.
+- [x] Task 4: Verify modal interaction, task removal, TypeScript checks, and performance guardrails (`npm run guardrails`)
+  - *Completed:* `npx tsc -p frontend/tsconfig.app.json --noEmit` and `npx tsc --noEmit` both passed with 0 errors. `npm run guardrails` passed with 0 violations.
+- [x] Task 5: Auto-update knowledge graph via `node scripts/quick-update.mjs`
+  - *Completed:* Executed `node scripts/quick-update.mjs` successfully (1216 nodes, 806 edges, 10 layers).

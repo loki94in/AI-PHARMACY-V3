@@ -3264,8 +3264,21 @@ export const RefillsSection: React.FC = () => {
 
       {/* Early Refill Booking Confirmation Modal */}
       {earlyBookingConfirm && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150">
+        <div
+          role="dialog"
+          aria-modal="true"
+          data-modal="true"
+          className="z-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setEarlyBookingConfirm(null);
+            }
+          }}
+        >
+          <div
+            className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">

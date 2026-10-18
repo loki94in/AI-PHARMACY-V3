@@ -1,4 +1,4 @@
-import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, checkPatientRefillCycleBooking } from '../utils/refillSettled';
+import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, isRefillSettled, checkRefillCycleBooking, checkPatientRefillCycleBooking } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -243,8 +243,8 @@ export const QuickAssistSidebar = memo(({
   };
 
   useOnClickOutside(sidebarRef, (event) => {
-    // Do not collapse sidebar if an edit or arrival modal or daily modal or refill order modal is currently open
-    if (arrivalModalGroup || editingGroup || refillOrderModalGroup) {
+    // Do not collapse sidebar if an edit or arrival modal or daily modal or refill order modal or early booking modal is currently open
+    if (arrivalModalGroup || editingGroup || refillOrderModalGroup || earlyBookingConfirm) {
       return;
     }
     const target = event.target as HTMLElement | null;
@@ -256,8 +256,11 @@ export const QuickAssistSidebar = memo(({
     }
   });
 
+  // Modal Escape handler for early booking dialog (priority 10 so it closes before sidebar)
+  useModalEscape(Boolean(earlyBookingConfirm), () => setEarlyBookingConfirm(null), 10);
+
   // Esc collapses the panel; priority -1 so any modal opened above it closes first
-  useModalEscape(expanded, () => setExpanded(false), -1);
+  useModalEscape(expanded && !earlyBookingConfirm, () => setExpanded(false), -1);
 
   // Clear modal and expanded sub-panels whenever the sidebar collapses
   useEffect(() => {
@@ -265,6 +268,7 @@ export const QuickAssistSidebar = memo(({
       setEditingGroup(null);
       setArrivalModalGroup(null);
       setRefillOrderModalGroup(null);
+      setEarlyBookingConfirm(null);
       setExpandedRefillKeys(new Set());
       setExpandedWebsiteOrderKeys(new Set());
       setExpandedSpecialOrderKeys(new Set());
@@ -447,7 +451,7 @@ export const QuickAssistSidebar = memo(({
     }
   };
 
-  const handleCompleteRefillGroup = async (group: {
+  const handleBookRefillToPos = (group: {
     key: string;
     patient_name: string;
     patient_phone: string;
@@ -494,6 +498,90 @@ export const QuickAssistSidebar = memo(({
       return;
     }
 
+    const cleanDigits = (group.patient_phone || '').replace(/\D/g, '').slice(-10);
+
+    // Optimistically hide from Quick Assist
+    setOptimisticHiddenRefillKeys(prev => {
+      const next = new Set(prev);
+      next.add(group.key);
+      if (group.patient_phone) next.add(group.patient_phone);
+      if (cleanDigits) next.add(cleanDigits);
+      if (group.patient_name) next.add(group.patient_name.trim());
+      for (const m of group.medicines) {
+        next.add(String(m.id));
+      }
+      return next;
+    });
+
+    setExpanded(false);
+    navigate('/pos', {
+      state: {
+        prefill: {
+          patientName: group.patient_name,
+          patientPhone: group.patient_phone,
+          customerId: group.customer_id || group.medicines[0]?.customer_id || undefined,
+          refillPatient: true,
+          isRefillBooking: true,
+          isEarlyRefill: cycleStatus.isEarly,
+          daysEarly: cycleStatus.daysEarly,
+          refillDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate,
+          refillDays: group.medicines[0]?.refill_interval_days || 30,
+          refillIds: group.medicines.map(m => m.id),
+          medicines: group.medicines.map(m => ({
+            id: m.id,
+            medicine_id: m.medicine_id,
+            medicineId: m.medicine_id,
+            medicineName: m.medicine_name,
+            medicine_name: m.medicine_name,
+            quantity_needed: m.quantity_needed || 1,
+            quantity: m.quantity_needed || 1,
+            inventory_id: m.inventory_id,
+            batch_no: m.batch_no,
+            expiry_date: m.expiry_date,
+            mrp: m.mrp,
+            sell_price: m.sell_price,
+            unit_price: m.unit_price || m.sell_price || m.mrp || 0,
+            packaging: m.packaging,
+            pack_size: m.pack_size,
+            in_stock_qty: m.in_stock_qty || 0,
+            stock_qty: m.batch_quantity || m.in_stock_qty || 0,
+            loose_quantity: m.batch_loose_quantity || 0
+          }))
+        }
+      }
+    });
+  };
+
+  const handleCompleteRefillGroup = async (group: {
+    key: string;
+    patient_name: string;
+    patient_phone: string;
+    customer_id?: number | null;
+    next_refill_date?: string | null;
+    medicines: Array<{
+      id: number;
+      medicine_id?: number;
+      medicine_name?: string;
+      quantity_needed?: number;
+      inventory_id?: number;
+      batch_no?: string;
+      expiry_date?: string;
+      mrp?: number;
+      sell_price?: number;
+      unit_price?: number;
+      packaging?: string;
+      pack_size?: number;
+      in_stock_qty?: number;
+      batch_quantity?: number;
+      batch_loose_quantity?: number;
+      customer_id?: number | null;
+      refill_interval_days?: number | null;
+      last_refill_date?: string | null;
+      next_refill_date?: string | null;
+      status?: string | null;
+      is_active?: number | null;
+    }>;
+  }) => {
     if (fulfillingRefillKeys.has(group.key)) return;
     setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
 
@@ -539,50 +627,14 @@ export const QuickAssistSidebar = memo(({
         patient_phone: group.patient_phone,
         customer_id: group.customer_id || group.medicines[0]?.customer_id || undefined
       });
-      toastEvent.trigger(res?.message || `Refill cycle completed & opening POS for "${group.patient_name}"...`, 'success', '/pos');
+      toastEvent.trigger(res?.message || `Refill task completed & removed for "${group.patient_name}"`, 'success');
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
       refillEvent.triggerRefresh();
       specialOrdersEvent.triggerUpdated();
       automationHubEvent.triggerUpdated();
       onRefreshDailyLog();
       onActionComplete();
-      setExpanded(false);
-      navigate('/pos', {
-        state: {
-          prefill: {
-            patientName: group.patient_name,
-            patientPhone: group.patient_phone,
-            customerId: group.customer_id || group.medicines[0]?.customer_id || undefined,
-            refillPatient: true,
-            isRefillBooking: true,
-            isEarlyRefill: cycleStatus.isEarly,
-            daysEarly: cycleStatus.daysEarly,
-            refillDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate,
-            refillDays: group.medicines[0]?.refill_interval_days || 30,
-            refillIds: group.medicines.map(m => m.id),
-            medicines: group.medicines.map(m => ({
-              id: m.id,
-              medicine_id: m.medicine_id,
-              medicineId: m.medicine_id,
-              medicineName: m.medicine_name,
-              medicine_name: m.medicine_name,
-              quantity_needed: m.quantity_needed || 1,
-              quantity: m.quantity_needed || 1,
-              inventory_id: m.inventory_id,
-              batch_no: m.batch_no,
-              expiry_date: m.expiry_date,
-              mrp: m.mrp,
-              sell_price: m.sell_price,
-              unit_price: m.unit_price || m.sell_price || m.mrp || 0,
-              packaging: m.packaging,
-              pack_size: m.pack_size,
-              in_stock_qty: m.in_stock_qty || 0,
-              stock_qty: m.batch_quantity || m.in_stock_qty || 0,
-              loose_quantity: m.batch_loose_quantity || 0
-            }))
-          }
-        }
-      });
-
     } catch (err: unknown) {
       console.error('Failed to complete refill cycle:', err);
       const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to complete refill cycle';
@@ -892,7 +944,9 @@ export const QuickAssistSidebar = memo(({
         r.status === 'completed' ||
         r.status === 'fulfilled' ||
         r.status === 'canceled' ||
-        isRefillFulfilledToday(r)
+        isRefillSettled(r) ||
+        isRefillFulfilledToday(r) ||
+        checkRefillCycleBooking(r).alreadyDispensed
       ) {
         return false;
       }
@@ -1070,10 +1124,10 @@ export const QuickAssistSidebar = memo(({
 
     // Sort by diffDays ascending (most urgent first)
     list.sort((a, b) => a.diffDays - b.diffDays);
-    // 3-button workflow: settled (ordered + reminded) patients STAY visible as
-    // Stage-C [Re-Send Reminder] [POS] until POS fulfillment removes them via
-    // status completed/fulfilled. Do not re-add the settled filter here.
+    // Exclude any patient groups that are already dispensed for this cycle or fully settled
     return list.filter(g => {
+      if (checkPatientRefillCycleBooking(g.medicines).alreadyDispensed) return false;
+      if (g.medicines.every(m => isRefillSettled(m) || checkRefillCycleBooking(m).alreadyDispensed)) return false;
       if (optimisticHiddenRefillKeys.has(g.key)) return false;
       if (g.patient_phone && optimisticHiddenRefillKeys.has(g.patient_phone)) return false;
       const gDigits = (g.patient_phone || '').replace(/\D/g, '').slice(-10);
@@ -1689,10 +1743,9 @@ export const QuickAssistSidebar = memo(({
                                 {confirmBtn}
                                 <button
                                   type="button"
-                                  disabled={isFulfillingGroup}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleCompleteRefillGroup(group);
+                                    handleBookRefillToPos(group);
                                   }}
                                   className="h-6.5 px-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
                                   title={`Book & bill refill for ${group.patient_name} in POS`}
@@ -1802,6 +1855,18 @@ export const QuickAssistSidebar = memo(({
                                 {confirmBtn}
                                 <button
                                   type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleBookRefillToPos(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                  title={`Open POS to bill refill for ${group.patient_name}`}
+                                >
+                                  <ShoppingCart size={10} className="shrink-0" />
+                                  <span>POS</span>
+                                </button>
+                                <button
+                                  type="button"
                                   disabled={isMarkingReady}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -1821,7 +1886,7 @@ export const QuickAssistSidebar = memo(({
                                     handleCompleteRefillGroup(group);
                                   }}
                                   className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                  title={`Fulfill cycle and open POS for ${group.patient_name}`}
+                                  title={`Mark refill complete and remove from Quick Assist`}
                                 >
                                   {isFulfillingGroup ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
                                   <span className="truncate">Complete</span>
@@ -1833,6 +1898,18 @@ export const QuickAssistSidebar = memo(({
                           return (
                             <>
                               {confirmBtn}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleBookRefillToPos(group);
+                                }}
+                                className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                title={`Open POS to bill refill for ${group.patient_name}`}
+                              >
+                                <ShoppingCart size={10} className="shrink-0" />
+                                <span>POS</span>
+                              </button>
                               <button
                                 type="button"
                                 disabled={isMarkingReady}
@@ -1854,7 +1931,7 @@ export const QuickAssistSidebar = memo(({
                                   handleCompleteRefillGroup(group);
                                 }}
                                 className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                title={`Fulfill cycle and open POS for ${group.patient_name}`}
+                                title={`Mark refill complete and remove from Quick Assist`}
                               >
                                 {isFulfillingGroup ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
                                 <span className="truncate">Complete</span>
@@ -2880,8 +2957,21 @@ export const QuickAssistSidebar = memo(({
           />
         )}
         {earlyBookingConfirm && createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-            <div className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150">
+          <div
+            role="dialog"
+            aria-modal="true"
+            data-modal="true"
+            className="z-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setEarlyBookingConfirm(null);
+              }
+            }}
+          >
+            <div
+              className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
@@ -2927,14 +3017,14 @@ export const QuickAssistSidebar = memo(({
               </div>
 
               <p className="text-xs text-muted leading-relaxed">
-                This refill is not yet due. Booking it now will load the prescribed medicines into POS and advance the schedule upon billing to prevent next-month reminder spam.
+                This refill is not yet due. You can either mark it complete to advance the cycle by 30 days and remove it from Quick Assist, or open POS to bill the patient immediately.
               </p>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
                 <button
                   type="button"
                   onClick={() => setEarlyBookingConfirm(null)}
-                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -2943,9 +3033,23 @@ export const QuickAssistSidebar = memo(({
                   onClick={() => {
                     const group = earlyBookingConfirm.group;
                     setEarlyBookingConfirm(null);
-                    handleCompleteRefillGroup(group, true);
+                    handleCompleteRefillGroup(group);
                   }}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  title="Mark refill complete and remove from Quick Assist"
+                >
+                  <CheckCircle2 size={13} />
+                  <span>Mark Complete</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const group = earlyBookingConfirm.group;
+                    setEarlyBookingConfirm(null);
+                    handleBookRefillToPos(group, true);
+                  }}
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  title="Open POS and transfer items to bill"
                 >
                   <ShoppingCart size={13} />
                   <span>Confirm & Open POS</span>
