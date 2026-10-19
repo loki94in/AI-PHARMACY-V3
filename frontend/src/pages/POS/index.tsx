@@ -896,7 +896,7 @@ export function allocateMedicineBatches(params: {
         )
       );
       const hasStock = ((item.stock_qty !== undefined ? item.stock_qty : item.quantity) || 0) > 0 || (item.loose_quantity || 0) > 0 || isEditingThisBatch;
-      return (idMatch || nameMatch) && hasStock;
+      return (medicineId > 0 ? idMatch : nameMatch) && hasStock;
     })
     .map(item => {
       const expiryStr = item.expiry_date || '';
@@ -5835,10 +5835,11 @@ const POS = () => {
                                 
                                 // First check compact cache for instant population
                                 const compact = getCompactInventoryCache();
+                                const rowMedId = Number(item.medicine_id || (typeof item.id === 'number' && item.id < 1000000000 ? item.id : 0));
                                 if (compact && compact.length > 0) {
                                   const localMatches = compact.filter(med => 
-                                    (item.medicine_id && med.medicine_id === item.medicine_id) ||
-                                    (med.name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim()
+                                    (rowMedId > 0 && (Number(med.medicine_id) === rowMedId || Number(med.id) === rowMedId)) ||
+                                    (!rowMedId && (med.name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim())
                                   );
                                   if (localMatches.length > 0) {
                                     setRowBatchesList(localMatches.map(m => ({
@@ -5859,8 +5860,13 @@ const POS = () => {
                                 api.searchMedicine(item.name || '')
                                   .then(data => {
                                     if (Array.isArray(data) && data.length > 0) {
-                                      const matches = data.filter(med => (med.medicine_name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim());
-                                      setRowBatchesList(matches.length > 0 ? matches : data);
+                                      const matches = data.filter(med => 
+                                        (rowMedId > 0 && (Number(med.medicine_id) === rowMedId || Number(med.id) === rowMedId)) ||
+                                        (!rowMedId && (med.medicine_name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim())
+                                      );
+                                      if (matches.length > 0) {
+                                        setRowBatchesList(matches);
+                                      }
                                     }
                                   })
                                   .catch(err => console.error('Error fetching batches:', err));
@@ -5884,12 +5890,12 @@ const POS = () => {
                             </button>
                             
                             {activeBatchRowId === String(item.id) && rowBatchesList.length > 0 && (
-                              <div className="absolute left-0 z-dropdown mt-1 bg-glass-bg border border-border rounded-xl overflow-hidden max-h-48 flex flex-col w-72 min-w-[280px] text-left shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-100">
+                              <div className="absolute left-0 z-dropdown mt-1 bg-glass-bg border border-border rounded-xl overflow-hidden max-h-72 flex flex-col w-72 min-w-[280px] text-left shadow-[0_8px_32px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in-95 duration-100">
                                 <div className="p-2 border-b border-border/30 bg-bg3 shrink-0 text-[13px] font-bold text-muted uppercase tracking-wider flex items-center justify-between">
                                   <span>Switch Batch</span>
                                   <span className="text-xs font-normal text-muted/70">{rowBatchesList.length} available</span>
                                 </div>
-                                <div className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
+                                <div className="flex-1 min-h-0 overflow-y-auto dropdown-scroll scrollbar-thin divide-y divide-border/10">
                                 {rowBatchesList.map(b => {
                                   const otherCartQty = cart.reduce((sum, c) => {
                                     if (c.id === item.id) return sum; // exclude current row
@@ -5946,6 +5952,11 @@ const POS = () => {
                                   );
                                 })}
                                 </div>
+                                {rowBatchesList.length > 3 && (
+                                  <div className="px-2 py-1 border-t border-border/30 bg-bg2/90 shrink-0 text-[10px] text-center text-muted font-sans select-none">
+                                    Showing {rowBatchesList.length} batches • Scroll to see all
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -6127,11 +6138,13 @@ const POS = () => {
                             }
                             const compactInventory = getCompactInventoryCache();
                             const packSize = Number(item.packSize || 1);
+                            const rowMedId = Number(item.medicine_id || (typeof item.id === 'number' && item.id < 1000000000 ? item.id : 0));
                             
                             // 1. Aggregate across all active batches for this medicine
                             const medMatches = compactInventory.filter(b => 
-                              (item.medicine_id && b.medicine_id === item.medicine_id) ||
-                              ((b.name || '').toLowerCase().trim() === (item.name || item.medicine_name || '').toLowerCase().trim())
+                              rowMedId > 0
+                                ? (Number(b.medicine_id) === rowMedId || Number(b.id) === rowMedId)
+                                : ((b.name || '').toLowerCase().trim() === (item.name || item.medicine_name || '').toLowerCase().trim())
                             );
 
                             let remainingStock: number | string = 'N/A';

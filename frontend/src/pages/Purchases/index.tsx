@@ -3786,10 +3786,15 @@ const Purchases: React.FC = () => {
                     const sgstPerVal = parseFloat(String(item.sgst_per)) || 0;
                     const baseAmount = qtyVal * rateVal;
                     const discountAmount = cdRsVal + addDiscVal + (baseAmount * cdPerVal / 100);
-                    const taxableAmount = baseAmount - discountAmount;
+                    const taxableAmount = Math.max(0, baseAmount - discountAmount);
                     const cgstAmount = taxableAmount * cgstPerVal / 100;
                     const sgstAmount = taxableAmount * sgstPerVal / 100;
                     const rowAmount = taxableAmount + cgstAmount + sgstAmount;
+                    const freeVal = parseFloat(String(item.free_qty || 0)) || 0;
+                    const totalUnits = qtyVal + freeVal;
+                    const unitNetExclTax = totalUnits > 0 ? (taxableAmount / totalUnits) : 0;
+                    const unitNetInclTax = totalUnits > 0 ? (rowAmount / totalUnits) : 0;
+                    const hasDiscountOrScheme = cdPerVal > 0 || cdRsVal > 0 || addDiscVal > 0 || freeVal > 0;
                     return (
                       <tr
                         key={item.id}
@@ -4319,17 +4324,21 @@ const Purchases: React.FC = () => {
                     {mrpVal > 0 && (
                       <div className="absolute -top-1.5 right-1 z-10 select-none pointer-events-none">
                         {(() => {
-                          const marginPercent = ((mrpVal - rateVal) / mrpVal) * 100;
+                          const effectiveRate = hasDiscountOrScheme && unitNetExclTax > 0 ? unitNetExclTax : rateVal;
+                          const marginPercent = mrpVal > 0 ? ((mrpVal - effectiveRate) / mrpVal) * 100 : 0;
                           return (
-                            <span className={`text-[9px] font-bold px-1 py-0.5 rounded border inline-block leading-none shadow-sm ${
-                              marginPercent > 20 
-                                ? 'bg-green-950/90 text-green-400 border-green-500/30' 
-                                : marginPercent > 10 
-                                  ? 'bg-blue-950/90 text-blue-400 border-blue-500/30'
-                                  : marginPercent > 0 
-                                    ? 'bg-yellow-950/90 text-yellow-400 border-yellow-500/30'
-                                    : 'bg-red-950/90 text-red-400 border-red-500/30'
-                            }`}>
+                            <span 
+                              className={`text-[9px] font-bold px-1 py-0.5 rounded border inline-block leading-none shadow-sm ${
+                                marginPercent > 20 
+                                  ? 'bg-green-950/90 text-green-400 border-green-500/30' 
+                                  : marginPercent > 10 
+                                    ? 'bg-blue-950/90 text-blue-400 border-blue-500/30'
+                                    : marginPercent > 0 
+                                      ? 'bg-yellow-950/90 text-yellow-400 border-yellow-500/30'
+                                      : 'bg-red-950/90 text-red-400 border-red-500/30'
+                              }`}
+                              title={hasDiscountOrScheme ? `Real Margin: ${marginPercent.toFixed(1)}% (MRP ₹${mrpVal} vs Net Cost ₹${effectiveRate.toFixed(2)})` : `Margin: ${marginPercent.toFixed(1)}%`}
+                            >
                               {marginPercent.toFixed(1)}%
                             </span>
                           );
@@ -4347,12 +4356,14 @@ const Purchases: React.FC = () => {
                         className="w-full bg-transparent border-0 outline-none text-white text-sm text-right p-0 focus:ring-0 focus:outline-none"
                       />
                     </div>
-                    {parseFloat(String(item.free_qty || 0)) > 0 && qtyVal > 0 && (
+                    {qtyVal > 0 && (
                       <div 
-                        className="text-[9px] font-mono text-emerald-400 font-bold block mt-0.5 truncate cursor-help text-right"
-                        title={`Effective Scheme Rate: ₹${((qtyVal * rateVal) / (qtyVal + parseFloat(String(item.free_qty || 0)))).toFixed(2)}/unit factoring in ${item.free_qty} free item(s)`}
+                        className="text-[9px] font-mono leading-tight mt-0.5 text-right whitespace-nowrap cursor-help select-none"
+                        title={`Effective Net Cost: ₹${unitNetExclTax.toFixed(2)} (exclude tax) / ₹${unitNetInclTax.toFixed(2)} (include tax)${freeVal > 0 ? ` [factoring in ${freeVal} free item(s)]` : ''}`}
                       >
-                        Eff: ₹{((qtyVal * rateVal) / (qtyVal + parseFloat(String(item.free_qty || 0)))).toFixed(2)}/u
+                        <span className="text-emerald-400 font-semibold">₹{unitNetExclTax.toFixed(2)}<span className="text-[8px] text-muted font-normal">(excl)</span></span>
+                        <span className="text-muted mx-0.5">/</span>
+                        <span className="text-sky-300 font-semibold">₹{unitNetInclTax.toFixed(2)}<span className="text-[8px] text-muted font-normal">(incl tx)</span></span>
                       </div>
                     )}
                     {hoveredRateRow === item.id && item.medicine_name && (
@@ -4478,6 +4489,8 @@ const Purchases: React.FC = () => {
                       onChange={(e) => updateItem(index, 'cd_rs', e.target.value)}
                       onKeyDown={(e) => handleRowInputKeyDown(e, index, 'cd_rs')}
                       className="w-14 bg-white/10 border border-white/20 rounded px-1 py-1 text-white text-sm text-right h-8"
+                      placeholder={cdPerVal > 0 && baseAmount > 0 ? ((baseAmount * cdPerVal) / 100).toFixed(2) : ''}
+                      title={cdPerVal > 0 && baseAmount > 0 ? `Calculated CD: ₹${((baseAmount * cdPerVal) / 100).toFixed(2)}` : 'Cash Discount in Rupees'}
                     />
                   </td>
                   <td className="py-2.5 px-1">

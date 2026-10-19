@@ -17206,6 +17206,7 @@ var init_pharmarackDailyDispatchService = __esm({
 var database_exports = {};
 __export(database_exports, {
   autoHealDistributorPhoneMappings: () => autoHealDistributorPhoneMappings,
+  autoHealRefillIntervalsAndTasks: () => autoHealRefillIntervalsAndTasks,
   dropFtsTriggers: () => dropFtsTriggers,
   ensureColumns: () => ensureColumns,
   ensureMedicineSearchSummaryTriggers: () => ensureMedicineSearchSummaryTriggers,
@@ -17522,6 +17523,34 @@ async function autoHealDistributorPhoneMappings(db2) {
     `);
   } catch (err) {
     console.warn("[Boot] Auto-heal distributor mappings error:", err?.message || err);
+  }
+}
+async function autoHealRefillIntervalsAndTasks(db2) {
+  try {
+    await db2.run(`
+      UPDATE patient_refills
+      SET refill_interval_days = 30
+      WHERE refill_interval_days IS NULL OR refill_interval_days < 7
+    `);
+    await db2.run(`
+      UPDATE patient_refills
+      SET next_refill_date = datetime(last_refill_date, '+30 days')
+      WHERE last_refill_date >= datetime('now', 'localtime', '-24 hours')
+        AND DATE(next_refill_date) <= DATE('now', 'localtime')
+    `);
+    await db2.run(`
+      UPDATE patient_call_tasks
+      SET status = 'completed',
+          call_outcome = 'Refill fulfilled at store',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE status IN ('pending', 'rescheduled')
+        AND reference_id IN (
+          SELECT CAST(pr.id AS TEXT)
+          FROM patient_refills pr
+          WHERE pr.last_refill_date >= datetime('now', 'localtime', '-48 hours')
+        )
+    `);
+  } catch (_) {
   }
 }
 async function ensureRefillCartLinkSchema(db2) {
@@ -18531,6 +18560,7 @@ async function ensureSchema(dbPath) {
         await ensureMultiPharmacyAndSnapshotSchema(db2);
         await normalizeBillDatesToLocalTime(db2);
         await autoHealDistributorPhoneMappings(db2);
+        await autoHealRefillIntervalsAndTasks(db2);
         await ensureMedicinesFts(db2);
         await ensureMedicineSearchSummaryTriggers(db2);
         try {
@@ -21685,6 +21715,7 @@ async function ensureSchema(dbPath) {
       await ensureMultiPharmacyAndSnapshotSchema(db2);
       await normalizeBillDatesToLocalTime(db2);
       await autoHealDistributorPhoneMappings(db2);
+      await autoHealRefillIntervalsAndTasks(db2);
       await ensureMedicinesFts(db2);
       await ensureMedicineSearchSummaryTriggers(db2);
       try {
@@ -28352,6 +28383,16 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND NOT EXISTS (
+        SELECT 1 FROM refill_fulfillments rf
+        WHERE rf.refill_id = pr.id
+          AND (
+            DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
+            OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
+            OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+          )
+      )
     GROUP BY pr.patient_name
     ORDER BY earliest_due ASC, pr.patient_name ASC
     LIMIT 15
@@ -28370,6 +28411,16 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND NOT EXISTS (
+        SELECT 1 FROM refill_fulfillments rf
+        WHERE rf.refill_id = pr.id
+          AND (
+            DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
+            OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
+            OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+          )
+      )
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
     LIMIT 50
   `).catch(() => []);
@@ -28574,6 +28625,8 @@ ${medLines}`);
       }
       t4Details = pBlocks.join("\n");
     }
+    const isAllClear = patientGroups.size === 0 && groupedCustomerOrders.length === 0 && dailyTasks.length === 0 && (!incomplete24hAudit?.overdue || incomplete24hAudit.overdue.length === 0);
+    const allClearBlock = isAllClear ? "\n\n\u{1F389} *ALL CAUGHT UP!* All patient refills, customer orders, and store tasks are completely fulfilled." : "";
     messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
@@ -28582,7 +28635,7 @@ ${medLines}`);
 ${t4Details}
 
 \u{1F4E6} *TODAY'S SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
   } else if (templateKey === "compact") {
     let t1Refills = "\u2022 No refills due in next 7 days";
     if (refillRows.length > 0) {
@@ -28601,6 +28654,8 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
         return `${i + 1}. *${cust.requester}* \u2014 ${itemCountLabel}${srcTag} (${statuses})`;
       }).join("\n");
     }
+    const isAllClear = refillRows.length === 0 && groupedCustomerOrders.length === 0 && dailyTasks.length === 0 && (!incomplete24hAudit?.overdue || incomplete24hAudit.overdue.length === 0);
+    const allClearBlock = isAllClear ? "\n\n\u{1F389} *ALL CAUGHT UP!* All patient refills, customer orders, and store tasks are completely fulfilled." : "";
     messageText = `\u2600\uFE0F *DAILY OPERATIONAL BRIEFING* \u2014 ${storeName}
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
@@ -28609,7 +28664,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 ${t1Refills}
 
 \u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
-${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
   } else if (templateKey === "checklist") {
     const t2Items = [];
     if (incomplete24hAudit.overdue.length > 0) {
@@ -60285,7 +60340,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.118";
+    APP_VERSION = "0.1.119";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -78932,16 +78987,20 @@ async function initRefillsTable(_db) {
   refillsTableInitialized = true;
 }
 function parseIntervalDays(val) {
+  let days = 30;
   if (typeof val === "string") {
     const cleaned = val.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (cleaned === "weekly" || cleaned === "7days") return 7;
-    if (cleaned === "15days") return 15;
-    if (cleaned === "monthly" || cleaned === "30days") return 30;
-    const parsed = parseInt(val, 10);
-    return isNaN(parsed) ? 30 : parsed;
+    if (cleaned === "weekly" || cleaned === "7days") days = 7;
+    else if (cleaned === "15days") days = 15;
+    else if (cleaned === "monthly" || cleaned === "30days") days = 30;
+    else {
+      const parsed = parseInt(val, 10);
+      days = isNaN(parsed) ? 30 : parsed;
+    }
+  } else if (typeof val === "number") {
+    days = val;
   }
-  if (typeof val === "number") return val;
-  return 30;
+  return Math.max(7, days);
 }
 function formatTime12h4(timeStr) {
   if (!timeStr) return "";
@@ -79107,7 +79166,7 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
   const customerIdsToPurge = /* @__PURE__ */ new Set();
   const localNow = toLocalSqlDateTime();
   for (const refill of refills) {
-    const interval = refill.refill_interval_days || 30;
+    const interval = Math.max(7, Number(refill.refill_interval_days || 30));
     const nextDate = /* @__PURE__ */ new Date();
     nextDate.setDate(nextDate.getDate() + interval);
     const nextDateStr = toLocalSqlDateTime(nextDate);
@@ -79146,6 +79205,7 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
       `UPDATE patient_refills 
        SET last_refill_date = ?,
            next_refill_date = ?,
+           refill_interval_days = MAX(7, COALESCE(refill_interval_days, 30)),
            stock_verified_override = 0,
            ordering_triggered = 0,
            cart_product_code = NULL,
@@ -79218,6 +79278,39 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
       refillIds: fulfilledIds,
       medicineNames: fulfilledMedNames.length > 0 ? fulfilledMedNames : void 0
     });
+  }
+  if (fulfilledIds.length > 0 || phonesToPurge.size > 0) {
+    const callTaskConditions = [];
+    const callTaskParams = [];
+    if (fulfilledIds.length > 0) {
+      callTaskConditions.push(`reference_id IN (${fulfilledIds.map(() => "?").join(",")})`);
+      callTaskParams.push(...fulfilledIds.map(String));
+    }
+    for (const phone of phonesToPurge) {
+      const cleanDigits = phone.replace(/\D/g, "").slice(-10);
+      if (cleanDigits.length >= 7) {
+        callTaskConditions.push(`patient_phone LIKE ?`);
+        callTaskParams.push(`%${cleanDigits}%`);
+      }
+    }
+    if (callTaskConditions.length > 0) {
+      await db2.run(
+        `UPDATE patient_call_tasks 
+         SET status = 'completed', call_outcome = 'Refill fulfilled at store', updated_at = CURRENT_TIMESTAMP
+         WHERE status IN ('pending', 'rescheduled') AND (${callTaskConditions.join(" OR ")})`,
+        callTaskParams
+      ).catch(() => {
+      });
+    }
+    if (fulfilledIds.length > 0) {
+      await db2.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled' 
+         WHERE status = 'staged' AND reference_id IN (${fulfilledIds.map(() => "?").join(",")})`,
+        fulfilledIds.map(String)
+      ).catch(() => {
+      });
+    }
   }
   return { fulfilledCount: results.length, results };
 }
@@ -91804,7 +91897,7 @@ var init_sales = __esm({
               const invRecord = currentStock;
               if (invRecord && invRecord.medicine_id) {
                 const nextDate = /* @__PURE__ */ new Date();
-                const rDays = Number(refillDays || 30);
+                const rDays = Math.max(7, Number(refillDays || 30));
                 nextDate.setDate(nextDate.getDate() + rDays);
                 const nextDateStr = toLocalSqlDateTime(nextDate);
                 const existingSchedule = await db2.get(
@@ -91873,7 +91966,7 @@ var init_sales = __esm({
             if (!isMedicineSold && explicitRefillIds.length === 0) {
               continue;
             }
-            const interval = Number(refill.refill_interval_days || 30);
+            const interval = Math.max(7, Number(refill.refill_interval_days || 30));
             const baseDate = new Date(invoiceDateValue.replace(" ", "T"));
             const nextDate = new Date(!isNaN(baseDate.getTime()) ? baseDate : Date.now());
             nextDate.setDate(nextDate.getDate() + interval);
@@ -91922,6 +92015,7 @@ var init_sales = __esm({
                 `UPDATE patient_refills 
              SET last_refill_date = ?, 
                  next_refill_date = ?, 
+                 refill_interval_days = MAX(7, COALESCE(refill_interval_days, 30)),
                  acknowledged = 0, 
                  ordering_triggered = 0,
                  cart_product_code = NULL,
@@ -91951,6 +92045,27 @@ var init_sales = __esm({
             refillIds: matchingRefills.map((r) => r.id),
             customerId
           });
+          const fulfilledRefillIds = matchingRefills.map((r) => r.id);
+          const cleanPhoneDigits = (patient_phone || "").replace(/\D/g, "").slice(-10);
+          const callConditions = [];
+          const callParams = [];
+          if (fulfilledRefillIds.length > 0) {
+            callConditions.push(`reference_id IN (${fulfilledRefillIds.map(() => "?").join(",")})`);
+            callParams.push(...fulfilledRefillIds.map(String));
+          }
+          if (cleanPhoneDigits.length >= 7) {
+            callConditions.push(`patient_phone LIKE ?`);
+            callParams.push(`%${cleanPhoneDigits}%`);
+          }
+          if (callConditions.length > 0) {
+            await db2.run(
+              `UPDATE patient_call_tasks 
+           SET status = 'completed', call_outcome = 'Refill fulfilled at POS sale', updated_at = CURRENT_TIMESTAMP
+           WHERE status IN ('pending', 'rescheduled') AND (${callConditions.join(" OR ")})`,
+              callParams
+            ).catch(() => {
+            });
+          }
           try {
             eventService.broadcast("refill_updated", {
               at: Date.now(),
@@ -108876,6 +108991,10 @@ function lazyRoute(loader, tier = "medium") {
 async function startTieredPreWarm() {
   if (preWarmStarted) return;
   preWarmStarted = true;
+  if (!isPackagedApp() && process.env.NODE_ENV !== "production") {
+    console.log("[Boot] Dev mode detected: deferring route pre-warming (routes load on-demand via lazyRoute).");
+    return;
+  }
   const t0 = performance.now();
   const loaders = (tier) => registeredLazyRoutes.filter((r) => r.tier === tier).map((r) => r.preload);
   await Promise.allSettled(loaders("hot"));
@@ -109601,6 +109720,7 @@ var init_server = __esm({
         setTimeout(() => {
           Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
         }, 600);
+        const waBootDelay = !isPackagedApp() && process.env.NODE_ENV !== "production" ? 2e4 : 12e3;
         setTimeout(async () => {
           if (process.env.DISABLE_BACKGROUND_WORKERS === "true") return;
           try {
@@ -109626,7 +109746,7 @@ var init_server = __esm({
           } catch (err) {
             console.warn("[Boot:Phase2] WhatsApp boot check error:", err);
           }
-        }, 1500);
+        }, waBootDelay);
         Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then(async (m) => {
           m.autoUpdateService.start();
           const failMsg = await m.autoUpdateService.checkFailedUpdate();
@@ -109647,6 +109767,7 @@ var init_server = __esm({
         await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
         const autoRow = await db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'");
         const isAutoEnabled = !autoRow || autoRow.value === "true";
+        const phase3Delay = !isPackagedApp() && process.env.NODE_ENV !== "production" ? 35e3 : 25e3;
         setTimeout(async () => {
           console.log("[Boot:Phase3] Evaluating lightweight workers & startup evaluation...");
           if (isAutoEnabled) {
@@ -109822,7 +109943,7 @@ var init_server = __esm({
             if (process.env.DISABLE_BACKGROUND_WORKERS === "true") return;
             Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports)).then((mod) => mod.warmupStartupCart()).catch((err) => console.warn("[Boot:Phase4] Cart warm-up fallback failed:", err?.message || err));
           }, 52e3);
-        }, 8e3);
+        }, phase3Delay);
         setTimeout(() => {
           console.log(`[Boot] Progressive background staging complete at T+10s: ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
         }, 1e4);
