@@ -1843,25 +1843,43 @@ const Purchases: React.FC = () => {
   }, []);
 
   const focusRowMedicineName = (rowIndex: number) => {
-    setTimeout(() => {
-      const el = document.querySelector(`input[data-row-index="${rowIndex}"][data-field="medicine_name"]`) as HTMLInputElement;
+    const tryFocus = () => {
+      const el = document.querySelector(`input[data-row-index="${rowIndex}"][data-field="medicine_name"]`) as HTMLInputElement | null;
       if (el) {
         el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
         el.focus();
         el.select?.();
+        return true;
       }
-    }, 60);
+      return false;
+    };
+    if (!tryFocus()) {
+      setTimeout(() => {
+        if (!tryFocus()) {
+          setTimeout(tryFocus, 90);
+        }
+      }, 50);
+    }
   };
 
   const focusRowField = (rowIndex: number, fieldName: string) => {
-    setTimeout(() => {
+    const tryFocus = () => {
       const el = document.querySelector(`input[data-row-index="${rowIndex}"][data-field="${fieldName}"]`) as HTMLInputElement | null;
       if (el) {
         el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
         el.focus();
         el.select?.();
+        return true;
       }
-    }, 50);
+      return false;
+    };
+    if (!tryFocus()) {
+      setTimeout(() => {
+        if (!tryFocus()) {
+          setTimeout(tryFocus, 80);
+        }
+      }, 40);
+    }
   };
 
   // Auto-scroll row and dropdown into view when search dropdown opens
@@ -2115,12 +2133,8 @@ const Purchases: React.FC = () => {
     setActiveSearchIndex(null);
     setSearchHighlightIndex(-1);
 
-    // Focus navigation: if batch is missing, focus batch; otherwise focus qty
-    if (!item.batch_no) {
-      focusRowField(index, 'batch_no');
-    } else if (!item.qty) {
-      focusRowField(index, 'qty');
-    }
+    // Sequential Enter-Key Column Hopping: always jump to batch_no on medicine selection
+    focusRowField(index, 'batch_no');
 
     // Alias creation: fire-and-forget in background scoped to selectedDistributor (no cross-matching)
     const aliasSource = (item.original_name || item.name || '').trim();
@@ -3910,7 +3924,14 @@ const Purchases: React.FC = () => {
                                       selectMedicine(searchResults[0], index);
                                       return;
                                     } else if (searchHighlightIndex === searchResults.length || searchResults.length === 0) {
-                                      if (item.medicine_name.trim().length > 0) {
+                                      if (item.medicine_id) {
+                                        e.preventDefault();
+                                        setActiveSearchIndex(null);
+                                        setSearchResults([]);
+                                        setSearchHighlightIndex(-1);
+                                        focusRowField(index, 'batch_no');
+                                        return;
+                                      } else if (item.medicine_name.trim().length > 0) {
                                         e.preventDefault();
                                         openAddMedicineModal(index);
                                         return;

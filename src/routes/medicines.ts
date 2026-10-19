@@ -931,6 +931,24 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
       await db.run(`UPDATE medicines SET ${updates.join(', ')} WHERE id = ?`, params);
     }
 
+    if (name !== undefined && String(name).trim() !== '') {
+      const cleanName = String(name).trim();
+      try {
+        await db.run(
+          `UPDATE sale_items 
+           SET medicine_name_snapshot = ? 
+           WHERE inventory_id IN (SELECT id FROM inventory_master WHERE medicine_id = ?)`,
+          [cleanName, id]
+        );
+      } catch (_) {}
+      try {
+        await db.run(
+          `UPDATE patient_refills SET medicine_name = ? WHERE medicine_id = ?`,
+          [cleanName, id]
+        );
+      } catch (_) {}
+    }
+
     if (inventory_id) {
       const invUpdates: string[] = [];
       const invParams: any[] = [];
@@ -1022,6 +1040,26 @@ router.post('/medicines/merge', async (req, res) => {
 
     // 2. Re-link purchase_items (preserves original bill raw names in purchase line)
     await db.run(`UPDATE purchase_items SET medicine_id = ? WHERE medicine_id IN (${placeholders})`, params);
+
+    // Re-link sale_items snapshots and patient_refills to primary medicine name
+    if (primary.name) {
+      try {
+        await db.run(
+          `UPDATE sale_items 
+           SET medicine_name_snapshot = ? 
+           WHERE inventory_id IN (SELECT id FROM inventory_master WHERE medicine_id = ?)`,
+          [primary.name, cleanPrimaryId]
+        );
+      } catch (_) {}
+      try {
+        await db.run(
+          `UPDATE patient_refills 
+           SET medicine_id = ?, medicine_name = ? 
+           WHERE medicine_id IN (${placeholders})`,
+          [cleanPrimaryId, primary.name, ...secondaryIds]
+        );
+      } catch (_) {}
+    }
 
     // 3. Re-link stock ledger
     try {

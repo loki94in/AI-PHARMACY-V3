@@ -503,3 +503,11 @@ To prevent unexpected or automated WhatsApp/SMS messages being sent to patients 
 - **Inserts**: `INSERT INTO medicines (name, source) VALUES (?, 'master_reference')` only — MRP/tax/manufacturer remain schema defaults until a real purchase invoice or user edit fills them. No inventory_master writes, no other tables touched.
 - **Dedupe**: whitespace-collapsed case-insensitive comparison on BOTH candidate and DB side; re-runs are idempotent. Do not weaken this to plain `LOWER(TRIM(name))` — that reintroduces spacing-variant duplicates (782 had to be purged after the 2026-08-22 run).
 - **Run**: `node scripts/importMedicineNames.mjs [--dry-run]`. 2026-08-22 result: 286,389 → 291,878 rows (+5,489 unique names); legacy duplicate groups pre-dating the import were deliberately left untouched.
+
+---
+
+## Sequential Enter-Key Column Hopping Contract (MANDATORY & LOCKED — added 2026-10-19)
+
+**STRICT CONTRACT FOR ALL AI AGENTS:**
+Fast, mouse-free keyboard billing and purchase entry is a core pharmacy speed requirement. Future AI agents must NEVER change, alter, conditionally bypass, or remove the sequential Enter-key column hopping workflow in Purchases (`frontend/src/pages/Purchases/index.tsx`) or POS (`frontend/src/pages/POS/index.tsx`) without explicit user confirmation. Full specifications and sequence paths are documented in `frontend/AGENTS.md` "Sequential Enter-Key Column Hopping Contract".
+

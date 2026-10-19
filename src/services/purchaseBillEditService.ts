@@ -58,22 +58,146 @@ export async function applyPurchaseStockChange(
   newLines: PurchaseStockLine[],
   ledgerType: string
 ): Promise<{ touchedMedicineIds: number[]; touchedInventoryIds: number[] }> {
+  // 1. Detect Batch Reassignments:
+  // When an old purchase line with batch B was registered under old_medicine_id,
+  // and the new bill line keeps the same batch B but links to new_medicine_id (old != new),
+  // this is an in-place identity re-link / correction rather than a physical stock take-back.
+  const reassignedOldIndices = new Set<number>();
+  const reassignedNewMap = new Map<number, { oldMedId: number; oldStrips: number }>();
+
+  for (let i = 0; i < oldLines.length; i++) {
+    const o = oldLines[i];
+    const obatch = String(o.batch_no ?? '').trim();
+    if (!obatch || obatch === '—') continue;
+
+    const matchIdx = newLines.findIndex((n, nIdx) =>
+      !reassignedNewMap.has(nIdx) &&
+      String(n.batch_no ?? '').trim() === obatch &&
+      Number(n.medicine_id) !== Number(o.medicine_id)
+    );
+
+    if (matchIdx !== -1) {
+      reassignedOldIndices.add(i);
+      reassignedNewMap.set(matchIdx, {
+        oldMedId: Number(o.medicine_id),
+        oldStrips: stripsOf(o)
+      });
+    }
+  }
+
+  const touchedMedicineIds = new Set<number>();
+  const touchedInventoryIds = new Set<number>();
+
+  // Execute database updates for reassigned batches:
+  for (const [newIdx, reassign] of reassignedNewMap.entries()) {
+    const n = newLines[newIdx];
+    const batch = String(n.batch_no ?? '').trim();
+    const newMedId = Number(n.medicine_id);
+    const oldMedId = reassign.oldMedId;
+
+    touchedMedicineIds.add(oldMedId);
+    touchedMedicineIds.add(newMedId);
+
+    const oldInv = await db.get(
+      `SELECT im.id, im.quantity, im.loose_quantity, m.name AS old_name
+       FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id
+       WHERE im.medicine_id = ? AND TRIM(COALESCE(im.batch_no, '')) = ?
+       ORDER BY im.id LIMIT 1`,
+      [oldMedId, batch]
+    );
+
+    if (oldInv) {
+      const newMed = await db.get(
+        `SELECT id, name FROM medicines WHERE id = ?`,
+        [newMedId]
+      );
+
+      const existingNewInv = await db.get(
+        `SELECT id, quantity, loose_quantity FROM inventory_master
+         WHERE medicine_id = ? AND TRIM(COALESCE(batch_no, '')) = ? AND id != ?
+         ORDER BY id LIMIT 1`,
+        [newMedId, batch, oldInv.id]
+      );
+
+      let targetInvId = oldInv.id;
+      if (!existingNewInv) {
+        await db.run(
+          `UPDATE inventory_master SET medicine_id = ? WHERE id = ?`,
+          [newMedId, oldInv.id]
+        );
+      } else {
+        await db.run(
+          `UPDATE inventory_master SET quantity = quantity + ?, loose_quantity = loose_quantity + ? WHERE id = ?`,
+          [Number(oldInv.quantity) || 0, Number(oldInv.loose_quantity) || 0, existingNewInv.id]
+        );
+        await db.run(
+          `UPDATE sale_items SET inventory_id = ? WHERE inventory_id = ?`,
+          [existingNewInv.id, oldInv.id]
+        );
+        await db.run(
+          `DELETE FROM inventory_master WHERE id = ?`,
+          [oldInv.id]
+        );
+        targetInvId = existingNewInv.id;
+      }
+
+      touchedInventoryIds.add(targetInvId);
+
+      // Propagate new medicine name snapshot to all past sales from this batch
+      if (newMed?.name) {
+        await db.run(
+          `UPDATE sale_items SET medicine_name_snapshot = ? WHERE inventory_id = ?`,
+          [newMed.name, targetInvId]
+        );
+      }
+
+      // Re-link previous stock ledger entries for this batch
+      try {
+        await db.run(
+          `UPDATE stock_ledger SET medicine_id = ? WHERE medicine_id = ? AND TRIM(COALESCE(batch_no, '')) = ?`,
+          [newMedId, oldMedId, batch]
+        );
+      } catch (_) {}
+
+      // Learn alias mapping
+      if (oldInv.old_name && oldInv.old_name.trim()) {
+        try {
+          await db.run(
+            `INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)`,
+            [oldInv.old_name.trim(), newMedId]
+          );
+        } catch (_) {}
+      }
+    }
+  }
+
+  // 2. Build changes map
   const changes = new Map<string, BatchChange>();
-  const keyOf = (l: PurchaseStockLine) => `${l.medicine_id}|${String(l.batch_no ?? '').trim()}`;
-  const entry = (l: PurchaseStockLine) => {
-    const k = keyOf(l);
+  const entry = (medId: number, batchNo: string | null) => {
+    const cleanBatch = String(batchNo ?? '').trim();
+    const k = `${medId}|${cleanBatch}`;
     let c = changes.get(k);
     if (!c) {
-      c = { medicine_id: Number(l.medicine_id), batch_no: String(l.batch_no ?? '').trim(), oldStrips: 0, newStrips: 0 };
+      c = { medicine_id: Number(medId), batch_no: cleanBatch, oldStrips: 0, newStrips: 0 };
       changes.set(k, c);
     }
     return c;
   };
-  for (const l of oldLines) entry(l).oldStrips += stripsOf(l);
-  for (const l of newLines) {
-    const c = entry(l);
+
+  for (let i = 0; i < oldLines.length; i++) {
+    if (reassignedOldIndices.has(i)) continue; // Old strips credited to new medicine below
+    const l = oldLines[i];
+    entry(l.medicine_id, l.batch_no).oldStrips += stripsOf(l);
+  }
+
+  for (let j = 0; j < newLines.length; j++) {
+    const l = newLines[j];
+    const c = entry(l.medicine_id, l.batch_no);
     c.newStrips += stripsOf(l);
     c.line = l;
+    if (reassignedNewMap.has(j)) {
+      c.oldStrips += reassignedNewMap.get(j)!.oldStrips;
+    }
   }
 
   // Check every take-back first so a refusal names every short batch at once.
@@ -105,8 +229,6 @@ export async function applyPurchaseStockChange(
     );
   }
 
-  const touchedMedicineIds = new Set<number>();
-  const touchedInventoryIds = new Set<number>();
 
   for (const [k, c] of changes) {
     touchedMedicineIds.add(c.medicine_id);

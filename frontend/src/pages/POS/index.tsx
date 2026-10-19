@@ -2115,14 +2115,29 @@ const POS = () => {
 
   // Keyboard-first medicine entry lives in the cart's trailing empty row, not the top search box.
   const focusCartMedicineInput = useCallback(() => {
-    setTimeout(() => {
+    const tryFocus = () => {
       const inputs = document.querySelectorAll<HTMLInputElement>('input[id^="row-med-input-"]');
       const target = inputs.length > 0 ? inputs[inputs.length - 1] : null;
       if (target && !target.disabled) {
         target.focus();
         target.select?.();
+        return true;
       }
-    }, 80);
+      const topSearch = document.getElementById('medicine-search-input') as HTMLInputElement | null;
+      if (topSearch && !topSearch.disabled) {
+        topSearch.focus();
+        topSearch.select?.();
+        return true;
+      }
+      return false;
+    };
+    if (!tryFocus()) {
+      setTimeout(() => {
+        if (!tryFocus()) {
+          setTimeout(tryFocus, 90);
+        }
+      }, 50);
+    }
   }, []);
 
   // Auto-focus Medicine input in cart on POS page mount so cashier can immediately start typing
@@ -2929,14 +2944,14 @@ const POS = () => {
 
     updateCart((prevCart): CartRow[] => {
       const cleanPrev = prevCart.filter(item => !item.isEmptyRow);
-      // Fast-billing: Liquids default to 1 unit; Tabs/Caps default to 0 for direct loose tablet entry
       const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
-      const incQty = isLiquid ? 1 : 0;
+      // Sequential Enter-Key Hopping: Default to 1 unit/strip so Enter advances immediately; auto-select on focus allows instant overwrite
+      const incQty = 1;
       const incLooseQty = 0;
       
       if (existingIndex !== -1) {
         const existingItem = cleanPrev[existingIndex];
-        const newQty = (existingItem.qty || 0) + (isLiquid ? 1 : 0);
+        const newQty = (existingItem.qty || 0) + 1;
         const newLoose = (existingItem.looseQty || 0) + incLooseQty;
         return rebalanceCartMedicine(cleanPrev, Number(existingItem.medicine_id || existingItem.id || 0), existingItem.id, { qty: newQty, looseQty: newLoose });
       }
@@ -3015,25 +3030,23 @@ const POS = () => {
         });
     }
 
-    // Fast-billing: Liquids jump directly to next medicine; Tabs/Caps focus directly on LOOSE for instant count
-    const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
-    setTimeout(() => {
-      if (isLiquid) {
-        focusCartMedicineInput();
-        return;
-      }
-      const looseInput = document.getElementById(`row-loose-input-${targetIndex}`) as HTMLInputElement | null;
-      if (looseInput && !looseInput.disabled) {
-        looseInput.focus();
-        looseInput.select?.();
-        return;
-      }
-      const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`);
-      if (qtyInput) {
+    // Sequential Enter-Key Hopping: when medicine is added to cart, always focus Strip Qty first with auto-select
+    const focusTargetQty = () => {
+      const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`) as HTMLInputElement | null;
+      if (qtyInput && !qtyInput.disabled) {
         qtyInput.focus();
-        (qtyInput as HTMLInputElement).select?.();
+        qtyInput.select?.();
+        return true;
       }
-    }, 120);
+      return false;
+    };
+    if (!focusTargetQty()) {
+      setTimeout(() => {
+        if (!focusTargetQty()) {
+          setTimeout(focusTargetQty, 90);
+        }
+      }, 50);
+    }
   };
 
   const toggleAllowLooseSale = async (item: CartRow | PosBatchItem) => {
@@ -3326,25 +3339,23 @@ const POS = () => {
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
-    // Fast-billing: Liquids jump directly to next medicine; Tabs/Caps focus directly on LOOSE for instant count
-    const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
-    setTimeout(() => {
-      if (isLiquid && opts?.presetQty === undefined) {
-        focusCartMedicineInput();
-        return;
-      }
-      const looseInput = document.getElementById(`row-loose-input-${index}`) as HTMLInputElement | null;
-      if (looseInput && !looseInput.disabled) {
-        looseInput.focus();
-        looseInput.select?.();
-        return;
-      }
-      const qtyInput = document.getElementById(`row-qty-input-${index}`);
-      if (qtyInput) {
+    // Sequential Enter-Key Hopping: when row medicine changes, always focus Strip Qty first with auto-select
+    const focusRowQty = () => {
+      const qtyInput = document.getElementById(`row-qty-input-${index}`) as HTMLInputElement | null;
+      if (qtyInput && !qtyInput.disabled) {
         qtyInput.focus();
-        (qtyInput as HTMLInputElement).select?.();
+        qtyInput.select?.();
+        return true;
       }
-    }, isLiquid ? 120 : 40);
+      return false;
+    };
+    if (!focusRowQty()) {
+      setTimeout(() => {
+        if (!focusRowQty()) {
+          setTimeout(focusRowQty, 80);
+        }
+      }, 40);
+    }
 
     // Enrich salts & alternatives asynchronously in the background
     api.getMedicineQuickDetails(Number(med.medicine_id))

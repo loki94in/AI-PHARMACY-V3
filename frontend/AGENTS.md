@@ -209,3 +209,31 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 - Distributor add/edit modal (`components/Purchases/DistributorModal.tsx`) carries optional Min Order ₹ / Min Items inputs (blank = no warning, preserved on settings-page saves since those send `undefined`). Saving goes through the existing `saveDistributor` in `pages/Purchases/index.tsx`.
 - The Purchases totals bar shows an amber `⚠ Min order: …` flag when the selected distributor's bill is below either minimum (`minOrderWarning` memo over `memoizedTotals.grandTotal` + valid-line count). Advisory only — it never blocks `PurchaseSaveVerificationModal` Confirm.
 - The BookOpen button in the items-table header opens `components/DistributorHistoryPickerModal.tsx` (requires a selected distributor): ONE `api.getDistributorFrequent` fetch per open (90 days, 100 rows, frequency + recency), local ≥2-char filter, checkbox list with `×N bills` chips on a `.dropdown-scroll` scroller. **Add to bill** hydrates via ONE `api.batchLastPurchase` call (real last rate/MRP/batch/expiry/GST); quantity always stays blank and already-billed medicines are skipped. Query key `distributor-frequent` is mark-stale mapped under `invoice_saved` / `purchase_sync` / `purchases_sync` in `SSE_QUERY_MAP`.
+
+## Sequential Enter-Key Column Hopping Contract (MANDATORY & LOCKED — added 2026-10-19)
+
+**STRICT CONTRACT FOR ALL AI AGENTS:**
+Fast, mouse-free keyboard billing and purchase entry is a core pharmacy speed requirement. Future AI agents must NEVER change, alter, conditionally bypass, or remove the sequential Enter-key column hopping workflow in Purchases or POS without explicit user confirmation.
+
+1. **Purchases Sequence (`pages/Purchases/index.tsx`)**:
+   - `Medicine Name` (type / search) ──(Enter on Dropdown Item)──> `Batch No`
+   - `Batch No` ──(Enter)──> `Expiry Date (MM/YY)`
+   - `Expiry Date` ──(Enter)──> `Rate`
+   - `Rate` ──(Enter)──> `MRP`
+   - `MRP` ──(Enter)──> `Qty`
+   - `Qty` ──(Enter)──> `Free Qty`
+   - `Free Qty` ──(Enter)──> `Next Row Medicine Name` (appends empty line if on the last row and focuses it).
+   - `selectMedicine()` must ALWAYS advance focus to `batch_no` and auto-select its text.
+   - Backward traversal: `Shift + Tab` smoothly moves backward through the exact same column chain.
+
+2. **POS Fast-Billing Sequence (`pages/POS/index.tsx`)**:
+   - **Header Medicine Search** (`#medicine-search-input`) ──(Enter on Item)──> Adds product to cart & immediately focuses the new item's **Strip Qty** (`#row-qty-input-${targetIndex}`) with `select()`.
+   - **Strip Qty** (`#row-qty-input-${index}`) ──(Enter)──>:
+     - If loose sales are allowed (`resolveAllowLooseSale` > 0) and `#row-loose-input-${index}` is enabled: jumps to **Loose Qty** (`#row-loose-input-${index}`) with `select()`.
+     - If loose sales are not allowed (liquids, syrups, single-unit bottles): jumps directly back to `#medicine-search-input` for the next medicine!
+   - **Loose Qty** (`#row-loose-input-${index}`) ──(Enter)──>:
+     - Jumps directly back to `#medicine-search-input` for the next medicine!
+   - **In-Cart Direct Row Entry**:
+     - `Row Medicine Input` ──(Enter on Item)──> `Strip Qty` ──(Enter)──> `Loose Qty` ──(Enter)──> Next Search / Row.
+   - Every input auto-selects its text upon receiving focus (`el.select()`) so operators can immediately type new values without pressing backspace.
+
