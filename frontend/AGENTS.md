@@ -25,6 +25,7 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
   - Lightbox / Fullscreen Overlay: `z-global-modal` (10000)
 - **Modal Interaction**: If a modal (e.g. Universal Edit) is opened from a drawer panel, the drawer panel must be closed (`setPanelOpen(false)`) to prevent layering overlaps.
 - **Alert & Confirm Dialogs**: Avoid using native blocking browser `alert()` or `confirm()` dialogs in new code. Use custom UI toast triggers (`toastEvent.trigger(msg, 'success' | 'error')`) or styled modal overlays.
+- **Distributor Labels in Modals (added 2026-10)**: In `MedicineLinkModal` and distributor linking dialogs, distributor store names must never be prematurely cut off with aggressive single-line `truncate` without wrapping. Use `flex-wrap gap-x-1.5 gap-y-0.5`, `break-words`, and clear `title` tooltips so long distributor names remain 100% visible on screen.
 
 ## Autocomplete Dropdown Gating Rule (added 2026-08)
 

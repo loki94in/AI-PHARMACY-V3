@@ -194,8 +194,8 @@ export const MedicineLinkModal: React.FC<{
                     <li key={linkKeyOf(p)} className="flex items-start gap-2 rounded-lg border border-border bg-bg px-2.5 py-1.5">
                       <span className="text-[10px] font-bold text-primary mt-0.5">#{i + 1}</span>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="font-bold text-text truncate">{p.storeName}</span>
+                        <div className="flex items-start flex-wrap gap-1.5 min-w-0">
+                          <span className="font-bold text-text break-words leading-tight" title={p.storeName}>{p.storeName}</span>
                           {p.company && (
                             <span className="px-1.5 py-0.5 rounded bg-bg3 text-[8.5px] font-medium text-muted border border-border shrink-0 truncate max-w-[110px]" title={p.company}>
                               {p.company}
@@ -278,7 +278,7 @@ export const MedicineLinkModal: React.FC<{
                       }`}
                       title={`Filter candidates from ${d.name} (Bought ${d.purchases}×)`}
                     >
-                      <span className="truncate max-w-[120px]">{d.name}</span>
+                      <span className="whitespace-nowrap font-medium" title={d.name}>{d.name}</span>
                       <span className={`text-[9px] font-mono px-1 rounded-full ${isSelected ? 'font-bold opacity-85' : 'bg-bg3 text-muted'}`}>
                         {d.purchases}×{results.length > 0 ? ` (${countForDist})` : ''}
                       </span>
@@ -326,8 +326,8 @@ export const MedicineLinkModal: React.FC<{
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-1.5 text-[10px] text-muted truncate mt-0.5">
-                              <span className="font-semibold text-text truncate">{c.storeName}</span>
+                            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[10px] text-muted mt-0.5">
+                              <span className="font-semibold text-text" title={c.storeName}>{c.storeName}</span>
                               {c.mapped === false && (
                                 <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[8.5px] font-semibold text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
                                   Unmapped
