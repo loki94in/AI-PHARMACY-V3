@@ -15955,6 +15955,29 @@ var init_phoneValidation = __esm({
 });
 
 // src/services/pharmarackCheckoutService.ts
+function resolvePharmarackProfilePath() {
+  const primary = import_path15.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+  if (import_fs15.default.existsSync(primary)) return primary;
+  const candidates = [
+    import_path15.default.resolve(process.cwd(), "data", "pharmarack_profile"),
+    import_path15.default.resolve(process.env.USERPROFILE || "", "AppData", "data", "pharmarack_profile"),
+    import_path15.default.resolve(process.env.LOCALAPPDATA || "", "AI Pharmacy OS", "data", "pharmarack_profile"),
+    import_path15.default.resolve(process.env.APPDATA || "", "AI Pharmacy OS", "data", "pharmarack_profile")
+  ];
+  for (const cand of candidates) {
+    if (cand && import_fs15.default.existsSync(cand)) {
+      console.log(`[PharmarackProfile] Found authenticated profile at candidate path: ${cand}`);
+      try {
+        import_fs15.default.mkdirSync(import_path15.default.dirname(primary), { recursive: true });
+        copyProfileFolder(cand, primary, "[PharmarackProfileSync]").catch(() => {
+        });
+      } catch (_) {
+      }
+      return cand;
+    }
+  }
+  return primary;
+}
 var import_fs15, import_path15, checkoutPromise, PharmarackCheckoutService, pharmarackCheckoutService;
 var init_pharmarackCheckoutService = __esm({
   "src/services/pharmarackCheckoutService.ts"() {
@@ -15999,9 +16022,9 @@ var init_pharmarackCheckoutService = __esm({
         if (!chromePath) {
           return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "Google Chrome was not found on your system." };
         }
-        const mainProfilePath = import_path15.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = resolvePharmarackProfilePath();
         if (!import_fs15.default.existsSync(mainProfilePath)) {
-          return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "No active Pharmarack profile found. Please log in first." };
+          import_fs15.default.mkdirSync(mainProfilePath, { recursive: true });
         }
         let browser = null;
         let headlessTrackId = null;
@@ -16323,7 +16346,7 @@ var init_pharmarackCheckoutService = __esm({
         if (!chromePath) {
           return { ok: false, message: "Google Chrome was not found on your system." };
         }
-        const mainProfilePath = import_path15.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = resolvePharmarackProfilePath();
         try {
           await killOrphanChromeProcesses("pharmarack_profile");
           if (!import_fs15.default.existsSync(mainProfilePath)) import_fs15.default.mkdirSync(mainProfilePath, { recursive: true });
@@ -31265,6 +31288,7 @@ var init_pharmarack = __esm({
     init_searchCache();
     init_tokenRefreshScheduler();
     init_config();
+    init_pharmarackOrderSyncService();
     init_distributorSyncHelper();
     init_distributorDispatchReminderWorker();
     init_pharmarackCatalogCache();
@@ -31788,7 +31812,7 @@ var init_pharmarack = __esm({
       try {
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
         const db2 = await dbManager.getConnection();
-        const appPort = process.env.PORT || 3001;
+        const appPort = process.env.PORT || config.port;
         if (orders && Array.isArray(orders) && orders.length > 0) {
           try {
             await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
@@ -31815,8 +31839,13 @@ var init_pharmarack = __esm({
         console.log("[PharmarackRoute] Step 2: Executing automated cart checkout with 10-12s buffers...");
         const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
         invalidatePharmarackCartCache();
+        try {
+          await syncPharmarackOrders();
+        } catch (syncErr) {
+          console.warn("[PharmarackRoute] Post-checkout order sync notice:", syncErr?.message || syncErr);
+        }
         const syncedToday = await db2.all(
-          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
+          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
           [today]
         );
         if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
@@ -31929,6 +31958,27 @@ var init_pharmarack = __esm({
       } catch (err) {
         console.error("Open cart window route error:", err);
         res.status(500).json({ ok: false, error: err.message || "Failed to open cart window" });
+      }
+    });
+    router.post("/cart/sync-post-checkout", async (_req, res) => {
+      try {
+        const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
+        await syncPharmarackOrders().catch(() => {
+        });
+        invalidatePharmarackCartCache();
+        const db2 = await dbManager.getConnection();
+        const syncedToday = await db2.all(
+          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+          [today]
+        );
+        try {
+          eventService.broadcast("pharmarack_orders_changed", { today });
+          eventService.broadcast("pharmarack_cart_changed", {});
+        } catch (_) {
+        }
+        res.json({ success: true, count: syncedToday.length, orders: syncedToday });
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message || "Post-checkout sync failed" });
       }
     });
     router.get("/cart", async (req, res) => {
@@ -60235,7 +60285,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.117";
+    APP_VERSION = "0.1.118";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
