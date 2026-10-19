@@ -3030,22 +3030,48 @@ const POS = () => {
         });
     }
 
-    // Sequential Enter-Key Hopping: when medicine is added to cart, always focus Strip Qty first with auto-select
-    const focusTargetQty = () => {
-      const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`) as HTMLInputElement | null;
-      if (qtyInput && !qtyInput.disabled) {
-        qtyInput.focus();
-        qtyInput.select?.();
-        return true;
-      }
-      return false;
-    };
-    if (!focusTargetQty()) {
-      setTimeout(() => {
-        if (!focusTargetQty()) {
-          setTimeout(focusTargetQty, 90);
+    // Fast-billing keyboard routing:
+    // 1. Liquids / single-unit forms (Qty=1, loose N/A): jump directly to Next Medicine row
+    // 2. Solid medicines with loose allowed: jump directly to Loose Tablets Qty
+    // 3. Full-pack only medicines: focus Strip Qty
+    const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || (Number(med.packSize ?? (med as any).pack_size) === 1);
+    const isLooseAllowed = resolveAllowLooseSale(med) === 1;
+
+    if (isLiquid) {
+      writeRef(skipEmptyRowAutofocusRef, false);
+      focusCartMedicineInput();
+    } else if (isLooseAllowed) {
+      const focusLoose = () => {
+        const looseInput = document.getElementById(`row-loose-input-${targetIndex}`) as HTMLInputElement | null;
+        if (looseInput && !looseInput.disabled) {
+          looseInput.focus();
+          looseInput.select?.();
+          return true;
         }
-      }, 50);
+        return false;
+      };
+      if (!focusLoose()) {
+        setTimeout(() => {
+          if (!focusLoose()) setTimeout(focusLoose, 90);
+        }, 50);
+      }
+    } else {
+      const focusTargetQty = () => {
+        const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`) as HTMLInputElement | null;
+        if (qtyInput && !qtyInput.disabled) {
+          qtyInput.focus();
+          qtyInput.select?.();
+          return true;
+        }
+        return false;
+      };
+      if (!focusTargetQty()) {
+        setTimeout(() => {
+          if (!focusTargetQty()) {
+            setTimeout(focusTargetQty, 90);
+          }
+        }, 50);
+      }
     }
   };
 
@@ -3339,22 +3365,48 @@ const POS = () => {
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
-    // Sequential Enter-Key Hopping: when row medicine changes, always focus Strip Qty first with auto-select
-    const focusRowQty = () => {
-      const qtyInput = document.getElementById(`row-qty-input-${index}`) as HTMLInputElement | null;
-      if (qtyInput && !qtyInput.disabled) {
-        qtyInput.focus();
-        qtyInput.select?.();
-        return true;
-      }
-      return false;
-    };
-    if (!focusRowQty()) {
-      setTimeout(() => {
-        if (!focusRowQty()) {
-          setTimeout(focusRowQty, 80);
+    // Fast-billing keyboard routing:
+    // 1. Liquids / single-unit forms (Qty=1, loose N/A): jump directly to Next Medicine row
+    // 2. Solid medicines with loose allowed: jump directly to Loose Tablets Qty
+    // 3. Full-pack only medicines: focus Strip Qty
+    const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || (Number(med.pack_size ?? (med as any).packSize) === 1);
+    const isLooseAllowed = resolveAllowLooseSale(med) === 1;
+
+    if (isLiquid) {
+      writeRef(skipEmptyRowAutofocusRef, false);
+      focusCartMedicineInput();
+    } else if (isLooseAllowed) {
+      const focusRowLoose = () => {
+        const looseInput = document.getElementById(`row-loose-input-${index}`) as HTMLInputElement | null;
+        if (looseInput && !looseInput.disabled) {
+          looseInput.focus();
+          looseInput.select?.();
+          return true;
         }
-      }, 40);
+        return false;
+      };
+      if (!focusRowLoose()) {
+        setTimeout(() => {
+          if (!focusRowLoose()) setTimeout(focusRowLoose, 80);
+        }, 40);
+      }
+    } else {
+      const focusRowQty = () => {
+        const qtyInput = document.getElementById(`row-qty-input-${index}`) as HTMLInputElement | null;
+        if (qtyInput && !qtyInput.disabled) {
+          qtyInput.focus();
+          qtyInput.select?.();
+          return true;
+        }
+        return false;
+      };
+      if (!focusRowQty()) {
+        setTimeout(() => {
+          if (!focusRowQty()) {
+            setTimeout(focusRowQty, 80);
+          }
+        }, 40);
+      }
     }
 
     // Enrich salts & alternatives asynchronously in the background
@@ -5650,6 +5702,21 @@ const POS = () => {
                                     if (cdEl) { cdEl.focus(); cdEl.select?.(); }
                                     return;
                                   }
+                                  if (e.key === 'Tab' && !e.shiftKey && !item.isEmptyRow && rowSearchResults.length === 0) {
+                                    e.preventDefault();
+                                    setActiveRowSearchIndex(null);
+                                    setRowSearchTerm('');
+                                    setRowSearchHighlightIndex(-1);
+                                    const isLooseAllowed = resolveAllowLooseSale(item) === 1;
+                                    const targetEl = isLooseAllowed
+                                      ? (document.getElementById(`row-loose-input-${idx}`) as HTMLInputElement | null)
+                                      : (document.getElementById(`row-qty-input-${idx}`) as HTMLInputElement | null);
+                                    if (targetEl) {
+                                      targetEl.focus();
+                                      targetEl.select?.();
+                                    }
+                                    return;
+                                  }
                                   if (activeRowSearchIndex !== idx || rowSearchResults.length === 0) return;
                                   if (e.key === 'ArrowDown') {
                                     e.preventDefault();
@@ -5833,6 +5900,7 @@ const POS = () => {
                             <button
                               id={`row-batch-input-${cart.indexOf(item)}`}
                               type="button"
+                              tabIndex={-1}
                               disabled={item.isEmptyRow}
                               className={`w-32 text-center flex items-center justify-between gap-1 bg-bg/60 border border-border/60 hover:border-primary/50 focus:border-primary/80 focus:ring-1 focus:ring-primary/20 text-sm font-mono font-semibold py-1 px-2 h-8 rounded-lg transition-all ${item.isEmptyRow ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-bg3/50'}`}
                               onClick={() => {

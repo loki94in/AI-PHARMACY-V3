@@ -3942,6 +3942,10 @@ const Purchases: React.FC = () => {
                                       e.preventDefault();
                                       selectMedicine(searchResults[searchHighlightIndex], index);
                                       return;
+                                    } else if (searchResults.length > 0 && searchHighlightIndex === -1) {
+                                      e.preventDefault();
+                                      selectMedicine(searchResults[0], index);
+                                      return;
                                     }
                                     // Accept typed medicine name and advance to batch_no
                                     setActiveSearchIndex(null);

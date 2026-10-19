@@ -1,76 +1,66 @@
-# Implementation Plan - Permanent Sequential Enter-Key Column Hopping in POS and Purchases
+# Implementation Plan - Optimized POS & Purchases Fast Keyboard Billing Workflow
 
-## 1. Overview & Problem Statement
-- **Issue:** Operators require high-speed keyboard-only data entry without touching the mouse. Previously, selecting a medicine in Purchases or POS caused focus drops, conditional skipping (e.g. freezing when batch/qty were pre-filled), or inconsistent Enter-key behaviors across columns.
-- **Goal:**
-  1. Enforce permanent, unbreakable **Sequential Enter-Key Column Hopping** in Purchases and POS.
-  2. Document the strict contract in `frontend/AGENTS.md` so future AI agents are explicitly forbidden from breaking or modifying this workflow without prior user confirmation.
-  3. Ensure all fields auto-select their text upon focus (`input.select()`) for instant overwrite.
-
-## 2. Hopping Sequences
-
-### A. Purchases Bill Entry & Edit (`frontend/src/pages/Purchases/index.tsx`)
-- `Medicine Search` ──(Enter on Dropdown Item)──> `Batch No`
-- `Batch No` ──(Enter)──> `Expiry Date (MM/YY)`
-- `Expiry Date` ──(Enter)──> `Rate`
-- `Rate` ──(Enter)──> `MRP`
-- `MRP` ──(Enter)──> `Qty`
-- `Qty` ──(Enter)──> `Free Qty`
-- `Free Qty` ──(Enter)──> `Next Row Medicine Search` (appends empty line if on the last row)
-- Backward traversal: `Shift + Tab` smoothly steps backward in the exact reverse sequence.
-
-### B. POS Fast Sales Billing (`frontend/src/pages/POS/index.tsx`)
-- `Medicine Search` (`#medicine-search-input`) ──(Enter on Item)──> Adds to cart & jumps to Cart Row `Strip Qty`
-- `Strip Qty` (`#row-qty-input-${index}`) ──(Enter)──>:
-  - If loose tablet sales allowed & enabled: jumps to `Loose Qty` (`#row-loose-input-${index}`)
-  - If liquid/syrup or loose disabled: jumps directly back to `#medicine-search-input` for the next medicine
-- `Loose Qty` (`#row-loose-input-${index}`) ──(Enter)──> Jumps directly back to `#medicine-search-input`
-- In-cart Direct Row Edit: `Row Medicine` ──(Enter)──> `Batch` ──(Enter)──> `Qty` ──(Enter)──> `Loose` ──(Enter)──> Next Search / Row.
-
-### C. Contract Protection
-- Add "Sequential Enter-Key Column Hopping Contract (MANDATORY & LOCKED)" to `frontend/AGENTS.md`. Future agents MUST NOT alter this without asking the user.
+## 1. Overview & Requirements
+- **Problem**:
+  1. Pressing Tab in POS rows focused the Batch button, opening the "Switch Batch" modal unexpectedly.
+  2. Selecting a medicine always focused Strip Qty, forcing an extra keystroke to reach Loose Tablets for tablet counter sales.
+  3. Selecting a liquid medicine (which defaults to Qty 1) stopped at Qty instead of advancing to the next item.
+  4. Dropdown search suggestions had minor cleanup lag on blur/Tab, causing dropdowns to flash or reopen.
+  5. In Purchases search, pressing Tab when highlight index was `-1` didn't auto-pick the top result.
+- **Goals**:
+  1. Skip Batch button in Tab order (`tabIndex={-1}`) to eliminate accidental batch popups during keyboard billing.
+  2. Auto-select highlighted or first match on both `Enter` and `Tab` in dropdowns.
+  3. For solid medicines allowing loose sales: jump focus directly to `Loose Tablets Qty` (`#row-loose-input-${index}`).
+  4. For liquid / single-unit medicines: set Qty = 1 and jump focus directly to the Next Medicine row (`focusCartMedicineInput()`).
+  5. In `row-loose-input`: pressing `Enter` or `Tab` advances directly to the Next Medicine row.
+  6. In Purchases `medicine_name`: pressing `Tab` auto-selects the highlighted or top search result.
 
 ---
 
-## 3. Implementation Steps
+## 2. Technical Strategy & File Changes
 
-1. **Purchases Page (`frontend/src/pages/Purchases/index.tsx`)**:
-   - Update `handleSelectMedicine` to always advance focus to `batch_no` with `el.select()`.
-   - Update `handleFieldKeyDown` for each field (`medicine_name`, `batch_no`, `expiry_date`, `rate`, `mrp`, `qty`, `free_qty`) to strictly hop on `Enter`.
-   - Ensure backward navigation (`Shift + Tab`) maps accurately.
+### A. POS Table Row (`frontend/src/pages/POS/index.tsx`)
+1. **Batch Button `tabIndex={-1}`**:
+   - Add `tabIndex={-1}` to `<button id="row-batch-btn-${cart.indexOf(item)}" ...>`.
+   - Result: Keyboard Tab jumps from Medicine Search straight to Qty / Loose without activating the batch selector.
+2. **Post-Medicine Selection Routing (`fetchDetailsAndChangeRowMedicine`)**:
+   - Check medicine characteristics via `resolveAllowLooseSale` and `isLiquidOrSingleUnitForm`:
+     - If liquid/single-unit: focus `focusCartMedicineInput()` directly (skipping Qty/Loose since Qty defaults to 1).
+     - If loose sales allowed: focus `#row-loose-input-${index}` with `input.select()`.
+     - Otherwise (full-pack only): focus `#row-qty-input-${index}` with `input.select()`.
+3. **Synchronous Search Cleanup**:
+   - In `row-med-input`: when selecting via `Enter` or `Tab`, synchronously reset `activeRowSearchIndex(null)`, `rowSearchTerm('')`, `rowSearchResults([])`, and `rowSearchHighlightIndex(-1)`.
+4. **Loose Qty Enter/Tab Navigation**:
+   - In `row-loose-input` `onKeyDown`: `Enter` and `Tab` (without Shift) advance directly to `focusCartMedicineInput()`.
 
-2. **POS Page (`frontend/src/pages/POS/index.tsx`)**:
-   - In `addToCart` / `fetchDetailsAndAddToCart`, reliably jump focus to `#row-qty-input-${targetIndex}` with `el.select()`.
-   - In `#row-qty-input-${idx}` `onKeyDown`, on `Enter`: if loose enabled, go to `#row-loose-input-${idx}`, else go to `#medicine-search-input`.
-   - In `#row-loose-input-${idx}` `onKeyDown`, on `Enter`: go to `#medicine-search-input`.
-   - In `#row-med-input-${idx}` `onKeyDown`, on `Enter`: advance to `#row-qty-input-${idx}`.
+### B. Purchases Search (`frontend/src/pages/Purchases/index.tsx`)
+1. In `medicine_name` input `onKeyDown`:
+   - On `Tab` (without Shift): if `searchHighlightIndex >= 0 && searchHighlightIndex < searchResults.length`, select that item; else if `searchResults.length > 0`, select `searchResults[0]`.
 
-3. **Documentation & Protection Contract**:
-   - Update `frontend/AGENTS.md` and root `AGENTS.md` with the locked contract.
+---
 
-4. **Verification**:
-   - Run `npm run guardrails` (`tsc --noEmit` and speed guardrails).
+## 3. Verification Plan
+1. **TypeScript & Guardrails Check**:
+   - Run `npm run guardrails` to ensure clean compilation (`tsc --noEmit`) and 0 speed/lint violations.
+2. **Knowledge Graph Update**:
    - Run `node scripts/quick-update.mjs`.
+3. **Documentation Update**:
+   - Update `frontend/AGENTS.md` to reflect the updated keyboard flow contract.
 
 ---
 
 ## Completed Tasks Log
-- [x] Task 1: Permanent Sequential Enter-Key Hopping in Purchases
-  - Added resilient multi-attempt `focusRowMedicineName` and `focusRowField` with `el.select()`.
-  - Updated `selectMedicine` so selecting any medicine immediately and unconditionally hops to `batch_no`.
-  - Updated `medicine_name` input so pressing `Enter` on an already-linked medicine advances to `batch_no` without opening the modal.
-  - Verified full sequential flow: `Medicine` -> `Batch` -> `Expiry` -> `Rate` -> `MRP` -> `Qty` -> `Free Qty` -> `Next Row Medicine Name`.
-- [x] Task 2: Permanent Sequential Enter-Key Hopping in POS
-  - Updated `addToCart` and `fetchDetailsAndChangeRowMedicine` to unconditionally focus `row-qty-input` with auto-select upon medicine selection.
-  - Set default `incQty = 1` for newly added items so operators can instantly tap `Enter` or overwrite without backspace.
-  - Updated `row-qty-input` on `Enter`: advances to `row-loose-input` (if loose sales allowed) or hops directly to `#medicine-search-input`.
-  - Updated `row-loose-input` on `Enter`: hops directly back to `#medicine-search-input` for the next medicine.
-  - Made `focusCartMedicineInput` resilient with fallback to `#medicine-search-input`.
-- [x] Task 3: Contract Documentation in AGENTS.md
-  - Added "Sequential Enter-Key Column Hopping Contract (MANDATORY & LOCKED)" to `frontend/AGENTS.md`.
-  - Added reference pointer in root `AGENTS.md`.
-  - Mandated that future AI agents must never modify or break this sequential hopping flow without explicit user confirmation.
-- [x] Task 4: Automated Verification & Guardrails
-  - Ran `npm run build:client` -> Vite and TypeScript client build passed 100%.
-  - Ran `npm run guardrails` -> TypeScript compilation (`tsc --noEmit`) OK, 0 violations, speed architecture intact.
-  - Ran `node scripts/quick-update.mjs` -> Updated 1,269 nodes and 809 edges in knowledge graph.
+- [x] Task 1: Update POS Batch Button, Medicine Selection, and Post-Select Focus Routing
+  - Added `tabIndex={-1}` to `<button id="row-batch-input-${cart.indexOf(item)}">` so Tab/Enter skips batch selection and prevents accidental batch modal popups.
+  - Implemented smart post-selection focus routing in `addToCart` and `fetchDetailsAndChangeRowMedicine`:
+    - Liquids / single-unit forms (`resolveAllowLooseSale === 0` / liquid form): default Qty = 1, jump directly to Next Medicine row.
+    - Solid medicines with loose sales allowed (`resolveAllowLooseSale === 1`): jump directly to Loose Tablets input (`#row-loose-input-${index}`).
+    - Solid medicines full-pack only: focus Strip Qty (`#row-qty-input-${index}`).
+  - Added Tab navigation for non-empty rows without active search to advance directly to Loose/Qty.
+- [x] Task 2: Align Purchases Search Dropdown Tab Selection
+  - In `frontend/src/pages/Purchases/index.tsx`, updated `Tab` keydown handler to select `searchResults[searchHighlightIndex >= 0 ? searchHighlightIndex : 0]` when search suggestions are visible.
+- [x] Task 3: Update AGENTS.md Contracts
+  - Updated `frontend/AGENTS.md` under "Sequential Enter-Key Column Hopping Contract (MANDATORY & LOCKED)" to lock the batch tabIndex skip, liquid auto-skip, and loose tablet direct focus routing.
+- [x] Task 4: Run Guardrails & Update Knowledge Graph
+  - Ran `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) passed with 0 errors, 0 speed violations.
+  - Ran `node scripts/quick-update.mjs`: Knowledge graph synchronized (1,269 nodes, 809 edges).

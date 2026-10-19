@@ -55104,22 +55104,120 @@ var init_saleBillEditService = __esm({
 
 // src/services/purchaseBillEditService.ts
 async function applyPurchaseStockChange(db2, purchaseId, oldLines, newLines, ledgerType) {
+  const reassignedOldIndices = /* @__PURE__ */ new Set();
+  const reassignedNewMap = /* @__PURE__ */ new Map();
+  for (let i = 0; i < oldLines.length; i++) {
+    const o = oldLines[i];
+    const obatch = String(o.batch_no ?? "").trim();
+    if (!obatch || obatch === "\u2014") continue;
+    const matchIdx = newLines.findIndex(
+      (n, nIdx) => !reassignedNewMap.has(nIdx) && String(n.batch_no ?? "").trim() === obatch && Number(n.medicine_id) !== Number(o.medicine_id)
+    );
+    if (matchIdx !== -1) {
+      reassignedOldIndices.add(i);
+      reassignedNewMap.set(matchIdx, {
+        oldMedId: Number(o.medicine_id),
+        oldStrips: stripsOf(o)
+      });
+    }
+  }
+  const touchedMedicineIds = /* @__PURE__ */ new Set();
+  const touchedInventoryIds = /* @__PURE__ */ new Set();
+  for (const [newIdx, reassign] of reassignedNewMap.entries()) {
+    const n = newLines[newIdx];
+    const batch = String(n.batch_no ?? "").trim();
+    const newMedId = Number(n.medicine_id);
+    const oldMedId = reassign.oldMedId;
+    touchedMedicineIds.add(oldMedId);
+    touchedMedicineIds.add(newMedId);
+    const oldInv = await db2.get(
+      `SELECT im.id, im.quantity, im.loose_quantity, m.name AS old_name
+       FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id
+       WHERE im.medicine_id = ? AND TRIM(COALESCE(im.batch_no, '')) = ?
+       ORDER BY im.id LIMIT 1`,
+      [oldMedId, batch]
+    );
+    if (oldInv) {
+      const newMed = await db2.get(
+        `SELECT id, name FROM medicines WHERE id = ?`,
+        [newMedId]
+      );
+      const existingNewInv = await db2.get(
+        `SELECT id, quantity, loose_quantity FROM inventory_master
+         WHERE medicine_id = ? AND TRIM(COALESCE(batch_no, '')) = ? AND id != ?
+         ORDER BY id LIMIT 1`,
+        [newMedId, batch, oldInv.id]
+      );
+      let targetInvId = oldInv.id;
+      if (!existingNewInv) {
+        await db2.run(
+          `UPDATE inventory_master SET medicine_id = ? WHERE id = ?`,
+          [newMedId, oldInv.id]
+        );
+      } else {
+        await db2.run(
+          `UPDATE inventory_master SET quantity = quantity + ?, loose_quantity = loose_quantity + ? WHERE id = ?`,
+          [Number(oldInv.quantity) || 0, Number(oldInv.loose_quantity) || 0, existingNewInv.id]
+        );
+        await db2.run(
+          `UPDATE sale_items SET inventory_id = ? WHERE inventory_id = ?`,
+          [existingNewInv.id, oldInv.id]
+        );
+        await db2.run(
+          `DELETE FROM inventory_master WHERE id = ?`,
+          [oldInv.id]
+        );
+        targetInvId = existingNewInv.id;
+      }
+      touchedInventoryIds.add(targetInvId);
+      if (newMed?.name) {
+        await db2.run(
+          `UPDATE sale_items SET medicine_name_snapshot = ? WHERE inventory_id = ?`,
+          [newMed.name, targetInvId]
+        );
+      }
+      try {
+        await db2.run(
+          `UPDATE stock_ledger SET medicine_id = ? WHERE medicine_id = ? AND TRIM(COALESCE(batch_no, '')) = ?`,
+          [newMedId, oldMedId, batch]
+        );
+      } catch (_) {
+      }
+      if (oldInv.old_name && oldInv.old_name.trim()) {
+        try {
+          await db2.run(
+            `INSERT OR IGNORE INTO medicine_aliases (alias_name, medicine_id) VALUES (?, ?)`,
+            [oldInv.old_name.trim(), newMedId]
+          );
+        } catch (_) {
+        }
+      }
+    }
+  }
   const changes = /* @__PURE__ */ new Map();
-  const keyOf = (l) => `${l.medicine_id}|${String(l.batch_no ?? "").trim()}`;
-  const entry = (l) => {
-    const k = keyOf(l);
+  const entry = (medId, batchNo) => {
+    const cleanBatch = String(batchNo ?? "").trim();
+    const k = `${medId}|${cleanBatch}`;
     let c = changes.get(k);
     if (!c) {
-      c = { medicine_id: Number(l.medicine_id), batch_no: String(l.batch_no ?? "").trim(), oldStrips: 0, newStrips: 0 };
+      c = { medicine_id: Number(medId), batch_no: cleanBatch, oldStrips: 0, newStrips: 0 };
       changes.set(k, c);
     }
     return c;
   };
-  for (const l of oldLines) entry(l).oldStrips += stripsOf(l);
-  for (const l of newLines) {
-    const c = entry(l);
+  for (let i = 0; i < oldLines.length; i++) {
+    if (reassignedOldIndices.has(i)) continue;
+    const l = oldLines[i];
+    entry(l.medicine_id, l.batch_no).oldStrips += stripsOf(l);
+  }
+  for (let j = 0; j < newLines.length; j++) {
+    const l = newLines[j];
+    const c = entry(l.medicine_id, l.batch_no);
     c.newStrips += stripsOf(l);
     c.line = l;
+    if (reassignedNewMap.has(j)) {
+      c.oldStrips += reassignedNewMap.get(j).oldStrips;
+    }
   }
   const shortages = [];
   const rows = /* @__PURE__ */ new Map();
@@ -55147,8 +55245,6 @@ async function applyPurchaseStockChange(db2, purchaseId, oldLines, newLines, led
       `Stock from this bill was already sold or returned, so it can't be taken back: ${shortages.join("; ")}. Edit or delete those sales/returns first, or correct the shelf count on Investigation.`
     );
   }
-  const touchedMedicineIds = /* @__PURE__ */ new Set();
-  const touchedInventoryIds = /* @__PURE__ */ new Set();
   for (const [k, c] of changes) {
     touchedMedicineIds.add(c.medicine_id);
     const net = c.newStrips - c.oldStrips;
@@ -60342,7 +60438,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.121";
+    APP_VERSION = "0.1.123";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -105741,6 +105837,25 @@ var init_medicines = __esm({
           params.push(id);
           await db2.run(`UPDATE medicines SET ${updates.join(", ")} WHERE id = ?`, params);
         }
+        if (name !== void 0 && String(name).trim() !== "") {
+          const cleanName = String(name).trim();
+          try {
+            await db2.run(
+              `UPDATE sale_items 
+           SET medicine_name_snapshot = ? 
+           WHERE inventory_id IN (SELECT id FROM inventory_master WHERE medicine_id = ?)`,
+              [cleanName, id]
+            );
+          } catch (_) {
+          }
+          try {
+            await db2.run(
+              `UPDATE patient_refills SET medicine_name = ? WHERE medicine_id = ?`,
+              [cleanName, id]
+            );
+          } catch (_) {
+          }
+        }
         if (inventory_id) {
           const invUpdates = [];
           const invParams = [];
@@ -105828,6 +105943,26 @@ var init_medicines = __esm({
         const params = [cleanPrimaryId, ...secondaryIds];
         await db2.run(`UPDATE inventory_master SET medicine_id = ? WHERE medicine_id IN (${placeholders})`, params);
         await db2.run(`UPDATE purchase_items SET medicine_id = ? WHERE medicine_id IN (${placeholders})`, params);
+        if (primary.name) {
+          try {
+            await db2.run(
+              `UPDATE sale_items 
+           SET medicine_name_snapshot = ? 
+           WHERE inventory_id IN (SELECT id FROM inventory_master WHERE medicine_id = ?)`,
+              [primary.name, cleanPrimaryId]
+            );
+          } catch (_) {
+          }
+          try {
+            await db2.run(
+              `UPDATE patient_refills 
+           SET medicine_id = ?, medicine_name = ? 
+           WHERE medicine_id IN (${placeholders})`,
+              [cleanPrimaryId, primary.name, ...secondaryIds]
+            );
+          } catch (_) {
+          }
+        }
         try {
           await db2.run(`UPDATE stock_ledger SET medicine_id = ? WHERE medicine_id IN (${placeholders})`, params);
         } catch (_) {
