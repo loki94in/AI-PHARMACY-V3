@@ -16054,16 +16054,19 @@ var init_pharmarackCheckoutService = __esm({
           page.on("response", async (response) => {
             try {
               const url = response.url();
-              if (url.includes("/order/") || url.includes("/cart/") || url.includes("Order")) {
+              if (url.includes("/order") || url.includes("/cart") || url.includes("Order") || url.includes("checkout") || url.includes("Checkout") || url.includes("retailer")) {
                 const status = response.status();
                 if (status >= 200 && status < 300) {
                   const text = await response.text().catch(() => "");
-                  if (text && text.includes("OrderNo")) {
-                    const matches = text.match(/"OrderNo"\s*:\s*"?([A-Za-z0-9_-]+)"?/g);
+                  if (text) {
+                    const matches = text.match(/"(?:OrderNo|orderNo|OrderId|orderId|po_number|poNumber|OrderNumber)"\s*:\s*"?([A-Za-z0-9_-]+)"?/gi);
                     if (matches) {
                       for (const m of matches) {
-                        const cleanNo = m.replace(/"OrderNo"\s*:\s*"?/, "").replace(/"?$/, "").trim();
-                        if (cleanNo) networkOrderNos.add(cleanNo);
+                        const cleanNo = m.replace(/"(?:OrderNo|orderNo|OrderId|orderId|po_number|poNumber|OrderNumber)"\s*:\s*"?/i, "").replace(/"?$/, "").trim();
+                        if (cleanNo && cleanNo !== "0" && cleanNo.toLowerCase() !== "null" && cleanNo.length >= 3) {
+                          networkOrderNos.add(cleanNo);
+                          console.log("[PharmarackCheckout] Captured official Order ID from network response:", cleanNo);
+                        }
                       }
                     }
                   }
@@ -16073,7 +16076,7 @@ var init_pharmarackCheckoutService = __esm({
             }
           });
           console.log("[PharmarackCheckout] Navigating to https://retailers.pharmarack.com/cart ...");
-          await page.goto("https://retailers.pharmarack.com/cart", { waitUntil: "domcontentloaded", timeout: 25e3 });
+          await page.goto("https://retailers.pharmarack.com/cart", { waitUntil: "domcontentloaded", timeout: 35e3 });
           const currentUrl = page.url();
           if (currentUrl.includes("/login") || currentUrl.includes("/auth") || currentUrl.includes("/signin")) {
             console.warn("[PharmarackCheckout] Session expired: Redirected to login page.");
@@ -16088,11 +16091,44 @@ var init_pharmarackCheckoutService = __esm({
               error: "Pharmarack session expired. Please re-authenticate via Settings > External Integrations."
             };
           }
-          await new Promise((r) => setTimeout(r, 2500));
+          console.log("[PharmarackCheckout] Waiting 10-12s for Pharmarack cart page SPA hydration and network calls...");
+          const hydrationStart = Date.now();
+          while (Date.now() - hydrationStart < 12e3) {
+            const isReady2 = await page.evaluate(() => {
+              const hasCards = document.querySelectorAll(
+                '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel, tbody tr'
+              ).length > 0;
+              const hasButtons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]')).some((b) => {
+                const txt = (b.textContent || "").trim().toLowerCase();
+                return txt.includes("place order") || txt.includes("confirm order") || txt.includes("checkout") || txt.includes("order now");
+              });
+              const isEmpty = (document.body.innerText || "").toLowerCase().includes("cart is empty");
+              return hasCards && hasButtons || isEmpty;
+            }).catch(() => false);
+            if (isReady2 && Date.now() - hydrationStart >= 8e3) {
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 1e3));
+          }
           const checkoutExecution = await page.evaluate(async (targetNames) => {
             const logs = [];
             const placedStores = [];
             const failedStores = [];
+            const normalizeStr2 = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
+            const matchesTargetStore = (candidateName, targets) => {
+              const normCand = normalizeStr2(candidateName);
+              const stopWords = /* @__PURE__ */ new Set(["pvt", "ltd", "pharmaceuticals", "distributors", "agencies", "enterprise", "pharma", "medical", "distributor", "agency"]);
+              const candTokens = normCand.split(" ").filter((w) => w.length > 2 && !stopWords.has(w));
+              return targets.some((t) => {
+                const normT = normalizeStr2(t);
+                if (normCand.includes(normT) || normT.includes(normCand)) return true;
+                const tTokens = normT.split(" ").filter((w) => w.length > 2 && !stopWords.has(w));
+                if (candTokens.length > 0 && tTokens.length > 0) {
+                  return candTokens.some((ct) => tTokens.includes(ct));
+                }
+                return false;
+              });
+            };
             if (targetNames && targetNames.length > 0) {
               try {
                 const potentialSections = Array.from(document.querySelectorAll(
@@ -16103,11 +16139,7 @@ var init_pharmarackCheckoutService = __esm({
                   if (!headerEl || !headerEl.textContent) continue;
                   const cardName = headerEl.textContent.trim();
                   if (cardName.length < 3 || cardName.toLowerCase().includes("cart") || cardName.toLowerCase().includes("total")) continue;
-                  const normCard = cardName.toLowerCase().trim();
-                  const shouldBeSelected = targetNames.some((t) => {
-                    const normT = t.toLowerCase().trim();
-                    return normCard.includes(normT) || normT.includes(normCard);
-                  });
+                  const shouldBeSelected = matchesTargetStore(cardName, targetNames);
                   const chk = section.querySelector('input[type="checkbox"], [role="checkbox"], .ant-checkbox-input, .mat-checkbox-input');
                   if (chk) {
                     const isChecked = chk.checked || chk.getAttribute("aria-checked") === "true" || chk.closest(".ant-checkbox-checked") !== null || chk.closest(".mat-checkbox-checked") !== null;
@@ -16115,12 +16147,12 @@ var init_pharmarackCheckoutService = __esm({
                       chk.scrollIntoView({ behavior: "instant", block: "center" });
                       chk.click();
                       logs.push(`Checked distributor checkbox on Pharmarack: ${cardName}`);
-                      await new Promise((r) => setTimeout(r, 200));
+                      await new Promise((r) => setTimeout(r, 400));
                     } else if (!shouldBeSelected && isChecked) {
                       chk.scrollIntoView({ behavior: "instant", block: "center" });
                       chk.click();
                       logs.push(`Unchecked distributor checkbox on Pharmarack: ${cardName}`);
-                      await new Promise((r) => setTimeout(r, 200));
+                      await new Promise((r) => setTimeout(r, 400));
                     }
                   }
                 }
@@ -16128,10 +16160,19 @@ var init_pharmarackCheckoutService = __esm({
                 logs.push(`Distributor checkbox sync warning: ${syncErr?.message || syncErr}`);
               }
             }
-            const allButtons = Array.from(document.querySelectorAll('button, a[role="button"]'));
+            const allButtons = Array.from(document.querySelectorAll(
+              'button, [role="button"], a[role="button"], input[type="button"], input[type="submit"], .btn, .ant-btn, .mat-button, .mat-raised-button, [class*="checkout"], [class*="place-order"]'
+            ));
             const placeOrderButtons = allButtons.filter((b) => {
-              const txt = (b.innerText || b.textContent || "").trim().toLowerCase();
-              return txt.includes("place order") || txt.includes("confirm order") || txt.includes("checkout") || txt.includes("order now");
+              const txt = (b.innerText || b.textContent || b.value || "").trim().toLowerCase();
+              const isActionText = txt.includes("place order") || txt.includes("confirm order") || txt.includes("checkout") || txt.includes("order now") || txt.includes("review & place") || txt.includes("proceed to buy");
+              if (!isActionText) return false;
+              try {
+                const style = window.getComputedStyle(b);
+                return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+              } catch (_) {
+                return true;
+              }
             });
             logs.push(`Found ${placeOrderButtons.length} potential place order button(s) on cart page.`);
             if (placeOrderButtons.length === 0) {
@@ -16145,12 +16186,12 @@ var init_pharmarackCheckoutService = __esm({
               try {
                 let storeName = "Distributor";
                 let container = btn;
-                for (let i = 0; i < 6; i++) {
+                for (let i = 0; i < 7; i++) {
                   if (!container) break;
                   const headerEl = container.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"]');
                   if (headerEl && headerEl.textContent) {
                     const cand = headerEl.textContent.trim();
-                    if (cand.length > 2 && !cand.toLowerCase().includes("cart") && !cand.toLowerCase().includes("order")) {
+                    if (cand.length > 2 && !cand.toLowerCase().includes("cart") && !cand.toLowerCase().includes("order") && !cand.toLowerCase().includes("checkout")) {
                       storeName = cand;
                       break;
                     }
@@ -16158,28 +16199,37 @@ var init_pharmarackCheckoutService = __esm({
                   container = container.parentElement;
                 }
                 if (targetNames && targetNames.length > 0) {
-                  const normStore = storeName.toLowerCase().trim();
-                  const isMatch = targetNames.some((t) => normStore.includes(t.toLowerCase().trim()) || t.toLowerCase().trim().includes(normStore));
+                  const isMatch = matchesTargetStore(storeName, targetNames);
                   if (storeName !== "Distributor" && !isMatch) {
                     logs.push(`Skipped non-target store Place Order button: ${storeName}`);
                     continue;
                   }
                 }
                 btn.scrollIntoView({ behavior: "instant", block: "center" });
+                if (btn.disabled) {
+                  btn.disabled = false;
+                }
                 btn.click();
                 logs.push(`Clicked Place Order for store: ${storeName}`);
-                await new Promise((r) => setTimeout(r, 800));
-                const modalButtons = Array.from(document.querySelectorAll('.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn'));
-                for (const mBtn of modalButtons) {
-                  const mText = (mBtn.innerText || mBtn.textContent || "").trim().toLowerCase();
-                  if (mText.includes("confirm") || mText.includes("yes") || mText.includes("proceed") || mText.includes("place order")) {
-                    mBtn.click();
-                    logs.push(`Confirmed modal dialog for: ${storeName}`);
-                    break;
+                for (let waitStep = 0; waitStep < 6; waitStep++) {
+                  await new Promise((r) => setTimeout(r, 600));
+                  const modalButtons = Array.from(document.querySelectorAll(
+                    '.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn, [class*="modal"] button, [class*="dialog"] button'
+                  ));
+                  let confirmed = false;
+                  for (const mBtn of modalButtons) {
+                    const mText = (mBtn.innerText || mBtn.textContent || "").trim().toLowerCase();
+                    if (mText.includes("confirm") || mText.includes("yes") || mText.includes("proceed") || mText.includes("place order") || mText.includes("ok")) {
+                      mBtn.click();
+                      logs.push(`Confirmed modal dialog for: ${storeName} (button: ${mText})`);
+                      confirmed = true;
+                      break;
+                    }
                   }
+                  if (confirmed) break;
                 }
                 placedStores.push(storeName);
-                await new Promise((r) => setTimeout(r, 1500));
+                await new Promise((r) => setTimeout(r, 2e3));
               } catch (btnErr) {
                 failedStores.push({ name: "Unknown Store", error: btnErr.message || "Button click failed" });
               }
@@ -16187,7 +16237,8 @@ var init_pharmarackCheckoutService = __esm({
             return { success: true, logs, placedStores, failedStores };
           }, targetStoreNames || null);
           console.log("[PharmarackCheckout] DOM Execution summary:", checkoutExecution);
-          await new Promise((r) => setTimeout(r, 3e3));
+          console.log("[PharmarackCheckout] Waiting 10-12s buffer for Pharmarack server to commit orders and emit Order IDs in network stream...");
+          await new Promise((r) => setTimeout(r, 11e3));
           console.log("[PharmarackCheckout] Triggering immediate Pharmarack order sync to fetch official Order IDs...");
           let syncRes = null;
           try {
@@ -31224,6 +31275,7 @@ var init_pharmarack = __esm({
     init_phoneValidation();
     init_pharmarackCheckoutService();
     init_localTime();
+    init_whatsappQueueWorker();
     init_activityTracker();
     init_orderNameMatcher();
     router = import_express.default.Router();
@@ -31734,17 +31786,11 @@ var init_pharmarack = __esm({
     router.post("/cart/place-official-orders", async (req, res) => {
       const { targetStoreNames, orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
       try {
-        const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
-        invalidatePharmarackCartCache();
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
         const db2 = await dbManager.getConnection();
-        const syncedToday = await db2.all(
-          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
-          [today]
-        );
+        const appPort = process.env.PORT || 3001;
         if (orders && Array.isArray(orders) && orders.length > 0) {
           try {
-            const appPort = process.env.PORT || 3001;
             await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -31753,17 +31799,26 @@ var init_pharmarack = __esm({
                 deliveryBoyPhone,
                 deliveryBoyName,
                 storeInfo,
-                dispatchDistributorsLater: false,
-                // Now that official orders were triggered
+                dispatchDistributorsLater: true,
+                // Hold distributor messages until official Order IDs are captured
                 includeMedicineList: false
                 // Clean distributor list only
               })
             }).catch(() => {
             });
+            console.log("[PharmarackRoute] Step 1: Delivery staff pickup summary enqueued successfully.");
           } catch (queueErr) {
-            console.warn("[PharmarackRoute] Failed to enqueue batch summary post-checkout:", queueErr);
+            console.warn("[PharmarackRoute] Failed to enqueue delivery boy summary pre-checkout:", queueErr);
           }
         }
+        await new Promise((r) => setTimeout(r, 1200));
+        console.log("[PharmarackRoute] Step 2: Executing automated cart checkout with 10-12s buffers...");
+        const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
+        invalidatePharmarackCartCache();
+        const syncedToday = await db2.all(
+          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
+          [today]
+        );
         if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
           for (const ord of checkoutResult.orders) {
             if (ord.status === "placed" && ord.orderNo) {
@@ -31779,8 +31834,78 @@ var init_pharmarack = __esm({
             }
           }
         }
+        if (orders && Array.isArray(orders) && orders.length > 0) {
+          const placedOrders = checkoutResult.orders?.filter((o) => o.status === "placed") || [];
+          const shopRow = await db2.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
+          const shopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || "AI Pharmacy";
+          const shopPhone = storeInfo?.phone || storeInfo?.adminPhone || "";
+          const shopAddress = storeInfo?.address || "";
+          const shopEmail = storeInfo?.email || "";
+          const invoiceFormat = storeInfo?.invoiceFileFormat ? storeInfo.invoiceFileFormat.replace(" File Format", "") : "CSV";
+          const orderDateFormatted = (/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
+          for (const ord of orders) {
+            if (!ord.phone) continue;
+            const normOrdStore = (ord.storeName || "").toLowerCase().trim();
+            const matchedPlaced = placedOrders.find((p) => {
+              const normP = (p.storeName || "").toLowerCase().trim();
+              return normOrdStore.includes(normP) || normP.includes(normOrdStore);
+            });
+            const matchedSynced = syncedToday.find((s) => {
+              const normS = (s.store_name || "").toLowerCase().trim();
+              return normOrdStore.includes(normS) || normS.includes(normOrdStore);
+            });
+            const resolvedOrderNo = matchedPlaced?.orderNo || matchedSynced?.order_no || "";
+            if (checkoutResult.ok || matchedPlaced || matchedSynced) {
+              let distMsg = resolvedOrderNo ? `\u{1F4E6} *Pharmarack Order #${resolvedOrderNo}* has been placed.
+` : `\u{1F4E6} *Pharmarack Order* has been placed.
+`;
+              distMsg += `Please pack and dispatch as soon as possible.
+
+`;
+              distMsg += `\u{1F69A} *Delivery / Pickup Staff:*
+`;
+              distMsg += `  \u{1F464} *${ord.deliveryBoyName || "Delivery Staff"}*
+`;
+              distMsg += `  \u{1F4DE} *${ord.deliveryBoyPhone || "N/A"}*
+
+`;
+              distMsg += `\u{1F3E5} *${shopName}*
+`;
+              if (shopAddress && shopAddress !== "N/A") distMsg += `\u{1F4CD} *Delivery Location:* ${shopAddress}
+`;
+              if (shopPhone) distMsg += `\u{1F4DE} *Pharmacy Contact:* ${shopPhone}
+`;
+              distMsg += `\u{1F4C5} *Order Date:* ${orderDateFormatted}
+
+`;
+              if (shopEmail) distMsg += `\u{1F4DD} *Note:* Please send invoice bill (${invoiceFormat}) to ${shopEmail}.`;
+              const cleanDistPhone = ord.phone.replace(/\D/g, "");
+              if (cleanDistPhone && cleanDistPhone.length >= 10) {
+                try {
+                  await whatsappQueueWorker.enqueue(
+                    cleanDistPhone,
+                    distMsg.trim(),
+                    "pharmarack_distributor_order",
+                    ord.storeName
+                  );
+                  console.log(`[PharmarackRoute] Step 4: Enqueued official Order ID dispatch message for ${ord.storeName} (Order #${resolvedOrderNo || "N/A"})`);
+                  await db2.run(
+                    `UPDATE pharmarack_placed_orders 
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = COALESCE(NULLIF(?, ''), order_no)
+                 WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+                    [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
+                  );
+                  await new Promise((r) => setTimeout(r, 1500));
+                } catch (distMsgErr) {
+                  console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);
+                }
+              }
+            }
+          }
+        }
         try {
           eventService.broadcast("pharmarack_orders_changed", { today });
+          eventService.broadcast("whatsapp_queue_updated", {});
         } catch (_) {
         }
         res.json({
@@ -60110,7 +60235,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.116";
+    APP_VERSION = "0.1.117";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -79594,12 +79719,23 @@ var init_refills = __esm({
             const stock = stockByMedicine.get(Number(row.medicine_id));
             let liveCartHit;
             if (cachedCartLines.length > 0) {
-              const normName = String(row.medicine_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              const rawName = String(row.medicine_name || "").toLowerCase();
+              const normName = rawName.replace(/[^a-z0-9]/g, "");
+              const words = rawName.split(/\s+/).filter((w) => w.length >= 2 && !["tab", "cap", "syp", "inj", "ointment", "gel", "drop"].includes(w));
               if (row.cart_product_code) {
-                liveCartHit = cachedCartLines.find((c) => c.storeId === Number(row.cart_store_id) && c.productCode === String(row.cart_product_code));
+                liveCartHit = cachedCartLines.find((c) => (row.cart_store_id ? c.storeId === Number(row.cart_store_id) : true) && c.productCode === String(row.cart_product_code));
               }
               if (!liveCartHit && normName) {
-                liveCartHit = cachedCartLines.find((c) => String(c.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "") === normName);
+                liveCartHit = cachedCartLines.find((c) => {
+                  const cNorm = String(c.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                  return cNorm === normName || normName.length >= 5 && (cNorm.includes(normName) || normName.includes(cNorm));
+                });
+              }
+              if (!liveCartHit && words.length > 0) {
+                liveCartHit = cachedCartLines.find((c) => {
+                  const cRaw = String(c.productName || "").toLowerCase();
+                  return words.every((w) => cRaw.includes(w));
+                });
               }
             }
             const finalCartStoreName = liveCartHit ? liveCartHit.storeName : row.cart_store_name || null;

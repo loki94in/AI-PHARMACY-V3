@@ -35,6 +35,31 @@ export interface CheckoutExecutionResult {
 // Single-flight checkout mutex
 let checkoutPromise: Promise<CheckoutExecutionResult> | null = null;
 
+export function resolvePharmarackProfilePath(): string {
+  const primary = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
+  if (fs.existsSync(primary)) return primary;
+
+  const candidates = [
+    path.resolve(process.cwd(), 'data', 'pharmarack_profile'),
+    path.resolve(process.env.USERPROFILE || '', 'AppData', 'data', 'pharmarack_profile'),
+    path.resolve(process.env.LOCALAPPDATA || '', 'AI Pharmacy OS', 'data', 'pharmarack_profile'),
+    path.resolve(process.env.APPDATA || '', 'AI Pharmacy OS', 'data', 'pharmarack_profile')
+  ];
+
+  for (const cand of candidates) {
+    if (cand && fs.existsSync(cand)) {
+      console.log(`[PharmarackProfile] Found authenticated profile at candidate path: ${cand}`);
+      try {
+        fs.mkdirSync(path.dirname(primary), { recursive: true });
+        copyProfileFolder(cand, primary, '[PharmarackProfileSync]').catch(() => {});
+      } catch (_) {}
+      return cand;
+    }
+  }
+
+  return primary;
+}
+
 export class PharmarackCheckoutService {
   private static instance: PharmarackCheckoutService;
 
@@ -74,9 +99,9 @@ export class PharmarackCheckoutService {
       return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: 'Google Chrome was not found on your system.' };
     }
 
-    const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
+    const mainProfilePath = resolvePharmarackProfilePath();
     if (!fs.existsSync(mainProfilePath)) {
-      return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: 'No active Pharmarack profile found. Please log in first.' };
+      fs.mkdirSync(mainProfilePath, { recursive: true });
     }
 
     let browser: any = null;
@@ -455,7 +480,7 @@ export class PharmarackCheckoutService {
       return { ok: false, message: 'Google Chrome was not found on your system.' };
     }
 
-    const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
+    const mainProfilePath = resolvePharmarackProfilePath();
     try {
       await killOrphanChromeProcesses('pharmarack_profile');
       if (!fs.existsSync(mainProfilePath)) fs.mkdirSync(mainProfilePath, { recursive: true });

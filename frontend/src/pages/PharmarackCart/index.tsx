@@ -1028,6 +1028,9 @@ export default function PharmarackCart() {
         }
         cachedSentDates = [];
         await loadSentDates();
+        fetchCart(false);
+        fetchPendingOrders();
+        fetchLatestSentMap();
       } else if (res?.skipped === 'session_expired' || res?.skipped === 'no_session') {
         toastEvent.trigger('Pharmarack session expired or not logged in. Please re-authenticate.', 'error');
       } else if (res?.skipped === 'throttled') {
@@ -1378,6 +1381,7 @@ export default function PharmarackCart() {
 
   const [isSendingBatchWhatsApp, setIsSendingBatchWhatsApp] = useState(false);
   const isSendingBatchRef = useRef(false);
+  const waitingForManualOrderSyncRef = useRef(false);
   const [sendingWaDistributorId, setSendingWaDistributorId] = useState<number | null>(null);
 
   // Persistent WhatsApp sent status map by storeId (preserves history across reloads & sessions, scoped to TODAY)
@@ -1473,7 +1477,13 @@ export default function PharmarackCart() {
     // P1 "events, not timers": sync on SSE queue pushes + focus — no fixed interval.
     const handleSseQueue = () => syncQueueStatus();
     const handleFocus = () => {
-      if (document.visibilityState === 'visible') syncQueueStatus();
+      if (document.visibilityState === 'visible') {
+        syncQueueStatus();
+        if (waitingForManualOrderSyncRef.current) {
+          waitingForManualOrderSyncRef.current = false;
+          handleSyncExternalOrders();
+        }
+      }
     };
     window.addEventListener('sse-wa-queue-updated', handleSseQueue);
     window.addEventListener('focus', handleFocus);
@@ -2932,6 +2942,7 @@ export default function PharmarackCart() {
       // Fallback: If automated order placement encounters an issue, provide direct access to authenticated cart window
       try {
         api.openOfficialPharmarackCartWindow().catch(() => {});
+        waitingForManualOrderSyncRef.current = true;
         toastEvent.trigger('Opened live cart window for 1-click manual verification / completion.', 'info');
       } catch (tabErr) {
         console.warn('Tab fallback error:', tabErr);

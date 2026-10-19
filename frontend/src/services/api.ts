@@ -1540,6 +1540,11 @@ export const api = {
     message?: string;
     error?: string;
   }>('/pharmarack/cart/place-official-orders', data).then(res => res.data),
+  syncPharmarackPostCheckout: () => apiClient.post<{
+    success: boolean;
+    count: number;
+    orders: Array<{ order_no: string; store_name: string; order_amount: number }>;
+  }>('/pharmarack/cart/sync-post-checkout').then(res => res.data),
   logoutPharmarack: () => apiClient.post('/pharmarack/logout').then(res => res.data),
   getAffectedClosurePatients: (params: { startDate?: string; endDate?: string; date?: string }) =>
     apiClient.get('/pharmarack/affected-closure-patients', { params }).then(res => res.data),

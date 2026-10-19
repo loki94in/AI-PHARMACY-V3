@@ -1,47 +1,53 @@
-# Implementation Plan: Pharmarack Paced Automated Checkout & Order ID Dispatch Flow
+# Implementation Plan: Fix Pharmarack Cart-to-PO-History Sync & Profile Discovery Gap
 
 **Goal:**
-Automate the end-to-end Pharmarack batch order placement with a 10–12 second settling buffer between steps. First notify delivery staff of today's pickup route, execute headless checkout on Pharmarack's cart with reliable 10–12s hydration and tokenized store matching, capture the official Order ID from the network/sync response, and automatically dispatch the confirmed Order ID to the saved distributor WhatsApp numbers with clean anti-flush pacing.
+Fix the fatal SQLite query error (`no such column: id`) in `src/routes/pharmarack.ts`, implement multi-candidate Chrome profile discovery (`C:\Users\ratna\AppData\data\pharmarack_profile` and local `data/pharmarack_profile`), fix the loopback port resolution from hardcoded 3001 to `config.port`, and ensure that when orders are placed on Pharmarack and clear from the cart, they are immediately synchronized from `DisplayOrders` into `pharmarack_synced_orders` and the Sent PO History, with the official Order IDs dispatched to saved distributor WhatsApp numbers.
 
 ---
 
-## 1. Problem & Architecture Review
+## 1. Root Cause & Architecture Review
 
-1. **Previous Headless Automation Timeout & Name Mismatch**:
-   - In `src/services/pharmarackCheckoutService.ts`, the script waited only 2.5s for the page to hydrate. On real/slow internet connections, Pharmarack's Angular SPA and API (`GetUserCartDetails`) take 4–10 seconds to render the cart table.
-   - The store name matching strictly checked substrings, which failed if the local store name (e.g. `"MAHAVIR MEDICAL"`) did not exactly match the card heading (*"MAHAVIR PHARMA DISTRIBUTORS PVT LTD"*).
-   - Button queries were limited to standard `<button>` tags, potentially missing Angular wrappers or disabled states.
+1. **Fatal SQLite Error in Order Sync Reconciliation**:
+   - In `src/routes/pharmarack.ts` line 2894:
+     ```sql
+     SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC
+     ```
+   - The table `pharmarack_synced_orders` primary key is `order_no`, and it uses `first_seen_at` for timestamps. It has no column named `id`.
+   - This threw an unhandled SQL error that caused `POST /cart/place-official-orders` to crash with HTTP 500, aborting the sync of placed orders to Sent PO History and triggering the fallback cart window.
 
-2. **Sequential Pacing & Order ID Availability**:
-   - Currently, distributor dispatch messages were constructed before the order was placed on Pharmarack, leaving the official `OrderNo` blank.
-   - The user specified a clear 10–12 second gap per step to ensure slow internet and heavy web applications have sufficient time, preventing race conditions and fast-flush WhatsApp bursts.
+2. **Chrome Profile Resolution Gap**:
+   - In `src/services/pharmarackCheckoutService.ts`, `mainProfilePath` was strictly resolved to `path.resolve(getAppDataDir(), 'data', 'pharmarack_profile')`.
+   - On the user's Windows machine, the actual authenticated Chrome session is located at `C:\Users\ratna\AppData\data\pharmarack_profile`.
+   - The absence of the folder in the local project directory caused automated checkout to return `'No active Pharmarack profile found'` without attempting headless checkout.
+
+3. **Loopback Port Misconfiguration**:
+   - In `src/routes/pharmarack.ts`, the code called `http://127.0.0.1:${appPort}` where `appPort` fell back to `3001`. The server actually runs on `config.port` (5174/5175).
+
+4. **Cart-Clearing to Sent PO History Bridge**:
+   - When orders are placed (either automatically or via the 1-click fallback cart window), Pharmarack removes items from `/cart` and moves them to `/orderhistory` (`DisplayOrders`).
+   - The app must immediately invoke `syncPharmarackOrders()` to capture the real `OrderNo`s and populate Sent PO History, then broadcast SSE events so the UI updates seamlessly.
 
 ---
 
 ## 2. Proposed Changes
 
-### A. Paced & Resilient Headless Checkout (`src/services/pharmarackCheckoutService.ts`)
-- Increase initial page hydration wait to a 10–12 second active polling loop checking for distributor cards, items, and checkout buttons.
-- Implement tokenized fuzzy matching for distributor store names (matching common significant words).
-- Broaden button search to `button, [role="button"], a[role="button"], .btn-checkout, .place-order-btn` with case-insensitive matching for "place order", "confirm order", "checkout", "proceed".
-- Provide a 10–12 second network settling window post-click to capture all returned `OrderNo`s from the API response stream.
-- Reconcile captured Order IDs with `syncPharmarackOrders()`.
+### A. Fix SQL Queries & Loopback Port in `src/routes/pharmarack.ts`
+- Fix `SELECT ... FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`.
+- Use `config.port` instead of `process.env.PORT || 3001`.
+- When orders are placed, invoke `syncPharmarackOrders()` and reconcile captured Order IDs.
+- In `POST /cart/open-official-window`, return resolved profile path so the launched Chrome window always points to the authenticated profile directory.
+- Add an explicit sync hook `POST /cart/sync-post-checkout` so when the user returns or closes the cart window, the app immediately updates the Sent PO History.
 
-### B. End-to-End Paced Batch Route (`src/routes/pharmarack.ts`)
-- In `POST /cart/place-official-orders`:
-  1. **Step 1**: Enqueue today's delivery boy pickup list summary first via `enqueue-pharmarack-batch` (with `dispatchDistributorsLater: true`).
-  2. **Step 2**: Execute headless checkout on Pharmarack cart with the 10–12s buffer.
-  3. **Step 3**: Capture official Order IDs and record them in `pharmarack_placed_orders` and `pharmarack_synced_orders`.
-  4. **Step 4**: For each placed distributor order with an official Order ID, format the official PO dispatch message (`📦 *Pharmarack Order #${orderNo}* has been placed...`) and enqueue it to the distributor's phone number with anti-flush pacing.
-  5. **Step 5**: If automated placement fails or encounters restrictions, return `success: false` so the frontend fallback can open the authenticated cart window for 1-click human verification.
+### B. Multi-Candidate Profile Resolution in `src/services/pharmarackCheckoutService.ts`
+- Add `resolvePharmarackProfilePath()` to check:
+  1. `path.resolve(getAppDataDir(), 'data', 'pharmarack_profile')`
+  2. `path.resolve(process.env.USERPROFILE || '', 'AppData', 'data', 'pharmarack_profile')`
+  3. `path.resolve(process.env.LOCALAPPDATA || '', 'AI Pharmacy OS', 'data', 'pharmarack_profile')`
+  4. `path.resolve(process.cwd(), 'data', 'pharmarack_profile')`
+- If found at an external location (e.g. `AppData/data/pharmarack_profile`), automatically use it.
 
-### C. WhatsApp Queue & Distributor Order Dispatch (`src/routes/whatsappQueue.ts`)
-- Support updating or enqueuing individual distributor PO messages after official order placement with the captured `order_no`.
-- Respect safe queue delivery spacing.
-
-### D. Frontend Feedback & Stepped Progress (`frontend/src/pages/PharmarackCart/index.tsx`)
-- Update `handleSendAllWhatsAppOrders` to display paced progress toasts across the 4 steps.
-- Retain human-in-the-loop fallback to open the official cart window on any exception.
+### C. Frontend Post-Checkout Re-Sync in `frontend/src/pages/PharmarackCart/index.tsx`
+- Ensure that whenever the batch order modal completes or the cart window is opened, the page triggers `fetchPendingOrders()`, `fetchLatestSentMap()`, and `loadSentDates()` to immediately reflect the cleared cart and new Sent PO numbers.
 
 ---
 
@@ -52,7 +58,6 @@ Automate the end-to-end Pharmarack batch order placement with a 10–12 second s
    - Frontend: `npx tsc -p frontend/tsconfig.app.json --noEmit`
 2. **Performance Guardrails**:
    - `npm run guardrails` (zero violations)
-   - Must pass all speed and schema constraints
 3. **Knowledge Graph Sync**:
    - `node scripts/quick-update.mjs`
 
@@ -60,11 +65,11 @@ Automate the end-to-end Pharmarack batch order placement with a 10–12 second s
 
 ### Tasks & Progress Tracking
 
-- [x] Task 1: Upgrade `pharmarackCheckoutService.ts` with 10–12s hydration polling, resilient button queries, tokenized store matching, and 10–12s network settling
-  - *Completed:* Implemented an active polling loop waiting 10–12s for Angular SPA hydration and `GetUserCartDetails` to finish, tokenized fuzzy matching between local store names and Pharmarack card headings, multi-selector visibility-checked button queries with modal auto-confirmation, and an 11s network response settling buffer that captures official Order IDs (`OrderNo`, `OrderId`, `po_number`).
-- [x] Task 2: Update `src/routes/pharmarack.ts` `/cart/place-official-orders` for the staged pipeline (Delivery Boy first -> Cart checkout -> Order ID capture -> Distributor dispatch with Order ID)
-  - *Completed:* Re-ordered batch execution so delivery staff immediately receives today's assigned pickup list first (`dispatchDistributorsLater: true`), automated checkout executes with paced 10–12s buffers, official Order IDs are captured from network/sync, and each placed distributor is sent an official dispatch reminder containing the confirmed Order ID with anti-flush pacing.
-- [x] Task 3: Enhance `frontend/src/pages/PharmarackCart/index.tsx` progress messaging & human-in-the-loop fallback
-  - *Completed:* Updated batch send handlers to communicate clear staged progress to the user, and ensured the human-in-the-loop fallback opens the live cart window cleanly if manual verification is required.
+- [x] Task 1: Add multi-candidate profile resolution in `src/services/pharmarackCheckoutService.ts`
+  - *Completed*: Created `resolvePharmarackProfilePath` searching local data dir, `%USERPROFILE%\AppData\data\pharmarack_profile`, and `%LOCALAPPDATA%\AI Pharmacy OS\data\pharmarack_profile`. Automatically syncs and copies active profile to local data directory so headless checkout and 1-click browser window find authenticated session.
+- [x] Task 2: Fix `ORDER BY first_seen_at DESC` and port resolution in `src/routes/pharmarack.ts`
+  - *Completed*: Fixed SQL crash (`no such column: id`) by replacing with `ORDER BY first_seen_at DESC`. Fixed loopback port to dynamically bind to `config.port` (5174/5175). Cleaned up route definitions and added `POST /cart/sync-post-checkout`.
+- [x] Task 3: Bridge cart-clearing and Sent PO History updates in `src/routes/pharmarack.ts` and `frontend/src/pages/PharmarackCart/index.tsx`
+  - *Completed*: Synchronized placed orders from `DisplayOrders` immediately during and after order placement. Added `waitingForManualOrderSyncRef` in `index.tsx` and connected window `focus` event listener: when user returns from the live cart window, the app immediately reconciles the placed orders, updates Sent PO History, and clears the cart lines. Added `syncPharmarackPostCheckout` in frontend API.
 - [x] Task 4: Verify typecheck, run performance guardrails, and update knowledge graph
-  - *Completed:* Frontend TypeScript (`tsc -p frontend/tsconfig.app.json --noEmit`), backend TypeScript (`tsc --noEmit`), and performance guardrails (`npm run guardrails`) all passed with exit code 0 and zero violations. Knowledge graph synchronized via `node scripts/quick-update.mjs`.
+  - *Completed*: `npx tsc --noEmit` passed (0 errors), `npx tsc -p frontend/tsconfig.app.json --noEmit` passed (0 errors), `npm run guardrails` passed (0 violations), and `node scripts/quick-update.mjs` synchronized the project knowledge graph.

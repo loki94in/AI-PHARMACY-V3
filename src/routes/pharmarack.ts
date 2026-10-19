@@ -10,7 +10,8 @@ import { searchCache } from '../services/searchCache.js';
 import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses, extractTokenFromProfile } from '../services/tokenRefreshScheduler.js';
 // import { exec } from 'child_process';
 // import { promisify } from 'util';
-import { getAppDataDir } from '../config/index.js';
+import { getAppDataDir, config } from '../config/index.js';
+import { syncPharmarackOrders } from '../services/pharmarackOrderSyncService.js';
 import { syncDistributorPhoneAcrossTables, resolveDistributorContact } from '../utils/distributorSyncHelper.js';
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
 import { pharmarackCatalogCache, scoreProductName } from '../services/pharmarackCatalogCache.js';
@@ -2860,7 +2861,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
   try {
     const today = toLocalSqlDateTime(new Date()).slice(0, 10);
     const db = await dbManager.getConnection();
-    const appPort = process.env.PORT || 3001;
+    const appPort = process.env.PORT || config.port;
 
     // STEP 1: Enqueue clean delivery boy pickup list FIRST so delivery staff receives their route immediately
     if (orders && Array.isArray(orders) && orders.length > 0) {
@@ -2894,9 +2895,16 @@ router.post('/cart/place-official-orders', async (req, res) => {
     // Invalidate local cart caches so UI sees fresh cart
     invalidatePharmarackCartCache();
 
-    // STEP 3: Reconcile today's official orders placed/synced from DB
+    // Trigger order sync immediately to pull official Order IDs from Pharmarack backend
+    try {
+      await syncPharmarackOrders();
+    } catch (syncErr: any) {
+      console.warn('[PharmarackRoute] Post-checkout order sync notice:', syncErr?.message || syncErr);
+    }
+
+    // STEP 3: Reconcile today's official orders placed/synced from DB (sorted by first_seen_at)
     const syncedToday = await db.all(
-      `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC`,
+      `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
       [today]
     );
 
@@ -3014,6 +3022,29 @@ router.post('/cart/open-official-window', async (_req, res) => {
   } catch (err: any) {
     console.error('Open cart window route error:', err);
     res.status(500).json({ ok: false, error: err.message || 'Failed to open cart window' });
+  }
+});
+
+// Post-checkout immediate sync endpoint: Reconciles cleared cart and captures new Order IDs
+router.post('/cart/sync-post-checkout', async (_req, res) => {
+  try {
+    const today = toLocalSqlDateTime(new Date()).slice(0, 10);
+    await syncPharmarackOrders().catch(() => {});
+    invalidatePharmarackCartCache();
+    const db = await dbManager.getConnection();
+    const syncedToday = await db.all(
+      `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+      [today]
+    );
+
+    try {
+      eventService.broadcast('pharmarack_orders_changed', { today });
+      eventService.broadcast('pharmarack_cart_changed', {});
+    } catch (_) {}
+
+    res.json({ success: true, count: syncedToday.length, orders: syncedToday });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Post-checkout sync failed' });
   }
 });
 
