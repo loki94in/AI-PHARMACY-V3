@@ -1108,6 +1108,12 @@ router.post('/staging/finalize', async (req, res) => {
       } catch (activeErr: any) {
         console.warn('[Migration Finalize] is_active sync warning:', activeErr.message);
       }
+      try {
+        const { reconnectPatientRefillsCatalog } = await import('../utils/reconnectPatientRefills.js');
+        await reconnectPatientRefillsCatalog(activeDb, backupPath);
+      } catch (refillReconnectErr: any) {
+        console.warn('[Migration Finalize] Refill catalog reconnection warning:', refillReconnectErr?.message);
+      }
     } catch (dbErr) {
       console.error('Failed to log snapshot:', dbErr);
     }

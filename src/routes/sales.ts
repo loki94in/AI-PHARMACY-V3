@@ -750,19 +750,22 @@ router.post('/', async (req, res) => {
               ? patient_name.trim()
               : (customerId ? (await db.get('SELECT name FROM customers WHERE id = ?', [customerId]))?.name || null : null);
 
+            const medRow = await db.get('SELECT name FROM medicines WHERE id = ?', [invRecord.medicine_id]);
+            const medName = medRow?.name || null;
             if (existingSchedule) {
               await db.run(
                 `UPDATE patient_refills 
                  SET customer_id = COALESCE(?, customer_id), patient_name = COALESCE(?, patient_name), 
-                     patient_phone = COALESCE(?, patient_phone), refill_interval_days = ?, next_refill_date = ?, is_active = 1
+                     patient_phone = COALESCE(?, patient_phone), medicine_name = COALESCE(?, medicine_name),
+                     refill_interval_days = ?, next_refill_date = ?, is_active = 1
                  WHERE id = ?`,
-                [customerId, resolvedPatientName, patient_phone, rDays, nextDateStr, existingSchedule.id]
+                [customerId, resolvedPatientName, patient_phone, medName, rDays, nextDateStr, existingSchedule.id]
               );
             } else {
               await db.run(
-                `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, is_active)
-                 VALUES (?, ?, ?, ?, ?, ?, 'pending', 1)`,
-                [customerId, resolvedPatientName, patient_phone || '', invRecord.medicine_id, rDays, nextDateStr]
+                `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, medicine_name, refill_interval_days, next_refill_date, status, is_active)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
+                [customerId, resolvedPatientName, patient_phone || '', invRecord.medicine_id, medName, rDays, nextDateStr]
               );
             }
           }

@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 76;
+const CURRENT_SCHEMA_VERSION = 77;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -530,6 +530,7 @@ async function ensureRefillCartLinkSchema(db: any) {
     distributor_notified_at: 'INTEGER DEFAULT NULL'
   });
   await ensureColumns(db, 'patient_refills', {
+    medicine_name: 'TEXT DEFAULT NULL',
     cart_store_id: 'INTEGER DEFAULT NULL',
     cart_store_name: 'TEXT DEFAULT NULL',
     cart_product_code: 'TEXT DEFAULT NULL',
@@ -2082,6 +2083,7 @@ export async function ensureSchema(dbPath: string) {
       patient_name TEXT NOT NULL,
       patient_phone TEXT NOT NULL,
       medicine_id INTEGER NOT NULL,
+      medicine_name TEXT DEFAULT NULL,
       refill_interval_days INTEGER DEFAULT 30,
       last_refill_date DATETIME DEFAULT CURRENT_TIMESTAMP,
       next_refill_date DATETIME,

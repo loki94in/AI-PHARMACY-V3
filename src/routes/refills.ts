@@ -280,20 +280,22 @@ router.post('/', async (req, res) => {
     );
 
     let refillId: number = 0;
+    const medRow = await db.get('SELECT name FROM medicines WHERE id = ?', [medicine_id]);
+    const medName = medRow?.name || null;
     if (existing) {
       refillId = existing.id;
       await db.run(
         `UPDATE patient_refills 
-         SET store_id = ?, customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
+         SET store_id = ?, customer_id = ?, patient_name = ?, patient_phone = ?, medicine_name = COALESCE(?, medicine_name), refill_interval_days = ?, 
              quantity_needed = ?, language = ?, is_active = 1, status = 'pending'
          WHERE id = ?`,
-        [targetStoreId, customerId, cleanName, cleanPhone, intervalDays, quantityNeeded, cleanLang, refillId]
+        [targetStoreId, customerId, cleanName, cleanPhone, medName, intervalDays, quantityNeeded, cleanLang, refillId]
       );
     } else {
       const result = await db.run(
-        `INSERT INTO patient_refills (store_id, customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, language, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)`,
-        [targetStoreId, customerId, cleanName, cleanPhone, medicine_id, intervalDays, nextRefillStr, quantityNeeded, cleanLang]
+        `INSERT INTO patient_refills (store_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, refill_interval_days, next_refill_date, status, quantity_needed, language, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)`,
+        [targetStoreId, customerId, cleanName, cleanPhone, medicine_id, medName, intervalDays, nextRefillStr, quantityNeeded, cleanLang]
       );
       refillId = Number(result.lastID || 0);
     }
@@ -542,8 +544,8 @@ router.get('/', async (req, res) => {
     const whereClause = allStores ? '' : 'WHERE (pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))';
     const params = allStores ? [] : [targetStoreId, targetStoreId];
     const refills = await db.all(
-      `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
-       JOIN medicines m ON pr.medicine_id = m.id
+      `SELECT pr.*, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name FROM patient_refills pr
+       LEFT JOIN medicines m ON pr.medicine_id = m.id
        ${whereClause}
        ORDER BY pr.next_refill_date ASC LIMIT 1000`,
       params
@@ -704,11 +706,11 @@ router.get('/panel', async (req, res) => {
     // Perf: base refill rows first (cheap: patient_refills is small). Stock lookups are
     // resolved in a SECOND pass restricted to only the medicines on this page — the old
     // query aggregated + window-sorted the ENTIRE inventory_master twice per request.
-    let query = `SELECT pr.*, m.name as medicine_name, m.packaging, m.pack_size, m.sell_price, m.mrp as medicine_mrp,
+    let query = `SELECT pr.*, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, m.packaging, m.pack_size, m.sell_price, m.mrp as medicine_mrp,
                 COALESCE(pr.language, cc.language, cp.language, 'en') as language,
                 COALESCE(pr.reminder_mode, cc.reminder_mode, cp.reminder_mode, 'manual') as reminder_mode
         FROM patient_refills pr
-        JOIN medicines m ON pr.medicine_id = m.id
+        LEFT JOIN medicines m ON pr.medicine_id = m.id
         LEFT JOIN customers cc ON cc.id = pr.customer_id AND cc.phone IS NOT NULL AND cc.phone != ''
         LEFT JOIN customers cp ON pr.customer_id IS NULL AND cp.phone = pr.patient_phone AND cp.phone IS NOT NULL AND cp.phone != ''`;
     const params: any[] = [];
@@ -1044,8 +1046,8 @@ router.post('/confirm-patient', async (req, res) => {
       if (numIds.length > 0) {
         const placeholders = numIds.map(() => '?').join(',');
         pendingRefills = await db.all(
-          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
-           FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed
+           FROM patient_refills pr LEFT JOIN medicines m ON m.id = pr.medicine_id
            WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
           numIds
         );
@@ -1053,8 +1055,8 @@ router.post('/confirm-patient', async (req, res) => {
     } else if (patientPhone || patientName) {
       const cleanDigits = (patientPhone || '').replace(/\D/g, '').slice(-10);
       pendingRefills = await db.all(
-        `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
-         FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+        `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed
+         FROM patient_refills pr LEFT JOIN medicines m ON m.id = pr.medicine_id
          WHERE ((? != '' AND pr.patient_phone LIKE ?) OR (? != '' AND pr.patient_name = ?))
            AND pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')
          ORDER BY pr.id DESC`,
@@ -1139,8 +1141,8 @@ router.post('/:id/confirm', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const refill = await db.get(
-      `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
-       FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+      `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed
+       FROM patient_refills pr LEFT JOIN medicines m ON m.id = pr.medicine_id
        WHERE pr.id = ? AND pr.is_active = 1`,
       [id]
     );
@@ -2109,9 +2111,9 @@ router.post('/:id/send', async (req, res) => {
 
     // Auto-bundle ALL companion active refills for this patient so ONE message carries all medicines
     const companionRefills = await db.all(
-      `SELECT pr.*, m.name as medicine_name
+      `SELECT pr.*, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name
        FROM patient_refills pr
-       JOIN medicines m ON pr.medicine_id = m.id
+       LEFT JOIN medicines m ON pr.medicine_id = m.id
        WHERE (
          (pr.patient_phone IS NOT NULL AND (pr.patient_phone = ? OR pr.patient_phone = ?))
          OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
@@ -2384,8 +2386,8 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
 
     // Query ready/override-verified refills due tomorrow
     const rows = await db.all(
-      `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
-       JOIN medicines m ON pr.medicine_id = m.id
+      `SELECT pr.*, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name FROM patient_refills pr
+       LEFT JOIN medicines m ON pr.medicine_id = m.id
        WHERE pr.patient_phone = ? AND pr.is_active = 1 
          AND (pr.is_ready = 1 OR pr.stock_verified_override = 1)`,
       [patient_phone]
@@ -2501,8 +2503,8 @@ router.post('/send-reminder-now', async (req, res) => {
     }
 
     const rows = await db.all(
-      `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
-       JOIN medicines m ON pr.medicine_id = m.id
+      `SELECT pr.*, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name FROM patient_refills pr
+       LEFT JOIN medicines m ON pr.medicine_id = m.id
        WHERE pr.patient_phone = ? AND pr.is_active = 1
        ORDER BY pr.next_refill_date ASC`,
       [patient_phone]
@@ -2964,9 +2966,9 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
 
     const refills = await db.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, pr.quantity_needed, pr.language,
-             m.name as medicine_name
+             COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name
       FROM patient_refills pr
-      JOIN medicines m ON pr.medicine_id = m.id
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
       WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
         AND pr.is_active = 1
         AND pr.status NOT IN ('completed', 'canceled')
@@ -3076,9 +3078,9 @@ router.post('/:id/mark-ready', async (req, res) => {
   try {
     db = await dbManager.getConnection();
     const refill = await db.get(`
-      SELECT pr.*, m.name as medicine_name
+      SELECT pr.*, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name
       FROM patient_refills pr
-      JOIN medicines m ON pr.medicine_id = m.id
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
       WHERE pr.id = ?
     `, [id]);
 
