@@ -1,6 +1,7 @@
 import React, { memo, useState, useEffect, useCallback, useRef } from 'react';
-import { Smartphone, QrCode, Wifi, WifiOff, Edit2, Save, X, Bot, BotOff, Loader2 } from 'lucide-react';
-import { api } from '../services/api';
+import { Smartphone, QrCode, Wifi, WifiOff, Edit2, Save, X, Bot, BotOff, Loader2, Clock, MessageSquare, Pause, Send } from 'lucide-react';
+import { api, peekWhatsAppQueueStatusCache, type WhatsAppQueueStatus } from '../services/api';
+import { whatsappQueueEvent } from '../services/events';
 
 export interface RegisteredDevice {
   token: string;
@@ -23,6 +24,14 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   const [editingToken, setEditingToken] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [waStatus, setWaStatus] = useState<{ isReady: boolean; sleeping: boolean; status: string } | null>(null);
+  const [queueStatus, setQueueStatus] = useState<WhatsAppQueueStatus | null>(() => peekWhatsAppQueueStatusCache(30000));
+  const [countdownSec, setCountdownSec] = useState<number>(() => {
+    const initial = peekWhatsAppQueueStatusCache(30000);
+    if (initial?.nextDispatchTimestamp) {
+      return Math.max(0, Math.ceil((initial.nextDispatchTimestamp - Date.now()) / 1000));
+    }
+    return initial?.nextDispatchCountdownSeconds || 0;
+  });
   const [waking, setWaking] = useState(false);
   const wakePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -89,18 +98,63 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
     }
   }, [waking, fetchWhatsAppStatus]);
 
+  const fetchQueueStatus = useCallback(async (bypassCache = false) => {
+    try {
+      if (typeof api.getWhatsAppQueueStatus === 'function') {
+        const cached = bypassCache ? null : peekWhatsAppQueueStatusCache(2500);
+        const data = cached ?? (await api.getWhatsAppQueueStatus());
+        if (data) {
+          setQueueStatus(data);
+          if (data.nextDispatchTimestamp) {
+            setCountdownSec(Math.max(0, Math.ceil((data.nextDispatchTimestamp - Date.now()) / 1000)));
+          } else {
+            setCountdownSec(data.nextDispatchCountdownSeconds || 0);
+          }
+        }
+      }
+    } catch {
+      // Ignore background fetch errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!queueStatus?.nextDispatchTimestamp) {
+      if (countdownSec !== (queueStatus?.nextDispatchCountdownSeconds || 0)) {
+        setCountdownSec(queueStatus?.nextDispatchCountdownSeconds || 0);
+      }
+      return;
+    }
+
+    const targetTs = queueStatus.nextDispatchTimestamp;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((targetTs - Date.now()) / 1000));
+      setCountdownSec(remaining);
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [queueStatus?.nextDispatchTimestamp, queueStatus?.nextDispatchCountdownSeconds]);
+
   useEffect(() => {
     fetchDevicesStatus();
     fetchWhatsAppStatus();
+    fetchQueueStatus(false);
 
     // P1 "events, not timers": updates driven by SSE push, focus, and visibility change — zero background polling timers
-    const handleSse = () => fetchWhatsAppStatus();
+    const handleSse = () => {
+      fetchWhatsAppStatus();
+      fetchQueueStatus(true);
+    };
     window.addEventListener('sse-wa-status-changed', handleSse);
+    window.addEventListener('sse-wa-queue-updated', handleSse);
+    const unsubQueue = whatsappQueueEvent.subscribeUpdated(() => fetchQueueStatus(true));
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         fetchDevicesStatus();
         fetchWhatsAppStatus();
+        fetchQueueStatus(true);
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -111,11 +165,13 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
         clearInterval(wakePollRef.current);
         wakePollRef.current = null;
       }
+      unsubQueue();
       window.removeEventListener('sse-wa-status-changed', handleSse);
+      window.removeEventListener('sse-wa-queue-updated', handleSse);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
-  }, [fetchDevicesStatus, fetchWhatsAppStatus]);
+  }, [fetchDevicesStatus, fetchWhatsAppStatus, fetchQueueStatus]);
 
   const handleSaveRename = async (token: string) => {
     if (!editName.trim()) return;
@@ -181,6 +237,150 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
       >
         {waking ? <Loader2 size={11} className="animate-spin" /> : <BotOff size={11} />}
         <span className="font-semibold">{waking ? 'Connecting...' : 'AI Bot: Offline — Connect'}</span>
+      </button>
+    );
+  };
+
+  // WhatsApp Queue Countdown & Live Status Pill
+  const QueueCountdownPill = () => {
+    const pendingCount = (queueStatus?.counts?.pending || 0) + (queueStatus?.counts?.sending || 0);
+    const sendingCount = queueStatus?.counts?.sending || 0;
+    const isPaused = Boolean(queueStatus?.isPaused);
+    const isOnline = Boolean(waStatus?.isReady || queueStatus?.isOnline);
+    const isSleeping = Boolean(waStatus?.sleeping || queueStatus?.sleeping);
+
+    const handleClick = () => {
+      whatsappQueueEvent.triggerOpen();
+    };
+
+    // State 1: Paused
+    if (isPaused) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] shrink-0 hover:bg-amber-500/20 transition-colors cursor-pointer"
+          title="WhatsApp send queue is paused. Click to open controller and resume."
+        >
+          <Pause size={11} className="fill-current text-amber-400" />
+          <span className="font-semibold">Queue: Paused{pendingCount > 0 ? ` (${pendingCount})` : ''}</span>
+        </button>
+      );
+    }
+
+    // State 2: Offline / Disconnected with queued items
+    if (!isOnline && !isSleeping && pendingCount > 0) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-400 text-[11px] shrink-0 hover:bg-rose-500/20 transition-colors cursor-pointer"
+          title={`WhatsApp bot is offline with ${pendingCount} message(s) queued. Click to open controller.`}
+        >
+          <Clock size={11} className="text-rose-400" />
+          <span className="font-semibold">Queue: WA Offline ({pendingCount})</span>
+        </button>
+      );
+    }
+
+    // State 3: Sleeping with queued items
+    if (isSleeping && pendingCount > 0) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-500/10 border border-sky-500/25 text-sky text-[11px] shrink-0 hover:bg-sky-500/20 transition-colors cursor-pointer"
+          title={`WhatsApp is sleeping. Queue will wake it automatically to dispatch ${pendingCount} message(s). Click to open controller.`}
+        >
+          <Clock size={11} className="text-sky" />
+          <span className="font-semibold">Queue: Sleeping ({pendingCount})</span>
+        </button>
+      );
+    }
+
+    // State 4: Actively sending / pacing countdown
+    if (sendingCount > 0 && countdownSec > 0) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky text-[11px] shrink-0 hover:bg-sky-500/20 transition-colors cursor-pointer"
+          title="Dispatching message now. Click to open live WhatsApp queue controller."
+        >
+          <Loader2 size={11} className="animate-spin text-sky" />
+          <span className="font-semibold">Sending · Next in {countdownSec}s ({pendingCount})</span>
+        </button>
+      );
+    }
+
+    if (countdownSec > 0 && pendingCount > 0) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] shrink-0 hover:bg-amber-500/20 transition-colors cursor-pointer"
+          title="Waiting pacing delay before sending next message. Click to open controller or send now."
+        >
+          <Clock size={11} className="text-amber-300" />
+          <span className="font-semibold">Next message in {countdownSec}s ({pendingCount})</span>
+        </button>
+      );
+    }
+
+    if (sendingCount > 0) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky text-[11px] shrink-0 hover:bg-sky-500/20 transition-colors cursor-pointer"
+          title="Sending queued WhatsApp message. Click to open controller."
+        >
+          <Loader2 size={11} className="animate-spin text-sky" />
+          <span className="font-semibold">Sending message... ({pendingCount})</span>
+        </button>
+      );
+    }
+
+    if (pendingCount > 0) {
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px] shrink-0 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+          title="Queue ready for dispatch. Click to open controller."
+        >
+          <Send size={11} className="text-emerald-400" />
+          <span className="font-semibold">Queue: {pendingCount} ready</span>
+        </button>
+      );
+    }
+
+    // State 5: Idle (empty queue)
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        onMouseEnter={() => import('./WhatsAppQueuePopover').catch(() => {})}
+        onFocus={() => import('./WhatsAppQueuePopover').catch(() => {})}
+        className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-bg3/60 hover:bg-bg3 border border-glass-border text-muted hover:text-text text-[11px] shrink-0 transition-colors cursor-pointer"
+        title="WhatsApp queue is idle. Click to view delivery register & queue controller."
+      >
+        <MessageSquare size={11} />
+        <span className="font-semibold">Queue: Idle</span>
       </button>
     );
   };
@@ -276,9 +476,10 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
         )}
       </div>
 
-      {/* Right: AI Bot status + sync indicator */}
-      <div className="flex items-center gap-2.5 shrink-0">
+      {/* Right: AI Bot status + WhatsApp queue countdown + sync indicator */}
+      <div className="flex items-center gap-2 shrink-0">
         <BotStatusPill />
+        <QueueCountdownPill />
         <div className="h-3 w-[1px] bg-glass-border" />
         <button
           onClick={onOpenConnectModal}

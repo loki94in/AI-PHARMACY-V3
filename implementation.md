@@ -1,75 +1,68 @@
-# Implementation Plan: Fix Pharmarack Cart-to-PO-History Sync & Profile Discovery Gap
+# Implementation Plan: App Startup Optimization & Dev-Mode Latency Elimination
 
-**Goal:**
-Fix the fatal SQLite query error (`no such column: id`) in `src/routes/pharmarack.ts`, implement multi-candidate Chrome profile discovery (`C:\Users\ratna\AppData\data\pharmarack_profile` and local `data/pharmarack_profile`), fix the loopback port resolution from hardcoded 3001 to `config.port`, and ensure that when orders are placed on Pharmarack and clear from the cart, they are immediately synchronized from `DisplayOrders` into `pharmarack_synced_orders` and the Sent PO History, with the official Order IDs dispatched to saved distributor WhatsApp numbers.
-
----
-
-## 1. Root Cause & Architecture Review
-
-1. **Fatal SQLite Error in Order Sync Reconciliation**:
-   - In `src/routes/pharmarack.ts` line 2894:
-     ```sql
-     SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY id DESC
-     ```
-   - The table `pharmarack_synced_orders` primary key is `order_no`, and it uses `first_seen_at` for timestamps. It has no column named `id`.
-   - This threw an unhandled SQL error that caused `POST /cart/place-official-orders` to crash with HTTP 500, aborting the sync of placed orders to Sent PO History and triggering the fallback cart window.
-
-2. **Chrome Profile Resolution Gap**:
-   - In `src/services/pharmarackCheckoutService.ts`, `mainProfilePath` was strictly resolved to `path.resolve(getAppDataDir(), 'data', 'pharmarack_profile')`.
-   - On the user's Windows machine, the actual authenticated Chrome session is located at `C:\Users\ratna\AppData\data\pharmarack_profile`.
-   - The absence of the folder in the local project directory caused automated checkout to return `'No active Pharmarack profile found'` without attempting headless checkout.
-
-3. **Loopback Port Misconfiguration**:
-   - In `src/routes/pharmarack.ts`, the code called `http://127.0.0.1:${appPort}` where `appPort` fell back to `3001`. The server actually runs on `config.port` (5174/5175).
-
-4. **Cart-Clearing to Sent PO History Bridge**:
-   - When orders are placed (either automatically or via the 1-click fallback cart window), Pharmarack removes items from `/cart` and moves them to `/orderhistory` (`DisplayOrders`).
-   - The app must immediately invoke `syncPharmarackOrders()` to capture the real `OrderNo`s and populate Sent PO History, then broadcast SSE events so the UI updates seamlessly.
+**Goal:** Eliminate startup latency, UI lag, and process contention when opening AI Pharmacy OS (especially alongside Antigravity IDE in `npm run electron:dev`) by reusing the active dev server, lazy-loading heavy startup evaluations until after the UI is interactive, and throttling eager route compilation in dev mode.
 
 ---
 
-## 2. Proposed Changes
+## 1. Root Cause & Architectural Strategy
 
-### A. Fix SQL Queries & Loopback Port in `src/routes/pharmarack.ts`
-- Fix `SELECT ... FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`.
-- Use `config.port` instead of `process.env.PORT || 3001`.
-- When orders are placed, invoke `syncPharmarackOrders()` and reconcile captured Order IDs.
-- In `POST /cart/open-official-window`, return resolved profile path so the launched Chrome window always points to the authenticated profile directory.
-- Add an explicit sync hook `POST /cart/sync-post-checkout` so when the user returns or closes the cart window, the app immediately updates the Sent PO History.
+1. **Duplicate Backend Spawn & Process Kill in `electron:dev`**:
+   - `npm run electron:dev` starts `dev:server` (`tsx src/bootstrap.ts`) on port 5175 via `concurrently`.
+   - `wait-on` waits for port 5175 and then starts `electron electron/main.ts`.
+   - `electron/main.ts` executed `reclaimPort(PORT)`, found PID listening on 5175, killed it with `taskkill /F /T`, and spawned a *duplicate* backend instance.
+   - **Fix:** In `electron/main.ts`, probe port 5175 in dev mode (`!app.isPackaged`). If the backend is already alive and responding, adopt it directly. Do not kill port 5175 or spawn a duplicate process.
 
-### B. Multi-Candidate Profile Resolution in `src/services/pharmarackCheckoutService.ts`
-- Add `resolvePharmarackProfilePath()` to check:
-  1. `path.resolve(getAppDataDir(), 'data', 'pharmarack_profile')`
-  2. `path.resolve(process.env.USERPROFILE || '', 'AppData', 'data', 'pharmarack_profile')`
-  3. `path.resolve(process.env.LOCALAPPDATA || '', 'AI Pharmacy OS', 'data', 'pharmarack_profile')`
-  4. `path.resolve(process.cwd(), 'data', 'pharmarack_profile')`
-- If found at an external location (e.g. `AppData/data/pharmarack_profile`), automatically use it.
+2. **Eager Route Pre-warming CPU Thrashing in Dev Mode**:
+   - `startTieredPreWarm()` in `src/server.ts` concurrently imported and compiled 25+ TypeScript route modules via `tsx` on the fly within seconds of boot.
+   - **Fix:** In dev mode (`!isPackagedApp()`), bypass eager pre-warming. `lazyRoute` loads routes on-demand when requested by the frontend, eliminating the boot-time CPU spike.
 
-### C. Frontend Post-Checkout Re-Sync in `frontend/src/pages/PharmarackCart/index.tsx`
-- Ensure that whenever the batch order modal completes or the cart window is opened, the page triggers `fetchPendingOrders()`, `fetchLatestSentMap()`, and `loadSentDates()` to immediately reflect the cleared cart and new Sent PO numbers.
+3. **Startup Evaluation Storm (Phase 3 & Phase 4 Contention)**:
+   - Phase 3 was running after only 8 seconds, right as the frontend window finishes loading and makes its initial API queries (compact inventory, dashboard, settings, refills panel).
+   - Synchronous SQLite queries (`checkAllRefills`, `checkOverdueCreditNotes`, `scanAndCreateExpiryReviews`, `expiryScan`, `monthlyReports`) locked the Node event loop and starved the CPU software renderer (SwiftShader).
+   - **Fix:** Defer Phase 3 background catch-up evaluations to 30 seconds after boot (or until the user is idle), giving the UI 100% uninterrupted CPU time to mount, hydrate, and paint.
 
----
-
-## 3. Verification Plan
-
-1. **TypeScript Compilation**:
-   - Backend: `npx tsc --noEmit`
-   - Frontend: `npx tsc -p frontend/tsconfig.app.json --noEmit`
-2. **Performance Guardrails**:
-   - `npm run guardrails` (zero violations)
-3. **Knowledge Graph Sync**:
-   - `node scripts/quick-update.mjs`
+4. **Preserve All Security, DB Safety, and Guardrails**:
+   - Guardrail E1 (`app.disableHardwareAcceleration()` and `disable-gpu-compositing`) remains strictly intact in `electron/main.ts`.
+   - SQLite WAL mode and schema integrity remain untouched.
 
 ---
 
-### Tasks & Progress Tracking
+## 2. Step-by-Step Implementation Steps
 
-- [x] Task 1: Add multi-candidate profile resolution in `src/services/pharmarackCheckoutService.ts`
-  - *Completed*: Created `resolvePharmarackProfilePath` searching local data dir, `%USERPROFILE%\AppData\data\pharmarack_profile`, and `%LOCALAPPDATA%\AI Pharmacy OS\data\pharmarack_profile`. Automatically syncs and copies active profile to local data directory so headless checkout and 1-click browser window find authenticated session.
-- [x] Task 2: Fix `ORDER BY first_seen_at DESC` and port resolution in `src/routes/pharmarack.ts`
-  - *Completed*: Fixed SQL crash (`no such column: id`) by replacing with `ORDER BY first_seen_at DESC`. Fixed loopback port to dynamically bind to `config.port` (5174/5175). Cleaned up route definitions and added `POST /cart/sync-post-checkout`.
-- [x] Task 3: Bridge cart-clearing and Sent PO History updates in `src/routes/pharmarack.ts` and `frontend/src/pages/PharmarackCart/index.tsx`
-  - *Completed*: Synchronized placed orders from `DisplayOrders` immediately during and after order placement. Added `waitingForManualOrderSyncRef` in `index.tsx` and connected window `focus` event listener: when user returns from the live cart window, the app immediately reconciles the placed orders, updates Sent PO History, and clears the cart lines. Added `syncPharmarackPostCheckout` in frontend API.
-- [x] Task 4: Verify typecheck, run performance guardrails, and update knowledge graph
-  - *Completed*: `npx tsc --noEmit` passed (0 errors), `npx tsc -p frontend/tsconfig.app.json --noEmit` passed (0 errors), `npm run guardrails` passed (0 violations), and `node scripts/quick-update.mjs` synchronized the project knowledge graph.
+### Step 1: Optimize `electron/main.ts` Dev-Mode Backend Attachment
+- Add a lightweight health probe helper (`probeBackendAlive(port: number, timeoutMs: number): Promise<boolean>`).
+- In `app.whenReady()`:
+  - If `!app.isPackaged`: check if backend is already alive on port 5175.
+  - If alive, set `isExternalDevBackend = true`, skip `reclaimPort(PORT)`, skip `startBackend()`, and immediately load the window once ready.
+  - If not alive or in packaged mode, proceed with standard single-instance port reclamation and `startBackend()`.
+- In `window-all-closed`:
+  - If `isExternalDevBackend`, let `concurrently` handle the process lifecycle cleanly.
+
+### Step 2: Throttle Route Pre-Warming in Development Mode (`src/server.ts`)
+- In `startTieredPreWarm()`:
+  - Check if running in development mode (`!isPackagedApp() && process.env.NODE_ENV !== 'production'`).
+  - In dev mode, log and exit early: `[Boot] Dev mode detected: deferring route pre-warming (routes load on-demand via lazyRoute)`.
+  - In production mode, retain the existing staggered tiered pre-warm.
+
+### Step 3: Defer Phase 3 Heavy Startup Evaluations to Post-Interactive Window (`src/server.ts`)
+- Stagger Phase 3 execution:
+  - Increase delay from 8s to 25–30s so the first screen gets 100% CPU on dual-core / shared CPU environments.
+  - Ensure lightweight stock calculation worker starts cleanly while heavy database catch-up scans (`checkAllRefills`, `checkOverdueCreditNotes`, `scanAndCreateExpiryReviews`, `monthlyReports`) wait until the UI has settled.
+
+### Step 4: Verification, Lint & Guardrails Check
+- Run `npx tsc --noEmit` to verify type safety across modified files.
+- Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`) to ensure all performance guardrails pass (including Guardrail E1).
+- Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+
+---
+
+## 3. Progress Tracking & Completed Tasks
+
+- [x] Task 1: Dev-mode backend attachment in `electron/main.ts`
+  - Completed: Added `checkBackendAlive(timeoutMs)` and `isExternalDevBackend` flag. In development mode (`!app.isPackaged`), if port 5175 is already running and responds 200 on health ready, Electron directly attaches to it without killing port 5175 with `taskkill /F /T` or spawning a duplicate child backend. On window close, it cleanly exits without terminating the dev watch server.
+- [x] Task 2: Route pre-warming bypass in dev mode (`src/server.ts`)
+  - Completed: Added dev-mode bypass to `startTieredPreWarm`. In dev mode (`!isPackagedApp() && process.env.NODE_ENV !== 'production'`), eager TS compilation of 25+ routes is skipped so routes load on demand via `lazyRoute`, eliminating the boot-time CPU thrashing.
+- [x] Task 3: Defer heavy startup evaluations until post-hydration in `src/server.ts`
+  - Completed: Deferred WhatsApp session boot restore from T+1.5s to T+12s/20s and Phase 3 startup database scans (`checkAllRefills`, `checkOverdueCreditNotes`, `scanAndCreateExpiryReviews`, `expiryScan`, `monthlyReports`) from T+8s to T+25s/35s. This gives the frontend UI 100% of CPU time to mount, hydrate, and paint without SQLite event-loop blocking.
+- [x] Task 4: Run typecheck, performance guardrails, and knowledge graph update
+  - Completed: `npx tsc --noEmit` exit 0 (0 errors); `npm run guardrails` exit 0 (0 violations, Guardrail E1 No-GPU contract intact); `node scripts/quick-update.mjs` synchronized knowledge graph (1267 nodes, 808 edges, 10 layers). Updated `SMALL_BUG_FIX_PLAN.md` with entry `[Fixed] P2-102`.

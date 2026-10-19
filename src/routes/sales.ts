@@ -735,7 +735,7 @@ router.post('/', async (req, res) => {
           const invRecord = currentStock;
           if (invRecord && invRecord.medicine_id) {
             const nextDate = new Date();
-            const rDays = Number(refillDays || 30);
+            const rDays = Math.max(7, Number(refillDays || 30));
             nextDate.setDate(nextDate.getDate() + rDays);
             const nextDateStr = toLocalSqlDateTime(nextDate);
 
@@ -817,7 +817,7 @@ router.post('/', async (req, res) => {
           continue; // Don't fulfill unrelated medicines in a partial purchase
         }
 
-        const interval = Number(refill.refill_interval_days || 30);
+        const interval = Math.max(7, Number(refill.refill_interval_days || 30));
         // Base the next due date calculation starting from the invoice's local date
         const baseDate = new Date(invoiceDateValue.replace(' ', 'T'));
         const nextDate = new Date(!isNaN(baseDate.getTime()) ? baseDate : Date.now());
@@ -874,6 +874,7 @@ router.post('/', async (req, res) => {
             `UPDATE patient_refills 
              SET last_refill_date = ?, 
                  next_refill_date = ?, 
+                 refill_interval_days = MAX(7, COALESCE(refill_interval_days, 30)),
                  acknowledged = 0, 
                  ordering_triggered = 0,
                  cart_product_code = NULL,
@@ -909,6 +910,28 @@ router.post('/', async (req, res) => {
         refillIds: matchingRefills.map(r => r.id),
         customerId
       });
+
+      // Auto-complete pending call tasks for this fulfilled patient / refills
+      const fulfilledRefillIds = matchingRefills.map(r => r.id);
+      const cleanPhoneDigits = (patient_phone || '').replace(/\D/g, '').slice(-10);
+      const callConditions: string[] = [];
+      const callParams: any[] = [];
+      if (fulfilledRefillIds.length > 0) {
+        callConditions.push(`reference_id IN (${fulfilledRefillIds.map(() => '?').join(',')})`);
+        callParams.push(...fulfilledRefillIds.map(String));
+      }
+      if (cleanPhoneDigits.length >= 7) {
+        callConditions.push(`patient_phone LIKE ?`);
+        callParams.push(`%${cleanPhoneDigits}%`);
+      }
+      if (callConditions.length > 0) {
+        await db.run(
+          `UPDATE patient_call_tasks 
+           SET status = 'completed', call_outcome = 'Refill fulfilled at POS sale', updated_at = CURRENT_TIMESTAMP
+           WHERE status IN ('pending', 'rescheduled') AND (${callConditions.join(' OR ')})`,
+          callParams
+        ).catch(() => {});
+      }
 
       try {
         eventService.broadcast('refill_updated', {

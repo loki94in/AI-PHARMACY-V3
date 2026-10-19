@@ -100,6 +100,10 @@ let preWarmStarted = false;
 async function startTieredPreWarm(): Promise<void> {
   if (preWarmStarted) return;
   preWarmStarted = true;
+  if (!isPackagedApp() && process.env.NODE_ENV !== 'production') {
+    console.log('[Boot] Dev mode detected: deferring route pre-warming (routes load on-demand via lazyRoute).');
+    return;
+  }
   const t0 = performance.now();
   const loaders = (tier: RouteTier) => registeredLazyRoutes.filter(r => r.tier === tier).map(r => r.preload);
 
@@ -740,9 +744,10 @@ server.on('error', (err: any) => {
           .catch(err => console.warn('[Boot:Phase2] Pharmarack session heartbeat start failed:', err));
       }, 600);
 
-      // WhatsApp client: Boot session check at T+1.5s (1.5s stagger protects dual-core i3 UI paint)
+      // WhatsApp client: Boot session check (deferred to protect UI paint and initial hydration)
       // Checks if an authenticated WhatsApp session exists on disk. If not configured or disconnected,
       // it auto-stops immediately without launching Chrome or spamming checks.
+      const waBootDelay = (!isPackagedApp() && process.env.NODE_ENV !== 'production') ? 20_000 : 12_000;
       setTimeout(async () => {
         if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
         try {
@@ -768,7 +773,7 @@ server.on('error', (err: any) => {
         } catch (err) {
           console.warn('[Boot:Phase2] WhatsApp boot check error:', err);
         }
-      }, 1500);
+      }, waBootDelay);
 
       // Auto-update scheduler: checks every 15 days (DB-gated, won't hammer on every boot)
       import('./services/autoUpdateService.js')
@@ -800,7 +805,9 @@ server.on('error', (err: any) => {
       const isAutoEnabled = !autoRow || autoRow.value === 'true';
 
       // ── Phase 3: Lightweight workers (gated on automation_enabled !== 'false') ──
-      // Deferred 8 s so the first screen gets the whole CPU on a dual-core i3 (was setImmediate).
+      // Deferred 25-35s so the UI has finished all mounting, hydration, and initial API requests
+      // without SQLite event-loop blocking or CPU contention with the frontend renderer.
+      const phase3Delay = (!isPackagedApp() && process.env.NODE_ENV !== 'production') ? 35_000 : 25_000;
       setTimeout(async () => {
         console.log('[Boot:Phase3] Evaluating lightweight workers & startup evaluation...');
 
@@ -1017,7 +1024,7 @@ server.on('error', (err: any) => {
           if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
           import('./routes/pharmarack.js').then(mod => mod.warmupStartupCart()).catch(err => console.warn('[Boot:Phase4] Cart warm-up fallback failed:', err?.message || err));
         }, 52_000); // safety net, ~T+60 s after boot
-      }, 8_000);
+      }, phase3Delay);
 
       // One-line boot health summary, ~T+10s (covers the T+2/5/6/8s staggers).
       // Later failures (WhatsApp T+45s, cart warm-up) still log their own errors.

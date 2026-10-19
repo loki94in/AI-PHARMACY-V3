@@ -668,6 +668,7 @@ export interface WhatsAppQueueStatus {
   initializing?: boolean;
   hasSavedSession?: boolean;
   nextDispatchCountdownMs: number;
+  nextDispatchCountdownSeconds?: number;
   nextDispatchTimestamp: number | null;
   currentPacingMinMs: number;
   currentPacingMaxMs: number;

@@ -66,16 +66,21 @@ router.use((req, res, next) => {
 
 // Helper to parse dynamic or text-based interval descriptions into numbers
 function parseIntervalDays(val: any): number {
+  let days = 30;
   if (typeof val === 'string') {
     const cleaned = val.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (cleaned === 'weekly' || cleaned === '7days') return 7;
-    if (cleaned === '15days') return 15;
-    if (cleaned === 'monthly' || cleaned === '30days') return 30;
-    const parsed = parseInt(val, 10);
-    return isNaN(parsed) ? 30 : parsed;
+    if (cleaned === 'weekly' || cleaned === '7days') days = 7;
+    else if (cleaned === '15days') days = 15;
+    else if (cleaned === 'monthly' || cleaned === '30days') days = 30;
+    else {
+      const parsed = parseInt(val, 10);
+      days = isNaN(parsed) ? 30 : parsed;
+    }
+  } else if (typeof val === 'number') {
+    days = val;
   }
-  if (typeof val === 'number') return val;
-  return 30;
+  // Safe minimum: Refills must never cycle in less than 7 days
+  return Math.max(7, days);
 }
 
 // Multilingual refill reminder message builder
@@ -1608,7 +1613,7 @@ async function executeCloseRefillCycles(
   const localNow = toLocalSqlDateTime();
 
   for (const refill of refills) {
-    const interval = refill.refill_interval_days || 30;
+    const interval = Math.max(7, Number(refill.refill_interval_days || 30));
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + interval);
     const nextDateStr = toLocalSqlDateTime(nextDate);
@@ -1652,6 +1657,7 @@ async function executeCloseRefillCycles(
       `UPDATE patient_refills 
        SET last_refill_date = ?,
            next_refill_date = ?,
+           refill_interval_days = MAX(7, COALESCE(refill_interval_days, 30)),
            stock_verified_override = 0,
            ordering_triggered = 0,
            cart_product_code = NULL,
@@ -1731,6 +1737,41 @@ async function executeCloseRefillCycles(
       refillIds: fulfilledIds,
       medicineNames: fulfilledMedNames.length > 0 ? fulfilledMedNames : undefined
     });
+  }
+
+  // Auto-complete pending call tasks and staged notifications for fulfilled patients
+  if (fulfilledIds.length > 0 || phonesToPurge.size > 0) {
+    const callTaskConditions: string[] = [];
+    const callTaskParams: any[] = [];
+    if (fulfilledIds.length > 0) {
+      callTaskConditions.push(`reference_id IN (${fulfilledIds.map(() => '?').join(',')})`);
+      callTaskParams.push(...fulfilledIds.map(String));
+    }
+    for (const phone of phonesToPurge) {
+      const cleanDigits = phone.replace(/\D/g, '').slice(-10);
+      if (cleanDigits.length >= 7) {
+        callTaskConditions.push(`patient_phone LIKE ?`);
+        callTaskParams.push(`%${cleanDigits}%`);
+      }
+    }
+    if (callTaskConditions.length > 0) {
+      await db.run(
+        `UPDATE patient_call_tasks 
+         SET status = 'completed', call_outcome = 'Refill fulfilled at store', updated_at = CURRENT_TIMESTAMP
+         WHERE status IN ('pending', 'rescheduled') AND (${callTaskConditions.join(' OR ')})`,
+        callTaskParams
+      ).catch(() => {});
+    }
+
+    // Cancel any staged notifications for these fulfilled refills
+    if (fulfilledIds.length > 0) {
+      await db.run(
+        `UPDATE automation_notifications 
+         SET status = 'cancelled' 
+         WHERE status = 'staged' AND reference_id IN (${fulfilledIds.map(() => '?').join(',')})`,
+        fulfilledIds.map(String)
+      ).catch(() => {});
+    }
   }
 
   return { fulfilledCount: results.length, results };

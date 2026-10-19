@@ -678,6 +678,16 @@ export async function buildDailyOperationalBriefing(
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND NOT EXISTS (
+        SELECT 1 FROM refill_fulfillments rf
+        WHERE rf.refill_id = pr.id
+          AND (
+            DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
+            OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
+            OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+          )
+      )
     GROUP BY pr.patient_name
     ORDER BY earliest_due ASC, pr.patient_name ASC
     LIMIT 15
@@ -698,6 +708,16 @@ export async function buildDailyOperationalBriefing(
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND NOT EXISTS (
+        SELECT 1 FROM refill_fulfillments rf
+        WHERE rf.refill_id = pr.id
+          AND (
+            DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
+            OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
+            OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+          )
+      )
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
     LIMIT 50
   `).catch(() => []);
@@ -946,6 +966,9 @@ export async function buildDailyOperationalBriefing(
       t4Details = pBlocks.join('\n');
     }
 
+    const isAllClear = patientGroups.size === 0 && groupedCustomerOrders.length === 0 && dailyTasks.length === 0 && (!incomplete24hAudit?.overdue || incomplete24hAudit.overdue.length === 0);
+    const allClearBlock = isAllClear ? '\n\n🎉 *ALL CAUGHT UP!* All patient refills, customer orders, and store tasks are completely fulfilled.' : '';
+
     messageText = `☀️ *DAILY OPERATIONAL BRIEFING* — ${storeName}
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
@@ -954,7 +977,7 @@ export async function buildDailyOperationalBriefing(
 ${t4Details}
 
 📦 *TODAY'S SPECIAL & ONLINE ORDERS*:
-${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 
   } else if (templateKey === 'compact') {
     // TEMPLATE 1: Compact worklist (no medicine names)
@@ -977,6 +1000,9 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
       }).join('\n');
     }
 
+    const isAllClear = refillRows.length === 0 && groupedCustomerOrders.length === 0 && dailyTasks.length === 0 && (!incomplete24hAudit?.overdue || incomplete24hAudit.overdue.length === 0);
+    const allClearBlock = isAllClear ? '\n\n🎉 *ALL CAUGHT UP!* All patient refills, customer orders, and store tasks are completely fulfilled.' : '';
+
     messageText = `☀️ *DAILY OPERATIONAL BRIEFING* — ${storeName}
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
@@ -985,7 +1011,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
 ${t1Refills}
 
 📦 *2. SPECIAL & ONLINE ORDERS*:
-${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}`;
+${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 
   } else if (templateKey === 'checklist') {
     // TEMPLATE 2: Action checklist [ ]

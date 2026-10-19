@@ -89,4 +89,49 @@ describe('Daily Operational Briefing Clean Formatting & Fallbacks', () => {
     // WhatsApp should have [WhatsApp] tag
     expect(messageText).toContain('*Mr. MOKASHI* — 1 item [WhatsApp] (Ready)');
   });
+
+  it('Excludes refills fulfilled today or within last 24h from the Daily Briefing', async () => {
+    // Insert a medicine
+    await db.run(`INSERT OR IGNORE INTO medicines (id, name) VALUES (901, 'AZITHRAL 500')`);
+    await db.run(`INSERT OR IGNORE INTO medicines (id, name) VALUES (902, 'PARACETAMOL 650')`);
+
+    // 1. Refill fulfilled today: last_refill_date = today, next_refill_date = tomorrow
+    await db.run(`
+      INSERT INTO patient_refills (id, patient_name, patient_phone, medicine_id, refill_interval_days, last_refill_date, next_refill_date, status, is_active)
+      VALUES (801, 'Mr. FULFILLED TODAY', '9999999801', 901, 30, datetime('now', 'localtime'), date('now', 'localtime', '+1 day'), 'pending', 1)
+    `);
+
+    // 2. Refill truly pending (not fulfilled): last_refill_date = 20 days ago, next_refill_date = today
+    await db.run(`
+      INSERT INTO patient_refills (id, patient_name, patient_phone, medicine_id, refill_interval_days, last_refill_date, next_refill_date, status, is_active)
+      VALUES (802, 'Mr. GENUINE PENDING', '9999999802', 902, 30, date('now', 'localtime', '-20 days'), date('now', 'localtime'), 'pending', 1)
+    `);
+
+    const { messageText } = await buildDailyOperationalBriefing(db, 'detailed');
+
+    // Fulfilled today must NOT be in the briefing
+    expect(messageText).not.toContain('Mr. FULFILLED TODAY');
+    expect(messageText).not.toContain('AZITHRAL 500');
+
+    // Genuine pending MUST be in the briefing
+    expect(messageText).toContain('Mr. GENUINE PENDING');
+    expect(messageText).toContain('PARACETAMOL 650');
+  });
+
+  it('autoHealRefillIntervalsAndTasks cures short intervals and advances prematurely triggered next dates', async () => {
+    const { autoHealRefillIntervalsAndTasks } = await import('../src/database.js');
+
+    // Insert patient with 1-day interval fulfilled 2 hours ago with next date set to today
+    await db.run(`
+      INSERT INTO patient_refills (id, patient_name, patient_phone, medicine_id, refill_interval_days, last_refill_date, next_refill_date, status, is_active)
+      VALUES (803, 'Mr. SHORT CYCLE', '9999999803', 901, 1, datetime('now', 'localtime', '-2 hours'), date('now', 'localtime'), 'pending', 1)
+    `);
+
+    await autoHealRefillIntervalsAndTasks(db);
+
+    const cured = await db.get('SELECT refill_interval_days, next_refill_date FROM patient_refills WHERE id = 803');
+    expect(cured.refill_interval_days).toBe(30);
+    // next_refill_date should be advanced to +30 days, not today
+    expect(cured.next_refill_date).not.toMatch(new RegExp(`^${new Date().toISOString().slice(0, 10)}`));
+  });
 });

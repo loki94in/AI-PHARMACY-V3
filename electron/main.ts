@@ -44,6 +44,7 @@ const HEALTH_URL = `${BACKEND_URL}/api/health/ready`;
 
 let backendProcess: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
+let isExternalDevBackend = false;
 
 // Single-instance lock to protect port 5175
 const gotTheLock = app.requestSingleInstanceLock();
@@ -163,6 +164,21 @@ function waitForBackend(timeoutMs = 90_000): Promise<void> {
       setTimeout(probe, 100);
     }
     probe();
+  });
+}
+
+/** Fast single-probe check if backend is already responding on port */
+function checkBackendAlive(timeoutMs = 800): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(HEALTH_URL, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      resolve(false);
+    });
   });
 }
 
@@ -366,14 +382,27 @@ app.whenReady().then(async () => {
   // for the whole backend start-up; the splash is swapped for the SPA once the backend answers.
   createWindow();
 
-  // Startup Sanitation: Reclaim port 5175 if occupied by any lingering zombie, and clear session locks
-  const exeDir = path.dirname(process.execPath);
-  await reclaimPort(PORT);
-  if (!mainWindow) return; // closed on the splash: the app is quitting, don't start an orphan backend
-  cleanAllSessionLocks(exeDir);
+  // In development mode (e.g. npm run electron:dev), check if the dev server was already
+  // started by concurrently or another terminal on port 5175. If alive, adopt it immediately
+  // without killing its process tree or spawning an expensive duplicate tsx child.
+  if (!app.isPackaged) {
+    const alreadyAlive = await checkBackendAlive(1000);
+    if (alreadyAlive) {
+      console.log(`[ElectronMain] Dev backend is already running on port ${PORT}. Reusing existing instance.`);
+      isExternalDevBackend = true;
+    }
+  }
 
-  console.log('[ElectronMain] Starting AI Pharmacy OS backend...');
-  backendProcess = startBackend();
+  if (!isExternalDevBackend) {
+    // Startup Sanitation: Reclaim port 5175 if occupied by any lingering zombie, and clear session locks
+    const exeDir = path.dirname(process.execPath);
+    await reclaimPort(PORT);
+    if (!mainWindow) return; // closed on the splash: the app is quitting, don't start an orphan backend
+    cleanAllSessionLocks(exeDir);
+
+    console.log('[ElectronMain] Starting AI Pharmacy OS backend...');
+    backendProcess = startBackend();
+  }
 
   try {
     await waitForBackend();
@@ -407,7 +436,7 @@ app.on('window-all-closed', () => {
   const proc = backendProcess;
   const pid = proc?.pid;
 
-  if (!proc || !pid) {
+  if (isExternalDevBackend || !proc || !pid) {
     const exeDir = path.dirname(process.execPath);
     cleanAllSessionLocks(exeDir);
     app.quit();

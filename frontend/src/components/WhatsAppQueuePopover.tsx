@@ -53,6 +53,27 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<number, boolean>>({});
+  const [liveCountdownSec, setLiveCountdownSec] = useState<number>(() => {
+    if (initialQueueState?.nextDispatchTimestamp) {
+      return Math.max(0, Math.ceil((initialQueueState.nextDispatchTimestamp - Date.now()) / 1000));
+    }
+    return initialQueueState?.nextDispatchCountdownSeconds || 0;
+  });
+
+  useEffect(() => {
+    if (!queueState?.nextDispatchTimestamp) {
+      setLiveCountdownSec(queueState?.nextDispatchCountdownSeconds || 0);
+      return;
+    }
+    const targetTs = queueState.nextDispatchTimestamp;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((targetTs - Date.now()) / 1000));
+      setLiveCountdownSec(remaining);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [queueState?.nextDispatchTimestamp, queueState?.nextDispatchCountdownSeconds]);
 
   // Pacing Slider state
   const [, setPacingSec] = useState<number>(() => cachedQueueState?.currentPacingMinMs ? Math.round(cachedQueueState.currentPacingMinMs / 1000) : 10);
@@ -994,9 +1015,9 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                   <RefreshCw size={10} className="animate-spin" /> Sending: {queueState?.counts?.sending || todaySendingCount}
                 </span>
               )}
-              {((queueState?.nextDispatchCountdownSeconds || 0) > 0 && queueState?.isProcessing) && (
+              {((liveCountdownSec || 0) > 0 && queueState?.isProcessing) && (
                 <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold flex items-center gap-1">
-                  <Clock size={10} /> Waiting Delay: {queueState.nextDispatchCountdownSeconds}s
+                  <Clock size={10} /> Waiting Delay: {liveCountdownSec}s
                 </span>
               )}
               {todayRemainingCount > 0 && (
@@ -1050,9 +1071,9 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                     <span className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-300 flex items-center gap-1">
                       <Clock size={11} /> Next in Queue
                     </span>
-                    {(queueState?.nextDispatchCountdownSeconds as number) > 0 ? (
+                    {(liveCountdownSec as number) > 0 ? (
                       <span className="text-[10px] font-mono font-extrabold text-amber-600 dark:text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30 animate-pulse">
-                        Wait: {queueState!.nextDispatchCountdownSeconds}s
+                        Wait: {liveCountdownSec}s
                       </span>
                     ) : (
                       <span className="text-[10px] font-mono text-muted">Ready</span>

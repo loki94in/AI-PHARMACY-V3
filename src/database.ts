@@ -424,6 +424,45 @@ export async function autoHealDistributorPhoneMappings(db: any): Promise<void> {
 }
 
 /**
+ * Auto-heals legacy or accidentally short refill intervals (< 7 days) and repairs
+ * any refill schedules where next_refill_date was immediately advanced to today
+ * after being fulfilled within the last 24 hours.
+ */
+export async function autoHealRefillIntervalsAndTasks(db: any): Promise<void> {
+  try {
+    // 1. Repair any refill interval that is missing or < 7 days to standard 30 days
+    await db.run(`
+      UPDATE patient_refills
+      SET refill_interval_days = 30
+      WHERE refill_interval_days IS NULL OR refill_interval_days < 7
+    `);
+
+    // 2. Repair any refills fulfilled within the last 24 hours whose next_refill_date
+    // was prematurely set to today or earlier (e.g. from a 1-day interval)
+    await db.run(`
+      UPDATE patient_refills
+      SET next_refill_date = datetime(last_refill_date, '+30 days')
+      WHERE last_refill_date >= datetime('now', 'localtime', '-24 hours')
+        AND DATE(next_refill_date) <= DATE('now', 'localtime')
+    `);
+
+    // 3. Mark any patient call tasks as completed if the patient's refill was already fulfilled
+    await db.run(`
+      UPDATE patient_call_tasks
+      SET status = 'completed',
+          call_outcome = 'Refill fulfilled at store',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE status IN ('pending', 'rescheduled')
+        AND reference_id IN (
+          SELECT CAST(pr.id AS TEXT)
+          FROM patient_refills pr
+          WHERE pr.last_refill_date >= datetime('now', 'localtime', '-48 hours')
+        )
+    `);
+  } catch (_) {}
+}
+
+/**
  * Refill → Live Cart (added 2026-09-30). Idempotent; runs on BOTH boot paths.
  * - medicine_distributor_links: the Pharmarack distributor products the pharmacist
  *   ticked for a medicine (one medicine can have several; the refill cart popup
@@ -1543,6 +1582,7 @@ export async function ensureSchema(dbPath: string) {
         await ensureMultiPharmacyAndSnapshotSchema(db);
         await normalizeBillDatesToLocalTime(db);
         await autoHealDistributorPhoneMappings(db);
+        await autoHealRefillIntervalsAndTasks(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
         try {
@@ -4828,6 +4868,7 @@ export async function ensureSchema(dbPath: string) {
       await ensureMultiPharmacyAndSnapshotSchema(db);
       await normalizeBillDatesToLocalTime(db);
       await autoHealDistributorPhoneMappings(db);
+      await autoHealRefillIntervalsAndTasks(db);
       await ensureMedicinesFts(db);
       await ensureMedicineSearchSummaryTriggers(db);
       try {
