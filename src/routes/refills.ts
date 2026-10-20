@@ -715,7 +715,9 @@ router.get('/panel', async (req, res) => {
         LEFT JOIN customers cp ON pr.customer_id IS NULL AND cp.phone = pr.patient_phone AND cp.phone IS NOT NULL AND cp.phone != ''`;
     const params: any[] = [];
     if (upcomingDays && !isNaN(upcomingDays) && upcomingDays > 0) {
-      query += ` WHERE pr.next_refill_date <= date('now', '+' || ? || ' days') ${storeCond ? 'AND ' + storeCond : ''}`;
+      query += ` WHERE pr.is_active = 1
+                   AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+                   AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days') ${storeCond ? 'AND ' + storeCond : ''}`;
       params.push(upcomingDays);
       if (!allStores) params.push(targetStoreId, targetStoreId);
     } else if (storeCond) {

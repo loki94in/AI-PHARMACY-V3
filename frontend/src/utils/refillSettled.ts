@@ -60,9 +60,10 @@ export interface RefillCycleBookingStatus {
 
 /**
  * Checks whether a single refill medicine can be booked for the current cycle:
- * 1. Blocks re-booking if the current running cycle was already dispensed (last_refill_date within cycle).
- * 2. Flags early booking if next_refill_date is in the future.
+ * 1. Blocks re-booking if the current running cycle was already dispensed today in shop time.
+ * 2. Allows early booking if next_refill_date is in the upcoming 7-day window.
  * 3. Allows direct booking if due now or overdue.
+ * 4. Marks cycle dormant (alreadyDispensed = true) if more than 7 days away from next due date.
  */
 export const checkRefillCycleBooking = (med: {
   next_refill_date?: string | null;
@@ -92,13 +93,12 @@ export const checkRefillCycleBooking = (med: {
   const nextDue = nextDueDate ? new Date(nextDueDate) : null;
   const lastDisp = lastDispensedDate ? new Date(lastDispensedDate) : null;
 
+  let daysSinceDispense: number | null = null;
   if (lastDisp) {
     const lastDispDay = new Date(lastDisp);
     lastDispDay.setHours(0, 0, 0, 0);
-    const daysSinceDispense = Math.round((now.getTime() - lastDispDay.getTime()) / (1000 * 60 * 60 * 24));
-    const minCycleDays = Math.max(7, Math.floor(intervalDays * 0.6));
-
-    if (daysSinceDispense === 0 || (nextDue && nextDue.getTime() > now.getTime() && daysSinceDispense < minCycleDays)) {
+    daysSinceDispense = Math.round((now.getTime() - lastDispDay.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysSinceDispense === 0) {
       const lastDispFormatted = lastDisp.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
       const nextDueFormatted = nextDue ? nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
       return {
@@ -118,18 +118,41 @@ export const checkRefillCycleBooking = (med: {
     nextDueDay.setHours(0, 0, 0, 0);
     const diffDays = Math.round((nextDueDay.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-    if (diffDays > 0) {
-      const nextDueFormatted = nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    // Active & actionable 7-day refill lead-time window
+    if (diffDays <= 7) {
+      if (diffDays > 0) {
+        const nextDueFormatted = nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        return {
+          canBook: true,
+          isEarly: true,
+          daysEarly: diffDays,
+          alreadyDispensed: false,
+          lastDispensedDate,
+          nextDueDate,
+          message: `This refill is due in ${diffDays} day(s) on ${nextDueFormatted}. Allow early booking?`
+        };
+      }
       return {
         canBook: true,
-        isEarly: true,
-        daysEarly: diffDays,
+        isEarly: false,
+        daysEarly: 0,
         alreadyDispensed: false,
         lastDispensedDate,
-        nextDueDate,
-        message: `This refill is due in ${diffDays} day(s) on ${nextDueFormatted}. Allow early booking?`
+        nextDueDate
       };
     }
+
+    // Beyond 7 days away: cycle is dormant until 7-day lead-time window
+    const nextDueFormatted = nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return {
+      canBook: false,
+      isEarly: true,
+      daysEarly: diffDays,
+      alreadyDispensed: true,
+      lastDispensedDate,
+      nextDueDate,
+      message: `Cycle is dormant. Next refill is due on ${nextDueFormatted} (in ${diffDays} days).`
+    };
   }
 
   return {

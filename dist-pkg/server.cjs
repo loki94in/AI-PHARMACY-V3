@@ -17534,9 +17534,10 @@ async function autoHealRefillIntervalsAndTasks(db2) {
     `);
     await db2.run(`
       UPDATE patient_refills
-      SET next_refill_date = datetime(last_refill_date, '+30 days')
-      WHERE last_refill_date >= datetime('now', 'localtime', '-24 hours')
-        AND DATE(next_refill_date) <= DATE('now', 'localtime')
+      SET next_refill_date = datetime(last_refill_date, '+' || MAX(7, COALESCE(refill_interval_days, 30)) || ' days')
+      WHERE is_active = 1
+        AND last_refill_date IS NOT NULL
+        AND DATE(next_refill_date) < DATE(last_refill_date, '+' || MAX(7, COALESCE(refill_interval_days, 30)) || ' days')
     `);
     await db2.run(`
       UPDATE patient_call_tasks
@@ -28386,6 +28387,8 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -28393,6 +28396,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
           )
       )
     GROUP BY pr.patient_name
@@ -28414,6 +28418,8 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -28421,6 +28427,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
           )
       )
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
@@ -60438,7 +60445,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.125";
+    APP_VERSION = "0.1.126";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -78966,6 +78973,2472 @@ var init_billDistributorLinkService = __esm({
   }
 });
 
+// src/services/returnWindowService.ts
+var DEFAULT_RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
+var init_returnWindowService = __esm({
+  "src/services/returnWindowService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    DEFAULT_RETURN_WINDOW_DAYS = 15;
+    RETURN_WINDOW_MS = 14 * 24 * 60 * 60 * 1e3;
+    ReturnWindowService = class {
+      /**
+       * Fetches the configured return window duration from app_settings (default 15 days).
+       */
+      async getConfiguredReturnWindowDays(storeIdOrDb, customDb) {
+        try {
+          let db2;
+          if (customDb) {
+            db2 = customDb;
+          } else if (storeIdOrDb && typeof storeIdOrDb.get === "function") {
+            db2 = storeIdOrDb;
+          } else {
+            db2 = await dbManager.getConnection();
+          }
+          const row = await db2.get("SELECT value FROM app_settings WHERE key = 'return_window_days'");
+          if (row && row.value) {
+            const val = parseInt(row.value, 10);
+            if (!isNaN(val) && val > 0) return val;
+          }
+        } catch (_) {
+        }
+        return DEFAULT_RETURN_WINDOW_DAYS;
+      }
+      /**
+       * Calculates the return window deadline given a delivered timestamp and optional days
+       */
+      calculateReturnWindowUntil(deliveredAt, windowDays) {
+        const deliveredDate = new Date(deliveredAt);
+        const days = windowDays !== void 0 && windowDays > 0 ? windowDays : DEFAULT_RETURN_WINDOW_DAYS;
+        const deadlineMs = deliveredDate.getTime() + days * 24 * 60 * 60 * 1e3;
+        return new Date(deadlineMs).toISOString();
+      }
+      /**
+       * Evaluates the return window status for an order
+       */
+      evaluateOrderReturnStatus(order) {
+        const orderId = order.id;
+        const deliveryStatus = order.delivery_status || (order.status === "Delivered" ? "delivered" : "pending");
+        const deliveredAt = order.delivered_at || null;
+        const overrideBy = order.return_override_by || null;
+        const overrideReason = order.return_override_reason || null;
+        const overrideAt = order.return_override_at || null;
+        if (overrideBy) {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt,
+            returnWindowUntil: order.return_window_until || null,
+            returnStatus: "override_approved",
+            daysRemaining: 0,
+            isEligible: true,
+            overrideReason,
+            overrideBy,
+            overrideAt
+          };
+        }
+        if (order.return_status === "returned") {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt,
+            returnWindowUntil: order.return_window_until || null,
+            returnStatus: "returned",
+            daysRemaining: 0,
+            isEligible: false
+          };
+        }
+        if (deliveryStatus !== "delivered" || !deliveredAt) {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt: null,
+            returnWindowUntil: null,
+            returnStatus: "none",
+            daysRemaining: 0,
+            isEligible: false
+          };
+        }
+        const windowUntil = order.return_window_until || this.calculateReturnWindowUntil(deliveredAt);
+        const deadline = new Date(windowUntil).getTime();
+        const now = Date.now();
+        const msRemaining = deadline - now;
+        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1e3 * 60 * 60 * 24)));
+        const isEligible = msRemaining > 0;
+        const returnStatus = isEligible ? "eligible" : "expired";
+        return {
+          orderId,
+          deliveryStatus: "delivered",
+          deliveredAt,
+          returnWindowUntil: windowUntil,
+          returnStatus,
+          daysRemaining,
+          isEligible
+        };
+      }
+      /**
+       * Marks an order as delivered, stamping delivered_at and calculating the 14-day return window
+       */
+      async markDelivered(orderId, deliveredAtDate, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const deliveredAt = (deliveredAtDate || /* @__PURE__ */ new Date()).toISOString();
+        const windowDays = await this.getConfiguredReturnWindowDays(db2);
+        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt, windowDays);
+        await db2.run(
+          `UPDATE special_orders
+       SET delivery_status = 'delivered',
+           status = 'Delivered',
+           auto_remind = 0,
+           delivered_at = ?,
+           return_window_until = ?,
+           return_status = 'eligible',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [deliveredAt, returnWindowUntil, orderId]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
+          [orderId, `Order delivered. ${windowDays}-day return window open until ${returnWindowUntil}`]
+        );
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "delivered" });
+        } catch (_) {
+        }
+        const updatedOrder = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return this.evaluateOrderReturnStatus(updatedOrder);
+      }
+      /**
+       * Background scan: automatically closes expired 14-day return windows without deleting records
+       */
+      async checkAndCloseExpiredReturnWindows(dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const expiredOrders = await db2.all(
+          `SELECT id, delivered_at, return_window_until 
+       FROM special_orders
+       WHERE delivery_status = 'delivered'
+         AND return_status = 'eligible'
+         AND return_window_until IS NOT NULL
+         AND return_window_until <= ?
+         AND return_override_by IS NULL`,
+          [nowIso]
+        ).catch(() => []);
+        if (expiredOrders.length === 0) return 0;
+        for (const order of expiredOrders) {
+          await db2.run(
+            `UPDATE special_orders
+         SET return_status = 'expired',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [order.id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'return_window_expired', '14-day return period ended. Return window closed automatically.', 'system', CURRENT_TIMESTAMP)`,
+            [order.id]
+          );
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), expiredCount: expiredOrders.length });
+        } catch (_) {
+        }
+        return expiredOrders.length;
+      }
+      /**
+       * Human exception override: Pharmacist/Manager approves return after expiration
+       */
+      async applyReturnOverride(orderId, opts, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          throw new Error(`Order #${orderId} not found`);
+        }
+        const overrideBy = (opts.overrideBy || "Admin").trim();
+        const reason = (opts.reason || "Management approval").trim();
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        await db2.run(
+          `UPDATE special_orders
+       SET return_status = 'override_approved',
+           return_override_by = ?,
+           return_override_reason = ?,
+           return_override_at = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [overrideBy, reason, nowIso, orderId]
+        );
+        await db2.run(
+          `INSERT INTO action_logs (action_type, description, metadata, created_at)
+       VALUES ('return_override', ?, ?, CURRENT_TIMESTAMP)`,
+          [
+            `Return window manually overridden for Order #${orderId} by ${overrideBy}`,
+            JSON.stringify({ orderId, overrideBy, reason, previousStatus: order.return_status })
+          ]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'return_override', ?, ?, CURRENT_TIMESTAMP)`,
+          [orderId, `Return window override granted by ${overrideBy}. Reason: ${reason}`, overrideBy]
+        );
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "return_override" });
+        } catch (_) {
+        }
+        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return this.evaluateOrderReturnStatus(updated);
+      }
+    };
+    returnWindowService = new ReturnWindowService();
+  }
+});
+
+// src/routes/orders.ts
+var orders_exports = {};
+__export(orders_exports, {
+  cancelPendingWhatsAppForOrder: () => cancelPendingWhatsAppForOrder,
+  default: () => orders_default,
+  syncCloseCompanionRefillsForOrders: () => syncCloseCompanionRefillsForOrders
+});
+async function initOrdersTable(db2) {
+  if (ordersTableInitialized) return;
+  try {
+    const cols = await db2.all("PRAGMA table_info(special_orders)");
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("notification_count")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN notification_count INTEGER DEFAULT 0");
+    }
+    if (!colNames.has("cart_add_error")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN cart_add_error TEXT DEFAULT NULL");
+    }
+  } catch (_) {
+  }
+  ordersTableInitialized = true;
+}
+async function enqueueArrivalWhatsApp(db2, order, options) {
+  if (options?.skipWhatsApp) return false;
+  const cleanPhone = String(order.phone || "").replace(/\D/g, "");
+  if (!cleanPhone) return false;
+  const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const last102 = cleanPhone.slice(-10);
+  const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+  const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+  const lang = custRow?.language || "en";
+  const companionOrders = await db2.all(
+    `SELECT id, product, medicine_name, qty, status FROM special_orders
+     WHERE (phone LIKE ? OR phone = ? OR (requester = ? AND requester != ''))
+       AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
+       AND (notified = 0 OR id = ?)`,
+    [`%${last102}`, cleanPhone, order.requester || "", order.id]
+  ).catch(() => []);
+  const bundleOrders = companionOrders && companionOrders.length > 0 ? companionOrders : [order];
+  let msg;
+  if (bundleOrders.length > 1) {
+    const multiItems = bundleOrders.map((o) => ({
+      productName: (o.product || o.medicine_name || "Special Order Item").trim(),
+      qty: o.qty || 1,
+      status: "arrived"
+    }));
+    msg = await buildMultiOrderNotificationMessage(order.requester, multiItems, db2, lang);
+  } else {
+    msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
+  }
+  if (!options?.forceResend && !options?.skipDedupe) {
+    const recentQueue = await db2.get(
+      `SELECT id, created_at FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type IN ('special_order', 'special_order_multi_arrived')
+         AND message = ?
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last102}%`, `%${formattedPhone}%`, msg, sixtyMinutesAgoMs]
+    );
+    if (recentQueue) {
+      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same order already queued within 60m, queue ID: ${recentQueue.id}).`);
+      return false;
+    }
+  }
+  let pdfPath = void 0;
+  try {
+    const uploadsDir = import_path46.default.resolve(getAppDataDir(), "uploads");
+    if (!import_fs51.default.existsSync(uploadsDir)) {
+      import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
+    }
+    const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
+    const fullPdfPath = import_path46.default.join(uploadsDir, pdfFilename);
+    await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
+    pdfPath = fullPdfPath;
+  } catch (pdfErr) {
+    console.warn(`[Orders] Special order PDF slip generation note for #${order.id}:`, pdfErr);
+  }
+  await whatsappQueueWorker.enqueue(
+    formattedPhone,
+    msg,
+    "special_order",
+    order.requester || "Customer",
+    void 0,
+    pdfPath,
+    void 0,
+    { skipDedupe: options?.skipDedupe }
+  );
+  void ensureWhatsAppReady(3e4).catch(() => {
+  });
+  const bundleOrderIds = bundleOrders.map((o) => o.id);
+  const placeholders = bundleOrderIds.map(() => "?").join(",");
+  await db2.run(
+    `UPDATE special_orders 
+     SET notified = 1, 
+         notification_count = COALESCE(notification_count, 0) + 1,
+         last_collection_reminder_at = datetime('now')
+     WHERE id IN (${placeholders})`,
+    bundleOrderIds
+  ).catch(() => {
+  });
+  for (const bOrd of bundleOrders) {
+    await db2.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["special_order_arrived", order.requester || "Customer", formattedPhone, msg, "queued", String(bOrd.id)]
+    ).catch(() => {
+    });
+  }
+  return true;
+}
+async function cancelPendingWhatsAppForOrder(db2, order) {
+  const cleanPhone = order.phone ? order.phone.replace(/\D/g, "") : "";
+  const last102 = cleanPhone.slice(-10);
+  const reqName = (order.requester || "").trim();
+  const prodName = (order.product || "").trim();
+  try {
+    const matchConditions = [];
+    const matchArgs = [];
+    if (last102 && last102.length >= 7) {
+      matchConditions.push("number LIKE ?");
+      matchArgs.push(`%${last102}%`);
+    }
+    if (reqName) {
+      matchConditions.push("target_name = ?");
+      matchArgs.push(reqName);
+    }
+    if (prodName) {
+      matchConditions.push("message LIKE ?");
+      matchArgs.push(`%${prodName}%`);
+    }
+    if (matchConditions.length > 0) {
+      await db2.run(
+        `DELETE FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'failed_offline') 
+           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'order_ready', 'refill_collection', 'admin_shortage_reminder', 'whatsapp_notification')
+           AND (${matchConditions.join(" OR ")})`,
+        matchArgs
+      );
+    }
+  } catch (cancelErr) {
+    console.warn("[Orders] Could not delete pending WhatsApp queue items for order:", cancelErr);
+  }
+  try {
+    await db2.run(
+      `DELETE FROM automation_notifications 
+       WHERE reference_id IN (?, ?)
+          OR (type = 'admin_shortage_reminder' AND message LIKE ?)
+          OR (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') AND reference_id = ?)`,
+      [String(order.id), `shortage_${order.id}`, prodName ? `%${prodName}%` : "", String(order.id)]
+    );
+  } catch (_) {
+  }
+}
+async function syncCloseCompanionRefillsForOrders(db2, orders) {
+  if (!orders || orders.length === 0) return;
+  try {
+    const { executeCloseRefillCycles: executeCloseRefillCycles2 } = await Promise.resolve().then(() => (init_refills(), refills_exports));
+    const matchedRefills = [];
+    const seenRefillIds = /* @__PURE__ */ new Set();
+    for (const ord of orders) {
+      if (ord.source_refill_id && !seenRefillIds.has(ord.source_refill_id)) {
+        const rows = await db2.all(
+          `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE pr.id = ? AND pr.is_active = 1`,
+          [ord.source_refill_id]
+        );
+        for (const r of rows) {
+          if (!seenRefillIds.has(r.id)) {
+            seenRefillIds.add(r.id);
+            matchedRefills.push(r);
+          }
+        }
+      }
+      const cleanDigits = (ord.phone || "").replace(/\D/g, "").slice(-10);
+      const prodName = (ord.product || ord.medicine_name || "").trim().toLowerCase();
+      if (cleanDigits.length >= 7 && prodName) {
+        const rows = await db2.all(
+          `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE (pr.patient_phone LIKE ? OR replace(replace(pr.patient_phone, ' ', ''), '-', '') LIKE ?)
+             AND pr.is_active = 1
+             AND (
+               LOWER(TRIM(COALESCE(m.name, ''))) = ? 
+               OR LOWER(TRIM(COALESCE(pr.medicine_name, ''))) = ?
+               OR ? LIKE '%' || LOWER(TRIM(COALESCE(m.name, ''))) || '%'
+               OR LOWER(TRIM(COALESCE(m.name, ''))) LIKE '%' || ? || '%'
+             )`,
+          [`%${cleanDigits}%`, `%${cleanDigits}%`, prodName, prodName, prodName, prodName]
+        );
+        for (const r of rows) {
+          if (!seenRefillIds.has(r.id)) {
+            seenRefillIds.add(r.id);
+            matchedRefills.push(r);
+          }
+        }
+      }
+    }
+    if (matchedRefills.length > 0) {
+      await executeCloseRefillCycles2(db2, matchedRefills, "special_order_fulfilled");
+    }
+  } catch (refillSyncErr) {
+    console.warn("[Orders] Could not auto-close companion refill on special order fulfillment:", refillSyncErr);
+  }
+}
+var import_express19, import_path46, import_fs51, router19, broadcastOrdersChanged, ordersTableInitialized, handleStatusUpdate, handleBatchStatusUpdate, orders_default;
+var init_orders = __esm({
+  "src/routes/orders.ts"() {
+    "use strict";
+    import_express19 = __toESM(require("express"), 1);
+    init_connection();
+    import_path46 = __toESM(require("path"), 1);
+    import_fs51 = __toESM(require("fs"), 1);
+    init_whatsappClient();
+    init_storeSettingsService();
+    init_closureNotice();
+    init_whatsappQueueWorker();
+    init_pdfInvoiceService();
+    init_eventService();
+    init_config();
+    init_nameFormatter();
+    init_storeContextService();
+    init_returnWindowService();
+    init_orderScheduleService();
+    init_paymentQrService();
+    init_refillService();
+    init_phoneValidation();
+    router19 = import_express19.default.Router();
+    broadcastOrdersChanged = (delta) => {
+      try {
+        if (delta) {
+          eventService.broadcast("order_delta", delta);
+        }
+        eventService.broadcast("order_updated", { at: Date.now(), delta });
+      } catch (_) {
+      }
+    };
+    ordersTableInitialized = false;
+    router19.get("/", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const storeId = resolveStoreId(req);
+        const allStores = req.query.all_stores === "true";
+        let orders;
+        try {
+          if (allStores) {
+            orders = await db2.all("SELECT * FROM special_orders ORDER BY created_at DESC, id DESC LIMIT 1000");
+          } else {
+            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY created_at DESC, id DESC LIMIT 1000", [storeId]);
+          }
+        } catch (_) {
+          if (allStores) {
+            orders = await db2.all("SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000");
+          } else {
+            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000", [storeId]);
+          }
+        }
+        res.json(orders);
+      } catch (err) {
+        console.error("Orders fetch error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router19.post("/batch", async (req, res) => {
+      const {
+        items,
+        requester,
+        phone,
+        priority = "Normal",
+        status = "Pending",
+        advance_payment = 0,
+        sendWhatsApp = false,
+        store_id
+      } = req.body;
+      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "At least one medicine item is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        const cleanPhone = phoneVal.cleanPhone;
+        const cleanReqName = formatCustomerName(requester);
+        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+        const insertedOrders = [];
+        const batchCustomerId = req.body.customer_id ? Number(req.body.customer_id) : null;
+        if (cleanPhone && cleanPhone.length >= 10) {
+          try {
+            if (batchCustomerId) {
+              await db2.run("UPDATE customers SET name = ?, phone = ? WHERE id = ?", [cleanReqName, cleanPhone, batchCustomerId]);
+            } else {
+              const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
+              if (!existingCust) {
+                await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [cleanReqName, cleanPhone]);
+              }
+            }
+          } catch (_) {
+          }
+        }
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const medName = (item.product || item.medicine_name || item.name || "").trim();
+            if (!medName) continue;
+            const itemQty = Number(item.qty) || 1;
+            const itemAdv = i === 0 && advance_payment ? Number(advance_payment) : Number(item.advance_payment || 0);
+            const initialNotified = 0;
+            const initialStatus = item.status || status || "Pending";
+            let resolvedMedicineId = item.medicine_id ? Number(item.medicine_id) : null;
+            if (!resolvedMedicineId && medName) {
+              const medRow = await db2.get(
+                `SELECT id FROM medicines WHERE name = ? COLLATE NOCASE OR canonical_name = ? COLLATE NOCASE LIMIT 1`,
+                [medName, medName]
+              );
+              if (medRow) {
+                resolvedMedicineId = medRow.id;
+              }
+            }
+            const result = await db2.run(
+              `INSERT INTO special_orders (
+            store_id, customer_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
+            pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                targetStoreId,
+                batchCustomerId,
+                resolvedMedicineId,
+                medName,
+                medName,
+                cleanReqName,
+                cleanPhone,
+                itemQty,
+                item.priority || priority,
+                initialStatus,
+                todayStr2,
+                initialNotified,
+                item.distributor || item.pharmarack_distributor || null,
+                item.rate !== void 0 ? item.rate : item.pharmarack_rate !== void 0 ? item.pharmarack_rate : null,
+                item.mrp !== void 0 ? item.mrp : item.pharmarack_mrp !== void 0 ? item.pharmarack_mrp : null,
+                item.mapped ? 1 : item.pharmarack_mapped ? 1 : 0,
+                item.scheme || item.pharmarack_scheme || null,
+                itemAdv,
+                calculatedSchedule.scheduledProcessingAt,
+                calculatedSchedule.estimatedDeliveryStart,
+                calculatedSchedule.estimatedDeliveryEnd,
+                calculatedSchedule.cutoffAt,
+                calculatedSchedule.timezone,
+                calculatedSchedule.scheduleStatus,
+                calculatedSchedule.scheduleReason,
+                calculatedSchedule.scheduleVersion,
+                calculatedSchedule.calculatedAt
+              ]
+            );
+            insertedOrders.push({
+              id: result.lastID || 0,
+              product: medName,
+              qty: itemQty
+            });
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        if (Boolean(sendWhatsApp || req.body.sendWhatsApp) && cleanPhone) {
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const medicalName = await getStoreMedicalNameAndPhone(db2);
+          const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: \u20B9${Number(advance_payment).toFixed(2)})` : "";
+          const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          const lang = req.body.language || custRow?.language || "en";
+          let itemsListStr = "";
+          if (insertedOrders.length === 1) {
+            itemsListStr = `${insertedOrders[0].product}`;
+          } else {
+            itemsListStr = "\n" + insertedOrders.map((o, idx) => `${idx + 1}. ${o.product}`).join("\n");
+          }
+          let msg = "";
+          if (lang === "hi") {
+            msg = `\u0928\u092E\u0938\u094D\u0924\u0947 ${cleanReqName}, ${medicalName} \u092A\u0930 \u0906\u092A\u0915\u0940 ${itemsListStr}${advMsg} \u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930 \u0932\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0926\u0935\u093E\u0908 \u0906\u0928\u0947 \u092A\u0930 \u0939\u092E \u0906\u092A\u0915\u094B \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947\u0964`;
+          } else if (lang === "mr") {
+            msg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${cleanReqName}, ${medicalName} \u092F\u0947\u0925\u0947 \u0906\u092A\u0932\u0940 ${itemsListStr}${advMsg} \u091A\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0924 \u0906\u0932\u0940 \u0906\u0939\u0947. \u0914\u0937\u0927 \u0906\u0932\u094D\u092F\u093E\u0935\u0930 \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0915\u0933\u0935\u0942.`;
+          } else {
+            msg = `Hi ${cleanReqName}, your order for ${itemsListStr}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
+          }
+          msg += await getShopTimingNote(db2, lang, "booking");
+          try {
+            await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order_batch", cleanReqName);
+            console.log(`Consolidated special order confirmation WhatsApp queued for ${cleanReqName} (${insertedOrders.length} items)`);
+            for (const o of insertedOrders) {
+              await db2.run(
+                `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+                ["quick_order_batch", cleanReqName, formattedPhone, msg, "queued", String(o.id)]
+              );
+            }
+          } catch (waErr) {
+            console.error("Failed to queue special order confirmation WhatsApp:", waErr);
+          }
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: `Successfully logged ${insertedOrders.length} special request(s)`, orders: insertedOrders });
+      } catch (err) {
+        console.error("Batch create special orders error:", err);
+        res.status(500).json({ error: "Failed to create special orders: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.post("/", async (req, res) => {
+      const {
+        requester,
+        phone,
+        product,
+        medicine_name,
+        qty = 1,
+        priority = "Normal",
+        status = "Pending",
+        pharmarack_distributor,
+        pharmarack_rate,
+        pharmarack_mrp,
+        pharmarack_mapped = 0,
+        pharmarack_scheme,
+        advance_payment,
+        store_id,
+        customer_order_source = "in_store",
+        prescription_url,
+        product_image_url,
+        notes,
+        pharmarack_product_id,
+        pharmarack_product_code,
+        pharmarack_store_id,
+        pharmarack_product_name
+      } = req.body;
+      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
+      const reqProduct = product || medicine_name;
+      if (!requester || !reqProduct) {
+        return res.status(400).json({ error: "Requester name and product name are required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+        if (!phoneVal.isValid) {
+          return res.status(400).json({ error: phoneVal.error });
+        }
+        const cleanPhone = phoneVal.cleanPhone;
+        const singleCustomerId = req.body.customer_id ? Number(req.body.customer_id) : null;
+        if (cleanPhone && cleanPhone.length >= 10) {
+          try {
+            if (singleCustomerId) {
+              await db2.run("UPDATE customers SET name = ?, phone = ? WHERE id = ?", [requester.trim(), cleanPhone, singleCustomerId]);
+            } else {
+              const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
+              if (!existingCust) {
+                await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [requester.trim(), cleanPhone]);
+              }
+            }
+          } catch (_) {
+          }
+        }
+        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+        const medName = reqProduct.trim();
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
+        const initialNotified = 0;
+        const initialStatus = status || "Pending";
+        const result = await db2.run(
+          `INSERT INTO special_orders (
+        store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
+        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
+        customer_order_source, prescription_url, product_image_url, notes, notification_count,
+        scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+        cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+        schedule_calculated_at, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            targetStoreId,
+            singleCustomerId,
+            medName,
+            requester.trim(),
+            cleanPhone,
+            Number(qty) || 1,
+            priority || "Normal",
+            initialStatus,
+            todayStr2,
+            initialNotified,
+            pharmarack_distributor || null,
+            pharmarack_rate !== void 0 ? pharmarack_rate : null,
+            pharmarack_mrp !== void 0 ? pharmarack_mrp : null,
+            pharmarack_mapped ? 1 : 0,
+            pharmarack_scheme || null,
+            advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : 0,
+            customer_order_source,
+            prescription_url || null,
+            product_image_url || null,
+            notes || null,
+            calculatedSchedule.scheduledProcessingAt,
+            calculatedSchedule.estimatedDeliveryStart,
+            calculatedSchedule.estimatedDeliveryEnd,
+            calculatedSchedule.cutoffAt,
+            calculatedSchedule.timezone,
+            calculatedSchedule.scheduleStatus,
+            calculatedSchedule.scheduleReason,
+            calculatedSchedule.scheduleVersion,
+            calculatedSchedule.calculatedAt,
+            pharmarack_product_id ? Number(pharmarack_product_id) : null,
+            pharmarack_product_code || null,
+            pharmarack_store_id ? Number(pharmarack_store_id) : null,
+            pharmarack_product_name || null
+          ]
+        );
+        if (Boolean(req.body.sendWhatsApp) && phone) {
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const medicalName = await getStoreMedicalNameAndPhone(db2);
+          const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: \u20B9${Number(advance_payment).toFixed(2)})` : "";
+          const cleanReqName = formatCustomerName(requester);
+          const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          const lang = req.body.language || custRow?.language || "en";
+          let msg = "";
+          if (lang === "hi") {
+            msg = `\u0928\u092E\u0938\u094D\u0924\u0947 ${cleanReqName}, ${medicalName} \u092A\u0930 \u0906\u092A\u0915\u0940 ${medName}${advMsg} \u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930 \u0932\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0926\u0935\u093E\u0908 \u0906\u0928\u0947 \u092A\u0930 \u0939\u092E \u0906\u092A\u0915\u094B \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947\u0964`;
+          } else if (lang === "mr") {
+            msg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${cleanReqName}, ${medicalName} \u092F\u0947\u0925\u0947 \u0906\u092A\u0932\u0940 ${medName}${advMsg} \u091A\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0924 \u0906\u0932\u0940 \u0906\u0939\u0947. \u0914\u0937\u0927 \u0906\u0932\u094D\u092F\u093E\u0935\u0930 \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0915\u0933\u0935\u0942.`;
+          } else {
+            msg = `Hi ${cleanReqName}, your order for ${medName}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
+          }
+          msg += await getShopTimingNote(db2, lang, "booking");
+          try {
+            await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order", cleanReqName);
+            console.log(`Special order confirmation WhatsApp queued for ${cleanReqName}`);
+            await db2.run(
+              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+              ["quick_order", cleanReqName, formattedPhone, msg, "queued", String(result.lastID)]
+            );
+          } catch (waErr) {
+            console.error("Failed to queue special order confirmation WhatsApp:", waErr);
+          }
+        }
+        if (!pharmarack_mapped) {
+          try {
+            const mapping = await db2.get(
+              `SELECT store_name, rate, mrp FROM pharmarack_catalog_cache 
+           WHERE LOWER(item_name) = LOWER(?) LIMIT 1`,
+              [medName]
+            );
+            if (mapping?.store_name) {
+              await db2.run(
+                `UPDATE special_orders 
+             SET pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = 1 
+             WHERE id = ?`,
+                [mapping.store_name, mapping.rate, mapping.mrp, result.lastID]
+              );
+            }
+          } catch (matchErr) {
+            console.error("Failed auto-matching distributor for special order:", matchErr);
+          }
+        }
+        if (cleanPhone && cleanPhone.length >= 10) {
+          try {
+            const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
+            if (!existingCust) {
+              await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [requester.trim(), cleanPhone]);
+            }
+          } catch (_) {
+          }
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Request logged successfully" });
+      } catch (err) {
+        console.error("Create order request error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router19.get("/check-arrival-notified", async (req, res) => {
+      try {
+        const rawPhone = String(req.query.phone || "").replace(/\D/g, "");
+        if (!rawPhone || rawPhone.length < 7) {
+          return res.json({ recentlyNotified: false });
+        }
+        const last102 = rawPhone.slice(-10);
+        const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+        const db2 = await dbManager.getConnection();
+        const recent = await db2.get(
+          `SELECT id, created_at, status FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'special_order'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+          [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+        );
+        if (recent) {
+          const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recent.created_at)) / 6e4));
+          return res.json({
+            recentlyNotified: true,
+            minutesAgo,
+            queueId: recent.id,
+            status: recent.status
+          });
+        }
+        return res.json({ recentlyNotified: false });
+      } catch (err) {
+        console.error("Check arrival notified error:", err);
+        res.json({ recentlyNotified: false });
+      }
+    });
+    router19.post("/:id/notify-arrival", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        if (!order.phone) {
+          return res.status(400).json({ error: "Order has no associated phone number" });
+        }
+        const isForce = req.body?.force_resend === true;
+        const isResend = Number(order.notified) === 1 || Number(order.notification_count) > 0;
+        const queued = await enqueueArrivalWhatsApp(db2, order, { skipDedupe: isResend, forceResend: isForce });
+        let newCount = Number(order.notification_count || 0);
+        if (queued) {
+          newCount += 1;
+          await db2.run("UPDATE special_orders SET status = ?, notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?", ["Ready", newCount, id]);
+        }
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          whatsapp_queued: queued,
+          notification_count: newCount,
+          message: queued ? "Arrival notification queued successfully via WhatsApp" : "Arrival message was already queued in the last 60 minutes (or no phone stored)"
+        });
+      } catch (err) {
+        console.error("Notify arrival error:", err);
+        res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.post("/batch-notify-arrival", async (req, res) => {
+      const { order_ids, items, custom_message, lang: reqLang, force_resend } = req.body;
+      if (!Array.isArray(order_ids) || order_ids.length === 0) {
+        return res.status(400).json({ error: "order_ids array is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const placeholders = order_ids.map(() => "?").join(",");
+        const orders = await db2.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, order_ids);
+        if (orders.length === 0) {
+          return res.status(404).json({ error: "No matching orders found" });
+        }
+        const firstPhone = String(orders[0].phone || "").replace(/\D/g, "");
+        if (!firstPhone) {
+          return res.status(400).json({ error: "Customer phone number is missing" });
+        }
+        const formattedPhone = firstPhone.length === 10 ? `91${firstPhone}` : firstPhone;
+        const last102 = firstPhone.slice(-10);
+        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+        if (!force_resend) {
+          const recentQueue = await db2.get(
+            `SELECT id, created_at, status FROM whatsapp_send_queue
+         WHERE (number LIKE ? OR number LIKE ?)
+           AND type = 'special_order'
+           AND status NOT IN ('cancelled', 'failed_perm')
+           AND created_at >= ?
+         ORDER BY created_at DESC LIMIT 1`,
+            [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+          );
+          if (recentQueue) {
+            const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recentQueue.created_at)) / 6e4));
+            return res.status(409).json({
+              error: `An arrival notification was already queued for this customer ${minutesAgo} minute(s) ago.`,
+              code: "RECENTLY_NOTIFIED",
+              already_queued: true,
+              minutes_ago: minutesAgo,
+              recent_queue_id: recentQueue.id
+            });
+          }
+        }
+        const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [firstPhone]);
+        const lang = reqLang || orders[0].language || custRow?.language || "en";
+        const requesterName = orders[0].requester || "Customer";
+        const itemMap = /* @__PURE__ */ new Map();
+        if (Array.isArray(items)) {
+          for (const it of items) {
+            if (it && it.order_id) {
+              itemMap.set(Number(it.order_id), {
+                status: it.status === "delayed" ? "delayed" : "arrived",
+                delayReason: it.delay_reason,
+                expectedDate: it.expected_date
+              });
+            }
+          }
+        }
+        const multiOrderItems = [];
+        const arrivedOrderIds = [];
+        for (const ord of orders) {
+          const itInfo = itemMap.get(Number(ord.id)) || { status: "arrived" };
+          multiOrderItems.push({
+            productName: ord.product,
+            qty: ord.qty || 1,
+            status: itInfo.status,
+            delayReason: itInfo.delayReason,
+            expectedDate: itInfo.expectedDate
+          });
+          if (itInfo.status === "arrived") {
+            arrivedOrderIds.push(Number(ord.id));
+          }
+        }
+        const msg = custom_message && String(custom_message).trim().length > 0 ? String(custom_message).trim() : await buildMultiOrderNotificationMessage(requesterName, multiOrderItems, db2, lang);
+        await whatsappQueueWorker.enqueue(
+          formattedPhone,
+          msg,
+          "special_order",
+          requesterName,
+          void 0,
+          void 0,
+          void 0,
+          { skipDedupe: true }
+        );
+        void ensureWhatsAppReady(3e4).catch(() => {
+        });
+        for (const ord of orders) {
+          const itInfo = itemMap.get(Number(ord.id)) || { status: "arrived" };
+          const newCount = Number(ord.notification_count || 0) + 1;
+          if (itInfo.status === "arrived") {
+            await db2.run(
+              `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?`,
+              [newCount, ord.id]
+            );
+          } else {
+            const delayNote = itInfo.delayReason ? `Delayed: ${itInfo.delayReason}` : ord.notes || "";
+            await db2.run(
+              `UPDATE special_orders SET notes = ?, notification_count = ? WHERE id = ?`,
+              [delayNote, newCount, ord.id]
+            );
+          }
+        }
+        await db2.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+          ["special_order_multi_arrived", requesterName, formattedPhone, msg, "queued", order_ids.join(",")]
+        ).catch(() => {
+        });
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          whatsapp_queued: true,
+          arrived_count: arrivedOrderIds.length,
+          total_count: orders.length,
+          message: `Consolidated notification queued for ${requesterName} (${arrivedOrderIds.length} arrived, ${orders.length - arrivedOrderIds.length} delayed)`
+        });
+      } catch (err) {
+        console.error("Batch notify arrival error:", err);
+        res.status(500).json({ error: "Failed to queue consolidated notification: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.post("/:id/resend-booking", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        if (!order.phone) {
+          return res.status(400).json({ error: "Order has no associated phone number" });
+        }
+        const cleanPhone = order.phone.replace(/\D/g, "");
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+        const lang = order.language || custRow?.language || "en";
+        const medicalName = await getStoreMedicalNameAndPhone(db2);
+        const cleanReqName = formatCustomerName(order.requester);
+        const advMsg = order.advance_payment && Number(order.advance_payment) > 0 ? ` (Advance Paid: \u20B9${Number(order.advance_payment).toFixed(2)})` : "";
+        let msg = "";
+        if (lang === "hi") {
+          msg = `\u0928\u092E\u0938\u094D\u0924\u0947 ${cleanReqName}, ${medicalName} \u092A\u0930 \u0906\u092A\u0915\u0940 ${order.product}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (\u0905\u0917\u094D\u0930\u093F\u092E \u0930\u093E\u0936\u093F: \u20B9${Number(order.advance_payment).toFixed(2)})` : ""} \u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930 \u0932\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0926\u0935\u093E\u0908 \u0906\u0928\u0947 \u092A\u0930 \u0939\u092E \u0906\u092A\u0915\u094B \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947\u0964`;
+        } else if (lang === "mr") {
+          msg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${cleanReqName}, ${medicalName} \u092F\u0947\u0925\u0947 \u0906\u092A\u0932\u0940 ${order.product}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (\u0905\u0917\u093E\u090A \u0930\u0915\u094D\u0915\u092E: \u20B9${Number(order.advance_payment).toFixed(2)})` : ""} \u091A\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0924 \u0906\u0932\u0940 \u0906\u0939\u0947. \u0914\u0937\u0927 \u0906\u0932\u094D\u092F\u093E\u0935\u0930 \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0915\u0933\u0935\u0942.`;
+        } else {
+          msg = `Hi ${cleanReqName}, your order for ${order.product}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
+        }
+        await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order", order.requester || "Customer", void 0, void 0, void 0, { skipDedupe: true });
+        await db2.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+          ["quick_order_resend", order.requester || "Customer", formattedPhone, msg, "queued", String(id)]
+        );
+        res.json({ success: true, message: "Booking confirmation WhatsApp queued successfully" });
+      } catch (err) {
+        console.error("Resend booking notification error:", err);
+        res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.get("/:id/payment-qr", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const configs = await paymentQrService.getQrConfigs();
+        const assignedId = order.payment_qr_id || "QR_1";
+        const config2 = configs.find((c) => c.id === assignedId && c.is_active) || configs.find((c) => c.is_active) || configs[0];
+        const amount = Number(order.advance_payment || order.total_amount || 50);
+        const soCode = `SO-${order.id}`;
+        const upiUri = paymentQrService.buildUpiUri(config2.upi_id, config2.payee_name, amount, soCode);
+        return res.json({
+          success: true,
+          order_id: order.id,
+          so_code: soCode,
+          customer_name: order.requester || "Customer",
+          customer_phone: order.phone || "",
+          medicine_name: order.product || order.medicine_name || "Medicine",
+          amount,
+          upi_id: config2.upi_id,
+          payee_name: config2.payee_name,
+          upi_uri: upiUri,
+          payment_status: order.payment_status || "UNPAID"
+        });
+      } catch (err) {
+        console.error("[Orders] Get payment QR error:", err);
+        res.status(500).json({ error: "Failed to generate payment QR: " + err.message });
+      }
+    });
+    router19.post("/:id/send-payment-qr", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const cleanPhone = String(order.phone || "").replace(/\D/g, "");
+        if (cleanPhone.length < 10) {
+          return res.status(400).json({ error: "Order has no valid customer phone number" });
+        }
+        const activeQr = await paymentQrService.allocateNextQr();
+        const amount = Number(order.advance_payment || order.total_amount || 50);
+        const soCode = `SO-${order.id}`;
+        const medicineName = order.product || order.medicine_name || "Medicine";
+        const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
+        const fullQrPath = await paymentQrService.generatePaymentCard({
+          upiUri,
+          orderNumber: soCode,
+          medicineName,
+          amount,
+          payeeName: activeQr.payee_name,
+          upiId: activeQr.upi_id,
+          filename: `payment_card_${soCode}.png`
+        });
+        await db2.run(
+          `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
+          [activeQr.id, amount, id]
+        );
+        const custQrMsg = `\u2705 *Medicine Request Confirmed*
+
+\u{1F194} *Special Order*: ${soCode}
+\u{1F48A} *Medicine*: ${medicineName}
+\u{1F4E6} *Quantity*: ${order.qty || 1}
+
+\u{1F510} *Booking Advance Amount*: \u20B9${amount.toFixed(2)}
+
+Please pay the \u20B9${amount.toFixed(2)} booking amount using the QR card attached above.
+
+\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
+\u{1F464} *Payee*: ${activeQr.payee_name}
+
+\u{1F449} *Or tap to pay directly on this phone*:
+${upiUri}
+
+\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
+        const queueId = await whatsappQueueWorker.enqueue(
+          cleanPhone,
+          custQrMsg,
+          "customer_payment_qr",
+          order.requester || "Customer",
+          void 0,
+          fullQrPath
+        );
+        broadcastOrdersChanged();
+        return res.json({
+          success: true,
+          queue_id: queueId,
+          message: `\u20B9${amount.toFixed(2)} payment QR code dispatched to customer on WhatsApp!`
+        });
+      } catch (err) {
+        console.error("[Orders] Send payment QR error:", err);
+        res.status(500).json({ error: "Failed to send payment QR: " + err.message });
+      }
+    });
+    router19.get("/:id/distributor-options", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+        const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+        await waAdminEscalationService2.ensureOwnerPendingRequestsTable?.(db2);
+        const reqRow = await db2.get(
+          `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? OR req_code LIKE ? ORDER BY id DESC LIMIT 1`,
+          [soCode, `%${id}`]
+        );
+        let options = [];
+        if (reqRow && reqRow.options_json) {
+          try {
+            const parsed = JSON.parse(reqRow.options_json);
+            options = Array.isArray(parsed) ? parsed : parsed.options || parsed.allOptions || [];
+          } catch (_) {
+          }
+        }
+        return res.json({
+          orderId: id,
+          soCode,
+          medicineName: order.medicine_name || order.product,
+          quantity: order.qty || 1,
+          currentDistributor: order.distributor_name || order.pharmarack_distributor || null,
+          currentRate: order.pharmarack_rate || null,
+          currentMrp: order.pharmarack_mrp || null,
+          paymentStatus: order.payment_status || "UNPAID",
+          status: order.status || "Pending",
+          ownerRequestStatus: reqRow?.status || null,
+          options
+        });
+      } catch (err) {
+        console.error("[Orders] Get distributor options error:", err);
+        res.status(500).json({ error: "Failed to fetch distributor options: " + err.message });
+      }
+    });
+    router19.post("/:id/confirm-distributor", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const {
+          distributor,
+          rate,
+          mrp,
+          productId,
+          productCode,
+          storeId,
+          productName,
+          sendPaymentQr = true
+        } = req.body;
+        if (!distributor) {
+          return res.status(400).json({ error: "Distributor name is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const distName = String(distributor).trim();
+        const distRate = Number(rate || 0);
+        const distMrp = Number(mrp || order.pharmarack_mrp || 0);
+        const prodId = productId ? Number(productId) : order.pharmarack_product_id || null;
+        const prodCode = productCode ? String(productCode) : order.pharmarack_product_code || null;
+        const stId = storeId ? Number(storeId) : order.pharmarack_store_id || null;
+        const prodName = productName || order.pharmarack_product_name || order.medicine_name || order.product;
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+        await db2.run(
+          `UPDATE special_orders SET
+         distributor_name = ?,
+         pharmarack_distributor = ?,
+         pharmarack_rate = ?,
+         pharmarack_mrp = ?,
+         pharmarack_product_id = ?,
+         pharmarack_product_code = ?,
+         pharmarack_store_id = ?,
+         pharmarack_product_name = ?,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [distName, distName, distRate, distMrp, prodId, prodCode, stId, prodName, id]
+        );
+        await db2.run(
+          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+          [soCode, `%${id}`]
+        ).catch(() => {
+        });
+        const isPaymentConfirmed = ["PAYMENT_CONFIRMED", "VERIFIED", "CONFIRMED"].includes(String(order.payment_status || "").toUpperCase());
+        const oldDistName = String(order.pharmarack_distributor || order.distributor_name || "").trim();
+        const oldStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : null;
+        const oldProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : null;
+        const oldProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+        const distChanged = oldDistName && oldDistName.toLowerCase() !== distName.toLowerCase() || oldStoreId && stId && oldStoreId !== stId;
+        if (distChanged || isPaymentConfirmed) {
+          try {
+            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2, addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+            if (oldDistName && distChanged) {
+              await Promise.race([
+                adjustSpecialOrderInLiveCart2({
+                  product: oldProdName,
+                  qty: order.qty || 1,
+                  distributor: oldDistName,
+                  productCode: oldProdCode,
+                  storeId: oldStoreId,
+                  exactOnly: true
+                }),
+                new Promise((r) => setTimeout(r, 1500))
+              ]);
+            }
+            if (stId && distName) {
+              await addItemsToPharmarackCart2([{
+                productName: prodName,
+                product: prodName,
+                productId: prodId,
+                productCode: prodCode || "",
+                storeId: stId,
+                storeName: distName,
+                qty: order.qty || 1,
+                rate: distRate,
+                mrp: distMrp,
+                packaging: "1 strip",
+                mapped: true
+              }]).catch((err) => console.warn("[Orders] Error migrating item to new distributor cart:", err));
+            }
+          } catch (cartMigrateErr) {
+            console.warn("[Orders] Could not auto-migrate cart on distributor change:", cartMigrateErr);
+          }
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'distributor_switched', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+            [id, `Distributor updated from "${oldDistName || "None"}" to "${distName}". Live cart synced.`]
+          ).catch(() => {
+          });
+        }
+        let qrSent = false;
+        let queueId = null;
+        if (sendPaymentQr && !isPaymentConfirmed) {
+          const cleanPhone = String(order.phone || "").replace(/\D/g, "");
+          const custPhoneLast10 = cleanPhone.slice(-10);
+          const activeQr = await paymentQrService.allocateNextQr();
+          const amount = 50;
+          const medicineTitle = prodName || order.medicine_name || order.product || "Medicine";
+          const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
+          const fullQrPath = await paymentQrService.generatePaymentCard({
+            upiUri,
+            orderNumber: soCode,
+            medicineName: medicineTitle,
+            amount,
+            payeeName: activeQr.payee_name,
+            upiId: activeQr.upi_id,
+            filename: `payment_card_${soCode}.png`
+          });
+          await db2.run(
+            `UPDATE special_orders SET
+           payment_qr_id = ?,
+           payment_status = 'AWAITING_PAYMENT',
+           advance_payment = ?,
+           total_amount = ?
+         WHERE id = ?`,
+            [activeQr.id, amount, amount, id]
+          );
+          if (custPhoneLast10) {
+            await db2.run(
+              `UPDATE wa_pending_clarifications
+           SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
+           WHERE phone LIKE ? OR phone LIKE ?`,
+              [id, soCode, `%${custPhoneLast10}`, `%${custPhoneLast10}%`]
+            ).catch(() => {
+            });
+          }
+          const mrpLine = distMrp > 0 ? `
+\u{1F3F7}\uFE0F *MRP*: \u20B9${distMrp.toFixed(2)}` : "";
+          const custQrMsg = `\u2705 *Medicine Request Confirmed*
+
+\u{1F194} *Special Order*: ${soCode}
+\u{1F48A} *Medicine*: ${medicineTitle}
+\u{1F4E6} *Quantity*: ${order.qty || 1}${mrpLine}
+
+\u{1F510} *Booking Advance Amount*: \u20B9${amount.toFixed(2)}
+
+Please pay the \u20B9${amount.toFixed(2)} booking amount using the QR card attached above.
+
+\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
+\u{1F464} *Payee*: ${activeQr.payee_name}
+
+\u{1F449} *Or tap to pay directly on this phone*:
+${upiUri}
+
+\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
+          let custTarget = cleanPhone;
+          if (custPhoneLast10) {
+            const activeChat = await db2.get(
+              `SELECT id FROM whatsapp_chats 
+           WHERE (resolved_number LIKE ? OR id LIKE ?) 
+           ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC LIMIT 1`,
+              [`%${custPhoneLast10}%`, `%${custPhoneLast10}%`]
+            ).catch(() => null);
+            if (activeChat?.id) {
+              custTarget = activeChat.id;
+            }
+          }
+          if (custTarget) {
+            queueId = await whatsappQueueWorker.enqueue(
+              custTarget,
+              custQrMsg,
+              "customer_payment_qr",
+              order.requester || "Customer",
+              void 0,
+              fullQrPath
+            ).catch((err) => {
+              console.warn("[Orders] QR image enqueue failed, falling back to text:", err?.message || err);
+              return whatsappQueueWorker.enqueue(
+                custTarget,
+                custQrMsg + `
+
+\u{1F517} *Pay via UPI link*:
+${upiUri}`,
+                "customer_payment_qr",
+                order.requester || "Customer"
+              ).catch(() => null);
+            });
+            qrSent = true;
+          }
+        }
+        broadcastOrdersChanged();
+        return res.json({
+          success: true,
+          orderId: id,
+          distributor: distName,
+          rate: distRate,
+          mrp: distMrp,
+          qrSent,
+          queueId,
+          message: qrSent ? `Distributor ${distName} confirmed and \u20B950 payment QR dispatched to customer on WhatsApp!` : isPaymentConfirmed ? `Distributor ${distName} updated for paid order #${id} (Cart migrated to ${distName}).` : `Distributor ${distName} assigned to order #${id}.`
+        });
+      } catch (err) {
+        console.error("[Orders] Confirm distributor error:", err);
+        res.status(500).json({ error: "Failed to confirm distributor: " + err.message });
+      }
+    });
+    router19.post("/:id/mark-advance-paid", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        await db2.run(
+          `UPDATE special_orders SET payment_status = 'PAYMENT_CONFIRMED', advance_payment = CASE WHEN advance_payment > 0 THEN advance_payment ELSE 50 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [id]
+        );
+        try {
+          const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          void addItemsToPharmarackCart2([{
+            productName: order.pharmarack_product_name || order.medicine_name || order.product,
+            product: order.pharmarack_product_name || order.medicine_name || order.product,
+            productId: order.pharmarack_product_id || order.medicine_id || 0,
+            productCode: order.pharmarack_product_code || "",
+            storeId: order.pharmarack_store_id || 0,
+            storeName: order.pharmarack_distributor || "Standard Distributor",
+            qty: order.qty > 0 ? order.qty : 1,
+            rate: order.pharmarack_rate || 0,
+            mrp: order.pharmarack_mrp || 0,
+            packaging: "1 strip",
+            mapped: order.pharmarack_mapped === 1
+          }]).catch((err) => console.warn("[Orders] Live cart add error on mark-advance-paid:", err?.message || err));
+        } catch (_) {
+        }
+        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
+        const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
+        const customerName = formatCustomerName(order.customer_name || order.requester || "Customer");
+        const medicineName = order.medicine_name || order.product || "Medicine";
+        const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
+        const cleanCustPhone = String(order.phone || "").replace(/\D/g, "").slice(-10);
+        await db2.run(
+          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+          [soCode, `%${id}`]
+        ).catch(() => {
+        });
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+          [id, soCode]
+        ).catch(() => {
+        });
+        const custFinalMsg = `\u{1F389} Hello *${customerName}*, your medicine request is confirmed!
+
+\u{1F194} Special Order ID: ${soCode}
+
+\u{1F48A} ${medicineName}
+\u{1F4E6} Quantity: ${order.qty || 1}
+
+\u{1F4B0} Booking Amount Paid: \u20B9${amountPaid}
+
+\u{1F6D2} Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!
+
+Thank you!
+\u2014 ${storeName}`;
+        if (cleanCustPhone) {
+          try {
+            await whatsappQueueWorker.enqueue(
+              cleanCustPhone,
+              custFinalMsg,
+              "customer_order_confirmed",
+              customerName
+            );
+            console.log(`[Orders] Payment confirmation WhatsApp enqueued for ${customerName} (${cleanCustPhone}) [${soCode}]`);
+          } catch (waErr) {
+            console.warn("[Orders] Failed to enqueue customer payment confirmation WhatsApp:", waErr);
+          }
+          try {
+            await db2.run(
+              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+           VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
+              ["whatsapp_order", customerName, cleanCustPhone, custFinalMsg, String(id)]
+            );
+          } catch (notifErr) {
+            console.warn("[Orders] Failed to log automation_notification:", notifErr);
+          }
+        }
+        broadcastOrdersChanged();
+        return res.json({
+          success: true,
+          message: "Advance payment marked as CONFIRMED"
+        });
+      } catch (err) {
+        console.error("[Orders] Mark advance paid error:", err);
+        res.status(500).json({ error: "Failed to mark advance paid: " + err.message });
+      }
+    });
+    router19.get("/uncollected-alerts", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const uncollected = await db2.all(
+          `SELECT * FROM special_orders 
+       WHERE status IN ('Pending', 'Ready', 'Ordered', 'Pending Collection') 
+       AND datetime(date) <= datetime('now', '-2 days')`
+        );
+        res.json(uncollected || []);
+      } catch (err) {
+        console.error("Fetch uncollected alerts error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router19.put("/:id", async (req, res) => {
+      const { id } = req.params;
+      const {
+        status,
+        priority,
+        qty,
+        product,
+        requester,
+        phone,
+        pharmarack_distributor,
+        pharmarack_rate,
+        pharmarack_mrp,
+        pharmarack_mapped,
+        advance_payment,
+        cart_add_error,
+        resend,
+        sendPaymentQr,
+        skipWhatsApp,
+        sendWhatsApp,
+        pharmarack_product_id,
+        pharmarack_product_code,
+        pharmarack_store_id,
+        pharmarack_product_name
+      } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!existing) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        let newStatus = status !== void 0 ? status : existing.status;
+        if (newStatus === "Completed" || newStatus === "completed") {
+          newStatus = "Fulfilled";
+        }
+        const newPriority = priority !== void 0 ? priority : existing.priority;
+        const newQty = qty !== void 0 ? qty : existing.qty;
+        const newProduct = product !== void 0 ? product : existing.product;
+        const newRequester = requester !== void 0 ? requester : existing.requester;
+        let newPhone = existing.phone;
+        if (phone !== void 0) {
+          const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
+          if (!phoneVal.isValid) {
+            return res.status(400).json({ error: phoneVal.error });
+          }
+          newPhone = phoneVal.cleanPhone;
+        }
+        const newDistributor = pharmarack_distributor !== void 0 ? pharmarack_distributor : existing.pharmarack_distributor;
+        const newRate = pharmarack_rate !== void 0 ? pharmarack_rate : existing.pharmarack_rate;
+        const newMrp = pharmarack_mrp !== void 0 ? pharmarack_mrp : existing.pharmarack_mrp;
+        const newMapped = pharmarack_mapped !== void 0 ? pharmarack_mapped ? 1 : 0 : existing.pharmarack_mapped;
+        const newAdvancePayment = advance_payment !== void 0 ? advance_payment : existing.advance_payment;
+        const newCartAddError = cart_add_error !== void 0 ? cart_add_error : existing.cart_add_error;
+        const newProductId = pharmarack_product_id !== void 0 ? pharmarack_product_id ? Number(pharmarack_product_id) : null : existing.pharmarack_product_id;
+        const newProductCode = pharmarack_product_code !== void 0 ? pharmarack_product_code || null : existing.pharmarack_product_code;
+        const newStoreId = pharmarack_store_id !== void 0 ? pharmarack_store_id ? Number(pharmarack_store_id) : null : existing.pharmarack_store_id;
+        const newProductName = pharmarack_product_name !== void 0 ? pharmarack_product_name || null : existing.pharmarack_product_name;
+        let whatsappQueued = false;
+        const isResend = Boolean(resend);
+        const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
+        if (newStatus === "Ready" && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
+          try {
+            whatsappQueued = await enqueueArrivalWhatsApp(
+              db2,
+              { ...existing, phone: newPhone, requester: newRequester, product: newProduct, qty: newQty },
+              { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
+            );
+          } catch (waErr) {
+            console.error("Failed to queue arrival WhatsApp on order update:", waErr?.message || waErr);
+          }
+        }
+        let newNotified = existing.notified;
+        if (newStatus === "Fulfilled" || whatsappQueued) {
+          newNotified = 1;
+        }
+        const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
+        const newAutoRemind = newStatus === "Fulfilled" || newStatus === "Cancelled" ? 0 : newStatus === "Ready" ? 1 : existing.auto_remind ?? 0;
+        const lastRemindAt = newStatus === "Ready" || whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : newStatus === "Fulfilled" || newStatus === "Cancelled" ? null : existing.last_collection_reminder_at;
+        await db2.run(
+          `UPDATE special_orders
+       SET status = ?, priority = ?, qty = ?, product = ?, requester = ?, phone = ?,
+           pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = ?,
+           advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?,
+           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?,
+           auto_remind = ?, last_collection_reminder_at = ?
+       WHERE id = ?`,
+          [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, newAutoRemind, lastRemindAt, id]
+        );
+        const targetCustId = existing.customer_id || (req.body.customer_id ? Number(req.body.customer_id) : null);
+        if (targetCustId && (phone !== void 0 || requester !== void 0)) {
+          try {
+            await db2.run("UPDATE customers SET name = ?, phone = ? WHERE id = ?", [newRequester, newPhone, targetCustId]);
+          } catch (_) {
+          }
+        }
+        let paymentQrSent = false;
+        const distributorNewlyAssigned = !existing.pharmarack_distributor && newDistributor;
+        const shouldSendQr = Boolean(distributorNewlyAssigned || sendPaymentQr);
+        const cleanPhoneForQr = String(newPhone || existing.phone || "").replace(/\D/g, "");
+        if (shouldSendQr && cleanPhoneForQr.length >= 10) {
+          try {
+            const advanceAmount = Number(newAdvancePayment || existing.advance_payment || 50);
+            const qrAmount = advanceAmount > 0 ? advanceAmount : 50;
+            const soCode = `SO-${id}`;
+            const medicineName = newProduct || existing.product || "Medicine";
+            const activeQr = await paymentQrService.allocateNextQr();
+            const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, qrAmount, soCode);
+            const fullQrPath = await paymentQrService.generatePaymentCard({
+              upiUri,
+              orderNumber: soCode,
+              medicineName,
+              amount: qrAmount,
+              payeeName: activeQr.payee_name,
+              upiId: activeQr.upi_id,
+              filename: `payment_card_${soCode}.png`
+            });
+            await db2.run(
+              `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
+              [activeQr.id, qrAmount, id]
+            );
+            const formattedQrPhone = cleanPhoneForQr.length === 10 ? `91${cleanPhoneForQr}` : cleanPhoneForQr;
+            const custQrMsg = `\u2705 *Medicine & Supplier Confirmed*
+
+\u{1F194} *Special Order*: ${soCode}
+\u{1F48A} *Medicine*: ${medicineName}
+\u{1F4E6} *Quantity*: ${newQty || existing.qty || 1}
+\u{1F3E2} *Supplier*: ${newDistributor}
+
+\u{1F510} *Booking Advance Amount*: \u20B9${qrAmount.toFixed(2)}
+
+Please pay the \u20B9${qrAmount.toFixed(2)} booking amount using the QR card attached above.
+
+\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
+\u{1F464} *Payee*: ${activeQr.payee_name}
+
+\u{1F449} *Or tap to pay directly on this phone*:
+${upiUri}
+
+\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
+            await whatsappQueueWorker.enqueue(
+              formattedQrPhone,
+              custQrMsg,
+              "customer_payment_qr",
+              newRequester || existing.requester || "Customer",
+              void 0,
+              fullQrPath
+            );
+            paymentQrSent = true;
+            console.log(`[Orders] Auto-sent payment QR to ${formattedQrPhone} for ${soCode} after distributor assigned: ${newDistributor}`);
+          } catch (qrErr) {
+            console.error("[Orders] Failed to auto-send payment QR on distributor assignment:", qrErr?.message || qrErr);
+          }
+        }
+        if (newStatus === "Cancelled" || newStatus === "Fulfilled" || newStatus === "Completed") {
+          await cancelPendingWhatsAppForOrder(db2, {
+            id,
+            phone: newPhone || existing.phone,
+            requester: newRequester || existing.requester,
+            product: newProduct || existing.product
+          });
+          await purgePendingCustomerReminders(db2, {
+            phone: newPhone || existing.phone,
+            specialOrderIds: [Number(id)],
+            medicineNames: [newProduct || existing.product].filter(Boolean)
+          });
+        }
+        if (newStatus === "Fulfilled" || newStatus === "Completed") {
+          await db2.run(
+            `UPDATE automation_notifications 
+         SET lifecycle_status = 'sent', status = 'sent_manually' 
+         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
+           AND reference_id = ?`,
+            [String(id), String(id)]
+          ).catch(() => {
+          });
+          await syncCloseCompanionRefillsForOrders(db2, [{
+            phone: newPhone || existing.phone,
+            product: newProduct || existing.product,
+            medicine_name: existing.medicine_name,
+            source_refill_id: existing.source_refill_id
+          }]);
+        }
+        if (newPhone && (newPhone !== existing.phone || newRequester !== existing.requester)) {
+          const cleanNewPhone = normalizeWhatsAppPhone(newPhone);
+          const oldDigits = (existing.phone || "").replace(/\D/g, "");
+          const last8Old = oldDigits.length >= 7 ? oldDigits.slice(-8) : oldDigits;
+          if (cleanNewPhone) {
+            await db2.run(
+              `UPDATE whatsapp_send_queue
+           SET number = ?, target_name = ?, status = 'pending', retry_count = 0, error_message = NULL
+           WHERE (
+             (target_name IS NOT NULL AND target_name = ?)
+             OR (? != '' AND number LIKE ?)
+             OR message LIKE ?
+           )
+           AND status IN ('pending', 'failed_offline', 'failed_perm', 'review_required')`,
+              [cleanNewPhone, newRequester, existing.requester, last8Old, `%${last8Old}%`, `%${existing.product}%`]
+            ).catch(() => {
+            });
+            await db2.run(
+              `UPDATE automation_notifications
+           SET recipient_phone = ?, recipient_name = ?, status = 'queued', error_message = NULL
+           WHERE (
+             reference_id = ?
+             OR (recipient_name IS NOT NULL AND recipient_name = ?)
+             OR (? != '' AND recipient_phone LIKE ?)
+           )
+           AND status IN ('queued', 'failed', 'error')`,
+              [cleanNewPhone, newRequester, String(id), existing.requester, last8Old, `%${last8Old}%`]
+            ).catch(() => {
+            });
+            await db2.run(
+              `UPDATE customers 
+           SET phone = ?, name = ?
+           WHERE phone = ? OR name = ?`,
+              [newPhone, newRequester, existing.phone, existing.requester]
+            ).catch(() => {
+            });
+            try {
+              whatsappQueueWorker.triggerProcessing();
+              whatsappQueueWorker.broadcastQueueState(true);
+              eventService.broadcast("customers_changed", { timestamp: Date.now() });
+            } catch (_) {
+            }
+          }
+        }
+        if (newStatus === "Cancelled" || newStatus === "Ready") {
+          setImmediate(async () => {
+            try {
+              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+              await adjustSpecialOrderInLiveCart2({
+                product: newProduct || existing.product,
+                qty: newQty || existing.qty,
+                distributor: newDistributor || existing.pharmarack_distributor,
+                productCode: newProductCode || existing.pharmarack_product_code,
+                storeId: newStoreId || existing.pharmarack_store_id
+              });
+              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
+              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+              eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
+            } catch (cartErr) {
+              console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
+            }
+          });
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, payment_qr_sent: paymentQrSent });
+      } catch (err) {
+        console.error("Update order error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    handleStatusUpdate = async (req, res) => {
+      const { id } = req.params;
+      let { status, resend } = req.body;
+      if (!status) {
+        return res.status(400).json({ error: "status is required" });
+      }
+      if (typeof status === "string" && (status.trim().toLowerCase() === "completed" || status.trim().toLowerCase() === "fulfilled")) {
+        status = "Fulfilled";
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!existing) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        let whatsappQueued = false;
+        const isResend = Boolean(resend);
+        const shouldSkipWa = req.body?.skipWhatsApp === true || req.body?.sendWhatsApp === false;
+        if (status === "Ready" && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
+          try {
+            whatsappQueued = await enqueueArrivalWhatsApp(
+              db2,
+              existing,
+              { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
+            );
+          } catch (waErr) {
+            console.error("Failed to queue arrival WhatsApp on status Ready:", waErr?.message || waErr);
+          }
+        }
+        const newNotified = status === "Fulfilled" || whatsappQueued ? 1 : existing.notified;
+        const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
+        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : status === "Ready" ? 1 : existing.auto_remind ?? 0;
+        const lastRemindAt = status === "Ready" || whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : status === "Fulfilled" || status === "Cancelled" ? null : existing.last_collection_reminder_at;
+        await db2.run(
+          "UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?",
+          [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
+        );
+        if (status === "Cancelled" || status === "Fulfilled") {
+          await cancelPendingWhatsAppForOrder(db2, existing);
+          await purgePendingCustomerReminders(db2, {
+            phone: existing.phone,
+            specialOrderIds: [Number(id)],
+            medicineNames: existing.product ? [existing.product] : void 0
+          });
+        }
+        if (status === "Fulfilled") {
+          await db2.run(
+            `UPDATE automation_notifications 
+         SET lifecycle_status = 'sent', status = 'sent_manually' 
+         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
+           AND reference_id = ?`,
+            [String(id), String(id)]
+          ).catch(() => {
+          });
+          await syncCloseCompanionRefillsForOrders(db2, [existing]);
+        }
+        if (status === "Cancelled" || status === "Ready") {
+          setImmediate(async () => {
+            try {
+              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+              await adjustSpecialOrderInLiveCart2({
+                product: existing.product,
+                qty: existing.qty,
+                distributor: existing.pharmarack_distributor,
+                productCode: existing.pharmarack_product_code,
+                storeId: existing.pharmarack_store_id
+              });
+              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
+              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+              eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
+            } catch (cartErr) {
+              console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
+            }
+          });
+        }
+        broadcastOrdersChanged({ action: "update_status", orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
+        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, auto_remind: newAutoRemind });
+      } catch (err) {
+        console.error("Update order status error:", err);
+        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
+      }
+    };
+    handleBatchStatusUpdate = async (req, res) => {
+      const rawIds = req.body?.order_ids || req.body?.ids;
+      let { status, resend, skipWhatsApp, sendWhatsApp } = req.body;
+      if (!rawIds || !Array.isArray(rawIds) || rawIds.length === 0) {
+        return res.status(400).json({ error: "order_ids array is required" });
+      }
+      if (!status) {
+        return res.status(400).json({ error: "status is required" });
+      }
+      if (typeof status === "string" && (status.trim().toLowerCase() === "completed" || status.trim().toLowerCase() === "fulfilled")) {
+        status = "Fulfilled";
+      }
+      const orderIds = rawIds.map(Number).filter((n) => !isNaN(n));
+      if (orderIds.length === 0) {
+        return res.status(400).json({ error: "Valid numeric order_ids required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const placeholders = orderIds.map(() => "?").join(",");
+        const orders = await db2.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, orderIds);
+        if (!orders || orders.length === 0) {
+          return res.status(404).json({ error: "No matching orders found" });
+        }
+        const isResend = Boolean(resend);
+        const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
+        let totalWaQueued = 0;
+        if (status === "Ready" && !shouldSkipWa) {
+          for (const ord of orders) {
+            if (Number(ord.notified) !== 1 || isResend) {
+              try {
+                const queued = await enqueueArrivalWhatsApp(
+                  db2,
+                  ord,
+                  { skipDedupe: isResend || Number(ord.notified) === 1, skipWhatsApp: shouldSkipWa }
+                );
+                if (queued) totalWaQueued++;
+              } catch (waErr) {
+                console.error("[Orders] Failed to queue arrival WhatsApp on batch status Ready:", waErr?.message || waErr);
+              }
+            }
+          }
+        }
+        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : status === "Ready" ? 1 : null;
+        const lastRemindAt = status === "Ready" ? (/* @__PURE__ */ new Date()).toISOString() : null;
+        if (status === "Fulfilled") {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ?, notified = 1, auto_remind = 0, last_collection_reminder_at = NULL 
+         WHERE id IN (${placeholders})`,
+            [status, ...orderIds]
+          );
+        } else if (status === "Cancelled") {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ?, auto_remind = 0, last_collection_reminder_at = NULL 
+         WHERE id IN (${placeholders})`,
+            [status, ...orderIds]
+          );
+        } else if (status === "Ready") {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ?, auto_remind = 1, last_collection_reminder_at = ? 
+         WHERE id IN (${placeholders})`,
+            [status, lastRemindAt, ...orderIds]
+          );
+        } else {
+          await db2.run(
+            `UPDATE special_orders 
+         SET status = ? 
+         WHERE id IN (${placeholders})`,
+            [status, ...orderIds]
+          );
+        }
+        if (status === "Cancelled" || status === "Fulfilled") {
+          for (const ord of orders) {
+            await cancelPendingWhatsAppForOrder(db2, ord);
+            await purgePendingCustomerReminders(db2, {
+              phone: ord.phone,
+              specialOrderIds: [Number(ord.id)],
+              medicineNames: ord.product ? [ord.product] : void 0
+            });
+          }
+        }
+        if (status === "Fulfilled") {
+          const strIds = orderIds.map(String);
+          const strPlaceholders = strIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE automation_notifications 
+         SET lifecycle_status = 'sent', status = 'sent_manually' 
+         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id IN (${strPlaceholders}))
+           AND reference_id IN (${strPlaceholders})`,
+            [...strIds, ...strIds]
+          ).catch(() => {
+          });
+          await syncCloseCompanionRefillsForOrders(db2, orders);
+        }
+        if (status === "Cancelled" || status === "Ready") {
+          setImmediate(async () => {
+            try {
+              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+              for (const ord of orders) {
+                try {
+                  await adjustSpecialOrderInLiveCart2({
+                    product: ord.product,
+                    qty: ord.qty,
+                    distributor: ord.pharmarack_distributor,
+                    productCode: ord.pharmarack_product_code,
+                    storeId: ord.pharmarack_store_id
+                  });
+                } catch (_) {
+                }
+              }
+              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_batch_${status.toLowerCase()}`, ids: orderIds });
+              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
+              eventService.broadcast("refresh-special-orders", { at: Date.now() });
+            } catch (bgErr) {
+              console.warn("[Orders] Background batch live cart adjustment note:", bgErr);
+            }
+          });
+        }
+        broadcastOrdersChanged({ action: "batch_update_status", orderIds, patch: { status, auto_remind: newAutoRemind } });
+        res.json({
+          success: true,
+          message: `Successfully updated ${orderIds.length} orders to ${status}`,
+          count: orderIds.length,
+          status,
+          whatsapp_queued: totalWaQueued > 0,
+          queued_count: totalWaQueued
+        });
+      } catch (err) {
+        console.error("Batch update order status error:", err);
+        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
+      }
+    };
+    router19.post("/batch-status", handleBatchStatusUpdate);
+    router19.put("/batch-status", handleBatchStatusUpdate);
+    router19.post("/:id/status", handleStatusUpdate);
+    router19.put("/:id/status", handleStatusUpdate);
+    router19.post("/:id/auto-remind", async (req, res) => {
+      const { id } = req.params;
+      const { auto_remind } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
+        await db2.run("UPDATE special_orders SET auto_remind = ? WHERE id = ?", [val, id]);
+        if (val === 0) {
+          const order = await db2.get("SELECT phone, product FROM special_orders WHERE id = ?", [id]);
+          if (order) {
+            await cancelPendingWhatsAppForOrder(db2, { id, phone: order.phone, product: order.product });
+            await purgePendingCustomerReminders(db2, {
+              phone: order.phone,
+              specialOrderIds: [Number(id)],
+              medicineNames: order.product ? [order.product] : void 0
+            });
+          }
+        }
+        broadcastOrdersChanged({ action: "auto_remind", orderId: Number(id), patch: { auto_remind: val } });
+        res.json({ success: true, id: Number(id), auto_remind: val });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router19.post("/:id/restore", async (req, res) => {
+      const { id } = req.params;
+      const { restored_by = "Staff Pharmacist", notes = "" } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!existing) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        if (existing.status !== "Cancelled") {
+          return res.status(400).json({ error: "Order is not cancelled" });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE special_orders
+         SET status = 'Pending',
+             pharmacy_verification_status = 'PENDING',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_restored', ?, ?, CURRENT_TIMESTAMP)`,
+            [id, `Order restored to Pending by ${restored_by}. ${notes ? `Note: ${notes}` : ""}`.trim(), restored_by]
+          ).catch(() => {
+          });
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        broadcastOrdersChanged({ action: "restore", orderId: Number(id), patch: { status: "Pending", pharmacy_verification_status: "PENDING" } });
+        res.json({ success: true, message: "Order restored to Pending successfully" });
+      } catch (err) {
+        console.error("Restore order error:", err);
+        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
+      }
+    });
+    router19.get("/:id/items", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const items = await db2.all(
+          `SELECT id, order_id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, sell_price, subtotal, item_status
+       FROM online_order_items
+       WHERE order_id = ?
+       ORDER BY id ASC`,
+          [id]
+        );
+        if (items && items.length > 0) {
+          return res.json({ success: true, orderId: Number(id), items });
+        }
+        const fallbackItem = {
+          id: 0,
+          order_id: order.id,
+          medicine_id: order.medicine_id || null,
+          product_name: order.product || order.medicine_name || "Medicine",
+          requested_qty: order.qty || 1,
+          confirmed_qty: order.qty || 1,
+          mrp: order.pharmarack_mrp || 0,
+          sell_price: order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0,
+          subtotal: (order.qty || 1) * (order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0),
+          item_status: "PENDING"
+        };
+        return res.json({ success: true, orderId: Number(id), items: [fallbackItem] });
+      } catch (err) {
+        console.error("Get order items error:", err);
+        res.status(500).json({ error: "Failed to fetch order items" });
+      }
+    });
+    router19.put("/:id/items", async (req, res) => {
+      const { id } = req.params;
+      const { items, removed_item_ids, notes, send_whatsapp, advance_payment } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "At least one medicine item is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          if (Array.isArray(removed_item_ids) && removed_item_ids.length > 0) {
+            for (const remId of removed_item_ids) {
+              const numId = Number(remId);
+              if (numId > 0) {
+                await db2.run("DELETE FROM online_order_items WHERE order_id = ? AND id = ?", [id, numId]);
+              }
+            }
+          }
+          for (const it of items) {
+            const prodName = String(it.product_name || it.product || it.name || "").trim();
+            if (!prodName) continue;
+            const qty = Math.max(1, parseInt(String(it.requested_qty || it.qty || 1), 10) || 1);
+            const mrp = Number(it.mrp || 0);
+            const sellPrice = Number(it.sell_price !== void 0 ? it.sell_price : it.rate !== void 0 ? it.rate : mrp);
+            const subtotal = qty * sellPrice;
+            const itemId = Number(it.id || 0);
+            const medId = it.medicine_id ? Number(it.medicine_id) : null;
+            if (itemId > 0) {
+              const existingItem = await db2.get("SELECT id FROM online_order_items WHERE id = ? AND order_id = ?", [itemId, id]);
+              if (existingItem) {
+                await db2.run(
+                  `UPDATE online_order_items
+               SET product_name = ?, product_name_snapshot = ?, requested_qty = ?, mrp = ?, sell_price = ?, subtotal = ?
+               WHERE id = ? AND order_id = ?`,
+                  [prodName, prodName, qty, mrp, sellPrice, subtotal, itemId, id]
+                );
+              } else {
+                await db2.run(
+                  `INSERT INTO online_order_items
+               (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+                  [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+                );
+              }
+            } else {
+              await db2.run(
+                `INSERT INTO online_order_items
+             (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+                [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
+              );
+            }
+          }
+          const currentItems = await db2.all("SELECT * FROM online_order_items WHERE order_id = ? ORDER BY id ASC", [id]);
+          if (currentItems.length === 0) {
+            throw new Error("Order must contain at least one item");
+          }
+          const totalAmount = currentItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
+          const totalQty = currentItems.reduce((acc, it) => acc + (Number(it.requested_qty) || 1), 0);
+          const summaryProduct = currentItems.length === 1 ? currentItems[0].product_name : `${currentItems[0].product_name} (+${currentItems.length - 1} more)`;
+          const newNotes = notes !== void 0 ? notes : order.notes;
+          const newAdvance = advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : order.advance_payment;
+          await db2.run(
+            `UPDATE special_orders
+         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_modified', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+            [id, `Order modified: ${currentItems.length} items total (\u20B9${totalAmount.toFixed(2)})`]
+          ).catch(() => {
+          });
+          await db2.run("COMMIT");
+          if (Boolean(send_whatsapp) && order.phone) {
+            const cleanPhone = String(order.phone).replace(/\D/g, "");
+            if (cleanPhone.length >= 10) {
+              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+              const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
+              const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, Number(id)).catch(() => `SO-TMSA-${id}`);
+              const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
+              const custName = formatCustomerName(order.requester || "Customer");
+              const itemsText = currentItems.map((it, idx) => {
+                const itemPrice = Number(it.subtotal || 0).toFixed(2);
+                return `${idx + 1}. *${it.product_name}* \xD7 ${it.requested_qty} (\u20B9${itemPrice})`;
+              }).join("\n");
+              const waMsg = `\u{1F4DD} Hello *${custName}*,
+
+Your order *${soCode}* has been updated:
+
+${itemsText}
+
+\u{1F4B0} *Updated Total*: \u20B9${totalAmount.toFixed(2)}
+
+We are preparing your order. Thank you!
+\u2014 ${storeName}`;
+              void whatsappQueueWorker.enqueue(
+                formattedPhone,
+                waMsg,
+                "order_modified",
+                custName
+              ).catch((waErr) => console.warn("[Orders] Failed to enqueue WhatsApp on modify:", waErr));
+            }
+          }
+          broadcastOrdersChanged({ action: "update_items", orderId: Number(id), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
+          res.json({
+            success: true,
+            message: "Order items updated successfully",
+            order_id: Number(id),
+            items: currentItems,
+            total_amount: totalAmount,
+            qty: totalQty
+          });
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+      } catch (err) {
+        console.error("Modify order items error:", err);
+        res.status(500).json({ error: "Failed to modify order items: " + (err?.message || "Unknown error") });
+      }
+    });
+    router19.delete("/:id", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!existing) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        const result = await db2.run("DELETE FROM special_orders WHERE id = ?", id);
+        if (result.changes === 0) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        if (existing.source_refill_id || existing.source === "refill") {
+          try {
+            if (existing.source_refill_id) {
+              await db2.run(
+                `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                [existing.source_refill_id]
+              );
+            } else if (existing.phone && (existing.product || existing.medicine_name)) {
+              const medName = existing.product || existing.medicine_name || "";
+              const cleanPhone = (existing.phone || "").replace(/\D/g, "");
+              const last102 = cleanPhone.slice(-10);
+              await db2.run(
+                `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP 
+             WHERE (patient_phone = ? OR patient_phone LIKE ?) 
+               AND medicine_id IN (SELECT id FROM medicines WHERE name = ? OR name LIKE ?)`,
+                [existing.phone, `%${last102}%`, medName, `%${medName}%`]
+              );
+            }
+            eventService.broadcast("refill_updated", { action: "cancel", fromOrderId: Number(id) });
+          } catch (refillCascadeErr) {
+            console.warn("[Orders] Cascade cancellation to patient_refills failed:", refillCascadeErr);
+          }
+        }
+        await cancelPendingWhatsAppForOrder(db2, existing);
+        let cartAdjustment = null;
+        try {
+          const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          cartAdjustment = await Promise.race([
+            adjustSpecialOrderInLiveCart2({
+              product: existing.product,
+              qty: existing.qty,
+              distributor: existing.pharmarack_distributor,
+              productCode: existing.pharmarack_product_code,
+              storeId: existing.pharmarack_store_id
+            }),
+            new Promise((r) => setTimeout(() => r(null), 1500))
+          ]);
+        } catch (cartErr) {
+          console.warn("[Orders] Could not auto-adjust live cart on order delete:", cartErr);
+        }
+        broadcastOrdersChanged({ action: "delete", orderId: Number(id) });
+        res.json({ success: true, message: "Order deleted successfully", cartAdjustment });
+      } catch (err) {
+        console.error("Delete order error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router19.post("/convert-to-refill", async (req, res) => {
+      const { orderId, refillIntervalDays } = req.body;
+      if (!orderId || !refillIntervalDays) {
+        return res.status(400).json({ error: "orderId and refillIntervalDays are required" });
+      }
+      try {
+        const { orderFulfillmentService: orderFulfillmentService2 } = await Promise.resolve().then(() => (init_orderFulfillmentService(), orderFulfillmentService_exports));
+        const result = await orderFulfillmentService2.convertToRecurringRefill(
+          Number(orderId),
+          Number(refillIntervalDays)
+        );
+        if (result.success) {
+          broadcastOrdersChanged();
+          try {
+            eventService.broadcast("refill_updated", { at: Date.now(), source: "convert-to-refill" });
+          } catch (_) {
+          }
+          res.json(result);
+        } else {
+          res.status(400).json(result);
+        }
+      } catch (err) {
+        console.error("Failed to convert order to refill:", err);
+        res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router19.post("/:id/fulfill", async (req, res) => {
+      const { id } = req.params;
+      const { invoiceNo, grandTotal, sendWhatsApp } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        await initOrdersTable(db2);
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        await db2.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1, auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?", id);
+        await cancelPendingWhatsAppForOrder(db2, order);
+        await purgePendingCustomerReminders(db2, {
+          phone: order.phone,
+          specialOrderIds: [Number(id)],
+          medicineNames: [order.product].filter(Boolean)
+        });
+        await db2.run(
+          `UPDATE automation_notifications 
+       SET lifecycle_status = 'sent', status = 'sent_manually' 
+       WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
+         AND reference_id = ?`,
+          [String(id), String(id)]
+        ).catch(() => {
+        });
+        if (Boolean(sendWhatsApp) && order.phone) {
+          const cleanPhone = order.phone.replace(/\D/g, "");
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const medicalName = await getStoreMedicalNameAndPhone(db2);
+          const invText = invoiceNo ? ` (Invoice: ${invoiceNo})` : "";
+          const totalText = grandTotal ? ` Total Amount: \u20B9${Number(grandTotal).toFixed(2)}.` : "";
+          const msg = `Hi ${order.requester || "Customer"}, your special order for ${order.product} (Qty: ${order.qty}) has been successfully dispensed and delivered at ${medicalName}.${invText}${totalText} Thank you for visiting us!`;
+          await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order_fulfilled", order.requester || "Customer");
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Special order marked as Fulfilled" });
+      } catch (err) {
+        console.error("Fulfill order error:", err);
+        res.status(500).json({ error: "Failed to fulfill order: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.post("/:id/mark-delivered", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const returnStatus = await returnWindowService.markDelivered(orderId);
+        const db2 = await dbManager.getConnection();
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (existing) {
+          await cancelPendingWhatsAppForOrder(db2, existing);
+          await purgePendingCustomerReminders(db2, {
+            phone: existing.phone,
+            specialOrderIds: [orderId],
+            medicineNames: existing.product ? [existing.product] : void 0
+          });
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Order marked as delivered", return_status: returnStatus });
+      } catch (err) {
+        console.error("Mark order delivered error:", err);
+        res.status(500).json({ error: "Failed to mark order delivered: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.post("/:id/return-override", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        const { override_by = "Pharmacist", reason = "Customer accommodation" } = req.body;
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const returnStatus = await returnWindowService.applyReturnOverride(orderId, { overrideBy: override_by, reason });
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Return override applied successfully", return_status: returnStatus });
+      } catch (err) {
+        console.error("Return override error:", err);
+        res.status(500).json({ error: "Failed to apply return override: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.get("/:id/return-status", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const statusInfo = returnWindowService.evaluateOrderReturnStatus(order);
+        res.json(statusInfo);
+      } catch (err) {
+        console.error("Get return status error:", err);
+        res.status(500).json({ error: "Failed to evaluate return status" });
+      }
+    });
+    router19.post("/:id/delivery-override", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        const {
+          estimated_delivery_start,
+          estimated_delivery_end,
+          reason = "Manual customer accommodation",
+          override_by = "Staff"
+        } = req.body;
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        if (!estimated_delivery_start || !estimated_delivery_end) {
+          return res.status(400).json({ error: "estimated_delivery_start and estimated_delivery_end are required" });
+        }
+        const updated = await orderScheduleService.overrideOrderSchedule(orderId, {
+          estimatedDeliveryStart: estimated_delivery_start,
+          estimatedDeliveryEnd: estimated_delivery_end,
+          reason,
+          overrideBy: override_by
+        });
+        if (!updated) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Delivery schedule overridden successfully", order: updated });
+      } catch (err) {
+        console.error("Delivery override error:", err);
+        res.status(500).json({ error: "Failed to override delivery schedule: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.get("/incomplete-24h-audit", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const storeId = resolveStoreId(req);
+        const audit2 = await orderScheduleService.evaluateIncompleteOrders24hSLA({
+          dbInstance: db2,
+          storeId,
+          cutoffHours: 24
+        });
+        res.json({ success: true, audit: audit2 });
+      } catch (err) {
+        console.error("Incomplete 24h orders audit error:", err);
+        res.status(500).json({ error: "Failed to evaluate incomplete orders SLA: " + (err.message || "Unknown error") });
+      }
+    });
+    router19.post("/incomplete-24h-action", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const { action, orderIds, customerPhones, template, nextWorkingDate, hours } = req.body;
+        if (!action) {
+          return res.status(400).json({ error: "action is required" });
+        }
+        if (action === "push_to_cart") {
+          const ids = Array.isArray(orderIds) ? orderIds : [];
+          let updatedCount = 0;
+          for (const id of ids) {
+            await db2.run("UPDATE special_orders SET status = 'Waiting', updated_at = datetime('now') WHERE id = ?", [id]);
+            updatedCount++;
+          }
+          broadcastOrdersChanged();
+          return res.json({ success: true, message: `Pushed ${updatedCount} items to order queue.` });
+        }
+        if (action === "send_delay_notices") {
+          const phones = Array.isArray(customerPhones) ? customerPhones : [];
+          const msgTemplate = template || "Dear Customer, your order was held due to wholesale market holiday. It will be delivered on {{next_working_date}}.";
+          const resumeDateStr = nextWorkingDate || "tomorrow";
+          let sentCount = 0;
+          for (const rawPhone of phones) {
+            if (!rawPhone || rawPhone.trim().length < 5) continue;
+            const normalized = normalizeWhatsAppPhone(rawPhone);
+            if (!normalized) continue;
+            const rendered = msgTemplate.replace(/\{\{next_working_date\}\}/gi, resumeDateStr);
+            await whatsappQueueWorker.enqueue(
+              normalized,
+              rendered,
+              "customer_order_update",
+              "Customer",
+              void 0,
+              void 0,
+              void 0,
+              { skipDedupe: true }
+            );
+            sentCount++;
+          }
+          return res.json({ success: true, message: `Queued delay notices for ${sentCount} customer(s).` });
+        }
+        if (action === "snooze_sla") {
+          const ids = Array.isArray(orderIds) ? orderIds.map(String) : [];
+          const snoozeDurationHours = Number(hours) || 24;
+          const snoozeUntil = Date.now() + snoozeDurationHours * 3600 * 1e3;
+          const existingRow = await db2.get("SELECT value FROM app_settings WHERE key = 'snoozed_24h_order_ids'").catch(() => null);
+          let snoozedMap = {};
+          try {
+            if (existingRow?.value) snoozedMap = JSON.parse(existingRow.value);
+          } catch (_) {
+          }
+          for (const id of ids) {
+            snoozedMap[id] = snoozeUntil;
+            snoozedMap[`special_order_${id}`] = snoozeUntil;
+            snoozedMap[`refill_${id}`] = snoozeUntil;
+            snoozedMap[`online_order_${id}`] = snoozeUntil;
+          }
+          await db2.run(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('snoozed_24h_order_ids', ?)",
+            [JSON.stringify(snoozedMap)]
+          );
+          broadcastOrdersChanged();
+          return res.json({ success: true, message: `Snoozed ${ids.length} order(s) for ${snoozeDurationHours} hours.` });
+        }
+        return res.status(400).json({ error: `Unknown action: ${action}` });
+      } catch (err) {
+        console.error("Incomplete 24h action error:", err);
+        res.status(500).json({ error: "Failed to process action: " + (err.message || "Unknown error") });
+      }
+    });
+    orders_default = router19;
+  }
+});
+
 // src/services/collectionReminderWorker.ts
 var collectionReminderWorker_exports = {};
 __export(collectionReminderWorker_exports, {
@@ -79284,6 +81757,7 @@ __export(refills_exports, {
   buildRefillCollectionMessage: () => buildRefillCollectionMessage,
   buildRefillReminderMessage: () => buildRefillReminderMessage,
   default: () => refills_default,
+  executeCloseRefillCycles: () => executeCloseRefillCycles,
   initRefillsTable: () => initRefillsTable,
   isFirstContactOrUnconfirmed: () => isFirstContactOrUnconfirmed
 });
@@ -79552,8 +82026,8 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
       const cleanPhoneDigits = (refill.patient_phone || "").replace(/\D/g, "").slice(-10);
       const mName = (refill.medicine_name || "").trim().toLowerCase();
       if (cleanPhoneDigits.length >= 7 && mName) {
-        conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) = ?))`);
-        params.push(`%${cleanPhoneDigits}%`, mName);
+        conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) = ? OR LOWER(TRIM(COALESCE(medicine_name, ''))) = ? OR ? LIKE '%' || LOWER(TRIM(product)) || '%' OR LOWER(TRIM(product)) LIKE '%' || ? || '%'))`);
+        params.push(`%${cleanPhoneDigits}%`, mName, mName, mName, mName);
       } else if (cleanPhoneDigits.length >= 7) {
         conditions.push(`(phone LIKE ? AND source = 'refill')`);
         params.push(`%${cleanPhoneDigits}%`);
@@ -79564,11 +82038,39 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
       }
     }
     if (conditions.length > 0) {
-      const updateQuery = `UPDATE special_orders 
-                           SET status = 'Completed', updated_at = ?
-                           WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(" OR ")})`;
-      await db2.run(updateQuery, [localNow, ...params]).catch(() => {
-      });
+      try {
+        const matchingOrders = await db2.all(
+          `SELECT id, phone, requester, product 
+           FROM special_orders 
+           WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready', 'Inquiry') 
+             AND (${conditions.join(" OR ")})`,
+          params
+        );
+        if (matchingOrders && matchingOrders.length > 0) {
+          try {
+            const { cancelPendingWhatsAppForOrder: cancelPendingWhatsAppForOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+            for (const ord of matchingOrders) {
+              await cancelPendingWhatsAppForOrder2(db2, ord);
+            }
+          } catch (_) {
+          }
+          const orderIdPlaceholders = matchingOrders.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE special_orders 
+             SET status = 'Fulfilled', updated_at = ?, auto_remind = 0, last_collection_reminder_at = NULL, notified = 1
+             WHERE id IN (${orderIdPlaceholders})`,
+            [localNow, ...matchingOrders.map((o) => o.id)]
+          );
+          eventService.broadcast("refresh-special-orders", { at: Date.now() });
+          eventService.broadcast("orders_changed", {
+            action: "batch_update_status",
+            orderIds: matchingOrders.map((o) => o.id),
+            patch: { status: "Fulfilled", auto_remind: 0 }
+          });
+        }
+      } catch (soSyncErr) {
+        console.warn("[Refills] Could not auto-close companion special orders:", soSyncErr);
+      }
     }
   }
   for (const phone of phonesToPurge) {
@@ -79619,14 +82121,14 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
   }
   return { fulfilledCount: results.length, results };
 }
-var import_express19, import_path46, import_fs51, router19, refillsTableInitialized, handlePatientProfileUpdate, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
+var import_express20, import_path47, import_fs52, router20, refillsTableInitialized, handlePatientProfileUpdate, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
 var init_refills = __esm({
   "src/routes/refills.ts"() {
     "use strict";
-    import_express19 = __toESM(require("express"), 1);
+    import_express20 = __toESM(require("express"), 1);
     init_connection();
-    import_path46 = __toESM(require("path"), 1);
-    import_fs51 = __toESM(require("fs"), 1);
+    import_path47 = __toESM(require("path"), 1);
+    import_fs52 = __toESM(require("fs"), 1);
     init_refillService();
     init_languageDetector();
     init_whatsappClient();
@@ -79642,9 +82144,9 @@ var init_refills = __esm({
     init_localTime();
     init_refillCartService();
     init_phoneValidation();
-    router19 = import_express19.default.Router();
+    router20 = import_express20.default.Router();
     refillsTableInitialized = false;
-    router19.use(async (_req, _res, next) => {
+    router20.use(async (_req, _res, next) => {
       try {
         const db2 = await dbManager.getConnection();
         await initRefillsTable(db2);
@@ -79652,7 +82154,7 @@ var init_refills = __esm({
       }
       next();
     });
-    router19.use((req, res, next) => {
+    router20.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -79667,7 +82169,7 @@ var init_refills = __esm({
       }
       next();
     });
-    router19.post("/", async (req, res) => {
+    router20.post("/", async (req, res) => {
       const { patient_name, patient_phone, medicine_id, refill_interval_days = 30, language = "en", store_id } = req.body;
       if (!patient_name || !patient_phone || !medicine_id) {
         return res.status(400).json({ error: "patient_name, patient_phone, and medicine_id are required" });
@@ -79812,9 +82314,9 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     };
-    router19.put("/patient-profile", handlePatientProfileUpdate);
-    router19.post(["/update-patient-profile", "/patient-profile"], handlePatientProfileUpdate);
-    router19.put("/patient-medicines", async (req, res) => {
+    router20.put("/patient-profile", handlePatientProfileUpdate);
+    router20.post(["/update-patient-profile", "/patient-profile"], handlePatientProfileUpdate);
+    router20.put("/patient-medicines", async (req, res) => {
       const { original_phone, patient_name, patient_phone, refill_interval_days = 30, medicines, language = "en", next_refill_date } = req.body;
       if (!patient_name || !patient_phone || !Array.isArray(medicines) || medicines.length === 0) {
         return res.status(400).json({ error: "patient_name, patient_phone, and valid medicines array are required" });
@@ -79931,7 +82433,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.get("/", async (req, res) => {
+    router20.get("/", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -79952,7 +82454,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router19.post("/check", async (_req, res) => {
+    router20.post("/check", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -79963,7 +82465,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router19.put("/:id", async (req, res, next) => {
+    router20.put("/:id", async (req, res, next) => {
       const { id } = req.params;
       if (!/^\d+$/.test(id)) return next();
       const { patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, hold_for_stock, is_active } = req.body;
@@ -80011,7 +82513,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router19.post("/:id/acknowledge", async (req, res) => {
+    router20.post("/:id/acknowledge", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -80023,7 +82525,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/skip", async (req, res) => {
+    router20.post("/:id/skip", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -80054,7 +82556,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.get("/panel", async (req, res) => {
+    router20.get("/panel", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -80257,7 +82759,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/toggle-pause", async (req, res) => {
+    router20.post("/:id/toggle-pause", async (req, res) => {
       const { id } = req.params;
       const pauseReason = (req.body?.reason || "Paused by pharmacist/customer").trim();
       let db2;
@@ -80340,7 +82842,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/add-to-cart", async (req, res) => {
+    router20.post("/:id/add-to-cart", async (req, res) => {
       const id = parseInt(req.params.id, 10);
       if (!id || isNaN(id)) return res.status(400).json({ error: "Valid refill ID required" });
       try {
@@ -80356,7 +82858,7 @@ var init_refills = __esm({
         res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to add refill to live cart" });
       }
     });
-    router19.post("/confirm-patient", async (req, res) => {
+    router20.post("/confirm-patient", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { patientPhone, patientName, refillIds, addToLiveCart = true } = req.body || {};
@@ -80446,7 +82948,7 @@ var init_refills = __esm({
         res.status(500).json({ error: err?.message || "Failed to confirm patient refills" });
       }
     });
-    router19.post("/:id/confirm", async (req, res) => {
+    router20.post("/:id/confirm", async (req, res) => {
       const id = parseInt(req.params.id, 10);
       if (!id || isNaN(id)) return res.status(400).json({ error: "Valid refill ID required" });
       try {
@@ -80483,21 +82985,21 @@ var init_refills = __esm({
         res.status(500).json({ error: err?.message || "Failed to confirm refill" });
       }
     });
-    router19.get("/distributor-ranks", async (_req, res) => {
+    router20.get("/distributor-ranks", async (_req, res) => {
       try {
         res.json({ success: true, ranks: await getDistributorPurchaseRanks() });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to load distributor purchase counts" });
       }
     });
-    router19.get("/distributor-priority", async (_req, res) => {
+    router20.get("/distributor-priority", async (_req, res) => {
       try {
         res.json({ success: true, distributors: await getDistributorPriorityList() });
       } catch (err) {
         res.status(500).json({ error: err?.message || "Failed to load distributor priority" });
       }
     });
-    router19.put("/distributor-priority", async (req, res) => {
+    router20.put("/distributor-priority", async (req, res) => {
       if (!Array.isArray(req.body?.order)) return res.status(400).json({ error: "order array of distributor names is required" });
       try {
         const saved = await saveDistributorPriority(req.body.order);
@@ -80506,7 +83008,7 @@ var init_refills = __esm({
         res.status(500).json({ error: err?.message || "Failed to save distributor priority" });
       }
     });
-    router19.post("/cart-summary", async (req, res) => {
+    router20.post("/cart-summary", async (req, res) => {
       if (!Array.isArray(req.body?.rows)) return res.status(400).json({ error: "rows array is required" });
       try {
         const out = await sendRefillCartSummary(String(req.body.patientName || ""), req.body.rows);
@@ -80515,7 +83017,7 @@ var init_refills = __esm({
         res.status(500).json({ error: err?.message || "Failed to queue refill cart summary" });
       }
     });
-    router19.get("/medicine-links/:medicineId", async (req, res) => {
+    router20.get("/medicine-links/:medicineId", async (req, res) => {
       const medicineId = parseInt(req.params.medicineId, 10);
       if (!medicineId || isNaN(medicineId)) return res.status(400).json({ error: "Valid medicine ID required" });
       try {
@@ -80524,7 +83026,7 @@ var init_refills = __esm({
         res.status(500).json({ error: err?.message || "Failed to load linked distributors" });
       }
     });
-    router19.put("/medicine-links/:medicineId", async (req, res) => {
+    router20.put("/medicine-links/:medicineId", async (req, res) => {
       const medicineId = parseInt(req.params.medicineId, 10);
       if (!medicineId || isNaN(medicineId)) return res.status(400).json({ error: "Valid medicine ID required" });
       if (!Array.isArray(req.body?.links)) return res.status(400).json({ error: "links array is required" });
@@ -80535,7 +83037,7 @@ var init_refills = __esm({
         res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to save linked distributors" });
       }
     });
-    router19.post("/bill-links", async (req, res) => {
+    router20.post("/bill-links", async (req, res) => {
       const purchaseId = parseInt(String(req.body?.purchaseId), 10);
       if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: "Valid purchaseId required" });
       try {
@@ -80545,7 +83047,7 @@ var init_refills = __esm({
         res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to link bill medicines" });
       }
     });
-    router19.post("/bill-links", async (req, res) => {
+    router20.post("/bill-links", async (req, res) => {
       const purchaseId = parseInt(String(req.body?.purchaseId), 10);
       if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: "Valid purchaseId required" });
       try {
@@ -80555,7 +83057,7 @@ var init_refills = __esm({
         res.status(err?.httpStatus || 500).json({ error: err?.message || "Failed to link bill medicines" });
       }
     });
-    router19.post("/:id/cancel", async (req, res) => {
+    router20.post("/:id/cancel", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -80671,10 +83173,10 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     };
-    router19.post("/delete-patient", deletePatientRefillsHandler);
-    router19.delete("/patient/:phone", deletePatientRefillsHandler);
-    router19.delete("/patient", deletePatientRefillsHandler);
-    router19.post("/:id/cancel", async (req, res) => {
+    router20.post("/delete-patient", deletePatientRefillsHandler);
+    router20.delete("/patient/:phone", deletePatientRefillsHandler);
+    router20.delete("/patient", deletePatientRefillsHandler);
+    router20.post("/:id/cancel", async (req, res) => {
       const { id } = req.params;
       const numId = parseInt(id, 10);
       if (!numId || isNaN(numId)) {
@@ -80720,7 +83222,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.delete("/:id", async (req, res) => {
+    router20.delete("/:id", async (req, res) => {
       const { id } = req.params;
       const numId = parseInt(id, 10);
       if (!numId || isNaN(numId)) {
@@ -80760,7 +83262,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.put("/:id/frequency", async (req, res) => {
+    router20.put("/:id/frequency", async (req, res) => {
       const { id } = req.params;
       const { refill_interval_days, update_all = false, next_refill_date } = req.body;
       const interval = parseInt(refill_interval_days, 10);
@@ -80800,7 +83302,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/toggle-override", async (req, res) => {
+    router20.post("/:id/toggle-override", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -80818,7 +83320,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/fulfill", async (req, res) => {
+    router20.post("/:id/fulfill", async (req, res) => {
       const { id } = req.params;
       const fulfilledVia = req.body?.fulfilled_via || "crm_complete";
       let db2;
@@ -80861,7 +83363,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post(["/patient/:phone/fulfill-all", "/patient/fulfill-all", "/fulfill-all"], async (req, res) => {
+    router20.post(["/patient/:phone/fulfill-all", "/patient/fulfill-all", "/fulfill-all"], async (req, res) => {
       const rawPhone = (req.params.phone || req.body.patient_phone || req.body.phone || "").trim();
       const cleanPhone = rawPhone.replace(/\D/g, "");
       const customerId = req.body.customer_id ? parseInt(req.body.customer_id, 10) : null;
@@ -80926,7 +83428,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.get("/patient/:identifier/history", async (req, res) => {
+    router20.get("/patient/:identifier/history", async (req, res) => {
       const identifier = req.params.identifier;
       let db2;
       try {
@@ -81048,9 +83550,9 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     };
-    router19.post("/:id/status", handleRefillStatusUpdate);
-    router19.put("/:id/status", handleRefillStatusUpdate);
-    router19.post("/:id/send", async (req, res) => {
+    router20.post("/:id/status", handleRefillStatusUpdate);
+    router20.put("/:id/status", handleRefillStatusUpdate);
+    router20.post("/:id/send", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -81139,12 +83641,12 @@ var init_refills = __esm({
         );
         let pdfPath = void 0;
         try {
-          const uploadsDir = import_path46.default.resolve(getAppDataDir(), "uploads");
-          if (!import_fs51.default.existsSync(uploadsDir)) {
-            import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads");
+          if (!import_fs52.default.existsSync(uploadsDir)) {
+            import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const pdfFilename = `refill_slip_${id}_${Date.now()}.pdf`;
-          const fullPdfPath = import_path46.default.join(uploadsDir, pdfFilename);
+          const fullPdfPath = import_path47.default.join(uploadsDir, pdfFilename);
           await pdfInvoiceService.generateRefillSchedulePdf(Number(id), fullPdfPath);
           pdfPath = fullPdfPath;
         } catch (pdfErr) {
@@ -81191,7 +83693,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/send-grouped", async (req, res) => {
+    router20.post("/send-grouped", async (req, res) => {
       const { patient_phone, patient_name, refill_ids, medicines } = req.body || {};
       const cleanPhone = normalizeWhatsAppPhone(patient_phone);
       if (!cleanPhone || cleanPhone.length < 10) {
@@ -81318,7 +83820,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/send-tomorrow-reminder", async (req, res) => {
+    router20.post("/send-tomorrow-reminder", async (req, res) => {
       const { patient_phone } = req.body;
       if (!patient_phone) {
         return res.status(400).json({ error: "patient_phone is required" });
@@ -81414,7 +83916,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/send-reminder-now", async (req, res) => {
+    router20.post("/send-reminder-now", async (req, res) => {
       const { patient_phone } = req.body;
       if (!patient_phone) {
         return res.status(400).json({ error: "patient_phone is required" });
@@ -81519,7 +84021,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.delete("/:id", async (req, res) => {
+    router20.delete("/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -81534,7 +84036,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router19.put("/patient-reminder-mode", async (req, res) => {
+    router20.put("/patient-reminder-mode", async (req, res) => {
       const { patient_phone, customer_id, reminder_mode } = req.body;
       if (!patient_phone && !customer_id) {
         return res.status(400).json({ error: "patient_phone or customer_id is required" });
@@ -81562,7 +84064,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.put("/:id/reminder-mode", async (req, res) => {
+    router20.put("/:id/reminder-mode", async (req, res) => {
       const { id } = req.params;
       const { reminder_mode } = req.body;
       const mode = reminder_mode === "auto" ? "auto" : "manual";
@@ -81580,7 +84082,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.get("/staged-summary", async (_req, res) => {
+    router20.get("/staged-summary", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -81624,7 +84126,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/dispatch-staged-auto", async (_req, res) => {
+    router20.post("/dispatch-staged-auto", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -81680,7 +84182,7 @@ var init_refills = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/send-staged-briefing", async (_req, res) => {
+    router20.post("/send-staged-briefing", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -81726,7 +84228,7 @@ ${summaryLines}
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/auto-remind", async (req, res) => {
+    router20.post("/:id/auto-remind", async (req, res) => {
       const { id } = req.params;
       const { auto_remind } = req.body;
       try {
@@ -81752,7 +84254,7 @@ ${summaryLines}
         res.status(500).json({ error: err.message });
       }
     });
-    router19.post("/patient/:phone/auto-remind", async (req, res) => {
+    router20.post("/patient/:phone/auto-remind", async (req, res) => {
       const { phone } = req.params;
       const { auto_remind } = req.body;
       try {
@@ -81779,7 +84281,7 @@ ${summaryLines}
         res.status(500).json({ error: err.message });
       }
     });
-    router19.post("/auto-remind/master-toggle", async (req, res) => {
+    router20.post("/auto-remind/master-toggle", async (req, res) => {
       const { enabled } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -81795,7 +84297,7 @@ ${summaryLines}
         res.status(500).json({ error: err.message });
       }
     });
-    router19.get("/auto-remind/settings", async (_req, res) => {
+    router20.get("/auto-remind/settings", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get("SELECT value FROM app_settings WHERE key = 'quick_assist_auto_remind_master'");
@@ -81810,7 +84312,7 @@ ${summaryLines}
         res.status(500).json({ error: err.message });
       }
     });
-    router19.post("/auto-remind/run-now", async (_req, res) => {
+    router20.post("/auto-remind/run-now", async (_req, res) => {
       try {
         const { runCollectionReminderCycle: runCollectionReminderCycle2 } = await Promise.resolve().then(() => (init_collectionReminderWorker(), collectionReminderWorker_exports));
         const result = await runCollectionReminderCycle2(true);
@@ -81819,7 +84321,7 @@ ${summaryLines}
         res.status(500).json({ error: err.message });
       }
     });
-    router19.post("/patient/:phone/mark-ready", async (req, res) => {
+    router20.post("/patient/:phone/mark-ready", async (req, res) => {
       const { phone } = req.params;
       const cleanPhone = normalizeWhatsAppPhone(phone);
       if (!cleanPhone || cleanPhone.length < 10) {
@@ -81919,7 +84421,7 @@ ${summaryLines}
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router19.post("/:id/mark-ready", async (req, res) => {
+    router20.post("/:id/mark-ready", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -82007,7 +84509,7 @@ ${summaryLines}
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    refills_default = router19;
+    refills_default = router20;
   }
 });
 
@@ -82315,15 +84817,15 @@ var automation_exports = {};
 __export(automation_exports, {
   default: () => automation_default
 });
-var import_express20, router20, SENT_STATUSES, phoneKey, automation_default;
+var import_express21, router21, SENT_STATUSES, phoneKey, automation_default;
 var init_automation = __esm({
   "src/routes/automation.ts"() {
     "use strict";
-    import_express20 = __toESM(require("express"), 1);
+    import_express21 = __toESM(require("express"), 1);
     init_connection();
     init_automationCatalog();
-    router20 = import_express20.default.Router();
-    router20.get("/catalog", async (_req, res) => {
+    router21 = import_express21.default.Router();
+    router21.get("/catalog", async (_req, res) => {
       try {
         const states = await getAutomationToggleStates();
         const result = AUTOMATION_CATALOG.map((entry) => ({
@@ -82338,7 +84840,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.post("/catalog/:id/toggle", async (req, res) => {
+    router21.post("/catalog/:id/toggle", async (req, res) => {
       const { id } = req.params;
       const { enabled } = req.body || {};
       const entry = AUTOMATION_CATALOG.find((e) => e.id === id);
@@ -82371,7 +84873,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.get("/hub-summary", async (_req, res) => {
+    router21.get("/hub-summary", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const queueRows = await db2.all(
@@ -82447,7 +84949,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.post("/resolve-failure", async (req, res) => {
+    router21.post("/resolve-failure", async (req, res) => {
       const { id, rawId, source, resolveAll } = req.body || {};
       try {
         const db2 = await dbManager.getConnection();
@@ -82490,7 +84992,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.get("/notifications", async (req, res) => {
+    router21.get("/notifications", async (req, res) => {
       const { type, status, search, limit = 100 } = req.query;
       let db2;
       try {
@@ -82521,7 +85023,7 @@ var init_automation = __esm({
     });
     SENT_STATUSES = ["sent", "sent_manually", "delivered"];
     phoneKey = (p) => String(p || "").replace(/\D/g, "").slice(-10);
-    router20.get("/notifications/daily-summary", async (req, res) => {
+    router21.get("/notifications/daily-summary", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const wantsLog = req.query.days !== void 0;
@@ -82570,7 +85072,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Failed to get daily notification summary: " + err.message });
       }
     });
-    router20.post("/notifications/:id/snooze", async (req, res) => {
+    router21.post("/notifications/:id/snooze", async (req, res) => {
       const { id } = req.params;
       const days = Math.max(1, parseInt(req.body?.days || "1", 10));
       try {
@@ -82613,7 +85115,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Failed to snooze notification: " + err.message });
       }
     });
-    router20.post("/notifications/group/snooze", async (req, res) => {
+    router21.post("/notifications/group/snooze", async (req, res) => {
       const { ids, days = 1 } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ error: "ids array is required" });
@@ -82660,7 +85162,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Failed to batch snooze: " + err.message });
       }
     });
-    router20.post("/notifications/snooze-patient", async (req, res) => {
+    router21.post("/notifications/snooze-patient", async (req, res) => {
       const { patient_phone, patient_name, days = 1 } = req.body;
       const snoozeDays = Math.max(1, parseInt(String(days), 10));
       if (!patient_phone && !patient_name) {
@@ -82724,7 +85226,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Failed to snooze patient refills: " + err.message });
       }
     });
-    router20.post("/notifications/:id/retry", async (req, res) => {
+    router21.post("/notifications/:id/retry", async (req, res) => {
       const { id } = req.params;
       try {
         const { messagingQueue: messagingQueue2 } = await Promise.resolve().then(() => (init_messagingQueue(), messagingQueue_exports));
@@ -82739,7 +85241,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.post("/notifications/:id/cancel", async (req, res) => {
+    router21.post("/notifications/:id/cancel", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -82772,7 +85274,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.post("/notifications/:id/manual", async (req, res) => {
+    router21.post("/notifications/:id/manual", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -82801,7 +85303,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router20.post("/notifications/:id/send", async (req, res) => {
+    router21.post("/notifications/:id/send", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get("SELECT * FROM automation_notifications WHERE id = ?", [req.params.id]);
@@ -82855,7 +85357,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Failed to send notification: " + err.message });
       }
     });
-    router20.post("/convert-to-refill", async (req, res) => {
+    router21.post("/convert-to-refill", async (req, res) => {
       const { orderId, refillIntervalDays } = req.body;
       if (!orderId || !refillIntervalDays) {
         return res.status(400).json({ error: "orderId and refillIntervalDays are required" });
@@ -82875,7 +85377,7 @@ var init_automation = __esm({
         res.status(500).json({ error: "Failed to convert to refill: " + err.message });
       }
     });
-    automation_default = router20;
+    automation_default = router21;
   }
 });
 
@@ -82884,14 +85386,14 @@ var triggers_exports = {};
 __export(triggers_exports, {
   default: () => triggers_default
 });
-var import_express21, router21, triggers_default;
+var import_express22, router22, triggers_default;
 var init_triggers = __esm({
   "src/routes/triggers.ts"() {
     "use strict";
-    import_express21 = __toESM(require("express"), 1);
+    import_express22 = __toESM(require("express"), 1);
     init_triggerSchedulerService();
-    router21 = import_express21.default.Router();
-    router21.get("/upcoming", async (req, res) => {
+    router22 = import_express22.default.Router();
+    router22.get("/upcoming", async (req, res) => {
       try {
         const lookaheadMinutes = parseInt(req.query.lookahead || "5", 10);
         const upcoming = await triggerSchedulerService.getUpcomingTriggers(lookaheadMinutes);
@@ -82901,7 +85403,7 @@ var init_triggers = __esm({
         res.status(500).json({ success: false, error: err?.message || "Failed to fetch upcoming triggers" });
       }
     });
-    router21.post("/run-now", async (req, res) => {
+    router22.post("/run-now", async (req, res) => {
       try {
         const { id } = req.body;
         if (!id) {
@@ -82917,7 +85419,7 @@ var init_triggers = __esm({
         res.status(500).json({ success: false, error: err?.message || "Failed to execute trigger" });
       }
     });
-    router21.post("/snooze", async (req, res) => {
+    router22.post("/snooze", async (req, res) => {
       try {
         const { id, minutes } = req.body;
         if (!id) {
@@ -82930,7 +85432,7 @@ var init_triggers = __esm({
         res.status(500).json({ success: false, error: err?.message || "Failed to snooze trigger" });
       }
     });
-    triggers_default = router21;
+    triggers_default = router22;
   }
 });
 
@@ -82940,14 +85442,14 @@ __export(prescriptions_exports, {
   default: () => prescriptions_default,
   prescriptionsRouter: () => prescriptionsRouter
 });
-var import_express22, prescriptionsRouter, prescriptions_default;
+var import_express23, prescriptionsRouter, prescriptions_default;
 var init_prescriptions = __esm({
   "src/routes/prescriptions.ts"() {
     "use strict";
-    import_express22 = require("express");
+    import_express23 = require("express");
     init_connection();
     init_prescriptionOrchestratorService();
-    prescriptionsRouter = (0, import_express22.Router)();
+    prescriptionsRouter = (0, import_express23.Router)();
     prescriptionsRouter.post("/scan", async (req, res) => {
       try {
         const { imageBase64, image, source = "pos", msgId, storeId = 1 } = req.body;
@@ -83113,18 +85615,18 @@ __export(enquiries_exports, {
   default: () => enquiries_default,
   enquiriesRouter: () => enquiriesRouter
 });
-var import_express23, enquiriesRouter, enquiries_default;
+var import_express24, enquiriesRouter, enquiries_default;
 var init_enquiries = __esm({
   "src/routes/enquiries.ts"() {
     "use strict";
-    import_express23 = require("express");
+    import_express24 = require("express");
     init_connection();
     init_eventService();
     init_dosageGroupService();
     init_orderScheduleService();
     init_whatsappQueueWorker();
     init_phoneValidation();
-    enquiriesRouter = (0, import_express23.Router)();
+    enquiriesRouter = (0, import_express24.Router)();
     enquiriesRouter.post("/", async (req, res) => {
       try {
         const {
@@ -83496,16 +85998,16 @@ var serviceStatus_exports = {};
 __export(serviceStatus_exports, {
   default: () => serviceStatus_default
 });
-var import_express24, router22, serviceStatus_default;
+var import_express25, router23, serviceStatus_default;
 var init_serviceStatus = __esm({
   "src/routes/serviceStatus.ts"() {
     "use strict";
-    import_express24 = __toESM(require("express"), 1);
+    import_express25 = __toESM(require("express"), 1);
     init_connection();
     init_tokenRefreshScheduler();
     init_whatsappClient();
-    router22 = import_express24.default.Router();
-    router22.get("/services-status", async (_req, res) => {
+    router23 = import_express25.default.Router();
+    router23.get("/services-status", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const prRows = await db2.all(
@@ -83581,7 +86083,7 @@ var init_serviceStatus = __esm({
         res.status(500).json({ success: false, error: err.message });
       }
     });
-    router22.post("/refresh-services", async (_req, res) => {
+    router23.post("/refresh-services", async (_req, res) => {
       try {
         tokenRefreshScheduler.triggerImmediateCheck().catch(() => {
         });
@@ -83590,7 +86092,7 @@ var init_serviceStatus = __esm({
         res.status(500).json({ success: false, error: err.message });
       }
     });
-    serviceStatus_default = router22;
+    serviceStatus_default = router23;
   }
 });
 
@@ -83599,15 +86101,15 @@ var callTasks_exports = {};
 __export(callTasks_exports, {
   default: () => callTasks_default
 });
-var import_express25, router23, callTasks_default;
+var import_express26, router24, callTasks_default;
 var init_callTasks = __esm({
   "src/routes/callTasks.ts"() {
     "use strict";
-    import_express25 = require("express");
+    import_express26 = require("express");
     init_connection();
     init_eventService();
-    router23 = (0, import_express25.Router)();
-    router23.get("/", async (req, res) => {
+    router24 = (0, import_express26.Router)();
+    router24.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { status, type, limit = "50", offset = "0" } = req.query;
@@ -83639,7 +86141,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    router23.get("/count", async (_req, res) => {
+    router24.get("/count", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -83650,7 +86152,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    router23.post("/", async (req, res) => {
+    router24.post("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { task_type, patient_name, patient_phone, details, reference_id } = req.body;
@@ -83672,7 +86174,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    router23.patch("/:id/complete", async (req, res) => {
+    router24.patch("/:id/complete", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { id } = req.params;
@@ -83689,7 +86191,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    router23.patch("/:id/reschedule", async (req, res) => {
+    router24.patch("/:id/reschedule", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { id } = req.params;
@@ -83709,7 +86211,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    router23.patch("/:id/dismiss", async (req, res) => {
+    router24.patch("/:id/dismiss", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { id } = req.params;
@@ -83726,7 +86228,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    router23.patch("/:id", async (req, res) => {
+    router24.patch("/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { id } = req.params;
@@ -83743,7 +86245,7 @@ var init_callTasks = __esm({
         return res.status(500).json({ success: false, error: err.message });
       }
     });
-    callTasks_default = router23;
+    callTasks_default = router24;
   }
 });
 
@@ -83753,22 +86255,22 @@ __export(autoUpdateService_exports, {
   autoUpdateService: () => autoUpdateService
 });
 function getStagingDir() {
-  const appDir = import_path47.default.dirname(process.execPath);
+  const appDir = import_path48.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
-  const baseDir = isSeaBinary ? appDir : import_path47.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
-  return import_path47.default.join(baseDir, "updates", "staging");
+  const baseDir = isSeaBinary ? appDir : import_path48.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
+  return import_path48.default.join(baseDir, "updates", "staging");
 }
 function getUpdaterPath() {
-  const appDir = import_path47.default.dirname(process.execPath);
+  const appDir = import_path48.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
-  if (isSeaBinary) return import_path47.default.join(appDir, "Updater.bat");
-  return import_path47.default.join(process.cwd(), "packaging", "Updater.bat");
+  if (isSeaBinary) return import_path48.default.join(appDir, "Updater.bat");
+  return import_path48.default.join(process.cwd(), "packaging", "Updater.bat");
 }
 function getLogPath() {
-  const appDir = import_path47.default.dirname(process.execPath);
+  const appDir = import_path48.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
-  const baseDir = isSeaBinary ? appDir : import_path47.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
-  return import_path47.default.join(baseDir, "logs", "updater.log");
+  const baseDir = isSeaBinary ? appDir : import_path48.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
+  return import_path48.default.join(baseDir, "logs", "updater.log");
 }
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
@@ -83785,13 +86287,13 @@ function downloadFile(url, dest) {
         if (res.statusCode !== 200) {
           return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
         }
-        const fileStream = import_fs52.default.createWriteStream(tempDest);
+        const fileStream = import_fs53.default.createWriteStream(tempDest);
         res.pipe(fileStream);
         fileStream.on("finish", () => {
           fileStream.close(() => {
             try {
-              if (import_fs52.default.existsSync(dest)) import_fs52.default.unlinkSync(dest);
-              import_fs52.default.renameSync(tempDest, dest);
+              if (import_fs53.default.existsSync(dest)) import_fs53.default.unlinkSync(dest);
+              import_fs53.default.renameSync(tempDest, dest);
               resolve();
             } catch (renameErr) {
               reject(renameErr);
@@ -83800,7 +86302,7 @@ function downloadFile(url, dest) {
         });
       }).on("error", (err) => {
         try {
-          if (import_fs52.default.existsSync(tempDest)) import_fs52.default.unlinkSync(tempDest);
+          if (import_fs53.default.existsSync(tempDest)) import_fs53.default.unlinkSync(tempDest);
         } catch (_) {
         }
         reject(new Error(`DOWNLOAD_FAILED: ${err.message}`));
@@ -83812,18 +86314,18 @@ function downloadFile(url, dest) {
 function computeSha256(filePath) {
   return new Promise((resolve, reject) => {
     const hash = import_crypto7.default.createHash("sha256");
-    const stream = import_fs52.default.createReadStream(filePath);
+    const stream = import_fs53.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("end", () => resolve(hash.digest("hex")));
     stream.on("error", reject);
   });
 }
-var import_fs52, import_path47, import_os2, import_https, import_http, import_crypto7, import_child_process6, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+var import_fs53, import_path48, import_os2, import_https, import_http, import_crypto7, import_child_process6, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
 var init_autoUpdateService = __esm({
   "src/services/autoUpdateService.ts"() {
     "use strict";
-    import_fs52 = __toESM(require("fs"), 1);
-    import_path47 = __toESM(require("path"), 1);
+    import_fs53 = __toESM(require("fs"), 1);
+    import_path48 = __toESM(require("path"), 1);
     import_os2 = __toESM(require("os"), 1);
     import_https = __toESM(require("https"), 1);
     import_http = __toESM(require("http"), 1);
@@ -83896,8 +86398,8 @@ var init_autoUpdateService = __esm({
           }
           const stagingDir = getStagingDir();
           const zipFileName = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
-          const zipPath = zipFileName ? import_path47.default.join(stagingDir, zipFileName) : null;
-          const alreadyDownloaded = zipPath ? import_fs52.default.existsSync(zipPath) : false;
+          const zipPath = zipFileName ? import_path48.default.join(stagingDir, zipFileName) : null;
+          const alreadyDownloaded = zipPath ? import_fs53.default.existsSync(zipPath) : false;
           this.lastResult = {
             ...result,
             downloading: false,
@@ -83952,7 +86454,7 @@ var init_autoUpdateService = __esm({
         const { url, dest, version, sha256: expectedSha256, changelog, reason = "auto" } = opts;
         try {
           const stagingDir = getStagingDir();
-          import_fs52.default.mkdirSync(stagingDir, { recursive: true });
+          import_fs53.default.mkdirSync(stagingDir, { recursive: true });
           console.log(`[AutoUpdate] Silently downloading update v${version} to staging...`);
           await downloadFile(url, dest);
           if (expectedSha256) {
@@ -83961,7 +86463,7 @@ var init_autoUpdateService = __esm({
             if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
               console.error(`[AutoUpdate] CHECKSUM_MISMATCH \u2014 aborting. Expected: ${expectedSha256}, got: ${actualSha256}`);
               try {
-                import_fs52.default.unlinkSync(dest);
+                import_fs53.default.unlinkSync(dest);
               } catch (_) {
               }
               this.isDownloading = false;
@@ -83985,7 +86487,7 @@ var init_autoUpdateService = __esm({
         } catch (err) {
           this.isDownloading = false;
           try {
-            if (import_fs52.default.existsSync(dest + ".tmp")) import_fs52.default.unlinkSync(dest + ".tmp");
+            if (import_fs53.default.existsSync(dest + ".tmp")) import_fs53.default.unlinkSync(dest + ".tmp");
           } catch (_) {
           }
           console.warn("[AutoUpdate] DOWNLOAD_FAILED:", err.message);
@@ -84009,15 +86511,15 @@ var init_autoUpdateService = __esm({
         }
         const stagingDir = getStagingDir();
         const zipFileName = `AI-Pharmacy-OS-Update-v${this.lastResult.latestVersion}.zip`;
-        const zipPath = import_path47.default.join(stagingDir, zipFileName);
-        if (!import_fs52.default.existsSync(zipPath)) {
+        const zipPath = import_path48.default.join(stagingDir, zipFileName);
+        if (!import_fs53.default.existsSync(zipPath)) {
           throw new Error("Update file has not finished downloading yet.");
         }
         const updaterPath = getUpdaterPath();
-        if (!import_fs52.default.existsSync(updaterPath)) {
+        if (!import_fs53.default.existsSync(updaterPath)) {
           throw new Error(`Updater.bat not found at: ${updaterPath}`);
         }
-        const installDir = import_path47.default.dirname(process.execPath);
+        const installDir = import_path48.default.dirname(process.execPath);
         const logPath = getLogPath();
         const sha256 = this.lastResult.sha256 || "";
         console.log("[AutoUpdate] Spawning dedicated Updater.bat...");
@@ -84049,12 +86551,12 @@ var init_autoUpdateService = __esm({
        */
       async checkFailedUpdate() {
         const stagingDir = getStagingDir();
-        const failurePath = import_path47.default.join(stagingDir, "failure.json");
-        if (!import_fs52.default.existsSync(failurePath)) return null;
+        const failurePath = import_path48.default.join(stagingDir, "failure.json");
+        if (!import_fs53.default.existsSync(failurePath)) return null;
         try {
-          const raw = import_fs52.default.readFileSync(failurePath, "utf8");
+          const raw = import_fs53.default.readFileSync(failurePath, "utf8");
           const info = JSON.parse(raw);
-          import_fs52.default.unlinkSync(failurePath);
+          import_fs53.default.unlinkSync(failurePath);
           const { reportCrashTelemetry: reportCrashTelemetry2 } = await Promise.resolve().then(() => (init_licenseService(), licenseService_exports));
           await reportCrashTelemetry2({
             errorType: "UPDATE_INSTALL_FAILED",
@@ -84185,17 +86687,17 @@ function verifyPassword2(password, expectedHash, salt) {
     return false;
   }
 }
-var import_express26, import_crypto9, router24, auth_default;
+var import_express27, import_crypto9, router25, auth_default;
 var init_auth = __esm({
   "src/routes/auth.ts"() {
     "use strict";
-    import_express26 = __toESM(require("express"), 1);
+    import_express27 = __toESM(require("express"), 1);
     import_crypto9 = __toESM(require("crypto"), 1);
     init_connection();
     init_tenantAuth();
     init_storeContextService();
-    router24 = import_express26.default.Router();
-    router24.post("/login", async (req, res) => {
+    router25 = import_express27.default.Router();
+    router25.post("/login", async (req, res) => {
       try {
         const { username, password, store_id } = req.body;
         if (!username || !password) {
@@ -84268,7 +86770,7 @@ var init_auth = __esm({
         res.status(500).json({ error: "Authentication failed" });
       }
     });
-    router24.get("/me", tenantAuthMiddleware, async (req, res) => {
+    router25.get("/me", tenantAuthMiddleware, async (req, res) => {
       try {
         const tenant = req.tenant;
         const db2 = await dbManager.getConnection();
@@ -84300,7 +86802,7 @@ var init_auth = __esm({
         res.status(500).json({ error: "Failed to fetch session" });
       }
     });
-    router24.post("/switch-store", tenantAuthMiddleware, async (req, res) => {
+    router25.post("/switch-store", tenantAuthMiddleware, async (req, res) => {
       try {
         const tenant = req.tenant;
         const targetStoreId = parseInt(String(req.body.store_id), 10);
@@ -84338,7 +86840,7 @@ var init_auth = __esm({
         res.status(500).json({ error: "Failed to switch store" });
       }
     });
-    auth_default = router24;
+    auth_default = router25;
   }
 });
 
@@ -84347,22 +86849,22 @@ var stores_exports = {};
 __export(stores_exports, {
   default: () => stores_default
 });
-var import_express27, router25, broadcastStoresChanged, stores_default;
+var import_express28, router26, broadcastStoresChanged, stores_default;
 var init_stores = __esm({
   "src/routes/stores.ts"() {
     "use strict";
-    import_express27 = __toESM(require("express"), 1);
+    import_express28 = __toESM(require("express"), 1);
     init_storeContextService();
     init_eventService();
     init_phoneValidation();
-    router25 = import_express27.default.Router();
+    router26 = import_express28.default.Router();
     broadcastStoresChanged = () => {
       try {
         eventService.broadcast("stores_updated", { at: Date.now() });
       } catch (_) {
       }
     };
-    router25.get("/", async (req, res) => {
+    router26.get("/", async (req, res) => {
       try {
         const includeInactive = req.query.include_inactive === "true";
         const stores = await storeContextService.listStores(void 0, includeInactive);
@@ -84372,7 +86874,7 @@ var init_stores = __esm({
         res.status(500).json({ error: "Failed to fetch stores" });
       }
     });
-    router25.get("/:id", async (req, res) => {
+    router26.get("/:id", async (req, res) => {
       try {
         const storeId = parseInt(req.params.id, 10);
         if (isNaN(storeId)) {
@@ -84388,7 +86890,7 @@ var init_stores = __esm({
         res.status(500).json({ error: "Failed to get store details" });
       }
     });
-    router25.post("/", async (req, res) => {
+    router26.post("/", async (req, res) => {
       try {
         const { name, code, address, phone, email, is_central } = req.body;
         if (!name || typeof name !== "string" || !name.trim()) {
@@ -84417,7 +86919,7 @@ var init_stores = __esm({
         res.status(500).json({ error: err.message || "Failed to create store" });
       }
     });
-    router25.put("/:id", async (req, res) => {
+    router26.put("/:id", async (req, res) => {
       try {
         const storeId = parseInt(req.params.id, 10);
         if (isNaN(storeId)) {
@@ -84439,7 +86941,7 @@ var init_stores = __esm({
         res.status(500).json({ error: err.message || "Failed to update store" });
       }
     });
-    router25.get("/:id/settings", async (req, res) => {
+    router26.get("/:id/settings", async (req, res) => {
       try {
         const storeId = parseInt(req.params.id, 10);
         if (isNaN(storeId)) {
@@ -84452,7 +86954,7 @@ var init_stores = __esm({
         res.status(500).json({ error: "Failed to fetch store settings" });
       }
     });
-    router25.put("/:id/settings", async (req, res) => {
+    router26.put("/:id/settings", async (req, res) => {
       try {
         const storeId = parseInt(req.params.id, 10);
         if (isNaN(storeId)) {
@@ -84474,7 +86976,7 @@ var init_stores = __esm({
         res.status(500).json({ error: "Failed to update store settings" });
       }
     });
-    stores_default = router25;
+    stores_default = router26;
   }
 });
 
@@ -84527,17 +87029,17 @@ function resolveAuthorizedStore(req, res) {
   }
   return storeId;
 }
-var import_express28, import_crypto10, router26, websiteOwner_default;
+var import_express29, import_crypto10, router27, websiteOwner_default;
 var init_websiteOwner = __esm({
   "src/routes/websiteOwner.ts"() {
     "use strict";
-    import_express28 = __toESM(require("express"), 1);
+    import_express29 = __toESM(require("express"), 1);
     import_crypto10 = __toESM(require("crypto"), 1);
     init_connection();
     init_storeContextService();
     init_whatsappQueueWorker();
-    router26 = import_express28.default.Router();
-    router26.post("/login", async (req, res) => {
+    router27 = import_express29.default.Router();
+    router27.post("/login", async (req, res) => {
       try {
         const { email, pin } = req.body;
         if (!email || typeof email !== "string") {
@@ -84598,8 +87100,8 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Login failed" });
       }
     });
-    router26.use(requireOwnerAuth);
-    router26.get("/stores", async (_req, res) => {
+    router27.use(requireOwnerAuth);
+    router27.get("/stores", async (_req, res) => {
       try {
         const session = res.locals.ownerSession;
         const db2 = await dbManager.getConnection();
@@ -84620,7 +87122,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to fetch authorized stores" });
       }
     });
-    router26.get("/orders", async (req, res) => {
+    router27.get("/orders", async (req, res) => {
       try {
         const storeId = resolveAuthorizedStore(req, res);
         if (!storeId) return;
@@ -84649,7 +87151,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to fetch orders" });
       }
     });
-    router26.get("/orders/:orderId", async (req, res) => {
+    router27.get("/orders/:orderId", async (req, res) => {
       try {
         const session = res.locals.ownerSession;
         const orderId = parseInt(String(req.params.orderId), 10);
@@ -84678,7 +87180,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to fetch order detail" });
       }
     });
-    router26.patch("/orders/:orderId/status", async (req, res) => {
+    router27.patch("/orders/:orderId/status", async (req, res) => {
       try {
         const session = res.locals.ownerSession;
         const orderId = parseInt(String(req.params.orderId), 10);
@@ -84709,7 +87211,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to update order status" });
       }
     });
-    router26.post("/orders/:orderId/notify", async (req, res) => {
+    router27.post("/orders/:orderId/notify", async (req, res) => {
       try {
         const session = res.locals.ownerSession;
         const orderId = parseInt(String(req.params.orderId), 10);
@@ -84779,7 +87281,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to send message" });
       }
     });
-    router26.get("/catalogue", async (req, res) => {
+    router27.get("/catalogue", async (req, res) => {
       try {
         const storeId = resolveAuthorizedStore(req, res);
         if (!storeId) return;
@@ -84815,7 +87317,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to fetch catalogue" });
       }
     });
-    router26.get("/access", async (req, res) => {
+    router27.get("/access", async (req, res) => {
       try {
         const storeId = resolveAuthorizedStore(req, res);
         if (!storeId) return;
@@ -84838,7 +87340,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to fetch access list" });
       }
     });
-    router26.post("/access", async (req, res) => {
+    router27.post("/access", async (req, res) => {
       try {
         const session = res.locals.ownerSession;
         const { store_id, email, role } = req.body;
@@ -84870,7 +87372,7 @@ var init_websiteOwner = __esm({
         res.status(500).json({ error: "Failed to grant access" });
       }
     });
-    router26.post("/logout", async (req, res) => {
+    router27.post("/logout", async (req, res) => {
       try {
         const authHeader = req.headers["authorization"] || "";
         const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
@@ -84884,227 +87386,7 @@ var init_websiteOwner = __esm({
         res.json({ success: true });
       }
     });
-    websiteOwner_default = router26;
-  }
-});
-
-// src/services/returnWindowService.ts
-var DEFAULT_RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
-var init_returnWindowService = __esm({
-  "src/services/returnWindowService.ts"() {
-    "use strict";
-    init_connection();
-    init_eventService();
-    DEFAULT_RETURN_WINDOW_DAYS = 15;
-    RETURN_WINDOW_MS = 14 * 24 * 60 * 60 * 1e3;
-    ReturnWindowService = class {
-      /**
-       * Fetches the configured return window duration from app_settings (default 15 days).
-       */
-      async getConfiguredReturnWindowDays(storeIdOrDb, customDb) {
-        try {
-          let db2;
-          if (customDb) {
-            db2 = customDb;
-          } else if (storeIdOrDb && typeof storeIdOrDb.get === "function") {
-            db2 = storeIdOrDb;
-          } else {
-            db2 = await dbManager.getConnection();
-          }
-          const row = await db2.get("SELECT value FROM app_settings WHERE key = 'return_window_days'");
-          if (row && row.value) {
-            const val = parseInt(row.value, 10);
-            if (!isNaN(val) && val > 0) return val;
-          }
-        } catch (_) {
-        }
-        return DEFAULT_RETURN_WINDOW_DAYS;
-      }
-      /**
-       * Calculates the return window deadline given a delivered timestamp and optional days
-       */
-      calculateReturnWindowUntil(deliveredAt, windowDays) {
-        const deliveredDate = new Date(deliveredAt);
-        const days = windowDays !== void 0 && windowDays > 0 ? windowDays : DEFAULT_RETURN_WINDOW_DAYS;
-        const deadlineMs = deliveredDate.getTime() + days * 24 * 60 * 60 * 1e3;
-        return new Date(deadlineMs).toISOString();
-      }
-      /**
-       * Evaluates the return window status for an order
-       */
-      evaluateOrderReturnStatus(order) {
-        const orderId = order.id;
-        const deliveryStatus = order.delivery_status || (order.status === "Delivered" ? "delivered" : "pending");
-        const deliveredAt = order.delivered_at || null;
-        const overrideBy = order.return_override_by || null;
-        const overrideReason = order.return_override_reason || null;
-        const overrideAt = order.return_override_at || null;
-        if (overrideBy) {
-          return {
-            orderId,
-            deliveryStatus,
-            deliveredAt,
-            returnWindowUntil: order.return_window_until || null,
-            returnStatus: "override_approved",
-            daysRemaining: 0,
-            isEligible: true,
-            overrideReason,
-            overrideBy,
-            overrideAt
-          };
-        }
-        if (order.return_status === "returned") {
-          return {
-            orderId,
-            deliveryStatus,
-            deliveredAt,
-            returnWindowUntil: order.return_window_until || null,
-            returnStatus: "returned",
-            daysRemaining: 0,
-            isEligible: false
-          };
-        }
-        if (deliveryStatus !== "delivered" || !deliveredAt) {
-          return {
-            orderId,
-            deliveryStatus,
-            deliveredAt: null,
-            returnWindowUntil: null,
-            returnStatus: "none",
-            daysRemaining: 0,
-            isEligible: false
-          };
-        }
-        const windowUntil = order.return_window_until || this.calculateReturnWindowUntil(deliveredAt);
-        const deadline = new Date(windowUntil).getTime();
-        const now = Date.now();
-        const msRemaining = deadline - now;
-        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1e3 * 60 * 60 * 24)));
-        const isEligible = msRemaining > 0;
-        const returnStatus = isEligible ? "eligible" : "expired";
-        return {
-          orderId,
-          deliveryStatus: "delivered",
-          deliveredAt,
-          returnWindowUntil: windowUntil,
-          returnStatus,
-          daysRemaining,
-          isEligible
-        };
-      }
-      /**
-       * Marks an order as delivered, stamping delivered_at and calculating the 14-day return window
-       */
-      async markDelivered(orderId, deliveredAtDate, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const deliveredAt = (deliveredAtDate || /* @__PURE__ */ new Date()).toISOString();
-        const windowDays = await this.getConfiguredReturnWindowDays(db2);
-        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt, windowDays);
-        await db2.run(
-          `UPDATE special_orders
-       SET delivery_status = 'delivered',
-           status = 'Delivered',
-           auto_remind = 0,
-           delivered_at = ?,
-           return_window_until = ?,
-           return_status = 'eligible',
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [deliveredAt, returnWindowUntil, orderId]
-        );
-        await db2.run(
-          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-       VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
-          [orderId, `Order delivered. ${windowDays}-day return window open until ${returnWindowUntil}`]
-        );
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "delivered" });
-        } catch (_) {
-        }
-        const updatedOrder = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        return this.evaluateOrderReturnStatus(updatedOrder);
-      }
-      /**
-       * Background scan: automatically closes expired 14-day return windows without deleting records
-       */
-      async checkAndCloseExpiredReturnWindows(dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-        const expiredOrders = await db2.all(
-          `SELECT id, delivered_at, return_window_until 
-       FROM special_orders
-       WHERE delivery_status = 'delivered'
-         AND return_status = 'eligible'
-         AND return_window_until IS NOT NULL
-         AND return_window_until <= ?
-         AND return_override_by IS NULL`,
-          [nowIso]
-        ).catch(() => []);
-        if (expiredOrders.length === 0) return 0;
-        for (const order of expiredOrders) {
-          await db2.run(
-            `UPDATE special_orders
-         SET return_status = 'expired',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-            [order.id]
-          );
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'return_window_expired', '14-day return period ended. Return window closed automatically.', 'system', CURRENT_TIMESTAMP)`,
-            [order.id]
-          );
-        }
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), expiredCount: expiredOrders.length });
-        } catch (_) {
-        }
-        return expiredOrders.length;
-      }
-      /**
-       * Human exception override: Pharmacist/Manager approves return after expiration
-       */
-      async applyReturnOverride(orderId, opts, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) {
-          throw new Error(`Order #${orderId} not found`);
-        }
-        const overrideBy = (opts.overrideBy || "Admin").trim();
-        const reason = (opts.reason || "Management approval").trim();
-        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-        await db2.run(
-          `UPDATE special_orders
-       SET return_status = 'override_approved',
-           return_override_by = ?,
-           return_override_reason = ?,
-           return_override_at = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [overrideBy, reason, nowIso, orderId]
-        );
-        await db2.run(
-          `INSERT INTO action_logs (action_type, description, metadata, created_at)
-       VALUES ('return_override', ?, ?, CURRENT_TIMESTAMP)`,
-          [
-            `Return window manually overridden for Order #${orderId} by ${overrideBy}`,
-            JSON.stringify({ orderId, overrideBy, reason, previousStatus: order.return_status })
-          ]
-        );
-        await db2.run(
-          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-       VALUES (?, 'return_override', ?, ?, CURRENT_TIMESTAMP)`,
-          [orderId, `Return window override granted by ${overrideBy}. Reason: ${reason}`, overrideBy]
-        );
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "return_override" });
-        } catch (_) {
-        }
-        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        return this.evaluateOrderReturnStatus(updated);
-      }
-    };
-    returnWindowService = new ReturnWindowService();
+    websiteOwner_default = router27;
   }
 });
 
@@ -85209,8 +87491,8 @@ async function processPrescriptionAndNotifyPharmacy(input) {
       try {
         console.log(`[PrescriptionIntel] Scanning ${imagePaths.length} prescription photo(s) for Order #${orderId}...`);
         const { prescriptionOrchestratorService: prescriptionOrchestratorService2 } = await Promise.resolve().then(() => (init_prescriptionOrchestratorService(), prescriptionOrchestratorService_exports));
-        const existingPaths = imagePaths.filter((p) => import_fs53.default.existsSync(p));
-        const buffers = await Promise.all(existingPaths.map((p) => import_fs53.default.promises.readFile(p)));
+        const existingPaths = imagePaths.filter((p) => import_fs54.default.existsSync(p));
+        const buffers = await Promise.all(existingPaths.map((p) => import_fs54.default.promises.readFile(p)));
         if (buffers.length > 0) {
           const scanResult = buffers.length > 1 ? await prescriptionOrchestratorService2.scanPrescriptionBundle(buffers, { source: "website" }) : await prescriptionOrchestratorService2.scanPrescriptionImage({
             buffer: buffers[0],
@@ -85325,7 +87607,7 @@ async function processPrescriptionAndNotifyPharmacy(input) {
     if (pharmacyPhone) {
       console.log(`[PrescriptionIntel] Dispatching briefing for Order #${orderId} to Pharmacy WhatsApp: ${pharmacyPhone}`);
       try {
-        if (primaryImagePath && import_fs53.default.existsSync(primaryImagePath)) {
+        if (primaryImagePath && import_fs54.default.existsSync(primaryImagePath)) {
           await sendMessage(pharmacyPhone, primaryImagePath, briefingText);
         } else {
           await sendMessage(pharmacyPhone, void 0, briefingText);
@@ -85368,11 +87650,11 @@ async function processPrescriptionAndNotifyPharmacy(input) {
     console.error(`[PrescriptionIntel] Error processing prescription for Order #${orderId}:`, err);
   }
 }
-var import_fs53;
+var import_fs54;
 var init_prescriptionIntelService = __esm({
   "src/services/prescriptionIntelService.ts"() {
     "use strict";
-    import_fs53 = __toESM(require("fs"), 1);
+    import_fs54 = __toESM(require("fs"), 1);
     init_connection();
     init_pharmarack();
     init_whatsappClient();
@@ -85385,13 +87667,13 @@ var websiteOrders_exports = {};
 __export(websiteOrders_exports, {
   default: () => websiteOrders_default
 });
-var import_express29, import_fs54, import_path48, router27, broadcastOrdersChanged, websiteOrders_default;
+var import_express30, import_fs55, import_path49, router28, broadcastOrdersChanged2, websiteOrders_default;
 var init_websiteOrders = __esm({
   "src/routes/websiteOrders.ts"() {
     "use strict";
-    import_express29 = __toESM(require("express"), 1);
-    import_fs54 = __toESM(require("fs"), 1);
-    import_path48 = __toESM(require("path"), 1);
+    import_express30 = __toESM(require("express"), 1);
+    import_fs55 = __toESM(require("fs"), 1);
+    import_path49 = __toESM(require("path"), 1);
     init_config();
     init_connection();
     init_returnWindowService();
@@ -85405,8 +87687,8 @@ var init_websiteOrders = __esm({
     init_orderScheduleService();
     init_prescriptionIntelService();
     init_imageCompressionService();
-    router27 = import_express29.default.Router();
-    broadcastOrdersChanged = (delta) => {
+    router28 = import_express30.default.Router();
+    broadcastOrdersChanged2 = (delta) => {
       try {
         if (delta) {
           eventService.broadcast("order_delta", delta);
@@ -85415,7 +87697,7 @@ var init_websiteOrders = __esm({
       } catch (_) {
       }
     };
-    router27.get("/medicines/search", async (req, res) => {
+    router28.get("/medicines/search", async (req, res) => {
       try {
         const rawQuery = (req.query.query || "").trim();
         const query = rawQuery.replace(/\s+/g, " ");
@@ -85502,7 +87784,7 @@ var init_websiteOrders = __esm({
         res.status(500).json({ error: "Failed to search medicines" });
       }
     });
-    router27.post("/orders", async (req, res) => {
+    router28.post("/orders", async (req, res) => {
       const {
         customer_name,
         customer_phone,
@@ -85717,7 +87999,7 @@ Please collect and pay at our pharmacy counter.`;
           } catch (_) {
           }
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         const primaryOrderId = createdOrders[0]?.id;
         const paymentQrResponse = allocatedQr ? {
           qr_id: allocatedQr.id,
@@ -85765,7 +88047,7 @@ Please collect and pay at our pharmacy counter.`;
         res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
       }
     });
-    router27.post("/orders/:orderId/mark-paid", async (req, res) => {
+    router28.post("/orders/:orderId/mark-paid", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -85777,13 +88059,13 @@ Please collect and pay at our pharmacy counter.`;
         if (screenshot_base64 && typeof screenshot_base64 === "string") {
           try {
             const cleanBase64 = screenshot_base64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "");
-            const uploadsDir = import_path48.default.resolve(getAppDataDir(), "uploads");
-            if (!import_fs54.default.existsSync(uploadsDir)) {
-              import_fs54.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = import_path49.default.resolve(getAppDataDir(), "uploads");
+            if (!import_fs55.default.existsSync(uploadsDir)) {
+              import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
             }
             const savedFileName = `payment_proof_SO-${orderId}.jpg`;
-            const diskPath = import_path48.default.join(uploadsDir, savedFileName);
-            import_fs54.default.writeFileSync(diskPath, Buffer.from(cleanBase64, "base64"));
+            const diskPath = import_path49.default.join(uploadsDir, savedFileName);
+            import_fs55.default.writeFileSync(diskPath, Buffer.from(cleanBase64, "base64"));
             proofImagePath = `/uploads/${savedFileName}`;
           } catch (saveErr) {
             console.error("[WebsiteOrdersRoute] Failed to save payment proof from portal:", saveErr);
@@ -85873,7 +88155,7 @@ Thank you!
             console.warn("[WebsiteOrdersRoute] Could not enqueue payment screenshot request:", waErr);
           }
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({
           success: true,
           message: proofImagePath ? "Payment screenshot uploaded successfully. Pharmacy verification is in progress." : "Payment reported successfully. Pharmacy verification is in progress.",
@@ -85886,7 +88168,7 @@ Thank you!
         res.status(500).json({ error: "Failed to mark order paid" });
       }
     });
-    router27.get("/orders/:orderId/payment-qr", async (req, res) => {
+    router28.get("/orders/:orderId/payment-qr", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -85898,7 +88180,7 @@ Thank you!
         res.status(500).json({ error: "Failed to fetch payment QR" });
       }
     });
-    router27.patch("/orders/:orderId/payment", async (req, res) => {
+    router28.patch("/orders/:orderId/payment", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86050,7 +88332,7 @@ Thank you!
             console.warn("[WebsiteOrdersRoute] Failed to log automation_notification:", notifErr);
           }
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({
           success: true,
           message: `Payment confirmed. Order #${orderId} is now ${nextOrderStatus}.`,
@@ -86063,7 +88345,7 @@ Thank you!
         res.status(500).json({ error: "Failed to confirm payment" });
       }
     });
-    router27.get("/live-cart", async (req, res) => {
+    router28.get("/live-cart", async (req, res) => {
       try {
         const storeId = parseInt(req.query.store_id || "1", 10) || 1;
         const db2 = await dbManager.getConnection();
@@ -86114,7 +88396,7 @@ Thank you!
         res.status(500).json({ error: "Failed to load live cart" });
       }
     });
-    router27.patch("/live-cart/items/:itemId", async (req, res) => {
+    router28.patch("/live-cart/items/:itemId", async (req, res) => {
       try {
         const itemId = parseInt(req.params.itemId, 10);
         if (isNaN(itemId)) return res.status(400).json({ error: "Invalid item ID" });
@@ -86232,14 +88514,14 @@ Thank you!
             [itemId]
           );
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: "Item updated", item_id: itemId, item_status });
       } catch (err) {
         console.error("[WebsiteOrdersRoute] Item verify error:", err);
         res.status(500).json({ error: "Failed to update order item" });
       }
     });
-    router27.post("/live-cart/orders/:orderId/finalize", async (req, res) => {
+    router28.post("/live-cart/orders/:orderId/finalize", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86361,7 +88643,7 @@ Thank you for your payment.`;
           } catch (_) {
           }
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({
           success: true,
           message: "Order finalized. Held bill pushed to POS.",
@@ -86374,7 +88656,7 @@ Thank you for your payment.`;
         res.status(500).json({ error: "Failed to finalize order" });
       }
     });
-    router27.post("/live-cart/orders/:orderId/cancel", async (req, res) => {
+    router28.post("/live-cart/orders/:orderId/cancel", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86410,7 +88692,7 @@ Thank you for your payment.`;
           await db2.run("ROLLBACK");
           throw txErr;
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({
           success: true,
           message: "Order cancelled. Stock reservations released.",
@@ -86422,7 +88704,7 @@ Thank you for your payment.`;
         res.status(500).json({ error: "Failed to cancel order" });
       }
     });
-    router27.post("/orders/:orderId/restore", async (req, res) => {
+    router28.post("/orders/:orderId/restore", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         const { restored_by = "Staff Pharmacist", notes = "" } = req.body;
@@ -86453,7 +88735,7 @@ Thank you for your payment.`;
           await db2.run("ROLLBACK");
           throw txErr;
         }
-        broadcastOrdersChanged({ action: "restore", orderId: Number(orderId), patch: { status: "Pending", pharmacy_verification_status: "PENDING" } });
+        broadcastOrdersChanged2({ action: "restore", orderId: Number(orderId), patch: { status: "Pending", pharmacy_verification_status: "PENDING" } });
         res.json({
           success: true,
           message: "Order restored to Pending. Staff can freshly verify and source items.",
@@ -86464,7 +88746,7 @@ Thank you for your payment.`;
         res.status(500).json({ error: "Failed to restore order" });
       }
     });
-    router27.get("/orders/:orderId/items", async (req, res) => {
+    router28.get("/orders/:orderId/items", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86499,7 +88781,7 @@ Thank you for your payment.`;
         res.status(500).json({ error: "Failed to fetch order items" });
       }
     });
-    router27.put("/orders/:orderId/items", async (req, res) => {
+    router28.put("/orders/:orderId/items", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86606,7 +88888,7 @@ We are preparing your order. Thank you!
               ).catch((waErr) => console.warn("[WebsiteOrdersRoute] Failed to enqueue WhatsApp on modify:", waErr));
             }
           }
-          broadcastOrdersChanged({ action: "update_items", orderId: Number(orderId), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
+          broadcastOrdersChanged2({ action: "update_items", orderId: Number(orderId), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
           res.json({
             success: true,
             message: "Order items updated successfully",
@@ -86624,7 +88906,7 @@ We are preparing your order. Thank you!
         res.status(500).json({ error: "Failed to modify order items: " + (err?.message || "Unknown error") });
       }
     });
-    router27.get("/orders/:orderId/track", async (req, res) => {
+    router28.get("/orders/:orderId/track", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86656,7 +88938,7 @@ We are preparing your order. Thank you!
         res.status(500).json({ error: "Failed to track order" });
       }
     });
-    router27.post("/orders/:orderId/return-request", async (req, res) => {
+    router28.post("/orders/:orderId/return-request", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         const { reason = "Customer return request" } = req.body;
@@ -86684,7 +88966,7 @@ We are preparing your order. Thank you!
             JSON.stringify({ orderId, reason, customer: order.requester, phone: order.phone })
           ]
         );
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({
           success: true,
           message: "Return request submitted. Our pharmacy team will process your return.",
@@ -86695,7 +88977,7 @@ We are preparing your order. Thank you!
         res.status(500).json({ error: "Failed to submit return request" });
       }
     });
-    router27.post("/prescription-request", async (req, res) => {
+    router28.post("/prescription-request", async (req, res) => {
       try {
         const {
           customer_name,
@@ -86731,16 +89013,16 @@ We are preparing your order. Thank you!
         const savedUrls = [];
         const savedFilePaths = [];
         if (imageList.length > 0) {
-          const uploadsDir = import_path48.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-          if (!import_fs54.default.existsSync(uploadsDir)) {
-            import_fs54.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path49.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+          if (!import_fs55.default.existsSync(uploadsDir)) {
+            import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
           }
           for (let i = 0; i < imageList.length; i++) {
             const rawImg = imageList[i];
             const base64Str = rawImg.replace(/^data:image\/\w+;base64,/, "");
             const buffer = Buffer.from(base64Str, "base64");
             const safeName = `Rx_Web_${Date.now()}_${i + 1}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-            const fullPath = import_path48.default.join(uploadsDir, safeName);
+            const fullPath = import_path49.default.join(uploadsDir, safeName);
             await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
             savedUrls.push(`/uploads/prescriptions/${safeName}`);
             savedFilePaths.push(fullPath);
@@ -86864,7 +89146,7 @@ I want to order medicines using my prescription / photo:
         waText += `
 Please check counter availability and send me the price estimate and UPI payment QR code!`;
         const waUrl = targetPhone ? `https://wa.me/${targetPhone}?text=${encodeURIComponent(waText)}` : `https://wa.me/?text=${encodeURIComponent(waText)}`;
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         void processPrescriptionAndNotifyPharmacy({
           orderId,
           customerName: cleanName,
@@ -86893,7 +89175,7 @@ Please check counter availability and send me the price estimate and UPI payment
         res.status(500).json({ error: "Failed to submit prescription request: " + (err.message || "Unknown error") });
       }
     });
-    router27.get("/orders/:orderId/refill-preview", async (req, res) => {
+    router28.get("/orders/:orderId/refill-preview", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -86971,7 +89253,7 @@ Please check counter availability and send me the price estimate and UPI payment
         res.status(500).json({ error: "Failed to generate refill preview" });
       }
     });
-    router27.post("/orders/:orderId/refill", async (req, res) => {
+    router28.post("/orders/:orderId/refill", async (req, res) => {
       try {
         const originalOrderId = parseInt(req.params.orderId, 10);
         if (isNaN(originalOrderId)) return res.status(400).json({ error: "Invalid original order ID" });
@@ -87112,7 +89394,7 @@ Please check counter availability and send me the price estimate and UPI payment
        VALUES (?, 'order_created', ?, 'customer_refill', CURRENT_TIMESTAMP)`,
           [newOrderId, `Refill order created from original Order #${originalOrderId}. ${validItems.length} item(s).`]
         );
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.status(201).json({
           success: true,
           message: "Refill order created. Original order remains unchanged.",
@@ -87136,7 +89418,7 @@ Please check counter availability and send me the price estimate and UPI payment
         res.status(500).json({ error: "Failed to create refill order: " + (err.message || "Unknown error") });
       }
     });
-    websiteOrders_default = router27;
+    websiteOrders_default = router28;
   }
 });
 
@@ -87146,14 +89428,14 @@ __export(cloudflareTunnelService_exports, {
   cloudflareTunnelService: () => cloudflareTunnelService,
   default: () => cloudflareTunnelService_default
 });
-var import_child_process7, import_http2, import_fs55, import_path49, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
+var import_child_process7, import_http2, import_fs56, import_path50, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
 var init_cloudflareTunnelService = __esm({
   "src/services/cloudflareTunnelService.ts"() {
     "use strict";
     import_child_process7 = require("child_process");
     import_http2 = __toESM(require("http"), 1);
-    import_fs55 = __toESM(require("fs"), 1);
-    import_path49 = __toESM(require("path"), 1);
+    import_fs56 = __toESM(require("fs"), 1);
+    import_path50 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     init_config();
@@ -87217,21 +89499,21 @@ var init_cloudflareTunnelService = __esm({
         const isWindows = process.platform === "win32";
         if (isWindows) {
           const candidates = [
-            import_path49.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
-            import_path49.default.join(process.cwd(), "cloudflared.exe")
+            import_path50.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
+            import_path50.default.join(process.cwd(), "cloudflared.exe")
           ];
           for (const p of candidates) {
-            if (import_fs55.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
+            if (import_fs56.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
           }
           const localAppData = process.env.LOCALAPPDATA;
           if (localAppData) {
-            const npxDir = import_path49.default.join(localAppData, "npm-cache", "_npx");
-            if (import_fs55.default.existsSync(npxDir)) {
+            const npxDir = import_path50.default.join(localAppData, "npm-cache", "_npx");
+            if (import_fs56.default.existsSync(npxDir)) {
               try {
-                const dirs = import_fs55.default.readdirSync(npxDir);
+                const dirs = import_fs56.default.readdirSync(npxDir);
                 for (const d of dirs) {
-                  const binPath = import_path49.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
-                  if (import_fs55.default.existsSync(binPath)) {
+                  const binPath = import_path50.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
+                  if (import_fs56.default.existsSync(binPath)) {
                     return { binary: binPath, spawnArgsPrefix: [], useShell: false };
                   }
                 }
@@ -88180,9 +90462,9 @@ function loadCatalogAndImages() {
     return { catalog: catalogCache, images: imageStateCache };
   }
   try {
-    const csvPath = import_path50.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-    if (import_fs56.default.existsSync(csvPath)) {
-      const content = import_fs56.default.readFileSync(csvPath, "utf-8");
+    const csvPath = import_path51.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+    if (import_fs57.default.existsSync(csvPath)) {
+      const content = import_fs57.default.readFileSync(csvPath, "utf-8");
       const lines = content.split(/\r?\n/);
       const items = [];
       for (let i = 1; i < lines.length; i++) {
@@ -88214,9 +90496,9 @@ function loadCatalogAndImages() {
         });
       }
       try {
-        const clinicalCsvPath = import_path50.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
-        if (import_fs56.default.existsSync(clinicalCsvPath)) {
-          const clinContent = import_fs56.default.readFileSync(clinicalCsvPath, "utf-8");
+        const clinicalCsvPath = import_path51.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
+        if (import_fs57.default.existsSync(clinicalCsvPath)) {
+          const clinContent = import_fs57.default.readFileSync(clinicalCsvPath, "utf-8");
           const clinLines = clinContent.split(/\r?\n/);
           for (let j = 1; j < clinLines.length; j++) {
             const clinLine = clinLines[j].trim();
@@ -88247,9 +90529,9 @@ function loadCatalogAndImages() {
     catalogCache = [];
   }
   try {
-    const statePath = import_path50.default.resolve(process.cwd(), "data/image_download_state.json");
-    if (import_fs56.default.existsSync(statePath)) {
-      const stateData = JSON.parse(import_fs56.default.readFileSync(statePath, "utf-8"));
+    const statePath = import_path51.default.resolve(process.cwd(), "data/image_download_state.json");
+    if (import_fs57.default.existsSync(statePath)) {
+      const stateData = JSON.parse(import_fs57.default.readFileSync(statePath, "utf-8"));
       imageStateCache = stateData.products || {};
     }
   } catch (e) {
@@ -88258,14 +90540,14 @@ function loadCatalogAndImages() {
   lastCacheLoad = now;
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
-var import_express30, import_crypto12, import_fs56, import_path50, router28, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var import_express31, import_crypto12, import_fs57, import_path51, router29, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
-    import_express30 = __toESM(require("express"), 1);
+    import_express31 = __toESM(require("express"), 1);
     import_crypto12 = __toESM(require("crypto"), 1);
-    import_fs56 = __toESM(require("fs"), 1);
-    import_path50 = __toESM(require("path"), 1);
+    import_fs57 = __toESM(require("fs"), 1);
+    import_path51 = __toESM(require("path"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_eventService();
@@ -88278,9 +90560,9 @@ var init_customerPortal = __esm({
     init_returnWindowService();
     init_cloudflareTunnelService();
     init_phoneValidation();
-    router28 = import_express30.default.Router();
+    router29 = import_express31.default.Router();
     SESSION_SECRET2 = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
-    router28.get("/accounts", async (req, res) => {
+    router29.get("/accounts", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const query = (req.query.search || "").trim();
@@ -88325,7 +90607,7 @@ var init_customerPortal = __esm({
         res.status(500).json({ error: "Failed to fetch portal accounts" });
       }
     });
-    router28.get("/accounts/:id/sessions", async (req, res) => {
+    router29.get("/accounts/:id/sessions", async (req, res) => {
       try {
         const accountId = parseInt(String(req.params.id), 10);
         const db2 = await dbManager.getConnection();
@@ -88341,7 +90623,7 @@ var init_customerPortal = __esm({
         res.status(500).json({ error: "Failed to fetch customer sessions" });
       }
     });
-    router28.post("/accounts/generate", async (req, res) => {
+    router29.post("/accounts/generate", async (req, res) => {
       const {
         customer_id,
         phone,
@@ -88442,7 +90724,7 @@ Login to view your past store bills, choose medicines, and reorder for quick cou
         res.status(500).json({ error: "Failed to generate portal credentials: " + (err.message || "Unknown error") });
       }
     });
-    router28.post("/accounts/:id/send-credentials", async (req, res) => {
+    router29.post("/accounts/:id/send-credentials", async (req, res) => {
       const accountId = parseInt(req.params.id, 10);
       if (isNaN(accountId)) return res.status(400).json({ error: "Invalid account ID" });
       try {
@@ -88495,7 +90777,7 @@ Tap the link to login, select medicines from your previous bills, and place your
         res.status(500).json({ error: "Failed to send credentials" });
       }
     });
-    router28.put("/accounts/:id", async (req, res) => {
+    router29.put("/accounts/:id", async (req, res) => {
       const accountId = parseInt(req.params.id, 10);
       const { status, preferred_store_id, custom_pin, override_pin, send_whatsapp = true } = req.body;
       try {
@@ -88559,7 +90841,7 @@ Your online refill portal PIN has been reset by the pharmacy.
         res.status(500).json({ error: "Failed to update account" });
       }
     });
-    router28.post("/auth/change-pin", async (req, res) => {
+    router29.post("/auth/change-pin", async (req, res) => {
       const { customer_id, phone, current_pin, new_pin } = req.body;
       const cleanPhone = normalizePhone2(phone);
       const cleanCurrentPin = String(current_pin || "").trim();
@@ -88609,7 +90891,7 @@ If you did not make this change, please contact your pharmacy immediately.`;
         res.status(500).json({ error: "Failed to update PIN" });
       }
     });
-    router28.post("/auth/login", async (req, res) => {
+    router29.post("/auth/login", async (req, res) => {
       const { login_id, loginId, phone, pin } = req.body;
       const rawId = login_id || loginId || phone;
       const cleanPhone = normalizePhone2(rawId);
@@ -88680,7 +90962,7 @@ If you did not make this change, please contact your pharmacy immediately.`;
         res.status(500).json({ error: "Login failed" });
       }
     });
-    router28.post("/auth/register", async (req, res) => {
+    router29.post("/auth/register", async (req, res) => {
       const { name, phone, address, pin } = req.body;
       const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
       if (!phoneCheck.isValid) {
@@ -88786,7 +91068,7 @@ You can now browse medicines, reorder refills, and view your medical bills anyti
         res.status(500).json({ error: "Failed to register account" });
       }
     });
-    router28.post("/auth/request-otp", async (req, res) => {
+    router29.post("/auth/request-otp", async (req, res) => {
       const { login_id, phone, loginId, name } = req.body;
       const cleanPhone = normalizePhone2(login_id || phone || loginId);
       if (!cleanPhone || cleanPhone.length < 10) {
@@ -88843,7 +91125,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         res.status(500).json({ error: "Failed to send OTP" });
       }
     });
-    router28.post("/auth/verify-otp", async (req, res) => {
+    router29.post("/auth/verify-otp", async (req, res) => {
       const { login_id, phone, loginId, otp_code, otp } = req.body;
       const cleanPhone = normalizePhone2(login_id || phone || loginId);
       const cleanOtp = String(otp_code || otp || "").trim();
@@ -88941,7 +91223,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         res.status(500).json({ error: "OTP verification failed" });
       }
     });
-    router28.get("/customer/bills", async (req, res) => {
+    router29.get("/customer/bills", async (req, res) => {
       const customerId = parseInt(req.query.customer_id, 10);
       const phone = normalizePhone2(req.query.phone);
       const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
@@ -89004,7 +91286,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         res.status(500).json({ error: "Failed to fetch customer bills" });
       }
     });
-    router28.get("/customer/refills", async (req, res) => {
+    router29.get("/customer/refills", async (req, res) => {
       const customerId = parseInt(req.query.customer_id, 10);
       const phone = normalizePhone2(req.query.phone);
       const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
@@ -89050,7 +91332,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         res.status(500).json({ error: "Failed to fetch refills" });
       }
     });
-    router28.get("/customer/past-medicines", async (req, res) => {
+    router29.get("/customer/past-medicines", async (req, res) => {
       const customerId = req.query.customer_id ? parseInt(req.query.customer_id, 10) : null;
       const rawPhone = req.query.phone || "";
       const phone = normalizePhone2(rawPhone);
@@ -89144,7 +91426,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         res.status(500).json({ error: "Failed to fetch past medicines" });
       }
     });
-    router28.put("/customer/phone", async (req, res) => {
+    router29.put("/customer/phone", async (req, res) => {
       const { customer_id, new_phone } = req.body;
       const cleanPhone = normalizePhone2(new_phone);
       if (!cleanPhone || cleanPhone.length < 10) {
@@ -89190,7 +91472,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         res.status(500).json({ error: "Failed to update phone number" });
       }
     });
-    router28.post("/customer/refill-order", async (req, res) => {
+    router29.post("/customer/refill-order", async (req, res) => {
       const {
         customer_id,
         customer_name,
@@ -89436,7 +91718,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
       }
     });
-    router28.put("/customer/preferred-store", async (req, res) => {
+    router29.put("/customer/preferred-store", async (req, res) => {
       try {
         const { customer_id, phone, preferred_store_id } = req.body;
         const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
@@ -89468,7 +91750,7 @@ ${upiUri}
     catalogCache = null;
     imageStateCache = null;
     lastCacheLoad = 0;
-    router28.get("/public-catalog", async (req, res) => {
+    router29.get("/public-catalog", async (req, res) => {
       try {
         const category = String(req.query.category || "all").toLowerCase();
         const search = String(req.query.search || "").trim();
@@ -89567,7 +91849,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to fetch catalog: " + err.message });
       }
     });
-    router28.get("/categories-summary", async (_req, res) => {
+    router29.get("/categories-summary", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -89585,14 +91867,14 @@ ${upiUri}
         res.status(500).json({ error: "Failed to load category summary" });
       }
     });
-    router28.get("/standalone-catalog", (_req, res) => {
-      const filePath = import_path50.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
-      if (import_fs56.default.existsSync(filePath)) {
+    router29.get("/standalone-catalog", (_req, res) => {
+      const filePath = import_path51.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
+      if (import_fs57.default.existsSync(filePath)) {
         return res.sendFile(filePath);
       }
       res.status(404).send("Live catalog website file not found");
     });
-    router28.get("/customer/orders", async (req, res) => {
+    router29.get("/customer/orders", async (req, res) => {
       try {
         const customerId = parseInt(req.query.customer_id || "0", 10);
         const phone = req.query.phone || "";
@@ -89661,7 +91943,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to fetch customer orders" });
       }
     });
-    router28.get("/history", async (req, res) => {
+    router29.get("/history", async (req, res) => {
       try {
         const customerId = parseInt(req.query.customer_id || "0", 10);
         const loginId = req.query.login_id || "";
@@ -89737,7 +92019,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to load purchase history" });
       }
     });
-    router28.post("/history/:invoiceId/refill", async (req, res) => {
+    router29.post("/history/:invoiceId/refill", async (req, res) => {
       try {
         const invoiceId = parseInt(req.params.invoiceId, 10);
         if (isNaN(invoiceId)) return res.status(400).json({ error: "Invalid invoice ID" });
@@ -89880,7 +92162,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to create refill order" });
       }
     });
-    router28.get("/admin/catalog-visibility", async (req, res) => {
+    router29.get("/admin/catalog-visibility", async (req, res) => {
       try {
         const search = String(req.query.search || "").trim();
         const filter = String(req.query.filter || "all").toLowerCase();
@@ -89960,7 +92242,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to load catalog visibility" });
       }
     });
-    router28.put("/admin/catalog-visibility/:medicineId", async (req, res) => {
+    router29.put("/admin/catalog-visibility/:medicineId", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId, 10);
         if (isNaN(medicineId)) return res.status(400).json({ error: "Invalid medicine ID" });
@@ -89996,7 +92278,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to update visibility" });
       }
     });
-    router28.post("/admin/catalog-visibility/bulk", async (req, res) => {
+    router29.post("/admin/catalog-visibility/bulk", async (req, res) => {
       try {
         const { medicine_ids, is_portal_visible, is_website_visible } = req.body;
         if (!Array.isArray(medicine_ids) || medicine_ids.length === 0) {
@@ -90030,7 +92312,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to bulk update visibility" });
       }
     });
-    router28.post("/admin/catalog-visibility/publish-in-stock", async (req, res) => {
+    router29.post("/admin/catalog-visibility/publish-in-stock", async (req, res) => {
       try {
         const { is_online = true } = req.body;
         const onlineVal = is_online ? 1 : 0;
@@ -90051,7 +92333,7 @@ ${upiUri}
         res.status(500).json({ error: "Failed to publish in-stock medicines" });
       }
     });
-    router28.post("/cloud/sync-catalog", async (_req, res) => {
+    router29.post("/cloud/sync-catalog", async (_req, res) => {
       try {
         const { pushLocalCatalogToCloud: pushLocalCatalogToCloud2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
         const result = await pushLocalCatalogToCloud2();
@@ -90060,7 +92342,7 @@ ${upiUri}
         res.status(500).json({ success: false, error: err.message });
       }
     });
-    router28.post("/cloud/pull-orders", async (_req, res) => {
+    router29.post("/cloud/pull-orders", async (_req, res) => {
       try {
         const { pullCloudOrdersToLocal: pullCloudOrdersToLocal2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
         const result = await pullCloudOrdersToLocal2();
@@ -90069,7 +92351,7 @@ ${upiUri}
         res.status(500).json({ success: false, error: err.message });
       }
     });
-    customerPortal_default = router28;
+    customerPortal_default = router29;
   }
 });
 
@@ -90078,14 +92360,14 @@ var tunnel_exports = {};
 __export(tunnel_exports, {
   default: () => tunnel_default
 });
-var import_express31, router29, tunnel_default;
+var import_express32, router30, tunnel_default;
 var init_tunnel = __esm({
   "src/routes/tunnel.ts"() {
     "use strict";
-    import_express31 = require("express");
+    import_express32 = require("express");
     init_cloudflareTunnelService();
-    router29 = (0, import_express31.Router)();
-    router29.get("/status", async (_req, res) => {
+    router30 = (0, import_express32.Router)();
+    router30.get("/status", async (_req, res) => {
       try {
         const status = await cloudflareTunnelService.getStatus();
         res.json({ success: true, ...status });
@@ -90093,7 +92375,7 @@ var init_tunnel = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to get tunnel status" });
       }
     });
-    router29.post("/start", async (_req, res) => {
+    router30.post("/start", async (_req, res) => {
       try {
         const status = await cloudflareTunnelService.start();
         res.json({ success: true, ...status });
@@ -90101,7 +92383,7 @@ var init_tunnel = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to start tunnel" });
       }
     });
-    router29.post("/stop", async (_req, res) => {
+    router30.post("/stop", async (_req, res) => {
       try {
         const status = await cloudflareTunnelService.stop();
         res.json({ success: true, ...status });
@@ -90109,7 +92391,7 @@ var init_tunnel = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to stop tunnel" });
       }
     });
-    router29.post("/configure", async (req, res) => {
+    router30.post("/configure", async (req, res) => {
       try {
         const { token, customDomain, autostart } = req.body;
         const status = await cloudflareTunnelService.configure({ token, customDomain, autostart });
@@ -90118,7 +92400,7 @@ var init_tunnel = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to configure tunnel" });
       }
     });
-    tunnel_default = router29;
+    tunnel_default = router30;
   }
 });
 
@@ -90793,17 +93075,17 @@ async function requireCustomerAuth(req, res, next) {
   req.customer = session;
   next();
 }
-var import_express32, router30, customerRoutes_default;
+var import_express33, router31, customerRoutes_default;
 var init_customerRoutes = __esm({
   "src/routes/api/customerRoutes.ts"() {
     "use strict";
-    import_express32 = __toESM(require("express"), 1);
+    import_express33 = __toESM(require("express"), 1);
     init_customerAuthService();
     init_customerService();
     init_catalogService();
     init_apiResponse();
-    router30 = import_express32.default.Router();
-    router30.post("/auth/request-otp", async (req, res) => {
+    router31 = import_express33.default.Router();
+    router31.post("/auth/request-otp", async (req, res) => {
       try {
         const phone = req.body.phone || req.body.login_id || req.body.loginId;
         const result = await customerAuthService.requestOtp(phone);
@@ -90812,7 +93094,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "OTP_REQUEST_FAILED", err.message || "Failed to send OTP", 400);
       }
     });
-    router30.post("/auth/verify-otp", async (req, res) => {
+    router31.post("/auth/verify-otp", async (req, res) => {
       try {
         const phone = req.body.phone || req.body.login_id || req.body.loginId;
         const otp = req.body.otp || req.body.otp_code;
@@ -90824,7 +93106,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "OTP_VERIFICATION_FAILED", err.message || "Failed to verify OTP", 400);
       }
     });
-    router30.post("/auth/login", async (req, res) => {
+    router31.post("/auth/login", async (req, res) => {
       try {
         const loginId = req.body.loginId || req.body.login_id || req.body.phone;
         const pin = req.body.pin;
@@ -90836,7 +93118,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "LOGIN_FAILED", err.message || "Invalid login credentials", 401);
       }
     });
-    router30.post("/auth/heartbeat", requireCustomerAuth, async (req, res) => {
+    router31.post("/auth/heartbeat", requireCustomerAuth, async (req, res) => {
       try {
         const authHeader = req.headers.authorization;
         const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.query.token;
@@ -90847,7 +93129,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "HEARTBEAT_FAILED", err.message || "Failed to update heartbeat", 500);
       }
     });
-    router30.post("/auth/logout", requireCustomerAuth, async (req, res) => {
+    router31.post("/auth/logout", requireCustomerAuth, async (req, res) => {
       try {
         const authHeader = req.headers.authorization;
         const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.query.token;
@@ -90858,7 +93140,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "LOGOUT_FAILED", err.message || "Failed to logout session", 500);
       }
     });
-    router30.get("/dashboard", requireCustomerAuth, async (req, res) => {
+    router31.get("/dashboard", requireCustomerAuth, async (req, res) => {
       try {
         const customerId = req.customer.customerId;
         const summary = await customerService.getDashboardSummary(customerId);
@@ -90867,7 +93149,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "DASHBOARD_ERROR", err.message || "Failed to load dashboard", 500);
       }
     });
-    router30.get("/catalog", async (req, res) => {
+    router31.get("/catalog", async (req, res) => {
       try {
         const { search, category, inStockOnly, limit, offset, storeId } = req.query;
         const result = await catalogService.getCatalog({
@@ -90884,7 +93166,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "CATALOG_ERROR", err.message || "Failed to load catalog", 500);
       }
     });
-    router30.get("/catalog/:id", async (req, res) => {
+    router31.get("/catalog/:id", async (req, res) => {
       try {
         const id = parseInt(String(req.params.id), 10);
         const storeId = req.query.storeId ? parseInt(req.query.storeId, 10) : 1;
@@ -90897,7 +93179,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "PRODUCT_ERROR", err.message || "Failed to load product", 500);
       }
     });
-    router30.get("/bills", requireCustomerAuth, async (req, res) => {
+    router31.get("/bills", requireCustomerAuth, async (req, res) => {
       try {
         const customerId = req.customer.customerId;
         const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
@@ -90908,7 +93190,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "BILLS_ERROR", err.message || "Failed to load bills", 500);
       }
     });
-    router30.get("/bills/:id", requireCustomerAuth, async (req, res) => {
+    router31.get("/bills/:id", requireCustomerAuth, async (req, res) => {
       try {
         const customerId = req.customer.customerId;
         const billId = parseInt(String(req.params.id), 10);
@@ -90921,7 +93203,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "BILL_DETAILS_ERROR", err.message || "Failed to load bill details", 500);
       }
     });
-    router30.get("/bills/:id/reorder", requireCustomerAuth, async (req, res) => {
+    router31.get("/bills/:id/reorder", requireCustomerAuth, async (req, res) => {
       try {
         const customerId = req.customer.customerId;
         const billId = parseInt(String(req.params.id), 10);
@@ -90931,7 +93213,7 @@ var init_customerRoutes = __esm({
         return sendError(res, "REORDER_ERROR", err.message || "Failed to load reorder items", 500);
       }
     });
-    customerRoutes_default = router30;
+    customerRoutes_default = router31;
   }
 });
 
@@ -90940,16 +93222,16 @@ var adminRoutes_exports = {};
 __export(adminRoutes_exports, {
   default: () => adminRoutes_default
 });
-var import_express33, router31, adminRoutes_default;
+var import_express34, router32, adminRoutes_default;
 var init_adminRoutes = __esm({
   "src/routes/api/adminRoutes.ts"() {
     "use strict";
-    import_express33 = __toESM(require("express"), 1);
+    import_express34 = __toESM(require("express"), 1);
     init_pricingService();
     init_catalogService();
     init_apiResponse();
-    router31 = import_express33.default.Router();
-    router31.get("/pricing/rules", async (_req, res) => {
+    router32 = import_express34.default.Router();
+    router32.get("/pricing/rules", async (_req, res) => {
       try {
         const rules = await pricingService.getActiveRules();
         return sendSuccess(res, { rules });
@@ -90957,7 +93239,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "PRICING_RULES_ERROR", err.message || "Failed to fetch pricing rules", 500);
       }
     });
-    router31.post("/pricing/rules", async (req, res) => {
+    router32.post("/pricing/rules", async (req, res) => {
       try {
         const rule = req.body;
         if (!rule.rule_type) {
@@ -90969,7 +93251,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "PRICING_SAVE_ERROR", err.message || "Failed to save pricing rule", 500);
       }
     });
-    router31.delete("/pricing/rules/:id", async (req, res) => {
+    router32.delete("/pricing/rules/:id", async (req, res) => {
       try {
         const id = parseInt(String(req.params.id), 10);
         await pricingService.deleteRule(id);
@@ -90978,7 +93260,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "PRICING_DELETE_ERROR", err.message || "Failed to delete pricing rule", 500);
       }
     });
-    router31.post("/pricing/calculate", async (req, res) => {
+    router32.post("/pricing/calculate", async (req, res) => {
       try {
         const { mrp, costPrice, category, medicineId, storeId } = req.body;
         const result = await pricingService.calculatePrice({
@@ -90993,7 +93275,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "CALCULATION_ERROR", err.message || "Failed to calculate price", 500);
       }
     });
-    router31.get("/catalog", async (req, res) => {
+    router32.get("/catalog", async (req, res) => {
       try {
         const { search, category, channel, limit, offset, storeId } = req.query;
         const result = await catalogService.getCatalog({
@@ -91009,7 +93291,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "ADMIN_CATALOG_ERROR", err.message || "Failed to fetch catalog", 500);
       }
     });
-    router31.put("/catalog/:id/visibility", async (req, res) => {
+    router32.put("/catalog/:id/visibility", async (req, res) => {
       try {
         const medicineId = parseInt(String(req.params.id), 10);
         const { website, whatsapp, portal, pos, featuredRank } = req.body;
@@ -91025,7 +93307,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "VISIBILITY_UPDATE_ERROR", err.message || "Failed to update visibility", 500);
       }
     });
-    router31.get("/customers/:id/sessions", async (req, res) => {
+    router32.get("/customers/:id/sessions", async (req, res) => {
       try {
         const customerId = parseInt(String(req.params.id), 10);
         const { customerAuthService: customerAuthService2 } = await Promise.resolve().then(() => (init_customerAuthService(), customerAuthService_exports));
@@ -91035,7 +93317,7 @@ var init_adminRoutes = __esm({
         return sendError(res, "SESSION_FETCH_ERROR", err.message || "Failed to fetch sessions", 500);
       }
     });
-    adminRoutes_default = router31;
+    adminRoutes_default = router32;
   }
 });
 
@@ -91244,17 +93526,17 @@ var sync_exports = {};
 __export(sync_exports, {
   default: () => sync_default
 });
-var import_express34, router32, sync_default;
+var import_express35, router33, sync_default;
 var init_sync = __esm({
   "src/routes/sync.ts"() {
     "use strict";
-    import_express34 = __toESM(require("express"), 1);
+    import_express35 = __toESM(require("express"), 1);
     init_connection();
     init_storeSyncService();
     init_storeContextService();
     init_eventService();
-    router32 = import_express34.default.Router();
-    router32.get("/status", async (req, res) => {
+    router33 = import_express35.default.Router();
+    router33.get("/status", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const status = await storeSyncService.getSyncStatus(storeId);
@@ -91264,7 +93546,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to get sync status" });
       }
     });
-    router32.post("/push", async (req, res) => {
+    router33.post("/push", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const limit = parseInt(req.body.limit || "100", 10) || 100;
@@ -91275,7 +93557,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to push sync items" });
       }
     });
-    router32.post("/pull", async (req, res) => {
+    router33.post("/pull", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const { items = [] } = req.body;
@@ -91289,7 +93571,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to apply pull sync" });
       }
     });
-    router32.post("/resolve-conflict", async (req, res) => {
+    router33.post("/resolve-conflict", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const { conflict_id, resolution = "keep_local" } = req.body;
@@ -91331,7 +93613,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to resolve conflict" });
       }
     });
-    sync_default = router32;
+    sync_default = router33;
   }
 });
 
@@ -91340,15 +93622,15 @@ var license_exports = {};
 __export(license_exports, {
   default: () => license_default
 });
-var import_express35, router33, license_default;
+var import_express36, router34, license_default;
 var init_license = __esm({
   "src/routes/license.ts"() {
     "use strict";
-    import_express35 = require("express");
+    import_express36 = require("express");
     init_licenseService();
     init_autoUpdateService();
-    router33 = (0, import_express35.Router)();
-    router33.get("/status", async (_req, res) => {
+    router34 = (0, import_express36.Router)();
+    router34.get("/status", async (_req, res) => {
       try {
         const status = await checkLicense();
         res.json({
@@ -91360,14 +93642,14 @@ var init_license = __esm({
         res.status(500).json({ error: err.message, appVersion: APP_VERSION });
       }
     });
-    router33.get("/version", (_req, res) => {
+    router34.get("/version", (_req, res) => {
       res.json({
         version: APP_VERSION,
         appVersion: APP_VERSION,
         currentVersion: APP_VERSION
       });
     });
-    router33.post("/activate", async (req, res) => {
+    router34.post("/activate", async (req, res) => {
       const { licenseId, licenseKey } = req.body || {};
       if (!licenseId?.trim() || !licenseKey?.trim()) {
         return res.status(400).json({ error: "licenseId and licenseKey are required" });
@@ -91383,7 +93665,7 @@ var init_license = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router33.get("/machine-id", (_req, res) => {
+    router34.get("/machine-id", (_req, res) => {
       try {
         const machineId = getMachineId();
         res.json({ machineId: machineId.substring(0, 8) + "..." });
@@ -91391,7 +93673,7 @@ var init_license = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router33.post("/check-update", async (_req, res) => {
+    router34.post("/check-update", async (_req, res) => {
       try {
         const result = await autoUpdateService.triggerCheck();
         res.json({
@@ -91414,7 +93696,7 @@ var init_license = __esm({
         });
       }
     });
-    license_default = router33;
+    license_default = router34;
   }
 });
 
@@ -91582,11 +93864,11 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express36, import_path51, import_fs57, import_pdfkit4, router34, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express37, import_path52, import_fs58, import_pdfkit4, router35, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
-    import_express36 = __toESM(require("express"), 1);
+    import_express37 = __toESM(require("express"), 1);
     init_inventoryActive();
     init_saleTotals();
     init_billNumber();
@@ -91599,8 +93881,8 @@ var init_sales = __esm({
     init_verificationService();
     init_activityLogger();
     init_eventService();
-    import_path51 = __toESM(require("path"), 1);
-    import_fs57 = __toESM(require("fs"), 1);
+    import_path52 = __toESM(require("path"), 1);
+    import_fs58 = __toESM(require("fs"), 1);
     import_pdfkit4 = __toESM(require("pdfkit"), 1);
     init_barcodeService();
     init_config();
@@ -91615,9 +93897,9 @@ var init_sales = __esm({
     init_investigation();
     init_nameNormalizer();
     init_phoneValidation();
-    router34 = import_express36.default.Router();
-    router34.use(tenantAuthMiddleware);
-    router34.use((_req, _res, next) => {
+    router35 = import_express37.default.Router();
+    router35.use(tenantAuthMiddleware);
+    router35.use((_req, _res, next) => {
       dbManager.runWithPriority("VIP", () => next());
     });
     normalizeNumericSearch = (val) => {
@@ -91637,7 +93919,7 @@ var init_sales = __esm({
     SQLITE_BUSY_RETRIES = 5;
     SQLITE_BUSY_BASE_DELAY_MS = 100;
     generateInvoiceNo = (db2) => nextSaleInvoiceNo(db2);
-    router34.get("/last-invoice", async (_req, res) => {
+    router35.get("/last-invoice", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const last = await lastSaleInvoice(db2);
@@ -91647,7 +93929,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.get("/next-invoice", async (_req, res) => {
+    router35.get("/next-invoice", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -91664,7 +93946,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.get("/today-medicines", async (_req, res) => {
+    router35.get("/today-medicines", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -91687,7 +93969,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to fetch today sold medicines: " + err.message });
       }
     });
-    router34.post("/counter-session", async (req, res) => {
+    router35.post("/counter-session", async (req, res) => {
       try {
         let { phone, customerId, refillId, refillIds, specialOrderId, specialOrderIds, autoFulfill } = req.body;
         let cleanPhone = (phone || "").replace(/\D/g, "");
@@ -91860,7 +94142,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err?.message || "Internal server error" });
       }
     });
-    router34.post("/", async (req, res) => {
+    router35.post("/", async (req, res) => {
       let db2;
       try {
         const verification = await verificationService.verifyPOSBill(req.body);
@@ -92438,6 +94720,33 @@ var init_sales = __esm({
                 specialOrderIds: fulfilledSoIds,
                 customerId
               });
+              try {
+                const { executeCloseRefillCycles: executeCloseRefillCycles2 } = await Promise.resolve().then(() => (init_refills(), refills_exports));
+                const soPlaceholders = fulfilledSoIds.map(() => "?").join(",");
+                const soRows = await db2.all(
+                  `SELECT id, source_refill_id, phone, product, medicine_name FROM special_orders WHERE id IN (${soPlaceholders})`,
+                  fulfilledSoIds
+                );
+                const refillIdsToClose = /* @__PURE__ */ new Set();
+                for (const r of soRows) {
+                  if (r.source_refill_id) refillIdsToClose.add(Number(r.source_refill_id));
+                }
+                if (refillIdsToClose.size > 0) {
+                  const rPlaceholders = Array.from(refillIdsToClose).map(() => "?").join(",");
+                  const refs = await db2.all(
+                    `SELECT pr.*, m.name as medicine_name 
+                 FROM patient_refills pr 
+                 LEFT JOIN medicines m ON pr.medicine_id = m.id 
+                 WHERE pr.id IN (${rPlaceholders}) AND pr.is_active = 1`,
+                    Array.from(refillIdsToClose)
+                  );
+                  if (refs.length > 0) {
+                    await executeCloseRefillCycles2(db2, refs, "pos_special_order_fulfilled");
+                  }
+                }
+              } catch (rErr) {
+                console.warn("[Sales] Could not close companion refill on special order fulfillment:", rErr);
+              }
               for (const soId of fulfilledSoIds) {
                 eventService.broadcast("order_updated", { at: Date.now(), orderId: soId, action: "fulfilled_pos" });
                 eventService.broadcast("special_orders_updated", { at: Date.now(), orderId: soId });
@@ -92610,13 +94919,13 @@ var init_sales = __esm({
                 waMsg += `\u2014 AI Pharmacy OS`;
                 let pdfPath = void 0;
                 try {
-                  const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
-                  if (!import_fs57.default.existsSync(uploadsDir)) {
-                    import_fs57.default.mkdirSync(uploadsDir, { recursive: true });
+                  const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads");
+                  if (!import_fs58.default.existsSync(uploadsDir)) {
+                    import_fs58.default.mkdirSync(uploadsDir, { recursive: true });
                   }
                   const sanitizeNo = String(invoice_no || "").replace(/[^a-zA-Z0-9-]/g, "_");
                   const pdfFilename = `invoice_${sanitizeNo}_${Date.now()}.pdf`;
-                  const fullPdfPath = import_path51.default.join(uploadsDir, pdfFilename);
+                  const fullPdfPath = import_path52.default.join(uploadsDir, pdfFilename);
                   const { pdfInvoiceService: pdfInvoiceService2 } = await Promise.resolve().then(() => (init_pdfInvoiceService(), pdfInvoiceService_exports));
                   await pdfInvoiceService2.generateInvoicePdf(invoiceId, fullPdfPath);
                   pdfPath = fullPdfPath;
@@ -92736,7 +95045,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router34.post("/hold", async (req, res) => {
+    router35.post("/hold", async (req, res) => {
       let db2;
       try {
         if (!req.body) {
@@ -92852,7 +95161,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to hold bill" });
       }
     });
-    router34.get("/recommend-quantity", async (req, res) => {
+    router35.get("/recommend-quantity", async (req, res) => {
       const medicineName = req.query.medicineName;
       if (!medicineName) {
         return res.status(400).json({ error: "medicineName query parameter required" });
@@ -92905,7 +95214,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router34.get("/recommend-quantity/batch", async (req, res) => {
+    router35.get("/recommend-quantity/batch", async (req, res) => {
       const namesParam = req.query.medicineNames;
       if (!namesParam) {
         return res.status(400).json({ error: "medicineNames query parameter required" });
@@ -93015,7 +95324,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router34.get("/list", async (req, res) => {
+    router35.get("/list", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -93156,7 +95465,7 @@ var init_sales = __esm({
         return res.status(500).json({ error: "Internal server error", details: err.message });
       }
     });
-    router34.get("/search-medicine", async (req, res) => {
+    router35.get("/search-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -93596,7 +95905,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.get("/suggest-medicine", async (req, res) => {
+    router35.get("/suggest-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -93627,7 +95936,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.post("/queue-from-pos", async (req, res) => {
+    router35.post("/queue-from-pos", async (req, res) => {
       const { medicine_id } = req.body;
       if (!medicine_id) {
         return res.status(400).json({ error: "medicine_id is required" });
@@ -93651,7 +95960,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.get("/universal-search", async (req, res) => {
+    router35.get("/universal-search", async (req, res) => {
       const query = req.query.q;
       if (!query) {
         return res.json([]);
@@ -93673,7 +95982,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.get("/hold", async (_req, res) => {
+    router35.get("/hold", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -93684,7 +95993,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to retrieve held bills" });
       }
     });
-    router34.post("/staged", async (req, res) => {
+    router35.post("/staged", async (req, res) => {
       try {
         const { patient_name, patient_phone, discount = 0, items } = req.body;
         if (!patient_name || !items || !Array.isArray(items) || items.length === 0) {
@@ -93736,7 +96045,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to create staged sale" });
       }
     });
-    router34.get("/staged", async (req, res) => {
+    router35.get("/staged", async (req, res) => {
       const { all } = req.query;
       let db2;
       try {
@@ -93776,14 +96085,14 @@ var init_sales = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs57.default.existsSync(uploadsDir)) {
-          import_fs57.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs58.default.existsSync(uploadsDir)) {
+          import_fs58.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path51.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs57.default.createWriteStream(pdfPath);
+        const pdfPath = import_path52.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs58.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -93809,7 +96118,7 @@ var init_sales = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path51.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path52.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -93817,9 +96126,9 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to generate sale invoice barcode: " + error.message });
       }
     };
-    router34.get("/invoice-barcode", handleInvoiceBarcode);
-    router34.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
-    router34.get("/:id", async (req, res, next) => {
+    router35.get("/invoice-barcode", handleInvoiceBarcode);
+    router35.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
+    router35.get("/:id", async (req, res, next) => {
       const rawId = req.params.id;
       if (!/^\d+$/.test(rawId)) {
         return next();
@@ -93877,7 +96186,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error", details: error.message });
       }
     });
-    router34.put("/:id", async (req, res) => {
+    router35.put("/:id", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -94021,7 +96330,7 @@ var init_sales = __esm({
         res.status(error instanceof SaleEditError ? 400 : 500).json({ error: err.message || "Internal server error" });
       }
     });
-    router34.delete("/:id", async (req, res) => {
+    router35.delete("/:id", async (req, res) => {
       try {
         const { id } = req.params;
         const rawReason = req.body?.reason || req.query?.reason || "Sale invoice deleted";
@@ -94137,7 +96446,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.delete("/hold/:id", async (req, res) => {
+    router35.delete("/hold/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -94192,7 +96501,7 @@ var init_sales = __esm({
     });
     stagedDeviceColumnsReady = false;
     syncDedupeTableReady = false;
-    router34.post("/sync", async (req, res) => {
+    router35.post("/sync", async (req, res) => {
       let db2;
       try {
         const { sales = [], deviceName = "", device_uuid = "" } = req.body;
@@ -94241,7 +96550,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline sales" });
       }
     });
-    router34.post("/staged/:id/approve", async (req, res) => {
+    router35.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, patient_name, patient_phone, discount = 0 } = req.body;
       let db2;
@@ -94333,7 +96642,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged sale" });
       }
     });
-    router34.post("/staged/:id/reject", async (req, res) => {
+    router35.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -94347,7 +96656,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged sale" });
       }
     });
-    router34.post("/staged/:id/consume", async (req, res) => {
+    router35.post("/staged/:id/consume", async (req, res) => {
       const { id } = req.params;
       const invoiceNo = typeof req.body?.invoice_no === "string" ? req.body.invoice_no.slice(0, 64) : null;
       let db2;
@@ -94366,7 +96675,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to consume staged sale" });
       }
     });
-    router34.get("/credit-dues", async (req, res) => {
+    router35.get("/credit-dues", async (req, res) => {
       const customerId = Number(req.query.customer_id) || 0;
       const phone = typeof req.query.phone === "string" ? req.query.phone.trim() : "";
       const refillId = Number(req.query.refill_id) || 0;
@@ -94408,7 +96717,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to load credit dues" });
       }
     });
-    router34.get("/reorder-suggestions", async (_req, res) => {
+    router35.get("/reorder-suggestions", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { ensureMedicineSalesMetricsSchema: ensureMedicineSalesMetricsSchema2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
@@ -94493,7 +96802,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch reorder suggestions" });
       }
     });
-    router34.post("/reorder-suggestions/snooze", async (req, res) => {
+    router35.post("/reorder-suggestions/snooze", async (req, res) => {
       try {
         const { medicineId, snoozeDays = 7, snoozeType = "7_days", reason = "" } = req.body;
         if (!medicineId) {
@@ -94516,7 +96825,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to snooze reorder suggestion" });
       }
     });
-    router34.post("/reorder-suggestions/unsnooze", async (req, res) => {
+    router35.post("/reorder-suggestions/unsnooze", async (req, res) => {
       try {
         const { medicineId } = req.body;
         if (!medicineId) {
@@ -94530,7 +96839,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to unsnooze reorder suggestion" });
       }
     });
-    router34.get("/reorder-suggestions/snoozed", async (_req, res) => {
+    router35.get("/reorder-suggestions/snoozed", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -94585,7 +96894,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch snoozed reorders" });
       }
     });
-    router34.get("/medicine-refill-info/:medicineId", async (req, res) => {
+    router35.get("/medicine-refill-info/:medicineId", async (req, res) => {
       const { medicineId } = req.params;
       const medId = parseInt(medicineId, 10);
       if (isNaN(medId) || medId <= 0) {
@@ -94675,7 +96984,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get medicine refill info" });
       }
     });
-    router34.get("/patient-refill-medicines", async (req, res) => {
+    router35.get("/patient-refill-medicines", async (req, res) => {
       const { customerId, phone, name } = req.query;
       if (!customerId && !phone && !name) {
         return res.status(400).json({ error: "customerId, phone, or name is required" });
@@ -94854,20 +97163,20 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get patient refill medicines" });
       }
     });
-    router34.post("/prescription/upload", async (req, res) => {
+    router35.post("/prescription/upload", async (req, res) => {
       try {
         const { image, fileName: _fileName } = req.body;
         if (!image) {
           return res.status(400).json({ error: "Image data (base64) is required" });
         }
-        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-        if (!import_fs57.default.existsSync(uploadsDir)) {
-          import_fs57.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+        if (!import_fs58.default.existsSync(uploadsDir)) {
+          import_fs58.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const base64Str = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Str, "base64");
         const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-        const fullPath = import_path51.default.join(uploadsDir, safeName);
+        const fullPath = import_path52.default.join(uploadsDir, safeName);
         await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
         const relativeUrl = `/uploads/prescriptions/${safeName}`;
         res.json({ success: true, image_path: relativeUrl });
@@ -94876,7 +97185,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to upload prescription" });
       }
     });
-    router34.post("/:id/prescription", async (req, res) => {
+    router35.post("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       const { prescription_image } = req.body;
       if (!prescription_image) {
@@ -94894,7 +97203,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to attach prescription" });
       }
     });
-    router34.get("/:id/prescription", async (req, res) => {
+    router35.get("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -94917,7 +97226,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch prescription" });
       }
     });
-    sales_default = router34;
+    sales_default = router35;
   }
 });
 
@@ -94926,14 +97235,14 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express37, router35, dashboard_default;
+var import_express38, router36, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
-    import_express37 = __toESM(require("express"), 1);
+    import_express38 = __toESM(require("express"), 1);
     init_connection();
-    router35 = import_express37.default.Router();
-    router35.get("/", async (_req, res) => {
+    router36 = import_express38.default.Router();
+    router36.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const [salesTodayRow, lowStockCount, pendingTasksCount, alerts, storageLocationsCount, pendingSpecialOrdersCount, activeDeliveryBoysCount, purchasesTodayRow, recentSales, recentCommunications] = await Promise.all([
@@ -94984,7 +97293,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.delete("/alerts/:id", async (req, res) => {
+    router36.delete("/alerts/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -94995,7 +97304,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    dashboard_default = router35;
+    dashboard_default = router36;
   }
 });
 
@@ -95270,13 +97579,13 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios4, import_fs58, import_path52, import_tesseract4, InvoiceVisionService, invoiceVisionService;
+var import_axios4, import_fs59, import_path53, import_tesseract4, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
     import_axios4 = __toESM(require("axios"), 1);
-    import_fs58 = __toESM(require("fs"), 1);
-    import_path52 = __toESM(require("path"), 1);
+    import_fs59 = __toESM(require("fs"), 1);
+    import_path53 = __toESM(require("path"), 1);
     import_tesseract4 = require("tesseract.js");
     init_connection();
     init_nameNormalizer();
@@ -95287,14 +97596,14 @@ var init_invoiceVisionService = __esm({
        * Parse a purchase invoice from an image buffer (JPEG/PNG/WebP/PDF).
        */
       async parseInvoiceImage(buffer, mimeType = "image/jpeg", originalFilename = "invoice.jpg") {
-        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
-        if (!import_fs58.default.existsSync(uploadsDir)) {
-          import_fs58.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
+        if (!import_fs59.default.existsSync(uploadsDir)) {
+          import_fs59.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const ext = import_path52.default.extname(originalFilename) || ".jpg";
+        const ext = import_path53.default.extname(originalFilename) || ".jpg";
         const safeFilename = `PB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
-        const savedPath = import_path52.default.join(uploadsDir, safeFilename);
-        import_fs58.default.writeFileSync(savedPath, buffer);
+        const savedPath = import_path53.default.join(uploadsDir, safeFilename);
+        import_fs59.default.writeFileSync(savedPath, buffer);
         const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
         let geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
         if (!geminiKey || geminiKey.trim() === "") {
@@ -95862,21 +98171,21 @@ function invalidateReconciliationCache() {
   reconciliationCache = null;
   inFlightReconciliationPromise = null;
 }
-var import_express38, import_path53, import_multer2, import_fs59, router36, upload2, batchLastPurchaseCache, BATCH_LAST_PURCHASE_TTL_MS, reconciliationCache, inFlightReconciliationPromise, RECONCILIATION_CACHE_TTL_MS, purchases_default;
+var import_express39, import_path54, import_multer2, import_fs60, router37, upload2, batchLastPurchaseCache, BATCH_LAST_PURCHASE_TTL_MS, reconciliationCache, inFlightReconciliationPromise, RECONCILIATION_CACHE_TTL_MS, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
-    import_express38 = __toESM(require("express"), 1);
+    import_express39 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
-    import_path53 = __toESM(require("path"), 1);
+    import_path54 = __toESM(require("path"), 1);
     import_multer2 = __toESM(require("multer"), 1);
     init_productNameFilterService();
     init_emailService();
     init_config();
     init_inventoryActive();
     init_inventoryCache();
-    import_fs59 = __toESM(require("fs"), 1);
+    import_fs60 = __toESM(require("fs"), 1);
     init_medicineService();
     init_orderFulfillmentService();
     init_summaryCacheService();
@@ -95890,9 +98199,9 @@ var init_purchases = __esm({
     init_stockCalculatorWorker();
     init_expiryAlertService();
     init_reconciliationMatcher();
-    router36 = import_express38.default.Router();
+    router37 = import_express39.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
-    router36.get("/summary", async (_req, res) => {
+    router37.get("/summary", async (_req, res) => {
       try {
         const cached = await getSummaryCache("purchase_summary");
         if (cached) {
@@ -95905,22 +98214,22 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/upload", upload2.single("file"), async (req, res) => {
+    router37.post("/upload", upload2.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const uploadsDir = process.env.UPLOADS_DIR || import_path53.default.join(getAppDataDir(), "uploads");
-        if (!import_fs59.default.existsSync(uploadsDir)) {
-          import_fs59.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = process.env.UPLOADS_DIR || import_path54.default.join(getAppDataDir(), "uploads");
+        if (!import_fs60.default.existsSync(uploadsDir)) {
+          import_fs60.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const sanitizedFilename = import_path53.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        const tempPath = import_path53.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
-        import_fs59.default.writeFileSync(tempPath, req.file.buffer);
+        const sanitizedFilename = import_path54.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const tempPath = import_path54.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
+        import_fs60.default.writeFileSync(tempPath, req.file.buffer);
         const result = await emailService.parseAndImportAttachment(tempPath, false);
         if (!result.success) {
           try {
-            import_fs59.default.unlinkSync(tempPath);
+            import_fs60.default.unlinkSync(tempPath);
           } catch {
           }
           return res.status(400).json({ error: "Failed to parse invoice file" });
@@ -95946,7 +98255,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to process invoice file: " + err.message });
       }
     });
-    router36.get("/", async (req, res) => {
+    router37.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const months = parseInt(req.query.months) || 0;
@@ -96046,7 +98355,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/earliest-date", async (_req, res) => {
+    router37.get("/earliest-date", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(`
@@ -96062,7 +98371,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/check-duplicate", async (req, res) => {
+    router37.get("/check-duplicate", async (req, res) => {
       try {
         const invoiceNo = String(req.query.invoice_no || "").trim();
         const distributorId = req.query.distributor_id ? parseInt(String(req.query.distributor_id), 10) : null;
@@ -96128,7 +98437,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to verify invoice uniqueness" });
       }
     });
-    router36.post("/manual", async (req, res) => {
+    router37.post("/manual", async (req, res) => {
       const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items, source_filename, source_file_headers, mapping_config, email_uid } = req.body;
       let db2;
       try {
@@ -96555,7 +98864,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message, stack: error.stack });
       }
     });
-    router36.get("/items/all", async (req, res) => {
+    router37.get("/items/all", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limit = parseInt(req.query.limit) || 1e3;
@@ -96588,10 +98897,10 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.put("/:id/full", async (req, res) => {
+    router37.put("/:id/full", async (req, res) => {
       return handleUpdatePurchaseFull(req, res);
     });
-    router36.put("/:id", async (req, res) => {
+    router37.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { distributor, invoice_no, total_amount, date } = req.body;
       try {
@@ -96615,7 +98924,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.delete("/:id", async (req, res) => {
+    router37.delete("/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -96662,7 +98971,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/bulk-action", async (req, res) => {
+    router37.post("/bulk-action", async (req, res) => {
       const { action, ids = [] } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -96676,7 +98985,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/last-purchase", async (req, res) => {
+    router37.get("/last-purchase", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -96755,7 +99064,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/medicine-batches", async (req, res) => {
+    router37.get("/medicine-batches", async (req, res) => {
       let db2;
       try {
         const medicineIdParam = req.query.medicine_id;
@@ -96927,7 +99236,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/price-history", async (req, res) => {
+    router37.get("/price-history", async (req, res) => {
       let db2;
       try {
         const medicineIdParam = req.query.medicine_id;
@@ -97027,7 +99336,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/last-by-distributor", async (req, res) => {
+    router37.get("/last-by-distributor", async (req, res) => {
       const medicineId = parseInt(req.query.medicine_id, 10);
       if (!medicineId || medicineId <= 0) {
         return res.status(400).json({ error: "medicine_id is required" });
@@ -97054,7 +99363,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/frequent", async (req, res) => {
+    router37.get("/frequent", async (req, res) => {
       const distributorId = parseInt(req.query.distributor_id, 10);
       if (!distributorId || distributorId <= 0) {
         return res.status(400).json({ error: "distributor_id is required" });
@@ -97106,7 +99415,7 @@ var init_purchases = __esm({
     });
     batchLastPurchaseCache = /* @__PURE__ */ new Map();
     BATCH_LAST_PURCHASE_TTL_MS = 6e4;
-    router36.post("/batch-last-purchase", async (req, res) => {
+    router37.post("/batch-last-purchase", async (req, res) => {
       let db2;
       try {
         const { medicines, distributor_id } = req.body;
@@ -97215,7 +99524,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/history-prefill", async (req, res) => {
+    router37.get("/history-prefill", async (req, res) => {
       let db2;
       try {
         const name = String(req.query.name || "").trim();
@@ -97298,7 +99607,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/:id/pdf", async (req, res) => {
+    router37.get("/:id/pdf", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -97420,7 +99729,7 @@ var init_purchases = __esm({
     reconciliationCache = null;
     inFlightReconciliationPromise = null;
     RECONCILIATION_CACHE_TTL_MS = 15e3;
-    router36.get("/reconciliation", async (_req, res) => {
+    router37.get("/reconciliation", async (_req, res) => {
       try {
         const now = Date.now();
         if (reconciliationCache && now - reconciliationCache.ts < RECONCILIATION_CACHE_TTL_MS) {
@@ -97736,7 +100045,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/ignored-words", async (_req, res) => {
+    router37.get("/ignored-words", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT id, word, source, created_at FROM permanently_ignored_words ORDER BY created_at DESC");
@@ -97746,7 +100055,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/ignored-words", async (req, res) => {
+    router37.post("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { word, source = "recon" } = req.body;
@@ -97766,7 +100075,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.delete("/ignored-words/:id", async (req, res) => {
+    router37.delete("/ignored-words/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = Number(req.params.id);
@@ -97781,7 +100090,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/reconciliation/learn-mapping", async (req, res) => {
+    router37.post("/reconciliation/learn-mapping", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { distributor_id, distributor_name, mapping_config } = req.body;
@@ -97801,7 +100110,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to save distributor mapping template" });
       }
     });
-    router36.post("/reconciliation/resolve", async (req, res) => {
+    router37.post("/reconciliation/resolve", async (req, res) => {
       const { email_uid } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -97824,7 +100133,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/reconciliation/preview/:email_uid", async (req, res) => {
+    router37.get("/reconciliation/preview/:email_uid", async (req, res) => {
       try {
         const { email_uid } = req.params;
         const db2 = await dbManager.getConnection();
@@ -97840,7 +100149,7 @@ var init_purchases = __esm({
         let parsedTotalAmount = 0;
         let parsedGlobalCdPer = 0;
         for (const att of dbAttachments) {
-          if (att.local_path && import_fs59.default.existsSync(att.local_path)) {
+          if (att.local_path && import_fs60.default.existsSync(att.local_path)) {
             try {
               const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
               if (resParse && resParse.success) {
@@ -97907,7 +100216,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router36.post("/reconciliation/reissue", async (req, res) => {
+    router37.post("/reconciliation/reissue", async (req, res) => {
       const { email_uid, invoice_date: bodyInvoiceDate } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -97949,7 +100258,7 @@ var init_purchases = __esm({
         if (parsedItems.length === 0) {
           const dbAttachments = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachments) {
-            if (att.local_path && import_fs59.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs60.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -97985,7 +100294,7 @@ var init_purchases = __esm({
         if (!resolvedInvoiceDate) {
           const dbAttachmentsForDate = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachmentsForDate) {
-            if (!resolvedInvoiceDate && att.local_path && import_fs59.default.existsSync(att.local_path)) {
+            if (!resolvedInvoiceDate && att.local_path && import_fs60.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse?.success && resParse.invoice_date) {
@@ -98184,7 +100493,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router36.post("/match-items", async (req, res) => {
+    router37.post("/match-items", async (req, res) => {
       try {
         const { names, distributor_id } = req.body || {};
         if (!Array.isArray(names) || names.length === 0) {
@@ -98221,7 +100530,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "match-items failed" });
       }
     });
-    router36.get("/staged", async (_req, res) => {
+    router37.get("/staged", async (_req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -98237,7 +100546,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to retrieve staged purchases" });
       }
     });
-    router36.get("/reconciliation/bounced", async (_req, res) => {
+    router37.get("/reconciliation/bounced", async (_req, res) => {
       try {
         const { bouncedAlertService: bouncedAlertService2 } = await Promise.resolve().then(() => (init_bouncedAlertService(), bouncedAlertService_exports));
         const sent = await bouncedAlertService2.checkAndSendBouncedProductsAlert();
@@ -98247,7 +100556,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router36.get("/bill-barcode/:purchaseId", async (req, res) => {
+    router37.get("/bill-barcode/:purchaseId", async (req, res) => {
       const purchaseId = Number(req.params.purchaseId);
       if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
         return res.status(400).json({ error: "Valid purchase id is required" });
@@ -98276,14 +100585,14 @@ var init_purchases = __esm({
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
         const { default: PDFDocument6 } = await import("pdfkit");
-        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs59.default.existsSync(uploadsDir)) {
-          import_fs59.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs60.default.existsSync(uploadsDir)) {
+          import_fs60.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new PDFDocument6({ size: [350, 220], margin: 15 });
         const sanitizeNo = billNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path53.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs59.default.createWriteStream(pdfPath);
+        const pdfPath = import_path54.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs60.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -98312,7 +100621,7 @@ var init_purchases = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path53.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path54.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -98321,7 +100630,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to generate purchase bill barcode: " + message });
       }
     });
-    router36.get("/:id", async (req, res) => {
+    router37.get("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -98354,7 +100663,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/sync", async (req, res) => {
+    router37.post("/sync", async (req, res) => {
       let db2;
       try {
         const { purchases = [] } = req.body;
@@ -98395,7 +100704,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline purchases" });
       }
     });
-    router36.post("/staged/:id/approve", async (req, res) => {
+    router37.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, distributor_name, invoice_no, date, total_amount } = req.body;
       let db2;
@@ -98575,7 +100884,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged purchase" });
       }
     });
-    router36.post("/staged/:id/reject", async (req, res) => {
+    router37.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -98589,7 +100898,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged purchase" });
       }
     });
-    router36.post("/scan-bill", upload2.single("file"), async (req, res) => {
+    router37.post("/scan-bill", upload2.single("file"), async (req, res) => {
       try {
         const { invoiceVisionService: invoiceVisionService2 } = await Promise.resolve().then(() => (init_invoiceVisionService(), invoiceVisionService_exports));
         let buffer = null;
@@ -98615,7 +100924,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to process purchase bill image" });
       }
     });
-    purchases_default = router36;
+    purchases_default = router37;
   }
 });
 
@@ -98624,15 +100933,15 @@ var sellPrice_exports = {};
 __export(sellPrice_exports, {
   default: () => sellPrice_default
 });
-var import_express39, router37, sellPrice_default;
+var import_express40, router38, sellPrice_default;
 var init_sellPrice = __esm({
   "src/routes/sellPrice.ts"() {
     "use strict";
-    import_express39 = __toESM(require("express"), 1);
+    import_express40 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
-    router37 = import_express39.default.Router();
-    router37.post("/bulk-update", async (req, res) => {
+    router38 = import_express40.default.Router();
+    router38.post("/bulk-update", async (req, res) => {
       let db2;
       try {
         const items = Array.isArray(req.body) ? req.body : req.body?.items || [];
@@ -98681,7 +100990,7 @@ var init_sellPrice = __esm({
         res.status(500).json({ error: error.message || "Failed to update sell prices" });
       }
     });
-    sellPrice_default = router37;
+    sellPrice_default = router38;
   }
 });
 
@@ -98776,22 +101085,22 @@ async function moveSupplierReturnStock(db2, returnId, oldLines, newLines, ledger
     });
   }
 }
-var import_express40, import_path54, import_fs60, import_pdfkit5, router38, RETURN_STOCK_LEDGER_TYPES, ReturnEditError, returns_default;
+var import_express41, import_path55, import_fs61, import_pdfkit5, router39, RETURN_STOCK_LEDGER_TYPES, ReturnEditError, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
-    import_express40 = __toESM(require("express"), 1);
+    import_express41 = __toESM(require("express"), 1);
     init_connection();
-    import_path54 = __toESM(require("path"), 1);
-    import_fs60 = __toESM(require("fs"), 1);
+    import_path55 = __toESM(require("path"), 1);
+    import_fs61 = __toESM(require("fs"), 1);
     import_pdfkit5 = __toESM(require("pdfkit"), 1);
     init_aiCameraService();
     init_inventoryCache();
     init_config();
     init_stockRebuild();
     init_eventService();
-    router38 = import_express40.default.Router();
-    router38.use((req, res, next) => {
+    router39 = import_express41.default.Router();
+    router39.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -98809,7 +101118,7 @@ var init_returns = __esm({
       }
       next();
     });
-    router38.get("/", async (req, res) => {
+    router39.get("/", async (req, res) => {
       let db2;
       try {
         const { search, date_from, date_to, min_amount, max_amount } = req.query;
@@ -98892,7 +101201,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/", async (req, res) => {
+    router39.post("/", async (req, res) => {
       let db2;
       try {
         const { return_no, original_invoice_id, type, total_amount, distributor_id, is_expiry, loss_percentage, return_invoice_id, return_sub_type, return_date_time } = req.body;
@@ -98928,7 +101237,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/near-expiry", async (req, res) => {
+    router39.get("/near-expiry", async (req, res) => {
       let db2;
       try {
         const monthsStr = req.query.months || "6";
@@ -98988,7 +101297,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/financial-note", async (req, res) => {
+    router39.post("/financial-note", async (req, res) => {
       let pdfDoc;
       let stream;
       try {
@@ -98998,8 +101307,8 @@ var init_returns = __esm({
         }
         pdfDoc = new import_pdfkit5.default();
         const filename = `financial-note-${Date.now()}.pdf`;
-        const outPath = import_path54.default.resolve(getAppDataDir(), "uploads", filename);
-        stream = import_fs60.default.createWriteStream(outPath);
+        const outPath = import_path55.default.resolve(getAppDataDir(), "uploads", filename);
+        stream = import_fs61.default.createWriteStream(outPath);
         pdfDoc.pipe(stream);
         pdfDoc.fontSize(20).text(`${type.charAt(0).toUpperCase() + type.slice(1)} Note`, { align: "center" });
         if (amount) {
@@ -99032,7 +101341,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/ai-camera/process", async (req, res) => {
+    router39.post("/ai-camera/process", async (req, res) => {
       try {
         if (!req.body || !req.body.image) {
           return res.status(400).json({ error: "Image data is required" });
@@ -99056,7 +101365,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error during OCR processing" });
       }
     });
-    router38.get("/lookup-purchases", async (req, res) => {
+    router39.get("/lookup-purchases", async (req, res) => {
       let db2;
       try {
         const { name, batch, distributor_id, distributor_name } = req.query;
@@ -99164,7 +101473,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/process-returns", async (req, res) => {
+    router39.post("/process-returns", async (req, res) => {
       let db2;
       try {
         const {
@@ -99346,7 +101655,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/export-pdf-report", async (req, res) => {
+    router39.post("/export-pdf-report", async (req, res) => {
       try {
         const { items, return_sub_type: pdfSubType, reason: pdfReason } = req.body;
         if (!items || !Array.isArray(items) || items.length === 0) {
@@ -99427,7 +101736,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/:id/items", async (req, res) => {
+    router39.get("/:id/items", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -99460,7 +101769,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/:id/resolve-missing", async (req, res) => {
+    router39.get("/:id/resolve-missing", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -99552,7 +101861,7 @@ var init_returns = __esm({
     ReturnEditError = class extends Error {
       status = 400;
     };
-    router38.put("/:id", async (req, res) => {
+    router39.put("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -99600,7 +101909,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.delete("/:id", async (req, res) => {
+    router39.delete("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -99627,7 +101936,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/expiry-reviews", async (req, res) => {
+    router39.get("/expiry-reviews", async (req, res) => {
       let db2;
       try {
         const { status, search, date_from, date_to } = req.query;
@@ -99690,7 +101999,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/expiry-reviews/scan", async (_req, res) => {
+    router39.post("/expiry-reviews/scan", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { scanAndCreateExpiryReviews: scanAndCreateExpiryReviews2 } = await Promise.resolve().then(() => (init_returnsService(), returnsService_exports));
@@ -99705,7 +102014,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to run expiry scan" });
       }
     });
-    router38.post("/expiry-reviews/:id/approve", async (req, res) => {
+    router39.post("/expiry-reviews/:id/approve", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -99845,7 +102154,7 @@ var init_returns = __esm({
         res.status(500).json({ error: err.message || "Failed to approve return review" });
       }
     });
-    router38.post("/expiry-reviews/:id/reject", async (req, res) => {
+    router39.post("/expiry-reviews/:id/reject", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -99884,7 +102193,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to reject expiry review" });
       }
     });
-    router38.post("/expiry-reviews/bulk-approve", async (req, res) => {
+    router39.post("/expiry-reviews/bulk-approve", async (req, res) => {
       let db2;
       try {
         const { ids, loss_percentage } = req.body;
@@ -100017,7 +102326,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to bulk approve expiry reviews" });
       }
     });
-    router38.get("/expiry-reviews/audit-history", async (_req, res) => {
+    router39.get("/expiry-reviews/audit-history", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const logs = await db2.all(`
@@ -100032,7 +102341,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to fetch audit history" });
       }
     });
-    returns_default = router38;
+    returns_default = router39;
   }
 });
 
@@ -100053,17 +102362,17 @@ var customerReturns_exports = {};
 __export(customerReturns_exports, {
   default: () => customerReturns_default
 });
-var import_express41, router39, broadcastCustomerReturn, customerReturns_default;
+var import_express42, router40, broadcastCustomerReturn, customerReturns_default;
 var init_customerReturns = __esm({
   "src/routes/customerReturns.ts"() {
     "use strict";
-    import_express41 = __toESM(require("express"), 1);
+    import_express42 = __toESM(require("express"), 1);
     init_connection();
     init_asyncHandler();
     init_inventoryCache();
     init_stockRebuild();
     init_eventService();
-    router39 = import_express41.default.Router();
+    router40 = import_express42.default.Router();
     broadcastCustomerReturn = () => {
       try {
         eventService.broadcast("return_created", { at: Date.now(), type: "customer_return" });
@@ -100071,7 +102380,7 @@ var init_customerReturns = __esm({
       } catch (_) {
       }
     };
-    router39.get("/search-invoice", asyncHandler(async (req, res) => {
+    router40.get("/search-invoice", asyncHandler(async (req, res) => {
       const { invoice_no } = req.query;
       if (!invoice_no) {
         return res.status(400).json({ error: "invoice_no required" });
@@ -100105,7 +102414,7 @@ var init_customerReturns = __esm({
       await dbManager.close();
       res.json({ invoice, items, previousReturns });
     }));
-    router39.post("/", asyncHandler(async (req, res) => {
+    router40.post("/", asyncHandler(async (req, res) => {
       const { original_invoice_id, return_items, reason } = req.body;
       if (!original_invoice_id || !Array.isArray(return_items) || return_items.length === 0) {
         return res.status(400).json({ error: "Invalid return data" });
@@ -100231,7 +102540,7 @@ var init_customerReturns = __esm({
       broadcastCustomerReturn();
       res.json({ success: true, return_no: result.returnNo, total_refund: result.totalRefund });
     }));
-    router39.get("/history", asyncHandler(async (req, res) => {
+    router40.get("/history", asyncHandler(async (req, res) => {
       const db2 = await dbManager.getConnection();
       const start = req.query.start;
       const end = req.query.end;
@@ -100311,2189 +102620,7 @@ var init_customerReturns = __esm({
         res.json(rows);
       }
     }));
-    customerReturns_default = router39;
-  }
-});
-
-// src/routes/orders.ts
-var orders_exports = {};
-__export(orders_exports, {
-  default: () => orders_default
-});
-async function initOrdersTable(db2) {
-  if (ordersTableInitialized) return;
-  try {
-    const cols = await db2.all("PRAGMA table_info(special_orders)");
-    const colNames = new Set(cols.map((c) => c.name));
-    if (!colNames.has("notification_count")) {
-      await db2.run("ALTER TABLE special_orders ADD COLUMN notification_count INTEGER DEFAULT 0");
-    }
-    if (!colNames.has("cart_add_error")) {
-      await db2.run("ALTER TABLE special_orders ADD COLUMN cart_add_error TEXT DEFAULT NULL");
-    }
-  } catch (_) {
-  }
-  ordersTableInitialized = true;
-}
-async function enqueueArrivalWhatsApp(db2, order, options) {
-  if (options?.skipWhatsApp) return false;
-  const cleanPhone = String(order.phone || "").replace(/\D/g, "");
-  if (!cleanPhone) return false;
-  const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-  const last102 = cleanPhone.slice(-10);
-  const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
-  const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-  const lang = custRow?.language || "en";
-  const companionOrders = await db2.all(
-    `SELECT id, product, medicine_name, qty, status FROM special_orders
-     WHERE (phone LIKE ? OR phone = ? OR (requester = ? AND requester != ''))
-       AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
-       AND (notified = 0 OR id = ?)`,
-    [`%${last102}`, cleanPhone, order.requester || "", order.id]
-  ).catch(() => []);
-  const bundleOrders = companionOrders && companionOrders.length > 0 ? companionOrders : [order];
-  let msg;
-  if (bundleOrders.length > 1) {
-    const multiItems = bundleOrders.map((o) => ({
-      productName: (o.product || o.medicine_name || "Special Order Item").trim(),
-      qty: o.qty || 1,
-      status: "arrived"
-    }));
-    msg = await buildMultiOrderNotificationMessage(order.requester, multiItems, db2, lang);
-  } else {
-    msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
-  }
-  if (!options?.forceResend && !options?.skipDedupe) {
-    const recentQueue = await db2.get(
-      `SELECT id, created_at FROM whatsapp_send_queue
-       WHERE (number LIKE ? OR number LIKE ?)
-         AND type IN ('special_order', 'special_order_multi_arrived')
-         AND message = ?
-         AND status NOT IN ('cancelled', 'failed_perm')
-         AND created_at >= ?
-       ORDER BY created_at DESC LIMIT 1`,
-      [`%${last102}%`, `%${formattedPhone}%`, msg, sixtyMinutesAgoMs]
-    );
-    if (recentQueue) {
-      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (same order already queued within 60m, queue ID: ${recentQueue.id}).`);
-      return false;
-    }
-  }
-  let pdfPath = void 0;
-  try {
-    const uploadsDir = import_path55.default.resolve(getAppDataDir(), "uploads");
-    if (!import_fs61.default.existsSync(uploadsDir)) {
-      import_fs61.default.mkdirSync(uploadsDir, { recursive: true });
-    }
-    const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
-    const fullPdfPath = import_path55.default.join(uploadsDir, pdfFilename);
-    await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
-    pdfPath = fullPdfPath;
-  } catch (pdfErr) {
-    console.warn(`[Orders] Special order PDF slip generation note for #${order.id}:`, pdfErr);
-  }
-  await whatsappQueueWorker.enqueue(
-    formattedPhone,
-    msg,
-    "special_order",
-    order.requester || "Customer",
-    void 0,
-    pdfPath,
-    void 0,
-    { skipDedupe: options?.skipDedupe }
-  );
-  void ensureWhatsAppReady(3e4).catch(() => {
-  });
-  const bundleOrderIds = bundleOrders.map((o) => o.id);
-  const placeholders = bundleOrderIds.map(() => "?").join(",");
-  await db2.run(
-    `UPDATE special_orders 
-     SET notified = 1, 
-         notification_count = COALESCE(notification_count, 0) + 1,
-         last_collection_reminder_at = datetime('now')
-     WHERE id IN (${placeholders})`,
-    bundleOrderIds
-  ).catch(() => {
-  });
-  for (const bOrd of bundleOrders) {
-    await db2.run(
-      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      ["special_order_arrived", order.requester || "Customer", formattedPhone, msg, "queued", String(bOrd.id)]
-    ).catch(() => {
-    });
-  }
-  return true;
-}
-async function cancelPendingWhatsAppForOrder(db2, order) {
-  const cleanPhone = order.phone ? order.phone.replace(/\D/g, "") : "";
-  const last102 = cleanPhone.slice(-10);
-  const reqName = (order.requester || "").trim();
-  const prodName = (order.product || "").trim();
-  try {
-    const matchConditions = [];
-    const matchArgs = [];
-    if (last102 && last102.length >= 7) {
-      matchConditions.push("number LIKE ?");
-      matchArgs.push(`%${last102}%`);
-    }
-    if (reqName) {
-      matchConditions.push("target_name = ?");
-      matchArgs.push(reqName);
-    }
-    if (prodName) {
-      matchConditions.push("message LIKE ?");
-      matchArgs.push(`%${prodName}%`);
-    }
-    if (matchConditions.length > 0) {
-      await db2.run(
-        `DELETE FROM whatsapp_send_queue 
-         WHERE status IN ('pending', 'failed_offline') 
-           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'order_ready', 'refill_collection', 'admin_shortage_reminder', 'whatsapp_notification')
-           AND (${matchConditions.join(" OR ")})`,
-        matchArgs
-      );
-    }
-  } catch (cancelErr) {
-    console.warn("[Orders] Could not delete pending WhatsApp queue items for order:", cancelErr);
-  }
-  try {
-    await db2.run(
-      `DELETE FROM automation_notifications 
-       WHERE reference_id IN (?, ?)
-          OR (type = 'admin_shortage_reminder' AND message LIKE ?)
-          OR (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') AND reference_id = ?)`,
-      [String(order.id), `shortage_${order.id}`, prodName ? `%${prodName}%` : "", String(order.id)]
-    );
-  } catch (_) {
-  }
-}
-var import_express42, import_path55, import_fs61, router40, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, handleBatchStatusUpdate, orders_default;
-var init_orders = __esm({
-  "src/routes/orders.ts"() {
-    "use strict";
-    import_express42 = __toESM(require("express"), 1);
-    init_connection();
-    import_path55 = __toESM(require("path"), 1);
-    import_fs61 = __toESM(require("fs"), 1);
-    init_whatsappClient();
-    init_storeSettingsService();
-    init_closureNotice();
-    init_whatsappQueueWorker();
-    init_pdfInvoiceService();
-    init_eventService();
-    init_config();
-    init_nameFormatter();
-    init_storeContextService();
-    init_returnWindowService();
-    init_orderScheduleService();
-    init_paymentQrService();
-    init_refillService();
-    init_phoneValidation();
-    router40 = import_express42.default.Router();
-    broadcastOrdersChanged2 = (delta) => {
-      try {
-        if (delta) {
-          eventService.broadcast("order_delta", delta);
-        }
-        eventService.broadcast("order_updated", { at: Date.now(), delta });
-      } catch (_) {
-      }
-    };
-    ordersTableInitialized = false;
-    router40.get("/", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const storeId = resolveStoreId(req);
-        const allStores = req.query.all_stores === "true";
-        let orders;
-        try {
-          if (allStores) {
-            orders = await db2.all("SELECT * FROM special_orders ORDER BY created_at DESC, id DESC LIMIT 1000");
-          } else {
-            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY created_at DESC, id DESC LIMIT 1000", [storeId]);
-          }
-        } catch (_) {
-          if (allStores) {
-            orders = await db2.all("SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000");
-          } else {
-            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000", [storeId]);
-          }
-        }
-        res.json(orders);
-      } catch (err) {
-        console.error("Orders fetch error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router40.post("/batch", async (req, res) => {
-      const {
-        items,
-        requester,
-        phone,
-        priority = "Normal",
-        status = "Pending",
-        advance_payment = 0,
-        sendWhatsApp = false,
-        store_id
-      } = req.body;
-      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "At least one medicine item is required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
-        if (!phoneVal.isValid) {
-          return res.status(400).json({ error: phoneVal.error });
-        }
-        const cleanPhone = phoneVal.cleanPhone;
-        const cleanReqName = formatCustomerName(requester);
-        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
-        const insertedOrders = [];
-        const batchCustomerId = req.body.customer_id ? Number(req.body.customer_id) : null;
-        if (cleanPhone && cleanPhone.length >= 10) {
-          try {
-            if (batchCustomerId) {
-              await db2.run("UPDATE customers SET name = ?, phone = ? WHERE id = ?", [cleanReqName, cleanPhone, batchCustomerId]);
-            } else {
-              const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
-              if (!existingCust) {
-                await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [cleanReqName, cleanPhone]);
-              }
-            }
-          } catch (_) {
-          }
-        }
-        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            const medName = (item.product || item.medicine_name || item.name || "").trim();
-            if (!medName) continue;
-            const itemQty = Number(item.qty) || 1;
-            const itemAdv = i === 0 && advance_payment ? Number(advance_payment) : Number(item.advance_payment || 0);
-            const initialNotified = 0;
-            const initialStatus = item.status || status || "Pending";
-            let resolvedMedicineId = item.medicine_id ? Number(item.medicine_id) : null;
-            if (!resolvedMedicineId && medName) {
-              const medRow = await db2.get(
-                `SELECT id FROM medicines WHERE name = ? COLLATE NOCASE OR canonical_name = ? COLLATE NOCASE LIMIT 1`,
-                [medName, medName]
-              );
-              if (medRow) {
-                resolvedMedicineId = medRow.id;
-              }
-            }
-            const result = await db2.run(
-              `INSERT INTO special_orders (
-            store_id, customer_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
-            pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
-            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
-            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
-            schedule_calculated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                targetStoreId,
-                batchCustomerId,
-                resolvedMedicineId,
-                medName,
-                medName,
-                cleanReqName,
-                cleanPhone,
-                itemQty,
-                item.priority || priority,
-                initialStatus,
-                todayStr2,
-                initialNotified,
-                item.distributor || item.pharmarack_distributor || null,
-                item.rate !== void 0 ? item.rate : item.pharmarack_rate !== void 0 ? item.pharmarack_rate : null,
-                item.mrp !== void 0 ? item.mrp : item.pharmarack_mrp !== void 0 ? item.pharmarack_mrp : null,
-                item.mapped ? 1 : item.pharmarack_mapped ? 1 : 0,
-                item.scheme || item.pharmarack_scheme || null,
-                itemAdv,
-                calculatedSchedule.scheduledProcessingAt,
-                calculatedSchedule.estimatedDeliveryStart,
-                calculatedSchedule.estimatedDeliveryEnd,
-                calculatedSchedule.cutoffAt,
-                calculatedSchedule.timezone,
-                calculatedSchedule.scheduleStatus,
-                calculatedSchedule.scheduleReason,
-                calculatedSchedule.scheduleVersion,
-                calculatedSchedule.calculatedAt
-              ]
-            );
-            insertedOrders.push({
-              id: result.lastID || 0,
-              product: medName,
-              qty: itemQty
-            });
-          }
-          await db2.run("COMMIT");
-        } catch (txErr) {
-          await db2.run("ROLLBACK");
-          throw txErr;
-        }
-        if (Boolean(sendWhatsApp || req.body.sendWhatsApp) && cleanPhone) {
-          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-          const medicalName = await getStoreMedicalNameAndPhone(db2);
-          const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: \u20B9${Number(advance_payment).toFixed(2)})` : "";
-          const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-          const lang = req.body.language || custRow?.language || "en";
-          let itemsListStr = "";
-          if (insertedOrders.length === 1) {
-            itemsListStr = `${insertedOrders[0].product}`;
-          } else {
-            itemsListStr = "\n" + insertedOrders.map((o, idx) => `${idx + 1}. ${o.product}`).join("\n");
-          }
-          let msg = "";
-          if (lang === "hi") {
-            msg = `\u0928\u092E\u0938\u094D\u0924\u0947 ${cleanReqName}, ${medicalName} \u092A\u0930 \u0906\u092A\u0915\u0940 ${itemsListStr}${advMsg} \u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930 \u0932\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0926\u0935\u093E\u0908 \u0906\u0928\u0947 \u092A\u0930 \u0939\u092E \u0906\u092A\u0915\u094B \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947\u0964`;
-          } else if (lang === "mr") {
-            msg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${cleanReqName}, ${medicalName} \u092F\u0947\u0925\u0947 \u0906\u092A\u0932\u0940 ${itemsListStr}${advMsg} \u091A\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0924 \u0906\u0932\u0940 \u0906\u0939\u0947. \u0914\u0937\u0927 \u0906\u0932\u094D\u092F\u093E\u0935\u0930 \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0915\u0933\u0935\u0942.`;
-          } else {
-            msg = `Hi ${cleanReqName}, your order for ${itemsListStr}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
-          }
-          msg += await getShopTimingNote(db2, lang, "booking");
-          try {
-            await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order_batch", cleanReqName);
-            console.log(`Consolidated special order confirmation WhatsApp queued for ${cleanReqName} (${insertedOrders.length} items)`);
-            for (const o of insertedOrders) {
-              await db2.run(
-                `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-                ["quick_order_batch", cleanReqName, formattedPhone, msg, "queued", String(o.id)]
-              );
-            }
-          } catch (waErr) {
-            console.error("Failed to queue special order confirmation WhatsApp:", waErr);
-          }
-        }
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: `Successfully logged ${insertedOrders.length} special request(s)`, orders: insertedOrders });
-      } catch (err) {
-        console.error("Batch create special orders error:", err);
-        res.status(500).json({ error: "Failed to create special orders: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.post("/", async (req, res) => {
-      const {
-        requester,
-        phone,
-        product,
-        medicine_name,
-        qty = 1,
-        priority = "Normal",
-        status = "Pending",
-        pharmarack_distributor,
-        pharmarack_rate,
-        pharmarack_mrp,
-        pharmarack_mapped = 0,
-        pharmarack_scheme,
-        advance_payment,
-        store_id,
-        customer_order_source = "in_store",
-        prescription_url,
-        product_image_url,
-        notes,
-        pharmarack_product_id,
-        pharmarack_product_code,
-        pharmarack_store_id,
-        pharmarack_product_name
-      } = req.body;
-      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
-      const reqProduct = product || medicine_name;
-      if (!requester || !reqProduct) {
-        return res.status(400).json({ error: "Requester name and product name are required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
-        if (!phoneVal.isValid) {
-          return res.status(400).json({ error: phoneVal.error });
-        }
-        const cleanPhone = phoneVal.cleanPhone;
-        const singleCustomerId = req.body.customer_id ? Number(req.body.customer_id) : null;
-        if (cleanPhone && cleanPhone.length >= 10) {
-          try {
-            if (singleCustomerId) {
-              await db2.run("UPDATE customers SET name = ?, phone = ? WHERE id = ?", [requester.trim(), cleanPhone, singleCustomerId]);
-            } else {
-              const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
-              if (!existingCust) {
-                await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [requester.trim(), cleanPhone]);
-              }
-            }
-          } catch (_) {
-          }
-        }
-        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
-        const medName = reqProduct.trim();
-        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
-        const initialNotified = 0;
-        const initialStatus = status || "Pending";
-        const result = await db2.run(
-          `INSERT INTO special_orders (
-        store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
-        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
-        customer_order_source, prescription_url, product_image_url, notes, notification_count,
-        scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
-        cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
-        schedule_calculated_at, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            targetStoreId,
-            singleCustomerId,
-            medName,
-            requester.trim(),
-            cleanPhone,
-            Number(qty) || 1,
-            priority || "Normal",
-            initialStatus,
-            todayStr2,
-            initialNotified,
-            pharmarack_distributor || null,
-            pharmarack_rate !== void 0 ? pharmarack_rate : null,
-            pharmarack_mrp !== void 0 ? pharmarack_mrp : null,
-            pharmarack_mapped ? 1 : 0,
-            pharmarack_scheme || null,
-            advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : 0,
-            customer_order_source,
-            prescription_url || null,
-            product_image_url || null,
-            notes || null,
-            calculatedSchedule.scheduledProcessingAt,
-            calculatedSchedule.estimatedDeliveryStart,
-            calculatedSchedule.estimatedDeliveryEnd,
-            calculatedSchedule.cutoffAt,
-            calculatedSchedule.timezone,
-            calculatedSchedule.scheduleStatus,
-            calculatedSchedule.scheduleReason,
-            calculatedSchedule.scheduleVersion,
-            calculatedSchedule.calculatedAt,
-            pharmarack_product_id ? Number(pharmarack_product_id) : null,
-            pharmarack_product_code || null,
-            pharmarack_store_id ? Number(pharmarack_store_id) : null,
-            pharmarack_product_name || null
-          ]
-        );
-        if (Boolean(req.body.sendWhatsApp) && phone) {
-          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-          const medicalName = await getStoreMedicalNameAndPhone(db2);
-          const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: \u20B9${Number(advance_payment).toFixed(2)})` : "";
-          const cleanReqName = formatCustomerName(requester);
-          const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-          const lang = req.body.language || custRow?.language || "en";
-          let msg = "";
-          if (lang === "hi") {
-            msg = `\u0928\u092E\u0938\u094D\u0924\u0947 ${cleanReqName}, ${medicalName} \u092A\u0930 \u0906\u092A\u0915\u0940 ${medName}${advMsg} \u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930 \u0932\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0926\u0935\u093E\u0908 \u0906\u0928\u0947 \u092A\u0930 \u0939\u092E \u0906\u092A\u0915\u094B \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947\u0964`;
-          } else if (lang === "mr") {
-            msg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${cleanReqName}, ${medicalName} \u092F\u0947\u0925\u0947 \u0906\u092A\u0932\u0940 ${medName}${advMsg} \u091A\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0924 \u0906\u0932\u0940 \u0906\u0939\u0947. \u0914\u0937\u0927 \u0906\u0932\u094D\u092F\u093E\u0935\u0930 \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0915\u0933\u0935\u0942.`;
-          } else {
-            msg = `Hi ${cleanReqName}, your order for ${medName}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
-          }
-          msg += await getShopTimingNote(db2, lang, "booking");
-          try {
-            await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order", cleanReqName);
-            console.log(`Special order confirmation WhatsApp queued for ${cleanReqName}`);
-            await db2.run(
-              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-              ["quick_order", cleanReqName, formattedPhone, msg, "queued", String(result.lastID)]
-            );
-          } catch (waErr) {
-            console.error("Failed to queue special order confirmation WhatsApp:", waErr);
-          }
-        }
-        if (!pharmarack_mapped) {
-          try {
-            const mapping = await db2.get(
-              `SELECT store_name, rate, mrp FROM pharmarack_catalog_cache 
-           WHERE LOWER(item_name) = LOWER(?) LIMIT 1`,
-              [medName]
-            );
-            if (mapping?.store_name) {
-              await db2.run(
-                `UPDATE special_orders 
-             SET pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = 1 
-             WHERE id = ?`,
-                [mapping.store_name, mapping.rate, mapping.mrp, result.lastID]
-              );
-            }
-          } catch (matchErr) {
-            console.error("Failed auto-matching distributor for special order:", matchErr);
-          }
-        }
-        if (cleanPhone && cleanPhone.length >= 10) {
-          try {
-            const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ?", [cleanPhone]);
-            if (!existingCust) {
-              await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [requester.trim(), cleanPhone]);
-            }
-          } catch (_) {
-          }
-        }
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: "Request logged successfully" });
-      } catch (err) {
-        console.error("Create order request error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router40.get("/check-arrival-notified", async (req, res) => {
-      try {
-        const rawPhone = String(req.query.phone || "").replace(/\D/g, "");
-        if (!rawPhone || rawPhone.length < 7) {
-          return res.json({ recentlyNotified: false });
-        }
-        const last102 = rawPhone.slice(-10);
-        const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
-        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
-        const db2 = await dbManager.getConnection();
-        const recent = await db2.get(
-          `SELECT id, created_at, status FROM whatsapp_send_queue
-       WHERE (number LIKE ? OR number LIKE ?)
-         AND type = 'special_order'
-         AND status NOT IN ('cancelled', 'failed_perm')
-         AND created_at >= ?
-       ORDER BY created_at DESC LIMIT 1`,
-          [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
-        );
-        if (recent) {
-          const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recent.created_at)) / 6e4));
-          return res.json({
-            recentlyNotified: true,
-            minutesAgo,
-            queueId: recent.id,
-            status: recent.status
-          });
-        }
-        return res.json({ recentlyNotified: false });
-      } catch (err) {
-        console.error("Check arrival notified error:", err);
-        res.json({ recentlyNotified: false });
-      }
-    });
-    router40.post("/:id/notify-arrival", async (req, res) => {
-      const { id } = req.params;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!order) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        if (!order.phone) {
-          return res.status(400).json({ error: "Order has no associated phone number" });
-        }
-        const isForce = req.body?.force_resend === true;
-        const isResend = Number(order.notified) === 1 || Number(order.notification_count) > 0;
-        const queued = await enqueueArrivalWhatsApp(db2, order, { skipDedupe: isResend, forceResend: isForce });
-        let newCount = Number(order.notification_count || 0);
-        if (queued) {
-          newCount += 1;
-          await db2.run("UPDATE special_orders SET status = ?, notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?", ["Ready", newCount, id]);
-        }
-        broadcastOrdersChanged2();
-        res.json({
-          success: true,
-          whatsapp_queued: queued,
-          notification_count: newCount,
-          message: queued ? "Arrival notification queued successfully via WhatsApp" : "Arrival message was already queued in the last 60 minutes (or no phone stored)"
-        });
-      } catch (err) {
-        console.error("Notify arrival error:", err);
-        res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.post("/batch-notify-arrival", async (req, res) => {
-      const { order_ids, items, custom_message, lang: reqLang, force_resend } = req.body;
-      if (!Array.isArray(order_ids) || order_ids.length === 0) {
-        return res.status(400).json({ error: "order_ids array is required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const placeholders = order_ids.map(() => "?").join(",");
-        const orders = await db2.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, order_ids);
-        if (orders.length === 0) {
-          return res.status(404).json({ error: "No matching orders found" });
-        }
-        const firstPhone = String(orders[0].phone || "").replace(/\D/g, "");
-        if (!firstPhone) {
-          return res.status(400).json({ error: "Customer phone number is missing" });
-        }
-        const formattedPhone = firstPhone.length === 10 ? `91${firstPhone}` : firstPhone;
-        const last102 = firstPhone.slice(-10);
-        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
-        if (!force_resend) {
-          const recentQueue = await db2.get(
-            `SELECT id, created_at, status FROM whatsapp_send_queue
-         WHERE (number LIKE ? OR number LIKE ?)
-           AND type = 'special_order'
-           AND status NOT IN ('cancelled', 'failed_perm')
-           AND created_at >= ?
-         ORDER BY created_at DESC LIMIT 1`,
-            [`%${last102}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
-          );
-          if (recentQueue) {
-            const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recentQueue.created_at)) / 6e4));
-            return res.status(409).json({
-              error: `An arrival notification was already queued for this customer ${minutesAgo} minute(s) ago.`,
-              code: "RECENTLY_NOTIFIED",
-              already_queued: true,
-              minutes_ago: minutesAgo,
-              recent_queue_id: recentQueue.id
-            });
-          }
-        }
-        const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [firstPhone]);
-        const lang = reqLang || orders[0].language || custRow?.language || "en";
-        const requesterName = orders[0].requester || "Customer";
-        const itemMap = /* @__PURE__ */ new Map();
-        if (Array.isArray(items)) {
-          for (const it of items) {
-            if (it && it.order_id) {
-              itemMap.set(Number(it.order_id), {
-                status: it.status === "delayed" ? "delayed" : "arrived",
-                delayReason: it.delay_reason,
-                expectedDate: it.expected_date
-              });
-            }
-          }
-        }
-        const multiOrderItems = [];
-        const arrivedOrderIds = [];
-        for (const ord of orders) {
-          const itInfo = itemMap.get(Number(ord.id)) || { status: "arrived" };
-          multiOrderItems.push({
-            productName: ord.product,
-            qty: ord.qty || 1,
-            status: itInfo.status,
-            delayReason: itInfo.delayReason,
-            expectedDate: itInfo.expectedDate
-          });
-          if (itInfo.status === "arrived") {
-            arrivedOrderIds.push(Number(ord.id));
-          }
-        }
-        const msg = custom_message && String(custom_message).trim().length > 0 ? String(custom_message).trim() : await buildMultiOrderNotificationMessage(requesterName, multiOrderItems, db2, lang);
-        await whatsappQueueWorker.enqueue(
-          formattedPhone,
-          msg,
-          "special_order",
-          requesterName,
-          void 0,
-          void 0,
-          void 0,
-          { skipDedupe: true }
-        );
-        void ensureWhatsAppReady(3e4).catch(() => {
-        });
-        for (const ord of orders) {
-          const itInfo = itemMap.get(Number(ord.id)) || { status: "arrived" };
-          const newCount = Number(ord.notification_count || 0) + 1;
-          if (itInfo.status === "arrived") {
-            await db2.run(
-              `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ?, auto_remind = 1, last_collection_reminder_at = datetime('now') WHERE id = ?`,
-              [newCount, ord.id]
-            );
-          } else {
-            const delayNote = itInfo.delayReason ? `Delayed: ${itInfo.delayReason}` : ord.notes || "";
-            await db2.run(
-              `UPDATE special_orders SET notes = ?, notification_count = ? WHERE id = ?`,
-              [delayNote, newCount, ord.id]
-            );
-          }
-        }
-        await db2.run(
-          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-          ["special_order_multi_arrived", requesterName, formattedPhone, msg, "queued", order_ids.join(",")]
-        ).catch(() => {
-        });
-        broadcastOrdersChanged2();
-        res.json({
-          success: true,
-          whatsapp_queued: true,
-          arrived_count: arrivedOrderIds.length,
-          total_count: orders.length,
-          message: `Consolidated notification queued for ${requesterName} (${arrivedOrderIds.length} arrived, ${orders.length - arrivedOrderIds.length} delayed)`
-        });
-      } catch (err) {
-        console.error("Batch notify arrival error:", err);
-        res.status(500).json({ error: "Failed to queue consolidated notification: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.post("/:id/resend-booking", async (req, res) => {
-      const { id } = req.params;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!order) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        if (!order.phone) {
-          return res.status(400).json({ error: "Order has no associated phone number" });
-        }
-        const cleanPhone = order.phone.replace(/\D/g, "");
-        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-        const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-        const lang = order.language || custRow?.language || "en";
-        const medicalName = await getStoreMedicalNameAndPhone(db2);
-        const cleanReqName = formatCustomerName(order.requester);
-        const advMsg = order.advance_payment && Number(order.advance_payment) > 0 ? ` (Advance Paid: \u20B9${Number(order.advance_payment).toFixed(2)})` : "";
-        let msg = "";
-        if (lang === "hi") {
-          msg = `\u0928\u092E\u0938\u094D\u0924\u0947 ${cleanReqName}, ${medicalName} \u092A\u0930 \u0906\u092A\u0915\u0940 ${order.product}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (\u0905\u0917\u094D\u0930\u093F\u092E \u0930\u093E\u0936\u093F: \u20B9${Number(order.advance_payment).toFixed(2)})` : ""} \u0915\u093E \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930 \u0932\u093F\u092F\u093E \u0917\u092F\u093E \u0939\u0948\u0964 \u0926\u0935\u093E\u0908 \u0906\u0928\u0947 \u092A\u0930 \u0939\u092E \u0906\u092A\u0915\u094B \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947\u0964`;
-        } else if (lang === "mr") {
-          msg = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${cleanReqName}, ${medicalName} \u092F\u0947\u0925\u0947 \u0906\u092A\u0932\u0940 ${order.product}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (\u0905\u0917\u093E\u090A \u0930\u0915\u094D\u0915\u092E: \u20B9${Number(order.advance_payment).toFixed(2)})` : ""} \u091A\u0940 \u0911\u0930\u094D\u0921\u0930 \u092C\u0941\u0915 \u0915\u0930\u0923\u094D\u092F\u093E\u0924 \u0906\u0932\u0940 \u0906\u0939\u0947. \u0914\u0937\u0927 \u0906\u0932\u094D\u092F\u093E\u0935\u0930 \u0906\u092E\u094D\u0939\u0940 \u0906\u092A\u0932\u094D\u092F\u093E\u0932\u093E \u0915\u0933\u0935\u0942.`;
-        } else {
-          msg = `Hi ${cleanReqName}, your order for ${order.product}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
-        }
-        await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order", order.requester || "Customer", void 0, void 0, void 0, { skipDedupe: true });
-        await db2.run(
-          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-          ["quick_order_resend", order.requester || "Customer", formattedPhone, msg, "queued", String(id)]
-        );
-        res.json({ success: true, message: "Booking confirmation WhatsApp queued successfully" });
-      } catch (err) {
-        console.error("Resend booking notification error:", err);
-        res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.get("/:id/payment-qr", async (req, res) => {
-      try {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        const configs = await paymentQrService.getQrConfigs();
-        const assignedId = order.payment_qr_id || "QR_1";
-        const config2 = configs.find((c) => c.id === assignedId && c.is_active) || configs.find((c) => c.is_active) || configs[0];
-        const amount = Number(order.advance_payment || order.total_amount || 50);
-        const soCode = `SO-${order.id}`;
-        const upiUri = paymentQrService.buildUpiUri(config2.upi_id, config2.payee_name, amount, soCode);
-        return res.json({
-          success: true,
-          order_id: order.id,
-          so_code: soCode,
-          customer_name: order.requester || "Customer",
-          customer_phone: order.phone || "",
-          medicine_name: order.product || order.medicine_name || "Medicine",
-          amount,
-          upi_id: config2.upi_id,
-          payee_name: config2.payee_name,
-          upi_uri: upiUri,
-          payment_status: order.payment_status || "UNPAID"
-        });
-      } catch (err) {
-        console.error("[Orders] Get payment QR error:", err);
-        res.status(500).json({ error: "Failed to generate payment QR: " + err.message });
-      }
-    });
-    router40.post("/:id/send-payment-qr", async (req, res) => {
-      try {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        const cleanPhone = String(order.phone || "").replace(/\D/g, "");
-        if (cleanPhone.length < 10) {
-          return res.status(400).json({ error: "Order has no valid customer phone number" });
-        }
-        const activeQr = await paymentQrService.allocateNextQr();
-        const amount = Number(order.advance_payment || order.total_amount || 50);
-        const soCode = `SO-${order.id}`;
-        const medicineName = order.product || order.medicine_name || "Medicine";
-        const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
-        const fullQrPath = await paymentQrService.generatePaymentCard({
-          upiUri,
-          orderNumber: soCode,
-          medicineName,
-          amount,
-          payeeName: activeQr.payee_name,
-          upiId: activeQr.upi_id,
-          filename: `payment_card_${soCode}.png`
-        });
-        await db2.run(
-          `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
-          [activeQr.id, amount, id]
-        );
-        const custQrMsg = `\u2705 *Medicine Request Confirmed*
-
-\u{1F194} *Special Order*: ${soCode}
-\u{1F48A} *Medicine*: ${medicineName}
-\u{1F4E6} *Quantity*: ${order.qty || 1}
-
-\u{1F510} *Booking Advance Amount*: \u20B9${amount.toFixed(2)}
-
-Please pay the \u20B9${amount.toFixed(2)} booking amount using the QR card attached above.
-
-\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
-\u{1F464} *Payee*: ${activeQr.payee_name}
-
-\u{1F449} *Or tap to pay directly on this phone*:
-${upiUri}
-
-\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
-        const queueId = await whatsappQueueWorker.enqueue(
-          cleanPhone,
-          custQrMsg,
-          "customer_payment_qr",
-          order.requester || "Customer",
-          void 0,
-          fullQrPath
-        );
-        broadcastOrdersChanged2();
-        return res.json({
-          success: true,
-          queue_id: queueId,
-          message: `\u20B9${amount.toFixed(2)} payment QR code dispatched to customer on WhatsApp!`
-        });
-      } catch (err) {
-        console.error("[Orders] Send payment QR error:", err);
-        res.status(500).json({ error: "Failed to send payment QR: " + err.message });
-      }
-    });
-    router40.get("/:id/distributor-options", async (req, res) => {
-      try {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
-        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
-        const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
-        await waAdminEscalationService2.ensureOwnerPendingRequestsTable?.(db2);
-        const reqRow = await db2.get(
-          `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? OR req_code LIKE ? ORDER BY id DESC LIMIT 1`,
-          [soCode, `%${id}`]
-        );
-        let options = [];
-        if (reqRow && reqRow.options_json) {
-          try {
-            const parsed = JSON.parse(reqRow.options_json);
-            options = Array.isArray(parsed) ? parsed : parsed.options || parsed.allOptions || [];
-          } catch (_) {
-          }
-        }
-        return res.json({
-          orderId: id,
-          soCode,
-          medicineName: order.medicine_name || order.product,
-          quantity: order.qty || 1,
-          currentDistributor: order.distributor_name || order.pharmarack_distributor || null,
-          currentRate: order.pharmarack_rate || null,
-          currentMrp: order.pharmarack_mrp || null,
-          paymentStatus: order.payment_status || "UNPAID",
-          status: order.status || "Pending",
-          ownerRequestStatus: reqRow?.status || null,
-          options
-        });
-      } catch (err) {
-        console.error("[Orders] Get distributor options error:", err);
-        res.status(500).json({ error: "Failed to fetch distributor options: " + err.message });
-      }
-    });
-    router40.post("/:id/confirm-distributor", async (req, res) => {
-      try {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
-        const {
-          distributor,
-          rate,
-          mrp,
-          productId,
-          productCode,
-          storeId,
-          productName,
-          sendPaymentQr = true
-        } = req.body;
-        if (!distributor) {
-          return res.status(400).json({ error: "Distributor name is required" });
-        }
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        const distName = String(distributor).trim();
-        const distRate = Number(rate || 0);
-        const distMrp = Number(mrp || order.pharmarack_mrp || 0);
-        const prodId = productId ? Number(productId) : order.pharmarack_product_id || null;
-        const prodCode = productCode ? String(productCode) : order.pharmarack_product_code || null;
-        const stId = storeId ? Number(storeId) : order.pharmarack_store_id || null;
-        const prodName = productName || order.pharmarack_product_name || order.medicine_name || order.product;
-        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
-        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
-        await db2.run(
-          `UPDATE special_orders SET
-         distributor_name = ?,
-         pharmarack_distributor = ?,
-         pharmarack_rate = ?,
-         pharmarack_mrp = ?,
-         pharmarack_product_id = ?,
-         pharmarack_product_code = ?,
-         pharmarack_store_id = ?,
-         pharmarack_product_name = ?,
-         updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [distName, distName, distRate, distMrp, prodId, prodCode, stId, prodName, id]
-        );
-        await db2.run(
-          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
-          [soCode, `%${id}`]
-        ).catch(() => {
-        });
-        const isPaymentConfirmed = ["PAYMENT_CONFIRMED", "VERIFIED", "CONFIRMED"].includes(String(order.payment_status || "").toUpperCase());
-        const oldDistName = String(order.pharmarack_distributor || order.distributor_name || "").trim();
-        const oldStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : null;
-        const oldProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : null;
-        const oldProdName = order.pharmarack_product_name || order.medicine_name || order.product;
-        const distChanged = oldDistName && oldDistName.toLowerCase() !== distName.toLowerCase() || oldStoreId && stId && oldStoreId !== stId;
-        if (distChanged || isPaymentConfirmed) {
-          try {
-            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2, addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-            if (oldDistName && distChanged) {
-              await Promise.race([
-                adjustSpecialOrderInLiveCart2({
-                  product: oldProdName,
-                  qty: order.qty || 1,
-                  distributor: oldDistName,
-                  productCode: oldProdCode,
-                  storeId: oldStoreId,
-                  exactOnly: true
-                }),
-                new Promise((r) => setTimeout(r, 1500))
-              ]);
-            }
-            if (stId && distName) {
-              await addItemsToPharmarackCart2([{
-                productName: prodName,
-                product: prodName,
-                productId: prodId,
-                productCode: prodCode || "",
-                storeId: stId,
-                storeName: distName,
-                qty: order.qty || 1,
-                rate: distRate,
-                mrp: distMrp,
-                packaging: "1 strip",
-                mapped: true
-              }]).catch((err) => console.warn("[Orders] Error migrating item to new distributor cart:", err));
-            }
-          } catch (cartMigrateErr) {
-            console.warn("[Orders] Could not auto-migrate cart on distributor change:", cartMigrateErr);
-          }
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'distributor_switched', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
-            [id, `Distributor updated from "${oldDistName || "None"}" to "${distName}". Live cart synced.`]
-          ).catch(() => {
-          });
-        }
-        let qrSent = false;
-        let queueId = null;
-        if (sendPaymentQr && !isPaymentConfirmed) {
-          const cleanPhone = String(order.phone || "").replace(/\D/g, "");
-          const custPhoneLast10 = cleanPhone.slice(-10);
-          const activeQr = await paymentQrService.allocateNextQr();
-          const amount = 50;
-          const medicineTitle = prodName || order.medicine_name || order.product || "Medicine";
-          const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
-          const fullQrPath = await paymentQrService.generatePaymentCard({
-            upiUri,
-            orderNumber: soCode,
-            medicineName: medicineTitle,
-            amount,
-            payeeName: activeQr.payee_name,
-            upiId: activeQr.upi_id,
-            filename: `payment_card_${soCode}.png`
-          });
-          await db2.run(
-            `UPDATE special_orders SET
-           payment_qr_id = ?,
-           payment_status = 'AWAITING_PAYMENT',
-           advance_payment = ?,
-           total_amount = ?
-         WHERE id = ?`,
-            [activeQr.id, amount, amount, id]
-          );
-          if (custPhoneLast10) {
-            await db2.run(
-              `UPDATE wa_pending_clarifications
-           SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
-           WHERE phone LIKE ? OR phone LIKE ?`,
-              [id, soCode, `%${custPhoneLast10}`, `%${custPhoneLast10}%`]
-            ).catch(() => {
-            });
-          }
-          const mrpLine = distMrp > 0 ? `
-\u{1F3F7}\uFE0F *MRP*: \u20B9${distMrp.toFixed(2)}` : "";
-          const custQrMsg = `\u2705 *Medicine Request Confirmed*
-
-\u{1F194} *Special Order*: ${soCode}
-\u{1F48A} *Medicine*: ${medicineTitle}
-\u{1F4E6} *Quantity*: ${order.qty || 1}${mrpLine}
-
-\u{1F510} *Booking Advance Amount*: \u20B9${amount.toFixed(2)}
-
-Please pay the \u20B9${amount.toFixed(2)} booking amount using the QR card attached above.
-
-\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
-\u{1F464} *Payee*: ${activeQr.payee_name}
-
-\u{1F449} *Or tap to pay directly on this phone*:
-${upiUri}
-
-\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
-          let custTarget = cleanPhone;
-          if (custPhoneLast10) {
-            const activeChat = await db2.get(
-              `SELECT id FROM whatsapp_chats 
-           WHERE (resolved_number LIKE ? OR id LIKE ?) 
-           ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC LIMIT 1`,
-              [`%${custPhoneLast10}%`, `%${custPhoneLast10}%`]
-            ).catch(() => null);
-            if (activeChat?.id) {
-              custTarget = activeChat.id;
-            }
-          }
-          if (custTarget) {
-            queueId = await whatsappQueueWorker.enqueue(
-              custTarget,
-              custQrMsg,
-              "customer_payment_qr",
-              order.requester || "Customer",
-              void 0,
-              fullQrPath
-            ).catch((err) => {
-              console.warn("[Orders] QR image enqueue failed, falling back to text:", err?.message || err);
-              return whatsappQueueWorker.enqueue(
-                custTarget,
-                custQrMsg + `
-
-\u{1F517} *Pay via UPI link*:
-${upiUri}`,
-                "customer_payment_qr",
-                order.requester || "Customer"
-              ).catch(() => null);
-            });
-            qrSent = true;
-          }
-        }
-        broadcastOrdersChanged2();
-        return res.json({
-          success: true,
-          orderId: id,
-          distributor: distName,
-          rate: distRate,
-          mrp: distMrp,
-          qrSent,
-          queueId,
-          message: qrSent ? `Distributor ${distName} confirmed and \u20B950 payment QR dispatched to customer on WhatsApp!` : isPaymentConfirmed ? `Distributor ${distName} updated for paid order #${id} (Cart migrated to ${distName}).` : `Distributor ${distName} assigned to order #${id}.`
-        });
-      } catch (err) {
-        console.error("[Orders] Confirm distributor error:", err);
-        res.status(500).json({ error: "Failed to confirm distributor: " + err.message });
-      }
-    });
-    router40.post("/:id/mark-advance-paid", async (req, res) => {
-      try {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id)) return res.status(400).json({ error: "Invalid order ID" });
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [id]);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        await db2.run(
-          `UPDATE special_orders SET payment_status = 'PAYMENT_CONFIRMED', advance_payment = CASE WHEN advance_payment > 0 THEN advance_payment ELSE 50 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [id]
-        );
-        try {
-          const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-          void addItemsToPharmarackCart2([{
-            productName: order.pharmarack_product_name || order.medicine_name || order.product,
-            product: order.pharmarack_product_name || order.medicine_name || order.product,
-            productId: order.pharmarack_product_id || order.medicine_id || 0,
-            productCode: order.pharmarack_product_code || "",
-            storeId: order.pharmarack_store_id || 0,
-            storeName: order.pharmarack_distributor || "Standard Distributor",
-            qty: order.qty > 0 ? order.qty : 1,
-            rate: order.pharmarack_rate || 0,
-            mrp: order.pharmarack_mrp || 0,
-            packaging: "1 strip",
-            mapped: order.pharmarack_mapped === 1
-          }]).catch((err) => console.warn("[Orders] Live cart add error on mark-advance-paid:", err?.message || err));
-        } catch (_) {
-        }
-        const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
-        const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
-        const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
-        const customerName = formatCustomerName(order.customer_name || order.requester || "Customer");
-        const medicineName = order.medicine_name || order.product || "Medicine";
-        const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
-        const cleanCustPhone = String(order.phone || "").replace(/\D/g, "").slice(-10);
-        await db2.run(
-          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
-          [soCode, `%${id}`]
-        ).catch(() => {
-        });
-        await db2.run(
-          `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
-          [id, soCode]
-        ).catch(() => {
-        });
-        const custFinalMsg = `\u{1F389} Hello *${customerName}*, your medicine request is confirmed!
-
-\u{1F194} Special Order ID: ${soCode}
-
-\u{1F48A} ${medicineName}
-\u{1F4E6} Quantity: ${order.qty || 1}
-
-\u{1F4B0} Booking Amount Paid: \u20B9${amountPaid}
-
-\u{1F6D2} Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!
-
-Thank you!
-\u2014 ${storeName}`;
-        if (cleanCustPhone) {
-          try {
-            await whatsappQueueWorker.enqueue(
-              cleanCustPhone,
-              custFinalMsg,
-              "customer_order_confirmed",
-              customerName
-            );
-            console.log(`[Orders] Payment confirmation WhatsApp enqueued for ${customerName} (${cleanCustPhone}) [${soCode}]`);
-          } catch (waErr) {
-            console.warn("[Orders] Failed to enqueue customer payment confirmation WhatsApp:", waErr);
-          }
-          try {
-            await db2.run(
-              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
-           VALUES (?, ?, ?, ?, 'sent', 0, ?)`,
-              ["whatsapp_order", customerName, cleanCustPhone, custFinalMsg, String(id)]
-            );
-          } catch (notifErr) {
-            console.warn("[Orders] Failed to log automation_notification:", notifErr);
-          }
-        }
-        broadcastOrdersChanged2();
-        return res.json({
-          success: true,
-          message: "Advance payment marked as CONFIRMED"
-        });
-      } catch (err) {
-        console.error("[Orders] Mark advance paid error:", err);
-        res.status(500).json({ error: "Failed to mark advance paid: " + err.message });
-      }
-    });
-    router40.get("/uncollected-alerts", async (_req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const uncollected = await db2.all(
-          `SELECT * FROM special_orders 
-       WHERE status IN ('Pending', 'Ready', 'Ordered', 'Pending Collection') 
-       AND datetime(date) <= datetime('now', '-2 days')`
-        );
-        res.json(uncollected || []);
-      } catch (err) {
-        console.error("Fetch uncollected alerts error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router40.put("/:id", async (req, res) => {
-      const { id } = req.params;
-      const {
-        status,
-        priority,
-        qty,
-        product,
-        requester,
-        phone,
-        pharmarack_distributor,
-        pharmarack_rate,
-        pharmarack_mrp,
-        pharmarack_mapped,
-        advance_payment,
-        cart_add_error,
-        resend,
-        sendPaymentQr,
-        skipWhatsApp,
-        sendWhatsApp,
-        pharmarack_product_id,
-        pharmarack_product_code,
-        pharmarack_store_id,
-        pharmarack_product_name
-      } = req.body;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!existing) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        let newStatus = status !== void 0 ? status : existing.status;
-        if (newStatus === "Completed" || newStatus === "completed") {
-          newStatus = "Fulfilled";
-        }
-        const newPriority = priority !== void 0 ? priority : existing.priority;
-        const newQty = qty !== void 0 ? qty : existing.qty;
-        const newProduct = product !== void 0 ? product : existing.product;
-        const newRequester = requester !== void 0 ? requester : existing.requester;
-        let newPhone = existing.phone;
-        if (phone !== void 0) {
-          const phoneVal = validate10DigitPhone(phone, { allowEmpty: true, requireMobile: true });
-          if (!phoneVal.isValid) {
-            return res.status(400).json({ error: phoneVal.error });
-          }
-          newPhone = phoneVal.cleanPhone;
-        }
-        const newDistributor = pharmarack_distributor !== void 0 ? pharmarack_distributor : existing.pharmarack_distributor;
-        const newRate = pharmarack_rate !== void 0 ? pharmarack_rate : existing.pharmarack_rate;
-        const newMrp = pharmarack_mrp !== void 0 ? pharmarack_mrp : existing.pharmarack_mrp;
-        const newMapped = pharmarack_mapped !== void 0 ? pharmarack_mapped ? 1 : 0 : existing.pharmarack_mapped;
-        const newAdvancePayment = advance_payment !== void 0 ? advance_payment : existing.advance_payment;
-        const newCartAddError = cart_add_error !== void 0 ? cart_add_error : existing.cart_add_error;
-        const newProductId = pharmarack_product_id !== void 0 ? pharmarack_product_id ? Number(pharmarack_product_id) : null : existing.pharmarack_product_id;
-        const newProductCode = pharmarack_product_code !== void 0 ? pharmarack_product_code || null : existing.pharmarack_product_code;
-        const newStoreId = pharmarack_store_id !== void 0 ? pharmarack_store_id ? Number(pharmarack_store_id) : null : existing.pharmarack_store_id;
-        const newProductName = pharmarack_product_name !== void 0 ? pharmarack_product_name || null : existing.pharmarack_product_name;
-        let whatsappQueued = false;
-        const isResend = Boolean(resend);
-        const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
-        if (newStatus === "Ready" && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
-          try {
-            whatsappQueued = await enqueueArrivalWhatsApp(
-              db2,
-              { ...existing, phone: newPhone, requester: newRequester, product: newProduct, qty: newQty },
-              { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
-            );
-          } catch (waErr) {
-            console.error("Failed to queue arrival WhatsApp on order update:", waErr?.message || waErr);
-          }
-        }
-        let newNotified = existing.notified;
-        if (newStatus === "Fulfilled" || whatsappQueued) {
-          newNotified = 1;
-        }
-        const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
-        const newAutoRemind = newStatus === "Fulfilled" || newStatus === "Cancelled" ? 0 : newStatus === "Ready" ? 1 : existing.auto_remind ?? 0;
-        const lastRemindAt = newStatus === "Ready" || whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : newStatus === "Fulfilled" || newStatus === "Cancelled" ? null : existing.last_collection_reminder_at;
-        await db2.run(
-          `UPDATE special_orders
-       SET status = ?, priority = ?, qty = ?, product = ?, requester = ?, phone = ?,
-           pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = ?,
-           advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?,
-           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?,
-           auto_remind = ?, last_collection_reminder_at = ?
-       WHERE id = ?`,
-          [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, newAutoRemind, lastRemindAt, id]
-        );
-        const targetCustId = existing.customer_id || (req.body.customer_id ? Number(req.body.customer_id) : null);
-        if (targetCustId && (phone !== void 0 || requester !== void 0)) {
-          try {
-            await db2.run("UPDATE customers SET name = ?, phone = ? WHERE id = ?", [newRequester, newPhone, targetCustId]);
-          } catch (_) {
-          }
-        }
-        let paymentQrSent = false;
-        const distributorNewlyAssigned = !existing.pharmarack_distributor && newDistributor;
-        const shouldSendQr = Boolean(distributorNewlyAssigned || sendPaymentQr);
-        const cleanPhoneForQr = String(newPhone || existing.phone || "").replace(/\D/g, "");
-        if (shouldSendQr && cleanPhoneForQr.length >= 10) {
-          try {
-            const advanceAmount = Number(newAdvancePayment || existing.advance_payment || 50);
-            const qrAmount = advanceAmount > 0 ? advanceAmount : 50;
-            const soCode = `SO-${id}`;
-            const medicineName = newProduct || existing.product || "Medicine";
-            const activeQr = await paymentQrService.allocateNextQr();
-            const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, qrAmount, soCode);
-            const fullQrPath = await paymentQrService.generatePaymentCard({
-              upiUri,
-              orderNumber: soCode,
-              medicineName,
-              amount: qrAmount,
-              payeeName: activeQr.payee_name,
-              upiId: activeQr.upi_id,
-              filename: `payment_card_${soCode}.png`
-            });
-            await db2.run(
-              `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
-              [activeQr.id, qrAmount, id]
-            );
-            const formattedQrPhone = cleanPhoneForQr.length === 10 ? `91${cleanPhoneForQr}` : cleanPhoneForQr;
-            const custQrMsg = `\u2705 *Medicine & Supplier Confirmed*
-
-\u{1F194} *Special Order*: ${soCode}
-\u{1F48A} *Medicine*: ${medicineName}
-\u{1F4E6} *Quantity*: ${newQty || existing.qty || 1}
-\u{1F3E2} *Supplier*: ${newDistributor}
-
-\u{1F510} *Booking Advance Amount*: \u20B9${qrAmount.toFixed(2)}
-
-Please pay the \u20B9${qrAmount.toFixed(2)} booking amount using the QR card attached above.
-
-\u{1F3E6} *UPI ID*: ${activeQr.upi_id.trim()}
-\u{1F464} *Payee*: ${activeQr.payee_name}
-
-\u{1F449} *Or tap to pay directly on this phone*:
-${upiUri}
-
-\u{1F4F8} After payment, please send the payment screenshot in this chat.`;
-            await whatsappQueueWorker.enqueue(
-              formattedQrPhone,
-              custQrMsg,
-              "customer_payment_qr",
-              newRequester || existing.requester || "Customer",
-              void 0,
-              fullQrPath
-            );
-            paymentQrSent = true;
-            console.log(`[Orders] Auto-sent payment QR to ${formattedQrPhone} for ${soCode} after distributor assigned: ${newDistributor}`);
-          } catch (qrErr) {
-            console.error("[Orders] Failed to auto-send payment QR on distributor assignment:", qrErr?.message || qrErr);
-          }
-        }
-        if (newStatus === "Cancelled" || newStatus === "Fulfilled") {
-          await cancelPendingWhatsAppForOrder(db2, {
-            id,
-            phone: newPhone || existing.phone,
-            requester: newRequester || existing.requester,
-            product: newProduct || existing.product
-          });
-          await purgePendingCustomerReminders(db2, {
-            phone: newPhone || existing.phone,
-            specialOrderIds: [Number(id)],
-            medicineNames: [newProduct || existing.product].filter(Boolean)
-          });
-        }
-        if (newStatus === "Fulfilled") {
-          await db2.run(
-            `UPDATE automation_notifications 
-         SET lifecycle_status = 'sent', status = 'sent_manually' 
-         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
-           AND reference_id = ?`,
-            [String(id), String(id)]
-          ).catch(() => {
-          });
-        }
-        if (newPhone && (newPhone !== existing.phone || newRequester !== existing.requester)) {
-          const cleanNewPhone = normalizeWhatsAppPhone(newPhone);
-          const oldDigits = (existing.phone || "").replace(/\D/g, "");
-          const last8Old = oldDigits.length >= 7 ? oldDigits.slice(-8) : oldDigits;
-          if (cleanNewPhone) {
-            await db2.run(
-              `UPDATE whatsapp_send_queue
-           SET number = ?, target_name = ?, status = 'pending', retry_count = 0, error_message = NULL
-           WHERE (
-             (target_name IS NOT NULL AND target_name = ?)
-             OR (? != '' AND number LIKE ?)
-             OR message LIKE ?
-           )
-           AND status IN ('pending', 'failed_offline', 'failed_perm', 'review_required')`,
-              [cleanNewPhone, newRequester, existing.requester, last8Old, `%${last8Old}%`, `%${existing.product}%`]
-            ).catch(() => {
-            });
-            await db2.run(
-              `UPDATE automation_notifications
-           SET recipient_phone = ?, recipient_name = ?, status = 'queued', error_message = NULL
-           WHERE (
-             reference_id = ?
-             OR (recipient_name IS NOT NULL AND recipient_name = ?)
-             OR (? != '' AND recipient_phone LIKE ?)
-           )
-           AND status IN ('queued', 'failed', 'error')`,
-              [cleanNewPhone, newRequester, String(id), existing.requester, last8Old, `%${last8Old}%`]
-            ).catch(() => {
-            });
-            await db2.run(
-              `UPDATE customers 
-           SET phone = ?, name = ?
-           WHERE phone = ? OR name = ?`,
-              [newPhone, newRequester, existing.phone, existing.requester]
-            ).catch(() => {
-            });
-            try {
-              whatsappQueueWorker.triggerProcessing();
-              whatsappQueueWorker.broadcastQueueState(true);
-              eventService.broadcast("customers_changed", { timestamp: Date.now() });
-            } catch (_) {
-            }
-          }
-        }
-        if (newStatus === "Cancelled" || newStatus === "Ready") {
-          setImmediate(async () => {
-            try {
-              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-              await adjustSpecialOrderInLiveCart2({
-                product: newProduct || existing.product,
-                qty: newQty || existing.qty,
-                distributor: newDistributor || existing.pharmarack_distributor,
-                productCode: newProductCode || existing.pharmarack_product_code,
-                storeId: newStoreId || existing.pharmarack_store_id
-              });
-              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${newStatus.toLowerCase()}`, id: Number(id) });
-              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
-              eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
-            } catch (cartErr) {
-              console.warn(`[Orders] Could not auto-adjust live cart on order status ${newStatus}:`, cartErr);
-            }
-          });
-        }
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, payment_qr_sent: paymentQrSent });
-      } catch (err) {
-        console.error("Update order error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    handleStatusUpdate = async (req, res) => {
-      const { id } = req.params;
-      let { status, resend } = req.body;
-      if (!status) {
-        return res.status(400).json({ error: "status is required" });
-      }
-      if (typeof status === "string" && (status.trim().toLowerCase() === "completed" || status.trim().toLowerCase() === "fulfilled")) {
-        status = "Fulfilled";
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!existing) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        let whatsappQueued = false;
-        const isResend = Boolean(resend);
-        const shouldSkipWa = req.body?.skipWhatsApp === true || req.body?.sendWhatsApp === false;
-        if (status === "Ready" && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
-          try {
-            whatsappQueued = await enqueueArrivalWhatsApp(
-              db2,
-              existing,
-              { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
-            );
-          } catch (waErr) {
-            console.error("Failed to queue arrival WhatsApp on status Ready:", waErr?.message || waErr);
-          }
-        }
-        const newNotified = status === "Fulfilled" || whatsappQueued ? 1 : existing.notified;
-        const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
-        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : status === "Ready" ? 1 : existing.auto_remind ?? 0;
-        const lastRemindAt = status === "Ready" || whatsappQueued ? (/* @__PURE__ */ new Date()).toISOString() : status === "Fulfilled" || status === "Cancelled" ? null : existing.last_collection_reminder_at;
-        await db2.run(
-          "UPDATE special_orders SET status = ?, notified = ?, notification_count = ?, auto_remind = ?, last_collection_reminder_at = ? WHERE id = ?",
-          [status, newNotified, newCount, newAutoRemind, lastRemindAt, id]
-        );
-        if (status === "Cancelled" || status === "Fulfilled") {
-          await cancelPendingWhatsAppForOrder(db2, existing);
-          await purgePendingCustomerReminders(db2, {
-            phone: existing.phone,
-            specialOrderIds: [Number(id)],
-            medicineNames: existing.product ? [existing.product] : void 0
-          });
-        }
-        if (status === "Fulfilled") {
-          await db2.run(
-            `UPDATE automation_notifications 
-         SET lifecycle_status = 'sent', status = 'sent_manually' 
-         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
-           AND reference_id = ?`,
-            [String(id), String(id)]
-          ).catch(() => {
-          });
-        }
-        if (status === "Cancelled" || status === "Ready") {
-          setImmediate(async () => {
-            try {
-              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-              await adjustSpecialOrderInLiveCart2({
-                product: existing.product,
-                qty: existing.qty,
-                distributor: existing.pharmarack_distributor,
-                productCode: existing.pharmarack_product_code,
-                storeId: existing.pharmarack_store_id
-              });
-              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_${status.toLowerCase()}`, id: Number(id) });
-              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
-              eventService.broadcast("refresh-special-orders", { at: Date.now(), id: Number(id) });
-            } catch (cartErr) {
-              console.warn(`[Orders] Could not auto-adjust live cart on order status ${status}:`, cartErr);
-            }
-          });
-        }
-        broadcastOrdersChanged2({ action: "update_status", orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
-        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, auto_remind: newAutoRemind });
-      } catch (err) {
-        console.error("Update order status error:", err);
-        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
-      }
-    };
-    handleBatchStatusUpdate = async (req, res) => {
-      const rawIds = req.body?.order_ids || req.body?.ids;
-      let { status, resend, skipWhatsApp, sendWhatsApp } = req.body;
-      if (!rawIds || !Array.isArray(rawIds) || rawIds.length === 0) {
-        return res.status(400).json({ error: "order_ids array is required" });
-      }
-      if (!status) {
-        return res.status(400).json({ error: "status is required" });
-      }
-      if (typeof status === "string" && (status.trim().toLowerCase() === "completed" || status.trim().toLowerCase() === "fulfilled")) {
-        status = "Fulfilled";
-      }
-      const orderIds = rawIds.map(Number).filter((n) => !isNaN(n));
-      if (orderIds.length === 0) {
-        return res.status(400).json({ error: "Valid numeric order_ids required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const placeholders = orderIds.map(() => "?").join(",");
-        const orders = await db2.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, orderIds);
-        if (!orders || orders.length === 0) {
-          return res.status(404).json({ error: "No matching orders found" });
-        }
-        const isResend = Boolean(resend);
-        const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
-        let totalWaQueued = 0;
-        if (status === "Ready" && !shouldSkipWa) {
-          for (const ord of orders) {
-            if (Number(ord.notified) !== 1 || isResend) {
-              try {
-                const queued = await enqueueArrivalWhatsApp(
-                  db2,
-                  ord,
-                  { skipDedupe: isResend || Number(ord.notified) === 1, skipWhatsApp: shouldSkipWa }
-                );
-                if (queued) totalWaQueued++;
-              } catch (waErr) {
-                console.error("[Orders] Failed to queue arrival WhatsApp on batch status Ready:", waErr?.message || waErr);
-              }
-            }
-          }
-        }
-        const newAutoRemind = status === "Fulfilled" || status === "Cancelled" ? 0 : status === "Ready" ? 1 : null;
-        const lastRemindAt = status === "Ready" ? (/* @__PURE__ */ new Date()).toISOString() : null;
-        if (status === "Fulfilled") {
-          await db2.run(
-            `UPDATE special_orders 
-         SET status = ?, notified = 1, auto_remind = 0, last_collection_reminder_at = NULL 
-         WHERE id IN (${placeholders})`,
-            [status, ...orderIds]
-          );
-        } else if (status === "Cancelled") {
-          await db2.run(
-            `UPDATE special_orders 
-         SET status = ?, auto_remind = 0, last_collection_reminder_at = NULL 
-         WHERE id IN (${placeholders})`,
-            [status, ...orderIds]
-          );
-        } else if (status === "Ready") {
-          await db2.run(
-            `UPDATE special_orders 
-         SET status = ?, auto_remind = 1, last_collection_reminder_at = ? 
-         WHERE id IN (${placeholders})`,
-            [status, lastRemindAt, ...orderIds]
-          );
-        } else {
-          await db2.run(
-            `UPDATE special_orders 
-         SET status = ? 
-         WHERE id IN (${placeholders})`,
-            [status, ...orderIds]
-          );
-        }
-        if (status === "Cancelled" || status === "Fulfilled") {
-          for (const ord of orders) {
-            await cancelPendingWhatsAppForOrder(db2, ord);
-            await purgePendingCustomerReminders(db2, {
-              phone: ord.phone,
-              specialOrderIds: [Number(ord.id)],
-              medicineNames: ord.product ? [ord.product] : void 0
-            });
-          }
-        }
-        if (status === "Fulfilled") {
-          const strIds = orderIds.map(String);
-          const strPlaceholders = strIds.map(() => "?").join(",");
-          await db2.run(
-            `UPDATE automation_notifications 
-         SET lifecycle_status = 'sent', status = 'sent_manually' 
-         WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id IN (${strPlaceholders}))
-           AND reference_id IN (${strPlaceholders})`,
-            [...strIds, ...strIds]
-          ).catch(() => {
-          });
-        }
-        if (status === "Cancelled" || status === "Ready") {
-          setImmediate(async () => {
-            try {
-              const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-              for (const ord of orders) {
-                try {
-                  await adjustSpecialOrderInLiveCart2({
-                    product: ord.product,
-                    qty: ord.qty,
-                    distributor: ord.pharmarack_distributor,
-                    productCode: ord.pharmarack_product_code,
-                    storeId: ord.pharmarack_store_id
-                  });
-                } catch (_) {
-                }
-              }
-              eventService.broadcast("pharmarack_cart_changed", { at: Date.now(), reason: `special_order_batch_${status.toLowerCase()}`, ids: orderIds });
-              eventService.broadcast("refresh-pharmarack-cart", { at: Date.now() });
-              eventService.broadcast("refresh-special-orders", { at: Date.now() });
-            } catch (bgErr) {
-              console.warn("[Orders] Background batch live cart adjustment note:", bgErr);
-            }
-          });
-        }
-        broadcastOrdersChanged2({ action: "batch_update_status", orderIds, patch: { status, auto_remind: newAutoRemind } });
-        res.json({
-          success: true,
-          message: `Successfully updated ${orderIds.length} orders to ${status}`,
-          count: orderIds.length,
-          status,
-          whatsapp_queued: totalWaQueued > 0,
-          queued_count: totalWaQueued
-        });
-      } catch (err) {
-        console.error("Batch update order status error:", err);
-        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
-      }
-    };
-    router40.post("/batch-status", handleBatchStatusUpdate);
-    router40.put("/batch-status", handleBatchStatusUpdate);
-    router40.post("/:id/status", handleStatusUpdate);
-    router40.put("/:id/status", handleStatusUpdate);
-    router40.post("/:id/auto-remind", async (req, res) => {
-      const { id } = req.params;
-      const { auto_remind } = req.body;
-      try {
-        const db2 = await dbManager.getConnection();
-        const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
-        await db2.run("UPDATE special_orders SET auto_remind = ? WHERE id = ?", [val, id]);
-        if (val === 0) {
-          const order = await db2.get("SELECT phone, product FROM special_orders WHERE id = ?", [id]);
-          if (order) {
-            await cancelPendingWhatsAppForOrder(db2, { id, phone: order.phone, product: order.product });
-            await purgePendingCustomerReminders(db2, {
-              phone: order.phone,
-              specialOrderIds: [Number(id)],
-              medicineNames: order.product ? [order.product] : void 0
-            });
-          }
-        }
-        broadcastOrdersChanged2({ action: "auto_remind", orderId: Number(id), patch: { auto_remind: val } });
-        res.json({ success: true, id: Number(id), auto_remind: val });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-    router40.post("/:id/restore", async (req, res) => {
-      const { id } = req.params;
-      const { restored_by = "Staff Pharmacist", notes = "" } = req.body;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!existing) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        if (existing.status !== "Cancelled") {
-          return res.status(400).json({ error: "Order is not cancelled" });
-        }
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            `UPDATE special_orders
-         SET status = 'Pending',
-             pharmacy_verification_status = 'PENDING',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-            [id]
-          );
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'order_restored', ?, ?, CURRENT_TIMESTAMP)`,
-            [id, `Order restored to Pending by ${restored_by}. ${notes ? `Note: ${notes}` : ""}`.trim(), restored_by]
-          ).catch(() => {
-          });
-          await db2.run("COMMIT");
-        } catch (txErr) {
-          await db2.run("ROLLBACK");
-          throw txErr;
-        }
-        broadcastOrdersChanged2({ action: "restore", orderId: Number(id), patch: { status: "Pending", pharmacy_verification_status: "PENDING" } });
-        res.json({ success: true, message: "Order restored to Pending successfully" });
-      } catch (err) {
-        console.error("Restore order error:", err);
-        res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
-      }
-    });
-    router40.get("/:id/items", async (req, res) => {
-      const { id } = req.params;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        const items = await db2.all(
-          `SELECT id, order_id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, sell_price, subtotal, item_status
-       FROM online_order_items
-       WHERE order_id = ?
-       ORDER BY id ASC`,
-          [id]
-        );
-        if (items && items.length > 0) {
-          return res.json({ success: true, orderId: Number(id), items });
-        }
-        const fallbackItem = {
-          id: 0,
-          order_id: order.id,
-          medicine_id: order.medicine_id || null,
-          product_name: order.product || order.medicine_name || "Medicine",
-          requested_qty: order.qty || 1,
-          confirmed_qty: order.qty || 1,
-          mrp: order.pharmarack_mrp || 0,
-          sell_price: order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0,
-          subtotal: (order.qty || 1) * (order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0),
-          item_status: "PENDING"
-        };
-        return res.json({ success: true, orderId: Number(id), items: [fallbackItem] });
-      } catch (err) {
-        console.error("Get order items error:", err);
-        res.status(500).json({ error: "Failed to fetch order items" });
-      }
-    });
-    router40.put("/:id/items", async (req, res) => {
-      const { id } = req.params;
-      const { items, removed_item_ids, notes, send_whatsapp, advance_payment } = req.body;
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "At least one medicine item is required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          if (Array.isArray(removed_item_ids) && removed_item_ids.length > 0) {
-            for (const remId of removed_item_ids) {
-              const numId = Number(remId);
-              if (numId > 0) {
-                await db2.run("DELETE FROM online_order_items WHERE order_id = ? AND id = ?", [id, numId]);
-              }
-            }
-          }
-          for (const it of items) {
-            const prodName = String(it.product_name || it.product || it.name || "").trim();
-            if (!prodName) continue;
-            const qty = Math.max(1, parseInt(String(it.requested_qty || it.qty || 1), 10) || 1);
-            const mrp = Number(it.mrp || 0);
-            const sellPrice = Number(it.sell_price !== void 0 ? it.sell_price : it.rate !== void 0 ? it.rate : mrp);
-            const subtotal = qty * sellPrice;
-            const itemId = Number(it.id || 0);
-            const medId = it.medicine_id ? Number(it.medicine_id) : null;
-            if (itemId > 0) {
-              const existingItem = await db2.get("SELECT id FROM online_order_items WHERE id = ? AND order_id = ?", [itemId, id]);
-              if (existingItem) {
-                await db2.run(
-                  `UPDATE online_order_items
-               SET product_name = ?, product_name_snapshot = ?, requested_qty = ?, mrp = ?, sell_price = ?, subtotal = ?
-               WHERE id = ? AND order_id = ?`,
-                  [prodName, prodName, qty, mrp, sellPrice, subtotal, itemId, id]
-                );
-              } else {
-                await db2.run(
-                  `INSERT INTO online_order_items
-               (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-                  [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
-                );
-              }
-            } else {
-              await db2.run(
-                `INSERT INTO online_order_items
-             (order_id, medicine_id, product_name, product_name_snapshot, requested_qty, mrp, sell_price, subtotal, item_status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-                [id, medId, prodName, prodName, qty, mrp, sellPrice, subtotal]
-              );
-            }
-          }
-          const currentItems = await db2.all("SELECT * FROM online_order_items WHERE order_id = ? ORDER BY id ASC", [id]);
-          if (currentItems.length === 0) {
-            throw new Error("Order must contain at least one item");
-          }
-          const totalAmount = currentItems.reduce((acc, it) => acc + (Number(it.subtotal) || 0), 0);
-          const totalQty = currentItems.reduce((acc, it) => acc + (Number(it.requested_qty) || 1), 0);
-          const summaryProduct = currentItems.length === 1 ? currentItems[0].product_name : `${currentItems[0].product_name} (+${currentItems.length - 1} more)`;
-          const newNotes = notes !== void 0 ? notes : order.notes;
-          const newAdvance = advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : order.advance_payment;
-          await db2.run(
-            `UPDATE special_orders
-         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-            [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, id]
-          );
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'order_modified', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
-            [id, `Order modified: ${currentItems.length} items total (\u20B9${totalAmount.toFixed(2)})`]
-          ).catch(() => {
-          });
-          await db2.run("COMMIT");
-          if (Boolean(send_whatsapp) && order.phone) {
-            const cleanPhone = String(order.phone).replace(/\D/g, "");
-            if (cleanPhone.length >= 10) {
-              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-              const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
-              const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, Number(id)).catch(() => `SO-TMSA-${id}`);
-              const storeName = await getStoreMedicalName(db2, order.store_id || 1) || "AI Pharmacy";
-              const custName = formatCustomerName(order.requester || "Customer");
-              const itemsText = currentItems.map((it, idx) => {
-                const itemPrice = Number(it.subtotal || 0).toFixed(2);
-                return `${idx + 1}. *${it.product_name}* \xD7 ${it.requested_qty} (\u20B9${itemPrice})`;
-              }).join("\n");
-              const waMsg = `\u{1F4DD} Hello *${custName}*,
-
-Your order *${soCode}* has been updated:
-
-${itemsText}
-
-\u{1F4B0} *Updated Total*: \u20B9${totalAmount.toFixed(2)}
-
-We are preparing your order. Thank you!
-\u2014 ${storeName}`;
-              void whatsappQueueWorker.enqueue(
-                formattedPhone,
-                waMsg,
-                "order_modified",
-                custName
-              ).catch((waErr) => console.warn("[Orders] Failed to enqueue WhatsApp on modify:", waErr));
-            }
-          }
-          broadcastOrdersChanged2({ action: "update_items", orderId: Number(id), patch: { total_amount: totalAmount, qty: totalQty, product: summaryProduct } });
-          res.json({
-            success: true,
-            message: "Order items updated successfully",
-            order_id: Number(id),
-            items: currentItems,
-            total_amount: totalAmount,
-            qty: totalQty
-          });
-        } catch (txErr) {
-          await db2.run("ROLLBACK");
-          throw txErr;
-        }
-      } catch (err) {
-        console.error("Modify order items error:", err);
-        res.status(500).json({ error: "Failed to modify order items: " + (err?.message || "Unknown error") });
-      }
-    });
-    router40.delete("/:id", async (req, res) => {
-      const { id } = req.params;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!existing) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        const result = await db2.run("DELETE FROM special_orders WHERE id = ?", id);
-        if (result.changes === 0) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        if (existing.source_refill_id || existing.source === "refill") {
-          try {
-            if (existing.source_refill_id) {
-              await db2.run(
-                `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                [existing.source_refill_id]
-              );
-            } else if (existing.phone && (existing.product || existing.medicine_name)) {
-              const medName = existing.product || existing.medicine_name || "";
-              const cleanPhone = (existing.phone || "").replace(/\D/g, "");
-              const last102 = cleanPhone.slice(-10);
-              await db2.run(
-                `UPDATE patient_refills SET status = 'cancelled', is_active = 0, updated_at = CURRENT_TIMESTAMP 
-             WHERE (patient_phone = ? OR patient_phone LIKE ?) 
-               AND medicine_id IN (SELECT id FROM medicines WHERE name = ? OR name LIKE ?)`,
-                [existing.phone, `%${last102}%`, medName, `%${medName}%`]
-              );
-            }
-            eventService.broadcast("refill_updated", { action: "cancel", fromOrderId: Number(id) });
-          } catch (refillCascadeErr) {
-            console.warn("[Orders] Cascade cancellation to patient_refills failed:", refillCascadeErr);
-          }
-        }
-        await cancelPendingWhatsAppForOrder(db2, existing);
-        let cartAdjustment = null;
-        try {
-          const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-          cartAdjustment = await Promise.race([
-            adjustSpecialOrderInLiveCart2({
-              product: existing.product,
-              qty: existing.qty,
-              distributor: existing.pharmarack_distributor,
-              productCode: existing.pharmarack_product_code,
-              storeId: existing.pharmarack_store_id
-            }),
-            new Promise((r) => setTimeout(() => r(null), 1500))
-          ]);
-        } catch (cartErr) {
-          console.warn("[Orders] Could not auto-adjust live cart on order delete:", cartErr);
-        }
-        broadcastOrdersChanged2({ action: "delete", orderId: Number(id) });
-        res.json({ success: true, message: "Order deleted successfully", cartAdjustment });
-      } catch (err) {
-        console.error("Delete order error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router40.post("/convert-to-refill", async (req, res) => {
-      const { orderId, refillIntervalDays } = req.body;
-      if (!orderId || !refillIntervalDays) {
-        return res.status(400).json({ error: "orderId and refillIntervalDays are required" });
-      }
-      try {
-        const { orderFulfillmentService: orderFulfillmentService2 } = await Promise.resolve().then(() => (init_orderFulfillmentService(), orderFulfillmentService_exports));
-        const result = await orderFulfillmentService2.convertToRecurringRefill(
-          Number(orderId),
-          Number(refillIntervalDays)
-        );
-        if (result.success) {
-          broadcastOrdersChanged2();
-          try {
-            eventService.broadcast("refill_updated", { at: Date.now(), source: "convert-to-refill" });
-          } catch (_) {
-          }
-          res.json(result);
-        } else {
-          res.status(400).json(result);
-        }
-      } catch (err) {
-        console.error("Failed to convert order to refill:", err);
-        res.status(500).json({ error: "Internal server error: " + err.message });
-      }
-    });
-    router40.post("/:id/fulfill", async (req, res) => {
-      const { id } = req.params;
-      const { invoiceNo, grandTotal, sendWhatsApp } = req.body;
-      try {
-        const db2 = await dbManager.getConnection();
-        await initOrdersTable(db2);
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
-        if (!order) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        await db2.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1, auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?", id);
-        await cancelPendingWhatsAppForOrder(db2, order);
-        await purgePendingCustomerReminders(db2, {
-          phone: order.phone,
-          specialOrderIds: [Number(id)],
-          medicineNames: [order.product].filter(Boolean)
-        });
-        await db2.run(
-          `UPDATE automation_notifications 
-       SET lifecycle_status = 'sent', status = 'sent_manually' 
-       WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
-         AND reference_id = ?`,
-          [String(id), String(id)]
-        ).catch(() => {
-        });
-        if (Boolean(sendWhatsApp) && order.phone) {
-          const cleanPhone = order.phone.replace(/\D/g, "");
-          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-          const medicalName = await getStoreMedicalNameAndPhone(db2);
-          const invText = invoiceNo ? ` (Invoice: ${invoiceNo})` : "";
-          const totalText = grandTotal ? ` Total Amount: \u20B9${Number(grandTotal).toFixed(2)}.` : "";
-          const msg = `Hi ${order.requester || "Customer"}, your special order for ${order.product} (Qty: ${order.qty}) has been successfully dispensed and delivered at ${medicalName}.${invText}${totalText} Thank you for visiting us!`;
-          await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order_fulfilled", order.requester || "Customer");
-        }
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: "Special order marked as Fulfilled" });
-      } catch (err) {
-        console.error("Fulfill order error:", err);
-        res.status(500).json({ error: "Failed to fulfill order: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.post("/:id/mark-delivered", async (req, res) => {
-      try {
-        const orderId = parseInt(req.params.id, 10);
-        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
-        const returnStatus = await returnWindowService.markDelivered(orderId);
-        const db2 = await dbManager.getConnection();
-        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (existing) {
-          await cancelPendingWhatsAppForOrder(db2, existing);
-          await purgePendingCustomerReminders(db2, {
-            phone: existing.phone,
-            specialOrderIds: [orderId],
-            medicineNames: existing.product ? [existing.product] : void 0
-          });
-        }
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: "Order marked as delivered", return_status: returnStatus });
-      } catch (err) {
-        console.error("Mark order delivered error:", err);
-        res.status(500).json({ error: "Failed to mark order delivered: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.post("/:id/return-override", async (req, res) => {
-      try {
-        const orderId = parseInt(req.params.id, 10);
-        const { override_by = "Pharmacist", reason = "Customer accommodation" } = req.body;
-        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
-        const returnStatus = await returnWindowService.applyReturnOverride(orderId, { overrideBy: override_by, reason });
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: "Return override applied successfully", return_status: returnStatus });
-      } catch (err) {
-        console.error("Return override error:", err);
-        res.status(500).json({ error: "Failed to apply return override: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.get("/:id/return-status", async (req, res) => {
-      try {
-        const orderId = parseInt(req.params.id, 10);
-        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) return res.status(404).json({ error: "Order not found" });
-        const statusInfo = returnWindowService.evaluateOrderReturnStatus(order);
-        res.json(statusInfo);
-      } catch (err) {
-        console.error("Get return status error:", err);
-        res.status(500).json({ error: "Failed to evaluate return status" });
-      }
-    });
-    router40.post("/:id/delivery-override", async (req, res) => {
-      try {
-        const orderId = parseInt(req.params.id, 10);
-        const {
-          estimated_delivery_start,
-          estimated_delivery_end,
-          reason = "Manual customer accommodation",
-          override_by = "Staff"
-        } = req.body;
-        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
-        if (!estimated_delivery_start || !estimated_delivery_end) {
-          return res.status(400).json({ error: "estimated_delivery_start and estimated_delivery_end are required" });
-        }
-        const updated = await orderScheduleService.overrideOrderSchedule(orderId, {
-          estimatedDeliveryStart: estimated_delivery_start,
-          estimatedDeliveryEnd: estimated_delivery_end,
-          reason,
-          overrideBy: override_by
-        });
-        if (!updated) {
-          return res.status(404).json({ error: "Order not found" });
-        }
-        broadcastOrdersChanged2();
-        res.json({ success: true, message: "Delivery schedule overridden successfully", order: updated });
-      } catch (err) {
-        console.error("Delivery override error:", err);
-        res.status(500).json({ error: "Failed to override delivery schedule: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.get("/incomplete-24h-audit", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const storeId = resolveStoreId(req);
-        const audit2 = await orderScheduleService.evaluateIncompleteOrders24hSLA({
-          dbInstance: db2,
-          storeId,
-          cutoffHours: 24
-        });
-        res.json({ success: true, audit: audit2 });
-      } catch (err) {
-        console.error("Incomplete 24h orders audit error:", err);
-        res.status(500).json({ error: "Failed to evaluate incomplete orders SLA: " + (err.message || "Unknown error") });
-      }
-    });
-    router40.post("/incomplete-24h-action", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const { action, orderIds, customerPhones, template, nextWorkingDate, hours } = req.body;
-        if (!action) {
-          return res.status(400).json({ error: "action is required" });
-        }
-        if (action === "push_to_cart") {
-          const ids = Array.isArray(orderIds) ? orderIds : [];
-          let updatedCount = 0;
-          for (const id of ids) {
-            await db2.run("UPDATE special_orders SET status = 'Waiting', updated_at = datetime('now') WHERE id = ?", [id]);
-            updatedCount++;
-          }
-          broadcastOrdersChanged2();
-          return res.json({ success: true, message: `Pushed ${updatedCount} items to order queue.` });
-        }
-        if (action === "send_delay_notices") {
-          const phones = Array.isArray(customerPhones) ? customerPhones : [];
-          const msgTemplate = template || "Dear Customer, your order was held due to wholesale market holiday. It will be delivered on {{next_working_date}}.";
-          const resumeDateStr = nextWorkingDate || "tomorrow";
-          let sentCount = 0;
-          for (const rawPhone of phones) {
-            if (!rawPhone || rawPhone.trim().length < 5) continue;
-            const normalized = normalizeWhatsAppPhone(rawPhone);
-            if (!normalized) continue;
-            const rendered = msgTemplate.replace(/\{\{next_working_date\}\}/gi, resumeDateStr);
-            await whatsappQueueWorker.enqueue(
-              normalized,
-              rendered,
-              "customer_order_update",
-              "Customer",
-              void 0,
-              void 0,
-              void 0,
-              { skipDedupe: true }
-            );
-            sentCount++;
-          }
-          return res.json({ success: true, message: `Queued delay notices for ${sentCount} customer(s).` });
-        }
-        if (action === "snooze_sla") {
-          const ids = Array.isArray(orderIds) ? orderIds.map(String) : [];
-          const snoozeDurationHours = Number(hours) || 24;
-          const snoozeUntil = Date.now() + snoozeDurationHours * 3600 * 1e3;
-          const existingRow = await db2.get("SELECT value FROM app_settings WHERE key = 'snoozed_24h_order_ids'").catch(() => null);
-          let snoozedMap = {};
-          try {
-            if (existingRow?.value) snoozedMap = JSON.parse(existingRow.value);
-          } catch (_) {
-          }
-          for (const id of ids) {
-            snoozedMap[id] = snoozeUntil;
-            snoozedMap[`special_order_${id}`] = snoozeUntil;
-            snoozedMap[`refill_${id}`] = snoozeUntil;
-            snoozedMap[`online_order_${id}`] = snoozeUntil;
-          }
-          await db2.run(
-            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('snoozed_24h_order_ids', ?)",
-            [JSON.stringify(snoozedMap)]
-          );
-          broadcastOrdersChanged2();
-          return res.json({ success: true, message: `Snoozed ${ids.length} order(s) for ${snoozeDurationHours} hours.` });
-        }
-        return res.status(400).json({ error: `Unknown action: ${action}` });
-      } catch (err) {
-        console.error("Incomplete 24h action error:", err);
-        res.status(500).json({ error: "Failed to process action: " + (err.message || "Unknown error") });
-      }
-    });
-    orders_default = router40;
+    customerReturns_default = router40;
   }
 });
 

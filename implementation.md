@@ -1,80 +1,68 @@
-# Implementation Plan: 2-Way Synchronization & Auto-Removal of Completed Orders and Refills
+# Implementation Plan: 7-Day Refill Lead-Time & Cycle Visibility Engine
 
 ## 1. Overview
-When a user marks a special order or refill as Completed / Fulfilled anywhere in the app (Quick Assist, Website Orders, Refill CRM, or POS), the app must:
-1. Immediately remove the item from the Quick Assist panel (case-insensitive, instant optimistic removal).
-2. Automatically close and advance any companion items in the database (completing an order closes companion refills; completing a refill closes companion special orders).
-3. Ensure both the order and the refill are completely excluded from the Morning Briefing until their future schedule actually arrives.
+Enforce the strict 7-day visibility and cycle dormancy rule across the app:
+1. Patients become visible in the Quick Assist panel and Morning Briefing **only when their next refill is due within 7 days** (or overdue).
+2. When the user completes or fulfills the refill, the patient is **immediately removed and remains dormant** until 7 days before their *next* cycle.
+3. Fix the two bugs that were falsely hiding upcoming patients:
+   - The `Math.max(7)` minimum-cycle trap in `checkRefillCycleBooking` that hid 7–10 day interval patients due in 2–5 days.
+   - The string-comparison bug without `DATE()` in `GET /refills/panel` that dropped 7th-day patients.
 
 ---
 
-## 2. Root Cause Analysis
-1. `handleBatchStatusUpdate` in `src/routes/orders.ts` (called by Quick Assist when clicking "Complete" on orders) did not invoke `executeCloseRefillCycles`, leaving companion refills pending in the database.
-2. `executeCloseRefillCycles` in `src/routes/refills.ts` (called when completing refills) only updated `patient_refills`, never updating companion rows in `special_orders`.
-3. In `QuickAssistSidebar.tsx` and `frontend/src/utils/refillSettled.ts`, status checks were strictly case-sensitive (`=== 'Completed' || === 'Fulfilled'`), risking leaks if status casing differed.
+## 2. Planned Changes
 
----
+### Step 1: Fix SQL Lead-Time Filter in `src/routes/refills.ts`
+- In `GET /refills/panel`:
+  - Replace `pr.next_refill_date <= date('now', '+' || ? || ' days')` with `DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')`.
+  - Add `AND pr.is_active = 1`.
 
-## 3. Planned Changes
+### Step 2: Fix `checkRefillCycleBooking` & Visibility in `frontend/src/utils/refillSettled.ts`
+- Remove the `Math.max(7)` barrier that wrongly flagged patients due in 2–5 days as `alreadyDispensed`.
+- Guard `alreadyDispensed`: only mark a cycle already dispensed if `isRefillFulfilledToday` is true, or if `daysSinceDispense === 0`. If `nextDue` is within 7 days, the patient must be active and actionable.
 
-### Step 1: Backend 2-Way Sync in `src/routes/orders.ts`
-- In `handleBatchStatusUpdate` and `router.post('/:id/status')`:
-  - When status is `'Fulfilled'` or `'Completed'`, query companion refills (by `source_refill_id` or patient phone + medicine).
-  - Invoke `executeCloseRefillCycles(db, matchedRefills, 'special_order_fulfilled')` to advance the refill schedule and close open tasks.
+### Step 3: Align `QuickAssistSidebar.tsx` Filter
+- Ensure `actionableRefills` and `groupedActionableRefills` do not filter out patients whose due date is within 7 days.
 
-### Step 2: Backend 2-Way Sync in `src/routes/refills.ts`
-- In `executeCloseRefillCycles`:
-  - When refills are closed / fulfilled, query any open companion special orders (`source_refill_id` or patient phone + medicine with status `Pending`, `Ordered`, `Ready`, `Waiting`, `Confirmed`).
-  - Update their status to `'Fulfilled'`, cancel pending reminders/WhatsApp messages, and emit events.
-
-### Step 3: Frontend Case-Insensitive Filtering in Quick Assist & Helpers
-- In `frontend/src/utils/refillSettled.ts`: Update `isOrderItemSettled` to check `s === 'completed' || s === 'fulfilled' || s === 'cancelled'` case-insensitively.
-- In `frontend/src/components/QuickAssistSidebar.tsx`:
-  - Update `activeSpecialOrders` filter to be case-insensitive.
-  - Ensure `handleUpdateGroupStatus` includes `Fulfilled` in optimistic hiding alongside `Completed` and `Cancelled`.
-
-### Step 4: Verification & Performance Guardrails
-- Test completing an order: verify companion refill advances and both leave Quick Assist and Morning Briefing.
-- Test completing a refill: verify companion special order fulfills and both leave Quick Assist and Morning Briefing.
+### Step 4: Verification & Guardrails
+- Test `GET /api/refills/panel?upcoming_days=7` returns all 6 due patients (Subhash Chandra, Seeta Bai Sonawne, Alka Gulab Sonawne, Vishal Bhise, Sneha, Sunita Chavan).
+- Verify Quick Assist grouping logic.
 - Run `npm run guardrails` and `node scripts/quick-update.mjs`.
 
 ---
 
-## 4. Progress Tracker
-- [x] Task 1: Add companion refill sync to `handleBatchStatusUpdate` and `router.post('/:id/status')` in `src/routes/orders.ts`.
-- [x] Task 2: Add companion special order fulfillment to `executeCloseRefillCycles` in `src/routes/refills.ts`.
-- [x] Task 3: Make status filtering case-insensitive in `frontend/src/utils/refillSettled.ts` and `frontend/src/components/QuickAssistSidebar.tsx`.
-- [x] Task 4: Verify end-to-end sync and run guardrails.
+## 3. Progress Tracker
+- [x] Task 1: Fix SQL date comparison in `src/routes/refills.ts` for `/refills/panel`.
+- [x] Task 2: Fix `checkRefillCycleBooking` in `frontend/src/utils/refillSettled.ts`.
+- [x] Task 3: Align `QuickAssistSidebar.tsx` actionable refills filter.
+- [x] Task 4: Verify all 6 upcoming patients are active and pass guardrails.
 
 ---
 
-## 5. Execution & Completion Details
+## 4. Completed Work & Verification Summary
 
-### Task 1 Completion Details:
-- Implemented and exported `syncCloseCompanionRefillsForOrders(db, orders)` in [src/routes/orders.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/orders.ts).
-- Integrated `syncCloseCompanionRefillsForOrders` into:
-  1. `router.put('/:id')`: On status transition to `'Fulfilled'` or `'Completed'`.
-  2. `handleStatusUpdate` (`POST /:id/status`): On status transition to `'Fulfilled'` or `'Completed'`.
-  3. `handleBatchStatusUpdate` (`POST /orders/batch-status`): Used by Quick Assist when clicking "Complete" on order items.
-- Exported `cancelPendingWhatsAppForOrder` in [src/routes/orders.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/orders.ts) so other modules can cleanly purge stale arrival reminders when orders are completed.
+### What Was Completed:
+1. **SQL Date Evaluation in `src/routes/refills.ts` (lines 717-721)**:
+   - Used `DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')` so 7th-day refill dates (with timestamps) are compared accurately as date strings instead of falling off the boundary.
+   - Enforced `pr.is_active = 1 AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))`.
 
-### Task 2 Completion Details:
-- Updated `executeCloseRefillCycles` in [src/routes/refills.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/refills.ts).
-- When a refill is fulfilled/closed (via Quick Assist, CRM, or POS):
-  1. Automatically queries any companion open rows in `special_orders` (by `source_refill_id` or patient phone + medicine matching).
-  2. Cancels pending WhatsApp alerts for those orders via `cancelPendingWhatsAppForOrder`.
-  3. Marks their database status as `'Fulfilled'`, disables `auto_remind`, and clears reminder timestamps.
-  4. Dispatches `refresh-special-orders` and `orders_changed` SSE events so the frontend updates without delay.
+2. **Fixed Lead-Time Visibility in `frontend/src/utils/refillSettled.ts`**:
+   - Eliminated the `Math.max(7, Math.floor(intervalDays * 0.6))` trap in `checkRefillCycleBooking` which wrongly marked 7–10 day interval patients (Seeta Bai, Alka Gulab, Vishal Bhise, Sneha) as `alreadyDispensed: true` when their next refill was 2–5 days away.
+   - Any patient in their 7-day upcoming lead-time window (`diffDays <= 7`) who was not dispensed today (`daysSinceDispense === 0` / `isRefillFulfilledToday`) is now cleanly active, bookable, and actionable (`alreadyDispensed = false`).
+   - Patients beyond 7 days away are marked dormant (`alreadyDispensed = true`) until their upcoming window opens.
 
-### Task 3 Completion Details:
-- Updated `isOrderItemSettled` in [frontend/src/utils/refillSettled.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/utils/refillSettled.ts) to normalize status to lowercase: checks `completed`, `fulfilled`, `cancelled`.
-- In [frontend/src/components/QuickAssistSidebar.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickAssistSidebar.tsx):
-  1. Added `Fulfilled` to `handleUpdateGroupStatus` optimistic hide logic.
-  2. Updated `actionableRefills` to check normalized lowercase `completed`, `fulfilled`, `cancelled`, and `canceled`.
-  3. Updated `activeSpecialOrders` filter to normalize status to lowercase, preventing any casing mismatches from showing completed orders.
+3. **Quick Assist Panel Grouping & Morning Briefing Alignment**:
+   - Verified `groupedActionableRefills` in `QuickAssistSidebar.tsx`: all 6 due patients are active and non-settled (`visible=true`).
+   - Morning Briefing query in `src/services/refillService.ts`: accurately surfaces all 6 due patients across their upcoming cycles.
+   - Marking a refill complete atomically advances `next_refill_date` and marks the patient settled/dormant until $T-7$ days before the next cycle.
 
-### Task 4 Completion Details:
-- Tested order fulfillment on Kamal Pawarr's Order #48: status updated to `Fulfilled`.
-- Verified morning briefing output: Kamal Pawarr was successfully and completely excluded from all briefing sections.
-- Verified TypeScript compilation and database schema integrity via `npm run guardrails`: passed with exit code 0 (`PASS — no guardrail violations. Speed architecture intact`).
-- Synchronized knowledge graph via `node scripts/quick-update.mjs`.
+### Verification Results:
+- **Patients in 7-Day Window**:
+  - `Mr. SUBHASH CHANDRA`: due 2026-10-18 (Overdue) -> `visible=true, alreadyDispensed=false`
+  - `Mr. SEETA BAI SONAWNE`: due 2026-10-22 (in 2 days) -> `visible=true, alreadyDispensed=false`
+  - `Mr. ALKA GULAB SONAWNE`: due 2026-10-23 (in 3 days) -> `visible=true, alreadyDispensed=false`
+  - `Mr. VISHAL BHISE`: due 2026-10-24 (in 4 days) -> `visible=true, alreadyDispensed=false`
+  - `Mr. SNEHA`: due 2026-10-25 (in 5 days) -> `visible=true, alreadyDispensed=false`
+  - `Mr. SUNITA CHAVAN`: due 2026-10-27 (in 7 days) -> `visible=true, alreadyDispensed=false`
+- **Guardrails**: `npm run guardrails` passed (exit code 0, 0 violations).
+- **Knowledge Graph**: `node scripts/quick-update.mjs` completed (1270 nodes, 809 edges).
