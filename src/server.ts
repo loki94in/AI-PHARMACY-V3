@@ -69,6 +69,10 @@ function lazyRoute(loader: () => Promise<{ default: express.Router }>, tier: Rou
       loadPromise = loader().then(m => {
         router = m.default;
         return router!;
+      }).catch(err => {
+        loadPromise = null;
+        console.error('[lazyRoute] Failed to load route module:', err);
+        throw err;
       });
     }
     return loadPromise;

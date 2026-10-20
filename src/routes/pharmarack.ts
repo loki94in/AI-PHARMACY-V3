@@ -1945,7 +1945,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
           const searchRes = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
             method: 'POST',
             body: JSON.stringify(searchPayload),
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(15000)
           });
           if (searchRes.ok) {
             const searchData: any = await searchRes.json().catch(() => null);
@@ -1970,6 +1970,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
                 item.company = matched.Company || item.company || '';
                 item.mrp = Number(matched.MRP || item.mrp || 0);
                 item.rate = Number(matched.PTR || item.rate || 0);
+                void autoSaveMedicineDistributorLinks([item]);
               } else if (isTargetingSpecificStore) {
                 console.warn(`[Pharmarack Cart] "${cleanKeyword}" not found under targeted distributor "${item.storeName}" (${item.storeId}). Blocked silent fallback to prevent cart mismatch.`);
               }
@@ -1986,7 +1987,13 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   let lastError = '';
   let failedItem: any = null;
 
-  // Primary: Call the official AddUserProductCartDetail API
+  // Pre-load active cart for UPSERT detection (detect if productCode already exists in store cart)
+  let activeCart: any = null;
+  try {
+    activeCart = await loadLiveCartCore();
+  } catch (_) {}
+
+  // Primary: Call the official AddUserProductCartDetail / UpdateUserProductCartDetail API
   try {
     for (const item of items) {
       failedItem = item;
@@ -1995,12 +2002,30 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         cartSuccess = false;
         break;
       }
+
+      let existingQty = 0;
+      if (activeCart && Array.isArray(activeCart.distributors)) {
+        for (const dist of activeCart.distributors) {
+          if (Number(dist.storeId) === Number(item.storeId)) {
+            for (const it of dist.items || []) {
+              if (String(it.productCode || it.ProductCode || '').toLowerCase() === String(item.productCode).toLowerCase()) {
+                existingQty = Number(it.qty || it.Quantity || 0);
+                break;
+              }
+            }
+          }
+          if (existingQty > 0) break;
+        }
+      }
+
+      const requestedQty = Number(item.qty || item.Quantity || 1);
+      const targetCartQty = existingQty > 0 ? (existingQty + requestedQty) : requestedQty;
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,
         StoreName: item.storeName || '',
         ProductCode: item.productCode || '',
-        Quantity: Number(item.qty || item.Quantity || 1),
+        Quantity: targetCartQty,
         PTR: rateVal,
         Free: 0,
         HiddenPTR: rateVal,
@@ -2076,16 +2101,31 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
 
       const response = await (async () => {
         // Slow-network tolerance: 30 s per try + ONE retry on timeout/network failure only.
-        // An upstream rejection (non-OK status or success:false body) is never retried here —
-        // the CRM refill path tries the next linked distributor instead.
         let lastErr: any = null;
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            return await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
+            const endpoint = (attempt === 2 && existingQty > 0)
+              ? 'https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail'
+              : 'https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail';
+
+            const res = await fetchPharmarack(endpoint, {
               method: 'POST',
               body: JSON.stringify(payload),
               signal: AbortSignal.timeout(30000)
             });
+
+            // If AddUserProductCartDetail failed on upstream duplicate/scheme error, immediately attempt UpdateUserProductCartDetail
+            if (!res.ok && endpoint.includes('AddUserProductCartDetail')) {
+              try {
+                const altRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail', {
+                  method: 'POST',
+                  body: JSON.stringify(payload),
+                  signal: AbortSignal.timeout(30000)
+                });
+                if (altRes.ok) return altRes;
+              } catch (_) {}
+            }
+            return res;
           } catch (err: any) {
             lastErr = err;
             const msg = String(err?.message || err || '');

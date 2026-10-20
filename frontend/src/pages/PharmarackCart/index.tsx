@@ -8,7 +8,7 @@ import { findBestCartMatchForOrder } from '../../utils/orderFuzzyMatcher';
 import { isStrictSameProduct } from '../../utils/strictProductName';
 import { isRefillFulfilledToday } from '../../utils/refillSettled';
 
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { sanitizePhoneInput } from '../../utils/phone';
 import { PharmarackCartCalendar } from '../../components/PharmarackCartCalendar';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
@@ -811,6 +811,13 @@ export default function PharmarackCart() {
   const [pendingOrders, setPendingOrders] = useState<SpecialOrder[]>(() => cachedPendingOrders);
   const [pendingRefills, setPendingRefills] = useState<Refill[]>(() => cachedPendingRefills);
   const [todaySoldMeds, setTodaySoldMeds] = useState<Set<string>>(() => new Set());
+
+  const location = useLocation();
+  useEffect(() => {
+    setEditingDistributor(null);
+    setSwitchModalTarget(null);
+    setReorderSameModalTarget(null);
+  }, [location.pathname]);
 
   const isSoldAtPOSToday = useCallback((medName?: string): boolean => {
     if (!medName) return false;
@@ -6877,8 +6884,16 @@ export default function PharmarackCart() {
 
       {/* ── Edit Distributor Contact Modal ── */}
       {editingDistributor && (
-        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div 
+          className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setEditingDistributor(null);
+              setIsSavingContact(false);
+            }
+          }}
+        >
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -7094,8 +7109,13 @@ export default function PharmarackCart() {
 
       {/* ── Switch Supplier / Compare Prices Modal ── */}
       {switchModalTarget && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+        <div 
+          className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSwitchModalTarget(null);
+          }}
+        >
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
@@ -7264,8 +7284,13 @@ export default function PharmarackCart() {
 
       {/* ── Reorder Same Confirmation Modal ── */}
       {reorderSameModalTarget && createPortal(
-        <div className="fixed inset-0 z-modal bg-black/75 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[500px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
+        <div 
+          className="fixed inset-0 z-modal bg-black/75 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setReorderSameModalTarget(null);
+          }}
+        >
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[500px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="bg-bg3/80 px-6 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">

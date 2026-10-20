@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
   ShieldAlert, 
   CheckCircle2, 
@@ -83,6 +84,15 @@ const storeCachedStats = (st: ReviewStats) => { cachedStats = st; };
 
 export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: number) => void }> = ({ onPendingCountChange }) => {
   const queryClient = useQueryClient();
+  const location = useLocation();
+
+  useEffect(() => {
+    setApprovingItem(null);
+    setShowBulkApproveModal(false);
+    setRejectingItem(null);
+    setShowAuditModal(false);
+  }, [location.pathname]);
+
   const [statusFilter, setStatusFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -664,8 +674,13 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Single Item Approval Modal */}
       {approvingItem && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-lg shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setApprovingItem(null);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-lg shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <CheckCircle2 size={18} className="text-emerald-500" />
@@ -788,8 +803,13 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Bulk Approval Modal */}
       {showBulkApproveModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowBulkApproveModal(false);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <CheckCircle2 size={18} className="text-emerald-500" />
@@ -885,8 +905,13 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Reject Modal */}
       {rejectingItem && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setRejectingItem(null);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <XCircle size={18} className="text-red-500" />
@@ -937,8 +962,13 @@ export const ExpiryReturnReview: React.FC<{ onPendingCountChange?: (count: numbe
 
       {/* Audit History Modal */}
       {showAuditModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4">
-          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 overflow-hidden">
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-global-modal p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAuditModal(false);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl p-5 w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <h3 className="text-sm font-black text-text flex items-center gap-2">
                 <History size={18} className="text-indigo-400" />

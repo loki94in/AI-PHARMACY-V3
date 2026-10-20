@@ -10,6 +10,7 @@ import {
 import { api } from '../../services/api';
 import type { CatalogImageItem, CatalogImageCounts } from '../../services/api';
 import { toastEvent } from '../../services/events';
+import { useLocation } from 'react-router-dom';
 
 interface Props {
   initialFilter?: string;
@@ -102,6 +103,17 @@ interface LastActionRecord {
 }
 
 export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = 'review' }) => {
+  const location = useLocation();
+  useEffect(() => {
+    setIncorrectModalItem(null);
+    setHistoryDrawerOpen(false);
+    setRejectingImage(null);
+    setReplacingSlot(null);
+    setCandidateTrayOpen(false);
+    setRelinkModalImage(null);
+    setLightboxOpen(false);
+  }, [location.pathname]);
+
   // Main view state
   const [filter, setFilter] = useState<string>(initialFilter);
   const [search, setSearch] = useState('');
@@ -2527,8 +2539,16 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* MARK INCORRECT REASON MODAL (Full Reason Options) */}
       {/* ============================================================ */}
       {incorrectModalItem && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95">
+        <div 
+          className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setIncorrectModalItem(null);
+              setCustomIncorrectNote('');
+            }
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 text-amber-400">
               <AlertTriangle size={20} />
               <h3 className="text-sm font-bold text-text">Mark Image Incorrect / Missing Angle</h3>
@@ -2627,8 +2647,13 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* AUDIT LOG HISTORY DRAWER */}
       {/* ============================================================ */}
       {historyDrawerOpen && (
-        <div className="fixed inset-0 z-global-modal bg-black/70 flex justify-end">
-          <div className="w-full max-w-md bg-bg2 border-l border-border h-full flex flex-col p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in slide-in-from-right">
+        <div 
+          className="fixed inset-0 z-global-modal bg-black/70 flex justify-end"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setHistoryDrawerOpen(false);
+          }}
+        >
+          <div className="w-full max-w-md bg-bg2 border-l border-border h-full flex flex-col p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in slide-in-from-right" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <History size={16} className="text-sky" />
@@ -2705,8 +2730,13 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* REJECT CONFIRMATION MODAL */}
       {/* ============================================================ */}
       {rejectingImage && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
+        <div 
+          className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setRejectingImage(null);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 text-rose-400">
               <XCircle size={20} />
               <h3 className="text-sm font-bold text-text">Reject Product Image</h3>
@@ -2747,8 +2777,13 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* REPLACE IMAGE MODAL */}
       {/* ============================================================ */}
       {replacingSlot && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
+        <div 
+          className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setReplacingSlot(null);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-text">
                 Replace {replacingSlot.slotId.toUpperCase()} Packaging Image
@@ -2805,8 +2840,13 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* ONLINE PACKAGING CANDIDATES MODAL (PharmEasy + Tata 1mg) */}
       {/* ============================================================ */}
       {candidateTrayOpen && selectedMedicine && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95 max-h-[88vh] flex flex-col">
+        <div 
+          className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCandidateTrayOpen(false);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95 max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between pb-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-sky-500/10 text-sky">
@@ -2946,8 +2986,13 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       {/* CONNECT TO MASTER MEDICINE MODAL */}
       {/* ============================================================ */}
       {relinkModalImage && (
-        <div className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95">
+        <div 
+          className="fixed inset-0 z-global-modal bg-black/80 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setRelinkModalImage(null);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-primary">
                 <Link2 size={20} />

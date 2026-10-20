@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   RefreshCw, Send, MessageSquare, Phone,
   Search, MessageCircle, Check, Package,
@@ -117,10 +118,18 @@ export const WhatsAppSection: React.FC = () => {
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [qrMessage, setQrMessage] = useState<string>('');
   const [templates, setTemplates] = useState<WaMessageTemplate[]>(cachedWaTemplates);
-  const [showTemplatePopover, setShowTemplatePopover] = useState(false);
+  const location = useLocation();
   const [showManageModal, setShowManageModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [newChatNumber, setNewChatNumber] = useState('');
+
+  // Reset modal states on route change
+  useEffect(() => {
+    setShowManageModal(false);
+    setShowNewChatModal(false);
+    setShowTemplatePopover(false);
+  }, [location.pathname]);
+
   const [scanningOcrId, setScanningOcrId] = useState<string | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [deletingWaMsgId, setDeletingWaMsgId] = useState<string | null>(null);
@@ -1179,8 +1188,16 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
 
       {/* Template Manager Modal */}
       {showManageModal && (
-        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-lg h-[75vh] min-h-[480px] max-h-[680px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
+        <div
+          className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowManageModal(false);
+          }}
+        >
+          <div
+            className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-lg h-[75vh] min-h-[480px] max-h-[680px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <Zap size={16} className="text-primary" />
@@ -1301,8 +1318,19 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
 
       {/* New Chat Modal */}
       {showNewChatModal && (
-        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
+        <div
+          className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowNewChatModal(false);
+              setNewChatNumber('');
+            }
+          }}
+        >
+          <div
+            className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-sm overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-4 border-b border-border flex items-center justify-between">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <MessageSquare size={16} className="text-emerald-400" />

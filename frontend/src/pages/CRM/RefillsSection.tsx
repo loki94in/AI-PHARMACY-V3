@@ -1,7 +1,7 @@
 import { isPatientRefillsSettled, getRefillStage, isRefillFulfilledToday, checkPatientRefillCycleBooking } from '../../utils/refillSettled';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   RefreshCw, Send, Users, Phone, Calendar,
   AlertCircle, Clock, Search, Repeat2, Bell,
@@ -44,6 +44,17 @@ export const RefillsSection: React.FC = () => {
   useEffect(() => {
     pageActiveRef.current = pageActive;
   }, [pageActive]);
+
+  const location = useLocation();
+  useEffect(() => {
+    setShowAddModal(false);
+    setEditingPatient(null);
+    setEditingRefill(null);
+    setViewInvoice(null);
+    setShowDelayModal(false);
+    setOrderingPatient(null);
+    setEarlyBookingConfirm(null);
+  }, [location.pathname]);
 
   const [data, setData] = useState<RefillPatient[]>(cachedRefillsData);
   const [selectedPatient, setSelectedPatient] = useState<RefillPatient | null>(null);
@@ -273,10 +284,12 @@ export const RefillsSection: React.FC = () => {
     };
   }, [isDragging]);
 
-  // Ref to track currently selected patient phone for smooth silent background updates
-  const selectedPatientPhoneRef = useRef<string | null>(null);
+  // Ref to track currently selected patient key for smooth silent background updates
+  const selectedPatientKeyRef = useRef<{ customer_id?: number; phone: string; name: string } | null>(null);
   useEffect(() => {
-    selectedPatientPhoneRef.current = selectedPatient?.patient_phone || null;
+    selectedPatientKeyRef.current = selectedPatient
+      ? { customer_id: selectedPatient.customer_id, phone: selectedPatient.patient_phone, name: selectedPatient.patient_name }
+      : null;
   }, [selectedPatient]);
 
   const handleOpenAddModal = (existingPat?: RefillPatient) => {
@@ -408,7 +421,7 @@ export const RefillsSection: React.FC = () => {
 
   const load = useCallback(async (silent = false) => {
     if (!silent && cachedRefillsData.length === 0) setLoading(true);
-    const previousPhone = selectedPatientPhoneRef.current;
+    const prevKey = selectedPatientKeyRef.current;
     try {
       const r = await withSilentRetry(() => apiClient.get<RefillPatient[]>('/refills/panel'));
       const list = Array.isArray(r.data) ? r.data : [];
@@ -416,7 +429,9 @@ export const RefillsSection: React.FC = () => {
       setData(list);
 
       if (list.length > 0) {
-        const match = previousPhone ? list.find(p => p.patient_phone === previousPhone) : null;
+        const match = prevKey
+          ? list.find(p => (prevKey.customer_id && p.customer_id ? p.customer_id === prevKey.customer_id : (p.patient_phone === prevKey.phone && p.patient_name === prevKey.name)))
+          : null;
         const active = match || list[0];
         setSelectedPatient(active);
         loadPatientFulfillments(active.patient_phone, active.customer_id);
@@ -1602,7 +1617,11 @@ export const RefillsSection: React.FC = () => {
               </div>
             ) : (
               filtered.map(patient => {
-                const isSelected = selectedPatient?.patient_phone === patient.patient_phone;
+                const isSelected = selectedPatient
+                  ? (selectedPatient.customer_id && patient.customer_id
+                      ? selectedPatient.customer_id === patient.customer_id
+                      : (selectedPatient.patient_phone === patient.patient_phone && selectedPatient.patient_name === patient.patient_name))
+                  : false;
                 const dueDate = new Date(patient.next_refill_date);
                 const isOverdue = dueDate < new Date();
                 const diffDays = Math.ceil((dueDate.getTime() - new Date().getTime()) / 86400000);
@@ -1612,7 +1631,7 @@ export const RefillsSection: React.FC = () => {
 
                 return (
                   <div
-                    key={patient.patient_phone}
+                    key={patient.customer_id ? `cust_${patient.customer_id}` : `${patient.patient_phone}_${patient.patient_name}`}
                     onClick={() => selectPatientAndLoadDetails(patient)}
                     className={`p-3 cursor-pointer transition-all flex items-center justify-between hover:bg-bg/60 ${
                       isSelected ? 'bg-primary/10 border-l-4 border-primary font-semibold' : ''
@@ -2486,8 +2505,16 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Add / Edit Refill Modal ── */}
       {showAddModal && createPortal(
-        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col">
+        <div 
+          className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowAddModal(false);
+              setEditingPatient(null);
+            }
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-xl h-[80vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex items-center justify-between shrink-0 bg-bg3/40">
               <div>
@@ -3066,8 +3093,13 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Inline Edit Refill Frequency Modal ── */}
       {editingRefill && createPortal(
-        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
+        <div 
+          className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setEditingRefill(null);
+          }}
+        >
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-md p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 <Sliders size={16} className="text-primary" />
@@ -3157,8 +3189,13 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Bill / Invoice Preview Modal ── */}
       {viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
+        <div 
+          className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setViewInvoice(null);
+          }}
+        >
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col border-primary/20 bg-bg2 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <div>

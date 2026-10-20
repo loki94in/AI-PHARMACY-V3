@@ -1,6 +1,7 @@
 // import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite';
-import { parseValues, cleanValue, normalizeDate } from '../../utils/migrationUtils.js';
+import { cleanValue, normalizeDate } from '../../utils/migrationUtils.js';
+import { extractInsertValues } from './baseParserHelper.js';
 import { recordAuditEntry } from '../../utils/migrationAudit.js';
 
 /**
@@ -29,36 +30,8 @@ export async function processInventoryLine(sqlLine: string, db: Database): Promi
   }
 
   try {
-    // Extract the VALUES part from the INSERT statement
-    // Find the position of 'VALUES' (case-insensitive)
-    const valuesIndex = uppercaseLine.indexOf('VALUES');
-    if (valuesIndex === -1) {
-      console.warn('INSERT INTO legacy_* found but no VALUES clause:', line);
-      return false;
-    }
-
-    // Get everything after 'VALUES'
-    const afterValues = line.substring(valuesIndex + 6); // 6 = length of 'VALUES'
-
-    // Find the opening parenthesis after VALUES
-    const openParenIndex = afterValues.indexOf('(');
-    if (openParenIndex === -1) {
-      console.warn('No opening parenthesis found after VALUES:', line);
-      return false;
-    }
-
-    // Find the matching closing parenthesis (simple approach - assumes no nested parentheses)
-    let closeParenIndex = afterValues.indexOf(')', openParenIndex);
-    if (closeParenIndex === -1) {
-      console.warn('No closing parenthesis found for VALUES:', line);
-      return false;
-    }
-
-    // Extract the values string between parentheses
-    const valuesStr = afterValues.substring(openParenIndex + 1, closeParenIndex).trim();
-
-    // Use proper CSV-like parsing that respects quotes
-    const rawValues = parseValues(valuesStr);
+    const rawValues = extractInsertValues(line, uppercaseLine, 'legacy_*');
+    if (!rawValues) return false;
 
     // We expect 5 columns: medicine_id, quantity, rack_location, batch_no, expiry_date
     if (rawValues.length !== 5) {

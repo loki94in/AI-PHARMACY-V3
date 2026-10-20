@@ -12,7 +12,7 @@
  * Prod: Packaged Electron binary with PharmacyBackend.exe child process.
  */
 
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, shell, session, desktopCapturer } from 'electron';
 import { spawn, exec, execSync, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -377,6 +377,24 @@ app.whenReady().then(async () => {
     yieldReq.on('error', () => {/* port 5174 not running, expected in standalone prod */});
     yieldReq.end();
   } catch (_) {}
+
+  // Register Desktop Media Request Handler for screen/window capture in renderer (e.g. Purchases invoice capture)
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+      desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+        if (sources.length > 0) {
+          callback({ video: sources[0] });
+        } else {
+          callback({});
+        }
+      }).catch((err) => {
+        console.error('[ElectronMain] desktopCapturer getSources error:', err);
+        callback({});
+      });
+    });
+  } catch (err) {
+    console.error('[ElectronMain] Failed to set display media request handler:', err);
+  }
 
   // Window first (bug P2-81): the user sees the app open immediately instead of an empty desktop
   // for the whole backend start-up; the splash is swapped for the SPA once the backend answers.

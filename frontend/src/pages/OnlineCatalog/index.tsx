@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Globe, Search, RefreshCw, CheckCircle2, EyeOff,
   Package, Zap, Filter, ChevronLeft, ChevronRight, X, Sparkles,
@@ -39,10 +40,18 @@ interface CatalogVisibilityResponse {
 }
 
 export default function OnlineCatalog() {
+  const location = useLocation();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'in_stock' | 'online' | 'offline' | 'with_image' | 'all'>('in_stock');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CatalogVisibilityResponse | null>(null);
+
+  // Reset modal states on route change
+  useEffect(() => {
+    setShowQrModal(false);
+    setShowConfigModal(false);
+  }, [location.pathname]);
+
   const [loading, setLoading] = useState(false);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -700,8 +709,16 @@ export default function OnlineCatalog() {
 
       {/* ── QR Code Popup Modal ────────────────────────────────────── */}
       {showQrModal && portalFullUrl && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4 animate-in fade-in">
-          <div className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-sm shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-center space-y-4">
+        <div
+          className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4 animate-in fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowQrModal(false);
+          }}
+        >
+          <div
+            className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-sm shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-center space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <QrCode className="w-5 h-5 text-emerald-500" />
@@ -756,8 +773,16 @@ export default function OnlineCatalog() {
 
       {/* ── Cloudflare Token & Permanent Domain Modal ─────────────── */}
       {showConfigModal && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4 animate-in fade-in">
-          <div className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4">
+        <div
+          className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4 animate-in fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowConfigModal(false);
+          }}
+        >
+          <div
+            className="bg-bg2 border border-border rounded-3xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-sky" />

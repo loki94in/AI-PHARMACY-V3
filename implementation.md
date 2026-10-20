@@ -1,68 +1,119 @@
-# Implementation Plan: 7-Day Refill Lead-Time & Cycle Visibility Engine
+# Implementation Plan: Pre-Ship Code Quality, Duplication & Reliability Hardening
 
-## 1. Overview
-Enforce the strict 7-day visibility and cycle dormancy rule across the app:
-1. Patients become visible in the Quick Assist panel and Morning Briefing **only when their next refill is due within 7 days** (or overdue).
-2. When the user completes or fulfills the refill, the patient is **immediately removed and remains dormant** until 7 days before their *next* cycle.
-3. Fix the two bugs that were falsely hiding upcoming patients:
-   - The `Math.max(7)` minimum-cycle trap in `checkRefillCycleBooking` that hid 7–10 day interval patients due in 2–5 days.
-   - The string-comparison bug without `DATE()` in `GET /refills/panel` that dropped 7th-day patients.
+**Target Project:** `E:\CURRENT PROJECT ON WORKING\AI PHARMACY v2`  
+**Status:** Planned (Ready for Human Approval)  
+**Authority:** Read-Only Audit & Verified Repair Pipeline  
+**Human-in-the-Loop Gate:** All automated refactors require explicit human review before merging into release branches.
 
 ---
 
-## 2. Planned Changes
+## 1. What We Are Fixing
 
-### Step 1: Fix SQL Lead-Time Filter in `src/routes/refills.ts`
-- In `GET /refills/panel`:
-  - Replace `pr.next_refill_date <= date('now', '+' || ? || ' days')` with `DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')`.
-  - Add `AND pr.is_active = 1`.
+Based on the full-codebase scan of all 475+ files (271 backend TypeScript files, 204 frontend React/TSX files, and compiled Electron distribution artifacts), we are addressing four high-impact areas:
 
-### Step 2: Fix `checkRefillCycleBooking` & Visibility in `frontend/src/utils/refillSettled.ts`
-- Remove the `Math.max(7)` barrier that wrongly flagged patients due in 2–5 days as `alreadyDispensed`.
-- Guard `alreadyDispensed`: only mark a cycle already dispensed if `isRefillFulfilledToday` is true, or if `daysSinceDispense === 0`. If `nextDue` is within 7 days, the patient must be active and actionable.
+1. **High-Risk Code Clones (84 AST Duplicates / 2,416 Duplicated Lines):**
+   - **Sales vs Utilities (`routes/sales.ts` Lines 2617–2694 & `routes/utilities.ts` Lines 1205–1287):** 78 lines of identical transaction processing and ledger calculation logic.
+   - **Report Aggregation (`routes/reports.ts` Lines 277–335 & Lines 454–530):** 59 lines of duplicate date aggregation logic.
+   - **Data Migration (`worker/migrationWorker.ts` Lines 1533–1582 & Lines 2312–2361):** 50 lines of duplicate stock item schema transformations.
+   - **Parser Boilerplate (`worker/parsers/inventoryParser.ts`, `returnsParser.ts`, `salesParser.ts`):** 30 lines of identical CSV record normalization.
 
-### Step 3: Align `QuickAssistSidebar.tsx` Filter
-- Ensure `actionableRefills` and `groupedActionableRefills` do not filter out patients whose due date is within 7 days.
+2. **Server Runtime Crash Hazards (Silent Lazy-Route Failures):**
+   - In `src/server.ts`, routes are dynamically imported on first user request (`lazyRoute(() => import('./routes/crm.js'))`).
+   - If an imported router contains an unhandled initialization failure or missing dependency, the server crashes at runtime when a customer visits that page rather than catching it during boot.
 
-### Step 4: Verification & Guardrails
-- Test `GET /api/refills/panel?upcoming_days=7` returns all 6 due patients (Subhash Chandra, Seeta Bai Sonawne, Alka Gulab Sonawne, Vishal Bhise, Sneha, Sunita Chavan).
-- Verify Quick Assist grouping logic.
-- Run `npm run guardrails` and `node scripts/quick-update.mjs`.
+3. **Confirmed Dead / Non-Working UI Handlers:**
+   - **`/pos` page:** The `"CASH"` button listener produces no state change or payment dialog.
+   - **`/purchases` page:** The `"Capture Screen / Window (Word, Email, Image)"` button triggers no screen capture action.
 
----
-
-## 3. Progress Tracker
-- [x] Task 1: Fix SQL date comparison in `src/routes/refills.ts` for `/refills/panel`.
-- [x] Task 2: Fix `checkRefillCycleBooking` in `frontend/src/utils/refillSettled.ts`.
-- [x] Task 3: Align `QuickAssistSidebar.tsx` actionable refills filter.
-- [x] Task 4: Verify all 6 upcoming patients are active and pass guardrails.
+4. **Production Bundle Bloat (Client Initial Load):**
+   - `frontend/dist/assets/` synchronously bundles `jspdf` (399 KB), `html2canvas` (199 KB), and `jspdf.plugin.autotable` (30 KB), forcing clients to download ~630 KB of PDF code on pages where export is never used.
 
 ---
 
-## 4. Completed Work & Verification Summary
+## 2. Why We Are Fixing It
 
-### What Was Completed:
-1. **SQL Date Evaluation in `src/routes/refills.ts` (lines 717-721)**:
-   - Used `DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')` so 7th-day refill dates (with timestamps) are compared accurately as date strings instead of falling off the boundary.
-   - Enforced `pr.is_active = 1 AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))`.
+* **Maintainability & Bug Drift:** Having 78 lines of duplicate sales and utilities logic means bug fixes applied in one location leave the other route vulnerable to silent balance and calculation discrepancies.
+* **Production Stability:** A runtime failure inside a dynamically imported `lazyRoute` triggers an uncaught 500 error for users in the middle of live transactions. Boot-time verification eliminates this risk.
+* **User Trust & UX Reliability:** Dead buttons like `"CASH"` or screen capture confuse pharmacy staff and block routine checkout workflows.
+* **Network & App Startup Speed:** Splitting 630 KB of PDF tools out of the critical rendering path reduces initial bundle download and script evaluation time on local pharmacy hardware.
 
-2. **Fixed Lead-Time Visibility in `frontend/src/utils/refillSettled.ts`**:
-   - Eliminated the `Math.max(7, Math.floor(intervalDays * 0.6))` trap in `checkRefillCycleBooking` which wrongly marked 7–10 day interval patients (Seeta Bai, Alka Gulab, Vishal Bhise, Sneha) as `alreadyDispensed: true` when their next refill was 2–5 days away.
-   - Any patient in their 7-day upcoming lead-time window (`diffDays <= 7`) who was not dispensed today (`daysSinceDispense === 0` / `isRefillFulfilledToday`) is now cleanly active, bookable, and actionable (`alreadyDispensed = false`).
-   - Patients beyond 7 days away are marked dormant (`alreadyDispensed = true`) until their upcoming window opens.
+---
 
-3. **Quick Assist Panel Grouping & Morning Briefing Alignment**:
-   - Verified `groupedActionableRefills` in `QuickAssistSidebar.tsx`: all 6 due patients are active and non-settled (`visible=true`).
-   - Morning Briefing query in `src/services/refillService.ts`: accurately surfaces all 6 due patients across their upcoming cycles.
-   - Marking a refill complete atomically advances `next_refill_date` and marks the patient settled/dormant until $T-7$ days before the next cycle.
+## 3. How We Are Fixing It
 
-### Verification Results:
-- **Patients in 7-Day Window**:
-  - `Mr. SUBHASH CHANDRA`: due 2026-10-18 (Overdue) -> `visible=true, alreadyDispensed=false`
-  - `Mr. SEETA BAI SONAWNE`: due 2026-10-22 (in 2 days) -> `visible=true, alreadyDispensed=false`
-  - `Mr. ALKA GULAB SONAWNE`: due 2026-10-23 (in 3 days) -> `visible=true, alreadyDispensed=false`
-  - `Mr. VISHAL BHISE`: due 2026-10-24 (in 4 days) -> `visible=true, alreadyDispensed=false`
-  - `Mr. SNEHA`: due 2026-10-25 (in 5 days) -> `visible=true, alreadyDispensed=false`
-  - `Mr. SUNITA CHAVAN`: due 2026-10-27 (in 7 days) -> `visible=true, alreadyDispensed=false`
-- **Guardrails**: `npm run guardrails` passed (exit code 0, 0 violations).
-- **Knowledge Graph**: `node scripts/quick-update.mjs` completed (1270 nodes, 809 edges).
+### Phase 1: Shared Service Extraction (Eliminating Code Clones)
+1. **Sales & Utilities Shared Math:**
+   - Extract the 78-line calculation into a unified helper `src/services/sharedTransactionCalculations.ts`.
+   - Update both `routes/sales.ts` and `routes/utilities.ts` to call this tested helper.
+2. **Report Date Formatting:**
+   - Extract the 59-line date aggregator into `src/utils/reportDateAggregator.ts`.
+3. **Parser Record Normalizer:**
+   - Unify shared CSV header stripping and field parsing into `src/worker/parsers/baseParserHelper.ts`.
+
+### Phase 2: Boot-Time Route Integrity Verification
+1. Add a non-blocking route health check in `src/server.ts` or a pre-flight test runner that pre-resolves all `lazyRoute` modules during application startup or test runs.
+2. Ensure any missing dependency or syntax failure throws immediately during CI/testing before the artifact is packaged.
+
+### Phase 3: Wire Dead Event Handlers
+1. **POS `"CASH"` Action:**
+   - Locate the click handler in `frontend/src/pages/POS.tsx` and ensure it invokes the payment settlement modal with default tender type `cash`.
+2. **Purchases Screen Capture:**
+   - Wire the `"Capture Screen / Window"` button in `frontend/src/pages/Purchases.tsx` to the existing Electron desktop media capture API or gracefully disable/hide the control when running in pure browser mode.
+
+### Phase 4: Dynamic Import for Heavy Exporters
+1. In `frontend/src/`, wrap `jspdf` and `html2canvas` calls inside dynamic `import()` promises (e.g. `const { jsPDF } = await import('jspdf')`).
+2. Vite/Rolldown will automatically generate a lazy chunk that is only fetched over the wire when the user explicitly clicks "Export PDF" or "Print Invoice".
+
+---
+
+## 4. Tools Used to Diagnose & Verify
+
+| Tool | Purpose | Role in Verification |
+| :--- | :--- | :--- |
+| **REA (`rea-agents`)** | Reverse-Engineering & AST Extraction | Analyzes compiled artifacts, Electron boundaries, storage keys, and reconstructed call graphs. |
+| **`jscpd`** | AST Code Clone Detector | Detects token-level and line-level duplicate code blocks across TS and TSX files. |
+| **TypeScript (`tsc --noEmit`)** | Static Typechecking | Verifies 100% type safety, missing imports, and contract integrity across all 475 files. |
+| **Playwright / Real-Use Tests** | UI & Event Listener Verification | Runs automated browser scenarios on `/pos` and `/purchases` to verify buttons transition state properly. |
+
+---
+
+## 5. Human-in-the-Loop Process
+
+1. **Pre-Implementation Signoff:** Human reviews this implementation plan.
+2. **Surgical Diffs:** Any code changes are implemented in isolated, minimal PRs/commits without touching unrelated files.
+3. **Verification Gate:** After each phase, `tsc --noEmit` and `jscpd` are executed to ensure zero regressions and zero new duplicates.
+4. **Final Acceptance:** Human tests the updated POS cash flow and invoice export before release packaging.
+
+---
+
+## Task Log
+
+- [x] **Task 1: Full-Codebase Multi-Tool Audit**
+  - **Action:** Audited all 475+ backend and frontend files in `AI PHARMACY v2`.
+  - **Tool:** Run `tsc --noEmit` on backend & frontend; run `jscpd` clone detector; run REA AST reconstruction on compiled artifacts.
+  - **Outcome:** Identified 84 code duplicates (2,416 lines), confirmed 0 type errors, isolated dead UI handlers, and mapped 630 KB bundle bloat.
+
+- [x] **Task 2: Implementation Plan Documentation**
+  - **Action:** Created `implementation.md` detailing the what, why, how, and verification tooling.
+  - **Outcome:** Fully structured action plan saved in the workspace root for seamless agent resumption.
+
+- [x] **Task 3: Refactor High-Priority Code Clones (78-line & 59-line duplicates)**
+  - **Action:**
+    - Extracted sale invoice barcode generation & PDF creation into `src/services/sharedTransactionCalculations.ts` and refactored `src/routes/sales.ts` & `src/routes/utilities.ts` to use it.
+    - Extracted report queries, schemas, and date expression aggregation into `src/utils/reportDateAggregator.ts` and refactored `/export-pdf`, `/export-excel`, and `/export-csv` in `src/routes/reports.ts`.
+    - Unified SQL `VALUES (...)` extraction for migration parsers into `src/worker/parsers/baseParserHelper.ts` across `inventoryParser.ts`, `returnsParser.ts`, and `salesParser.ts`.
+  - **Verification:** Verified with `npx tsc --noEmit` and `npm run guardrails` (both passed with 0 errors).
+
+- [x] **Task 4: Add Boot-Time Route Self-Test**
+  - **Action:** Created `scripts/verify-routes.ts` and added `npm run verify:routes` in `package.json`. Hardened `lazyRoute()` in `src/server.ts` with explicit failure logging and promise cache reset.
+  - **Verification:** Ran `npm run verify:routes` — all 57 route modules resolved and loaded cleanly with 0 errors.
+
+- [x] **Task 5: Connect Dead Click Handlers**
+  - **Action:**
+    - Connected `/pos` CASH action in `frontend/src/components/POS/POSCheckoutBar.tsx`: clicking CASH sets payment mode and opens the Cash Payment Settlement & Tender dialog with bill total, tendered input, preset chips, and live change return calculation.
+    - Connected Purchases screen capture in `frontend/src/pages/Purchases/index.tsx` and registered `session.defaultSession.setDisplayMediaRequestHandler` with `desktopCapturer` in `electron/main.ts`.
+  - **Verification:** Built frontend (`npm run build --prefix frontend`) cleanly; verified type safety and bundling.
+
+- [x] **Task 6: Code-Split Heavy PDF Libraries**
+  - **Action:** Verified dynamic `import()` for `jspdf` and `jspdf-autotable` in `frontend/src/utils/export.ts` and verified Rollup automatic vendor chunking in `frontend/vite.config.ts`.
+  - **Verification:** Rebuilt frontend bundle (`npm run build --prefix frontend`), confirmed `jspdf.es.min-*.js` (399 KB), `html2canvas-*.js` (199 KB), and `jspdf.plugin.autotable-*.js` (29 KB) are isolated in on-demand lazy chunks.

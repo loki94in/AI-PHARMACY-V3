@@ -6,7 +6,7 @@ import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEd
 import { parsePackSizeFromPackaging } from '../../utils/packagingMatcher';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { useQueryClient } from '@tanstack/react-query';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import CatalogUpload from '../CatalogUpload';
 import { CatalogImageVerificationTab } from './CatalogImageVerificationTab';
 import { formatDisplayDate } from '../../utils/date';
@@ -98,9 +98,16 @@ type LocalApiError = { response?: { data?: { error?: string } }; message?: strin
 
 const DatabasePage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || 'db';
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    setShowPriceHistoryModal(false);
+    setShowBulkAddModal(false);
+    setIsUniversalModalOpen(false);
+  }, [location.pathname]);
   const [medicines, setMedicines] = useState<MedicineRow[]>(cachedMedicines || []);
   const [productNameInput, setProductNameInput] = useState('');
 
@@ -969,8 +976,13 @@ const DatabasePage = () => {
 
       {/* Price History Modal */}
       {showPriceHistoryModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 p-4">
-          <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden">
+        <div 
+          className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowPriceHistoryModal(false);
+          }}
+        >
+          <div className="bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border bg-bg3/50 shrink-0">
               <div>
@@ -1079,8 +1091,16 @@ const DatabasePage = () => {
       
       {/* Bulk Multi-Add Medicine Modal */}
       {showBulkAddModal && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col">
+        <div 
+          className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowBulkAddModal(false);
+              setAddMessage(null);
+            }
+          }}
+        >
+          <div className="relative bg-bg border border-glass-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="p-5 border-b border-glass-border bg-bg3 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-3">

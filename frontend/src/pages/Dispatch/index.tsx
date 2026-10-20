@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, Fragment } from 'react';
+import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
   Truck,
@@ -143,6 +144,7 @@ type LocalApiError = { response?: { data?: { error?: string } }; message?: strin
 type TabType = 'all' | 'queue' | 'reminders' | 'staff' | 'logs';
 
 const Dispatch = () => {
+  const location = useLocation();
   const isPageActive = usePageActive();
   const cachedOrders = getDispatchOrdersCache() as DispatchOrder[] | null;
   const cachedDeliveryBoys = getDispatchDeliveryBoysCache() as DeliveryBoy[] | null;
@@ -160,6 +162,15 @@ const Dispatch = () => {
   const [showBoysModal, setShowBoysModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
+
+  // Reset modal states on route change
+  useEffect(() => {
+    setSelectedPrescription(null);
+    setShowModal(false);
+    setShowBoysModal(false);
+    setShowTemplateModal(false);
+    setShowManualOrderModal(false);
+  }, [location.pathname]);
 
   // Search & Filter States
   const [queueSearch, setQueueSearch] = useState('');
@@ -1296,8 +1307,16 @@ const Dispatch = () => {
 
       {/* Prescription Zoom Lightbox Modal */}
       {selectedPrescription && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col rounded-3xl p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden">
+        <div
+          className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedPrescription(null);
+          }}
+        >
+          <div
+            className="bg-bg border border-border w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col rounded-3xl p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <FileImage size={18} className="text-primary" />

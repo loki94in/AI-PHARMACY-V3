@@ -1,5 +1,6 @@
 import { Database } from 'sqlite';
-import { parseValues, cleanValue} from '../../utils/migrationUtils.js';
+import { cleanValue } from '../../utils/migrationUtils.js';
+import { extractInsertValues } from './baseParserHelper.js';
 import { recordAuditEntry } from '../../utils/migrationAudit.js';
 
 /**
@@ -58,29 +59,8 @@ export async function processSalesLine(sqlLine: string, db: Database): Promise<b
     // Handle legacy_sales (invoice headers)
     if (uppercaseLine.startsWith('INSERT INTO LEGACY_SALES')) {
         try {
-            // Extract the VALUES part
-            const valuesIndex = uppercaseLine.indexOf('VALUES');
-            if (valuesIndex === -1) {
-                console.warn('INSERT INTO legacy_sales found but no VALUES clause:', line);
-                return false;
-            }
-
-            const afterValues = line.substring(valuesIndex + 6); // 6 = length of 'VALUES'
-            const openParenIndex = afterValues.indexOf('(');
-            if (openParenIndex === -1) {
-                console.warn('No opening parenthesis found after VALUES:', line);
-                return false;
-            }
-
-            // Find matching closing parenthesis (handle nested parentheses if needed)
-            let closeParenIndex = afterValues.indexOf(')', openParenIndex);
-            if (closeParenIndex === -1) {
-                console.warn('No closing parenthesis found for VALUES:', line);
-                return false;
-            }
-
-            const valuesStr = afterValues.substring(openParenIndex + 1, closeParenIndex).trim();
-            const values = parseValues(valuesStr);
+            const values = extractInsertValues(line, uppercaseLine, 'legacy_sales');
+            if (!values) return false;
 
             // Expected columns for legacy_sales:
             // Based on typical legacy structure, assuming: invoice_id, bill_no, customer_id, date, total_amount, tax_amount, etc.
@@ -178,29 +158,8 @@ export async function processSalesLine(sqlLine: string, db: Database): Promise<b
     else if (uppercaseLine.startsWith('INSERT INTO LEGACY_SALEITEMS') ||
              uppercaseLine.startsWith('INSERT INTO LEGACY_SALE_ITEMS')) {
         try {
-            // Extract the VALUES part
-            const valuesIndex = uppercaseLine.indexOf('VALUES');
-            if (valuesIndex === -1) {
-                console.warn('INSERT INTO legacy_saleItems found but no VALUES clause:', line);
-                return false;
-            }
-
-            const afterValues = line.substring(valuesIndex + 6); // 6 = length of 'VALUES'
-            const openParenIndex = afterValues.indexOf('(');
-            if (openParenIndex === -1) {
-                console.warn('No opening parenthesis found after VALUES:', line);
-                return false;
-            }
-
-            // Find matching closing parenthesis
-            let closeParenIndex = afterValues.indexOf(')', openParenIndex);
-            if (closeParenIndex === -1) {
-                console.warn('No closing parenthesis found for VALUES:', line);
-                return false;
-            }
-
-            const valuesStr = afterValues.substring(openParenIndex + 1, closeParenIndex).trim();
-            const values = parseValues(valuesStr);
+            const values = extractInsertValues(line, uppercaseLine, 'legacy_saleItems');
+            if (!values) return false;
 
             // Expected columns for legacy_saleItems:
             // Assuming: item_id, invoice_id/bill_no, medicine_id, quantity, unit_price, etc.

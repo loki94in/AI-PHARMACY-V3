@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Globe,
   ShoppingBag,
@@ -72,7 +72,17 @@ export const getMediaUrl = (rawPath: string | null | undefined): string => {
 
 export default function WebsiteOrders() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { activeStoreId } = useStore();
+
+  // Reset modal states on route change
+  useEffect(() => {
+    setSelectedPrescription(null);
+    setOverrideModalOrder(null);
+    setDeliveryOverrideOrder(null);
+    setSelectedScreenshot(null);
+    setModifyingOrder(null);
+  }, [location.pathname]);
 
   const [orders, setOrders] = useState<any[]>(() => cachedOrders);
   const [loading, setLoading] = useState(() => cachedOrders.length === 0);
@@ -1437,8 +1447,16 @@ export default function WebsiteOrders() {
         const photos = parsePrescriptionUrls(selectedPrescription);
         const currentPhoto = photos[prescriptionPhotoIndex] || photos[0] || '';
         return (
-          <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
-            <div className="bg-bg border border-border w-[95vw] max-w-2xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col rounded-3xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden">
+          <div
+            className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setSelectedPrescription(null);
+            }}
+          >
+            <div
+              className="bg-bg border border-border w-[95vw] max-w-2xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col rounded-3xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] relative overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
                 <div className="flex items-center gap-2">
                   <FileImage size={18} className="text-primary" />
@@ -1588,8 +1606,16 @@ export default function WebsiteOrders() {
 
       {/* Return Override Authorization Modal */}
       {overrideModalOrder && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left">
+        <div
+          className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setOverrideModalOrder(null);
+          }}
+        >
+          <div
+            className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <ShieldAlert size={18} className="text-amber-500" />
@@ -1654,8 +1680,16 @@ export default function WebsiteOrders() {
 
       {/* Staff Delivery ETA Override Modal */}
       {deliveryOverrideOrder && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left">
+        <div
+          className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDeliveryOverrideOrder(null);
+          }}
+        >
+          <div
+            className="bg-bg border border-border w-[95vw] max-w-md rounded-3xl p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <Clock size={18} className="text-primary" />
@@ -1730,8 +1764,16 @@ export default function WebsiteOrders() {
 
       {/* WhatsApp Payment Screenshot Review Modal (Human-in-the-Loop) */}
       {selectedScreenshot && (
-        <div className="fixed inset-0 z-global-modal bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden">
+        <div
+          className="fixed inset-0 z-global-modal bg-black/70 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedScreenshot(null);
+          }}
+        >
+          <div
+            className="bg-bg border border-border rounded-2xl w-[95vw] max-w-lg h-[80vh] min-h-[520px] max-h-[760px] p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-border/60 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <FileImage size={18} className="text-primary" />

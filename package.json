@@ -20,6 +20,7 @@
     "tunnel:dev": "node scripts/start-online-catalog-tunnel.mjs --port=5173",
     "tunnel:server": "node scripts/start-online-catalog-tunnel.mjs --port=5174",
     "guardrails": "node scripts/performance-guardrails.mjs",
+    "verify:routes": "tsx scripts/verify-routes.ts",
     "analyze:bundle": "node scripts/analyze-frontend-bundle.mjs",
     "drill": "node scripts/backup-restore-drill.mjs",
     "watchdog": "node scripts/watchdog.mjs",

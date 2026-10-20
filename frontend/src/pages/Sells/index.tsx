@@ -146,6 +146,14 @@ const exportColumns = [
 const Sells = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    setEditInvoice(null);
+    setViewInvoice(null);
+    setBarcodeModalInvoice(null);
+    setOldFyBillConfirm(null);
+    setPanelOpen(false);
+  }, [location.pathname]);
+
   const queryClient = useQueryClient();
   const todayStr = getTodayString();
   const thirtyDaysAgoStr = getNDaysAgoString(30);
@@ -1110,8 +1118,13 @@ const Sells = () => {
       {/* Edit Modal */}
       {/* Bill Management & Deletion Modal */}
       {editInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="glass-panel w-[95vw] max-w-5xl h-[90vh] min-h-[580px] max-h-[880px] flex flex-col overflow-hidden border-primary/30 shadow-[0_4px_24px_rgba(0,0,0,0.12)]">
+        <div 
+          className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setEditInvoice(null);
+          }}
+        >
+          <div className="glass-panel w-[95vw] max-w-5xl h-[90vh] min-h-[580px] max-h-[880px] flex flex-col overflow-hidden border-primary/30 shadow-[0_4px_24px_rgba(0,0,0,0.12)]" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
               <div className="flex items-center gap-3">
@@ -1580,8 +1593,16 @@ const Sells = () => {
 
       {/* View Modal */}
       {viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden border-sky-500/20">
+        <div 
+          className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setViewInvoice(null);
+              setBarcodeModalInvoice(null);
+            }
+          }}
+        >
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden border-sky-500/20" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="p-5 border-b border-glass-border flex justify-between items-center bg-bg3 shrink-0">
               <div>
@@ -1924,8 +1945,13 @@ const Sells = () => {
 
       {/* Standalone Barcode Modal Portal */}
       {barcodeModalInvoice && !viewInvoice && createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="glass-panel w-[95vw] max-w-lg p-6 border-purple-500/30 flex flex-col items-center space-y-4 max-h-[90vh] overflow-y-auto">
+        <div 
+          className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setBarcodeModalInvoice(null);
+          }}
+        >
+          <div className="glass-panel w-[95vw] max-w-lg p-6 border-purple-500/30 flex flex-col items-center space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="w-full flex justify-between items-center border-b border-glass-border pb-3">
               <h3 className="font-bold text-base flex items-center gap-2 text-text">
                 <QrCode size={18} className="text-purple-400" />
@@ -2074,8 +2100,13 @@ const Sells = () => {
 
       {/* Old Financial Year Bill Action Modal */}
       {oldFyBillConfirm && createPortal(
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4">
-          <div className="glass-panel w-[95vw] max-w-md border-amber-500/40 overflow-hidden">
+        <div 
+          className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setOldFyBillConfirm(null);
+          }}
+        >
+          <div className="glass-panel w-[95vw] max-w-md border-amber-500/40 overflow-hidden" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="p-5 border-b border-glass-border bg-amber-500/10">
               <div className="flex items-center gap-3">

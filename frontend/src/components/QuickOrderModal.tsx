@@ -1002,8 +1002,16 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 transition-all duration-300">
-      <div className="glass-panel w-[95vw] max-w-3xl p-6 relative border border-glass-border shadow-[0_0_50px_rgba(59,130,246,0.2)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 rounded-3xl max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-black/60 transition-all duration-300"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+    >
+      <div
+        className="glass-panel w-[95vw] max-w-3xl p-6 relative border border-glass-border shadow-[0_0_50px_rgba(59,130,246,0.2)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 rounded-3xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         
         {/* Close Button */}
         <button 

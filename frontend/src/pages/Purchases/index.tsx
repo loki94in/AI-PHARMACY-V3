@@ -3110,6 +3110,10 @@ const Purchases: React.FC = () => {
   };
 
   const captureScreen = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      toastEvent.trigger("Screen capture is not supported in this browser environment.", 'error', '/purchases');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const video = document.createElement('video');
@@ -3142,7 +3146,11 @@ const Purchases: React.FC = () => {
       } else {
         stream.getTracks().forEach(track => track.stop());
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError') {
+        // User dismissed the screen selector dialog
+        return;
+      }
       console.error("Failed to capture screen:", err);
       toastEvent.trigger("Screen capture was canceled or failed.", 'error', '/purchases');
     }

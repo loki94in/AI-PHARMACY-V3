@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, apiClient } from '../../services/api';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
@@ -98,7 +98,14 @@ const nextBillBarcodeRequestId = (): number => ++billBarcodeSeq;
 
 const PurchaseHistory = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+
+  // Reset modal states on route change
+  useEffect(() => {
+    setSelectedOrder(null);
+    setViewPurchase(null);
+  }, [location.pathname]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [colFilterId, setColFilterId] = useState('');
@@ -945,8 +952,16 @@ const PurchaseHistory = () => {
 
       {/* Investigation Modal */}
       {selectedOrder && createPortal(
-        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
-          <div className="glass-panel w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedOrder(null);
+          }}
+        >
+          <div
+            className="glass-panel w-[95vw] max-w-2xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-6 border-b border-glass-border flex justify-between items-start bg-bg2 shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-text flex items-center gap-2">
@@ -1083,8 +1098,16 @@ const PurchaseHistory = () => {
 
       {/* View Purchase Modal */}
       {viewPurchase && createPortal(
-        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
-          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeView();
+          }}
+        >
+          <div
+            className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[840px] flex flex-col overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-in fade-in duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-6 border-b border-glass-border flex justify-between items-center bg-bg2 shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-text flex items-center gap-2">
