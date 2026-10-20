@@ -1320,7 +1320,7 @@ router.get('/uncollected-alerts', async (_req, res) => {
 });
 
 // Helper to cancel and remove any pending unsent WhatsApp queue items and notifications for an order
-async function cancelPendingWhatsAppForOrder(
+export async function cancelPendingWhatsAppForOrder(
   db: any,
   order: { phone?: string; requester?: string; product?: string; id: number | string }
 ): Promise<void> {
@@ -1368,6 +1368,72 @@ async function cancelPendingWhatsAppForOrder(
       [String(order.id), `shortage_${order.id}`, prodName ? `%${prodName}%` : '', String(order.id)]
     );
   } catch (_) {}
+}
+
+/**
+ * 2-Way Sync Helper: When a special order (or batch of orders) is Fulfilled / Completed,
+ * automatically find and advance any companion refills in patient_refills table so they
+ * are stamped as fulfilled and advance to the next interval (leaving Quick Assist and morning briefing).
+ */
+export async function syncCloseCompanionRefillsForOrders(
+  db: any,
+  orders: Array<{ phone?: string | null; product?: string | null; medicine_name?: string | null; source_refill_id?: number | null }>
+) {
+  if (!orders || orders.length === 0) return;
+  try {
+    const { executeCloseRefillCycles } = await import('./refills.js');
+    const matchedRefills: any[] = [];
+    const seenRefillIds = new Set<number>();
+
+    for (const ord of orders) {
+      if (ord.source_refill_id && !seenRefillIds.has(ord.source_refill_id)) {
+        const rows = await db.all(
+          `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE pr.id = ? AND pr.is_active = 1`,
+          [ord.source_refill_id]
+        );
+        for (const r of rows) {
+          if (!seenRefillIds.has(r.id)) {
+            seenRefillIds.add(r.id);
+            matchedRefills.push(r);
+          }
+        }
+      }
+
+      const cleanDigits = (ord.phone || '').replace(/\D/g, '').slice(-10);
+      const prodName = (ord.product || ord.medicine_name || '').trim().toLowerCase();
+      if (cleanDigits.length >= 7 && prodName) {
+        const rows = await db.all(
+          `SELECT pr.*, m.name as medicine_name 
+           FROM patient_refills pr 
+           LEFT JOIN medicines m ON pr.medicine_id = m.id 
+           WHERE (pr.patient_phone LIKE ? OR replace(replace(pr.patient_phone, ' ', ''), '-', '') LIKE ?)
+             AND pr.is_active = 1
+             AND (
+               LOWER(TRIM(COALESCE(m.name, ''))) = ? 
+               OR LOWER(TRIM(COALESCE(pr.medicine_name, ''))) = ?
+               OR ? LIKE '%' || LOWER(TRIM(COALESCE(m.name, ''))) || '%'
+               OR LOWER(TRIM(COALESCE(m.name, ''))) LIKE '%' || ? || '%'
+             )`,
+          [`%${cleanDigits}%`, `%${cleanDigits}%`, prodName, prodName, prodName, prodName]
+        );
+        for (const r of rows) {
+          if (!seenRefillIds.has(r.id)) {
+            seenRefillIds.add(r.id);
+            matchedRefills.push(r);
+          }
+        }
+      }
+    }
+
+    if (matchedRefills.length > 0) {
+      await executeCloseRefillCycles(db, matchedRefills, 'special_order_fulfilled');
+    }
+  } catch (refillSyncErr) {
+    console.warn('[Orders] Could not auto-close companion refill on special order fulfillment:', refillSyncErr);
+  }
 }
 
 // Update order status/details
@@ -1520,7 +1586,7 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    if (newStatus === 'Cancelled' || newStatus === 'Fulfilled') {
+    if (newStatus === 'Cancelled' || newStatus === 'Fulfilled' || newStatus === 'Completed') {
       await cancelPendingWhatsAppForOrder(db, {
         id,
         phone: newPhone || existing.phone,
@@ -1533,7 +1599,7 @@ router.put('/:id', async (req, res) => {
         medicineNames: [newProduct || existing.product].filter(Boolean) as string[]
       });
     }
-    if (newStatus === 'Fulfilled') {
+    if (newStatus === 'Fulfilled' || newStatus === 'Completed') {
       await db.run(
         `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -1541,6 +1607,14 @@ router.put('/:id', async (req, res) => {
            AND reference_id = ?`,
         [String(id), String(id)]
       ).catch(() => {});
+
+      // 2-Way Sync: Close companion refills
+      await syncCloseCompanionRefillsForOrders(db, [{
+        phone: newPhone || existing.phone,
+        product: newProduct || existing.product,
+        medicine_name: existing.medicine_name,
+        source_refill_id: existing.source_refill_id
+      }]);
     }
 
     // 2-Way Sync: If phone or requester updated, cascade changes to pending/failed WhatsApp queue rows & customers table
@@ -1684,6 +1758,9 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
            AND reference_id = ?`,
         [String(id), String(id)]
       ).catch(() => {});
+
+      // 2-Way Sync: Close companion refills
+      await syncCloseCompanionRefillsForOrders(db, [existing]);
     }
 
     // Live cart adjustment runs in background setImmediate so HTTP response returns in <50ms
@@ -1820,6 +1897,9 @@ const handleBatchStatusUpdate = async (req: express.Request, res: express.Respon
            AND reference_id IN (${strPlaceholders})`,
         [...strIds, ...strIds]
       ).catch(() => {});
+
+      // 2-Way Sync: Close companion refills
+      await syncCloseCompanionRefillsForOrders(db, orders);
     }
 
     if (status === 'Cancelled' || status === 'Ready') {

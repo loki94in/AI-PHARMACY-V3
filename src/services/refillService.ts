@@ -679,6 +679,8 @@ export async function buildDailyOperationalBriefing(
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -686,6 +688,7 @@ export async function buildDailyOperationalBriefing(
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
           )
       )
     GROUP BY pr.patient_name
@@ -709,6 +712,8 @@ export async function buildDailyOperationalBriefing(
       AND pr.status IN ('pending', 'notified', 'staged')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -716,6 +721,7 @@ export async function buildDailyOperationalBriefing(
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
           )
       )
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC

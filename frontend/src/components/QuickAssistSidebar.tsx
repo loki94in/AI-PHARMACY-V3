@@ -687,7 +687,7 @@ export const QuickAssistSidebar = memo(({
       return next;
     });
 
-    if (newStatus === 'Completed' || newStatus === 'Cancelled') {
+    if (newStatus === 'Completed' || newStatus === 'Fulfilled' || newStatus === 'Cancelled') {
       setOptimisticHiddenOrderIds(prev => {
         const next = new Set(prev);
         itemIds.forEach(id => next.add(id));
@@ -938,12 +938,14 @@ export const QuickAssistSidebar = memo(({
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
 
     return flatRefills.filter(r => {
+      const st = (r.status || '').toLowerCase().trim();
       if (
         r.is_active !== 1 ||
         !r.next_refill_date ||
-        r.status === 'completed' ||
-        r.status === 'fulfilled' ||
-        r.status === 'canceled' ||
+        st === 'completed' ||
+        st === 'fulfilled' ||
+        st === 'cancelled' ||
+        st === 'canceled' ||
         isRefillSettled(r) ||
         isRefillFulfilledToday(r) ||
         checkRefillCycleBooking(r).alreadyDispensed
@@ -1145,7 +1147,10 @@ export const QuickAssistSidebar = memo(({
   // Group active special orders by requester
   const activeSpecialOrders = useMemo(() => {
     return Array.isArray(specialOrders)
-      ? specialOrders.filter(s => s.status !== 'Completed' && s.status !== 'Fulfilled' && s.status !== 'Cancelled' && !optimisticHiddenOrderIds.has(s.id))
+      ? specialOrders.filter(s => {
+          const st = (s.status || '').toLowerCase().trim();
+          return st !== 'completed' && st !== 'fulfilled' && st !== 'cancelled' && !optimisticHiddenOrderIds.has(s.id);
+        })
       : [];
   }, [specialOrders, optimisticHiddenOrderIds]);
 

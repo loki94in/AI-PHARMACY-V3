@@ -41,8 +41,10 @@ export const getRefillStage = (meds: RefillLike[] | undefined | null): RefillSta
 
 // Special orders and online orders: settled once completed, fulfilled, or cancelled
 type OrderItemLike = { status?: string | null; notification_count?: number | null };
-export const isOrderItemSettled = (i: OrderItemLike) =>
-  i.status === 'Completed' || i.status === 'Fulfilled' || i.status === 'Cancelled';
+export const isOrderItemSettled = (i: OrderItemLike) => {
+  const s = (i.status || '').toLowerCase().trim();
+  return s === 'completed' || s === 'fulfilled' || s === 'cancelled';
+};
 export const isOrderGroupSettled = (items: OrderItemLike[] | undefined | null) =>
   !!items && items.length > 0 && items.every(isOrderItemSettled);
 

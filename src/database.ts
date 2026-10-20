@@ -437,13 +437,13 @@ export async function autoHealRefillIntervalsAndTasks(db: any): Promise<void> {
       WHERE refill_interval_days IS NULL OR refill_interval_days < 7
     `);
 
-    // 2. Repair any refills fulfilled within the last 24 hours whose next_refill_date
-    // was prematurely set to today or earlier (e.g. from a 1-day interval)
+    // 2. Repair any refills fulfilled whose next_refill_date was prematurely set before their full cycle
     await db.run(`
       UPDATE patient_refills
-      SET next_refill_date = datetime(last_refill_date, '+30 days')
-      WHERE last_refill_date >= datetime('now', 'localtime', '-24 hours')
-        AND DATE(next_refill_date) <= DATE('now', 'localtime')
+      SET next_refill_date = datetime(last_refill_date, '+' || MAX(7, COALESCE(refill_interval_days, 30)) || ' days')
+      WHERE is_active = 1
+        AND last_refill_date IS NOT NULL
+        AND DATE(next_refill_date) < DATE(last_refill_date, '+' || MAX(7, COALESCE(refill_interval_days, 30)) || ' days')
     `);
 
     // 3. Mark any patient call tasks as completed if the patient's refill was already fulfilled

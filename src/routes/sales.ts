@@ -1005,6 +1005,36 @@ router.post('/', async (req, res) => {
             customerId
           });
 
+          // 2-Way Sync: If any fulfilled special orders originated from refills,
+          // advance and close the companion patient_refills schedule so it is removed from the morning briefing.
+          try {
+            const { executeCloseRefillCycles } = await import('./refills.js');
+            const soPlaceholders = fulfilledSoIds.map(() => '?').join(',');
+            const soRows = await db.all(
+              `SELECT id, source_refill_id, phone, product, medicine_name FROM special_orders WHERE id IN (${soPlaceholders})`,
+              fulfilledSoIds
+            );
+            const refillIdsToClose = new Set<number>();
+            for (const r of soRows) {
+              if (r.source_refill_id) refillIdsToClose.add(Number(r.source_refill_id));
+            }
+            if (refillIdsToClose.size > 0) {
+              const rPlaceholders = Array.from(refillIdsToClose).map(() => '?').join(',');
+              const refs = await db.all(
+                `SELECT pr.*, m.name as medicine_name 
+                 FROM patient_refills pr 
+                 LEFT JOIN medicines m ON pr.medicine_id = m.id 
+                 WHERE pr.id IN (${rPlaceholders}) AND pr.is_active = 1`,
+                Array.from(refillIdsToClose)
+              );
+              if (refs.length > 0) {
+                await executeCloseRefillCycles(db, refs, 'pos_special_order_fulfilled');
+              }
+            }
+          } catch (rErr) {
+            console.warn('[Sales] Could not close companion refill on special order fulfillment:', rErr);
+          }
+
           for (const soId of fulfilledSoIds) {
             eventService.broadcast('order_updated', { at: Date.now(), orderId: soId, action: 'fulfilled_pos' });
             eventService.broadcast('special_orders_updated', { at: Date.now(), orderId: soId });

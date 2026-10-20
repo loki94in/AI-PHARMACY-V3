@@ -1602,7 +1602,7 @@ interface CloseRefillCycleResult {
  * 4. Atomically marks companion special_orders as 'Completed'.
  * 5. Purges pending WhatsApp reminders & updates staged notifications.
  */
-async function executeCloseRefillCycles(
+export async function executeCloseRefillCycles(
   db: any,
   refills: any[],
   fulfilledVia: string
@@ -1696,7 +1696,7 @@ async function executeCloseRefillCycles(
     });
   }
 
-  // Atomically close companion out-of-stock special orders
+  // Atomically close companion out-of-stock / shortage special orders
   if (fulfilledIds.length > 0) {
     const idPlaceholders = fulfilledIds.map(() => '?').join(',');
     const conditions: string[] = [`source_refill_id IN (${idPlaceholders})`];
@@ -1706,8 +1706,8 @@ async function executeCloseRefillCycles(
       const cleanPhoneDigits = (refill.patient_phone || '').replace(/\D/g, '').slice(-10);
       const mName = (refill.medicine_name || '').trim().toLowerCase();
       if (cleanPhoneDigits.length >= 7 && mName) {
-        conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) = ?))`);
-        params.push(`%${cleanPhoneDigits}%`, mName);
+        conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(product)) = ? OR LOWER(TRIM(COALESCE(medicine_name, ''))) = ? OR ? LIKE '%' || LOWER(TRIM(product)) || '%' OR LOWER(TRIM(product)) LIKE '%' || ? || '%'))`);
+        params.push(`%${cleanPhoneDigits}%`, mName, mName, mName, mName);
       } else if (cleanPhoneDigits.length >= 7) {
         conditions.push(`(phone LIKE ? AND source = 'refill')`);
         params.push(`%${cleanPhoneDigits}%`);
@@ -1719,10 +1719,40 @@ async function executeCloseRefillCycles(
     }
 
     if (conditions.length > 0) {
-      const updateQuery = `UPDATE special_orders 
-                           SET status = 'Completed', updated_at = ?
-                           WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready') AND (${conditions.join(' OR ')})`;
-      await db.run(updateQuery, [localNow, ...params]).catch(() => {});
+      try {
+        const matchingOrders = await db.all(
+          `SELECT id, phone, requester, product 
+           FROM special_orders 
+           WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready', 'Inquiry') 
+             AND (${conditions.join(' OR ')})`,
+          params
+        );
+        if (matchingOrders && matchingOrders.length > 0) {
+          try {
+            const { cancelPendingWhatsAppForOrder } = await import('./orders.js');
+            for (const ord of matchingOrders) {
+              await cancelPendingWhatsAppForOrder(db, ord);
+            }
+          } catch (_) {}
+
+          const orderIdPlaceholders = matchingOrders.map(() => '?').join(',');
+          await db.run(
+            `UPDATE special_orders 
+             SET status = 'Fulfilled', updated_at = ?, auto_remind = 0, last_collection_reminder_at = NULL, notified = 1
+             WHERE id IN (${orderIdPlaceholders})`,
+            [localNow, ...matchingOrders.map((o: any) => o.id)]
+          );
+
+          eventService.broadcast('refresh-special-orders', { at: Date.now() });
+          eventService.broadcast('orders_changed', {
+            action: 'batch_update_status',
+            orderIds: matchingOrders.map((o: any) => o.id),
+            patch: { status: 'Fulfilled', auto_remind: 0 }
+          });
+        }
+      } catch (soSyncErr) {
+        console.warn('[Refills] Could not auto-close companion special orders:', soSyncErr);
+      }
     }
   }
 
