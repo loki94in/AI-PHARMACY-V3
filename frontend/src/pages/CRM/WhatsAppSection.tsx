@@ -119,6 +119,7 @@ export const WhatsAppSection: React.FC = () => {
   const [qrMessage, setQrMessage] = useState<string>('');
   const [templates, setTemplates] = useState<WaMessageTemplate[]>(cachedWaTemplates);
   const location = useLocation();
+  const [showTemplatePopover, setShowTemplatePopover] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [newChatNumber, setNewChatNumber] = useState('');
