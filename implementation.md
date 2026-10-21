@@ -13,7 +13,7 @@ flowchart TD
     AppCode["frontend/src/App.tsx"] --> |Strip Agentation| CleanBundle["Clean Production Web Bundle (No Agentation)"]
     Packaging["packaging/portable.env & installer.iss"] --> |Include LICENSE_SERVER_URL| Installer["Production Installer & Upgrades"]
     Installer --> |Syncs Live Server URL| InstalledEnv["G:\\AI Pharmacy OS\\.env"]
-    InstalledEnv --> |Query https://temporary-quick-jade-7r1dy0n.vercel.app| AutoUpdate["Notice v0.1.133 Update & Show Banner"]
+    InstalledEnv --> |Query https://website-woad-seven-26.vercel.app| AutoUpdate["Notice v0.1.133 Update & Show Banner"]
 ```
 
 ---
