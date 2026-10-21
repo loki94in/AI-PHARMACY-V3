@@ -724,6 +724,28 @@ router.put('/credit-customers/:id/due-date', async (req, res) => {
   }
 });
 
+// Toggle Customer Credit Status (Block / Unlock Credit)
+router.put('/credit-customers/:id/toggle-credit', async (req, res) => {
+  const { id } = req.params;
+  const { credit_enabled } = req.body || {};
+  try {
+    const db = await dbManager.getConnection();
+    const enabledVal = credit_enabled ? 1 : 0;
+    await db.run('UPDATE customers SET credit_enabled = ? WHERE id = ?', [enabledVal, id]);
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id), credit_enabled: enabledVal });
+    } catch (_) {}
+    res.json({
+      success: true,
+      credit_enabled: enabledVal,
+      message: `Customer credit ${enabledVal ? 'unlocked' : 'blocked'} successfully`,
+    });
+  } catch (error: any) {
+    console.error('Failed to toggle customer credit:', error);
+    res.status(500).json({ error: 'Failed to toggle credit status: ' + error.message });
+  }
+});
+
 // Send Manual Credit WhatsApp Reminder to Patient with dynamic UPI QR
 router.post('/credit-customers/:id/send-reminder', async (req, res) => {
   const { id } = req.params;

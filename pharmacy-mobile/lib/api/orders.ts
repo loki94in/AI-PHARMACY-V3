@@ -134,3 +134,7 @@ export async function updateOrderStatus(
     return { success: true, isOffline: true };
   }
 }
+
+export async function deleteSpecialOrder(id: number): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/orders/${id}`, { method: 'DELETE' });
+}

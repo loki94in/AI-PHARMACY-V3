@@ -8,6 +8,7 @@ import {
   Dimensions,
   TouchableWithoutFeedback,
   DevSettings,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, usePathname } from 'expo-router';
@@ -180,11 +181,15 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     borderRightWidth: 1,
     borderRightColor: colors.divider,
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 16,
+    ...(Platform.OS === 'ios' || Platform.OS === 'android' ? {
+      shadowColor: '#000',
+      shadowOffset: { width: 4, height: 0 },
+      shadowOpacity: 0.3,
+      shadowRadius: 5,
+      elevation: 16,
+    } : {
+      boxShadow: '4px 0 5px rgba(0, 0, 0, 0.3)',
+    }),
   },
   header: {
     flexDirection: 'row',

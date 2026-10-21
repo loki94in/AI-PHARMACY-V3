@@ -1,0 +1,30 @@
+{
+  "initialLoad": true,
+  "tabsTested": [
+    "CRM",
+    "Inventory",
+    "Billing",
+    "Inbox",
+    "More",
+    "Assistant"
+  ],
+  "searchTested": false,
+  "appLockDismissed": false,
+  "serverSetupChecked": false,
+  "screenshots": [
+    "01_initial_screen.png",
+    "02_dashboard_screen.png",
+    "tab_crm.png",
+    "crm_special_orders.png",
+    "crm_modal_add_order.png",
+    "crm_credit_ledger.png",
+    "crm_modal_collect_payment.png",
+    "tab_inventory.png",
+    "tab_billing.png",
+    "tab_billing_search.png",
+    "tab_inbox.png",
+    "tab_more.png",
+    "tab_assistant.png"
+  ],
+  "errors": []
+}

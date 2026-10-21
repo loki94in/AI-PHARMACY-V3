@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
-import * as Notifications from 'expo-notifications';
+import * as Notifications from '../../../lib/notifications';
 import { colors, spacing, typography, radius, shadows } from '../../../lib/theme';
 import {
   fetchGmailEmailsDirect,

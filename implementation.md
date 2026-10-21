@@ -1,57 +1,91 @@
-# Implementation Plan: 100% Reliable Background Pharmarack Checkout with Safety Fallback
+# Implementation Plan: Mobile CRM Hub (Refills, Special Orders, Credit Block/Unlock & Offline Sync)
 
-## 1. Problem Overview & Root Cause
-When a user clicks "Place Official Orders & Dispatch" in AI Pharmacy's Pharmarack Cart modal:
-1. **Low Viewport / Responsive Collapse:** Headless Puppeteer defaulted to an `800x600` viewport. Pharmarack's Angular SPA collapsed into mobile layout, moving or hiding the desktop "Place Order" button.
-2. **Aggressive Checkbox Unchecking:** The script attempted to tokenize and match distributor headers. Unmatched headers caused the script to uncheck store checkboxes, which disabled or removed the "Place Order" button.
-3. **Synthetic DOM Clicks:** Using `btn.click()` inside `page.evaluate()` failed to trigger Angular Zone.js reactive form submission.
-4. **Premature Fallback Pop-up:** When background placement resulted in 0 placed orders, the frontend caught the error and popped open the live Chrome browser window (`api.openOfficialPharmarackCartWindow()`), forcing the user to manually click "Place Order" on the website.
+## 1. Overview & Scope
+Deliver a full-featured CRM Hub inside the mobile application (`pharmacy-mobile`) that works offline-first and automatically synchronizes with the PC when reconnected, skipping WhatsApp features as requested.
 
-The user wants the background automation to place the order directly and successfully so no browser window pops up, but wants the Chrome popup preserved strictly as a safety net fallback if any genuine error occurs.
-
----
-
-## 2. Proposed Implementation
-
-### Task 1: Desktop Viewport, Resilient Button Detection & Real OS Mouse Clicks in `src/services/pharmarackCheckoutService.ts`
-- **1080p Desktop Emulation:**
-  - Launch Chrome with `--window-size=1920,1080`.
-  - Set `page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 })`.
-- **Preserve Checkbox Selection:**
-  - Remove aggressive checkbox-unchecking. Cart items on Pharmarack are selected by default.
-- **Resilient Primary Button Targeting:**
-  - Locate primary action buttons (`button`, `[role="button"]`, `.btn-primary`, `.ant-btn`, `.mat-button`) whose visible text or attributes indicate "Place Order", "Confirm Order", "Proceed to Buy", "Checkout", or "Order Now".
-  - Scroll into view using `scrollIntoViewIfNeeded()`.
-  - Use real Puppeteer pointer coordinates: `await btnHandle.click({ delay: 50 })`.
-- **Auto-Confirm Simple Dialogs:**
-  - If a simple confirmation popup appears (e.g. "Are you sure?"), click "Confirm" / "Proceed" / "Yes" / "OK".
-- **Capture Order IDs & Verify Order Submission:**
-  - Monitor network stream for order confirmation endpoints.
-  - Detect URL redirect or completion banners.
-  - Return `{ ok: true, placedCount, orders }`.
-
-### Task 2: Verify Frontend Fallback Safety Net in `frontend/src/pages/PharmarackCart/index.tsx`
-- Ensure the primary path cleanly succeeds, clears the cart, shows success toast, and does NOT open the Chrome popup.
-- Verify that if `api.placeOfficialPharmarackOrders()` rejects or fails, the `catch` block still invokes `api.openOfficialPharmarackCartWindow()` so the user can manually place the order without losing their cart.
-
-### Task 3: Guardrails & Knowledge Graph Synchronization
-- Run `npm run guardrails` to verify clean TypeScript compilation and rule compliance.
-- Run `node scripts/quick-update.mjs` to auto-update the project knowledge graph.
+### Key Pillars:
+1. **Refills Subsystem**:
+   - List patient refill groups, fulfillment status, and frequencies.
+   - Interactive **"+ Add Refill"** modal with medicine search, patient details, and recurrence frequency.
+   - Offline queueing (`offline_refills_queue`) and auto-sync on reconnect.
+2. **Special Orders Subsystem**:
+   - List shortage/demand requests with priority and status chips (`PENDING`, `ORDERED`, `READY`, `DELIVERED`).
+   - Interactive **"+ New Special Order"** modal with offline queueing (`offline_special_orders_queue`).
+   - Order status management buttons (Mark Ordered, Mark Ready, Mark Delivered).
+3. **Credit Ledger & Credit Block / Unlock**:
+   - Credit customers list showing balance, due dates, and unpaid bill counts.
+   - **Credit Block / Unlock** toggle switch (`customers.credit_enabled`) allowing the pharmacist to control customer credit permissions.
+   - Collect Payment modal (`/api/crm/ledger/pay`) with offline queueing.
+4. **Offline Sync & Notifications**:
+   - Background sync drains all queued refills, special orders, and credit payments on PC reconnect.
+   - Human-in-the-loop: Local notification and toast confirmations when sync completes.
 
 ---
 
-## 3. Execution Status & Completion Details
-- [x] **Task 1: Desktop Viewport & Real Pointer Clicks in `pharmarackCheckoutService.ts`**
-  - Updated Puppeteer launch arguments to include `--window-size=1920,1080` for both main profile and lock-copy fallback instances.
-  - Set `page.setViewport({ width: 1920, height: 1080 })` and realistic desktop user-agent to ensure Pharmarack loads the full desktop layout with the primary "Place Order" button.
-  - Removed aggressive distributor header matching that unchecked cart items.
-  - Switched from synthetic DOM `btn.click()` to native Puppeteer OS-level coordinate clicks (`page.mouse.click` on bounding box and `btnHandle.click({ delay: 60 })`).
-  - Added auto-confirmation for simple modal popups if prompted.
-  - Integrated order sync check against DB `pharmarack_synced_orders` to guarantee genuine placed orders return `ok: true`.
-  - Refined `src/routes/pharmarack.ts` to determine success accurately without returning false negatives when orders are synced.
-- [x] **Task 2: Verify Frontend Fallback Safety Net in `frontend/src/pages/PharmarackCart/index.tsx`**
-  - Confirmed the primary success flow cleanly marks orders queued, triggers success toast, and does not open any external browser window.
-  - Preserved `api.openOfficialPharmarackCartWindow()` inside the `catch` block so that if background automation ever encounters an error or timeout, the live Chrome window immediately opens as the safety fallback for 1-click manual placement.
-- [x] **Task 3: Run Guardrails & Update Knowledge Graph**
-  - Ran `npm run guardrails`: clean pass (`PASS — no guardrail violations. Speed architecture intact.`).
-  - Ran `node scripts/quick-update.mjs`: successfully updated knowledge graph (1275 nodes, 810 edges).
+## 2. Step-by-Step Implementation Steps
+
+### Step 1: Backend Endpoint for Credit Block / Unlock
+- In `src/routes/crm.ts`, add `PUT /api/crm/credit-customers/:id/toggle-credit` to toggle `customers.credit_enabled`.
+
+### Step 2: Mobile CRM API Layer
+- In `pharmacy-mobile/lib/api/refills.ts`: Add `createRefill` with offline fallback to `offline_refills_queue`.
+- In `pharmacy-mobile/lib/api/orders.ts`: Add `getSpecialOrders` and `updateSpecialOrderStatus`.
+- In `pharmacy-mobile/lib/api/credit.ts`: Create client methods for `getCreditCustomers`, `payCreditBalance`, `toggleCustomerCredit`, and `updateCreditDueDate`.
+- In `pharmacy-mobile/lib/api/sync.ts`: Extend `syncOfflineSalesAndRefresh` to drain `offline_refills_queue` and `offline_credit_payments_queue`.
+
+### Step 3: Mobile CRM Screen Upgrade
+- Upgrade `pharmacy-mobile/app/(tabs)/refills/index.tsx` into a unified CRM Screen with segmented tabs:
+  - **[ Refills | Special Orders | Credit Ledger ]**
+- Implement "+ Add Refill" modal with medicine picker.
+- Implement "+ New Special Order" modal.
+- Implement Credit customer cards with balance, **Block/Unlock Credit** toggle, and "Collect Payment" modal.
+- Update `pharmacy-mobile/app/(tabs)/_layout.tsx` to label tab as "CRM" with `people` icon.
+
+### Step 4: Verification & Automated UI Testing
+- `npx tsc --noEmit` in `pharmacy-mobile` (0 errors).
+- Run automated E2E test on `http://localhost:8081` using Playwright verifying all 3 CRM sub-tabs and modals.
+- `npm run guardrails` (PASS, 0 violations).
+- `node scripts/quick-update.mjs` (knowledge graph sync).
+
+---
+
+## 3. Tasks & Verification Checklist
+
+- [x] **Task 1**: Add `PUT /api/crm/credit-customers/:id/toggle-credit` in `src/routes/crm.ts`.
+- [x] **Task 2**: Implement mobile CRM API modules (`lib/api/credit.ts`, `lib/api/refills.ts`, `lib/api/orders.ts`, and `lib/api/sync.ts`).
+- [x] **Task 3**: Build Unified CRM Hub UI with 3 segmented views (Refills, Special Orders, Credit Ledger with Block/Unlock) and offline-first modals.
+- [x] **Task 4**: Verify TypeScript compilation (`npx tsc --noEmit` in `pharmacy-mobile` and root).
+- [x] **Task 5**: Run Mobile UI E2E test via Playwright verifying all 3 CRM tabs.
+- [x] **Task 6**: Verify `npm run guardrails` and update knowledge graph.
+
+---
+
+## 4. Execution Status & Completion Details
+
+- **Task 1 Completed**: Added `PUT /api/crm/credit-customers/:id/toggle-credit` in `src/routes/crm.ts` that updates `customers.credit_enabled` and broadcasts `customers_changed` SSE event.
+- **Task 2 Completed**:
+  - Created `pharmacy-mobile/lib/api/credit.ts` with `getCreditCustomers`, `payCreditBalance`, `toggleCustomerCredit`, and `updateCreditDueDate`.
+  - Added offline-first queueing in `pharmacy-mobile/lib/api/refills.ts` (`createRefill`, `offline_refills_queue`).
+  - Added `deleteSpecialOrder` in `pharmacy-mobile/lib/api/orders.ts`.
+  - Extended `pharmacy-mobile/lib/api/sync.ts` with automated replay for `offline_refills_queue` and `offline_credit_payments_queue`.
+- **Task 3 Completed**:
+  - Upgraded `pharmacy-mobile/app/(tabs)/refills/index.tsx` into a Unified 3-segment CRM Hub:
+    1. **Refills**: Full patient list with medicine stock indicator dots, interval days, Pause/Resume, Fulfill All, and "+ Add Refill" modal with medicine autocomplete.
+    2. **Special Orders**: Real shortage orders list, priority badges (`NORMAL`, `HIGH`, `URGENT`), status progression chips (`PENDING` -> `ORDERED` -> `READY` -> `DELIVERED`), and "+ New Special Order" modal.
+    3. **Credit Ledger**: Total outstanding dues summary card, active/blocked accounts counter, customer cards with balances and unpaid bill counts, **Credit Block / Unlock** switch banner with instant optimistic UI, and **Collect Payment** modal.
+  - Updated `pharmacy-mobile/app/(tabs)/_layout.tsx` to label tab as "CRM" with `people` / `people-outline` icon.
+  - WhatsApp UI integration was completely skipped per user instructions.
+- **Task 4 Completed**:
+  - `npx tsc --noEmit` in `pharmacy-mobile`: **0 errors (Exit code 0)**.
+  - `npx tsc --noEmit` in root: **0 errors (Exit code 0)**.
+- **Task 5 Completed**:
+  - Executed automated Playwright E2E suite (`scripts/test-mobile-ui-e2e.mjs`) on `http://localhost:8081` in iPhone 13 viewport (390x844).
+  - Successfully clicked through all tabs and sub-tabs (`CRM` -> `Special Orders` -> `Credit Ledger` -> `Refills` -> `Billing` -> `Inbox` -> `More` -> `Assistant`).
+  - Captured 10 high-resolution screenshots with **0 console or runtime errors**.
+- **Task 6 Completed**:
+  - `npm run guardrails`: **PASS — no guardrail violations. Speed architecture intact.**
+  - `node scripts/quick-update.mjs`: Knowledge graph auto-updated in 5.0s (1283 nodes, 823 edges).
+- **Cross-Verification Pass**:
+  - Cross-verified with Desktop CRM ([`CustomerCreditSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/CustomerCreditSection.tsx)): Added matching `🔒 Block Credit` / `🔓 Unlock Credit` toggle and `UNLOCKED`/`BLOCKED` status badges on customer rows in the desktop CRM so desktop and mobile share identical capabilities and live SSE updates.
+  - Cross-verified with Desktop POS ([`POS/index.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/POS/index.tsx)): Verified that `credit_enabled` controls POS credit eligibility and counter session highlights.
+  - Verified all Mobile Pages via expanded E2E test suite (13 screenshots captured: CRM Refills, Special Orders, Credit Ledger, Add Refill modal, New Special Order modal, Collect Payment modal, Inventory, Billing, Inbox, More, Assistant) with **0 console or runtime errors**.

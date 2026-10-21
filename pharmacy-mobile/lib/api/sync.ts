@@ -4,6 +4,8 @@ import { getOfflineSalesQueue, clearOfflineSalesQueue } from './sales';
 import { getOfflinePurchasesQueue, clearOfflinePurchasesQueue } from './purchases';
 import { getOfflineStockQueue, clearOfflineStockQueue, isAdminMode } from './admin';
 import { getOfflineSpecialOrdersQueue, clearOfflineSpecialOrdersQueue, createSpecialOrder, getOfflineOrderStatusQueue } from './orders';
+import { getOfflineRefillsQueue, clearOfflineRefillsQueue, createRefill } from './refills';
+import { getOfflineCreditPaymentsQueue, clearOfflineCreditPaymentsQueue, payCreditBalance } from './credit';
 import { replayPendingBillPhotos } from './scanBill';
 import { getInventory } from './inventory';
 import { syncGoogleAuthFromPc } from './gmail';
@@ -115,6 +117,40 @@ export async function syncOfflineSalesAndRefresh(): Promise<{ syncedCount: numbe
       console.error(`Failed to sync order status for #${item.id}:`, e);
       warnings.push(`Order #${item.id} (${item.status}): ${e.message}`);
       break; // stop replaying on first failure to preserve order
+    }
+  }
+
+  // 5. Sync Refills
+  const refillsQueue = await getOfflineRefillsQueue();
+  if (refillsQueue.length > 0) {
+    try {
+      let syncedRefills = 0;
+      for (const refill of refillsQueue) {
+        await createRefill(refill);
+        syncedRefills++;
+      }
+      await clearOfflineRefillsQueue();
+      syncedCount += syncedRefills;
+    } catch (e: any) {
+      console.error('Failed to sync offline refills:', e);
+      warnings.push(`Refills Sync failed: ${e.message}`);
+    }
+  }
+
+  // 6. Sync Credit Payments
+  const creditQueue = await getOfflineCreditPaymentsQueue();
+  if (creditQueue.length > 0) {
+    try {
+      let syncedPayments = 0;
+      for (const payment of creditQueue) {
+        await payCreditBalance(payment.customer_id, payment.amount, payment.customer_name);
+        syncedPayments++;
+      }
+      await clearOfflineCreditPaymentsQueue();
+      syncedCount += syncedPayments;
+    } catch (e: any) {
+      console.error('Failed to sync offline credit payments:', e);
+      warnings.push(`Credit Payments Sync failed: ${e.message}`);
     }
   }
 

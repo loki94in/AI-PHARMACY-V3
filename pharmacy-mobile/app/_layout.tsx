@@ -1,10 +1,9 @@
-import { DarkTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { DarkTheme, ThemeProvider, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, Platform, Animated, TouchableOpacity } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import * as Notifications from '../lib/notifications';
 import * as SecureStore from '../lib/secureStore';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,14 +17,32 @@ import AppLock from '../components/AppLock';
 
 export { ErrorBoundary } from 'expo-router';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Suppress benign web-only deprecation warnings from third-party Expo modules on web/SSR
+if (Platform.OS === 'web' || typeof window === 'undefined') {
+  const origWarn = console.warn;
+  console.warn = (...args: any[]) => {
+    const first = typeof args[0] === 'string' ? args[0] : '';
+    if (
+      first.includes('[expo-notifications] Listening to push token changes') ||
+      first.includes('Push notification permissions denied') ||
+      first.includes('style props are deprecated')
+    ) {
+      return;
+    }
+    origWarn.apply(console, args);
+  };
+}
+
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -104,8 +121,9 @@ export default function RootLayout() {
     }, 4500);
   };
 
-  // Toast and Notification History hook
+  // Toast and Notification History hook (native only)
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const subscription = Notifications.addNotificationReceivedListener(async (notification) => {
       const { title, body } = notification.request.content;
       if (title && body) {
@@ -229,13 +247,18 @@ export default function RootLayout() {
     if ((fontsLoaded || fontError) && !initRef.current) {
       initRef.current = true;
       (async () => {
-        // Initialize server URL: default to http://localhost:5000 if none configured
+        // Initialize server URL: on web use 127.0.0.1:5174, on native discover or fallback
         let url = await getServerUrl();
         if (!url) {
-          url = await autoDiscoverServer();
-          if (!url) {
-            url = 'http://localhost:5000';
+          if (Platform.OS === 'web') {
+            url = 'http://127.0.0.1:5174';
             await SecureStore.setItemAsync('pharmacy_server_url', url);
+          } else {
+            url = await autoDiscoverServer();
+            if (!url) {
+              url = 'http://192.168.1.13:5174';
+              await SecureStore.setItemAsync('pharmacy_server_url', url);
+            }
           }
         }
         setHasServer(true);
@@ -247,12 +270,13 @@ export default function RootLayout() {
         try {
           await SplashScreen.hideAsync();
         } catch (err) {
-          console.warn('Failed to hide splash screen:', err);
+          // splash screen already hidden
         }
       })();
 
-      // Push notification setup & permissions request
+      // Push notification setup & permissions request (native only)
       (async () => {
+        if (Platform.OS === 'web') return;
         const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
         if (existingStatus !== 'granted') {
@@ -511,11 +535,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     backgroundColor: 'rgba(26, 26, 46, 0.95)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 10,
+    ...(Platform.OS === 'ios' || Platform.OS === 'android' ? {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.35,
+      shadowRadius: 10,
+      elevation: 10,
+    } : {
+      boxShadow: '0 6px 10px rgba(0, 0, 0, 0.35)',
+    }),
     overflow: 'hidden',
   },
   toastContent: {

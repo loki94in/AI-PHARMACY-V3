@@ -83,9 +83,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="refills/index"
         options={{
-          title: 'Refills',
+          title: 'CRM',
           tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons name={focused ? 'repeat' : 'repeat-outline'} size={size} color={color} />
+            <Ionicons name={focused ? 'people' : 'people-outline'} size={size} color={color} />
           ),
         }}
       />

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, TextInput, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -360,8 +360,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginTop: spacing.lg,
     textAlign: 'center',
-    textShadowColor: '#000',
-    textShadowRadius: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   closeBtn: {
     position: 'absolute',

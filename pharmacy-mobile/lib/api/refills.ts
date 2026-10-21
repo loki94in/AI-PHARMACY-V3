@@ -1,4 +1,45 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { request } from './client';
+
+export interface CreateRefillPayload {
+  patient_name: string;
+  patient_phone: string;
+  medicine_id: number;
+  medicine_name?: string;
+  refill_interval_days?: number;
+  language?: string;
+  timestamp?: string;
+}
+
+const OFFLINE_REFILLS_KEY = 'offline_refills_queue';
+
+export async function getOfflineRefillsQueue(): Promise<CreateRefillPayload[]> {
+  try {
+    const data = await AsyncStorage.getItem(OFFLINE_REFILLS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error('Failed to get offline refills queue:', e);
+    return [];
+  }
+}
+
+export async function queueOfflineRefill(payload: CreateRefillPayload): Promise<void> {
+  try {
+    const current = await getOfflineRefillsQueue();
+    current.push({ ...payload, timestamp: new Date().toISOString() });
+    await AsyncStorage.setItem(OFFLINE_REFILLS_KEY, JSON.stringify(current));
+  } catch (e) {
+    console.error('Failed to queue offline refill:', e);
+  }
+}
+
+export async function clearOfflineRefillsQueue(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(OFFLINE_REFILLS_KEY);
+  } catch (e) {
+    console.error('Failed to clear offline refills queue:', e);
+  }
+}
 
 // ─── Refills (view + full management) ──────────────────────────────────────
 
@@ -100,3 +141,24 @@ export function updatePatientProfile(payload: PatientProfilePayload) {
 export function deletePatientRefills(phone: string) {
   return request<{ success: boolean }>(`/refills/patient/${encodeURIComponent(phone)}`, { method: 'DELETE' });
 }
+
+export async function createRefill(payload: CreateRefillPayload): Promise<{ success: boolean; isOffline?: boolean; id?: number; message?: string }> {
+  try {
+    const res = await request<any>('/refills', {
+      method: 'POST',
+      body: JSON.stringify({
+        patient_name: payload.patient_name,
+        patient_phone: payload.patient_phone,
+        medicine_id: payload.medicine_id,
+        refill_interval_days: payload.refill_interval_days || 30,
+        language: payload.language || 'en',
+      }),
+    });
+    return { success: true, isOffline: false, id: res.id, message: res.message };
+  } catch (err: any) {
+    console.warn('Online create refill failed, queueing offline:', err);
+    await queueOfflineRefill(payload);
+    return { success: true, isOffline: true, message: `Refill for ${payload.medicine_name || 'medicine'} queued offline` };
+  }
+}
+

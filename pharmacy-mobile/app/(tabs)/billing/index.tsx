@@ -14,8 +14,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import * as Notifications from 'expo-notifications';
+import { router, useFocusEffect } from 'expo-router';
+import * as Notifications from '../../../lib/notifications';
 import { colors, spacing, typography, radius, shadows } from '../../../lib/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -40,11 +40,11 @@ import {
   removeQueuedSaleAt,
   getDeviceIdentity,
 } from '../../../lib/api';
-import { useFocusEffect } from '@react-navigation/native';
 import UpwardSearchDropdown from '../../../components/UpwardSearchDropdown';
 import ProductListPanel from '../../../components/ProductListPanel';
 import SwipeToDelete from '../../../components/SwipeToDelete';
 import { sanitizePhoneInput } from '../../../lib/helpers';
+import { cartEvents } from '../../../lib/cartEvents';
 
 const CART_STATE_KEY = 'billing_cart_state';
 const PENDING_ORDERS_CACHE_KEY = 'cached_special_orders';
@@ -278,6 +278,15 @@ export default function BillingScreen() {
     ).catch(() => {});
   }, [cart, saleMode, patientName, patientPhone, discountType, discountValue]);
 
+  // ─── Listen for cart events emitted from AI Chat or other components ───────
+  useEffect(() => {
+    const unsub = cartEvents.subscribe((item: any, qty: number) => {
+      addToCart(item, qty);
+      showToast(`🛒 Added ${qty} × ${item.medicine_name} from Chat`);
+    });
+    return unsub;
+  }, []);
+
   // ─── Refill "Sell Now" handoff: drain queued items when tab gains focus ──
 
   useFocusEffect(
@@ -287,12 +296,12 @@ export default function BillingScreen() {
           const queued = await AsyncStorage.getItem('billing_cart_add_queue');
           if (!queued) return;
           await AsyncStorage.removeItem('billing_cart_add_queue');
-          const items: SearchMedicineResult[] = JSON.parse(queued);
+          const items: (SearchMedicineResult & { strip_qty?: number; quantity?: number })[] = JSON.parse(queued);
           for (const item of items) {
-            await addToCart(item);
+            await addToCart(item, item.strip_qty || item.quantity || 1);
           }
           if (items.length > 0) {
-            showToast(`🧺 ${items.length} refill medicine${items.length !== 1 ? 's' : ''} added to bill`);
+            showToast(`🧺 ${items.length} medicine${items.length !== 1 ? 's' : ''} added to bill`);
             setSaleMode('DIRECT');
           }
         } catch {}
@@ -382,7 +391,7 @@ export default function BillingScreen() {
 
   // ─── Cart Management ─────────────────────────────────────────────────────
 
-  const addToCart = async (item: SearchMedicineResult) => {
+  const addToCart = async (item: SearchMedicineResult, quantity: number = 1) => {
     const isOutOfStock = (item.quantity || 0) <= 0;
 
     if (isOutOfStock) {
@@ -426,6 +435,8 @@ export default function BillingScreen() {
           },
         ];
 
+    const addQty = Math.max(1, quantity || (item as any).strip_qty || 1);
+
     setCart(currentCart => {
       // Mark existing items as collapsed so the view remains high-density
       const collapsedCurrent = currentCart.map(c => ({ ...c, is_collapsed: true }));
@@ -434,7 +445,7 @@ export default function BillingScreen() {
       if (existing) {
         return collapsedCurrent.map(c =>
           c.inventory_id === item.inventory_id
-            ? { ...c, strip_qty: c.strip_qty + 1, is_collapsed: false }
+            ? { ...c, strip_qty: c.strip_qty + addQty, is_collapsed: false }
             : c
         );
       } else {
@@ -442,7 +453,7 @@ export default function BillingScreen() {
           ...collapsedCurrent,
           {
             ...item,
-            strip_qty: 1,
+            strip_qty: addQty,
             loose_qty: 0,
             selected_batch: item.batch_no || '',
             available_batches: availableBatches,

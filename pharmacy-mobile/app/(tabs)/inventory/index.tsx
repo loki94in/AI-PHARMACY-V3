@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { colors, spacing, typography, radius } from '../../../lib/theme';
 import { getInventory, getInventoryPeek, InventoryItem, isAdminMode, updateStockOverride } from '../../../lib/api';
+import { getCachedInventory } from '../../../lib/api/inventory';
 import SearchBar from '../../../components/SearchBar';
 import MedicineRow from '../../../components/MedicineRow';
 import Card from '../../../components/Card';
@@ -37,7 +38,23 @@ export default function InventoryScreen() {
 
   useEffect(() => {
     isAdminMode().then(setIsAdmin);
-  }, []);
+    // Instant cache hydration
+    getCachedInventory().then(cached => {
+      if (cached && cached.length > 0) {
+        setItems(cached.map(c => ({
+          id: c.inventory_id,
+          medicine_id: c.medicine_id,
+          medicine_name: c.medicine_name,
+          quantity: c.quantity,
+          batch_no: c.batch_no,
+          expiry_date: c.expiry_date,
+          item_code: c.item_code,
+        })));
+        setLoading(false);
+      }
+    });
+    fetchData('');
+  }, [fetchData]);
 
   // Debounced search fetch
   useEffect(() => {

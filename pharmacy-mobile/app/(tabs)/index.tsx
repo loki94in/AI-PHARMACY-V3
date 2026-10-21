@@ -15,10 +15,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import * as Notifications from 'expo-notifications';
+import * as Notifications from '../../lib/notifications';
 import { colors, spacing, typography, radius, shadows } from '../../lib/theme';
 import { getDashboard, searchMedicine, SearchMedicineResult, getServerUrl, testConnection, createSale, searchPharmarack, addPharmarackCart, logAssistantChat } from '../../lib/api';
 import * as SecureStore from '../../lib/secureStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { cartEvents } from '../../lib/cartEvents';
 import DrawerMenu from '../../components/DrawerMenu';
 
@@ -770,10 +771,16 @@ export default function AssistantScreen() {
                                             
                                             <TouchableOpacity
                                               style={styles.cardAddButton}
-                                              onPress={() => {
+                                              onPress={async () => {
                                                 const key = `local-${item.inventory_id}`;
                                                 const qty = quantities[key] || 1;
                                                 cartEvents.emit(item, qty);
+                                                try {
+                                                  const raw = await AsyncStorage.getItem('billing_cart_add_queue');
+                                                  const queue = raw ? JSON.parse(raw) : [];
+                                                  queue.push({ ...item, strip_qty: qty, quantity: qty });
+                                                  await AsyncStorage.setItem('billing_cart_add_queue', JSON.stringify(queue));
+                                                } catch {}
                                                 Alert.alert('Added to Cart', `${qty} × ${item.medicine_name} added to POS billing.`);
                                                 setQuantities(prev => ({ ...prev, [key]: 1 }));
                                               }}
@@ -1613,10 +1620,14 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 10,
+    ...(Platform.OS === 'ios' || Platform.OS === 'android' ? {
+      shadowColor: '#000',
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+      elevation: 10,
+    } : {
+      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.5)',
+    }),
   },
   modalTitle: {
     fontSize: 14,

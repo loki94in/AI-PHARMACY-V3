@@ -1,4 +1,4 @@
-import { Dimensions } from 'react-native';
+import { Dimensions, Platform } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -61,22 +61,32 @@ export const typography = {
   label: { fontSize: 13, fontWeight: '600' as const, color: colors.textSecondary, textTransform: 'uppercase' as const, letterSpacing: 1 },
 };
 
+const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
+
 // ─── Shadows ─────────────────────────────────────────────────────────────────
 export const shadows = {
-  card: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  small: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
+  card: isNative
+    ? {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 8,
+      }
+    : {
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+      },
+  small: isNative
+    ? {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 3,
+      }
+    : {
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+      },
 };
 
 // ─── Border Radius ───────────────────────────────────────────────────────────

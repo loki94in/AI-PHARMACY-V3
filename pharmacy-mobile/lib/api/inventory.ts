@@ -58,8 +58,17 @@ export function parsePackSize(raw: any): number {
 export async function cacheInventory(items: SearchMedicineResult[]): Promise<void> {
   try {
     await AsyncStorage.setItem(INVENTORY_CACHE_KEY, JSON.stringify(items));
-  } catch (e) {
-    console.error('Failed to cache inventory locally:', e);
+  } catch (e: any) {
+    // Browser localStorage has a strict 5MB quota; fallback to top 300 items without erroring
+    if (e?.name === 'QuotaExceededError' || e?.message?.includes('quota') || e?.message?.includes('exceeded')) {
+      try {
+        await AsyncStorage.setItem(INVENTORY_CACHE_KEY, JSON.stringify(items.slice(0, 300)));
+      } catch {
+        // web storage completely full, ignore gracefully
+      }
+    } else {
+      console.warn('Could not cache full inventory:', e?.message || e);
+    }
   }
 }
 
@@ -76,8 +85,8 @@ export async function getCachedInventory(): Promise<SearchMedicineResult[]> {
 export async function getInventory(search?: string): Promise<InventoryItem[]> {
   try {
     const endpoint = search
-      ? `/inventory?search=${encodeURIComponent(search.trim())}`
-      : '/inventory?limit=0';
+      ? `/inventory?search=${encodeURIComponent(search.trim())}&limit=100`
+      : '/inventory?limit=200';
     const raw = await request<any>(endpoint);
     // Backend returns { data: [...] } (paginated) or a plain array
     const items: InventoryItem[] = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];

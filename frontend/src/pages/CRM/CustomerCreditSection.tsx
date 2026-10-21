@@ -18,6 +18,7 @@ interface CreditCustomerItem {
   language?: string;
   credit_balance: number;
   credit_due_date?: string;
+  credit_enabled?: number;
   unpaid_bills_count: number;
   last_sale_date?: string;
 }
@@ -190,6 +191,22 @@ export const CustomerCreditSection: React.FC = () => {
     }
   };
 
+  const handleToggleCredit = async (cust: CreditCustomerItem) => {
+    const willEnable = cust.credit_enabled !== 1;
+    try {
+      await apiClient.put(`/crm/credit-customers/${cust.id}/toggle-credit`, { credit_enabled: willEnable });
+      toastEvent.trigger(
+        willEnable ? `Credit Unlocked for ${cust.name || 'Customer'}` : `Credit Blocked for ${cust.name || 'Customer'}`,
+        'success',
+        '/crm'
+      );
+      setSelectedCustomer(prev => (prev && prev.id === cust.id ? { ...prev, credit_enabled: willEnable ? 1 : 0 } : prev));
+      await loadCreditCustomers();
+    } catch {
+      toastEvent.trigger('Failed to update customer credit permissions', 'error', '/crm');
+    }
+  };
+
   const filtered = customers.filter(c => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
@@ -301,6 +318,11 @@ export const CustomerCreditSection: React.FC = () => {
                       <div className="text-xs font-bold text-text flex items-center gap-1.5">
                         <span>{cust.name || 'Unnamed Patient'}</span>
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky/10 text-sky border border-sky/20 font-medium">UPI QR</span>
+                        {cust.credit_enabled === 1 ? (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-bold">UNLOCKED</span>
+                        ) : (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 font-bold">BLOCKED</span>
+                        )}
                       </div>
                       <div className="text-[10px] text-muted flex items-center gap-1.5 mt-0.5">
                         <span>📱 {cust.phone || 'No phone'}</span>
@@ -368,6 +390,19 @@ export const CustomerCreditSection: React.FC = () => {
                   >
                     <Zap size={14} className={payingId === selectedCustomer.id ? 'animate-pulse' : ''} />
                     <span>{payingId === selectedCustomer.id ? 'Cancel Payment' : 'Collect Payment'}</span>
+                  </button>
+
+                  {/* Credit Block / Unlock Toggle Button */}
+                  <button
+                    onClick={() => handleToggleCredit(selectedCustomer)}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      selectedCustomer.credit_enabled === 1
+                        ? 'bg-rose-500/10 text-rose-500 border-rose-500/30 hover:bg-rose-500/20'
+                        : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'
+                    }`}
+                    title={selectedCustomer.credit_enabled === 1 ? 'Click to Block Credit (No POS credit sales permitted)' : 'Click to Unlock Credit (Allow POS credit sales)'}
+                  >
+                    <span>{selectedCustomer.credit_enabled === 1 ? '🔒 Block Credit' : '🔓 Unlock Credit'}</span>
                   </button>
 
                   {/* WhatsApp Reminder Button — disabled when number confirmed NOT on WA */}

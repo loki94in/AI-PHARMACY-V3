@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator, TextInput, Platform } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
@@ -234,7 +234,16 @@ const styles = StyleSheet.create({
   camera: { flex: 1 },
   cameraOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scanFrame: { width: 260, height: 160, borderWidth: 2, borderColor: colors.primary, borderRadius: radius.md, backgroundColor: 'transparent' },
-  scanHint: { ...typography.bodySmall, color: '#fff', marginTop: spacing.md, textShadowColor: '#000', textShadowRadius: 4 },
+  scanHint: {
+    ...typography.bodySmall,
+    color: '#fff',
+    marginTop: spacing.md,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   cameraControls: {
     flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
     backgroundColor: colors.surface, paddingVertical: spacing.lg, paddingBottom: spacing.xl,
