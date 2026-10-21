@@ -21,6 +21,22 @@ const rootDir   = process.cwd();
 const pkgPath   = path.join(rootDir, 'package.json');
 const pkg       = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
+// Load .env from root directory if present so secrets/tokens are recognized
+const envPath = path.join(rootDir, '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  for (const line of envContent.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx > 0) {
+      const key = trimmed.slice(0, eqIdx).trim();
+      const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+  }
+}
+
 // ── Parse CLI flags ─────────────────────────────────────────────────────────
 const args             = process.argv.slice(2);
 const isPilot          = args.includes('--pilot')  || args.includes('-p');
@@ -46,7 +62,7 @@ const vercelServer = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-lice
 const adminSecret  = process.env.ADMIN_SECRET;
 if ((isPromote || isRemote) && !adminSecret) {
   console.error('\n❌ STOP RELEASE: Missing required ADMIN_SECRET environment variable.');
-  console.error('   Please set ADMIN_SECRET in your environment before running remote release.');
+  console.error('   Please set ADMIN_SECRET in your .env file or environment before running remote release.');
   process.exit(1);
 }
 const ghRepo       = 'loki94in/AI-PHARMACY-V3';
@@ -291,32 +307,136 @@ console.log('\n📤 Step 4: Uploading assets to GitHub Releases...');
 
 const downloadUrl = `https://github.com/${ghRepo}/releases/download/${tagName}/${expectedInstallerName}`;
 const updatePackageUrl = `https://github.com/${ghRepo}/releases/download/${tagName}/${expectedZipName}`;
+const releaseNotes = isPilot
+  ? `AI Pharmacy OS ${tagName} — Pilot / Staging Release`
+  : `AI Pharmacy OS ${tagName} — Production Release`;
 
+let uploadedViaGh = false;
+let hasGhCli = false;
 try {
-  let releaseExists = false;
-  try {
-    execSync(`gh release view ${tagName}`, { stdio: 'ignore' });
-    releaseExists = true;
-  } catch (_) {}
+  execSync('gh --version', { stdio: 'ignore' });
+  hasGhCli = true;
+} catch (_) {
+  hasGhCli = false;
+}
 
-  if (releaseExists) {
-    console.log(`   Release ${tagName} already exists. Updating assets (--clobber)...`);
-    execSync(`gh release upload ${tagName} "${installerExe}" --clobber`, { stdio: 'inherit', cwd: rootDir });
-    execSync(`gh release upload ${tagName} "${updateZipPath}" --clobber`, { stdio: 'inherit', cwd: rootDir });
-  } else {
-    console.log(`   Creating new GitHub release ${tagName}...`);
-    const notes = isPilot
-      ? `AI Pharmacy OS ${tagName} — Pilot / Staging Release`
-      : `AI Pharmacy OS ${tagName} — Production Release`;
-    execSync(
-      `gh release create ${tagName} "${installerExe}" "${updateZipPath}" --title "AI Pharmacy OS ${tagName}" --notes "${notes}"`,
-      { stdio: 'inherit', cwd: rootDir }
-    );
+if (hasGhCli) {
+  try {
+    let releaseExists = false;
+    try {
+      execSync(`gh release view ${tagName}`, { stdio: 'ignore' });
+      releaseExists = true;
+    } catch (_) {}
+
+    if (releaseExists) {
+      console.log(`   Release ${tagName} already exists. Updating assets (--clobber)...`);
+      execSync(`gh release upload ${tagName} "${installerExe}" --clobber`, { stdio: 'inherit', cwd: rootDir });
+      execSync(`gh release upload ${tagName} "${updateZipPath}" --clobber`, { stdio: 'inherit', cwd: rootDir });
+    } else {
+      console.log(`   Creating new GitHub release ${tagName} via gh CLI...`);
+      execSync(
+        `gh release create ${tagName} "${installerExe}" "${updateZipPath}" --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes}"`,
+        { stdio: 'inherit', cwd: rootDir }
+      );
+    }
+    console.log('✓ GitHub upload complete via gh CLI (installer + update package).');
+    uploadedViaGh = true;
+  } catch (ghErr) {
+    console.warn(`   Notice: gh CLI upload failed (${ghErr.message}). Attempting GitHub REST API fallback...`);
   }
-  console.log('✓ GitHub upload complete (installer + update package).');
-} catch (ghErr) {
-  console.error('\n❌ GitHub upload failed. Ensure `gh auth status` is authenticated:', ghErr.message);
-  process.exit(1);
+}
+
+if (!uploadedViaGh) {
+  const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!ghToken) {
+    console.error('\n❌ GitHub upload failed:');
+    console.error('   1. GitHub CLI (`gh`) is not installed or authenticated (`gh auth login`).');
+    console.error('   2. OR set GITHUB_TOKEN=... in your .env file or environment (needs repo permissions).');
+    console.error(`   Direct download URLs that will be expected once uploaded:`);
+    console.error(`     - Installer : ${downloadUrl}`);
+    console.error(`     - Update ZIP: ${updatePackageUrl}`);
+    process.exit(1);
+  }
+
+  console.log('   Uploading via GitHub REST API (token authenticated)...');
+  const ghHeaders = {
+    Authorization: `Bearer ${ghToken}`,
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'AI-Pharmacy-Release-Builder',
+  };
+
+  try {
+    let release;
+    try {
+      const getRes = await axios.get(`https://api.github.com/repos/${ghRepo}/releases/tags/${tagName}`, { headers: ghHeaders });
+      release = getRes.data;
+      console.log(`   Found existing release ${tagName} (ID: ${release.id})`);
+    } catch (err) {
+      if (err.response?.status === 404) {
+        console.log(`   Creating release ${tagName}...`);
+        const createRes = await axios.post(
+          `https://api.github.com/repos/${ghRepo}/releases`,
+          {
+            tag_name: tagName,
+            name: `AI Pharmacy OS ${tagName}`,
+            body: releaseNotes,
+            draft: false,
+            prerelease: isPilot,
+          },
+          { headers: ghHeaders }
+        );
+        release = createRes.data;
+        console.log(`   Release created (ID: ${release.id})`);
+      } else {
+        throw err;
+      }
+    }
+
+    const apkFile = path.join(rootDir, 'data', 'pharmacy-mobile.apk');
+    const apkName = `AI-Pharmacy-Mobile-${tagName}.apk`;
+
+    const assetsToUpload = [
+      { filePath: installerExe, fileName: expectedInstallerName },
+      { filePath: updateZipPath, fileName: expectedZipName },
+    ];
+    if (fs.existsSync(apkFile)) {
+      assetsToUpload.push({ filePath: apkFile, fileName: apkName });
+      console.log(`   Found mobile companion APK: ${apkName}`);
+    }
+
+    for (const { filePath, fileName } of assetsToUpload) {
+      const fileSize = fs.statSync(filePath).size;
+      // If asset already exists on this release, delete it first
+      if (release.assets && release.assets.length > 0) {
+        const existing = release.assets.find(a => a.name === fileName);
+        if (existing) {
+          console.log(`   Replacing existing asset ${fileName}...`);
+          await axios.delete(`https://api.github.com/repos/${ghRepo}/releases/assets/${existing.id}`, { headers: ghHeaders });
+        }
+      }
+
+      console.log(`   Uploading ${fileName} (${(fileSize / (1024 * 1024)).toFixed(1)} MB)...`);
+      const fileStream = fs.createReadStream(filePath);
+      await axios.post(
+        `https://uploads.github.com/repos/${ghRepo}/releases/${release.id}/assets?name=${encodeURIComponent(fileName)}`,
+        fileStream,
+        {
+          headers: {
+            ...ghHeaders,
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': fileSize,
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        }
+      );
+      console.log(`   ✓ Uploaded ${fileName}`);
+    }
+    console.log('✓ GitHub REST API upload complete (installer + update package + APK if present).');
+  } catch (apiErr) {
+    console.error('\n❌ GitHub REST API upload failed:', apiErr.response?.data || apiErr.message);
+    process.exit(1);
+  }
 }
 
 // ── Step 5: Publish metadata to Vercel/Redis ─────────────────────────────────

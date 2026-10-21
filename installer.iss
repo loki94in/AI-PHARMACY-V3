@@ -125,6 +125,9 @@ Source: "data\app.db"; DestDir: "{app}\data"; DestName: "app.db"; Flags: onlyifd
 Source: "medicines.csv"; DestDir: "{app}\data"; DestName: "reference_medicines.csv"; Flags: ignoreversion nocompression skipifsourcedoesntexist
 Source: "data\reference_medicines.csv"; DestDir: "{app}\data"; Flags: ignoreversion nocompression skipifsourcedoesntexist
 
+; Android Mobile Companion APK (downloadable from PC and mobile pairing QR)
+Source: "data\pharmacy-mobile.apk"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
+
 ; Optional Tesseract OCR data
 Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 

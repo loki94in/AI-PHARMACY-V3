@@ -1,91 +1,80 @@
-# Implementation Plan: Mobile CRM Hub (Refills, Special Orders, Credit Block/Unlock & Offline Sync)
+# Implementation Plan: Stub Online License Verification & Installer Packaging
 
-## 1. Overview & Scope
-Deliver a full-featured CRM Hub inside the mobile application (`pharmacy-mobile`) that works offline-first and automatically synchronizes with the PC when reconnected, skipping WhatsApp features as requested.
-
-### Key Pillars:
-1. **Refills Subsystem**:
-   - List patient refill groups, fulfillment status, and frequencies.
-   - Interactive **"+ Add Refill"** modal with medicine search, patient details, and recurrence frequency.
-   - Offline queueing (`offline_refills_queue`) and auto-sync on reconnect.
-2. **Special Orders Subsystem**:
-   - List shortage/demand requests with priority and status chips (`PENDING`, `ORDERED`, `READY`, `DELIVERED`).
-   - Interactive **"+ New Special Order"** modal with offline queueing (`offline_special_orders_queue`).
-   - Order status management buttons (Mark Ordered, Mark Ready, Mark Delivered).
-3. **Credit Ledger & Credit Block / Unlock**:
-   - Credit customers list showing balance, due dates, and unpaid bill counts.
-   - **Credit Block / Unlock** toggle switch (`customers.credit_enabled`) allowing the pharmacist to control customer credit permissions.
-   - Collect Payment modal (`/api/crm/ledger/pay`) with offline queueing.
-4. **Offline Sync & Notifications**:
-   - Background sync drains all queued refills, special orders, and credit payments on PC reconnect.
-   - Human-in-the-loop: Local notification and toast confirmations when sync completes.
+## 1. Overview & Objective
+Package and verify the lightweight **AI Pharmacy Stub Installer** (`stub-installer`). The stub installer is a standalone ~72.9 MB setup executable that new clients download. When run on a client's PC:
+1. It presents a clean, branded GUI.
+2. Requires entry of the user's **License ID** and **License Key**.
+3. Verifies & activates the license online via the Vercel License Server (`/api/license/activate`) against hardware fingerprints (MAC + MachineGuid).
+4. Fetches the latest portable setup URL from `/api/updates/latest` (currently `v0.1.131`).
+5. Streams download with resilient DNS (bypassing ISP CDN blackholes) and progress UI.
+6. Installs silently to `%LOCALAPPDATA%\AI Pharmacy OS`, pre-seeds `license.json`, and offers a 1-click launch.
 
 ---
 
-## 2. Step-by-Step Implementation Steps
+## 2. Architecture & Components
 
-### Step 1: Backend Endpoint for Credit Block / Unlock
-- In `src/routes/crm.ts`, add `PUT /api/crm/credit-customers/:id/toggle-credit` to toggle `customers.credit_enabled`.
-
-### Step 2: Mobile CRM API Layer
-- In `pharmacy-mobile/lib/api/refills.ts`: Add `createRefill` with offline fallback to `offline_refills_queue`.
-- In `pharmacy-mobile/lib/api/orders.ts`: Add `getSpecialOrders` and `updateSpecialOrderStatus`.
-- In `pharmacy-mobile/lib/api/credit.ts`: Create client methods for `getCreditCustomers`, `payCreditBalance`, `toggleCustomerCredit`, and `updateCreditDueDate`.
-- In `pharmacy-mobile/lib/api/sync.ts`: Extend `syncOfflineSalesAndRefresh` to drain `offline_refills_queue` and `offline_credit_payments_queue`.
-
-### Step 3: Mobile CRM Screen Upgrade
-- Upgrade `pharmacy-mobile/app/(tabs)/refills/index.tsx` into a unified CRM Screen with segmented tabs:
-  - **[ Refills | Special Orders | Credit Ledger ]**
-- Implement "+ Add Refill" modal with medicine picker.
-- Implement "+ New Special Order" modal.
-- Implement Credit customer cards with balance, **Block/Unlock Credit** toggle, and "Collect Payment" modal.
-- Update `pharmacy-mobile/app/(tabs)/_layout.tsx` to label tab as "CRM" with `people` icon.
-
-### Step 4: Verification & Automated UI Testing
-- `npx tsc --noEmit` in `pharmacy-mobile` (0 errors).
-- Run automated E2E test on `http://localhost:8081` using Playwright verifying all 3 CRM sub-tabs and modals.
-- `npm run guardrails` (PASS, 0 violations).
-- `node scripts/quick-update.mjs` (knowledge graph sync).
+```mermaid
+flowchart TD
+    Client["Client PC (New User)"] --> StubExe["Stub Installer (.exe)"]
+    StubExe --> InputUI["Enter License ID & Key"]
+    InputUI --> OnlineVerify["POST https://ai-pharmacy-license.vercel.app/api/license/activate"]
+    OnlineVerify --> |Success & Machine Bound| FetchLatest["GET /api/updates/latest"]
+    FetchLatest --> DL["Download Full Setup (.exe) with Resilient CDN"]
+    DL --> SilentInstall["Run Setup Silently to %LOCALAPPDATA%\\AI Pharmacy OS"]
+    SilentInstall --> SeedLic["Seed %LOCALAPPDATA%\\AI Pharmacy OS\\license.json"]
+    SeedLic --> Complete["Show Success & 'Launch AI Pharmacy'"]
+```
 
 ---
 
-## 3. Tasks & Verification Checklist
+## 3. Verification & Build Steps
 
-- [x] **Task 1**: Add `PUT /api/crm/credit-customers/:id/toggle-credit` in `src/routes/crm.ts`.
-- [x] **Task 2**: Implement mobile CRM API modules (`lib/api/credit.ts`, `lib/api/refills.ts`, `lib/api/orders.ts`, and `lib/api/sync.ts`).
-- [x] **Task 3**: Build Unified CRM Hub UI with 3 segmented views (Refills, Special Orders, Credit Ledger with Block/Unlock) and offline-first modals.
-- [x] **Task 4**: Verify TypeScript compilation (`npx tsc --noEmit` in `pharmacy-mobile` and root).
-- [x] **Task 5**: Run Mobile UI E2E test via Playwright verifying all 3 CRM tabs.
-- [x] **Task 6**: Verify `npm run guardrails` and update knowledge graph.
+### Step 1: Pre-flight Audit of `stub-installer`
+- Inspected `stub-installer/main.js`, `stub-installer/preload.js`, `stub-installer/renderer.js`, and `stub-installer/package.json`.
+- Verified API payload structure matches `website/api/license.js` (`POST /api/license/activate` expects `{ licenseId, licenseKey, machineId, machineName }`).
+- Confirmed silent installer execution flags match Inno Setup (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`).
+
+### Step 2: Dependency & Build Environment Resolution
+- Diagnosed Windows permission limitation when extracting `winCodeSign-2.6.0.7z` due to macOS symlinks.
+- Successfully staged `winCodeSign-2.6.0` in `AppData\Local\electron-builder\Cache` without symlinks.
+
+### Step 3: Compile & Package the Stub Installer
+- Ran `npm run build` inside `stub-installer`.
+- Verified the output executable: `stub-installer/dist/AI Pharmacy Installer Setup 1.0.0.exe` (76,445,336 bytes).
+
+### Step 4: Vercel Online Verification Deployment
+- Deployed serverless API to Vercel via CLI (`--temporary`).
+- Live Deployment URL: `https://temporary-snappy-juniper-ncy9eo7.vercel.app`
+- Claim URL for permanent dashboard integration: `https://vercel.com/claim-deployment?code=a3bb3337-1935-420e-9ce5-a782e6610f33`
+- Verified live JSON responses for `/api/updates?action=latest` and `/api/license?action=validate`.
+
+### Step 5: Cloud Release Pipeline & Auto-Update Auto-Detection
+- Updated `scripts/release.mjs` to automatically load `.env` so `ADMIN_SECRET`, `GITHUB_TOKEN`, and `LICENSE_SERVER_URL` are immediately available.
+- Added dual GitHub release uploading: supports `gh` CLI when present, and automatically falls back to GitHub REST API (`https://api.github.com/repos/.../releases` & `https://uploads.github.com/...`) using `GITHUB_TOKEN` when `gh` is not installed.
+- Added explicit npm scripts to `package.json`: `"release:publish": "node scripts/release.mjs --remote"` and `"release:pilot:publish": "node scripts/release.mjs --pilot --remote"`.
+### Step 6: EAS Mobile APK Cloud Build & Auto-Distribution
+- Initialized and linked project to EAS account: `@him94/pharmacy-mobile` (ID: `6b38638e-abc7-4421-aa61-915a254a7750`).
+- Dashboard URL: [https://expo.dev/accounts/him94/projects/pharmacy-mobile](https://expo.dev/accounts/him94/projects/pharmacy-mobile).
+- **Active Android Cloud Build**: [https://expo.dev/accounts/him94/projects/pharmacy-mobile/builds/683fe821-5083-421d-93ab-b6dbafd58e39](https://expo.dev/accounts/him94/projects/pharmacy-mobile/builds/683fe821-5083-421d-93ab-b6dbafd58e39).
+- Generated Android production signing keystore on Expo server (`Build Credentials LWx2laSGZP`).
+- Configured root `.easignore` and set `requireCommit: false` in `pharmacy-mobile/eas.json`.
+- Packaged `data\pharmacy-mobile.apk` into `installer.iss` so every desktop installation ships with the APK in `{app}\data`.
+- Updated `scripts/release.mjs` to automatically upload `AI-Pharmacy-Mobile-vX.Y.Z.apk` to GitHub Releases whenever `data/pharmacy-mobile.apk` is present.
+- Connected `/api/notifications/download-apk` and `MobileConnectionModal.tsx` for 1-click APK download from the desktop app.
 
 ---
 
-## 4. Execution Status & Completion Details
-
-- **Task 1 Completed**: Added `PUT /api/crm/credit-customers/:id/toggle-credit` in `src/routes/crm.ts` that updates `customers.credit_enabled` and broadcasts `customers_changed` SSE event.
-- **Task 2 Completed**:
-  - Created `pharmacy-mobile/lib/api/credit.ts` with `getCreditCustomers`, `payCreditBalance`, `toggleCustomerCredit`, and `updateCreditDueDate`.
-  - Added offline-first queueing in `pharmacy-mobile/lib/api/refills.ts` (`createRefill`, `offline_refills_queue`).
-  - Added `deleteSpecialOrder` in `pharmacy-mobile/lib/api/orders.ts`.
-  - Extended `pharmacy-mobile/lib/api/sync.ts` with automated replay for `offline_refills_queue` and `offline_credit_payments_queue`.
-- **Task 3 Completed**:
-  - Upgraded `pharmacy-mobile/app/(tabs)/refills/index.tsx` into a Unified 3-segment CRM Hub:
-    1. **Refills**: Full patient list with medicine stock indicator dots, interval days, Pause/Resume, Fulfill All, and "+ Add Refill" modal with medicine autocomplete.
-    2. **Special Orders**: Real shortage orders list, priority badges (`NORMAL`, `HIGH`, `URGENT`), status progression chips (`PENDING` -> `ORDERED` -> `READY` -> `DELIVERED`), and "+ New Special Order" modal.
-    3. **Credit Ledger**: Total outstanding dues summary card, active/blocked accounts counter, customer cards with balances and unpaid bill counts, **Credit Block / Unlock** switch banner with instant optimistic UI, and **Collect Payment** modal.
-  - Updated `pharmacy-mobile/app/(tabs)/_layout.tsx` to label tab as "CRM" with `people` / `people-outline` icon.
-  - WhatsApp UI integration was completely skipped per user instructions.
-- **Task 4 Completed**:
-  - `npx tsc --noEmit` in `pharmacy-mobile`: **0 errors (Exit code 0)**.
-  - `npx tsc --noEmit` in root: **0 errors (Exit code 0)**.
-- **Task 5 Completed**:
-  - Executed automated Playwright E2E suite (`scripts/test-mobile-ui-e2e.mjs`) on `http://localhost:8081` in iPhone 13 viewport (390x844).
-  - Successfully clicked through all tabs and sub-tabs (`CRM` -> `Special Orders` -> `Credit Ledger` -> `Refills` -> `Billing` -> `Inbox` -> `More` -> `Assistant`).
-  - Captured 10 high-resolution screenshots with **0 console or runtime errors**.
-- **Task 6 Completed**:
-  - `npm run guardrails`: **PASS — no guardrail violations. Speed architecture intact.**
-  - `node scripts/quick-update.mjs`: Knowledge graph auto-updated in 5.0s (1283 nodes, 823 edges).
-- **Cross-Verification Pass**:
-  - Cross-verified with Desktop CRM ([`CustomerCreditSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/CustomerCreditSection.tsx)): Added matching `🔒 Block Credit` / `🔓 Unlock Credit` toggle and `UNLOCKED`/`BLOCKED` status badges on customer rows in the desktop CRM so desktop and mobile share identical capabilities and live SSE updates.
-  - Cross-verified with Desktop POS ([`POS/index.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/POS/index.tsx)): Verified that `credit_enabled` controls POS credit eligibility and counter session highlights.
-  - Verified all Mobile Pages via expanded E2E test suite (13 screenshots captured: CRM Refills, Special Orders, Credit Ledger, Add Refill modal, New Special Order modal, Collect Payment modal, Inventory, Billing, Inbox, More, Assistant) with **0 console or runtime errors**.
+## 4. Completed Tasks Log
+- [x] Explored codebase and verified license server endpoints in `website/api/license.js` and `website/api/updates.js`.
+- [x] Inspected existing stub installer implementation in `stub-installer/`.
+- [x] Resolved electron-builder Windows winCodeSign symlink extraction conflict.
+- [x] Built native Windows NSIS Stub Installer: `stub-installer/dist/AI Pharmacy Installer Setup 1.0.0.exe` (76.4 MB).
+- [x] Deployed and verified Vercel serverless license verification backend.
+- [x] Upgraded `scripts/release.mjs` with `.env` loading and native GitHub REST API upload fallback.
+- [x] Added `release:publish` and `release:pilot:publish` shortcuts in `package.json`.
+- [x] Verified zero guardrail violations (`npm run guardrails`) and clean TypeScript build.
+- [x] Initialized and linked EAS project (`@him94/pharmacy-mobile`) and generated cloud keystore.
+- [x] Wired `installer.iss` and `scripts/release.mjs` to auto-bundle and auto-upload `pharmacy-mobile.apk`.
+- [x] EAS Cloud Build completed successfully (`builds/683fe821-5083-421d-93ab-b6dbafd58e39`).
+- [x] Downloaded and verified production APK (`data/pharmacy-mobile.apk`, 119.88 MB).
+- [x] Refreshed knowledge graph via `scripts/quick-update.mjs`.

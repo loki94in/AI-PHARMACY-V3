@@ -1,0 +1,14 @@
+# EAS Build Archive Filter
+# Only include mobile app files for Expo cloud builds, ignoring all desktop/backend/python assets
+*
+!/pharmacy-mobile/**
+!/pharmacy-mobile
+
+# Inside pharmacy-mobile, ignore heavy caches and local builds
+pharmacy-mobile/node_modules/
+pharmacy-mobile/.expo/
+pharmacy-mobile/android/
+pharmacy-mobile/ios/
+pharmacy-mobile/dist/
+pharmacy-mobile/web-build/
+pharmacy-mobile/.vscode/

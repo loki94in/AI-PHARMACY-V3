@@ -154,3 +154,6 @@ medicine_data.csv
 .e2e/failures/
 .e2e/logs/
 .e2e/videos/
+
+*.apk
+data/*.apk

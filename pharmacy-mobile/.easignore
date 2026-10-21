@@ -1,0 +1,17 @@
+# EAS Build Ignore — packs only mobile app files, ignoring heavy caches and native folders
+node_modules/
+.expo/
+dist/
+web-build/
+.kotlin/
+ios/
+android/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.tsbuildinfo
+.vscode/
+.claude/
