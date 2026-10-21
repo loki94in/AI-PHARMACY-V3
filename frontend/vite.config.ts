@@ -114,13 +114,6 @@ export default defineConfig({
           if (/\/node_modules\/axios\//.test(normalized)) {
             return 'vendor-utils';
           }
-          // Agentation feedback/devtools widget is mounted unconditionally at the app root
-          // (see App.tsx) and is large, but it's app-independent third-party code — split it
-          // out of the main entry chunk so it can be parsed/downloaded in parallel and cached
-          // independently of app code that changes on every build.
-          if (normalized.includes('/node_modules/agentation/')) {
-            return 'vendor-agentation';
-          }
           // Everything else (motion, jspdf, jspdf-autotable, html2canvas, dompurify, canvg, ...)
           // is left to Rollup's automatic chunking, which already isolates them behind their
           // existing dynamic-import boundaries (e.g. jsPDF only loads when a page dynamically

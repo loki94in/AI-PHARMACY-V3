@@ -23,7 +23,6 @@ const PageLoader = () => (
 
 // Lazy-load layout to move polling, SSE streams, and heavy components out of the initial bundle (G1/G4)
 const Layout = lazy(() => import('./components/Layout'));
-const AgentationDev = import.meta.env.DEV ? lazy(() => import('agentation').then(m => ({ default: m.Agentation }))) : null;
 
 // Lazy-loaded pages (ponytail: code-splitting prevents mounting lag)
 const Dashboard = lazy(pageImports['/dashboard']);
@@ -344,11 +343,6 @@ function App() {
               </Routes>
             </Layout>
           </Suspense>
-          {import.meta.env.DEV && AgentationDev && (
-            <Suspense fallback={null}>
-              <AgentationDev />
-            </Suspense>
-          )}
         </BrowserRouter>
       </StoreProvider>
     </ErrorBoundary>

@@ -60451,7 +60451,7 @@ var init_licenseService = __esm({
     import_os = require("os");
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
-    LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
+    LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://temporary-quick-jade-7r1dy0n.vercel.app";
     defaultAppVersion = "0.1.27";
     try {
       const pkgJsonPath = import_path32.default.join(process.cwd(), "package.json");
@@ -60461,7 +60461,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.132";
+    APP_VERSION = "0.1.133";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });

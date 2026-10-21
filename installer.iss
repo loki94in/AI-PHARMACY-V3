@@ -389,31 +389,38 @@ var
   EnvFilePath: String;
   EnvLines: TArrayOfString;
   I: Integer;
-  DataDirFound: Boolean;
+  LicServerFound: Boolean;
+  NumLines: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
     AppDir := ExpandConstant('{app}');
     // Data always lives in {app}\data — already created by [Dirs] section
-    // Remove any stale DATA_DIR line from .env so the app uses its built-in default
     EnvFilePath := AppDir + '\.env';
     if FileExists(EnvFilePath) then
     begin
       if LoadStringsFromFile(EnvFilePath, EnvLines) then
       begin
-        DataDirFound := False;
-        for I := GetArrayLength(EnvLines) - 1 downto 0 do
+        LicServerFound := False;
+        NumLines := GetArrayLength(EnvLines);
+        for I := 0 to NumLines - 1 do
         begin
-          // Strip any DATA_DIR= line — app resolves data dir automatically beside the exe
+          // Strip any legacy DATA_DIR= line
           if Copy(EnvLines[I], 1, 9) = 'DATA_DIR=' then
+            EnvLines[I] := '';
+          // Ensure LICENSE_SERVER_URL points to the live server
+          if Copy(EnvLines[I], 1, 19) = 'LICENSE_SERVER_URL=' then
           begin
-            // Remove this element by shifting down
-            SetArrayLength(EnvLines, GetArrayLength(EnvLines) - 1);
-            DataDirFound := True;
+            EnvLines[I] := 'LICENSE_SERVER_URL=https://temporary-quick-jade-7r1dy0n.vercel.app';
+            LicServerFound := True;
           end;
         end;
-        if DataDirFound then
-          SaveStringsToFile(EnvFilePath, EnvLines, False);
+        if not LicServerFound then
+        begin
+          SetArrayLength(EnvLines, NumLines + 1);
+          EnvLines[NumLines] := 'LICENSE_SERVER_URL=https://temporary-quick-jade-7r1dy0n.vercel.app';
+        end;
+        SaveStringsToFile(EnvFilePath, EnvLines, False);
       end;
     end;
     Sleep(2000);
