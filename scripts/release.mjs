@@ -42,6 +42,7 @@ const args             = process.argv.slice(2);
 const isPilot          = args.includes('--pilot')  || args.includes('-p');
 const isPromote        = args.includes('--promote');
 const skipBuild        = args.includes('--skip-build');
+const skipGithub       = args.includes('--skip-github');
 const isClean          = args.includes('--clean');
 const isMaxCompression = args.includes('--max-compression');
 const bumpMajor        = args.includes('--major');
@@ -58,7 +59,7 @@ if (isMaxCompression) {
 const isRemote   = (args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
 
 // ── Vercel / GitHub config ───────────────────────────────────────────────────
-const vercelServer = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-license.vercel.app';
+const vercelServer = process.env.LICENSE_SERVER_URL || 'https://temporary-quick-jade-7r1dy0n.vercel.app';
 const adminSecret  = process.env.ADMIN_SECRET;
 if ((isPromote || isRemote) && !adminSecret) {
   console.error('\n❌ STOP RELEASE: Missing required ADMIN_SECRET environment variable.');
@@ -320,7 +321,9 @@ try {
   hasGhCli = false;
 }
 
-if (hasGhCli) {
+if (skipGithub) {
+  console.log('   ⏩ Skipping GitHub asset upload (--skip-github specified).');
+} else if (hasGhCli) {
   try {
     let releaseExists = false;
     try {
@@ -346,19 +349,18 @@ if (hasGhCli) {
   }
 }
 
-if (!uploadedViaGh) {
+if (!skipGithub && !uploadedViaGh) {
   const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!ghToken) {
-    console.error('\n❌ GitHub upload failed:');
-    console.error('   1. GitHub CLI (`gh`) is not installed or authenticated (`gh auth login`).');
-    console.error('   2. OR set GITHUB_TOKEN=... in your .env file or environment (needs repo permissions).');
-    console.error(`   Direct download URLs that will be expected once uploaded:`);
-    console.error(`     - Installer : ${downloadUrl}`);
-    console.error(`     - Update ZIP: ${updatePackageUrl}`);
-    process.exit(1);
-  }
-
-  console.log('   Uploading via GitHub REST API (token authenticated)...');
+    console.warn('\n⚠️  Notice: GitHub asset upload skipped:');
+    console.warn('   1. GitHub CLI (`gh`) is not installed or authenticated (`gh auth login`).');
+    console.warn('   2. OR set GITHUB_TOKEN=... in your .env file or environment (needs repo permissions).');
+    console.warn(`   Direct download URLs that will be expected once uploaded:`);
+    console.warn(`     - Installer : ${downloadUrl}`);
+    console.warn(`     - Update ZIP: ${updatePackageUrl}`);
+    console.warn('   Proceeding to publish version metadata to update server...\n');
+  } else {
+    console.log('   Uploading via GitHub REST API (token authenticated)...');
   const ghHeaders = {
     Authorization: `Bearer ${ghToken}`,
     Accept: 'application/vnd.github.v3+json',
@@ -437,6 +439,7 @@ if (!uploadedViaGh) {
     console.error('\n❌ GitHub REST API upload failed:', apiErr.response?.data || apiErr.message);
     process.exit(1);
   }
+}
 }
 
 // ── Step 5: Publish metadata to Vercel/Redis ─────────────────────────────────

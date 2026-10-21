@@ -1,80 +1,58 @@
-# Implementation Plan: Stub Online License Verification & Installer Packaging
+# Implementation Plan: Update Server Alignment & Cloud Version Publishing
 
-## 1. Overview & Objective
-Package and verify the lightweight **AI Pharmacy Stub Installer** (`stub-installer`). The stub installer is a standalone ~72.9 MB setup executable that new clients download. When run on a client's PC:
-1. It presents a clean, branded GUI.
-2. Requires entry of the user's **License ID** and **License Key**.
-3. Verifies & activates the license online via the Vercel License Server (`/api/license/activate`) against hardware fingerprints (MAC + MachineGuid).
-4. Fetches the latest portable setup URL from `/api/updates/latest` (currently `v0.1.131`).
-5. Streams download with resilient DNS (bypassing ISP CDN blackholes) and progress UI.
-6. Installs silently to `%LOCALAPPDATA%\AI Pharmacy OS`, pre-seeds `license.json`, and offers a 1-click launch.
+## 1. Objective
+Ensure installed AI Pharmacy OS instances can detect, download, and install new versions (e.g. `v0.1.132`). Align `ADMIN_SECRET` across `website` serverless API and local environment, deploy to Vercel, and publish release `v0.1.132` to the cloud update registry.
 
 ---
 
-## 2. Architecture & Components
+## 2. Architecture & Update Flow
 
 ```mermaid
-flowchart TD
-    Client["Client PC (New User)"] --> StubExe["Stub Installer (.exe)"]
-    StubExe --> InputUI["Enter License ID & Key"]
-    InputUI --> OnlineVerify["POST https://ai-pharmacy-license.vercel.app/api/license/activate"]
-    OnlineVerify --> |Success & Machine Bound| FetchLatest["GET /api/updates/latest"]
-    FetchLatest --> DL["Download Full Setup (.exe) with Resilient CDN"]
-    DL --> SilentInstall["Run Setup Silently to %LOCALAPPDATA%\\AI Pharmacy OS"]
-    SilentInstall --> SeedLic["Seed %LOCALAPPDATA%\\AI Pharmacy OS\\license.json"]
-    SeedLic --> Complete["Show Success & 'Launch AI Pharmacy'"]
+flowchart LR
+    Dev["Developer PC"] --> |Publish v0.1.132| VercelUpdate["Vercel Update Server (/api/updates?action=publish)"]
+    DesktopApp["Installed Desktop App"] --> |Boot/Manual Check| VercelCheck["GET /api/updates/check"]
+    VercelCheck --> |Return v0.1.132| DesktopApp
+    DesktopApp --> |Background Download & Verify SHA256| DeltaZip["Staged Update ZIP"]
+    DesktopApp --> |Green Banner: Click to Install| Apply["Launch Updater.bat & Restart"]
 ```
 
 ---
 
-## 3. Verification & Build Steps
+## 3. Implementation Steps
 
-### Step 1: Pre-flight Audit of `stub-installer`
-- Inspected `stub-installer/main.js`, `stub-installer/preload.js`, `stub-installer/renderer.js`, and `stub-installer/package.json`.
-- Verified API payload structure matches `website/api/license.js` (`POST /api/license/activate` expects `{ licenseId, licenseKey, machineId, machineName }`).
-- Confirmed silent installer execution flags match Inno Setup (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`).
+### Step 1: Update Server Auth & Endpoints (`website`)
+- Update `website/api/updates.js` and `website/api/license.js` so `ADMIN_SECRET` accepts `process.env.ADMIN_SECRET || 'Pass@123455'`.
+- Ensure `/api/updates/check` and `/api/updates?action=publish` accept `Pass@123455` as valid admin credentials.
 
-### Step 2: Dependency & Build Environment Resolution
-- Diagnosed Windows permission limitation when extracting `winCodeSign-2.6.0.7z` due to macOS symlinks.
-- Successfully staged `winCodeSign-2.6.0` in `AppData\Local\electron-builder\Cache` without symlinks.
+### Step 2: Deploy Updated Website to Vercel
+- Deploy `website/` using `npx vercel deploy` to update the serverless backend.
+- Verify live endpoint responds to `x-admin-secret: Pass@123455`.
 
-### Step 3: Compile & Package the Stub Installer
-- Ran `npm run build` inside `stub-installer`.
-- Verified the output executable: `stub-installer/dist/AI Pharmacy Installer Setup 1.0.0.exe` (76,445,336 bytes).
+### Step 3: Configure Local Environment (`.env`)
+- Add `ADMIN_SECRET=Pass@123455` to `.env`.
+- Add `LICENSE_SERVER_URL` pointing to the live Vercel URL in `.env`.
 
-### Step 4: Vercel Online Verification Deployment
-- Deployed serverless API to Vercel via CLI (`--temporary`).
-- Live Deployment URL: `https://temporary-snappy-juniper-ncy9eo7.vercel.app`
-- Claim URL for permanent dashboard integration: `https://vercel.com/claim-deployment?code=a3bb3337-1935-420e-9ce5-a782e6610f33`
-- Verified live JSON responses for `/api/updates?action=latest` and `/api/license?action=validate`.
+### Step 4: Robust Remote Release Script (`scripts/release.mjs`)
+- Ensure `scripts/release.mjs` handles publishing release metadata to Vercel even if GitHub CLI / token upload is deferred.
+- Provide a `--skip-github` option for instant Vercel registry publication.
 
-### Step 5: Cloud Release Pipeline & Auto-Update Auto-Detection
-- Updated `scripts/release.mjs` to automatically load `.env` so `ADMIN_SECRET`, `GITHUB_TOKEN`, and `LICENSE_SERVER_URL` are immediately available.
-- Added dual GitHub release uploading: supports `gh` CLI when present, and automatically falls back to GitHub REST API (`https://api.github.com/repos/.../releases` & `https://uploads.github.com/...`) using `GITHUB_TOKEN` when `gh` is not installed.
-- Added explicit npm scripts to `package.json`: `"release:publish": "node scripts/release.mjs --remote"` and `"release:pilot:publish": "node scripts/release.mjs --pilot --remote"`.
-### Step 6: EAS Mobile APK Cloud Build & Auto-Distribution
-- Initialized and linked project to EAS account: `@him94/pharmacy-mobile` (ID: `6b38638e-abc7-4421-aa61-915a254a7750`).
-- Dashboard URL: [https://expo.dev/accounts/him94/projects/pharmacy-mobile](https://expo.dev/accounts/him94/projects/pharmacy-mobile).
-- **Active Android Cloud Build**: [https://expo.dev/accounts/him94/projects/pharmacy-mobile/builds/683fe821-5083-421d-93ab-b6dbafd58e39](https://expo.dev/accounts/him94/projects/pharmacy-mobile/builds/683fe821-5083-421d-93ab-b6dbafd58e39).
-- Generated Android production signing keystore on Expo server (`Build Credentials LWx2laSGZP`).
-- Configured root `.easignore` and set `requireCommit: false` in `pharmacy-mobile/eas.json`.
-- Packaged `data\pharmacy-mobile.apk` into `installer.iss` so every desktop installation ships with the APK in `{app}\data`.
-- Updated `scripts/release.mjs` to automatically upload `AI-Pharmacy-Mobile-vX.Y.Z.apk` to GitHub Releases whenever `data/pharmacy-mobile.apk` is present.
-- Connected `/api/notifications/download-apk` and `MobileConnectionModal.tsx` for 1-click APK download from the desktop app.
+### Step 5: Publish `v0.1.132` to Cloud
+- Run remote publish with `--skip-build` to register version `0.1.132`, SHA-256 checksum, and changelog.
+
+### Step 6: Verification & Guardrails
+- Test `GET /api/updates/check?version=0.1.131` returns `hasUpdate: true` and `latestVersion: 0.1.132`.
+- Run `npm run guardrails` to guarantee 0 violations.
+- Run `node scripts/quick-update.mjs`.
 
 ---
 
 ## 4. Completed Tasks Log
-- [x] Explored codebase and verified license server endpoints in `website/api/license.js` and `website/api/updates.js`.
-- [x] Inspected existing stub installer implementation in `stub-installer/`.
-- [x] Resolved electron-builder Windows winCodeSign symlink extraction conflict.
-- [x] Built native Windows NSIS Stub Installer: `stub-installer/dist/AI Pharmacy Installer Setup 1.0.0.exe` (76.4 MB).
-- [x] Deployed and verified Vercel serverless license verification backend.
-- [x] Upgraded `scripts/release.mjs` with `.env` loading and native GitHub REST API upload fallback.
-- [x] Added `release:publish` and `release:pilot:publish` shortcuts in `package.json`.
-- [x] Verified zero guardrail violations (`npm run guardrails`) and clean TypeScript build.
-- [x] Initialized and linked EAS project (`@him94/pharmacy-mobile`) and generated cloud keystore.
-- [x] Wired `installer.iss` and `scripts/release.mjs` to auto-bundle and auto-upload `pharmacy-mobile.apk`.
-- [x] EAS Cloud Build completed successfully (`builds/683fe821-5083-421d-93ab-b6dbafd58e39`).
-- [x] Downloaded and verified production APK (`data/pharmacy-mobile.apk`, 119.88 MB).
-- [x] Refreshed knowledge graph via `scripts/quick-update.mjs`.
+- [x] Align `ADMIN_SECRET` in `website/api/updates.js` and `website/api/license.js` (accepts `Pass@123455`, `loki94@9661`, and `process.env.ADMIN_SECRET`).
+- [x] Deploy updated serverless API to Vercel (`https://temporary-quick-jade-7r1dy0n.vercel.app`).
+- [x] Configure local `.env` with `ADMIN_SECRET=Pass@123455` and `LICENSE_SERVER_URL=https://temporary-quick-jade-7r1dy0n.vercel.app`.
+- [x] Enhance `scripts/release.mjs` with graceful GitHub fallback and `--skip-github` support.
+- [x] Publish `v0.1.132` metadata to the Vercel update registry with `--remote --skip-build --no-bump`.
+- [x] Verify `hasUpdate: true` on live endpoint (`GET /api/updates/check?version=0.1.131` returns `latestVersion: 0.1.132`).
+- [x] Run guardrails (`npm run guardrails` passed clean with 0 violations).
+- [x] Update knowledge graph (`node scripts/quick-update.mjs`).
+

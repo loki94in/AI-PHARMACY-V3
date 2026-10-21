@@ -16,7 +16,7 @@ import axios from 'axios';
 import { dbManager } from '../database/connection.js';
 
 // Vercel license server URL — update after deploying
-const LICENSE_SERVER = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-license.vercel.app';
+const LICENSE_SERVER = process.env.LICENSE_SERVER_URL || 'https://temporary-quick-jade-7r1dy0n.vercel.app';
 
 let defaultAppVersion = '0.1.27';
 try {
