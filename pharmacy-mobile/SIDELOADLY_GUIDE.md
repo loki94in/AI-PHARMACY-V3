@@ -56,10 +56,30 @@ When complete, EAS returns a download URL for the built `.ipa`.
 
 ---
 
+## How to Keep the App Active Forever (Never Expire / Never Run Out of Free Trial)
+
+With a free Apple ID, Apple normally gives a **7-day expiration** per sideloaded app, and a limit of **10 App IDs** per week:
+
+### 1. Locked Bundle ID (Zero Waste of Free App IDs)
+* The app is permanently locked to Bundle ID: `com.pharmacy.genius`.
+* **In Sideloadly, leave "Bundle ID" on default / unchanged.**
+* Every future update or reinstall updates the **exact same app in-place**, without consuming any extra App ID slots from your Apple account. Your offline bills, medicines, and CRM data stay intact.
+
+### 2. Sideloadly Automatic Background Refresh (Infinite Free Renewal)
+Sideloadly has an automated background renewal service so the app **never expires**:
+1. In Sideloadly, click the **"Advanced Options"** or look at the registered apps list.
+2. Check the box for **"Automatic App Refresh"**.
+3. Enable **"Wi-Fi Sideloading"**:
+   * Once you sideload via USB the first time, your iPhone and PC will communicate over your pharmacy Wi-Fi network.
+   * Whenever your Windows PC is running and your iPhone is on the same Wi-Fi, Sideloadly will **silently refresh the 7-day certificate in the background** before it ever runs out!
+   * You will **never** see the "App is no longer available" or expired popup.
+
+---
+
 ## How to Update the App Later
 
 When a new version or update is ready:
-1. Obtain the updated `PharmacyGenius-Sideloadly.ipa`.
-2. Connect your iPhone to Sideloadly.
+1. Download the new `PharmacyGenius-Sideloadly.ipa`.
+2. Open Sideloadly (phone connected via USB or Wi-Fi).
 3. Drag the new `.ipa` in and click **Start**.
-4. Sideloadly will update the installed app **in-place**. All cached inventory, offline queues, and local settings are preserved automatically.
+4. Sideloadly will overwrite and update the app **in-place**. All cached inventory, offline queues, settings, and login sessions are automatically preserved.

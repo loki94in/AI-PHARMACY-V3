@@ -60461,7 +60461,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.130";
+    APP_VERSION = "0.1.131";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -62362,6 +62362,27 @@ var init_crm = __esm({
       } catch (error) {
         console.error("Failed to update credit due date:", error);
         res.status(500).json({ error: "Failed to update due date: " + error.message });
+      }
+    });
+    router6.put("/credit-customers/:id/toggle-credit", async (req, res) => {
+      const { id } = req.params;
+      const { credit_enabled } = req.body || {};
+      try {
+        const db2 = await dbManager.getConnection();
+        const enabledVal = credit_enabled ? 1 : 0;
+        await db2.run("UPDATE customers SET credit_enabled = ? WHERE id = ?", [enabledVal, id]);
+        try {
+          eventService.broadcast("customers_changed", { at: Date.now(), id: Number(id), credit_enabled: enabledVal });
+        } catch (_) {
+        }
+        res.json({
+          success: true,
+          credit_enabled: enabledVal,
+          message: `Customer credit ${enabledVal ? "unlocked" : "blocked"} successfully`
+        });
+      } catch (error) {
+        console.error("Failed to toggle customer credit:", error);
+        res.status(500).json({ error: "Failed to toggle credit status: " + error.message });
       }
     });
     router6.post("/credit-customers/:id/send-reminder", async (req, res) => {
