@@ -996,6 +996,18 @@ class WhatsAppQueueWorker {
         // If this is a collection/refill/order reminder, verify the underlying entity wasn't already fulfilled or billed
         if (['refill_collection', 'refill_reminder', 'order_ready', 'special_order_arrived', 'special_order'].includes(item.type)) {
           if (item.type === 'refill_collection' || item.type === 'refill_reminder') {
+            const completedCallTask = await db.get(
+              `SELECT id FROM patient_call_tasks 
+               WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
+                 AND task_type = 'refill' 
+                 AND (
+                   (status = 'completed' AND updated_at > datetime('now', '-7 days'))
+                   OR (status = 'rescheduled' AND reschedule_date > date('now', 'localtime'))
+                 )
+               LIMIT 1`,
+              [`%${target10Digits}`, `%${target10Digits}`]
+            ).catch(() => null);
+
             const extraRefillFilter = item.type === 'refill_reminder'
               ? "AND COALESCE(patient_confirmed, 0) = 0 AND status != 'ordered' AND cart_store_name IS NULL"
               : "";
@@ -1010,15 +1022,15 @@ class WhatsAppQueueWorker {
               [`%${target10Digits}`, `%${target10Digits}`]
             ).catch(() => []);
 
-            if (!activeRefills || activeRefills.length === 0) {
-              console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — refill already fulfilled, confirmed, ordered, or reminder cancelled for ${target10Digits}.`);
+            if (completedCallTask || !activeRefills || activeRefills.length === 0) {
+              console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — refill already fulfilled, call task completed, or reminder cancelled for ${target10Digits}.`);
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, confirmed, or reminder cancelled' WHERE id = ?",
+                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, call task completed, or reminder cancelled' WHERE id = ?",
                 [item.id]
               );
               await db.run(
                 `UPDATE automation_notifications 
-                 SET status = 'cancelled', error_message = 'Already fulfilled or confirmed' 
+                 SET status = 'cancelled', error_message = 'Already fulfilled, completed, or confirmed' 
                  WHERE reference_id = ? OR reference_id = ?`,
                 [`queue_${item.id}`, String(item.id)]
               ).catch(() => {});
@@ -1026,6 +1038,18 @@ class WhatsAppQueueWorker {
               continue;
             }
           } else if (item.type === 'order_ready' || item.type === 'special_order_arrived' || item.type === 'special_order') {
+            const completedOrderTask = await db.get(
+              `SELECT id FROM patient_call_tasks 
+               WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
+                 AND task_type = 'special_order' 
+                 AND (
+                   (status = 'completed' AND updated_at > datetime('now', '-7 days'))
+                   OR (status = 'rescheduled' AND reschedule_date > date('now', 'localtime'))
+                 )
+               LIMIT 1`,
+              [`%${target10Digits}`, `%${target10Digits}`]
+            ).catch(() => null);
+
             const activeOrders = await db.all(
               `SELECT id FROM special_orders 
                WHERE (phone LIKE ? OR replace(phone, ' ', '') LIKE ?)
@@ -1034,15 +1058,15 @@ class WhatsAppQueueWorker {
               [`%${target10Digits}`, `%${target10Digits}`]
             ).catch(() => []);
 
-            if (!activeOrders || activeOrders.length === 0) {
-              console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — special order already fulfilled, delivered, or cancelled for ${target10Digits}.`);
+            if (completedOrderTask || !activeOrders || activeOrders.length === 0) {
+              console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — special order already fulfilled, delivered, or call task completed for ${target10Digits}.`);
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled or delivered' WHERE id = ?",
+                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled, delivered, or call task completed' WHERE id = ?",
                 [item.id]
               );
               await db.run(
                 `UPDATE automation_notifications 
-                 SET status = 'cancelled', error_message = 'Already fulfilled' 
+                 SET status = 'cancelled', error_message = 'Already fulfilled or delivered' 
                  WHERE reference_id = ? OR reference_id = ?`,
                 [`queue_${item.id}`, String(item.id)]
               ).catch(() => {});

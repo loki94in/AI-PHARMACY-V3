@@ -15,6 +15,7 @@ import {
   isShutdownInProgress
 } from '../utils/chromeBrowser.js';
 import { syncPharmarackOrders } from './pharmarackOrderSyncService.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 
 export interface CheckoutResultItem {
   storeId?: number;
@@ -124,6 +125,7 @@ export class PharmarackCheckoutService {
           args: getCommonHeadlessChromiumArgs([
             '--no-zygote',
             '--js-flags=--max-old-space-size=256',
+            '--window-size=1920,1080',
             '--window-position=-10000,-10000'
           ])
         });
@@ -145,6 +147,7 @@ export class PharmarackCheckoutService {
           args: getCommonHeadlessChromiumArgs([
             '--no-zygote',
             '--js-flags=--max-old-space-size=256',
+            '--window-size=1920,1080',
             '--window-position=-10000,-10000'
           ])
         });
@@ -153,7 +156,10 @@ export class PharmarackCheckoutService {
       }
 
       const [page] = await browser.pages();
-      page.setDefaultNavigationTimeout(30000);
+      // Standardize to desktop 1080p so the Angular SPA renders full desktop layout with primary Place Order button
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      page.setDefaultNavigationTimeout(35000);
       page.setDefaultTimeout(15000);
 
       // Captured order IDs from network API responses during checkout
@@ -200,194 +206,152 @@ export class PharmarackCheckoutService {
         };
       }
 
-      // Wait 10-12s buffer for dynamic Angular SPA to finish loading GetUserCartDetails & rendering cards
-      console.log('[PharmarackCheckout] Waiting 10-12s for Pharmarack cart page SPA hydration and network calls...');
+      // Wait up to 15s for dynamic Angular SPA to finish loading GetUserCartDetails & rendering cards
+      console.log('[PharmarackCheckout] Waiting for Pharmarack cart page SPA hydration and network calls...');
       const hydrationStart = Date.now();
-      while (Date.now() - hydrationStart < 12000) {
-        const isReady = await page.evaluate(() => {
+      let cartIsEmpty = false;
+
+      while (Date.now() - hydrationStart < 15000) {
+        const pageStatus = await page.evaluate(() => {
+          const bodyText = (document.body?.innerText || '').toLowerCase();
+          const isEmpty = bodyText.includes('cart is empty') || bodyText.includes('no item in cart') || bodyText.includes('no product found');
+          const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.btn, input[type="button"], input[type="submit"]'));
+          const hasPlaceOrderBtn = buttons.some(b => {
+            const txt = (b.textContent || (b as HTMLInputElement).value || '').trim().toLowerCase();
+            return txt.includes('place order') || txt.includes('checkout') || txt.includes('order now') || txt.includes('proceed to buy');
+          });
           const hasCards = document.querySelectorAll(
             '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel, tbody tr'
           ).length > 0;
-          const hasButtons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]')).some(b => {
-            const txt = (b.textContent || '').trim().toLowerCase();
-            return txt.includes('place order') || txt.includes('confirm order') || txt.includes('checkout') || txt.includes('order now');
-          });
-          const isEmpty = (document.body.innerText || '').toLowerCase().includes('cart is empty');
-          return (hasCards && hasButtons) || isEmpty;
-        }).catch(() => false);
 
-        if (isReady && (Date.now() - hydrationStart >= 8000)) {
-          // If elements are rendered and at least 8s have elapsed, proceed
+          return { isEmpty, hasPlaceOrderBtn, hasCards };
+        }).catch(() => ({ isEmpty: false, hasPlaceOrderBtn: false, hasCards: false }));
+
+        if (pageStatus.isEmpty) {
+          cartIsEmpty = true;
+          break;
+        }
+
+        if (pageStatus.hasPlaceOrderBtn && (Date.now() - hydrationStart >= 6000)) {
           break;
         }
         await new Promise(r => setTimeout(r, 1000));
       }
 
-      // Attempt to identify distributor cards and trigger official "Place Order" actions
-      const checkoutExecution = await page.evaluate(async (targetNames: string[] | null) => {
-        const logs: string[] = [];
-        const placedStores: string[] = [];
-        const failedStores: { name: string; error: string }[] = [];
+      const placedStores: string[] = [];
+      const failedStores: { name: string; error: string }[] = [];
+      const logs: string[] = [];
+      let primaryClicked = false;
 
-        const normalizeStr = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
-        const matchesTargetStore = (candidateName: string, targets: string[]): boolean => {
-          const normCand = normalizeStr(candidateName);
-          const stopWords = new Set(['pvt', 'ltd', 'pharmaceuticals', 'distributors', 'agencies', 'enterprise', 'pharma', 'medical', 'distributor', 'agency']);
-          const candTokens = normCand.split(' ').filter(w => w.length > 2 && !stopWords.has(w));
+      if (!cartIsEmpty) {
+        // Query candidate buttons via real Puppeteer handles for coordinate-level pointer clicks
+        const candidateHandles = await page.$$('button, [role="button"], a.btn, input[type="button"], input[type="submit"], [class*="checkout"], [class*="place-order"]');
+        logs.push(`Found ${candidateHandles.length} total interactive buttons on cart page`);
 
-          return targets.some(t => {
-            const normT = normalizeStr(t);
-            if (normCand.includes(normT) || normT.includes(normCand)) return true;
-            const tTokens = normT.split(' ').filter(w => w.length > 2 && !stopWords.has(w));
-            if (candTokens.length > 0 && tTokens.length > 0) {
-              return candTokens.some(ct => tTokens.includes(ct));
-            }
-            return false;
-          });
-        };
-
-        // 1. Sync distributor checkboxes on https://retailers.pharmarack.com/cart if targetNames provided
-        if (targetNames && targetNames.length > 0) {
+        for (const btnHandle of candidateHandles) {
           try {
-            const potentialSections = Array.from(document.querySelectorAll(
-              '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel'
-            )) as HTMLElement[];
+            const btnInfo = await page.evaluate((el: HTMLElement) => {
+              const text = (el.innerText || el.textContent || (el as HTMLInputElement).value || '').trim();
+              const lower = text.toLowerCase();
+              const isPlaceOrder = (
+                lower.includes('place order') ||
+                lower.includes('confirm order') ||
+                lower.includes('checkout') ||
+                lower.includes('order now') ||
+                lower.includes('review & place') ||
+                lower.includes('proceed to buy')
+              );
+              const style = window.getComputedStyle(el);
+              const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+              const isDisabled = (el as any).disabled || el.getAttribute('aria-disabled') === 'true' || el.classList.contains('disabled');
 
-            for (const section of potentialSections) {
-              const headerEl = section.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"], [class*="supplier-name"]');
-              if (!headerEl || !headerEl.textContent) continue;
-              const cardName = headerEl.textContent.trim();
-              if (cardName.length < 3 || cardName.toLowerCase().includes('cart') || cardName.toLowerCase().includes('total')) continue;
-
-              const shouldBeSelected = matchesTargetStore(cardName, targetNames);
-
-              // Locate checkbox associated with this distributor section
-              const chk = section.querySelector('input[type="checkbox"], [role="checkbox"], .ant-checkbox-input, .mat-checkbox-input') as HTMLInputElement | null;
-              if (chk) {
-                const isChecked = chk.checked || chk.getAttribute('aria-checked') === 'true' || chk.closest('.ant-checkbox-checked') !== null || chk.closest('.mat-checkbox-checked') !== null;
-                if (shouldBeSelected && !isChecked) {
-                  chk.scrollIntoView({ behavior: 'instant', block: 'center' });
-                  chk.click();
-                  logs.push(`Checked distributor checkbox on Pharmarack: ${cardName}`);
-                  await new Promise(r => setTimeout(r, 400));
-                } else if (!shouldBeSelected && isChecked) {
-                  chk.scrollIntoView({ behavior: 'instant', block: 'center' });
-                  chk.click();
-                  logs.push(`Unchecked distributor checkbox on Pharmarack: ${cardName}`);
-                  await new Promise(r => setTimeout(r, 400));
+              // Find parent store name if inside a store section
+              let storeName = 'Pharmarack Distributor';
+              let curr: HTMLElement | null = el;
+              for (let i = 0; i < 7; i++) {
+                if (!curr) break;
+                const headerEl = curr.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"], [class*="supplier-name"]');
+                if (headerEl && headerEl.textContent) {
+                  const cand = headerEl.textContent.trim();
+                  if (cand.length > 2 && !cand.toLowerCase().includes('cart') && !cand.toLowerCase().includes('order') && !cand.toLowerCase().includes('total')) {
+                    storeName = cand;
+                    break;
+                  }
                 }
+                curr = curr.parentElement;
               }
+
+              return { isPlaceOrder, isVisible, isDisabled, text, storeName };
+            }, btnHandle);
+
+            if (!btnInfo.isPlaceOrder || !btnInfo.isVisible || btnInfo.isDisabled) {
+              continue;
             }
-          } catch (syncErr: any) {
-            logs.push(`Distributor checkbox sync warning: ${syncErr?.message || syncErr}`);
+
+            logs.push(`Attempting real pointer click on Place Order button: "${btnInfo.text}" (store: ${btnInfo.storeName})`);
+
+            // Scroll into view
+            await btnHandle.scrollIntoViewIfNeeded().catch(() => {});
+            await new Promise(r => setTimeout(r, 400));
+
+            // Execute real OS mouse click on bounding box center
+            const box = await btnHandle.boundingBox();
+            if (box) {
+              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { delay: 60 });
+            } else {
+              await btnHandle.click({ delay: 60 });
+            }
+
+            // Also invoke DOM click as a secondary trigger guarantee for Angular Zone.js
+            await page.evaluate((el: HTMLElement) => el.click(), btnHandle).catch(() => {});
+
+            primaryClicked = true;
+            placedStores.push(btnInfo.storeName);
+            logs.push(`Successfully clicked Place Order button for: ${btnInfo.storeName}`);
+
+            // Brief settling pause to allow Angular to process and spawn confirmation dialog if any
+            await new Promise(r => setTimeout(r, 1200));
+
+            // Check for confirmation dialogs
+            for (let step = 0; step < 6; step++) {
+              const confirmedModal = await page.evaluate(() => {
+                const modalButtons = Array.from(document.querySelectorAll(
+                  '.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn, [class*="modal"] button, [class*="dialog"] button, .cdk-overlay-pane button'
+                )) as HTMLElement[];
+
+                for (const mBtn of modalButtons) {
+                  const mText = (mBtn.innerText || mBtn.textContent || '').trim().toLowerCase();
+                  if (mText.includes('confirm') || mText.includes('yes') || mText.includes('proceed') || mText.includes('place order') || mText.includes('ok')) {
+                    mBtn.click();
+                    return mText;
+                  }
+                }
+                return null;
+              }).catch(() => null);
+
+              if (confirmedModal) {
+                logs.push(`Confirmed modal dialog prompt with button: "${confirmedModal}"`);
+                break;
+              }
+              await new Promise(r => setTimeout(r, 500));
+            }
+
+            // If this was a global cart checkout button, one click places the entire cart
+            if (btnInfo.storeName === 'Pharmarack Distributor' || !targetStoreNames || targetStoreNames.length <= 1) {
+              break;
+            }
+          } catch (clickErr: any) {
+            logs.push(`Button click error: ${clickErr.message}`);
+            failedStores.push({ name: 'Distributor Button', error: clickErr.message });
           }
         }
+      }
 
-        // Search for all buttons on the cart page that indicate checkout/order placement
-        const allButtons = Array.from(document.querySelectorAll(
-          'button, [role="button"], a[role="button"], input[type="button"], input[type="submit"], .btn, .ant-btn, .mat-button, .mat-raised-button, [class*="checkout"], [class*="place-order"]'
-        )) as HTMLElement[];
+      console.log('[PharmarackCheckout] Execution summary:', { logs, placedStores, primaryClicked, cartIsEmpty });
 
-        const placeOrderButtons = allButtons.filter(b => {
-          const txt = (b.innerText || b.textContent || (b as HTMLInputElement).value || '').trim().toLowerCase();
-          const isActionText = (
-            txt.includes('place order') ||
-            txt.includes('confirm order') ||
-            txt.includes('checkout') ||
-            txt.includes('order now') ||
-            txt.includes('review & place') ||
-            txt.includes('proceed to buy')
-          );
-          if (!isActionText) return false;
-          try {
-            const style = window.getComputedStyle(b);
-            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-          } catch (_) {
-            return true;
-          }
-        });
-
-        logs.push(`Found ${placeOrderButtons.length} potential place order button(s) on cart page.`);
-
-        if (placeOrderButtons.length === 0) {
-          // Check if cart is already empty or no items
-          const bodyText = (document.body.innerText || '').toLowerCase();
-          if (bodyText.includes('cart is empty') || bodyText.includes('no item') || bodyText.includes('no product')) {
-            return { emptyCart: true, logs, placedStores, failedStores };
-          }
-          return { noButtons: true, logs, placedStores, failedStores };
-        }
-
-        for (const btn of placeOrderButtons) {
-          try {
-            // Find parent store name if possible
-            let storeName = 'Distributor';
-            let container: HTMLElement | null = btn;
-            for (let i = 0; i < 7; i++) {
-              if (!container) break;
-              const headerEl = container.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"]');
-              if (headerEl && headerEl.textContent) {
-                const cand = headerEl.textContent.trim();
-                if (cand.length > 2 && !cand.toLowerCase().includes('cart') && !cand.toLowerCase().includes('order') && !cand.toLowerCase().includes('checkout')) {
-                  storeName = cand;
-                  break;
-                }
-              }
-              container = container.parentElement;
-            }
-
-            // If target store names filter provided, check match
-            if (targetNames && targetNames.length > 0) {
-              const isMatch = matchesTargetStore(storeName, targetNames);
-              // If it's a store-specific button and doesn't match target, skip it
-              if (storeName !== 'Distributor' && !isMatch) {
-                logs.push(`Skipped non-target store Place Order button: ${storeName}`);
-                continue;
-              }
-            }
-
-            // Click the Place Order button
-            btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-            if ((btn as any).disabled) {
-              (btn as any).disabled = false;
-            }
-            btn.click();
-            logs.push(`Clicked Place Order for store: ${storeName}`);
-
-            // Brief delay to allow confirmation dialog to appear if any
-            for (let waitStep = 0; waitStep < 6; waitStep++) {
-              await new Promise(r => setTimeout(r, 600));
-              const modalButtons = Array.from(document.querySelectorAll(
-                '.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn, [class*="modal"] button, [class*="dialog"] button'
-              )) as HTMLElement[];
-              let confirmed = false;
-              for (const mBtn of modalButtons) {
-                const mText = (mBtn.innerText || mBtn.textContent || '').trim().toLowerCase();
-                if (mText.includes('confirm') || mText.includes('yes') || mText.includes('proceed') || mText.includes('place order') || mText.includes('ok')) {
-                  mBtn.click();
-                  logs.push(`Confirmed modal dialog for: ${storeName} (button: ${mText})`);
-                  confirmed = true;
-                  break;
-                }
-              }
-              if (confirmed) break;
-            }
-
-            placedStores.push(storeName);
-            await new Promise(r => setTimeout(r, 2000));
-          } catch (btnErr: any) {
-            failedStores.push({ name: 'Unknown Store', error: btnErr.message || 'Button click failed' });
-          }
-        }
-
-        return { success: true, logs, placedStores, failedStores };
-      }, targetStoreNames || null);
-
-      console.log('[PharmarackCheckout] DOM Execution summary:', checkoutExecution);
-
-      // Wait 10-12s buffer for network API calls to settle and capture official Order IDs
-      console.log('[PharmarackCheckout] Waiting 10-12s buffer for Pharmarack server to commit orders and emit Order IDs in network stream...');
-      await new Promise(r => setTimeout(r, 11000));
+      // Wait 8-10s buffer for Pharmarack server to commit orders and emit Order IDs in network stream
+      console.log('[PharmarackCheckout] Waiting for Pharmarack server to commit orders and sync Order IDs...');
+      await new Promise(r => setTimeout(r, 8000));
 
       // Trigger order sync immediately to pull official Order IDs from Pharmarack backend
       console.log('[PharmarackCheckout] Triggering immediate Pharmarack order sync to fetch official Order IDs...');
@@ -399,12 +363,25 @@ export class PharmarackCheckoutService {
         console.warn('[PharmarackCheckout] Order sync error post-checkout:', sErr.message);
       }
 
-      // Map placed stores to results
-      const placedNames = checkoutExecution.placedStores || [];
-      const capturedOrders = Array.from(networkOrderNos);
+      // Check database for today's orders
+      const today = toLocalSqlDateTime(new Date()).slice(0, 10);
+      const db = await dbManager.getConnection();
+      const syncedToday = await db.all(
+        `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+        [today]
+      ).catch(() => []);
 
-      if (placedNames.length > 0) {
-        placedNames.forEach((sName: string, idx: number) => {
+      const capturedOrders = Array.from(networkOrderNos);
+      if (syncedToday && syncedToday.length > 0) {
+        syncedToday.forEach((s: any) => {
+          if (s.order_no && !capturedOrders.includes(s.order_no)) {
+            capturedOrders.push(s.order_no);
+          }
+        });
+      }
+
+      if (placedStores.length > 0) {
+        placedStores.forEach((sName: string, idx: number) => {
           results.push({
             storeName: sName,
             orderNo: capturedOrders[idx] || undefined,
@@ -419,10 +396,15 @@ export class PharmarackCheckoutService {
             status: 'placed'
           });
         });
+      } else if (primaryClicked) {
+        results.push({
+          storeName: targetStoreNames?.[0] || 'Pharmarack Distributor',
+          status: 'placed'
+        });
       }
 
-      if (checkoutExecution.failedStores) {
-        checkoutExecution.failedStores.forEach((f: any) => {
+      if (failedStores.length > 0) {
+        failedStores.forEach((f: any) => {
           results.push({
             storeName: f.name,
             status: 'failed',
@@ -433,12 +415,14 @@ export class PharmarackCheckoutService {
 
       const placedCount = results.filter(r => r.status === 'placed').length;
       const failedCount = results.filter(r => r.status === 'failed').length;
+      const isOk = placedCount > 0 || primaryClicked || (syncedToday && syncedToday.length > 0);
 
       return {
-        ok: placedCount > 0 || (checkoutExecution.placedStores && checkoutExecution.placedStores.length > 0),
-        placedCount,
+        ok: isOk,
+        placedCount: placedCount || (isOk ? (syncedToday.length || 1) : 0),
         failedCount,
-        orders: results
+        orders: results,
+        error: isOk ? undefined : (cartIsEmpty ? 'Pharmarack cart is currently empty.' : 'No Place Order buttons could be confirmed on the cart page.')
       };
     } catch (err: any) {
       console.error('[PharmarackCheckout] Execution error:', err);

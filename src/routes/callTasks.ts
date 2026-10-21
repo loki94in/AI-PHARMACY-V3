@@ -103,15 +103,85 @@ router.patch('/:id/complete', async (req, res) => {
     const db = await dbManager.getConnection();
     const { id } = req.params;
     const { call_outcome, notes } = req.body;
+    const taskId = parseInt(id, 10);
+
+    const task = await db.get('SELECT * FROM patient_call_tasks WHERE id = ?', [taskId]);
+    if (!task) {
+      return res.status(404).json({ success: false, error: 'Call task not found' });
+    }
 
     await db.run(
       `UPDATE patient_call_tasks
        SET status = 'completed', call_outcome = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [call_outcome || 'called', notes || null, parseInt(id, 10)]
+      [call_outcome || 'called', notes || null, taskId]
     );
 
-    eventService.broadcast('call_tasks_updated', { taskId: parseInt(id, 10), status: 'completed' });
+    // If this call task is for a refill, advance and close the cycle for the patient's refills
+    if (task.task_type === 'refill') {
+      const cleanDigits = (task.patient_phone || '').replace(/\D/g, '').slice(-10);
+      const refillConditions: string[] = [];
+      const refillParams: any[] = [];
+
+      if (task.reference_id && !isNaN(Number(task.reference_id))) {
+        refillConditions.push('id = ?');
+        refillParams.push(Number(task.reference_id));
+      }
+      if (cleanDigits.length >= 7) {
+        refillConditions.push("patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?");
+        refillParams.push(`%${cleanDigits}`, `%${cleanDigits}`);
+      }
+      if (task.patient_name && cleanDigits.length === 0) {
+        refillConditions.push('LOWER(TRIM(patient_name)) = LOWER(TRIM(?))');
+        refillParams.push(task.patient_name);
+      }
+
+      if (refillConditions.length > 0) {
+        const matchingRefills = await db.all(
+          `SELECT * FROM patient_refills
+           WHERE (${refillConditions.join(' OR ')})
+             AND is_active = 1
+             AND status NOT IN ('completed', 'canceled')`,
+          refillParams
+        ).catch(() => []);
+
+        if (matchingRefills.length > 0) {
+          const { executeCloseRefillCycles } = await import('./refills.js');
+          await executeCloseRefillCycles(db, matchingRefills, 'call_task_complete');
+          eventService.broadcast('refill_updated', {
+            at: Date.now(),
+            patient_phone: task.patient_phone,
+            fulfilled: true,
+            count: matchingRefills.length,
+            via: 'call_task_complete'
+          });
+        }
+      }
+    } else if (task.task_type === 'special_order') {
+      const cleanDigits = (task.patient_phone || '').replace(/\D/g, '').slice(-10);
+      const orderConditions: string[] = [];
+      const orderParams: any[] = [];
+      if (task.reference_id && !isNaN(Number(task.reference_id))) {
+        orderConditions.push('id = ?');
+        orderParams.push(Number(task.reference_id));
+      }
+      if (cleanDigits.length >= 7) {
+        orderConditions.push('phone LIKE ?');
+        orderParams.push(`%${cleanDigits}%`);
+      }
+      if (orderConditions.length > 0) {
+        await db.run(
+          `UPDATE special_orders 
+           SET status = 'Completed', updated_at = CURRENT_TIMESTAMP 
+           WHERE status IN ('Ready', 'ORDER_READY_FOR_PICKUP', 'Pending', 'Confirmed') 
+             AND (${orderConditions.join(' OR ')})`,
+          orderParams
+        ).catch(() => {});
+        eventService.broadcast('special_order_updated', { at: Date.now() });
+      }
+    }
+
+    eventService.broadcast('call_tasks_updated', { taskId, status: 'completed' });
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });

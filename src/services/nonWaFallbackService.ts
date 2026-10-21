@@ -160,13 +160,52 @@ export class NonWaFallbackService {
       };
     }
 
-    // Dedup: don't create duplicate pending task for same patient+type within 24h
+    // Guardrail 1: For refills, check if patient has active, due refills that are unfulfilled
+    if (resolvedCtx.taskType === 'refill') {
+      const activeDueRefills = await db.all(
+        `SELECT pr.id, pr.next_refill_date, pr.is_ready, pr.status
+         FROM patient_refills pr
+         WHERE (
+           (pr.patient_phone IS NOT NULL AND (pr.patient_phone LIKE ? OR pr.patient_phone = ?))
+           OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
+         )
+         AND pr.is_active = 1
+         AND pr.status NOT IN ('completed', 'canceled')
+         AND (pr.is_ready = 1 OR date(pr.next_refill_date) <= date('now', 'localtime'))`,
+        [`%${resolvedCtx.patientPhone.slice(-10)}`, resolvedCtx.patientPhone, resolvedCtx.patientName]
+      ).catch(() => []);
+
+      if (!activeDueRefills || activeDueRefills.length === 0) {
+        console.log(`[NonWaFallback] Guardrail: Skipped — all refills for ${resolvedCtx.patientName} (${resolvedCtx.patientPhone}) are already fulfilled or scheduled in the future.`);
+        return { taskId: null, ownerWaSent: false, mode };
+      }
+    }
+
+    // Guardrail 2: Check if this patient's call task was recently completed, dismissed, or rescheduled to a future date
+    const completedOrSnoozedTask = await db.get(
+      `SELECT id, status, reschedule_date FROM patient_call_tasks
+       WHERE task_type = ? AND patient_phone = ?
+         AND (
+           (status = 'completed' AND updated_at > datetime('now', '-7 days'))
+           OR (status = 'rescheduled' AND reschedule_date > date('now', 'localtime'))
+           OR (status = 'dismissed' AND updated_at > datetime('now', '-7 days'))
+         )
+       ORDER BY id DESC LIMIT 1`,
+      [resolvedCtx.taskType, resolvedCtx.patientPhone]
+    ).catch(() => null);
+
+    if (completedOrSnoozedTask) {
+      console.log(`[NonWaFallback] Guardrail: Skipped — task was already ${completedOrSnoozedTask.status} for ${resolvedCtx.patientName} (${resolvedCtx.patientPhone}).`);
+      return { taskId: completedOrSnoozedTask.id, ownerWaSent: false, mode };
+    }
+
+    // Dedup: check for existing pending task within 24h
     const recentTask = await db.get(
-      `SELECT id FROM patient_call_tasks
+      `SELECT id, owner_wa_sent FROM patient_call_tasks
        WHERE task_type = ? AND patient_phone = ?
          AND status = 'pending'
          AND created_at > datetime('now', '-24 hours')
-       LIMIT 1`,
+       ORDER BY id DESC LIMIT 1`,
       [resolvedCtx.taskType, resolvedCtx.patientPhone]
     ).catch(() => null);
 
@@ -194,7 +233,8 @@ export class NonWaFallbackService {
     }
 
     let ownerWaSent = false;
-    if (mode === 'both' || mode === 'owner') {
+    const shouldSendOwnerWa = (mode === 'both' || mode === 'owner') && (!recentTask || recentTask.owner_wa_sent !== 1);
+    if (shouldSendOwnerWa) {
       try {
         const alertPhone = await this.getAlertPhone(db);
         if (alertPhone) {

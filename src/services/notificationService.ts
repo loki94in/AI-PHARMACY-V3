@@ -600,6 +600,7 @@ export class NotificationService {
         pharmacyEmail: store.email,
         dateLabel,
         orderNo: syncedOrderNo,
+        pharmacyName: store.storeName,
         isReminderOnly: true
       });
 
@@ -974,8 +975,6 @@ export class NotificationService {
           if (orderNoText && !hasOrderPlaceholder) {
             message = `${(followUp || isOrderAnnouncement) ? '🆕 New' : '📦'} Pharmarack order ${orderNoText}\n${message}`;
           }
-        } else if ((followUp || isOrderAnnouncement) && orderNoText) {
-          message = `🆕 New Pharmarack order ${orderNoText} placed. Please dispatch ASAP — to be collected by ${boyName} (${boyPhone}) - ${storeName}`;
         } else if (orderNoText) {
           message = `📦 Pharmarack order ${orderNoText} — has it been dispatched or collected by ${boyName} (${boyPhone})? - ${storeName}`;
         } else {

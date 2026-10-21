@@ -5,7 +5,7 @@ import fs from 'fs';
 // import { getPuppeteer } from '../utils/lazyPuppeteer.js';
 import { dbManager } from '../database/connection.js';
 import { eventService } from '../services/eventService.js';
-import { notificationService } from '../services/notificationService.js';
+import { notificationService, formatDisplayPhone } from '../services/notificationService.js';
 import { searchCache } from '../services/searchCache.js';
 import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses, extractTokenFromProfile } from '../services/tokenRefreshScheduler.js';
 // import { exec } from 'child_process';
@@ -2991,20 +2991,15 @@ router.post('/cart/place-official-orders', async (req, res) => {
 
         const resolvedOrderNo = matchedPlaced?.orderNo || matchedSynced?.order_no || '';
 
-        // If checkout placed orders or overall checkout completed
+        // If checkout placed orders or overall checkout completed:
+        // Enqueue exactly ONE concise dispatch reminder message (zero multi-line card dumps, zero 2nd reminder later)
         if (checkoutResult.ok || matchedPlaced || matchedSynced) {
-          let distMsg = resolvedOrderNo 
-            ? `📦 *Pharmarack Order #${resolvedOrderNo}* has been placed.\n`
-            : `📦 *Pharmarack Order* has been placed.\n`;
-          distMsg += `Please pack and dispatch as soon as possible.\n\n`;
-          distMsg += `🚚 *Delivery / Pickup Staff:*\n`;
-          distMsg += `  👤 *${ord.deliveryBoyName || 'Delivery Staff'}*\n`;
-          distMsg += `  📞 *${ord.deliveryBoyPhone || 'N/A'}*\n\n`;
-          distMsg += `🏥 *${shopName}*\n`;
-          if (shopAddress && shopAddress !== 'N/A') distMsg += `📍 *Delivery Location:* ${shopAddress}\n`;
-          if (shopPhone) distMsg += `📞 *Pharmacy Contact:* ${shopPhone}\n`;
-          distMsg += `📅 *Order Date:* ${orderDateFormatted}\n\n`;
-          if (shopEmail) distMsg += `📝 *Note:* Please send invoice bill (${invoiceFormat}) to ${shopEmail}.`;
+          const boyName = ord.deliveryBoyName || 'Delivery Staff';
+          const boyPhone = formatDisplayPhone(ord.deliveryBoyPhone);
+          const orderNoTag = resolvedOrderNo ? `#${resolvedOrderNo}` : '';
+          const distMsg = orderNoTag 
+            ? `📦 Pharmarack order ${orderNoTag} — has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`
+            : `📦 Has today's order been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
 
           const cleanDistPhone = ord.phone.replace(/\D/g, '');
           if (cleanDistPhone && cleanDistPhone.length >= 10) {
@@ -3012,17 +3007,55 @@ router.post('/cart/place-official-orders', async (req, res) => {
               await whatsappQueueWorker.enqueue(
                 cleanDistPhone,
                 distMsg.trim(),
-                'pharmarack_distributor_order',
-                ord.storeName
+                'distributor_dispatch_reminder',
+                ord.storeName,
+                undefined,
+                undefined,
+                undefined,
+                { skipDedupe: true }
               );
-              console.log(`[PharmarackRoute] Step 4: Enqueued official Order ID dispatch message for ${ord.storeName} (Order #${resolvedOrderNo || 'N/A'})`);
-              // Update pharmarack_placed_orders batch_sent status
+              console.log(`[PharmarackRoute] Step 4: Enqueued single official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo || 'N/A'})`);
+              
+              // 1. Update pharmarack_placed_orders batch_sent status
               await db.run(
                 `UPDATE pharmarack_placed_orders 
                  SET batch_sent = 1, batch_sent_at = ?, order_no = COALESCE(NULLIF(?, ''), order_no)
                  WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
                 [toLocalSqlDateTime(new Date()), resolvedOrderNo, today, ord.storeName]
               );
+
+              // 2. Mark distributor reminder as reminded and Dispatched so scheduled reminder worker never sends 2nd message
+              const existingRem = await db.get(
+                `SELECT id FROM distributor_dispatch_reminders 
+                 WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) LIMIT 1`,
+                [today, ord.storeName]
+              );
+              if (existingRem?.id) {
+                await db.run(
+                  `UPDATE distributor_dispatch_reminders 
+                   SET last_reminded_at = CURRENT_TIMESTAMP, status = 'Dispatched' 
+                   WHERE id = ?`,
+                  [existingRem.id]
+                );
+              } else {
+                await db.run(
+                  `INSERT INTO distributor_dispatch_reminders 
+                   (distributor_name, distributor_phone, date, status, auto_remind, last_reminded_at, order_source)
+                   VALUES (?, ?, ?, 'Dispatched', 1, CURRENT_TIMESTAMP, 'pharmarack')`,
+                  [ord.storeName, cleanDistPhone, today]
+                );
+              }
+
+              // 3. Mark announced_at in pharmarack_synced_orders so order sync service never sends a 2nd message
+              if (resolvedOrderNo) {
+                await db.run(
+                  `UPDATE pharmarack_synced_orders 
+                   SET announced_at = CURRENT_TIMESTAMP 
+                   WHERE order_no = ?`,
+                  [resolvedOrderNo]
+                );
+              }
+
               // Paced 1.5s gap between enqueuing successive distributor reminders to prevent fast-flush bursts
               await new Promise(r => setTimeout(r, 1500));
             } catch (distMsgErr) {
@@ -3038,15 +3071,18 @@ router.post('/cart/place-official-orders', async (req, res) => {
       eventService.broadcast('whatsapp_queue_updated', {});
     } catch (_) {}
 
+    const isSuccess = checkoutResult.ok || (syncedToday && syncedToday.length > 0) || (checkoutResult.placedCount > 0);
+    const placedTotal = checkoutResult.placedCount || (isSuccess ? (syncedToday?.length || 1) : 0);
+
     res.json({
-      success: checkoutResult.ok,
-      placedCount: checkoutResult.placedCount,
+      success: isSuccess,
+      placedCount: placedTotal,
       failedCount: checkoutResult.failedCount,
       orders: checkoutResult.orders,
       syncedOrders: syncedToday,
-      error: checkoutResult.error,
-      message: checkoutResult.ok 
-        ? `Successfully placed ${checkoutResult.placedCount} official order(s) on Pharmarack!`
+      error: isSuccess ? null : checkoutResult.error,
+      message: isSuccess 
+        ? `Successfully placed ${placedTotal} official order(s) on Pharmarack!`
         : (checkoutResult.error || 'Failed to place official orders on Pharmarack')
     });
   } catch (err: any) {
