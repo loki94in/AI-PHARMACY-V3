@@ -15954,6 +15954,33 @@ var init_phoneValidation = __esm({
   }
 });
 
+// src/utils/localTime.ts
+var localTime_exports = {};
+__export(localTime_exports, {
+  SQL_LOCAL_NOW: () => SQL_LOCAL_NOW,
+  normalizeToLocalSqlDateTime: () => normalizeToLocalSqlDateTime,
+  toLocalSqlDateTime: () => toLocalSqlDateTime
+});
+function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function normalizeToLocalSqlDateTime(value) {
+  if (value === void 0 || value === null || value === "") return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
+}
+var SQL_LOCAL_NOW, pad;
+var init_localTime = __esm({
+  "src/utils/localTime.ts"() {
+    "use strict";
+    SQL_LOCAL_NOW = "datetime('now', 'localtime')";
+    pad = (n) => String(n).padStart(2, "0");
+  }
+});
+
 // src/services/pharmarackCheckoutService.ts
 function resolvePharmarackProfilePath() {
   const primary = import_path15.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
@@ -15989,6 +16016,7 @@ var init_pharmarackCheckoutService = __esm({
     init_config();
     init_chromeBrowser();
     init_pharmarackOrderSyncService();
+    init_localTime();
     checkoutPromise = null;
     PharmarackCheckoutService = class _PharmarackCheckoutService {
       static instance;
@@ -16044,6 +16072,7 @@ var init_pharmarackCheckoutService = __esm({
               args: getCommonHeadlessChromiumArgs([
                 "--no-zygote",
                 "--js-flags=--max-old-space-size=256",
+                "--window-size=1920,1080",
                 "--window-position=-10000,-10000"
               ])
             });
@@ -16064,6 +16093,7 @@ var init_pharmarackCheckoutService = __esm({
               args: getCommonHeadlessChromiumArgs([
                 "--no-zygote",
                 "--js-flags=--max-old-space-size=256",
+                "--window-size=1920,1080",
                 "--window-position=-10000,-10000"
               ])
             });
@@ -16071,7 +16101,9 @@ var init_pharmarackCheckoutService = __esm({
             tempProfilePathToDelete = tempProfilePath;
           }
           const [page] = await browser.pages();
-          page.setDefaultNavigationTimeout(3e4);
+          await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+          await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+          page.setDefaultNavigationTimeout(35e3);
           page.setDefaultTimeout(15e3);
           const networkOrderNos = /* @__PURE__ */ new Set();
           page.on("response", async (response) => {
@@ -16103,8 +16135,8 @@ var init_pharmarackCheckoutService = __esm({
           const currentUrl = page.url();
           if (currentUrl.includes("/login") || currentUrl.includes("/auth") || currentUrl.includes("/signin")) {
             console.warn("[PharmarackCheckout] Session expired: Redirected to login page.");
-            const db2 = await dbManager.getConnection();
-            await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')").catch(() => {
+            const db3 = await dbManager.getConnection();
+            await db3.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')").catch(() => {
             });
             return {
               ok: false,
@@ -16114,154 +16146,115 @@ var init_pharmarackCheckoutService = __esm({
               error: "Pharmarack session expired. Please re-authenticate via Settings > External Integrations."
             };
           }
-          console.log("[PharmarackCheckout] Waiting 10-12s for Pharmarack cart page SPA hydration and network calls...");
+          console.log("[PharmarackCheckout] Waiting for Pharmarack cart page SPA hydration and network calls...");
           const hydrationStart = Date.now();
-          while (Date.now() - hydrationStart < 12e3) {
-            const isReady2 = await page.evaluate(() => {
+          let cartIsEmpty = false;
+          while (Date.now() - hydrationStart < 15e3) {
+            const pageStatus = await page.evaluate(() => {
+              const bodyText = (document.body?.innerText || "").toLowerCase();
+              const isEmpty = bodyText.includes("cart is empty") || bodyText.includes("no item in cart") || bodyText.includes("no product found");
+              const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.btn, input[type="button"], input[type="submit"]'));
+              const hasPlaceOrderBtn = buttons.some((b) => {
+                const txt = (b.textContent || b.value || "").trim().toLowerCase();
+                return txt.includes("place order") || txt.includes("checkout") || txt.includes("order now") || txt.includes("proceed to buy");
+              });
               const hasCards = document.querySelectorAll(
                 '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel, tbody tr'
               ).length > 0;
-              const hasButtons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]')).some((b) => {
-                const txt = (b.textContent || "").trim().toLowerCase();
-                return txt.includes("place order") || txt.includes("confirm order") || txt.includes("checkout") || txt.includes("order now");
-              });
-              const isEmpty = (document.body.innerText || "").toLowerCase().includes("cart is empty");
-              return hasCards && hasButtons || isEmpty;
-            }).catch(() => false);
-            if (isReady2 && Date.now() - hydrationStart >= 8e3) {
+              return { isEmpty, hasPlaceOrderBtn, hasCards };
+            }).catch(() => ({ isEmpty: false, hasPlaceOrderBtn: false, hasCards: false }));
+            if (pageStatus.isEmpty) {
+              cartIsEmpty = true;
+              break;
+            }
+            if (pageStatus.hasPlaceOrderBtn && Date.now() - hydrationStart >= 6e3) {
               break;
             }
             await new Promise((r) => setTimeout(r, 1e3));
           }
-          const checkoutExecution = await page.evaluate(async (targetNames) => {
-            const logs = [];
-            const placedStores = [];
-            const failedStores = [];
-            const normalizeStr2 = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
-            const matchesTargetStore = (candidateName, targets) => {
-              const normCand = normalizeStr2(candidateName);
-              const stopWords = /* @__PURE__ */ new Set(["pvt", "ltd", "pharmaceuticals", "distributors", "agencies", "enterprise", "pharma", "medical", "distributor", "agency"]);
-              const candTokens = normCand.split(" ").filter((w) => w.length > 2 && !stopWords.has(w));
-              return targets.some((t) => {
-                const normT = normalizeStr2(t);
-                if (normCand.includes(normT) || normT.includes(normCand)) return true;
-                const tTokens = normT.split(" ").filter((w) => w.length > 2 && !stopWords.has(w));
-                if (candTokens.length > 0 && tTokens.length > 0) {
-                  return candTokens.some((ct) => tTokens.includes(ct));
-                }
-                return false;
-              });
-            };
-            if (targetNames && targetNames.length > 0) {
+          const placedStores = [];
+          const failedStores = [];
+          const logs = [];
+          let primaryClicked = false;
+          if (!cartIsEmpty) {
+            const candidateHandles = await page.$$('button, [role="button"], a.btn, input[type="button"], input[type="submit"], [class*="checkout"], [class*="place-order"]');
+            logs.push(`Found ${candidateHandles.length} total interactive buttons on cart page`);
+            for (const btnHandle of candidateHandles) {
               try {
-                const potentialSections = Array.from(document.querySelectorAll(
-                  '.distributor-card, .supplier-card, .store-card, .card, [class*="distributor"], [class*="supplier"], [class*="store"], .cart-item-group, .accordion-item, .panel'
-                ));
-                for (const section of potentialSections) {
-                  const headerEl = section.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"], [class*="supplier-name"]');
-                  if (!headerEl || !headerEl.textContent) continue;
-                  const cardName = headerEl.textContent.trim();
-                  if (cardName.length < 3 || cardName.toLowerCase().includes("cart") || cardName.toLowerCase().includes("total")) continue;
-                  const shouldBeSelected = matchesTargetStore(cardName, targetNames);
-                  const chk = section.querySelector('input[type="checkbox"], [role="checkbox"], .ant-checkbox-input, .mat-checkbox-input');
-                  if (chk) {
-                    const isChecked = chk.checked || chk.getAttribute("aria-checked") === "true" || chk.closest(".ant-checkbox-checked") !== null || chk.closest(".mat-checkbox-checked") !== null;
-                    if (shouldBeSelected && !isChecked) {
-                      chk.scrollIntoView({ behavior: "instant", block: "center" });
-                      chk.click();
-                      logs.push(`Checked distributor checkbox on Pharmarack: ${cardName}`);
-                      await new Promise((r) => setTimeout(r, 400));
-                    } else if (!shouldBeSelected && isChecked) {
-                      chk.scrollIntoView({ behavior: "instant", block: "center" });
-                      chk.click();
-                      logs.push(`Unchecked distributor checkbox on Pharmarack: ${cardName}`);
-                      await new Promise((r) => setTimeout(r, 400));
+                const btnInfo = await page.evaluate((el) => {
+                  const text = (el.innerText || el.textContent || el.value || "").trim();
+                  const lower = text.toLowerCase();
+                  const isPlaceOrder = lower.includes("place order") || lower.includes("confirm order") || lower.includes("checkout") || lower.includes("order now") || lower.includes("review & place") || lower.includes("proceed to buy");
+                  const style = window.getComputedStyle(el);
+                  const isVisible = style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+                  const isDisabled = el.disabled || el.getAttribute("aria-disabled") === "true" || el.classList.contains("disabled");
+                  let storeName = "Pharmarack Distributor";
+                  let curr = el;
+                  for (let i = 0; i < 7; i++) {
+                    if (!curr) break;
+                    const headerEl = curr.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"], [class*="supplier-name"]');
+                    if (headerEl && headerEl.textContent) {
+                      const cand = headerEl.textContent.trim();
+                      if (cand.length > 2 && !cand.toLowerCase().includes("cart") && !cand.toLowerCase().includes("order") && !cand.toLowerCase().includes("total")) {
+                        storeName = cand;
+                        break;
+                      }
                     }
+                    curr = curr.parentElement;
                   }
+                  return { isPlaceOrder, isVisible, isDisabled, text, storeName };
+                }, btnHandle);
+                if (!btnInfo.isPlaceOrder || !btnInfo.isVisible || btnInfo.isDisabled) {
+                  continue;
                 }
-              } catch (syncErr) {
-                logs.push(`Distributor checkbox sync warning: ${syncErr?.message || syncErr}`);
+                logs.push(`Attempting real pointer click on Place Order button: "${btnInfo.text}" (store: ${btnInfo.storeName})`);
+                await btnHandle.scrollIntoViewIfNeeded().catch(() => {
+                });
+                await new Promise((r) => setTimeout(r, 400));
+                const box = await btnHandle.boundingBox();
+                if (box) {
+                  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { delay: 60 });
+                } else {
+                  await btnHandle.click({ delay: 60 });
+                }
+                await page.evaluate((el) => el.click(), btnHandle).catch(() => {
+                });
+                primaryClicked = true;
+                placedStores.push(btnInfo.storeName);
+                logs.push(`Successfully clicked Place Order button for: ${btnInfo.storeName}`);
+                await new Promise((r) => setTimeout(r, 1200));
+                for (let step = 0; step < 6; step++) {
+                  const confirmedModal = await page.evaluate(() => {
+                    const modalButtons = Array.from(document.querySelectorAll(
+                      '.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn, [class*="modal"] button, [class*="dialog"] button, .cdk-overlay-pane button'
+                    ));
+                    for (const mBtn of modalButtons) {
+                      const mText = (mBtn.innerText || mBtn.textContent || "").trim().toLowerCase();
+                      if (mText.includes("confirm") || mText.includes("yes") || mText.includes("proceed") || mText.includes("place order") || mText.includes("ok")) {
+                        mBtn.click();
+                        return mText;
+                      }
+                    }
+                    return null;
+                  }).catch(() => null);
+                  if (confirmedModal) {
+                    logs.push(`Confirmed modal dialog prompt with button: "${confirmedModal}"`);
+                    break;
+                  }
+                  await new Promise((r) => setTimeout(r, 500));
+                }
+                if (btnInfo.storeName === "Pharmarack Distributor" || !targetStoreNames || targetStoreNames.length <= 1) {
+                  break;
+                }
+              } catch (clickErr) {
+                logs.push(`Button click error: ${clickErr.message}`);
+                failedStores.push({ name: "Distributor Button", error: clickErr.message });
               }
             }
-            const allButtons = Array.from(document.querySelectorAll(
-              'button, [role="button"], a[role="button"], input[type="button"], input[type="submit"], .btn, .ant-btn, .mat-button, .mat-raised-button, [class*="checkout"], [class*="place-order"]'
-            ));
-            const placeOrderButtons = allButtons.filter((b) => {
-              const txt = (b.innerText || b.textContent || b.value || "").trim().toLowerCase();
-              const isActionText = txt.includes("place order") || txt.includes("confirm order") || txt.includes("checkout") || txt.includes("order now") || txt.includes("review & place") || txt.includes("proceed to buy");
-              if (!isActionText) return false;
-              try {
-                const style = window.getComputedStyle(b);
-                return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
-              } catch (_) {
-                return true;
-              }
-            });
-            logs.push(`Found ${placeOrderButtons.length} potential place order button(s) on cart page.`);
-            if (placeOrderButtons.length === 0) {
-              const bodyText = (document.body.innerText || "").toLowerCase();
-              if (bodyText.includes("cart is empty") || bodyText.includes("no item") || bodyText.includes("no product")) {
-                return { emptyCart: true, logs, placedStores, failedStores };
-              }
-              return { noButtons: true, logs, placedStores, failedStores };
-            }
-            for (const btn of placeOrderButtons) {
-              try {
-                let storeName = "Distributor";
-                let container = btn;
-                for (let i = 0; i < 7; i++) {
-                  if (!container) break;
-                  const headerEl = container.querySelector('h1, h2, h3, h4, h5, .store-name, .distributor-name, [class*="store"], [class*="distributor"]');
-                  if (headerEl && headerEl.textContent) {
-                    const cand = headerEl.textContent.trim();
-                    if (cand.length > 2 && !cand.toLowerCase().includes("cart") && !cand.toLowerCase().includes("order") && !cand.toLowerCase().includes("checkout")) {
-                      storeName = cand;
-                      break;
-                    }
-                  }
-                  container = container.parentElement;
-                }
-                if (targetNames && targetNames.length > 0) {
-                  const isMatch = matchesTargetStore(storeName, targetNames);
-                  if (storeName !== "Distributor" && !isMatch) {
-                    logs.push(`Skipped non-target store Place Order button: ${storeName}`);
-                    continue;
-                  }
-                }
-                btn.scrollIntoView({ behavior: "instant", block: "center" });
-                if (btn.disabled) {
-                  btn.disabled = false;
-                }
-                btn.click();
-                logs.push(`Clicked Place Order for store: ${storeName}`);
-                for (let waitStep = 0; waitStep < 6; waitStep++) {
-                  await new Promise((r) => setTimeout(r, 600));
-                  const modalButtons = Array.from(document.querySelectorAll(
-                    '.modal button, [role="dialog"] button, .swal2-confirm, .ant-modal-footer button, .confirm-btn, [class*="modal"] button, [class*="dialog"] button'
-                  ));
-                  let confirmed = false;
-                  for (const mBtn of modalButtons) {
-                    const mText = (mBtn.innerText || mBtn.textContent || "").trim().toLowerCase();
-                    if (mText.includes("confirm") || mText.includes("yes") || mText.includes("proceed") || mText.includes("place order") || mText.includes("ok")) {
-                      mBtn.click();
-                      logs.push(`Confirmed modal dialog for: ${storeName} (button: ${mText})`);
-                      confirmed = true;
-                      break;
-                    }
-                  }
-                  if (confirmed) break;
-                }
-                placedStores.push(storeName);
-                await new Promise((r) => setTimeout(r, 2e3));
-              } catch (btnErr) {
-                failedStores.push({ name: "Unknown Store", error: btnErr.message || "Button click failed" });
-              }
-            }
-            return { success: true, logs, placedStores, failedStores };
-          }, targetStoreNames || null);
-          console.log("[PharmarackCheckout] DOM Execution summary:", checkoutExecution);
-          console.log("[PharmarackCheckout] Waiting 10-12s buffer for Pharmarack server to commit orders and emit Order IDs in network stream...");
-          await new Promise((r) => setTimeout(r, 11e3));
+          }
+          console.log("[PharmarackCheckout] Execution summary:", { logs, placedStores, primaryClicked, cartIsEmpty });
+          console.log("[PharmarackCheckout] Waiting for Pharmarack server to commit orders and sync Order IDs...");
+          await new Promise((r) => setTimeout(r, 8e3));
           console.log("[PharmarackCheckout] Triggering immediate Pharmarack order sync to fetch official Order IDs...");
           let syncRes = null;
           try {
@@ -16270,10 +16263,22 @@ var init_pharmarackCheckoutService = __esm({
           } catch (sErr) {
             console.warn("[PharmarackCheckout] Order sync error post-checkout:", sErr.message);
           }
-          const placedNames = checkoutExecution.placedStores || [];
+          const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
+          const db2 = await dbManager.getConnection();
+          const syncedToday = await db2.all(
+            `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+            [today]
+          ).catch(() => []);
           const capturedOrders = Array.from(networkOrderNos);
-          if (placedNames.length > 0) {
-            placedNames.forEach((sName, idx) => {
+          if (syncedToday && syncedToday.length > 0) {
+            syncedToday.forEach((s) => {
+              if (s.order_no && !capturedOrders.includes(s.order_no)) {
+                capturedOrders.push(s.order_no);
+              }
+            });
+          }
+          if (placedStores.length > 0) {
+            placedStores.forEach((sName, idx) => {
               results.push({
                 storeName: sName,
                 orderNo: capturedOrders[idx] || void 0,
@@ -16288,9 +16293,14 @@ var init_pharmarackCheckoutService = __esm({
                 status: "placed"
               });
             });
+          } else if (primaryClicked) {
+            results.push({
+              storeName: targetStoreNames?.[0] || "Pharmarack Distributor",
+              status: "placed"
+            });
           }
-          if (checkoutExecution.failedStores) {
-            checkoutExecution.failedStores.forEach((f) => {
+          if (failedStores.length > 0) {
+            failedStores.forEach((f) => {
               results.push({
                 storeName: f.name,
                 status: "failed",
@@ -16300,11 +16310,13 @@ var init_pharmarackCheckoutService = __esm({
           }
           const placedCount = results.filter((r) => r.status === "placed").length;
           const failedCount = results.filter((r) => r.status === "failed").length;
+          const isOk = placedCount > 0 || primaryClicked || syncedToday && syncedToday.length > 0;
           return {
-            ok: placedCount > 0 || checkoutExecution.placedStores && checkoutExecution.placedStores.length > 0,
-            placedCount,
+            ok: isOk,
+            placedCount: placedCount || (isOk ? syncedToday.length || 1 : 0),
             failedCount,
-            orders: results
+            orders: results,
+            error: isOk ? void 0 : cartIsEmpty ? "Pharmarack cart is currently empty." : "No Place Order buttons could be confirmed on the cart page."
           };
         } catch (err) {
           console.error("[PharmarackCheckout] Execution error:", err);
@@ -16374,33 +16386,6 @@ var init_pharmarackCheckoutService = __esm({
       }
     };
     pharmarackCheckoutService = PharmarackCheckoutService.getInstance();
-  }
-});
-
-// src/utils/localTime.ts
-var localTime_exports = {};
-__export(localTime_exports, {
-  SQL_LOCAL_NOW: () => SQL_LOCAL_NOW,
-  normalizeToLocalSqlDateTime: () => normalizeToLocalSqlDateTime,
-  toLocalSqlDateTime: () => toLocalSqlDateTime
-});
-function toLocalSqlDateTime(d = /* @__PURE__ */ new Date()) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-function normalizeToLocalSqlDateTime(value) {
-  if (value === void 0 || value === null || value === "") return null;
-  const s = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : toLocalSqlDateTime(d);
-}
-var SQL_LOCAL_NOW, pad;
-var init_localTime = __esm({
-  "src/utils/localTime.ts"() {
-    "use strict";
-    SQL_LOCAL_NOW = "datetime('now', 'localtime')";
-    pad = (n) => String(n).padStart(2, "0");
   }
 });
 
@@ -16637,29 +16622,9 @@ function buildStandardDistributorOrderMessage(params) {
   const format = (params.preferredFileFormat || "CSV").trim();
   if (params.orderNo || params.isReminderOnly) {
     const orderNoClean = (params.orderNo || "").split(",").map((s) => s.trim().replace(/^#+/, "")).filter(Boolean).map((n) => `#${n}`).join(", ");
-    let msg2 = orderNoClean ? `\u{1F4E6} *Pharmarack Order ${orderNoClean}* has been placed.
-` : `\u{1F4E6} *Pharmarack Order* has been placed.
-`;
-    msg2 += `Please pack and dispatch as soon as possible.
-
-`;
-    msg2 += `\u{1F3EC} *Distributor:* ${(params.distributorName || "DISTRIBUTOR").toUpperCase()}
-`;
-    if (params.distributorPhone && params.distributorPhone.trim()) {
-      msg2 += `\u{1F4DE} Contact: ${params.distributorPhone.trim()}
-`;
-    }
-    msg2 += `\u{1F69A} *Delivery / Pickup Staff:* ${boyName} (${boyPhone})
-`;
-    msg2 += `\u{1F4C5} *Date:* ${dateLabel}
-
-`;
-    msg2 += `\u{1F4C4} *Preferred Invoice Format:* ${format}
-`;
-    if (params.pharmacyEmail && params.pharmacyEmail.trim()) {
-      msg2 += `\u{1F4E9} *Please email bill copies to:* ${params.pharmacyEmail.trim()}`;
-    }
-    return msg2.trim();
+    const shop = params.pharmacyName || "Pharmacy";
+    const tag = orderNoClean ? ` ${orderNoClean}` : "";
+    return `\u{1F4E6} Pharmarack order${tag} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shop}`;
   }
   const prefix = params.isLate ? `\u{1F4C5} TODAY ORDER (LATE ADDITION) \u2014 ` : `\u{1F4C5} TODAY DISTRIBUTOR ORDER \u2014 `;
   let msg = `${prefix}${dateLabel}
@@ -31984,45 +31949,58 @@ var init_pharmarack = __esm({
             });
             const resolvedOrderNo = matchedPlaced?.orderNo || matchedSynced?.order_no || "";
             if (checkoutResult.ok || matchedPlaced || matchedSynced) {
-              let distMsg = resolvedOrderNo ? `\u{1F4E6} *Pharmarack Order #${resolvedOrderNo}* has been placed.
-` : `\u{1F4E6} *Pharmarack Order* has been placed.
-`;
-              distMsg += `Please pack and dispatch as soon as possible.
-
-`;
-              distMsg += `\u{1F69A} *Delivery / Pickup Staff:*
-`;
-              distMsg += `  \u{1F464} *${ord.deliveryBoyName || "Delivery Staff"}*
-`;
-              distMsg += `  \u{1F4DE} *${ord.deliveryBoyPhone || "N/A"}*
-
-`;
-              distMsg += `\u{1F3E5} *${shopName}*
-`;
-              if (shopAddress && shopAddress !== "N/A") distMsg += `\u{1F4CD} *Delivery Location:* ${shopAddress}
-`;
-              if (shopPhone) distMsg += `\u{1F4DE} *Pharmacy Contact:* ${shopPhone}
-`;
-              distMsg += `\u{1F4C5} *Order Date:* ${orderDateFormatted}
-
-`;
-              if (shopEmail) distMsg += `\u{1F4DD} *Note:* Please send invoice bill (${invoiceFormat}) to ${shopEmail}.`;
+              const boyName = ord.deliveryBoyName || "Delivery Staff";
+              const boyPhone = formatDisplayPhone(ord.deliveryBoyPhone);
+              const orderNoTag = resolvedOrderNo ? `#${resolvedOrderNo}` : "";
+              const distMsg = orderNoTag ? `\u{1F4E6} Pharmarack order ${orderNoTag} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}` : `\u{1F4E6} Has today's order been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
               const cleanDistPhone = ord.phone.replace(/\D/g, "");
               if (cleanDistPhone && cleanDistPhone.length >= 10) {
                 try {
                   await whatsappQueueWorker.enqueue(
                     cleanDistPhone,
                     distMsg.trim(),
-                    "pharmarack_distributor_order",
-                    ord.storeName
+                    "distributor_dispatch_reminder",
+                    ord.storeName,
+                    void 0,
+                    void 0,
+                    void 0,
+                    { skipDedupe: true }
                   );
-                  console.log(`[PharmarackRoute] Step 4: Enqueued official Order ID dispatch message for ${ord.storeName} (Order #${resolvedOrderNo || "N/A"})`);
+                  console.log(`[PharmarackRoute] Step 4: Enqueued single official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo || "N/A"})`);
                   await db2.run(
                     `UPDATE pharmarack_placed_orders 
                  SET batch_sent = 1, batch_sent_at = ?, order_no = COALESCE(NULLIF(?, ''), order_no)
                  WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
                     [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
                   );
+                  const existingRem = await db2.get(
+                    `SELECT id FROM distributor_dispatch_reminders 
+                 WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) LIMIT 1`,
+                    [today, ord.storeName]
+                  );
+                  if (existingRem?.id) {
+                    await db2.run(
+                      `UPDATE distributor_dispatch_reminders 
+                   SET last_reminded_at = CURRENT_TIMESTAMP, status = 'Dispatched' 
+                   WHERE id = ?`,
+                      [existingRem.id]
+                    );
+                  } else {
+                    await db2.run(
+                      `INSERT INTO distributor_dispatch_reminders 
+                   (distributor_name, distributor_phone, date, status, auto_remind, last_reminded_at, order_source)
+                   VALUES (?, ?, ?, 'Dispatched', 1, CURRENT_TIMESTAMP, 'pharmarack')`,
+                      [ord.storeName, cleanDistPhone, today]
+                    );
+                  }
+                  if (resolvedOrderNo) {
+                    await db2.run(
+                      `UPDATE pharmarack_synced_orders 
+                   SET announced_at = CURRENT_TIMESTAMP 
+                   WHERE order_no = ?`,
+                      [resolvedOrderNo]
+                    );
+                  }
                   await new Promise((r) => setTimeout(r, 1500));
                 } catch (distMsgErr) {
                   console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);
@@ -32036,14 +32014,16 @@ var init_pharmarack = __esm({
           eventService.broadcast("whatsapp_queue_updated", {});
         } catch (_) {
         }
+        const isSuccess = checkoutResult.ok || syncedToday && syncedToday.length > 0 || checkoutResult.placedCount > 0;
+        const placedTotal = checkoutResult.placedCount || (isSuccess ? syncedToday?.length || 1 : 0);
         res.json({
-          success: checkoutResult.ok,
-          placedCount: checkoutResult.placedCount,
+          success: isSuccess,
+          placedCount: placedTotal,
           failedCount: checkoutResult.failedCount,
           orders: checkoutResult.orders,
           syncedOrders: syncedToday,
-          error: checkoutResult.error,
-          message: checkoutResult.ok ? `Successfully placed ${checkoutResult.placedCount} official order(s) on Pharmarack!` : checkoutResult.error || "Failed to place official orders on Pharmarack"
+          error: isSuccess ? null : checkoutResult.error,
+          message: isSuccess ? `Successfully placed ${placedTotal} official order(s) on Pharmarack!` : checkoutResult.error || "Failed to place official orders on Pharmarack"
         });
       } catch (err) {
         console.error("Place official orders route error:", err);
@@ -45220,6 +45200,7 @@ Mobile: ${formatDisplayPhone(clean2)}
             pharmacyEmail: store.email,
             dateLabel,
             orderNo: syncedOrderNo2,
+            pharmacyName: store.storeName,
             isReminderOnly: true
           });
           const distPhones = rawPhone.split(/[\s,;]+/).map((num) => num.replace(/\D/g, "")).filter((num) => num.length >= 10).map((num) => num.length === 10 ? `91${num}` : num);
@@ -45527,8 +45508,6 @@ ${mrpLine}
                 message = `${followUp || isOrderAnnouncement ? "\u{1F195} New" : "\u{1F4E6}"} Pharmarack order ${orderNoText}
 ${message}`;
               }
-            } else if ((followUp || isOrderAnnouncement) && orderNoText) {
-              message = `\u{1F195} New Pharmarack order ${orderNoText} placed. Please dispatch ASAP \u2014 to be collected by ${boyName} (${boyPhone}) - ${storeName}`;
             } else if (orderNoText) {
               message = `\u{1F4E6} Pharmarack order ${orderNoText} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${storeName}`;
             } else {
@@ -50575,12 +50554,45 @@ ${medLines}`;
             totalMeds: medicinesList.length
           };
         }
+        if (resolvedCtx.taskType === "refill") {
+          const activeDueRefills = await db2.all(
+            `SELECT pr.id, pr.next_refill_date, pr.is_ready, pr.status
+         FROM patient_refills pr
+         WHERE (
+           (pr.patient_phone IS NOT NULL AND (pr.patient_phone LIKE ? OR pr.patient_phone = ?))
+           OR (pr.patient_name IS NOT NULL AND LOWER(TRIM(pr.patient_name)) = LOWER(TRIM(?)))
+         )
+         AND pr.is_active = 1
+         AND pr.status NOT IN ('completed', 'canceled')
+         AND (pr.is_ready = 1 OR date(pr.next_refill_date) <= date('now', 'localtime'))`,
+            [`%${resolvedCtx.patientPhone.slice(-10)}`, resolvedCtx.patientPhone, resolvedCtx.patientName]
+          ).catch(() => []);
+          if (!activeDueRefills || activeDueRefills.length === 0) {
+            console.log(`[NonWaFallback] Guardrail: Skipped \u2014 all refills for ${resolvedCtx.patientName} (${resolvedCtx.patientPhone}) are already fulfilled or scheduled in the future.`);
+            return { taskId: null, ownerWaSent: false, mode };
+          }
+        }
+        const completedOrSnoozedTask = await db2.get(
+          `SELECT id, status, reschedule_date FROM patient_call_tasks
+       WHERE task_type = ? AND patient_phone = ?
+         AND (
+           (status = 'completed' AND updated_at > datetime('now', '-7 days'))
+           OR (status = 'rescheduled' AND reschedule_date > date('now', 'localtime'))
+           OR (status = 'dismissed' AND updated_at > datetime('now', '-7 days'))
+         )
+       ORDER BY id DESC LIMIT 1`,
+          [resolvedCtx.taskType, resolvedCtx.patientPhone]
+        ).catch(() => null);
+        if (completedOrSnoozedTask) {
+          console.log(`[NonWaFallback] Guardrail: Skipped \u2014 task was already ${completedOrSnoozedTask.status} for ${resolvedCtx.patientName} (${resolvedCtx.patientPhone}).`);
+          return { taskId: completedOrSnoozedTask.id, ownerWaSent: false, mode };
+        }
         const recentTask = await db2.get(
-          `SELECT id FROM patient_call_tasks
+          `SELECT id, owner_wa_sent FROM patient_call_tasks
        WHERE task_type = ? AND patient_phone = ?
          AND status = 'pending'
          AND created_at > datetime('now', '-24 hours')
-       LIMIT 1`,
+       ORDER BY id DESC LIMIT 1`,
           [resolvedCtx.taskType, resolvedCtx.patientPhone]
         ).catch(() => null);
         let taskId = recentTask?.id ?? null;
@@ -50605,7 +50617,8 @@ ${medLines}`;
           }
         }
         let ownerWaSent = false;
-        if (mode === "both" || mode === "owner") {
+        const shouldSendOwnerWa = (mode === "both" || mode === "owner") && (!recentTask || recentTask.owner_wa_sent !== 1);
+        if (shouldSendOwnerWa) {
           try {
             const alertPhone = await this.getAlertPhone(db2);
             if (alertPhone) {
@@ -51470,6 +51483,17 @@ var init_whatsappQueueWorker = __esm({
             }
             if (["refill_collection", "refill_reminder", "order_ready", "special_order_arrived", "special_order"].includes(item.type)) {
               if (item.type === "refill_collection" || item.type === "refill_reminder") {
+                const completedCallTask = await db2.get(
+                  `SELECT id FROM patient_call_tasks 
+               WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
+                 AND task_type = 'refill' 
+                 AND (
+                   (status = 'completed' AND updated_at > datetime('now', '-7 days'))
+                   OR (status = 'rescheduled' AND reschedule_date > date('now', 'localtime'))
+                 )
+               LIMIT 1`,
+                  [`%${target10Digits}`, `%${target10Digits}`]
+                ).catch(() => null);
                 const extraRefillFilter = item.type === "refill_reminder" ? "AND COALESCE(patient_confirmed, 0) = 0 AND status != 'ordered' AND cart_store_name IS NULL" : "";
                 const activeRefills = await db2.all(
                   `SELECT id FROM patient_refills 
@@ -51481,15 +51505,15 @@ var init_whatsappQueueWorker = __esm({
                  ${extraRefillFilter}`,
                   [`%${target10Digits}`, `%${target10Digits}`]
                 ).catch(() => []);
-                if (!activeRefills || activeRefills.length === 0) {
-                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 refill already fulfilled, confirmed, ordered, or reminder cancelled for ${target10Digits}.`);
+                if (completedCallTask || !activeRefills || activeRefills.length === 0) {
+                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 refill already fulfilled, call task completed, or reminder cancelled for ${target10Digits}.`);
                   await db2.run(
-                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, confirmed, or reminder cancelled' WHERE id = ?",
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, call task completed, or reminder cancelled' WHERE id = ?",
                     [item.id]
                   );
                   await db2.run(
                     `UPDATE automation_notifications 
-                 SET status = 'cancelled', error_message = 'Already fulfilled or confirmed' 
+                 SET status = 'cancelled', error_message = 'Already fulfilled, completed, or confirmed' 
                  WHERE reference_id = ? OR reference_id = ?`,
                     [`queue_${item.id}`, String(item.id)]
                   ).catch(() => {
@@ -51498,6 +51522,17 @@ var init_whatsappQueueWorker = __esm({
                   continue;
                 }
               } else if (item.type === "order_ready" || item.type === "special_order_arrived" || item.type === "special_order") {
+                const completedOrderTask = await db2.get(
+                  `SELECT id FROM patient_call_tasks 
+               WHERE (patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?)
+                 AND task_type = 'special_order' 
+                 AND (
+                   (status = 'completed' AND updated_at > datetime('now', '-7 days'))
+                   OR (status = 'rescheduled' AND reschedule_date > date('now', 'localtime'))
+                 )
+               LIMIT 1`,
+                  [`%${target10Digits}`, `%${target10Digits}`]
+                ).catch(() => null);
                 const activeOrders = await db2.all(
                   `SELECT id FROM special_orders 
                WHERE (phone LIKE ? OR replace(phone, ' ', '') LIKE ?)
@@ -51505,15 +51540,15 @@ var init_whatsappQueueWorker = __esm({
                  AND auto_remind = 1`,
                   [`%${target10Digits}`, `%${target10Digits}`]
                 ).catch(() => []);
-                if (!activeOrders || activeOrders.length === 0) {
-                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 special order already fulfilled, delivered, or cancelled for ${target10Digits}.`);
+                if (completedOrderTask || !activeOrders || activeOrders.length === 0) {
+                  console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 special order already fulfilled, delivered, or call task completed for ${target10Digits}.`);
                   await db2.run(
-                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled or delivered' WHERE id = ?",
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled, delivered, or call task completed' WHERE id = ?",
                     [item.id]
                   );
                   await db2.run(
                     `UPDATE automation_notifications 
-                 SET status = 'cancelled', error_message = 'Already fulfilled' 
+                 SET status = 'cancelled', error_message = 'Already fulfilled or delivered' 
                  WHERE reference_id = ? OR reference_id = ?`,
                     [`queue_${item.id}`, String(item.id)]
                   ).catch(() => {
@@ -60426,7 +60461,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.129";
+    APP_VERSION = "0.1.130";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -86150,13 +86185,78 @@ var init_callTasks = __esm({
         const db2 = await dbManager.getConnection();
         const { id } = req.params;
         const { call_outcome, notes } = req.body;
+        const taskId = parseInt(id, 10);
+        const task = await db2.get("SELECT * FROM patient_call_tasks WHERE id = ?", [taskId]);
+        if (!task) {
+          return res.status(404).json({ success: false, error: "Call task not found" });
+        }
         await db2.run(
           `UPDATE patient_call_tasks
        SET status = 'completed', call_outcome = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-          [call_outcome || "called", notes || null, parseInt(id, 10)]
+          [call_outcome || "called", notes || null, taskId]
         );
-        eventService.broadcast("call_tasks_updated", { taskId: parseInt(id, 10), status: "completed" });
+        if (task.task_type === "refill") {
+          const cleanDigits = (task.patient_phone || "").replace(/\D/g, "").slice(-10);
+          const refillConditions = [];
+          const refillParams = [];
+          if (task.reference_id && !isNaN(Number(task.reference_id))) {
+            refillConditions.push("id = ?");
+            refillParams.push(Number(task.reference_id));
+          }
+          if (cleanDigits.length >= 7) {
+            refillConditions.push("patient_phone LIKE ? OR replace(patient_phone, ' ', '') LIKE ?");
+            refillParams.push(`%${cleanDigits}`, `%${cleanDigits}`);
+          }
+          if (task.patient_name && cleanDigits.length === 0) {
+            refillConditions.push("LOWER(TRIM(patient_name)) = LOWER(TRIM(?))");
+            refillParams.push(task.patient_name);
+          }
+          if (refillConditions.length > 0) {
+            const matchingRefills = await db2.all(
+              `SELECT * FROM patient_refills
+           WHERE (${refillConditions.join(" OR ")})
+             AND is_active = 1
+             AND status NOT IN ('completed', 'canceled')`,
+              refillParams
+            ).catch(() => []);
+            if (matchingRefills.length > 0) {
+              const { executeCloseRefillCycles: executeCloseRefillCycles2 } = await Promise.resolve().then(() => (init_refills(), refills_exports));
+              await executeCloseRefillCycles2(db2, matchingRefills, "call_task_complete");
+              eventService.broadcast("refill_updated", {
+                at: Date.now(),
+                patient_phone: task.patient_phone,
+                fulfilled: true,
+                count: matchingRefills.length,
+                via: "call_task_complete"
+              });
+            }
+          }
+        } else if (task.task_type === "special_order") {
+          const cleanDigits = (task.patient_phone || "").replace(/\D/g, "").slice(-10);
+          const orderConditions = [];
+          const orderParams = [];
+          if (task.reference_id && !isNaN(Number(task.reference_id))) {
+            orderConditions.push("id = ?");
+            orderParams.push(Number(task.reference_id));
+          }
+          if (cleanDigits.length >= 7) {
+            orderConditions.push("phone LIKE ?");
+            orderParams.push(`%${cleanDigits}%`);
+          }
+          if (orderConditions.length > 0) {
+            await db2.run(
+              `UPDATE special_orders 
+           SET status = 'Completed', updated_at = CURRENT_TIMESTAMP 
+           WHERE status IN ('Ready', 'ORDER_READY_FOR_PICKUP', 'Pending', 'Confirmed') 
+             AND (${orderConditions.join(" OR ")})`,
+              orderParams
+            ).catch(() => {
+            });
+            eventService.broadcast("special_order_updated", { at: Date.now() });
+          }
+        }
+        eventService.broadcast("call_tasks_updated", { taskId, status: "completed" });
         return res.json({ success: true });
       } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
