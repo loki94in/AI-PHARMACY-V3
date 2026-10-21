@@ -68,7 +68,11 @@ function buildWithArchiver() {
 
     console.log(`[UpdatePackage]   + frontend/dist/**`);
     archive.directory(frontendDist, 'frontend/dist', entry => {
-      if (entry.name.startsWith('frontend/dist/products') || entry.name.includes('/products/')) {
+      const normalized = (entry.name || '').replace(/\\/g, '/');
+      if (normalized === 'frontend/dist/products' ||
+          normalized.startsWith('frontend/dist/products/') ||
+          normalized.includes('/products/') ||
+          normalized.startsWith('products/')) {
         return false;
       }
       return entry;
@@ -91,7 +95,7 @@ async function buildWithAdmZip() {
       const fullPath = path.join(dirPath, entry.name);
       const entryZipDir = zipBasePath || '';
       if (entry.isDirectory()) {
-        if (entry.name === 'products' && zipBasePath === 'frontend/dist') continue;
+        if (entry.name === 'products') continue;
         addDirToZip(fullPath, `${entryZipDir}${entry.name}/`);
       } else {
         zip.addLocalFile(fullPath, entryZipDir, entry.name);

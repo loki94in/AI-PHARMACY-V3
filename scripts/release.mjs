@@ -59,7 +59,7 @@ if (isMaxCompression) {
 const isRemote   = (args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
 
 // ── Vercel / GitHub config ───────────────────────────────────────────────────
-const vercelServer = process.env.LICENSE_SERVER_URL || 'https://temporary-quick-jade-7r1dy0n.vercel.app';
+const vercelServer = process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
 const adminSecret  = process.env.ADMIN_SECRET;
 if ((isPromote || isRemote) && !adminSecret) {
   console.error('\n❌ STOP RELEASE: Missing required ADMIN_SECRET environment variable.');
@@ -350,7 +350,18 @@ if (skipGithub) {
 }
 
 if (!skipGithub && !uploadedViaGh) {
-  const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  let ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!ghToken) {
+    try {
+      const creds = execSync('git credential fill', {
+        input: 'protocol=https\nhost=github.com\n\n',
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'ignore'],
+      });
+      const pwLine = creds.split('\n').find(l => l.startsWith('password='));
+      if (pwLine) ghToken = pwLine.slice(9).trim();
+    } catch (_) {}
+  }
   if (!ghToken) {
     console.warn('\n⚠️  Notice: GitHub asset upload skipped:');
     console.warn('   1. GitHub CLI (`gh`) is not installed or authenticated (`gh auth login`).');

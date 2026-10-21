@@ -411,14 +411,14 @@ begin
           // Ensure LICENSE_SERVER_URL points to the live server
           if Copy(EnvLines[I], 1, 19) = 'LICENSE_SERVER_URL=' then
           begin
-            EnvLines[I] := 'LICENSE_SERVER_URL=https://temporary-quick-jade-7r1dy0n.vercel.app';
+            EnvLines[I] := 'LICENSE_SERVER_URL=https://website-woad-seven-26.vercel.app';
             LicServerFound := True;
           end;
         end;
         if not LicServerFound then
         begin
           SetArrayLength(EnvLines, NumLines + 1);
-          EnvLines[NumLines] := 'LICENSE_SERVER_URL=https://temporary-quick-jade-7r1dy0n.vercel.app';
+          EnvLines[NumLines] := 'LICENSE_SERVER_URL=https://website-woad-seven-26.vercel.app';
         end;
         SaveStringsToFile(EnvFilePath, EnvLines, False);
       end;
