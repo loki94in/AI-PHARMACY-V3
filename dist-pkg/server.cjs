@@ -60787,7 +60787,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.138";
+    APP_VERSION = "0.1.139";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -86690,35 +86690,63 @@ function getLogPath() {
   const baseDir = isSeaBinary ? appDir : import_path49.default.join(import_os2.default.homedir(), "AppData", "Local", "AI Pharmacy OS");
   return import_path49.default.join(baseDir, "logs", "updater.log");
 }
-function downloadFile(url, dest) {
+function downloadFile(url, dest, onProgress) {
   return new Promise((resolve, reject) => {
     const tempDest = dest + ".tmp";
-    const client = url.startsWith("https") ? import_https.default : import_http.default;
     function makeRequest(currentUrl, redirectCount = 0) {
       if (redirectCount > 5) {
         return reject(new Error("DOWNLOAD_FAILED: Too many redirects while downloading update"));
       }
-      client.get(currentUrl, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return makeRequest(res.headers.location, redirectCount + 1);
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
-        }
-        const fileStream = import_fs54.default.createWriteStream(tempDest);
-        res.pipe(fileStream);
-        fileStream.on("finish", () => {
-          fileStream.close(() => {
-            try {
-              if (import_fs54.default.existsSync(dest)) import_fs54.default.unlinkSync(dest);
-              import_fs54.default.renameSync(tempDest, dest);
-              resolve();
-            } catch (renameErr) {
-              reject(renameErr);
+      const client = currentUrl.startsWith("https") ? import_https.default : import_http.default;
+      const req = client.get(
+        currentUrl,
+        {
+          headers: {
+            "User-Agent": "AI-Pharmacy-OS-AutoUpdater/1.0",
+            Accept: "*/*"
+          }
+        },
+        (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            return makeRequest(res.headers.location, redirectCount + 1);
+          }
+          if (res.statusCode !== 200) {
+            return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
+          }
+          const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+          let downloadedBytes = 0;
+          let lastReport = 0;
+          const fileStream = import_fs54.default.createWriteStream(tempDest);
+          res.on("data", (chunk) => {
+            downloadedBytes += chunk.length;
+            const now = Date.now();
+            if (onProgress && (now - lastReport > 600 || downloadedBytes === totalBytes)) {
+              lastReport = now;
+              onProgress(downloadedBytes, totalBytes);
             }
           });
-        });
-      }).on("error", (err) => {
+          res.pipe(fileStream);
+          fileStream.on("finish", () => {
+            fileStream.close(() => {
+              try {
+                if (import_fs54.default.existsSync(dest)) import_fs54.default.unlinkSync(dest);
+                import_fs54.default.renameSync(tempDest, dest);
+                resolve();
+              } catch (renameErr) {
+                reject(renameErr);
+              }
+            });
+          });
+          fileStream.on("error", (err) => {
+            try {
+              if (import_fs54.default.existsSync(tempDest)) import_fs54.default.unlinkSync(tempDest);
+            } catch (_) {
+            }
+            reject(err);
+          });
+        }
+      );
+      req.on("error", (err) => {
         try {
           if (import_fs54.default.existsSync(tempDest)) import_fs54.default.unlinkSync(tempDest);
         } catch (_) {
@@ -86848,7 +86876,8 @@ var init_autoUpdateService = __esm({
           const alreadyDownloaded = zipPath ? import_fs54.default.existsSync(zipPath) : false;
           this.lastResult = {
             ...result,
-            downloading: false,
+            downloading: this.isDownloading,
+            downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
             readyToInstall: alreadyDownloaded
           };
           if (result.hasUpdate) {
@@ -86860,29 +86889,12 @@ var init_autoUpdateService = __esm({
                 updatePackageUrl: result.updatePackageUrl,
                 changelog: result.changelog,
                 readyToInstall: true,
+                downloading: false,
+                downloadProgress: 100,
                 reason
               });
             } else if (result.updatePackageUrl && !this.isDownloading) {
-              if (reason === "manual") {
-                eventService.broadcast("update_available", {
-                  latestVersion: result.latestVersion,
-                  downloadUrl: result.downloadUrl,
-                  updatePackageUrl: result.updatePackageUrl,
-                  changelog: result.changelog,
-                  downloading: true,
-                  readyToInstall: false,
-                  reason
-                });
-              }
-              this.isDownloading = true;
-              this.downloadUpdateSilently({
-                url: result.updatePackageUrl,
-                dest: zipPath,
-                version: result.latestVersion,
-                sha256: result.sha256,
-                changelog: result.changelog,
-                reason
-              });
+              this.startBackgroundDownload(result, reason);
             }
           } else {
             if (reason === "manual") {
@@ -86898,13 +86910,78 @@ var init_autoUpdateService = __esm({
           console.warn("[AutoUpdate] Check failed (offline?):", err.message);
         }
       }
+      /**
+       * Start downloading the 105 MB update package in the background.
+       */
+      startBackgroundDownload(info, reason = "auto") {
+        const target = info || this.lastResult;
+        if (!target || !target.hasUpdate || !target.latestVersion || !target.updatePackageUrl) {
+          return;
+        }
+        if (this.isDownloading) return;
+        const stagingDir = getStagingDir();
+        const zipFileName = `AI-Pharmacy-OS-Update-v${target.latestVersion}.zip`;
+        const zipPath = import_path49.default.join(stagingDir, zipFileName);
+        if (import_fs54.default.existsSync(zipPath)) {
+          if (this.lastResult) {
+            this.lastResult.readyToInstall = true;
+            this.lastResult.downloading = false;
+            this.lastResult.downloadProgress = 100;
+          }
+          eventService.broadcast("update_available", {
+            latestVersion: target.latestVersion,
+            readyToInstall: true,
+            downloading: false,
+            downloadProgress: 100,
+            reason
+          });
+          return;
+        }
+        this.isDownloading = true;
+        this.lastResult = {
+          ...this.lastResult || {},
+          ...target,
+          downloading: true,
+          downloadProgress: 0,
+          readyToInstall: false
+        };
+        eventService.broadcast("update_available", {
+          latestVersion: target.latestVersion,
+          downloadUrl: target.downloadUrl,
+          updatePackageUrl: target.updatePackageUrl,
+          changelog: target.changelog,
+          downloading: true,
+          downloadProgress: 0,
+          readyToInstall: false,
+          reason
+        });
+        this.downloadUpdateSilently({
+          url: target.updatePackageUrl,
+          dest: zipPath,
+          version: target.latestVersion,
+          sha256: target.sha256,
+          changelog: target.changelog,
+          reason
+        });
+      }
       async downloadUpdateSilently(opts) {
         const { url, dest, version, sha256: expectedSha256, changelog, reason = "auto" } = opts;
         try {
           const stagingDir = getStagingDir();
           import_fs54.default.mkdirSync(stagingDir, { recursive: true });
-          console.log(`[AutoUpdate] Silently downloading update v${version} to staging...`);
-          await downloadFile(url, dest);
+          console.log(`[AutoUpdate] Silently downloading update v${version} (105 MB) to staging...`);
+          await downloadFile(url, dest, (downloaded, total) => {
+            const percent = total > 0 ? Math.round(downloaded / total * 100) : 0;
+            if (this.lastResult) {
+              this.lastResult.downloadProgress = percent;
+            }
+            eventService.broadcast("update_progress", {
+              latestVersion: version,
+              downloadProgress: percent,
+              downloadedBytes: downloaded,
+              totalBytes: total
+            });
+          });
           if (expectedSha256) {
             console.log("[AutoUpdate] Verifying SHA-256...");
             const actualSha256 = await computeSha256(dest);
@@ -86915,6 +86992,18 @@ var init_autoUpdateService = __esm({
               } catch (_) {
               }
               this.isDownloading = false;
+              if (this.lastResult) {
+                this.lastResult.downloading = false;
+                this.lastResult.readyToInstall = false;
+              }
+              eventService.broadcast("update_available", {
+                latestVersion: version,
+                changelog: changelog || "",
+                readyToInstall: false,
+                downloading: false,
+                error: "Checksum mismatch. Please retry download.",
+                reason
+              });
               return;
             }
             console.log("[AutoUpdate] SHA-256 verified OK.");
@@ -86923,6 +87012,7 @@ var init_autoUpdateService = __esm({
           if (this.lastResult) {
             this.lastResult.downloading = false;
             this.lastResult.readyToInstall = true;
+            this.lastResult.downloadProgress = 100;
           }
           console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
           eventService.broadcast("update_available", {
@@ -86930,15 +87020,28 @@ var init_autoUpdateService = __esm({
             changelog: changelog || "",
             readyToInstall: true,
             downloading: false,
+            downloadProgress: 100,
             reason
           });
         } catch (err) {
           this.isDownloading = false;
+          if (this.lastResult) {
+            this.lastResult.downloading = false;
+            this.lastResult.readyToInstall = false;
+          }
           try {
             if (import_fs54.default.existsSync(dest + ".tmp")) import_fs54.default.unlinkSync(dest + ".tmp");
           } catch (_) {
           }
           console.warn("[AutoUpdate] DOWNLOAD_FAILED:", err.message);
+          eventService.broadcast("update_available", {
+            latestVersion: version,
+            changelog: changelog || "",
+            readyToInstall: false,
+            downloading: false,
+            error: `Download failed: ${err.message}`,
+            reason
+          });
         }
       }
       /**
@@ -94126,10 +94229,27 @@ var init_license = __esm({
       res.json({
         hasUpdate: !!result?.hasUpdate,
         latestVersion: result?.latestVersion || null,
+        currentVersion: result?.currentVersion || APP_VERSION,
         readyToInstall: !!result?.readyToInstall,
         downloading: !!result?.downloading,
+        downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0),
+        downloadUrl: result?.downloadUrl,
+        updatePackageUrl: result?.updatePackageUrl,
         changelog: result?.changelog || ""
       });
+    });
+    router34.post("/start-download", (_req, res) => {
+      try {
+        autoUpdateService.startBackgroundDownload(void 0, "manual");
+        const result = autoUpdateService.getStatus();
+        res.json({
+          success: true,
+          downloading: true,
+          latestVersion: result?.latestVersion
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
     });
     router34.post("/check-update", async (_req, res) => {
       try {
@@ -94143,7 +94263,8 @@ var init_license = __esm({
           sha256: result?.sha256,
           changelog: result?.changelog,
           readyToInstall: result?.readyToInstall,
-          downloading: result?.downloading
+          downloading: result?.downloading,
+          downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0)
         });
       } catch (err) {
         res.status(500).json({
