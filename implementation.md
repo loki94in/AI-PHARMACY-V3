@@ -33,7 +33,7 @@
 - [x] **Step 5**: Run TypeScript compilation check (`tsc --noEmit`).
 - [x] **Step 6**: Run `npm run guardrails` and verify 0 violations.
 - [x] **Step 7**: Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
-- [ ] **Step 8**: Commit changes and publish new release (`npm run release`).
+- [x] **Step 8**: Commit changes and publish new release (`npm run release`).
 
 ---
 
