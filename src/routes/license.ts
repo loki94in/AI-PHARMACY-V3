@@ -62,10 +62,29 @@ router.get('/update-status', (_req, res) => {
   res.json({
     hasUpdate: !!result?.hasUpdate,
     latestVersion: result?.latestVersion || null,
+    currentVersion: result?.currentVersion || APP_VERSION,
     readyToInstall: !!result?.readyToInstall,
     downloading: !!result?.downloading,
+    downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0),
+    downloadUrl: result?.downloadUrl,
+    updatePackageUrl: result?.updatePackageUrl,
     changelog: result?.changelog || '',
   });
+});
+
+/** POST /api/license/start-download — trigger background download of 105 MB update package */
+router.post('/start-download', (_req, res) => {
+  try {
+    autoUpdateService.startBackgroundDownload(undefined, 'manual');
+    const result = autoUpdateService.getStatus();
+    res.json({
+      success: true,
+      downloading: true,
+      latestVersion: result?.latestVersion,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /** POST /api/license/check-update — manual update check trigger */
@@ -82,6 +101,7 @@ router.post('/check-update', async (_req, res) => {
       changelog: result?.changelog,
       readyToInstall: result?.readyToInstall,
       downloading: result?.downloading,
+      downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0),
     });
   } catch (err: any) {
     res.status(500).json({

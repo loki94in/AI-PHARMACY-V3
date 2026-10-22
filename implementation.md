@@ -1,74 +1,87 @@
-# Implementation Plan: Duplicate Phone Detection, Order ID Product Isolation & Multi-Order Safety
+# Implementation Plan: In-App Background Auto-Update Download & Notification Flow
 
 ## 1. Goal
-1. **Duplicate Phone Detection & Real-time Warning**:
-   - When entering or saving a phone number for any distributor (in Dispatch, Cart, or Master Directory), the app will proactively check if that number is already assigned to another distributor or a delivery boy.
-   - Display an instant real-time alert (e.g. `⚠️ 9762483343 is already assigned to AJAY PHARMA!`) so users never mistakenly save the same number across different distributors.
-   - Provide human-in-the-loop controls: allow the user to easily change the number or explicitly confirm if it is an intentional shared counter/warehouse contact.
-2. **Strict Order ID Product Isolation (Zero Cross-Order Mixing/Pruning)**:
-   - Each Order / PO ID must strictly retain only its own products (`items_json`).
-   - Remove aggressive same-store cross-order medicine pruning from `deduplicateSameStoreMultiOrderLines` and `distributorDispatchReminderWorker.ts`. Distinct orders placed on the same day must keep 100% of their respective items.
-3. **Surgical PO Assignment by Order ID**:
-   - In `src/routes/pharmarack.ts`, update `pharmarack_placed_orders` strictly by its specific order record ID (`WHERE id = ?`), never broad `WHERE store_name = ?` across all orders, preventing multiple orders from getting stamped with the same PO number.
-4. **Zero Phantom 0-Item Cards in Sent Orders**:
-   - In `/api/pharmarack/sent-orders`, if an in-app placed order already exists for that store/PO with items, suppress creating redundant empty synced cards.
+When a new software update is available (e.g. v0.1.138):
+1. **Never open external download manager or browser for the full 984 MB installer** when using the in-app update flow.
+2. **Auto Background Download of 105 MB OTA Update Package**:
+   - The app silently downloads the lightweight `AI-Pharmacy-OS-Update-v{version}.zip` (105 MB) in the background directly into staging (`%LOCALAPPDATA%\AI Pharmacy OS\updates\staging\`).
+   - Resilient HTTP streaming with `User-Agent: AI-Pharmacy-OS-AutoUpdater` and redirect following to ensure GitHub releases never reject downloads.
+3. **In-App Progress & Status**:
+   - In Settings > License & Updates:
+     - On mount, query `/api/license/update-status` so current state is immediately visible.
+     - While downloading, display `⏳ Downloading update in background ({percent}%)...`.
+     - When an update is detected, offer `[ Download in Background ]` instead of an external hyperlink.
+4. **Human-in-the-Loop "Install Now / Later" Prompt**:
+   - Once the 105 MB update package finishes downloading and SHA-256 verification passes:
+     - Top banner (`UpdateBanner.tsx`) displays: `🎉 Update Available: v{version} — Downloaded in background & ready to install` with `[ Install Now ]` and `[ Later ]`.
+     - In Settings > License & Updates, the button displays `[ Install & Restart ]`.
+     - Clicking `Install Now` or `Install & Restart` executes `/api/system/apply-update`, safely closes the app, runs `Updater.bat` (5-second atomic file replacement with backup & rollback), and restarts into the new version.
 
 ---
 
 ## 2. Technical Architecture & File Changes
 
-1. **`src/routes/distributors.ts`**:
-   - Add endpoint `GET /api/distributors/check-duplicate-phone`:
-     - Checks `distributors`, `pharmarack_distributor_mappings`, and `delivery_boys` tables.
-     - Returns `{ isDuplicate, matchedDistributor, matchedDeliveryBoy }`.
-2. **`src/routes/pharmarack.ts` (`/cart/place-official-orders` & `/sent-orders`)**:
-   - Update `pharmarack_placed_orders` with confirmed `order_no` strictly targeting the specific unattached row by `id = ?`.
-   - In `/sent-orders`, deduplicate synced orders against existing placed orders so empty 0-item placeholder cards are never duplicated when a full order card exists.
-3. **`src/services/pharmarackOrderSyncService.ts`**:
-   - In `deduplicateSameStoreMultiOrderLines`: Keep 100% of line items for distinct orders (different `order_no`). Never delete products across different orders of the same distributor.
-4. **`src/services/distributorDispatchReminderWorker.ts`**:
-   - In `getTodayDistributorRemindersFast` and `syncTodayActiveDistributors`: Remove cross-order item deduplication across distinct POs. Each order preview shows its true products.
-5. **`frontend/src/services/api.ts`**:
-   - Expose `checkDuplicateDistributorPhone(phone, excludeId?, excludeName?)`.
-6. **`frontend/src/pages/Dispatch/index.tsx`**:
-   - Real-time debounced duplicate check on phone input when editing distributor phone.
-   - Warning banner: `⚠️ Already saved for [Distributor Name]`.
-   - Human-in-the-loop confirmation modal if user attempts to save a conflicting number: `[Change Number]` vs `[Confirm Shared Contact]`.
-7. **`frontend/src/pages/PharmarackCart/index.tsx`**:
-   - Live duplicate phone check and warning in single dispatch modal & mapping save.
+1. **`src/services/autoUpdateService.ts`**:
+   - Update `downloadFile`: Add `'User-Agent': 'AI-Pharmacy-OS-AutoUpdater'`, dynamic protocol handling (`https` / `http`) on redirects, and progress callback.
+   - In `AutoUpdateService`:
+     - Maintain `downloading`, `downloadProgress`, and `readyToInstall` accurately in `lastResult`.
+     - Add `startBackgroundDownload(info?, reason?)` method.
+     - Broadcast `update_progress` SSE event with percentage.
+     - On download finish & SHA-256 verify, broadcast `update_available` with `readyToInstall: true`.
+2. **`src/routes/license.ts`**:
+   - Update `GET /api/license/update-status` to return `currentVersion`, `latestVersion`, `downloading`, `downloadProgress`, `readyToInstall`, `changelog`.
+   - Add `POST /api/license/start-download` to allow the user or frontend to trigger the background download on demand.
+3. **`frontend/src/pages/Settings/LicenseAndUpdatesTab.tsx`**:
+   - In `SoftwareUpdateCard`:
+     - On mount, call `/api/license/update-status` so the card is hydrated immediately.
+     - Listen to `sse:update_progress` to display real-time download percentage.
+     - Replace the external `<a href={downloadUrl}>Download</a>` link with an in-app button `[ Download in Background ]` that calls `/api/license/start-download`.
+     - Keep a discreet secondary text link for advanced users who explicitly want the manual standalone installer exe.
+4. **`frontend/src/components/UpdateBanner.tsx`**:
+   - Verify it continues listening to `sse:update_available` and only presents `[ Install Now ]` / `[ Later ]` once `readyToInstall: true`.
+5. **Verification**:
+   - Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`).
+   - Run `node scripts/quick-update.mjs`.
 
 ---
 
 ## 3. Step-by-Step Implementation Checklist
 
-- [x] **Step 1**: Add `GET /check-duplicate-phone` in `src/routes/distributors.ts` and expose it in `frontend/src/services/api.ts`.
-- [x] **Step 2**: Fix surgical `order_no` update in `src/routes/pharmarack.ts` (`/cart/place-official-orders`) so only the specific order row is updated.
-- [x] **Step 3**: Remove cross-order item pruning in `src/services/pharmarackOrderSyncService.ts` and `src/services/distributorDispatchReminderWorker.ts` so each PO retains 100% of its own products.
-- [x] **Step 4**: Suppress duplicate 0-item placeholder cards in `src/routes/pharmarack.ts` (`/sent-orders`).
-- [x] **Step 5**: Integrate real-time duplicate warning and human-in-the-loop confirmation in `frontend/src/pages/Dispatch/index.tsx`.
-- [x] **Step 6**: Integrate duplicate phone check in `frontend/src/pages/PharmarackCart/index.tsx`.
-- [x] **Step 7**: Run `npm run guardrails` and verify clean TypeScript compilation (`tsc --noEmit`).
-- [x] **Step 8**: Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+- [x] **Step 1**: Enhance `downloadFile` and `AutoUpdateService` in `src/services/autoUpdateService.ts` with User-Agent, progress tracking, and `startBackgroundDownload`.
+- [x] **Step 2**: Add `POST /api/license/start-download` and update `GET /api/license/update-status` in `src/routes/license.ts`.
+- [x] **Step 3**: Update `frontend/src/pages/Settings/LicenseAndUpdatesTab.tsx` to mount-hydrate update status, track download progress, and replace external link with in-app background download action.
+- [x] **Step 4**: Verify `frontend/src/components/UpdateBanner.tsx` prompt behavior.
+- [x] **Step 5**: Run `npm run guardrails` and verify clean TypeScript compilation (`tsc --noEmit`).
+- [x] **Step 6**: Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
 
 ---
 
 ## 4. Completed Tasks Log
 
-1. **Step 1 - Backend & API Duplicate Phone Validation**:
-   - Implemented `GET /api/distributors/check-duplicate-phone` in `src/routes/distributors.ts` querying `distributors`, `pharmarack_distributor_mappings`, and `delivery_boys`.
-   - Exposed `api.checkDuplicateDistributorPhone(phone, excludeId?, excludeName?)` in `frontend/src/services/api.ts`.
-2. **Step 2 - Surgical PO Assignment by Order ID**:
-   - In `src/routes/pharmarack.ts` (`/cart/place-official-orders`), updated `pharmarack_placed_orders` post-checkout update to target the exact row ID (`WHERE id = ?`) rather than broad date and store name match.
-3. **Step 3 - Order ID Product Isolation (Zero Cross-Order Mixing/Pruning)**:
-   - In `src/services/pharmarackOrderSyncService.ts` (`deduplicateSameStoreMultiOrderLines`), removed cross-order item deduplication across distinct `order_no`s. Distinct orders retain 100% of their respective items.
-   - In `src/services/distributorDispatchReminderWorker.ts`, updated `getTodayDistributorRemindersFast` and `syncTodayActiveDistributors` so orders never strip medicines belonging to other orders of the same distributor.
-4. **Step 4 - Phantom 0-Item Card Suppression in Sent Orders**:
-   - In `src/routes/pharmarack.ts` (`/sent-orders`), merged synced orders into existing store order cards, strictly suppressing redundant 0-item placeholder cards.
-5. **Step 5 - Human-in-the-Loop Confirmation in Dispatch**:
-   - In `frontend/src/pages/Dispatch/index.tsx`, added debounced duplicate check on phone input, an amber alert badge when a duplicate is found, and a Human-in-the-Loop confirmation modal (`[Change Number]` vs `[Confirm Shared Contact]`) before saving.
-6. **Step 6 - Duplicate Warning & Confirmation in PharmarackCart**:
-   - In `frontend/src/pages/PharmarackCart/index.tsx`, added real-time duplicate phone checking, warning callout under input, and human-in-the-loop confirmation banner in the contact modal.
-7. **Step 7 & 8 - Verification & Knowledge Graph Sync**:
-   - Fixed all raw Tailwind color classes to comply with semantic theming (F6 guardrail).
-   - Passed `npm run guardrails` with 0 violations and verified TypeScript compilation (`tsc --noEmit`).
-   - Ran `node scripts/quick-update.mjs` to synchronize knowledge graph (1,310 nodes, 826 edges).
+- **Task 1: Resilient In-App Background Streaming & Progress in `src/services/autoUpdateService.ts`**:
+  - Added `User-Agent: AI-Pharmacy-OS-AutoUpdater/1.0` and dynamic protocol redirection handling to `downloadFile` to prevent GitHub download blocks.
+  - Implemented streaming progress callback (`onProgress`) tracking `transferredMB`, `totalMB`, and `percent`.
+  - Added `startBackgroundDownload` method and real-time SSE broadcasts for `update_progress`.
+  - On SHA-256 verification pass, automatically broadcasts `update_available` with `readyToInstall: true`.
+
+- **Task 2: API Endpoints for Background Downloading in `src/routes/license.ts`**:
+  - Updated `GET /api/license/update-status` to return comprehensive state (`downloading`, `downloadProgress`, `readyToInstall`, `currentVersion`, `latestVersion`, `downloadUrl`, `changelog`).
+  - Added `POST /api/license/start-download` to trigger background downloading of the 105 MB update package on demand.
+  - Included `downloadProgress` in `POST /api/license/check-update`.
+
+- **Task 3: In-App Download UI & Progress Tracking in `frontend/src/pages/Settings/LicenseAndUpdatesTab.tsx`**:
+  - Hydrated update status on component mount via `GET /api/license/update-status`.
+  - Added SSE event listener for `sse:update_progress` alongside `sse:update_available`.
+  - Replaced external `<a href={downloadUrl} target="_blank">Download</a>` button with `[ Download Update (105 MB) ]` calling `apiClient.post('/license/start-download')`.
+  - Added live progress bar showing percent and MB transferred.
+  - Added human-in-the-loop `[ Install & Restart Now ]` and `[ Later ]` action buttons when package is downloaded and SHA-256 verified.
+  - Kept a discreet secondary text link for advanced users needing the full standalone offline installer setup.exe.
+
+- **Task 4: Global Update Banner Verification in `frontend/src/components/UpdateBanner.tsx`**:
+  - Verified that `UpdateBanner` stays completely invisible while downloading in background.
+  - Banner displays `Update Available: v{version} — Downloaded in background & ready to install` with `[ Install Now ]` and `[ Later ]` ONLY once the update is 100% verified.
+
+- **Task 5: Guardrails, Type Safety & Knowledge Graph**:
+  - Passed `npm run guardrails` with clean TypeScript compilation (`tsc --noEmit`) and zero color or performance rule violations.
+  - Frontend production build (`npm --prefix frontend run build`) verified clean without errors.
+  - Synchronized knowledge graph via `node scripts/quick-update.mjs`.

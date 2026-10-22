@@ -59,36 +59,63 @@ function getLogPath(): string {
 }
 
 // ── Download helper ──────────────────────────────────────────────────────────
-function downloadFile(url: string, dest: string): Promise<void> {
+function downloadFile(url: string, dest: string, onProgress?: (downloaded: number, total: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const tempDest = dest + '.tmp';
-    const client = url.startsWith('https') ? https : http;
 
     function makeRequest(currentUrl: string, redirectCount = 0) {
       if (redirectCount > 5) {
         return reject(new Error('DOWNLOAD_FAILED: Too many redirects while downloading update'));
       }
-      client.get(currentUrl, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return makeRequest(res.headers.location, redirectCount + 1);
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
-        }
-        const fileStream = fs.createWriteStream(tempDest);
-        res.pipe(fileStream);
-        fileStream.on('finish', () => {
-          fileStream.close(() => {
-            try {
-              if (fs.existsSync(dest)) fs.unlinkSync(dest);
-              fs.renameSync(tempDest, dest);
-              resolve();
-            } catch (renameErr) {
-              reject(renameErr);
+      const client = currentUrl.startsWith('https') ? https : http;
+
+      const req = client.get(
+        currentUrl,
+        {
+          headers: {
+            'User-Agent': 'AI-Pharmacy-OS-AutoUpdater/1.0',
+            Accept: '*/*',
+          },
+        },
+        (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            return makeRequest(res.headers.location, redirectCount + 1);
+          }
+          if (res.statusCode !== 200) {
+            return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
+          }
+          const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+          let downloadedBytes = 0;
+          let lastReport = 0;
+
+          const fileStream = fs.createWriteStream(tempDest);
+          res.on('data', (chunk: Buffer) => {
+            downloadedBytes += chunk.length;
+            const now = Date.now();
+            if (onProgress && (now - lastReport > 600 || downloadedBytes === totalBytes)) {
+              lastReport = now;
+              onProgress(downloadedBytes, totalBytes);
             }
           });
-        });
-      }).on('error', (err) => {
+          res.pipe(fileStream);
+          fileStream.on('finish', () => {
+            fileStream.close(() => {
+              try {
+                if (fs.existsSync(dest)) fs.unlinkSync(dest);
+                fs.renameSync(tempDest, dest);
+                resolve();
+              } catch (renameErr) {
+                reject(renameErr);
+              }
+            });
+          });
+          fileStream.on('error', (err) => {
+            try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
+            reject(err);
+          });
+        }
+      );
+      req.on('error', (err) => {
         try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
         reject(new Error(`DOWNLOAD_FAILED: ${err.message}`));
       });
@@ -116,12 +143,14 @@ class AutoUpdateService {
   private intervalHandle: NodeJS.Timeout | null = null;
   private lastResult: {
     hasUpdate: boolean;
+    currentVersion?: string;
     latestVersion?: string;
     downloadUrl?: string;
     updatePackageUrl?: string;
     sha256?: string;
     changelog?: string;
     downloading?: boolean;
+    downloadProgress?: number;
     readyToInstall?: boolean;
   } | null = null;
   private isDownloading = false;
@@ -230,7 +259,8 @@ class AutoUpdateService {
 
       this.lastResult = {
         ...result,
-        downloading: false,
+        downloading: this.isDownloading,
+        downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
         readyToInstall: alreadyDownloaded,
       };
 
@@ -244,31 +274,12 @@ class AutoUpdateService {
             updatePackageUrl: result.updatePackageUrl,
             changelog:        result.changelog,
             readyToInstall:   true,
+            downloading:      false,
+            downloadProgress: 100,
             reason,
           });
         } else if (result.updatePackageUrl && !this.isDownloading) {
-          if (reason === 'manual') {
-            eventService.broadcast('update_available', {
-              latestVersion:    result.latestVersion,
-              downloadUrl:      result.downloadUrl,
-              updatePackageUrl: result.updatePackageUrl,
-              changelog:        result.changelog,
-              downloading:      true,
-              readyToInstall:   false,
-              reason,
-            });
-          }
-
-          // Silently download the update ZIP in background (§29)
-          this.isDownloading = true;
-          this.downloadUpdateSilently({
-            url:       result.updatePackageUrl,
-            dest:      zipPath!,
-            version:   result.latestVersion!,
-            sha256:    result.sha256,
-            changelog: result.changelog,
-            reason,
-          });
+          this.startBackgroundDownload(result, reason);
         }
       } else {
         if (reason === 'manual') {
@@ -286,6 +297,66 @@ class AutoUpdateService {
     }
   }
 
+  /**
+   * Start downloading the 105 MB update package in the background.
+   */
+  startBackgroundDownload(info?: any, reason = 'auto'): void {
+    const target = info || this.lastResult;
+    if (!target || !target.hasUpdate || !target.latestVersion || !target.updatePackageUrl) {
+      return;
+    }
+    if (this.isDownloading) return;
+
+    const stagingDir = getStagingDir();
+    const zipFileName = `AI-Pharmacy-OS-Update-v${target.latestVersion}.zip`;
+    const zipPath = path.join(stagingDir, zipFileName);
+
+    if (fs.existsSync(zipPath)) {
+      if (this.lastResult) {
+        this.lastResult.readyToInstall = true;
+        this.lastResult.downloading = false;
+        this.lastResult.downloadProgress = 100;
+      }
+      eventService.broadcast('update_available', {
+        latestVersion: target.latestVersion,
+        readyToInstall: true,
+        downloading: false,
+        downloadProgress: 100,
+        reason,
+      });
+      return;
+    }
+
+    this.isDownloading = true;
+    this.lastResult = {
+      ...(this.lastResult || {}),
+      ...target,
+      downloading: true,
+      downloadProgress: 0,
+      readyToInstall: false,
+    };
+
+    eventService.broadcast('update_available', {
+      latestVersion: target.latestVersion,
+      downloadUrl: target.downloadUrl,
+      updatePackageUrl: target.updatePackageUrl,
+      changelog: target.changelog,
+      downloading: true,
+      downloadProgress: 0,
+      readyToInstall: false,
+      reason,
+    });
+
+    this.downloadUpdateSilently({
+      url: target.updatePackageUrl,
+      dest: zipPath,
+      version: target.latestVersion,
+      sha256: target.sha256,
+      changelog: target.changelog,
+      reason,
+    });
+  }
+
   private async downloadUpdateSilently(opts: {
     url: string;
     dest: string;
@@ -299,8 +370,19 @@ class AutoUpdateService {
       const stagingDir = getStagingDir();
       fs.mkdirSync(stagingDir, { recursive: true });
 
-      console.log(`[AutoUpdate] Silently downloading update v${version} to staging...`);
-      await downloadFile(url, dest);
+      console.log(`[AutoUpdate] Silently downloading update v${version} (105 MB) to staging...`);
+      await downloadFile(url, dest, (downloaded, total) => {
+        const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
+        if (this.lastResult) {
+          this.lastResult.downloadProgress = percent;
+        }
+        eventService.broadcast('update_progress', {
+          latestVersion: version,
+          downloadProgress: percent,
+          downloadedBytes: downloaded,
+          totalBytes: total,
+        });
+      });
 
       // SHA-256 verification (PRODUCTION.md §31)
       if (expectedSha256) {
@@ -308,9 +390,20 @@ class AutoUpdateService {
         const actualSha256 = await computeSha256(dest);
         if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
           console.error(`[AutoUpdate] CHECKSUM_MISMATCH — aborting. Expected: ${expectedSha256}, got: ${actualSha256}`);
-          // Delete corrupted package — keep current version
           try { fs.unlinkSync(dest); } catch (_) {}
           this.isDownloading = false;
+          if (this.lastResult) {
+            this.lastResult.downloading = false;
+            this.lastResult.readyToInstall = false;
+          }
+          eventService.broadcast('update_available', {
+            latestVersion: version,
+            changelog: changelog || '',
+            readyToInstall: false,
+            downloading: false,
+            error: 'Checksum mismatch. Please retry download.',
+            reason,
+          });
           return;
         }
         console.log('[AutoUpdate] SHA-256 verified OK.');
@@ -320,6 +413,7 @@ class AutoUpdateService {
       if (this.lastResult) {
         this.lastResult.downloading    = false;
         this.lastResult.readyToInstall = true;
+        this.lastResult.downloadProgress = 100;
       }
       console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
       eventService.broadcast('update_available', {
@@ -327,13 +421,25 @@ class AutoUpdateService {
         changelog:      changelog || '',
         readyToInstall: true,
         downloading:    false,
+        downloadProgress: 100,
         reason,
       });
     } catch (err: any) {
       this.isDownloading = false;
-      // Delete incomplete temp file if it exists
+      if (this.lastResult) {
+        this.lastResult.downloading = false;
+        this.lastResult.readyToInstall = false;
+      }
       try { if (fs.existsSync(dest + '.tmp')) fs.unlinkSync(dest + '.tmp'); } catch (_) {}
       console.warn('[AutoUpdate] DOWNLOAD_FAILED:', err.message);
+      eventService.broadcast('update_available', {
+        latestVersion: version,
+        changelog: changelog || '',
+        readyToInstall: false,
+        downloading: false,
+        error: `Download failed: ${err.message}`,
+        reason,
+      });
     }
   }
 

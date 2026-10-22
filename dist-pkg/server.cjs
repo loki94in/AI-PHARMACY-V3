@@ -14444,29 +14444,21 @@ async function getTodayDistributorRemindersFast(customDateStr) {
       let totalItems = 0;
       const hasOfficialRow = matchingPlaced.some((p) => Boolean(p.order_no && String(p.order_no).trim()));
       const filteredPlaced = hasOfficialRow ? matchingPlaced.filter((p) => Boolean(p.order_no && String(p.order_no).trim())) : matchingPlaced;
-      const seenMedKeysInStore = /* @__PURE__ */ new Set();
       for (const po of filteredPlaced) {
         let itemsArr = [];
         try {
           itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
         } catch (_) {
         }
-        const uniqueItems = itemsArr.filter((it) => {
-          const k = String(it.productCode || it.productName || it.name || "").trim().toLowerCase();
-          if (!k) return true;
-          if (seenMedKeysInStore.has(k)) return false;
-          seenMedKeysInStore.add(k);
-          return true;
-        });
-        totalItems += uniqueItems.length;
+        totalItems += itemsArr.length;
         const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
-        const previews = uniqueItems.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
+        const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
         ordersList.push({
           id: `pharma_${po.id}`,
           source: "pharmarack",
           order_no: po.order_no || null,
           order_time: timeStr,
-          items_count: uniqueItems.length,
+          items_count: itemsArr.length,
           items_preview: previews
         });
       }
@@ -14994,29 +14986,21 @@ async function syncTodayActiveDistributors() {
         let totalItems = 0;
         const hasOfficialRow = matchingPlaced.some((p) => Boolean(p.order_no && String(p.order_no).trim()));
         const filteredPlaced = hasOfficialRow ? matchingPlaced.filter((p) => Boolean(p.order_no && String(p.order_no).trim())) : matchingPlaced;
-        const seenMedKeysInStore = /* @__PURE__ */ new Set();
         for (const po of filteredPlaced) {
           let itemsArr = [];
           try {
             itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
           } catch (_) {
           }
-          const uniqueItems = itemsArr.filter((it) => {
-            const k = String(it.productCode || it.productName || it.name || "").trim().toLowerCase();
-            if (!k) return true;
-            if (seenMedKeysInStore.has(k)) return false;
-            seenMedKeysInStore.add(k);
-            return true;
-          });
-          totalItems += uniqueItems.length;
+          totalItems += itemsArr.length;
           const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
-          const previews = uniqueItems.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
+          const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
           ordersList.push({
             id: `pharma_${po.id}`,
             source: "pharmarack",
             order_no: po.order_no || null,
             order_time: timeStr,
-            items_count: uniqueItems.length,
+            items_count: itemsArr.length,
             items_preview: previews
           });
         }
@@ -32223,12 +32207,32 @@ var init_pharmarack = __esm({
                   { skipDedupe: true }
                 );
                 console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) with 5-minute grace period hold (queue #${queueId})`);
-                await db2.run(
-                  `UPDATE pharmarack_placed_orders 
-               SET batch_sent = 1, batch_sent_at = ?, order_no = ?
-               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
-                  [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
+                const targetPlacedRow = await db2.get(
+                  `SELECT id FROM pharmarack_placed_orders 
+               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) 
+                 AND (order_no IS NULL OR order_no = '' OR order_no = ?)
+               ORDER BY id DESC LIMIT 1`,
+                  [today, ord.storeName, resolvedOrderNo]
                 );
+                if (targetPlacedRow?.id) {
+                  await db2.run(
+                    `UPDATE pharmarack_placed_orders 
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 WHERE id = ?`,
+                    [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, targetPlacedRow.id]
+                  );
+                } else {
+                  await db2.run(
+                    `UPDATE pharmarack_placed_orders 
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 WHERE id = (
+                   SELECT id FROM pharmarack_placed_orders 
+                   WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
+                   ORDER BY id DESC LIMIT 1
+                 )`,
+                    [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
+                  );
+                }
                 const existingRem = await db2.get(
                   `SELECT id FROM distributor_dispatch_reminders 
                WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) LIMIT 1`,
@@ -32825,7 +32829,20 @@ var init_pharmarack = __esm({
           const sNo = String(s.order_no || "").trim();
           if (sNo && !claimedOrderNos.has(sNo)) {
             claimedOrderNos.add(sNo);
+            const existingStoreOrder = parsedOrders.find(
+              (p) => (!p.order_no || String(p.order_no).trim().toLowerCase() === sNo.toLowerCase()) && String(p.store_name || "").toLowerCase().trim() === String(s.store_name || "").toLowerCase().trim()
+            );
+            if (existingStoreOrder) {
+              if (!existingStoreOrder.order_no) existingStoreOrder.order_no = sNo;
+              if (!existingStoreOrder.pharmarack_order_nos?.includes(sNo)) {
+                existingStoreOrder.pharmarack_order_nos = [...existingStoreOrder.pharmarack_order_nos || [], sNo];
+              }
+              continue;
+            }
             const placed = await db2.get("SELECT * FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1", [sNo]);
+            if (placed && parsedOrders.some((p) => p.id === placed.id)) {
+              continue;
+            }
             let items = [];
             if (placed?.items_json) {
               try {
@@ -46864,19 +46881,36 @@ async function deduplicateSameStoreMultiOrderLines(db2) {
         }
         return { ...r, items };
       });
-      const seenItemKeys = /* @__PURE__ */ new Set();
+      const rowsByOrderNo = /* @__PURE__ */ new Map();
+      for (const r of parsedRows) {
+        const no = String(r.order_no || "").trim();
+        if (no) {
+          rowsByOrderNo.set(no, [...rowsByOrderNo.get(no) || [], r]);
+        }
+      }
+      for (const [orderNo, dupeRows] of rowsByOrderNo.entries()) {
+        if (dupeRows.length > 1) {
+          dupeRows.sort((a, b) => (b.items?.length || 0) - (a.items?.length || 0));
+          for (let i = 1; i < dupeRows.length; i++) {
+            await db2.run("DELETE FROM pharmarack_placed_orders WHERE id = ?", [dupeRows[i].id]);
+            fixedCount++;
+            console.log(`[PharmarackSync] Removed redundant duplicate placed order row #${dupeRows[i].id} for PO #${orderNo}`);
+          }
+        }
+      }
       for (const row of parsedRows) {
         const uniqueItems = [];
+        const seenWithinThisOrder = /* @__PURE__ */ new Set();
         let rowChanged = false;
         for (const it of row.items) {
           const key = String(it.productCode || it.productName || it.name || "").trim().toLowerCase();
           if (!key) continue;
-          if (seenItemKeys.has(key)) {
+          if (seenWithinThisOrder.has(key)) {
             rowChanged = true;
             fixedCount++;
             continue;
           }
-          seenItemKeys.add(key);
+          seenWithinThisOrder.add(key);
           uniqueItems.push(it);
         }
         if (rowChanged) {
@@ -46885,7 +46919,6 @@ async function deduplicateSameStoreMultiOrderLines(db2) {
             [JSON.stringify(uniqueItems), row.id]
           );
           row.items = uniqueItems;
-          console.log(`[PharmarackSync] Pruned duplicate medicine items from placed order #${row.id} (${row.order_no || "PO"})`);
         }
       }
     }
@@ -60754,7 +60787,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.136";
+    APP_VERSION = "0.1.138";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -107339,6 +107372,60 @@ var init_distributors = __esm({
         res.json({ success: true, distributors: rows || [] });
       } catch (error) {
         res.status(500).json({ error: "Failed to fetch Pharmarack distributors: " + error.message });
+      }
+    });
+    router53.get("/check-duplicate-phone", async (req, res) => {
+      try {
+        const rawPhone = String(req.query.phone || "").trim();
+        const excludeId = req.query.excludeId ? Number(req.query.excludeId) : null;
+        const excludeName = String(req.query.excludeName || "").toLowerCase().trim();
+        const clean2 = rawPhone.replace(/\D/g, "");
+        let phone10 = clean2;
+        if (clean2.length === 12 && clean2.startsWith("91")) {
+          phone10 = clean2.slice(2);
+        } else if (clean2.length === 11 && clean2.startsWith("0")) {
+          phone10 = clean2.slice(1);
+        }
+        if (!phone10 || phone10.length !== 10) {
+          return res.json({ isDuplicate: false, matchedDistributor: null, matchedDeliveryBoy: null });
+        }
+        const db2 = await dbManager.getConnection();
+        let distSql = "SELECT id, name, phone, contact FROM distributors WHERE (phone LIKE ? OR contact LIKE ? OR phone LIKE ? OR contact LIKE ?)";
+        const distParams = [`%${phone10}%`, `%${phone10}%`, `%${phone10}`, `%${phone10}`];
+        if (excludeId && !isNaN(excludeId)) {
+          distSql += " AND id != ?";
+          distParams.push(excludeId);
+        }
+        if (excludeName) {
+          distSql += " AND LOWER(TRIM(name)) != ?";
+          distParams.push(excludeName);
+        }
+        distSql += " LIMIT 1";
+        const distMatch = await db2.get(distSql, distParams);
+        let mapMatch = null;
+        if (!distMatch) {
+          let mapSql = "SELECT store_name, phone, distributor_id FROM pharmarack_distributor_mappings WHERE (phone LIKE ? OR phone LIKE ?)";
+          const mapParams = [`%${phone10}%`, `%${phone10}`];
+          if (excludeName) {
+            mapSql += " AND LOWER(TRIM(store_name)) != ?";
+            mapParams.push(excludeName);
+          }
+          mapSql += " LIMIT 1";
+          mapMatch = await db2.get(mapSql, mapParams);
+        }
+        const boyMatch = await db2.get(
+          "SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND (whatsapp_number LIKE ? OR whatsapp_number LIKE ?) LIMIT 1",
+          [`%${phone10}%`, `%${phone10}`]
+        );
+        const isDuplicate = Boolean(distMatch || mapMatch || boyMatch);
+        res.json({
+          isDuplicate,
+          phone: phone10,
+          matchedDistributor: distMatch ? { id: distMatch.id, name: distMatch.name, phone: distMatch.phone || distMatch.contact } : mapMatch ? { id: mapMatch.distributor_id, name: mapMatch.store_name, phone: mapMatch.phone } : null,
+          matchedDeliveryBoy: boyMatch ? { id: boyMatch.id, name: boyMatch.name, phone: boyMatch.whatsapp_number } : null
+        });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to check phone number: " + err.message });
       }
     });
     postDistributorsHandler = async (req, res) => {

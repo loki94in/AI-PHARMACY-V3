@@ -248,6 +248,13 @@ function LicenseManagementCard() {
 function SoftwareUpdateCard() {
   const [checking, setChecking] = React.useState(false);
   const [installing, setInstalling] = React.useState(false);
+  const [downloadStarting, setDownloadStarting] = React.useState(false);
+  const [downloadProgress, setDownloadProgress] = React.useState<{
+    percent: number;
+    transferredMB: number;
+    totalMB: number;
+    status: string;
+  } | null>(null);
   const [installedVersion, setInstalledVersion] = React.useState<string>('0.1.27');
   const [result, setResult] = React.useState<{
     hasUpdate: boolean;
@@ -257,14 +264,32 @@ function SoftwareUpdateCard() {
     changelog?: string;
     downloading?: boolean;
     readyToInstall?: boolean;
+    downloadProgress?: {
+      percent: number;
+      transferredMB: number;
+      totalMB: number;
+      status: string;
+    };
   } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [lastChecked, setLastChecked] = React.useState<string | null>(null);
+  const [postponed, setPostponed] = React.useState(false);
 
   React.useEffect(() => {
     apiClient.get('/license/version').then((res) => {
       if (res.data?.version || res.data?.appVersion) {
         setInstalledVersion(res.data.version || res.data.appVersion);
+      }
+    }).catch(() => {});
+
+    apiClient.get('/license/update-status').then((res) => {
+      const data = res.data;
+      if (data && (data.hasUpdate || data.readyToInstall || data.downloading)) {
+        if (data.currentVersion) setInstalledVersion(data.currentVersion);
+        setResult(data);
+        if (data.downloadProgress) {
+          setDownloadProgress(data.downloadProgress);
+        }
       }
     }).catch(() => {});
   }, []);
@@ -278,6 +303,7 @@ function SoftwareUpdateCard() {
       const data = res.data;
       if (data?.currentVersion) setInstalledVersion(data.currentVersion);
       setResult(data);
+      if (data?.downloadProgress) setDownloadProgress(data.downloadProgress);
       setLastChecked(new Date().toLocaleTimeString());
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Could not reach update server. Check internet connection.');
@@ -286,26 +312,57 @@ function SoftwareUpdateCard() {
     }
   };
 
-  // Live-update the card as the background silent download progresses,
-  // so it never gets stuck showing a stale "Download" link once the
-  // auto-updater has already grabbed the installer for us.
+  const handleStartBackgroundDownload = async () => {
+    setDownloadStarting(true);
+    setError(null);
+    try {
+      await apiClient.post('/license/start-download');
+      setResult((prev) => prev ? { ...prev, downloading: true, readyToInstall: false } : prev);
+      toastEvent.trigger('Background update download started...', 'info');
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err?.message || 'Failed to start download.');
+    } finally {
+      setDownloadStarting(false);
+    }
+  };
+
   React.useEffect(() => {
-    const handler = (e: Event) => {
+    const updateHandler = (e: Event) => {
       const raw  = (e as CustomEvent).detail;
       const data = raw?.payload || raw;
       if (!data?.latestVersion) return;
-      setResult({
+      setResult((prev) => ({
         hasUpdate:      true,
-        currentVersion: data.currentVersion || installedVersion,
+        currentVersion: data.currentVersion || prev?.currentVersion || installedVersion,
         latestVersion:  data.latestVersion,
-        downloadUrl:    data.downloadUrl,
-        changelog:      data.changelog || '',
+        downloadUrl:    data.downloadUrl || prev?.downloadUrl,
+        changelog:      data.changelog !== undefined ? data.changelog : (prev?.changelog || ''),
         downloading:    !!data.downloading,
         readyToInstall: !!data.readyToInstall,
-      });
+      }));
     };
-    window.addEventListener('sse:update_available', handler);
-    return () => window.removeEventListener('sse:update_available', handler);
+
+    const progressHandler = (e: Event) => {
+      const raw = (e as CustomEvent).detail;
+      const data = raw?.payload || raw;
+      if (!data) return;
+      setDownloadProgress(data);
+      if (data.status === 'downloading') {
+        setResult((prev) => prev ? { ...prev, downloading: true, readyToInstall: false } : prev);
+      } else if (data.status === 'ready') {
+        setResult((prev) => prev ? { ...prev, downloading: false, readyToInstall: true } : prev);
+      } else if (data.status === 'error') {
+        setResult((prev) => prev ? { ...prev, downloading: false } : prev);
+        setError(data.error || 'Failed to download update.');
+      }
+    };
+
+    window.addEventListener('sse:update_available', updateHandler);
+    window.addEventListener('sse:update_progress', progressHandler);
+    return () => {
+      window.removeEventListener('sse:update_available', updateHandler);
+      window.removeEventListener('sse:update_progress', progressHandler);
+    };
   }, [installedVersion]);
 
   const handleInstallAndRestart = async () => {
@@ -321,6 +378,14 @@ function SoftwareUpdateCard() {
     } catch (_) {
       // Backend terminates server during install — this catch is expected
     }
+  };
+
+  const handlePostpone = () => {
+    if (result?.latestVersion) {
+      sessionStorage.setItem(`update_later_${result.latestVersion}`, 'true');
+    }
+    setPostponed(true);
+    toastEvent.trigger(`Update v${result?.latestVersion || ''} postponed. You can install anytime from here.`, 'info');
   };
 
   return (
@@ -362,42 +427,111 @@ function SoftwareUpdateCard() {
             : 'bg-emerald-500/10 border-emerald-500/25 text-text'
         }`}>
           {result.hasUpdate ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="font-bold text-primary">
                   🎉 Update available — v{result.latestVersion} (Current: v{result.currentVersion || installedVersion})
                 </span>
                 {result.readyToInstall ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleInstallAndRestart}
+                      disabled={installing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
+                    >
+                      <RefreshCw size={12} className={installing ? 'animate-spin' : ''} />
+                      {installing ? 'Installing & restarting...' : 'Install & Restart Now'}
+                    </button>
+                    {!postponed && (
+                      <button
+                        type="button"
+                        onClick={handlePostpone}
+                        className="px-2.5 py-1.5 bg-bg3 border border-border text-text rounded-lg text-xs font-semibold hover:bg-bg transition-colors cursor-pointer"
+                      >
+                        Later
+                      </button>
+                    )}
+                  </div>
+                ) : result.downloading ? (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-xs font-bold">
+                    <ArrowDownToLine size={13} className="animate-bounce" />
+                    Downloading in background... {downloadProgress?.percent != null ? `${downloadProgress.percent}%` : ''}
+                  </span>
+                ) : (
                   <button
                     type="button"
-                    onClick={handleInstallAndRestart}
-                    disabled={installing}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60 cursor-pointer"
+                    onClick={handleStartBackgroundDownload}
+                    disabled={downloadStarting}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm shadow-primary/20 disabled:opacity-60"
                   >
-                    <RefreshCw size={11} className={installing ? 'animate-spin' : ''} />
-                    {installing ? 'Installing & restarting...' : 'Install & Restart'}
+                    <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
+                    {downloadStarting ? 'Starting...' : 'Download Update (105 MB)'}
                   </button>
-                ) : result.downloading ? (
-                  <span className="flex items-center gap-1 px-2.5 py-1 bg-primary/10 text-primary rounded-lg text-[11px] font-bold">
-                    <ArrowDownToLine size={11} className="animate-pulse" />
-                    Downloading in background...
-                  </span>
-                ) : result.downloadUrl && (
-                  <a
-                    href={result.downloadUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 px-2.5 py-1 bg-primary text-white rounded-lg text-[11px] font-bold hover:bg-primary/90 transition-colors"
-                  >
-                    <ExternalLink size={11} />
-                    Download
-                  </a>
                 )}
               </div>
+
+              {/* Progress bar when downloading */}
+              {result.downloading && (
+                <div className="space-y-1.5 p-2.5 rounded-lg bg-bg border border-border">
+                  <div className="flex justify-between text-[11px] font-semibold text-primary">
+                    <span className="flex items-center gap-1">
+                      <ArrowDownToLine size={12} />
+                      Downloading OTA update package in background...
+                    </span>
+                    <span>{downloadProgress?.transferredMB || 0} MB / {downloadProgress?.totalMB || 105} MB ({downloadProgress?.percent || 0}%)</span>
+                  </div>
+                  <div className="w-full bg-border rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-primary h-full transition-all duration-300 rounded-full"
+                      style={{ width: `${downloadProgress?.percent || 0}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted">
+                    You can continue working normally. Once download completes and is verified, you will be prompted to install.
+                  </p>
+                </div>
+              )}
+
+              {/* Verified ready notice */}
+              {result.readyToInstall && (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 font-semibold">
+                    <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+                    Update v{result.latestVersion} has been downloaded &amp; verified. Ready to install!
+                  </span>
+                  {postponed && (
+                    <button
+                      type="button"
+                      onClick={handleInstallAndRestart}
+                      disabled={installing}
+                      className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-md text-[11px] font-bold hover:bg-emerald-700 transition-colors shrink-0 cursor-pointer"
+                    >
+                      <RefreshCw size={11} className={installing ? 'animate-spin' : ''} />
+                      Install Now
+                    </button>
+                  )}
+                </div>
+              )}
+
               {result.changelog && (
                 <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed border-t border-border pt-2">
                   {result.changelog}
                 </p>
+              )}
+
+              {result.downloadUrl && (
+                <div className="pt-2 text-[10px] text-muted flex items-center gap-1 border-t border-border/50">
+                  <span>Need full offline standalone installer for other PCs?</span>
+                  <a
+                    href={result.downloadUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline inline-flex items-center gap-0.5 font-medium"
+                  >
+                    Download Setup (.exe, ~980 MB) <ExternalLink size={10} />
+                  </a>
+                </div>
               )}
             </div>
           ) : (
