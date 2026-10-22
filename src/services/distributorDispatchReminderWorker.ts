@@ -247,32 +247,21 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
         ? matchingPlaced.filter((p: any) => Boolean(p.order_no && String(p.order_no).trim()))
         : matchingPlaced;
 
-      const seenMedKeysInStore = new Set<string>();
-
       for (const po of filteredPlaced) {
         let itemsArr: any[] = [];
         try {
           itemsArr = typeof po.items_json === 'string' ? JSON.parse(po.items_json) : (Array.isArray(po.items_json) ? po.items_json : []);
         } catch (_) {}
 
-        // Strict de-duplication: eliminate medicines that already appeared in an earlier order for this store today
-        const uniqueItems = itemsArr.filter((it: any) => {
-          const k = String(it.productCode || it.productName || it.name || '').trim().toLowerCase();
-          if (!k) return true;
-          if (seenMedKeysInStore.has(k)) return false;
-          seenMedKeysInStore.add(k);
-          return true;
-        });
-
-        totalItems += uniqueItems.length;
+        totalItems += itemsArr.length;
         const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
-        const previews = uniqueItems.slice(0, 5).map((it: any) => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
+        const previews = itemsArr.slice(0, 5).map((it: any) => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
         ordersList.push({
           id: `pharma_${po.id}`,
           source: 'pharmarack',
           order_no: po.order_no || null,
           order_time: timeStr,
-          items_count: uniqueItems.length,
+          items_count: itemsArr.length,
           items_preview: previews
         });
       }
@@ -883,33 +872,22 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
           ? matchingPlaced.filter((p: any) => Boolean(p.order_no && String(p.order_no).trim()))
           : matchingPlaced;
 
-        const seenMedKeysInStore = new Set<string>();
-
         for (const po of filteredPlaced) {
           let itemsArr: any[] = [];
           try {
             itemsArr = typeof po.items_json === 'string' ? JSON.parse(po.items_json) : (Array.isArray(po.items_json) ? po.items_json : []);
           } catch (_) {}
 
-          // Strict de-duplication: eliminate medicines that already appeared in an earlier order for this store today
-          const uniqueItems = itemsArr.filter((it: any) => {
-            const k = String(it.productCode || it.productName || it.name || '').trim().toLowerCase();
-            if (!k) return true;
-            if (seenMedKeysInStore.has(k)) return false;
-            seenMedKeysInStore.add(k);
-            return true;
-          });
-
-          totalItems += uniqueItems.length;
+          totalItems += itemsArr.length;
           const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
-          const previews = uniqueItems.slice(0, 5).map(it => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
+          const previews = itemsArr.slice(0, 5).map(it => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
 
           ordersList.push({
             id: `pharma_${po.id}`,
             source: 'pharmarack',
             order_no: po.order_no || null,
             order_time: timeStr,
-            items_count: uniqueItems.length,
+            items_count: itemsArr.length,
             items_preview: previews
           });
         }

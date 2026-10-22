@@ -1253,6 +1253,13 @@ export const api = {
   }) => apiClient.get('/purchases/check-duplicate', { params }).then(res => res.data),
   createManualPurchase: (data: PurchasePayload) => apiClient.post('/purchases/manual', data, { timeout: 30000 }).then(res => res.data),
   getDistributors: () => apiClient.get('/distributors').then(res => res.data),
+  checkDuplicateDistributorPhone: (phone: string, excludeId?: number | null, excludeName?: string) =>
+    apiClient.get<{
+      isDuplicate: boolean;
+      phone?: string;
+      matchedDistributor?: { id: number; name: string; phone: string } | null;
+      matchedDeliveryBoy?: { id: number; name: string; phone: string } | null;
+    }>('/distributors/check-duplicate-phone', { params: { phone, excludeId, excludeName } }).then(res => res.data),
   getPendingReturns: (distributorId: number) => apiClient.get(`/distributors/${distributorId}/pending-returns`).then(res => res.data),
   getLastPurchase: (name: string, medicineId?: number, distributorId?: number, batchNo?: string) => {
     const params: { name: string; medicine_id?: number; distributor_id?: number; batch_no?: string } = { name };

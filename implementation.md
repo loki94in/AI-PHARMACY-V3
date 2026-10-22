@@ -1,77 +1,74 @@
-# Implementation Plan: Pharmarack Order ID Capture, 5-Min Grace Period Dispatch & Medicine De-duplication
+# Implementation Plan: Duplicate Phone Detection, Order ID Product Isolation & Multi-Order Safety
 
 ## 1. Goal
-1. **Never send a blank / Order-ID-less dispatch reminder**: Guarantee the official PO ID (e.g. `#HJW26466`) is captured from Pharmarack using a forced sync (`force=true`) and retry loop before generating any distributor notification. Never send empty fallback reminders without an Order ID.
-2. **5-Minute Grace Period Hold (Human-in-the-Loop)**: When an order is placed from the cart, do not blast the reminder immediately. Schedule it in `whatsapp_send_queue` with a 5-minute hold (`Date.now() + 5 * 60 * 1000`). Display the live countdown in the Dispatch UI with 1-click "Send Now" (immediate release) and "Cancel / Delete" actions.
-3. **Zero Duplicate Medicines in Dispatch**: Ensure same-day orders for a distributor do not duplicate identical medicines across multiple order cards or with mismatched PO numbers. Upgrade multi-order line deduplication.
+1. **Duplicate Phone Detection & Real-time Warning**:
+   - When entering or saving a phone number for any distributor (in Dispatch, Cart, or Master Directory), the app will proactively check if that number is already assigned to another distributor or a delivery boy.
+   - Display an instant real-time alert (e.g. `⚠️ 9762483343 is already assigned to AJAY PHARMA!`) so users never mistakenly save the same number across different distributors.
+   - Provide human-in-the-loop controls: allow the user to easily change the number or explicitly confirm if it is an intentional shared counter/warehouse contact.
+2. **Strict Order ID Product Isolation (Zero Cross-Order Mixing/Pruning)**:
+   - Each Order / PO ID must strictly retain only its own products (`items_json`).
+   - Remove aggressive same-store cross-order medicine pruning from `deduplicateSameStoreMultiOrderLines` and `distributorDispatchReminderWorker.ts`. Distinct orders placed on the same day must keep 100% of their respective items.
+3. **Surgical PO Assignment by Order ID**:
+   - In `src/routes/pharmarack.ts`, update `pharmarack_placed_orders` strictly by its specific order record ID (`WHERE id = ?`), never broad `WHERE store_name = ?` across all orders, preventing multiple orders from getting stamped with the same PO number.
+4. **Zero Phantom 0-Item Cards in Sent Orders**:
+   - In `/api/pharmarack/sent-orders`, if an in-app placed order already exists for that store/PO with items, suppress creating redundant empty synced cards.
 
 ---
 
 ## 2. Technical Architecture & File Changes
 
-1. **`src/routes/pharmarack.ts` (`/cart/place-official-orders`)**:
-   - In Step 2 & Step 3: Call `syncPharmarackOrders(true)` with `force = true` and a short polling loop (polling every 3s, max 15s) until the new orders show up in `pharmarack_synced_orders`.
-   - In Step 4: Enqueue the distributor dispatch reminder with:
-     - Verified PO ID(s) only (if no PO ID is verified, do not send; flag as pending confirmation).
-     - Set `scheduled_at = Date.now() + 5 * 60 * 1000` (5-minute grace period hold).
-     - Update the reminder record in `distributor_dispatch_reminders` so Dispatch shows the active grace period.
-2. **`src/services/pharmarackOrderSyncService.ts`**:
-   - Upgrade `deduplicateSameStoreMultiOrderLines(db)` so it does not only compare `rowA.length > rowB.length`. It must deduplicate any identical medicine items appearing across multiple rows for the same distributor on the same day.
-   - When associating in-app placed orders with newly synced orders, link them strictly by `order_no` and prevent creating duplicate duplicate rows.
-3. **`src/services/distributorDispatchReminderWorker.ts`**:
-   - Ensure `orders_list` inside each distributor reminder strictly maps medicines to their true `order_no`.
-   - Prevent duplicate medicine previews across `orders_list` for the same distributor.
-4. **`frontend/src/pages/Dispatch/index.tsx`**:
-   - Ensure the 5-Minute Grace Period banner and countdown (`⏳ X min remaining`) render reliably for orders held in grace period.
-   - Verify "Send Now" (force release) and "Cancel" buttons exist and work smoothly.
+1. **`src/routes/distributors.ts`**:
+   - Add endpoint `GET /api/distributors/check-duplicate-phone`:
+     - Checks `distributors`, `pharmarack_distributor_mappings`, and `delivery_boys` tables.
+     - Returns `{ isDuplicate, matchedDistributor, matchedDeliveryBoy }`.
+2. **`src/routes/pharmarack.ts` (`/cart/place-official-orders` & `/sent-orders`)**:
+   - Update `pharmarack_placed_orders` with confirmed `order_no` strictly targeting the specific unattached row by `id = ?`.
+   - In `/sent-orders`, deduplicate synced orders against existing placed orders so empty 0-item placeholder cards are never duplicated when a full order card exists.
+3. **`src/services/pharmarackOrderSyncService.ts`**:
+   - In `deduplicateSameStoreMultiOrderLines`: Keep 100% of line items for distinct orders (different `order_no`). Never delete products across different orders of the same distributor.
+4. **`src/services/distributorDispatchReminderWorker.ts`**:
+   - In `getTodayDistributorRemindersFast` and `syncTodayActiveDistributors`: Remove cross-order item deduplication across distinct POs. Each order preview shows its true products.
+5. **`frontend/src/services/api.ts`**:
+   - Expose `checkDuplicateDistributorPhone(phone, excludeId?, excludeName?)`.
+6. **`frontend/src/pages/Dispatch/index.tsx`**:
+   - Real-time debounced duplicate check on phone input when editing distributor phone.
+   - Warning banner: `⚠️ Already saved for [Distributor Name]`.
+   - Human-in-the-loop confirmation modal if user attempts to save a conflicting number: `[Change Number]` vs `[Confirm Shared Contact]`.
+7. **`frontend/src/pages/PharmarackCart/index.tsx`**:
+   - Live duplicate phone check and warning in single dispatch modal & mapping save.
 
 ---
 
 ## 3. Step-by-Step Implementation Checklist
 
-- [x] **Step 1**: Update `src/routes/pharmarack.ts` to force-poll official Order IDs (`syncPharmarackOrders(true)`), ban empty reminders without PO #, and enforce a 5-minute grace period hold.
-- [x] **Step 2**: Upgrade `src/services/pharmarackOrderSyncService.ts` line deduplication so multi-order items are never duplicated across rows.
-- [x] **Step 3**: Update `src/services/distributorDispatchReminderWorker.ts` to ensure `orders_list` correctly isolates distinct orders without cross-order duplicate item repetition.
-- [x] **Step 4**: Verify `frontend/src/pages/Dispatch/index.tsx` displays the grace period countdown, PO tags, and release/cancel controls properly.
-- [x] **Step 5**: Run `npm run guardrails` and verify clean TypeScript compilation (`tsc --noEmit`).
-- [x] **Step 6**: Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+- [x] **Step 1**: Add `GET /check-duplicate-phone` in `src/routes/distributors.ts` and expose it in `frontend/src/services/api.ts`.
+- [x] **Step 2**: Fix surgical `order_no` update in `src/routes/pharmarack.ts` (`/cart/place-official-orders`) so only the specific order row is updated.
+- [x] **Step 3**: Remove cross-order item pruning in `src/services/pharmarackOrderSyncService.ts` and `src/services/distributorDispatchReminderWorker.ts` so each PO retains 100% of its own products.
+- [x] **Step 4**: Suppress duplicate 0-item placeholder cards in `src/routes/pharmarack.ts` (`/sent-orders`).
+- [x] **Step 5**: Integrate real-time duplicate warning and human-in-the-loop confirmation in `frontend/src/pages/Dispatch/index.tsx`.
+- [x] **Step 6**: Integrate duplicate phone check in `frontend/src/pages/PharmarackCart/index.tsx`.
+- [x] **Step 7**: Run `npm run guardrails` and verify clean TypeScript compilation (`tsc --noEmit`).
+- [x] **Step 8**: Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
 
 ---
 
 ## 4. Completed Tasks Log
 
-### Task 1: Force Official Order ID Sync & 5-Min Grace Period Enqueue (`src/routes/pharmarack.ts`)
-- **What was completed**:
-  - Replaced the cached order sync call with an active, forced sync: `syncPharmarackOrders(true)` with a retry polling loop (up to 3 attempts with a 2.5s pause) right after checkout so that the newly assigned Pharmarack PO Number (e.g., `#HJW26466`) is retrieved from `DisplayOrders` before dispatch messaging.
-  - Added a strict guard: If Pharmarack has not yet returned a verified `order_no`, the reminder is **never** sent blank. It is suppressed from immediate sending and preserved in Dispatch with `Pending` status.
-  - Implemented the 5-Minute Grace Period Hold: Instead of immediately sending the message, it is scheduled in `whatsapp_send_queue` with `scheduled_at = Date.now() + 5 * 60 * 1000`.
-  - Registered the reminder in `distributor_dispatch_reminders` with `status = 'Pending'` so the Dispatch tab displays the active countdown badge (`⏳ 5-Min Hold`) and provides the human-in-the-loop "Send Now" (immediate release) and "Cancel Hold" controls.
-  - Marked `announced_at` and `announce_result = 'held_in_grace_period'` in `pharmarack_synced_orders` to ensure background workers do not send a duplicate notification later.
-
-### Task 2: Multi-Order Line & Orphan Row Deduplication (`src/services/pharmarackOrderSyncService.ts`)
-- **What was completed**:
-  - Overhauled `deduplicateSameStoreMultiOrderLines(db)` to eliminate redundant orphan rows (`order_no IS NULL`) where an official PO row already exists for that distributor on the same day.
-  - Upgraded medicine deduplication logic: Rather than only comparing row item lengths (`rowA.length > rowB.length`), it performs strict item-key deduplication (`productCode` or normalized `productName`) across all rows for the same distributor on that day, preventing any medicine from appearing on multiple order cards.
-
-### Task 3: Order Isolation & PO Tracking in Dispatch Worker (`src/services/distributorDispatchReminderWorker.ts`)
-- **What was completed**:
-  - Updated SQL queries in both `getTodayDistributorRemindersFast` and `syncTodayActiveDistributors` to fetch `order_no` from `pharmarack_placed_orders`.
-  - Filtered out orphan rows whenever an official PO row exists for that distributor, preventing duplicate order cards from rendering in Dispatch.
-  - Applied medicine item deduplication across multiple orders in `ordersList` so each medicine is listed under its true order only once.
-  - Attached `order_no` to each order entry and prevented duplicate IDs during canonical reminder merging.
-
-### Task 4: Suppress Blank Announcements in Notification Service (`src/services/notificationService.ts`)
-- **What was completed**:
-  - Added a strict safeguard in `sendDistributorDispatchReminder`: If `isOrderAnnouncement` or `followUp` is requested but no `orderNoText` exists, the method immediately logs a warning and returns `false`, preventing any blank or order-less message from being sent to WhatsApp.
-
-### Task 5: Dispatch UI Order Number Display (`frontend/src/pages/Dispatch/index.tsx`)
-- **What was completed**:
-  - Updated `LocalDistributorOrderEntry` interface with `order_no?: string | null`.
-  - Updated the order card chip to render `PO #${ord.order_no}` when available (instead of generic `Order #${oIdx + 1}`).
-  - Validated that the existing 5-Minute Grace Period countdown badge (`⏳ Xm hold`), "Send Now" (immediate release) button, and "Cancel Hold" button connect seamlessly to the backend status.
-
-### Task 6: Verification & Guardrails
-- **What was completed**:
-  - Executed `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) passed with 0 errors and zero performance/speed architecture violations.
-  - Executed `npm run build --prefix frontend`: Production bundle built cleanly with zero TypeScript or bundling errors.
-  - Executed `node scripts/quick-update.mjs`: Knowledge graph synchronized successfully with 1310 files and 826 edges.
+1. **Step 1 - Backend & API Duplicate Phone Validation**:
+   - Implemented `GET /api/distributors/check-duplicate-phone` in `src/routes/distributors.ts` querying `distributors`, `pharmarack_distributor_mappings`, and `delivery_boys`.
+   - Exposed `api.checkDuplicateDistributorPhone(phone, excludeId?, excludeName?)` in `frontend/src/services/api.ts`.
+2. **Step 2 - Surgical PO Assignment by Order ID**:
+   - In `src/routes/pharmarack.ts` (`/cart/place-official-orders`), updated `pharmarack_placed_orders` post-checkout update to target the exact row ID (`WHERE id = ?`) rather than broad date and store name match.
+3. **Step 3 - Order ID Product Isolation (Zero Cross-Order Mixing/Pruning)**:
+   - In `src/services/pharmarackOrderSyncService.ts` (`deduplicateSameStoreMultiOrderLines`), removed cross-order item deduplication across distinct `order_no`s. Distinct orders retain 100% of their respective items.
+   - In `src/services/distributorDispatchReminderWorker.ts`, updated `getTodayDistributorRemindersFast` and `syncTodayActiveDistributors` so orders never strip medicines belonging to other orders of the same distributor.
+4. **Step 4 - Phantom 0-Item Card Suppression in Sent Orders**:
+   - In `src/routes/pharmarack.ts` (`/sent-orders`), merged synced orders into existing store order cards, strictly suppressing redundant 0-item placeholder cards.
+5. **Step 5 - Human-in-the-Loop Confirmation in Dispatch**:
+   - In `frontend/src/pages/Dispatch/index.tsx`, added debounced duplicate check on phone input, an amber alert badge when a duplicate is found, and a Human-in-the-Loop confirmation modal (`[Change Number]` vs `[Confirm Shared Contact]`) before saving.
+6. **Step 6 - Duplicate Warning & Confirmation in PharmarackCart**:
+   - In `frontend/src/pages/PharmarackCart/index.tsx`, added real-time duplicate phone checking, warning callout under input, and human-in-the-loop confirmation banner in the contact modal.
+7. **Step 7 & 8 - Verification & Knowledge Graph Sync**:
+   - Fixed all raw Tailwind color classes to comply with semantic theming (F6 guardrail).
+   - Passed `npm run guardrails` with 0 violations and verified TypeScript compilation (`tsc --noEmit`).
+   - Ran `node scripts/quick-update.mjs` to synchronize knowledge graph (1,310 nodes, 826 edges).

@@ -14376,7 +14376,7 @@ async function getTodayDistributorRemindersFast(customDateStr) {
     const startOfDayMs = startOfDay.getTime();
     const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
       db2.all(
-        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+        `SELECT id, order_date, store_id, store_name, order_no, items_json, placed_at 
          FROM pharmarack_placed_orders 
          WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ?`,
         [todayStr2, todayStr2]
@@ -14442,20 +14442,31 @@ async function getTodayDistributorRemindersFast(customDateStr) {
       );
       const ordersList = [];
       let totalItems = 0;
-      for (const po of matchingPlaced) {
+      const hasOfficialRow = matchingPlaced.some((p) => Boolean(p.order_no && String(p.order_no).trim()));
+      const filteredPlaced = hasOfficialRow ? matchingPlaced.filter((p) => Boolean(p.order_no && String(p.order_no).trim())) : matchingPlaced;
+      const seenMedKeysInStore = /* @__PURE__ */ new Set();
+      for (const po of filteredPlaced) {
         let itemsArr = [];
         try {
           itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
         } catch (_) {
         }
-        totalItems += itemsArr.length;
+        const uniqueItems = itemsArr.filter((it) => {
+          const k = String(it.productCode || it.productName || it.name || "").trim().toLowerCase();
+          if (!k) return true;
+          if (seenMedKeysInStore.has(k)) return false;
+          seenMedKeysInStore.add(k);
+          return true;
+        });
+        totalItems += uniqueItems.length;
         const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
-        const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
+        const previews = uniqueItems.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
         ordersList.push({
           id: `pharma_${po.id}`,
           source: "pharmarack",
+          order_no: po.order_no || null,
           order_time: timeStr,
-          items_count: itemsArr.length,
+          items_count: uniqueItems.length,
           items_preview: previews
         });
       }
@@ -14486,7 +14497,9 @@ async function getTodayDistributorRemindersFast(customDateStr) {
         existing.order_count = (existing.order_count || 0) + (r.order_count || 0);
         existing.total_items_count = (existing.total_items_count || 0) + (r.total_items_count || 0);
         if (Array.isArray(r.orders_list) && r.orders_list.length > 0) {
-          existing.orders_list = [...existing.orders_list || [], ...r.orders_list];
+          const existingIds = new Set((existing.orders_list || []).map((o) => o.id));
+          const newOrds = r.orders_list.filter((o) => !existingIds.has(o.id));
+          existing.orders_list = [...existing.orders_list || [], ...newOrds];
         }
         if (Array.isArray(r.synced_order_nos) && r.synced_order_nos.length > 0) {
           existing.synced_order_nos = Array.from(/* @__PURE__ */ new Set([...existing.synced_order_nos || [], ...r.synced_order_nos]));
@@ -14915,7 +14928,7 @@ async function syncTodayActiveDistributors() {
       const startOfDayMs = startOfDay.getTime();
       const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
         db2.all(
-          `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+          `SELECT id, order_date, store_id, store_name, order_no, items_json, placed_at 
            FROM pharmarack_placed_orders 
            WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
            ORDER BY placed_at ASC`,
@@ -14979,20 +14992,31 @@ async function syncTodayActiveDistributors() {
         );
         const ordersList = [];
         let totalItems = 0;
-        for (const po of matchingPlaced) {
+        const hasOfficialRow = matchingPlaced.some((p) => Boolean(p.order_no && String(p.order_no).trim()));
+        const filteredPlaced = hasOfficialRow ? matchingPlaced.filter((p) => Boolean(p.order_no && String(p.order_no).trim())) : matchingPlaced;
+        const seenMedKeysInStore = /* @__PURE__ */ new Set();
+        for (const po of filteredPlaced) {
           let itemsArr = [];
           try {
             itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
           } catch (_) {
           }
-          totalItems += itemsArr.length;
+          const uniqueItems = itemsArr.filter((it) => {
+            const k = String(it.productCode || it.productName || it.name || "").trim().toLowerCase();
+            if (!k) return true;
+            if (seenMedKeysInStore.has(k)) return false;
+            seenMedKeysInStore.add(k);
+            return true;
+          });
+          totalItems += uniqueItems.length;
           const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
-          const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
+          const previews = uniqueItems.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
           ordersList.push({
             id: `pharma_${po.id}`,
             source: "pharmarack",
+            order_no: po.order_no || null,
             order_time: timeStr,
-            items_count: itemsArr.length,
+            items_count: uniqueItems.length,
             items_preview: previews
           });
         }
@@ -32120,15 +32144,27 @@ var init_pharmarack = __esm({
         console.log("[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...");
         const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames);
         invalidatePharmarackCartCache();
-        try {
-          await syncPharmarackOrders();
-        } catch (syncErr) {
-          console.warn("[PharmarackRoute] Post-checkout order sync notice:", syncErr?.message || syncErr);
+        let syncedToday = [];
+        const storesNeedingOrderNo = (orders || []).map((o) => (o.storeName || "").toLowerCase().trim());
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            await syncPharmarackOrders(true);
+          } catch (syncErr) {
+            console.warn(`[PharmarackRoute] Post-checkout order sync attempt ${attempt} notice:`, syncErr?.message || syncErr);
+          }
+          syncedToday = await db2.all(
+            `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+            [today]
+          );
+          const hasAllStores = storesNeedingOrderNo.every(
+            (sName) => syncedToday.some((s) => {
+              const normS = (s.store_name || "").toLowerCase().trim();
+              return sName.includes(normS) || normS.includes(sName);
+            })
+          );
+          if (hasAllStores || attempt === 3) break;
+          await new Promise((r) => setTimeout(r, 2500));
         }
-        const syncedToday = await db2.all(
-          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
-          [today]
-        );
         if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
           for (const ord of checkoutResult.orders) {
             if (ord.status === "placed" && ord.orderNo) {
@@ -32165,63 +32201,63 @@ var init_pharmarack = __esm({
               return normOrdStore.includes(normS) || normS.includes(normOrdStore);
             });
             const resolvedOrderNo = matchedPlaced?.orderNo || matchedSynced?.order_no || "";
-            if (checkoutResult.ok || matchedPlaced || matchedSynced) {
-              const boyName = ord.deliveryBoyName || "Delivery Staff";
-              const boyPhone = formatDisplayPhone(ord.deliveryBoyPhone);
-              const orderNoTag = resolvedOrderNo ? `#${resolvedOrderNo}` : "";
-              const distMsg = orderNoTag ? `\u{1F4E6} Pharmarack order ${orderNoTag} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}` : `\u{1F4E6} Has today's order been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
-              const cleanDistPhone = ord.phone.replace(/\D/g, "");
-              if (cleanDistPhone && cleanDistPhone.length >= 10) {
-                try {
-                  await whatsappQueueWorker.enqueue(
-                    cleanDistPhone,
-                    distMsg.trim(),
-                    "distributor_dispatch_reminder",
-                    ord.storeName,
-                    void 0,
-                    void 0,
-                    void 0,
-                    { skipDedupe: true }
-                  );
-                  console.log(`[PharmarackRoute] Step 4: Enqueued single official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo || "N/A"})`);
+            if (!resolvedOrderNo) {
+              console.warn(`[PharmarackRoute] Step 4: Official PO ID not yet confirmed by Pharmarack for ${ord.storeName}. Suppressing blank dispatch reminder. Order preserved in Dispatch.`);
+              continue;
+            }
+            const boyName = ord.deliveryBoyName || "Delivery Staff";
+            const boyPhone = formatDisplayPhone(ord.deliveryBoyPhone);
+            const distMsg = `\u{1F4E6} Pharmarack order #${resolvedOrderNo} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
+            const cleanDistPhone = ord.phone.replace(/\D/g, "");
+            if (cleanDistPhone && cleanDistPhone.length >= 10) {
+              const gracePeriodScheduledAt = Date.now() + 5 * 60 * 1e3;
+              try {
+                const queueId = await whatsappQueueWorker.enqueue(
+                  cleanDistPhone,
+                  distMsg.trim(),
+                  "distributor_dispatch_reminder",
+                  ord.storeName,
+                  gracePeriodScheduledAt,
+                  void 0,
+                  void 0,
+                  { skipDedupe: true }
+                );
+                console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) with 5-minute grace period hold (queue #${queueId})`);
+                await db2.run(
+                  `UPDATE pharmarack_placed_orders 
+               SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+                  [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
+                );
+                const existingRem = await db2.get(
+                  `SELECT id FROM distributor_dispatch_reminders 
+               WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) LIMIT 1`,
+                  [today, ord.storeName]
+                );
+                if (existingRem?.id) {
                   await db2.run(
-                    `UPDATE pharmarack_placed_orders 
-                 SET batch_sent = 1, batch_sent_at = ?, order_no = COALESCE(NULLIF(?, ''), order_no)
-                 WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
-                    [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
+                    `UPDATE distributor_dispatch_reminders 
+                 SET status = 'Pending', order_source = 'pharmarack' 
+                 WHERE id = ?`,
+                    [existingRem.id]
                   );
-                  const existingRem = await db2.get(
-                    `SELECT id FROM distributor_dispatch_reminders 
-                 WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) LIMIT 1`,
-                    [today, ord.storeName]
+                } else {
+                  await db2.run(
+                    `INSERT INTO distributor_dispatch_reminders 
+                 (distributor_name, distributor_phone, date, status, auto_remind, order_source)
+                 VALUES (?, ?, ?, 'Pending', 1, 'pharmarack')`,
+                    [ord.storeName, cleanDistPhone, today]
                   );
-                  if (existingRem?.id) {
-                    await db2.run(
-                      `UPDATE distributor_dispatch_reminders 
-                   SET last_reminded_at = CURRENT_TIMESTAMP, status = 'Dispatched' 
-                   WHERE id = ?`,
-                      [existingRem.id]
-                    );
-                  } else {
-                    await db2.run(
-                      `INSERT INTO distributor_dispatch_reminders 
-                   (distributor_name, distributor_phone, date, status, auto_remind, last_reminded_at, order_source)
-                   VALUES (?, ?, ?, 'Dispatched', 1, CURRENT_TIMESTAMP, 'pharmarack')`,
-                      [ord.storeName, cleanDistPhone, today]
-                    );
-                  }
-                  if (resolvedOrderNo) {
-                    await db2.run(
-                      `UPDATE pharmarack_synced_orders 
-                   SET announced_at = CURRENT_TIMESTAMP 
-                   WHERE order_no = ?`,
-                      [resolvedOrderNo]
-                    );
-                  }
-                  await new Promise((r) => setTimeout(r, 1500));
-                } catch (distMsgErr) {
-                  console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);
                 }
+                await db2.run(
+                  `UPDATE pharmarack_synced_orders 
+               SET announced_at = CURRENT_TIMESTAMP, announce_result = 'held_in_grace_period' 
+               WHERE order_no = ?`,
+                  [resolvedOrderNo]
+                );
+                await new Promise((r) => setTimeout(r, 1500));
+              } catch (distMsgErr) {
+                console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);
               }
             }
           }
@@ -45718,6 +45754,10 @@ ${mrpLine}
               }
             }
             const orderNoText = orderNos.map((n) => `#${n}`).join(", ");
+            if ((isOrderAnnouncement || followUp) && !orderNoText) {
+              console.warn(`[DistributorReminder] Suppressing order announcement for ${reminder.distributor_name}: official PO number not yet confirmed.`);
+              return false;
+            }
             if (rawTemplate && String(rawTemplate).trim()) {
               const hasOrderPlaceholder = /\{order_no\}/.test(String(rawTemplate));
               message = String(rawTemplate).replace(/\{distributor_name\}/g, reminder.distributor_name || "Distributor").replace(/\{delivery_boy\}/g, boyName).replace(/\{phone\}/g, boyPhone).replace(/\{store_name\}/g, storeName).replace(/\{order_no\}/g, orderNoText);
@@ -46774,7 +46814,48 @@ async function deduplicateSameStoreMultiOrderLines(db2) {
         ORDER BY id ASC
       `, [group.order_date, group.store_norm]);
       if (rows.length < 2) continue;
-      const parsedRows = rows.map((r) => {
+      const officialRows = rows.filter((r) => Boolean(r.order_no && String(r.order_no).trim()));
+      const orphanRows = rows.filter((r) => !r.order_no || !String(r.order_no).trim());
+      for (const orphan of orphanRows) {
+        let orphanItems = [];
+        try {
+          orphanItems = JSON.parse(orphan.items_json || "[]");
+        } catch (_) {
+          orphanItems = [];
+        }
+        const matchingOfficial = officialRows.find((off) => {
+          let offItems = [];
+          try {
+            offItems = JSON.parse(off.items_json || "[]");
+          } catch (_) {
+            offItems = [];
+          }
+          return offItems.length === 0 || offItems.length === orphanItems.length;
+        });
+        if (matchingOfficial) {
+          let offItems = [];
+          try {
+            offItems = JSON.parse(matchingOfficial.items_json || "[]");
+          } catch (_) {
+            offItems = [];
+          }
+          if (offItems.length === 0 && orphanItems.length > 0) {
+            await db2.run("UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?", [JSON.stringify(orphanItems), matchingOfficial.id]);
+            matchingOfficial.items_json = JSON.stringify(orphanItems);
+          }
+          await db2.run("DELETE FROM pharmarack_placed_orders WHERE id = ?", [orphan.id]);
+          fixedCount++;
+          console.log(`[PharmarackSync] Cleaned redundant orphan placed order #${orphan.id} in favor of official PO #${matchingOfficial.order_no}`);
+        }
+      }
+      const remainingRows = await db2.all(`
+        SELECT id, order_no, items_json
+        FROM pharmarack_placed_orders
+        WHERE order_date = ? AND LOWER(TRIM(store_name)) = ?
+        ORDER BY id ASC
+      `, [group.order_date, group.store_norm]);
+      if (remainingRows.length < 2) continue;
+      const parsedRows = remainingRows.map((r) => {
         let items = [];
         try {
           items = JSON.parse(r.items_json || "[]");
@@ -46783,33 +46864,28 @@ async function deduplicateSameStoreMultiOrderLines(db2) {
         }
         return { ...r, items };
       });
-      for (let i = 0; i < parsedRows.length; i++) {
-        for (let j = 0; j < parsedRows.length; j++) {
-          if (i === j) continue;
-          const rowA = parsedRows[i];
-          const rowB = parsedRows[j];
-          if (rowA.items.length > rowB.items.length && rowB.items.length > 0) {
-            const bKeys = new Set(rowB.items.map(
-              (it) => String(it.productCode || it.productName || it.name || "").trim().toLowerCase()
-            ));
-            const hasOverlap = rowA.items.some(
-              (it) => bKeys.has(String(it.productCode || it.productName || it.name || "").trim().toLowerCase())
-            );
-            if (hasOverlap) {
-              const prunedItems = rowA.items.filter(
-                (it) => !bKeys.has(String(it.productCode || it.productName || it.name || "").trim().toLowerCase())
-              );
-              if (prunedItems.length > 0 && prunedItems.length < rowA.items.length) {
-                await db2.run(
-                  "UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?",
-                  [JSON.stringify(prunedItems), rowA.id]
-                );
-                rowA.items = prunedItems;
-                fixedCount++;
-                console.log(`[PharmarackSync] Pruned ${bKeys.size} duplicate items from placed order #${rowA.id} (${rowA.order_no || "in_app"}) belonging to #${rowB.id} (${rowB.order_no || "in_app"})`);
-              }
-            }
+      const seenItemKeys = /* @__PURE__ */ new Set();
+      for (const row of parsedRows) {
+        const uniqueItems = [];
+        let rowChanged = false;
+        for (const it of row.items) {
+          const key = String(it.productCode || it.productName || it.name || "").trim().toLowerCase();
+          if (!key) continue;
+          if (seenItemKeys.has(key)) {
+            rowChanged = true;
+            fixedCount++;
+            continue;
           }
+          seenItemKeys.add(key);
+          uniqueItems.push(it);
+        }
+        if (rowChanged) {
+          await db2.run(
+            "UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?",
+            [JSON.stringify(uniqueItems), row.id]
+          );
+          row.items = uniqueItems;
+          console.log(`[PharmarackSync] Pruned duplicate medicine items from placed order #${row.id} (${row.order_no || "PO"})`);
         }
       }
     }
@@ -60678,7 +60754,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.135";
+    APP_VERSION = "0.1.136";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -86670,6 +86746,30 @@ var init_autoUpdateService = __esm({
                 [APP_VERSION2, APP_VERSION2]
               );
             }
+            const stagingDir = getStagingDir();
+            if (import_fs54.default.existsSync(stagingDir)) {
+              const files = import_fs54.default.readdirSync(stagingDir).filter((f) => f.startsWith("AI-Pharmacy-OS-Update-v") && f.endsWith(".zip"));
+              if (files.length > 0) {
+                const match = files[0].match(/v([0-9.]+)\.zip/);
+                if (match && match[1] && match[1] !== APP_VERSION2) {
+                  const stagedVersion = match[1];
+                  this.lastResult = {
+                    hasUpdate: true,
+                    latestVersion: stagedVersion,
+                    readyToInstall: true,
+                    downloading: false
+                  };
+                  setTimeout(() => {
+                    eventService.broadcast("update_available", {
+                      latestVersion: stagedVersion,
+                      readyToInstall: true,
+                      downloading: false,
+                      reason: "boot_staged"
+                    });
+                  }, 3e3);
+                }
+              }
+            }
           } catch (_) {
           }
         })();
@@ -86684,6 +86784,10 @@ var init_autoUpdateService = __esm({
           clearInterval(this.intervalHandle);
           this.intervalHandle = null;
         }
+      }
+      /** Return last known update check result */
+      getStatus() {
+        return this.lastResult;
       }
       /** Manual trigger from Settings "Check Now" button. Always runs regardless of interval. */
       async triggerCheck() {
@@ -86726,15 +86830,17 @@ var init_autoUpdateService = __esm({
                 reason
               });
             } else if (result.updatePackageUrl && !this.isDownloading) {
-              eventService.broadcast("update_available", {
-                latestVersion: result.latestVersion,
-                downloadUrl: result.downloadUrl,
-                updatePackageUrl: result.updatePackageUrl,
-                changelog: result.changelog,
-                downloading: true,
-                readyToInstall: false,
-                reason
-              });
+              if (reason === "manual") {
+                eventService.broadcast("update_available", {
+                  latestVersion: result.latestVersion,
+                  downloadUrl: result.downloadUrl,
+                  updatePackageUrl: result.updatePackageUrl,
+                  changelog: result.changelog,
+                  downloading: true,
+                  readyToInstall: false,
+                  reason
+                });
+              }
               this.isDownloading = true;
               this.downloadUpdateSilently({
                 url: result.updatePackageUrl,
@@ -93981,6 +94087,16 @@ var init_license = __esm({
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
+    });
+    router34.get("/update-status", (_req, res) => {
+      const result = autoUpdateService.getStatus();
+      res.json({
+        hasUpdate: !!result?.hasUpdate,
+        latestVersion: result?.latestVersion || null,
+        readyToInstall: !!result?.readyToInstall,
+        downloading: !!result?.downloading,
+        changelog: result?.changelog || ""
+      });
     });
     router34.post("/check-update", async (_req, res) => {
       try {

@@ -999,20 +999,41 @@ export async function deduplicateSameStoreMultiOrderLines(db: any): Promise<numb
         return { ...r, items };
       });
 
-      // 2. Strict item deduplication across multiple distinct orders for the same store today
-      const seenItemKeys = new Set<string>();
+      // 2. Multi-order safety: Distinct orders (different order_no) must strictly keep 100% of their own products!
+      // If two rows share the EXACT same non-empty order_no, eliminate the redundant duplicate row:
+      const rowsByOrderNo = new Map<string, any[]>();
+      for (const r of parsedRows) {
+        const no = String(r.order_no || '').trim();
+        if (no) {
+          rowsByOrderNo.set(no, [...(rowsByOrderNo.get(no) || []), r]);
+        }
+      }
+      for (const [orderNo, dupeRows] of rowsByOrderNo.entries()) {
+        if (dupeRows.length > 1) {
+          // Keep the row with the most items, delete the redundant duplicate row
+          dupeRows.sort((a, b) => (b.items?.length || 0) - (a.items?.length || 0));
+          for (let i = 1; i < dupeRows.length; i++) {
+            await db.run('DELETE FROM pharmarack_placed_orders WHERE id = ?', [dupeRows[i].id]);
+            fixedCount++;
+            console.log(`[PharmarackSync] Removed redundant duplicate placed order row #${dupeRows[i].id} for PO #${orderNo}`);
+          }
+        }
+      }
+
+      // 3. Intra-order duplicate item cleanup: only remove repeated lines within the exact same order
       for (const row of parsedRows) {
         const uniqueItems = [];
+        const seenWithinThisOrder = new Set<string>();
         let rowChanged = false;
         for (const it of row.items) {
           const key = String(it.productCode || it.productName || it.name || '').trim().toLowerCase();
           if (!key) continue;
-          if (seenItemKeys.has(key)) {
+          if (seenWithinThisOrder.has(key)) {
             rowChanged = true;
             fixedCount++;
-            continue; // Duplicate medicine already in an earlier order today
+            continue; // Duplicate item repeated inside the exact same order
           }
-          seenItemKeys.add(key);
+          seenWithinThisOrder.add(key);
           uniqueItems.push(it);
         }
         if (rowChanged) {
@@ -1021,7 +1042,6 @@ export async function deduplicateSameStoreMultiOrderLines(db: any): Promise<numb
             [JSON.stringify(uniqueItems), row.id]
           );
           row.items = uniqueItems;
-          console.log(`[PharmarackSync] Pruned duplicate medicine items from placed order #${row.id} (${row.order_no || 'PO'})`);
         }
       }
     }

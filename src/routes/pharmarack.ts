@@ -3033,13 +3033,33 @@ router.post('/cart/place-official-orders', async (req, res) => {
             );
             console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) with 5-minute grace period hold (queue #${queueId})`);
             
-            // 1. Update pharmarack_placed_orders batch_sent status and attach confirmed order_no
-            await db.run(
-              `UPDATE pharmarack_placed_orders 
-               SET batch_sent = 1, batch_sent_at = ?, order_no = ?
-               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
-              [toLocalSqlDateTime(new Date()), resolvedOrderNo, today, ord.storeName]
+            // 1. Update pharmarack_placed_orders batch_sent status and attach confirmed order_no surgically by row ID
+            const targetPlacedRow = await db.get(
+              `SELECT id FROM pharmarack_placed_orders 
+               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) 
+                 AND (order_no IS NULL OR order_no = '' OR order_no = ?)
+               ORDER BY id DESC LIMIT 1`,
+              [today, ord.storeName, resolvedOrderNo]
             );
+            if (targetPlacedRow?.id) {
+              await db.run(
+                `UPDATE pharmarack_placed_orders 
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 WHERE id = ?`,
+                [toLocalSqlDateTime(new Date()), resolvedOrderNo, targetPlacedRow.id]
+              );
+            } else {
+              await db.run(
+                `UPDATE pharmarack_placed_orders 
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 WHERE id = (
+                   SELECT id FROM pharmarack_placed_orders 
+                   WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
+                   ORDER BY id DESC LIMIT 1
+                 )`,
+                [toLocalSqlDateTime(new Date()), resolvedOrderNo, today, ord.storeName]
+              );
+            }
 
             // 2. Register reminder in distributor_dispatch_reminders with Pending status so 5-min grace period countdown renders in Dispatch
             const existingRem = await db.get(
@@ -3829,7 +3849,26 @@ router.get('/sent-orders', async (req, res) => {
       const sNo = String(s.order_no || '').trim();
       if (sNo && !claimedOrderNos.has(sNo)) {
         claimedOrderNos.add(sNo);
+
+        // Check if an existing parsed order for this store already exists
+        const existingStoreOrder = parsedOrders.find(p =>
+          (!p.order_no || String(p.order_no).trim().toLowerCase() === sNo.toLowerCase()) &&
+          String(p.store_name || '').toLowerCase().trim() === String(s.store_name || '').toLowerCase().trim()
+        );
+
+        if (existingStoreOrder) {
+          if (!existingStoreOrder.order_no) existingStoreOrder.order_no = sNo;
+          if (!existingStoreOrder.pharmarack_order_nos?.includes(sNo)) {
+            existingStoreOrder.pharmarack_order_nos = [...(existingStoreOrder.pharmarack_order_nos || []), sNo];
+          }
+          continue; // Successfully merged into existing placed order card; never create duplicate 0-item card
+        }
+
         const placed = await db.get('SELECT * FROM pharmarack_placed_orders WHERE order_no = ? LIMIT 1', [sNo]);
+        if (placed && parsedOrders.some(p => p.id === placed.id)) {
+          continue; // Already present in parsedOrders
+        }
+
         let items = [];
         if (placed?.items_json) {
           try { items = JSON.parse(placed.items_json); } catch (_) {}

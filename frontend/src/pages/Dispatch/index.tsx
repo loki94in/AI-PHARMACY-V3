@@ -34,6 +34,7 @@ import {
   Store as StoreIcon,
   RotateCcw,
   ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { api, apiClient, type DistributorDispatchReminder } from '../../services/api';
 import { whatsappQueueEvent, toastEvent, messageSendEvent } from '../../services/events';
@@ -532,20 +533,93 @@ const Dispatch = () => {
   const [distPhoneInput, setDistPhoneInput] = useState<string>('');
   const [isSavingDistPhone, setIsSavingDistPhone] = useState<boolean>(false);
 
+  // Real-time Duplicate Phone Detection
+  const [phoneDuplicateWarning, setPhoneDuplicateWarning] = useState<{
+    isDuplicate: boolean;
+    name?: string;
+    phone?: string;
+    isDeliveryBoy?: boolean;
+  } | null>(null);
+  const [checkingPhoneDuplicate, setCheckingPhoneDuplicate] = useState<boolean>(false);
+  const [duplicateConfirmTarget, setDuplicateConfirmTarget] = useState<{
+    item: LocalReminderRow;
+    phone: string;
+    duplicateName: string;
+    isDeliveryBoy?: boolean;
+  } | null>(null);
+
   const handleStartEditDistPhone = (item: LocalReminderRow) => {
     setEditingDistPhoneId(item.id);
     setDistPhoneInput(item.distributor_phone || '');
+    setPhoneDuplicateWarning(null);
   };
 
-  const handleSaveDistributorPhone = async (item: LocalReminderRow) => {
+  // Debounced check as user types/pastes a 10-digit number
+  useEffect(() => {
+    if (!editingDistPhoneId) {
+      setPhoneDuplicateWarning(null);
+      return;
+    }
+    const clean = distPhoneInput.replace(/\D/g, '');
+    const phone10 = clean.length === 12 && clean.startsWith('91') ? clean.slice(2) : (clean.length === 11 && clean.startsWith('0') ? clean.slice(1) : clean);
+    if (phone10.length !== 10) {
+      setPhoneDuplicateWarning(null);
+      return;
+    }
+    const targetDist = distributorReminders.find(r => r.id === editingDistPhoneId);
+    const timer = setTimeout(async () => {
+      try {
+        setCheckingPhoneDuplicate(true);
+        const res = await api.checkDuplicateDistributorPhone(phone10, targetDist?.distributor_id || null, targetDist?.distributor_name);
+        if (res && res.isDuplicate) {
+          if (res.matchedDistributor) {
+            setPhoneDuplicateWarning({
+              isDuplicate: true,
+              name: res.matchedDistributor.name,
+              phone: res.matchedDistributor.phone,
+              isDeliveryBoy: false
+            });
+          } else if (res.matchedDeliveryBoy) {
+            setPhoneDuplicateWarning({
+              isDuplicate: true,
+              name: res.matchedDeliveryBoy.name,
+              phone: res.matchedDeliveryBoy.phone,
+              isDeliveryBoy: true
+            });
+          }
+        } else {
+          setPhoneDuplicateWarning(null);
+        }
+      } catch {
+        setPhoneDuplicateWarning(null);
+      } finally {
+        setCheckingPhoneDuplicate(false);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [distPhoneInput, editingDistPhoneId, distributorReminders]);
+
+  const handleSaveDistributorPhone = async (item: LocalReminderRow, bypassDuplicateCheck = false) => {
     const cleanPhone = distPhoneInput.replace(/\D/g, '');
     if (cleanPhone && cleanPhone.length !== 10 && !(cleanPhone.length === 12 && cleanPhone.startsWith('91'))) {
       showNotif('Please enter a valid 10-digit phone number', 'error');
       return;
     }
+    const finalPhone = cleanPhone.length === 12 && cleanPhone.startsWith('91') ? cleanPhone.slice(2) : cleanPhone;
+
+    // Human-in-the-loop: If duplicate detected and user hasn't explicitly confirmed sharing, open confirmation modal
+    if (phoneDuplicateWarning?.isDuplicate && !bypassDuplicateCheck && finalPhone) {
+      setDuplicateConfirmTarget({
+        item,
+        phone: finalPhone,
+        duplicateName: phoneDuplicateWarning.name || 'another contact',
+        isDeliveryBoy: phoneDuplicateWarning.isDeliveryBoy
+      });
+      return;
+    }
+
     setIsSavingDistPhone(true);
     try {
-      const finalPhone = cleanPhone.length === 12 && cleanPhone.startsWith('91') ? cleanPhone.slice(2) : cleanPhone;
       // Persist atomically across tables
       await apiClient.post('/distributors', {
         name: item.distributor_name,
@@ -553,6 +627,8 @@ const Dispatch = () => {
       });
       setDistributorReminders(prev => prev.map(r => r.id === item.id ? { ...r, distributor_phone: finalPhone } : r));
       setEditingDistPhoneId(null);
+      setPhoneDuplicateWarning(null);
+      setDuplicateConfirmTarget(null);
 
       // Only auto-dispatch reminder if status is Pending and has not been reminded yet today
       if (item.status === 'Pending' && !item.last_reminded_at) {
@@ -1706,36 +1782,58 @@ const Dispatch = () => {
                           </td>
                           <td className="p-3.5 font-mono text-xs align-middle">
                             {editingDistPhoneId === item.id ? (
-                              <div className="flex items-center gap-1.5 min-w-[170px]">
-                                <input
-                                  type="text"
-                                  autoFocus
-                                  value={distPhoneInput}
-                                  onChange={e => setDistPhoneInput(e.target.value)}
-                                  placeholder="10-digit number"
-                                  className="w-28 text-xs font-mono px-2 py-1 rounded-lg bg-bg border border-glass-border focus:outline-none focus:border-emerald-500 text-text font-bold"
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') handleSaveDistributorPhone(item);
-                                    if (e.key === 'Escape') setEditingDistPhoneId(null);
-                                  }}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleSaveDistributorPhone(item)}
-                                  disabled={isSavingDistPhone}
-                                  className="p-1 rounded-md bg-emerald-500 text-black hover:bg-emerald-400 cursor-pointer shadow-sm disabled:opacity-50"
-                                  title="Save phone number"
-                                >
-                                  <Check size={12} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingDistPhoneId(null)}
-                                  className="p-1 rounded-md bg-bg3 text-muted hover:text-text cursor-pointer"
-                                  title="Cancel"
-                                >
-                                  <X size={12} />
-                                </button>
+                              <div className="flex flex-col gap-1 min-w-[170px]">
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    value={distPhoneInput}
+                                    onChange={e => setDistPhoneInput(e.target.value)}
+                                    placeholder="10-digit number"
+                                    className={`w-28 text-xs font-mono px-2 py-1 rounded-lg bg-bg border ${
+                                      phoneDuplicateWarning?.isDuplicate ? 'border-amber-500 text-amber-300' : 'border-glass-border focus:border-emerald-500 text-text'
+                                    } focus:outline-none font-bold`}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleSaveDistributorPhone(item);
+                                      if (e.key === 'Escape') {
+                                        setEditingDistPhoneId(null);
+                                        setPhoneDuplicateWarning(null);
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveDistributorPhone(item)}
+                                    disabled={isSavingDistPhone}
+                                    className="p-1 rounded-md bg-emerald-500 text-white hover:bg-emerald-400 cursor-pointer shadow-sm disabled:opacity-50"
+                                    title="Save phone number"
+                                  >
+                                    <Check size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingDistPhoneId(null);
+                                      setPhoneDuplicateWarning(null);
+                                    }}
+                                    className="p-1 rounded-md bg-bg3 text-muted hover:text-text cursor-pointer"
+                                    title="Cancel"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                                {checkingPhoneDuplicate && (
+                                  <span className="text-[10px] text-muted animate-pulse">Checking number...</span>
+                                )}
+                                {phoneDuplicateWarning?.isDuplicate && (
+                                  <div
+                                    className="text-[10px] text-amber-400 font-bold flex items-center gap-1 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30 max-w-[210px]"
+                                    title={`Already saved for ${phoneDuplicateWarning.name}`}
+                                  >
+                                    <AlertTriangle size={10} className="shrink-0 text-amber-400 animate-pulse" />
+                                    <span className="truncate">Already used by {phoneDuplicateWarning.name}!</span>
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="flex items-center gap-1.5 group">
@@ -2326,6 +2424,50 @@ const Dispatch = () => {
         onSave={handleCreateManualOrder}
         saving={savingManualOrder}
       />
+
+      {/* ── MODAL: DUPLICATE PHONE CONFIRMATION (HUMAN-IN-THE-LOOP) ── */}
+      {duplicateConfirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-md p-6 rounded-3xl bg-bg2 border border-glass-border shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center gap-2.5 text-amber-400">
+              <div className="p-2 rounded-xl bg-amber-500/20 border border-amber-500/30">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-text uppercase tracking-wide">Duplicate Phone Number</h3>
+                <p className="text-xs text-muted">Number collision detected</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-bg3/60 border border-glass-border/40 text-xs text-text space-y-1.5 leading-relaxed">
+              <p>
+                The number <span className="font-mono font-bold text-amber-400 font-bold">{duplicateConfirmTarget.phone}</span> is already assigned to <strong className="text-emerald-400">{duplicateConfirmTarget.duplicateName}</strong>{duplicateConfirmTarget.isDeliveryBoy ? ' (Delivery Staff)' : ''}.
+              </p>
+              <p className="text-muted text-[11px]">
+                Saving this number will cause <strong className="text-text">{duplicateConfirmTarget.item.distributor_name}</strong> to share this contact. Do you want to change it or confirm this is an intentional shared contact (sister agency / same warehouse)?
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDuplicateConfirmTarget(null)}
+                className="px-4 py-2 rounded-xl bg-bg3 hover:bg-glass-bg border border-glass-border text-xs font-bold text-text transition-all active:scale-95 cursor-pointer"
+              >
+                Change Number
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveDistributorPhone(duplicateConfirmTarget.item, true)}
+                disabled={isSavingDistPhone}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold transition-all active:scale-95 cursor-pointer shadow-md"
+              >
+                {isSavingDistPhone ? 'Saving...' : 'Confirm Shared Contact'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

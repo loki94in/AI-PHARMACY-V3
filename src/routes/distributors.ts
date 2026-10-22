@@ -36,6 +36,74 @@ router.get('/pharmarack-list', async (_req, res) => {
   }
 });
 
+// Check if a 10-digit phone number is already registered to another distributor or delivery boy
+router.get('/check-duplicate-phone', async (req, res) => {
+  try {
+    const rawPhone = String(req.query.phone || '').trim();
+    const excludeId = req.query.excludeId ? Number(req.query.excludeId) : null;
+    const excludeName = String(req.query.excludeName || '').toLowerCase().trim();
+
+    const clean = rawPhone.replace(/\D/g, '');
+    let phone10 = clean;
+    if (clean.length === 12 && clean.startsWith('91')) {
+      phone10 = clean.slice(2);
+    } else if (clean.length === 11 && clean.startsWith('0')) {
+      phone10 = clean.slice(1);
+    }
+
+    if (!phone10 || phone10.length !== 10) {
+      return res.json({ isDuplicate: false, matchedDistributor: null, matchedDeliveryBoy: null });
+    }
+
+    const db = await dbManager.getConnection();
+
+    // 1. Check existing distributors
+    let distSql = 'SELECT id, name, phone, contact FROM distributors WHERE (phone LIKE ? OR contact LIKE ? OR phone LIKE ? OR contact LIKE ?)';
+    const distParams: any[] = [`%${phone10}%`, `%${phone10}%`, `%${phone10}`, `%${phone10}`];
+    if (excludeId && !isNaN(excludeId)) {
+      distSql += ' AND id != ?';
+      distParams.push(excludeId);
+    }
+    if (excludeName) {
+      distSql += ' AND LOWER(TRIM(name)) != ?';
+      distParams.push(excludeName);
+    }
+    distSql += ' LIMIT 1';
+    const distMatch = await db.get(distSql, distParams);
+
+    // 2. Check pharmarack_distributor_mappings
+    let mapMatch: any = null;
+    if (!distMatch) {
+      let mapSql = 'SELECT store_name, phone, distributor_id FROM pharmarack_distributor_mappings WHERE (phone LIKE ? OR phone LIKE ?)';
+      const mapParams: any[] = [`%${phone10}%`, `%${phone10}`];
+      if (excludeName) {
+        mapSql += ' AND LOWER(TRIM(store_name)) != ?';
+        mapParams.push(excludeName);
+      }
+      mapSql += ' LIMIT 1';
+      mapMatch = await db.get(mapSql, mapParams);
+    }
+
+    // 3. Check delivery_boys table
+    const boyMatch = await db.get(
+      'SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND (whatsapp_number LIKE ? OR whatsapp_number LIKE ?) LIMIT 1',
+      [`%${phone10}%`, `%${phone10}`]
+    );
+
+    const isDuplicate = Boolean(distMatch || mapMatch || boyMatch);
+    res.json({
+      isDuplicate,
+      phone: phone10,
+      matchedDistributor: distMatch
+        ? { id: distMatch.id, name: distMatch.name, phone: distMatch.phone || distMatch.contact }
+        : (mapMatch ? { id: mapMatch.distributor_id, name: mapMatch.store_name, phone: mapMatch.phone } : null),
+      matchedDeliveryBoy: boyMatch ? { id: boyMatch.id, name: boyMatch.name, phone: boyMatch.whatsapp_number } : null
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to check phone number: ' + err.message });
+  }
+});
+
 // Create or update distributor details
 const postDistributorsHandler = async (req: express.Request, res: express.Response) => {
   const { name, store_name, phone, contact, email, address, gstin, state_code, preferred_file_format, min_order_value, min_order_items } = req.body;

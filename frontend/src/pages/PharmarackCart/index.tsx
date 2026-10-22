@@ -1733,12 +1733,14 @@ export default function PharmarackCart() {
   const [isResolutionHubCollapsed, setIsResolutionHubCollapsed] = useState(false);
   const [sessionResolvedCount, setSessionResolvedCount] = useState(0);
 
-  // Distributor search & contact edit modal state
   const [editingDistributor, setEditingDistributor] = useState<Distributor | null>(null);
   const [, setModalSearchTerm] = useState('');
   const [modalPhoneInput, setModalPhoneInput] = useState('');
   const [selectedSavedDistId, setSelectedSavedDistId] = useState<number | null>(null);
   const [isSavingContact, setIsSavingContact] = useState(false);
+  const [phoneDuplicateWarning, setPhoneDuplicateWarning] = useState<string | null>(null);
+  const [checkingPhoneDuplicate, setCheckingPhoneDuplicate] = useState(false);
+  const [duplicateConfirmNotice, setDuplicateConfirmNotice] = useState<{ message: string; cleanPhone: string } | null>(null);
 
   // New distributor inline creation state inside modal
   const [isAddingNewDistributor, setIsAddingNewDistributor] = useState(false);
@@ -1759,6 +1761,36 @@ export default function PharmarackCart() {
   const [singleDispatchTarget, setSingleDispatchTarget] = useState<Distributor | null>(null);
   const [singleDispatchBoyId, setSingleDispatchBoyId] = useState<number | null>(null);
   const [singleDispatchOrderNo, setSingleDispatchOrderNo] = useState<string>('');
+  // Debounced check for duplicate distributor phone numbers
+  useEffect(() => {
+    const clean = modalPhoneInput.replace(/\D/g, '');
+    if (clean.length === 10) {
+      setCheckingPhoneDuplicate(true);
+      const timer = setTimeout(async () => {
+        try {
+          const res = await api.checkDuplicateDistributorPhone(
+            clean,
+            selectedSavedDistId || undefined,
+            editingDistributor?.storeName || undefined
+          );
+          if (res.isDuplicate) {
+            setPhoneDuplicateWarning(res.message);
+          } else {
+            setPhoneDuplicateWarning(null);
+          }
+        } catch {
+          setPhoneDuplicateWarning(null);
+        } finally {
+          setCheckingPhoneDuplicate(false);
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      setPhoneDuplicateWarning(null);
+      setCheckingPhoneDuplicate(false);
+      setDuplicateConfirmNotice(null);
+    }
+  }, [modalPhoneInput, selectedSavedDistId, editingDistributor?.storeName]);
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
@@ -3008,6 +3040,9 @@ export default function PharmarackCart() {
   const handleOpenEditModal = (dist: Distributor) => {
     setEditingDistributor(dist);
     setIsSavingContact(false);
+    setPhoneDuplicateWarning(null);
+    setCheckingPhoneDuplicate(false);
+    setDuplicateConfirmNotice(null);
     setModalSearchTerm(dist.storeName || '');
     setIsAddingNewDistributor(false);
     setNewDistNameInput(dist.storeName || '');
@@ -3046,9 +3081,8 @@ export default function PharmarackCart() {
     setModalDeliveryBoyId(currentBoyId);
   };
 
-  const handleSaveDistributorContact = async () => {
+  const handleSaveDistributorContact = async (bypassDuplicateCheck = false) => {
     if (!editingDistributor || isSavingContact) return;
-    setIsSavingContact(true);
     const rawInput = modalPhoneInput.trim();
     let cleanPhone = rawInput.replace(/\D/g, '');
     if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
@@ -3059,9 +3093,28 @@ export default function PharmarackCart() {
 
     if (cleanPhone.length !== 10 || !isValidPhoneNumber(cleanPhone)) {
       toastEvent.trigger('Please enter a valid 10-digit mobile number (starts with 6, 7, 8, or 9).', 'error');
-      setIsSavingContact(false);
       return;
     }
+
+    if (!bypassDuplicateCheck) {
+      try {
+        const dupCheck = await api.checkDuplicateDistributorPhone(
+          cleanPhone,
+          selectedSavedDistId || undefined,
+          editingDistributor.storeName || undefined
+        );
+        if (dupCheck.isDuplicate) {
+          setPhoneDuplicateWarning(dupCheck.message);
+          setDuplicateConfirmNotice({ message: dupCheck.message, cleanPhone });
+          return;
+        }
+      } catch (err) {
+        console.warn('Duplicate check warning:', err);
+      }
+    }
+
+    setDuplicateConfirmNotice(null);
+    setIsSavingContact(true);
 
     const wasInBatchQueue = pendingMissingContactDistributorsRef.current.length > 0;
     const storeId = editingDistributor.storeId;
@@ -7140,6 +7193,23 @@ export default function PharmarackCart() {
                 <p className="text-[10px] text-muted mt-1 font-medium">
                   10-digit mobile numbers will be formatted with +91 country code automatically.
                 </p>
+                {checkingPhoneDuplicate && (
+                  <p className="text-[10px] text-muted mt-1 flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 border border-muted border-t-transparent rounded-full animate-spin" />
+                    Checking contact uniqueness...
+                  </p>
+                )}
+                {phoneDuplicateWarning && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2 text-amber-400 text-xs">
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5 text-amber-400" />
+                    <div className="flex-1 text-[11px] leading-tight">
+                      <span className="font-bold">{phoneDuplicateWarning}</span>
+                      <p className="text-[10px] text-muted mt-1">
+                        If intentional (shared contact person), you can confirm below. Otherwise, please enter the distinct number.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Default Delivery Person Input */}
@@ -7174,6 +7244,35 @@ export default function PharmarackCart() {
               </div>
             </div>
 
+            {/* Human-in-the-loop Duplicate Phone Confirmation Banner */}
+            {duplicateConfirmNotice && (
+              <div className="bg-amber-500/15 border-t border-b border-amber-500/40 px-6 py-3 flex flex-col gap-2">
+                <div className="flex items-center gap-1.5 text-amber-400 font-bold text-xs">
+                  <AlertTriangle size={14} className="shrink-0" />
+                  <span>Duplicate Phone Warning</span>
+                </div>
+                <p className="text-[11px] text-text">
+                  {duplicateConfirmNotice.message}. If you confirm, both distributors will receive WhatsApp dispatches at this number.
+                </p>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setDuplicateConfirmNotice(null)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-muted hover:text-text hover:bg-bg3"
+                  >
+                    Change Number
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveDistributorContact(true)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
+                  >
+                    Confirm Shared Contact
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Modal Actions */}
             <div className="bg-bg3/40 px-6 py-3.5 border-t border-glass-border flex items-center justify-between gap-2">
               <a
@@ -7196,6 +7295,8 @@ export default function PharmarackCart() {
                       toastEvent.trigger('Batch order setup cancelled.', 'info');
                     }
                     setEditingDistributor(null);
+                    setDuplicateConfirmNotice(null);
+                    setPhoneDuplicateWarning(null);
                     setIsSavingContact(false);
                   }}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 transition-all"
@@ -7204,7 +7305,7 @@ export default function PharmarackCart() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleSaveDistributorContact}
+                  onClick={() => handleSaveDistributorContact()}
                   disabled={isSavingContact}
                   className="premium-btn bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-5 py-2 rounded-xl flex items-center gap-1.5 disabled:opacity-50 transition-all shadow-md active:scale-95"
                 >
