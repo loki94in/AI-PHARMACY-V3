@@ -60787,7 +60787,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.139";
+    APP_VERSION = "0.1.140";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -86670,8 +86670,21 @@ var init_callTasks = __esm({
 // src/services/autoUpdateService.ts
 var autoUpdateService_exports = {};
 __export(autoUpdateService_exports, {
-  autoUpdateService: () => autoUpdateService
+  autoUpdateService: () => autoUpdateService,
+  compareVersions: () => compareVersions
 });
+function compareVersions(a, b) {
+  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
 function getStagingDir() {
   const appDir = import_path49.default.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
@@ -86810,24 +86823,47 @@ var init_autoUpdateService = __esm({
             const stagingDir = getStagingDir();
             if (import_fs54.default.existsSync(stagingDir)) {
               const files = import_fs54.default.readdirSync(stagingDir).filter((f) => f.startsWith("AI-Pharmacy-OS-Update-v") && f.endsWith(".zip"));
-              if (files.length > 0) {
-                const match = files[0].match(/v([0-9.]+)\.zip/);
-                if (match && match[1] && match[1] !== APP_VERSION2) {
+              for (const file of files) {
+                const match = file.match(/v([0-9.]+)\.zip/);
+                const filePath = import_path49.default.join(stagingDir, file);
+                if (match && match[1]) {
                   const stagedVersion = match[1];
-                  this.lastResult = {
-                    hasUpdate: true,
-                    latestVersion: stagedVersion,
-                    readyToInstall: true,
-                    downloading: false
-                  };
-                  setTimeout(() => {
-                    eventService.broadcast("update_available", {
+                  if (compareVersions(stagedVersion, APP_VERSION2) <= 0) {
+                    console.log(`[AutoUpdate] Purging obsolete staged update package: ${file} (current is v${APP_VERSION2})`);
+                    try {
+                      import_fs54.default.unlinkSync(filePath);
+                    } catch (_) {
+                    }
+                    continue;
+                  }
+                  if (!this.lastResult && compareVersions(stagedVersion, APP_VERSION2) > 0) {
+                    this.lastResult = {
+                      hasUpdate: true,
                       latestVersion: stagedVersion,
                       readyToInstall: true,
-                      downloading: false,
-                      reason: "boot_staged"
-                    });
-                  }, 3e3);
+                      downloading: false
+                    };
+                    setTimeout(() => {
+                      eventService.broadcast("update_available", {
+                        latestVersion: stagedVersion,
+                        readyToInstall: true,
+                        downloading: false,
+                        reason: "boot_staged"
+                      });
+                    }, 3e3);
+                  }
+                }
+              }
+              const tmpFiles = import_fs54.default.readdirSync(stagingDir).filter((f) => f.endsWith(".tmp"));
+              const now = Date.now();
+              for (const tmpFile of tmpFiles) {
+                try {
+                  const tmpPath = import_path49.default.join(stagingDir, tmpFile);
+                  const stat = import_fs54.default.statSync(tmpPath);
+                  if (now - stat.mtimeMs > 30 * 60 * 1e3) {
+                    import_fs54.default.unlinkSync(tmpPath);
+                  }
+                } catch (_) {
                 }
               }
             }
@@ -87059,6 +87095,14 @@ var init_autoUpdateService = __esm({
       async applyUpdate() {
         if (!this.lastResult?.latestVersion) {
           throw new Error("No pending update found.");
+        }
+        const isSeaBinary = !process.execPath.endsWith("node.exe") && !process.execPath.endsWith("node") && !process.execPath.includes("tsx");
+        if (!isSeaBinary) {
+          throw new Error("Updates can only be applied from the installed application (PharmacyOS.exe), not from development mode.");
+        }
+        const { APP_VERSION: APP_VERSION2 } = await Promise.resolve().then(() => (init_licenseService(), licenseService_exports));
+        if (this.lastResult?.latestVersion && compareVersions(this.lastResult.latestVersion, APP_VERSION2) <= 0) {
+          throw new Error(`Cannot install update: version v${this.lastResult.latestVersion} is not newer than currently running v${APP_VERSION2}.`);
         }
         const stagingDir = getStagingDir();
         const zipFileName = `AI-Pharmacy-OS-Update-v${this.lastResult.latestVersion}.zip`;
