@@ -78,7 +78,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     const readyRefills = await db.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
              pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count,
-             COALESCE(pr.language, c.language, 'en') as language
+             COALESCE(pr.language, c.preferred_language, c.language, 'mr') as language
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
       LEFT JOIN customers c ON (c.phone = pr.patient_phone OR c.name = pr.patient_name)
@@ -191,7 +191,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     const readySpecialOrders = await db.all(`
       SELECT so.id, so.requester, so.phone, so.product, so.qty,
              so.last_collection_reminder_at, so.notification_count,
-             COALESCE(c.language, 'en') as language
+             COALESCE(c.preferred_language, c.language, 'mr') as language
       FROM special_orders so
       LEFT JOIN customers c ON (c.phone = so.phone OR c.name = so.requester)
       WHERE so.auto_remind = 1

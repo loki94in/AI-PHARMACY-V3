@@ -58,7 +58,8 @@ import {
   Globe,
   Copy,
   Phone,
-  Cloud
+  Cloud,
+  Network
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -71,6 +72,7 @@ import { IntegrationsCredentialsTab } from './IntegrationsCredentialsTab';
 import { TriggerSchedulesTab } from './TriggerSchedulesTab';
 import { DataBackupsTab } from './DataBackupsTab';
 import { LicenseAndUpdatesTab } from './LicenseAndUpdatesTab';
+import { NetworkTerminalsTab } from './NetworkTerminalsTab';
 
 // ==========================================
 // TYPES & INTERFACES
@@ -101,6 +103,7 @@ function normalizeSettingsTab(tabParam: string | null): string {
   if (!tabParam) return 'profile';
   const lower = tabParam.toLowerCase();
   if (lower === 'profile' || lower === 'store') return 'profile';
+  if (lower === 'network' || lower === 'terminals' || lower === 'lan' || lower === 'terminal') return 'network';
   if (lower === 'stores' || lower === 'branches' || lower === 'multistore' || lower === 'sync') return 'stores';
   if (lower === 'staff' || lower === 'security') return 'staff';
   if (lower === 'ordertiming' || lower === 'timing' || lower === 'delivery' || lower === 'schedule' || lower === 'holidays') return 'orderTiming';
@@ -125,6 +128,7 @@ export default function Settings() {
 
   const tabs = [
     { id: 'profile', label: 'Store Profile', icon: Building2, desc: 'Pharmacy details, invoice layout & tax' },
+    { id: 'network', label: 'Network & Terminals', icon: Network, desc: 'Multi-PC setup, LAN host pairing, counter identities & live reservations' },
     { id: 'appearance', label: 'Appearance & Display', icon: Palette, desc: 'Themes, UI font scaling, popup & modal sizing, table density' },
     { id: 'orderTiming', label: 'Orders & Fulfilment Timing', icon: Clock, desc: 'Cutoff times, Sunday/holiday calendar & delivery windows' },
     { id: 'stores', label: 'Multi-Store & Sync', icon: StoreIcon, desc: 'Branch stores, offline sync & central management' },
@@ -173,6 +177,7 @@ export default function Settings() {
         ) : (
           <>
             {activeTab === 'profile' && <StoreProfileTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}
+            {activeTab === 'network' && <NetworkTerminalsTab />}
             {activeTab === 'appearance' && <AppearanceTab />}
             {activeTab === 'orderTiming' && <OrderTimingTab rawSettings={rawSettings} refetchSettings={refetchSettings} />}
             {activeTab === 'stores' && <MultiStoreTab />}

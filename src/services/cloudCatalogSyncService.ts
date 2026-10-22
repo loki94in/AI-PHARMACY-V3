@@ -178,40 +178,139 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
       return { success: true, message: 'Zero pending orders in cloud queue.', ordersImported: 0 };
     }
 
+    const { normalizeLanguage } = await import('./whatsappLocalizer.js');
     const importedIds: string[] = [];
+    let newImportCount = 0;
 
     for (const o of orders) {
+      const cleanPhone = String(o.phone || '').replace(/\D/g, '').slice(-10);
+
+      // Sync customer preferred language if provided
+      const rawLang = o.preferredLanguage || o.language;
+      if (rawLang && cleanPhone.length === 10) {
+        const normLang = normalizeLanguage(rawLang);
+        await db.run(
+          `UPDATE customers SET preferred_language = ? WHERE phone LIKE ?`,
+          [normLang, `%${cleanPhone}%`]
+        ).catch(() => {});
+        await db.run(
+          `UPDATE whatsapp_chats SET language = ? WHERE resolved_number LIKE ?`,
+          [normLang, `%${cleanPhone}%`]
+        ).catch(() => {});
+      }
+
       // Check if already imported
       const exists = await db.get(`SELECT id FROM special_orders WHERE sync_id = ?`, [o.orderId]);
       if (!exists) {
+        newImportCount++;
         const itemsSummary = (o.items || [])
-          .map((it: any) => `${it.name} (x${it.qty})`)
+          .map((it: any) => `${it.name} (x${it.qty || 1})`)
           .join(', ');
 
         const addressNotes = o.address ? `Delivery Address: ${o.address}` : 'Counter Store Pickup';
         const fullNotes = o.notes ? `${addressNotes} | Notes: ${o.notes}` : addressNotes;
 
-        await db.run(
-          `INSERT INTO special_orders (
-            store_id, requester, phone, notes, product, medicine_name, qty,
-            status, priority, customer_order_source, order_type, total_amount, sync_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            1,
-            o.customerName || 'Online Customer',
-            o.phone || '',
-            fullNotes,
-            itemsSummary,
-            itemsSummary,
-            o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
-            'Pending',
-            'High',
-            'website_247',
-            o.orderType || 'DELIVERY',
-            o.totalAmount || 0,
-            o.orderId,
-          ]
-        );
+        const isRefill = Boolean(o.isRefill || o.orderType === 'REFILL' || o.action === 'refill_request');
+        const isSpecialOrder = Boolean(o.isSpecialOrder || o.orderType === 'SPECIAL_ORDER');
+
+        let matchedCustomerId: number | null = null;
+        let customerName = o.customerName || 'Online Customer';
+
+        if (cleanPhone.length === 10) {
+          const cust = await db.get(`SELECT id, name FROM customers WHERE phone LIKE ?`, [`%${cleanPhone}%`]);
+          if (cust) {
+            matchedCustomerId = cust.id;
+            if (!o.customerName) customerName = cust.name;
+          }
+        }
+
+        if (isRefill) {
+          // Check if patient has an active refill for any of these items
+          if (matchedCustomerId) {
+            for (const it of (o.items || [])) {
+              const refill = await db.get(
+                `SELECT pr.id FROM patient_refills pr 
+                 JOIN medicines m ON m.id = pr.medicine_id
+                 WHERE pr.customer_id = ? AND (LOWER(m.name) = LOWER(?) OR LOWER(m.name) LIKE LOWER(?)) LIMIT 1`,
+                [matchedCustomerId, it.name, `%${it.name}%`]
+              );
+              if (refill) {
+                await db.run(
+                  `UPDATE patient_refills 
+                   SET next_refill_date = date('now'), updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?`,
+                  [refill.id]
+                ).catch(() => {});
+              }
+            }
+          }
+
+          await db.run(
+            `INSERT INTO special_orders (
+              store_id, requester, phone, notes, product, medicine_name, qty,
+              status, priority, customer_order_source, order_type, total_amount, sync_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              1,
+              customerName,
+              o.phone || '',
+              `[Website Refill Request #${o.orderId}] ${fullNotes}`,
+              itemsSummary,
+              itemsSummary,
+              o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
+              'Pending',
+              'High',
+              'website_refill',
+              'REFILL',
+              o.totalAmount || 0,
+              o.orderId,
+            ]
+          );
+        } else if (isSpecialOrder) {
+          await db.run(
+            `INSERT INTO special_orders (
+              store_id, requester, phone, notes, product, medicine_name, qty,
+              status, priority, customer_order_source, order_type, total_amount, sync_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              1,
+              customerName,
+              o.phone || '',
+              `[Special Shortage Request #${o.orderId}] ${fullNotes}`,
+              itemsSummary,
+              itemsSummary,
+              o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
+              'Pending',
+              'High',
+              'website_special_order',
+              'SPECIAL_ORDER',
+              o.totalAmount || 0,
+              o.orderId,
+            ]
+          );
+        } else {
+          await db.run(
+            `INSERT INTO special_orders (
+              store_id, requester, phone, notes, product, medicine_name, qty,
+              status, priority, customer_order_source, order_type, total_amount, sync_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              1,
+              customerName,
+              o.phone || '',
+              fullNotes,
+              itemsSummary,
+              itemsSummary,
+              o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
+              'Pending',
+              'High',
+              'website_247',
+              o.orderType || 'DELIVERY',
+              o.totalAmount || 0,
+              o.orderId,
+            ]
+          );
+        }
       }
       importedIds.push(o.orderId);
     }
@@ -225,16 +324,64 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
           'x-admin-secret': ADMIN_SECRET,
         },
         body: JSON.stringify({ orderIds: importedIds }),
-      });
+      }).catch(err => console.warn('[CloudCatalogSync] order ack failed:', err?.message || err));
+    }
+
+    if (newImportCount > 0) {
+      try {
+        const { eventService } = await import('./eventService.js');
+        eventService.broadcast('order_created', { count: newImportCount, source: 'cloud_sync' });
+        eventService.broadcast('refill_updated', { source: 'cloud_sync' });
+        eventService.broadcast('toast_alert', {
+          type: 'success',
+          message: `📥 ${newImportCount} new order(s)/refill(s) received from 24/7 Web Portal!`,
+          link: '/crm?tab=special_orders'
+        });
+      } catch (_) {}
     }
 
     return {
       success: true,
-      message: `Successfully imported ${importedIds.length} new online order(s) into counter queue!`,
-      ordersImported: importedIds.length,
+      message: `Successfully imported ${newImportCount} new online order(s) into counter queue!`,
+      ordersImported: newImportCount,
     };
   } catch (err: any) {
     console.error('[CloudCatalogSync] pull error:', err);
     return { success: false, message: err.message };
   }
 }
+
+let pollerActive = false;
+let isPulling = false;
+
+/**
+ * Initializes automatic background synchronization for 24/7 cloud orders.
+ * Staggered on startup with a quiet single-flight 60-second periodic poll.
+ */
+export function startCloudOrderSyncPoller(): void {
+  if (pollerActive) return;
+  pollerActive = true;
+
+  // Stagger initial check 8 seconds after boot
+  setTimeout(async () => {
+    try {
+      await pullCloudOrdersToLocal();
+    } catch (_) {}
+  }, 8000);
+
+  // Quiet 60-second background poll - gated by activityTracker
+  setInterval(async () => {
+    if (isPulling) return;
+    try {
+      const { activityTracker } = await import('../utils/activityTracker.js');
+      if (activityTracker.isIdle()) return;
+      isPulling = true;
+      await pullCloudOrdersToLocal();
+    } catch (_) {
+      // Offline or network error is silent and normal
+    } finally {
+      isPulling = false;
+    }
+  }, 60_000);
+}
+

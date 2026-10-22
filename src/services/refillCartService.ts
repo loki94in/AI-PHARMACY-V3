@@ -262,8 +262,11 @@ export async function processRefillCartItem(
   const db = await dbManager.getConnection();
   const refill = await db.get(
     `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
-            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name
-     FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name,
+            c.name AS customer_name, c.phone AS customer_phone, c.preferred_language
+     FROM patient_refills pr 
+     JOIN medicines m ON m.id = pr.medicine_id
+     LEFT JOIN customers c ON c.id = pr.customer_id
      WHERE pr.id = ?`,
     [refillId]
   );
@@ -363,11 +366,39 @@ export async function processRefillCartItem(
     if (!after || after.qty !== total) {
       return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
     }
-    // cart_qty = what THIS refill contributed, so cancelling it reduces the line by exactly that.
     await db.run(
       `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
       [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
     );
+
+    // Automatically send localized booking confirmation WhatsApp message to the patient
+    const patientPhone = refill.customer_phone ? String(refill.customer_phone).replace(/\D/g, '').slice(-10) : '';
+    if (patientPhone.length === 10) {
+      setImmediate(async () => {
+        try {
+          const { formatBookingConfirmationMessage } = await import('./whatsappLocalizer.js');
+          const { getStoreMedicalName } = await import('./storeSettingsService.js');
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          const storeName = (await getStoreMedicalName(db)) || 'Your Pharmacy';
+          const msg = formatBookingConfirmationMessage({
+            storeName,
+            patientName: refill.customer_name || 'Customer',
+            medicineName: after!.productName || medicineName,
+            quantity: qty,
+            lang: refill.preferred_language
+          });
+          await whatsappQueueWorker.enqueue(
+            `91${patientPhone}`,
+            msg,
+            'special_order',
+            refill.customer_name || 'Customer'
+          );
+        } catch (notifErr) {
+          console.warn('[RefillCartService] Failed to queue booking confirmation WhatsApp:', notifErr);
+        }
+      });
+    }
+
     return {
       ...base,
       status: 'added',
@@ -503,6 +534,34 @@ export async function processRefillCartItem(
       [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
     );
     await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cand.link.id]);
+
+    // Automatically send localized booking confirmation WhatsApp message to the patient
+    const patientPhone = refill.customer_phone ? String(refill.customer_phone).replace(/\D/g, '').slice(-10) : '';
+    if (patientPhone.length === 10) {
+      setImmediate(async () => {
+        try {
+          const { formatBookingConfirmationMessage } = await import('./whatsappLocalizer.js');
+          const { getStoreMedicalName } = await import('./storeSettingsService.js');
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          const storeName = (await getStoreMedicalName(db)) || 'Your Pharmacy';
+          const msg = formatBookingConfirmationMessage({
+            storeName,
+            patientName: refill.customer_name || 'Customer',
+            medicineName: added.productName || medicineName,
+            quantity: qty,
+            lang: refill.preferred_language
+          });
+          await whatsappQueueWorker.enqueue(
+            `91${patientPhone}`,
+            msg,
+            'special_order',
+            refill.customer_name || 'Customer'
+          );
+        } catch (notifErr) {
+          console.warn('[RefillCartService] Failed to queue booking confirmation WhatsApp:', notifErr);
+        }
+      });
+    }
 
     const firstLink = linkedState[0];
     const skipped = linkedState.filter(s => s !== cand && !s.inStock).map(s => String(s.link.store_name));

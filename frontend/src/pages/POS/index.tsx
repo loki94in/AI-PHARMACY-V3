@@ -28,6 +28,7 @@ import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { POSPatientModal, POSDoctorModal, POSPostSaleModal, POSInteractionsModal, POSPhonePromptModal, POSCheckoutBar } from '../../components/POS';
 import { isValidCustomerName } from '../../utils/customerValidator';
+import { useTerminal } from '../../context/TerminalContext';
 
 const getLocalDateString = (d: Date = new Date()) => {
   const yyyy = d.getFullYear();
@@ -1260,11 +1261,76 @@ const POS = () => {
     if (initialActiveTab.items && initialActiveTab.items.length > 0) {
       return initialActiveTab.items;
     }
+    try {
+      const rawDraft = localStorage.getItem('pos_active_draft');
+      if (rawDraft) {
+        const parsed = JSON.parse(rawDraft);
+        if (parsed && Array.isArray(parsed.cart) && parsed.cart.length > 0 && (Date.now() - (parsed.timestamp || 0) < 3600000)) {
+          return parsed.cart;
+        }
+      }
+    } catch {}
     return [makeEmptyCartRow()];
   });
   const [sendWhatsApp, setSendWhatsApp] = useState(initialActiveTab.sendWhatsApp !== undefined ? initialActiveTab.sendWhatsApp : true); // DEFAULT: ON (auto-dispatches when phone is present)
   const [paymentMedium, setPaymentMedium] = useState<string>(() => editSaleFromState?.payment_medium || initialActiveTab.paymentMedium || 'CASH'); // DEFAULT: CASH
   const queryClient = useQueryClient();
+  const { terminalId, terminalName } = useTerminal();
+
+  // Auto-save active draft to localStorage (protects against browser refresh or Wi-Fi blips)
+  useEffect(() => {
+    try {
+      const activeItems = cart.filter(item => !item.isEmptyRow && (item.name || item.medicine_name));
+      if (activeItems.length > 0 || (patientName && patientName.trim())) {
+        localStorage.setItem('pos_active_draft', JSON.stringify({
+          cart,
+          patientName,
+          patientPhone,
+          doctor,
+          paymentMedium,
+          discount,
+          timestamp: Date.now()
+        }));
+      } else {
+        localStorage.removeItem('pos_active_draft');
+      }
+    } catch {}
+  }, [cart, patientName, patientPhone, doctor, paymentMedium, discount]);
+
+  // Sync cart reservations to backend for multi-PC collision prevention
+  useEffect(() => {
+    if (!terminalId) return;
+    const itemsToReserve = cart
+      .filter(item => !item.isEmptyRow && (item.inventory_id || item.id) && Number(item.qty || item.quantity) > 0)
+      .map(item => ({
+        inventoryId: Number(item.inventory_id || item.id),
+        quantity: Number(item.qty || item.quantity || 1),
+        medicineName: item.name || item.medicine_name
+      }));
+
+    const timer = setTimeout(() => {
+      fetch('/api/sales/cart-reservations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          terminalId,
+          terminalName,
+          items: itemsToReserve
+        })
+      }).catch(() => {});
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [cart, terminalId, terminalName]);
+
+  // Release reservations on unmount
+  useEffect(() => {
+    return () => {
+      if (terminalId) {
+        fetch(`/api/sales/cart-reservations/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+      }
+    };
+  }, [terminalId]);
 
   const specialOrdersControl = useFetchMode('pos.specialOrders');
   const doctorsControl = useFetchMode('pos.doctors');
@@ -3922,7 +3988,9 @@ const POS = () => {
         online_order_id: pendingOnlineOrderIdRef.current || undefined,
         special_order_id: pendingSpecialOrderIdRef.current || undefined,
         special_order_ids: pendingSpecialOrderIdsRef.current.length > 0 ? [...pendingSpecialOrderIdsRef.current] : undefined,
-        editingInvoiceId: editingInvoiceId || undefined
+        editingInvoiceId: editingInvoiceId || undefined,
+        counter_name: terminalName || 'Counter 1',
+        terminalId: terminalId
       };
       writeRef(pendingRefillIdsRef, []);
       writeRef(pendingOnlineOrderIdRef, null);
@@ -3958,6 +4026,9 @@ const POS = () => {
       } else {
         result = await api.createSale(payload as Parameters<typeof api.createSale>[0]);
       }
+      try {
+        localStorage.removeItem('pos_active_draft');
+      } catch {}
       const invoiceNo = result!.invoice_no || result!.invoiceNo || 'SAVED';
       setRefillBookingBanner(null);
       writeRef(advanceRefillCycleRef, true);

@@ -445,7 +445,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, orderId: generateId('RFL'), message: 'Refill request submitted successfully!' });
     }
 
-    const { customerName, phone, storeId, items, deliveryAddress, notes } = req.body || {};
+    const { customerName, phone, storeId, items, deliveryAddress, notes, preferredLanguage } = req.body || {};
     const cleanPhone = String(phone || '').replace(/\D/g, '');
 
     if (!cleanPhone || cleanPhone.length < 10) {
@@ -472,12 +472,13 @@ export default async function handler(req, res) {
       customerName: (customerName || 'Patient').trim(),
       phone: cleanPhone,
       address: deliveryAddress || 'Counter Store Pickup',
-      orderType: deliveryAddress ? 'DELIVERY' : 'PICKUP',
+      orderType: 'REFILL',
       notes: notes ? `Refill Prescription: ${notes}` : 'Automatic Monthly Refill Reorder',
       items: processedItems,
       totalAmount: subtotal,
       status: 'Refill Requested',
       isRefill: true,
+      preferredLanguage: preferredLanguage || 'mr',
       source: 'Universal Patient Portal',
       createdAt: new Date().toISOString(),
     };
@@ -521,6 +522,68 @@ export default async function handler(req, res) {
     });
   }
 
+  // ================= 4b. SPECIAL SHORTAGE ORDER PLACEMENT =================
+  if (action === 'special_order') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const clientIp = getClientIp(req);
+    const rateCheck = checkRateLimit(`sp_order:${clientIp}`, 8, 60000);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: 'Too many special order requests submitted. Please wait 1 minute.' });
+    }
+
+    const { customerName, phone, storeId, medicineName, qty, notes, deliveryAddress, preferredLanguage } = req.body || {};
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Valid phone number required for special order.' });
+    }
+    if (!medicineName) {
+      return res.status(400).json({ error: 'Medicine name is required for special order.' });
+    }
+
+    const orderId = generateId('SPO');
+    const requestedQty = Math.max(1, parseInt(qty || 1, 10));
+
+    const specialOrder = {
+      orderId,
+      customerName: (customerName || 'Customer').trim(),
+      phone: cleanPhone,
+      address: deliveryAddress || 'Counter Store Pickup',
+      orderType: 'SPECIAL_ORDER',
+      notes: notes ? `Shortage Request: ${notes}` : 'Special Medicine Procurement Request',
+      items: [{
+        name: String(medicineName).trim(),
+        pack: 'Standard Pack',
+        qty: requestedQty,
+        price: 0,
+        itemTotal: 0
+      }],
+      totalAmount: 0,
+      status: 'Pending',
+      isSpecialOrder: true,
+      preferredLanguage: preferredLanguage || 'mr',
+      source: 'Patient Health Portal',
+      createdAt: new Date().toISOString(),
+    };
+
+    if (isKvConfigured) {
+      try {
+        await kv.set(`order:${orderId}`, specialOrder);
+        await kv.lpush('orders:pending', orderId);
+        await kv.lpush(`customer:${cleanPhone}:orders`, orderId);
+      } catch (err) {
+        console.warn('Special order KV save error:', err.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      orderId,
+      message: 'Special order submitted successfully! The pharmacy has received your request.',
+      order: specialOrder
+    });
+  }
+
   // ================= 5. GENERAL CART ORDER PLACEMENT =================
   if (action === 'order') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -536,7 +599,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, orderId: generateId('ORD'), message: 'Order placed successfully!' });
     }
 
-    const { customerName, phone, address, orderType, items, notes, storeId } = req.body || {};
+    const { customerName, phone, address, orderType, items, notes, storeId, preferredLanguage, isSpecialOrder } = req.body || {};
 
     if (!customerName || !phone) {
       return res.status(400).json({ error: 'Customer name and phone number are required.' });
@@ -590,6 +653,8 @@ export default async function handler(req, res) {
       status: 'Pending',
       storeId: storeId || 'PHARM-DEFAULT',
       source: 'Website 24/7 Cloud Shop',
+      preferredLanguage: preferredLanguage || 'mr',
+      isSpecialOrder: Boolean(isSpecialOrder || type === 'SPECIAL_ORDER'),
       createdAt,
     };
 

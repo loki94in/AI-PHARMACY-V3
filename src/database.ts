@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 77;
+const CURRENT_SCHEMA_VERSION = 78;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -845,6 +845,7 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
       store_id: 'INTEGER DEFAULT 1',
       source: "TEXT DEFAULT 'pos'",
       is_migrated: 'INTEGER DEFAULT 0',
+      counter_name: "TEXT DEFAULT 'Counter 1'",
     });
 
     await ensureColumns(db, 'purchases', {

@@ -328,6 +328,7 @@ app.use('/api/prescriptions', lazyRoute(() => import('./routes/prescriptions.js'
 app.use('/api/enquiries', lazyRoute(() => import('./routes/enquiries.js')));
 app.use('/api/system', lazyRoute(() => import('./routes/serviceStatus.js')));
 app.use('/api/call-tasks', lazyRoute(() => import('./routes/callTasks.js')));
+app.use('/api/network', lazyRoute(() => import('./routes/network.js'), 'hot'));
 
 // Pending shutdown timer for tab-close grace period (allows F5 reload / navigation without killing server)
 let pendingShutdownTimer: NodeJS.Timeout | null = null;
@@ -601,6 +602,11 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
   // Initialize Cloudflare Online Store Tunnel if configured for autostart
   import('./services/cloudflareTunnelService.js').then(({ cloudflareTunnelService }) => {
     cloudflareTunnelService.init().catch(() => {});
+  }).catch(() => {});
+
+  // Initialize 24/7 Cloud Orders Auto-Sync Poller (offline orders auto-pulled when online)
+  import('./services/cloudCatalogSyncService.js').then(({ startCloudOrderSyncPoller }) => {
+    startCloudOrderSyncPoller();
   }).catch(() => {});
 });
 

@@ -29,6 +29,7 @@ import { imageCompressionService } from '../services/imageCompressionService.js'
 import { invalidateInvestigationTimelineCache } from './investigation.js';
 import { isValidCustomerName } from '../utils/nameNormalizer.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
+import { cartReservationService } from '../services/cartReservationService.js';
 
 const router = express.Router();
 router.use(tenantAuthMiddleware);
@@ -122,6 +123,39 @@ router.get('/next-invoice', async (_req, res) => {
       timestamp: new Date().toISOString()
     }));
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Cart Soft-Reservations for Multi-Terminal Pharmacy Setup ───────────────
+router.get('/cart-reservations', (_req, res) => {
+  try {
+    const reservations = cartReservationService.getAllReservations();
+    res.json({ success: true, reservations });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/cart-reservations', (req, res) => {
+  try {
+    const { terminalId, terminalName, items } = req.body;
+    if (!terminalId) {
+      return res.status(400).json({ success: false, error: 'terminalId is required' });
+    }
+    cartReservationService.setTerminalReservations(terminalId, terminalName, items || []);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/cart-reservations/:terminalId', (req, res) => {
+  try {
+    const { terminalId } = req.params;
+    cartReservationService.releaseTerminal(terminalId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -354,7 +388,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: verification.message, layer: verification.layer });
     }
 
-    const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = 'CASH', paymentStatus = 'PAID', sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId: _refillId, prescription_image, online_order_id, order_id } = req.body;
+    const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = 'CASH', paymentStatus = 'PAID', sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId: _refillId, prescription_image, online_order_id, order_id, counter_name } = req.body;
     const resolvedOnlineOrderId = online_order_id ? parseInt(String(online_order_id), 10) : (order_id ? parseInt(String(order_id), 10) : null);
 
     // Strict validation: check items parameters to prevent null values
@@ -493,20 +527,21 @@ router.post('/', async (req, res) => {
     const customerPhoneSnapshot = String(patient_phone || '').trim();
     const customerAddressSnapshot = String(patient_address || '').trim();
     const doctorNameSnapshot = String(doctor_name || '').trim();
+    const counterNameSnapshot = String(counter_name || 'Counter 1').trim();
 
     const result = await db.run(
       `INSERT INTO sales_invoices (
         invoice_no, store_id, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value,
         payment_medium, payment_status, date, discount, subtotal, doctor_id, roff, online_order_id,
         customer_name_snapshot, customer_phone_snapshot, customer_address_snapshot,
-        doctor_name_snapshot, pharmacy_name_snapshot
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        doctor_name_snapshot, pharmacy_name_snapshot, counter_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoice_no, targetStoreId, customerId, total, tax, totalCgst, totalSgst, 0,
         paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal,
         resolvedDoctorId, roff, resolvedOnlineOrderId || null,
         customerNameSnapshot, customerPhoneSnapshot, customerAddressSnapshot,
-        doctorNameSnapshot, pharmacyNameSnapshot
+        doctorNameSnapshot, pharmacyNameSnapshot, counterNameSnapshot
       ]
     );
     const invoiceId = result.lastID;
@@ -1046,6 +1081,10 @@ router.post('/', async (req, res) => {
     // Commit transaction
     await db.run('COMMIT');
     inventoryCache.invalidate();
+
+    if (req.body.terminalId) {
+      cartReservationService.releaseTerminal(String(req.body.terminalId));
+    }
 
     // Surgical delta updates: recalculate stock metrics & expiry cache only for sold items
     try {

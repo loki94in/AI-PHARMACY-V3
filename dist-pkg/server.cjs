@@ -60787,7 +60787,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.141";
+    APP_VERSION = "0.1.142";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -87122,17 +87122,13 @@ var init_autoUpdateService = __esm({
         console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
         console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
         console.log(`[AutoUpdate]   SHA-256  : ${sha256 || "(not provided)"}`);
-        const child = (0, import_child_process6.spawn)("cmd.exe", [
-          "/c",
-          updaterPath,
-          zipPath,
-          installDir,
-          this.lastResult.latestVersion,
-          sha256,
-          logPath
-        ], {
+        const targetVersion = this.lastResult.latestVersion;
+        const windowTitle = `"AI Pharmacy OS \u2014 Updating to v${targetVersion}"`;
+        const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
+        const child = (0, import_child_process6.spawn)("cmd.exe", ["/c", "start", windowTitle, "cmd.exe", "/c", fullCommand], {
           detached: true,
-          stdio: "ignore"
+          stdio: "ignore",
+          windowsHide: false
         });
         child.unref();
         return { success: true, message: "Installing update and restarting AI Pharmacy OS..." };

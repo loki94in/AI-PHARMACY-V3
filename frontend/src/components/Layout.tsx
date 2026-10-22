@@ -85,6 +85,8 @@ const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { QuickAssistSidebar } from './QuickAssistSidebar';
 import { DailyCommunicationsModal } from './DailyCommunicationsModal';
+import { useTerminal } from '../context/TerminalContext';
+import { TerminalModeSwitcher } from './TerminalModeSwitcher';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -291,6 +293,7 @@ const Sidebar = memo(({
   const queryClient = useQueryClient();
   const routeLoc = useLocation();
   const hoverPrefetchControl = useFetchMode('layout.hoverPrefetch');
+  const { userMode, terminalName } = useTerminal();
   const menuItems = [
     { path: '/pos', label: 'Sales / POS', icon: <ShoppingCart size={18} /> },
     { path: '/sells', label: 'Sell', icon: <Receipt size={18} /> },
@@ -317,6 +320,14 @@ const Sidebar = memo(({
     { path: '/settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
     { path: '/audit', label: 'Audit Center', icon: <ShieldCheckIcon size={18} /> },
   ];
+
+  const filteredMenuItems = React.useMemo(() => {
+    if (userMode === 'cashier') {
+      const allowedPaths = new Set(['/pos', '/sells', '/website-orders', '/phone-sales', '/portal', '/crm', '/returns']);
+      return menuItems.filter(item => allowedPaths.has(item.path));
+    }
+    return menuItems;
+  }, [menuItems, userMode]);
 
   return (
     <>
@@ -389,9 +400,11 @@ const Sidebar = memo(({
         )}
 
         <div className="py-4 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
-          <div className="px-5 mb-2 text-[10px] font-bold tracking-[0.15em] uppercase text-muted/70">Main Menu</div>
+          <div className="px-5 mb-2 text-[10px] font-bold tracking-[0.15em] uppercase text-muted/70">
+            {userMode === 'cashier' ? 'Cashier Menu' : 'Main Menu'}
+          </div>
           <nav className="flex flex-col gap-1">
-            {menuItems.map((item) => {
+            {filteredMenuItems.map((item) => {
               const isActive = (() => {
                 const [basePath, queryStr] = item.path.split('?');
                 if (routeLoc.pathname !== basePath) return false;
@@ -2797,6 +2810,9 @@ const Topbar = memo(({
             </div>
           )}
 
+
+          {/* Terminal Counter & Mode Switcher */}
+          <TerminalModeSwitcher />
 
           {/* Live Cart Integrated Countdown Pill Button */}
           <LiveCartCountdownPill />

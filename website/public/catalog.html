@@ -97,12 +97,35 @@
             <span>Pharmacy WhatsApp</span>
           </a>
 
+          <!-- Language Selector Dropdown -->
+          <div class="relative">
+            <button onclick="toggleLangMenu()" id="langBtn" class="px-2.5 py-1.5 rounded-xl border border-slate-300 hover:border-brand-500 bg-white text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all" title="Select Language / भाषा बदला">
+              <i data-lucide="languages" class="w-3.5 h-3.5 text-brand-600"></i>
+              <span id="currentLangLabel">मराठी</span>
+              <i data-lucide="chevron-down" class="w-3 h-3 text-slate-400"></i>
+            </button>
+            <div id="langMenuDropdown" class="hidden absolute right-0 mt-2 w-36 bg-white rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 space-y-1">
+              <button onclick="changePortalLanguage('mr')" class="w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                <span>मराठी</span>
+                <span id="langCheck-mr" class="text-brand-600 font-bold">✓</span>
+              </button>
+              <button onclick="changePortalLanguage('hi')" class="w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                <span>हिंदी</span>
+                <span id="langCheck-hi" class="hidden text-brand-600 font-bold">✓</span>
+              </button>
+              <button onclick="changePortalLanguage('en')" class="w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                <span>English</span>
+                <span id="langCheck-en" class="hidden text-brand-600 font-bold">✓</span>
+              </button>
+            </div>
+          </div>
+
           <!-- Patient Login / Account Pill -->
           <div id="authContainer" class="flex items-center">
             <!-- Logged Out Button -->
             <button id="loginBtn" onclick="openLoginModal()" class="px-3 py-1.5 rounded-xl border border-slate-300 hover:border-brand-500 bg-white text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all">
               <i data-lucide="user" class="w-3.5 h-3.5 text-brand-600"></i>
-              <span>Patient Login</span>
+              <span id="i18n-loginBtnText">Patient Login</span>
             </button>
 
             <!-- Logged In Account Dropdown -->
@@ -120,17 +143,20 @@
                   <div class="text-[11px] text-slate-500 font-mono" id="dropdownUserPhone">9876543210</div>
                 </div>
                 <button onclick="switchPortalTab('refills'); toggleUserMenu();" class="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                  <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-brand-600"></i> My Medicine Refills
+                  <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-brand-600"></i> <span id="i18n-dropRefills">My Medicine Refills</span>
+                </button>
+                <button onclick="openSpecialOrderModal(); toggleUserMenu();" class="w-full text-left px-3 py-2 rounded-xl text-xs text-amber-700 hover:bg-amber-50 flex items-center gap-2 font-semibold">
+                  <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-600"></i> <span id="i18n-dropSpecial">Special Shortage Order</span>
                 </button>
                 <button onclick="switchPortalTab('bills'); toggleUserMenu();" class="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                  <i data-lucide="receipt" class="w-3.5 h-3.5 text-brand-600"></i> My Store Bills
+                  <i data-lucide="receipt" class="w-3.5 h-3.5 text-brand-600"></i> <span id="i18n-dropBills">My Store Bills</span>
                 </button>
                 <button onclick="switchPortalTab('orders'); toggleUserMenu();" class="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                  <i data-lucide="package" class="w-3.5 h-3.5 text-brand-600"></i> Order History & Status
+                  <i data-lucide="package" class="w-3.5 h-3.5 text-brand-600"></i> <span id="i18n-dropOrders">Order History & Status</span>
                 </button>
                 <div class="border-t border-slate-100 pt-1">
                   <button onclick="handlePatientLogout()" class="w-full text-left px-3 py-2 rounded-xl text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2 font-semibold">
-                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Sign Out
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i> <span id="i18n-dropLogout">Sign Out</span>
                   </button>
                 </div>
               </div>
@@ -140,30 +166,34 @@
           <!-- Cart Button -->
           <button onclick="openCart()" class="relative flex items-center gap-2 px-3.5 py-2 bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-md shadow-brand-600/20 transition-all">
             <i data-lucide="shopping-bag" class="w-4 h-4"></i>
-            <span class="hidden sm:inline">Cart</span>
+            <span class="hidden sm:inline" id="i18n-cartBtnText">Cart</span>
             <span id="cartCountBadge" class="hidden px-1.5 py-0.2 text-[10px] font-extrabold bg-white text-brand-700 rounded-full">0</span>
           </button>
         </div>
       </div>
 
-      <!-- Navigation Tabs Strip (Catalog, Refills, Bills, Orders) -->
+      <!-- Navigation Tabs Strip (Catalog, Refills, Special Order, Bills, Orders) -->
       <div class="flex items-center gap-1.5 pb-2.5 overflow-x-auto no-scrollbar border-t border-slate-200/60 pt-2">
         <button onclick="switchPortalTab('catalog')" id="tabBtn-catalog" class="portal-tab-btn shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-brand-600 text-white shadow-xs flex items-center gap-1.5 transition-all">
           <i data-lucide="store" class="w-3.5 h-3.5"></i>
-          <span>Shop & Catalog</span>
+          <span id="i18n-tabCatalog">Shop & Catalog</span>
         </button>
         <button onclick="switchPortalTab('refills')" id="tabBtn-refills" class="portal-tab-btn shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 flex items-center gap-1.5 transition-all">
           <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-brand-600"></i>
-          <span>My Refills (Rx)</span>
+          <span id="i18n-tabRefills">My Refills (Rx)</span>
           <span id="refillBadgeCount" class="hidden px-1.5 py-0.2 text-[10px] font-bold bg-amber-100 text-amber-800 rounded-full">0</span>
+        </button>
+        <button onclick="openSpecialOrderModal()" id="tabBtn-special" class="portal-tab-btn shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5 transition-all">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-600"></i>
+          <span id="i18n-tabSpecial">Special Order (Shortage)</span>
         </button>
         <button onclick="switchPortalTab('bills')" id="tabBtn-bills" class="portal-tab-btn shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 flex items-center gap-1.5 transition-all">
           <i data-lucide="receipt" class="w-3.5 h-3.5 text-brand-600"></i>
-          <span>My Invoices & Bills</span>
+          <span id="i18n-tabBills">My Invoices & Bills</span>
         </button>
         <button onclick="switchPortalTab('orders')" id="tabBtn-orders" class="portal-tab-btn shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 flex items-center gap-1.5 transition-all">
           <i data-lucide="clock" class="w-3.5 h-3.5 text-brand-600"></i>
-          <span>Track Orders</span>
+          <span id="i18n-tabOrders">Track Orders</span>
         </button>
       </div>
     </div>
@@ -348,13 +378,20 @@
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">Patient Full Name (For Prescription)</label>
+          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginNameLabel">Patient Full Name (For Prescription)</label>
           <input type="text" id="loginNameInput" placeholder="e.g. Aarav Patel"
             class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">Preferred Pharmacy Store</label>
+          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginPinLabel">Portal PIN / Password (WhatsApp)</label>
+          <input type="password" id="loginPinInput" placeholder="4-digit PIN (received on WhatsApp)" maxlength="6"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-brand-500">
+          <p class="text-[10px] text-slate-400 mt-1" id="i18n-loginPinHint">Leave blank if logging in for first time</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginStoreLabel">Preferred Pharmacy Store</label>
           <select id="loginStoreSelect" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
             <option value="PHARM-DEFAULT">Pune City Pharmacy</option>
           </select>
@@ -463,6 +500,66 @@
     </div>
   </div>
 
+  <!-- ================= SPECIAL / SHORTAGE ORDER MODAL ================= -->
+  <div id="specialOrderModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+    <div class="bg-white p-6 sm:p-8 rounded-3xl max-w-md w-full shadow-2xl border border-amber-100 space-y-4 max-h-[92vh] overflow-y-auto custom-scroll">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+            <i data-lucide="sparkles" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-extrabold text-slate-900" id="i18n-spTitle">Request Special / Shortage Medicine</h3>
+            <p class="text-[11px] text-slate-500" id="i18n-spSub">Order unavailable or rare medicines directly</p>
+          </div>
+        </div>
+        <button onclick="closeSpecialOrderModal()" class="p-1 text-slate-400 hover:text-slate-700 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="specialOrderForm" onsubmit="submitSpecialOrder(event)" class="space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-spMedLabel">Medicine Name *</label>
+          <input type="text" id="spMedName" required placeholder="e.g. Telma 40, Glycomet GP1"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-brand-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-spQtyLabel">Quantity *</label>
+            <input type="number" id="spQty" min="1" max="100" value="1" required
+              class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-brand-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-spPhoneLabel">Mobile Number *</label>
+            <input type="tel" id="spPhone" required maxlength="10" placeholder="98765 43210"
+              class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-brand-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-spNameLabel">Patient Name</label>
+          <input type="text" id="spName" placeholder="e.g. Ramesh Patil"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-spNotesLabel">Notes / Doctor Instructions</label>
+          <textarea id="spNotes" rows="2" placeholder="Specify brand, power, or special instructions"
+            class="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500"></textarea>
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" id="spSubmitBtn" class="w-full py-3 bg-amber-600 hover:bg-amber-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-md shadow-amber-600/20 transition-all flex items-center justify-center gap-2">
+            <span id="i18n-spSubmitBtnText">Submit Special Request 🚀</span>
+          </button>
+        </div>
+      </form>
+      <p class="text-[11px] text-center text-slate-400" id="i18n-spFooterNote">Our pharmacist will verify stock and contact you on WhatsApp once procured.</p>
+    </div>
+  </div>
+
   <!-- ================= ORDER SUCCESS CONFIRMATION MODAL ================= -->
   <div id="successModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
     <div class="bg-white p-6 sm:p-8 rounded-3xl max-w-md w-full text-center space-y-4 shadow-2xl border border-emerald-100">
@@ -514,9 +611,251 @@
     let customerRefills = [];
     let customerOrders = [];
 
+    // Language Support (mr, hi, en)
+    let currentLang = localStorage.getItem('portal_lang') || 'mr';
+
+    const i18n = {
+      mr: {
+        currentLabel: 'मराठी',
+        tabCatalog: 'दुकान आणि औषधे',
+        tabRefills: 'माझी रिफिल्स (Rx)',
+        tabSpecial: 'स्पेशल ऑर्डर (शॉर्टेज)',
+        tabBills: 'माझी बिले',
+        tabOrders: 'ऑर्डर ट्रॅकिंग',
+        loginBtnText: 'पेशंट लॉगिन',
+        dropRefills: 'माझी औषध रिफिल्स',
+        dropSpecial: 'स्पेशल शॉर्टेज ऑर्डर',
+        dropBills: 'माझी दुकानातील बिले',
+        dropOrders: 'ऑर्डर इतिहास आणि स्थिती',
+        dropLogout: 'बाहेर पडा',
+        cartBtnText: 'माझी बॅग',
+        searchPlaceholder: 'औषध, गोळी किंवा सॉल्ट नावाने शोधा (उदा. Telma, Metformin)...',
+        reorderRefill: 'औषध पुन्हा मागवा',
+        refillAllDue: 'सर्व देय रिफिल्स मागवा',
+        daysLeft: 'दिवस बाकी',
+        refillDue: 'रिफिल देय',
+        emptyRefills: 'या नंबरसाठी कोणतीही सक्रिय रिफिल नोंद नाही. दुकानात जाऊन आपली नियमित औषधे नोंदवा.',
+        emptyBills: 'या मोबाईल नंबरसाठी अद्याप कोणतीही बिले आढळली नाहीत.',
+        emptyOrders: 'अद्याप कोणतीही ऑर्डर केलेली नाही.',
+        spTitle: 'खास औषध / शॉर्टेज नोंदवा',
+        spSub: 'जे औषध उपलब्ध नाही किंवा दुर्मिळ आहे, ते मागवण्यासाठी येथे नोंदवा',
+        spMedLabel: 'औषधाचे नाव *',
+        spQtyLabel: 'प्रमाण (संख्या) *',
+        spPhoneLabel: 'मोबाईल नंबर *',
+        spNameLabel: 'रुग्णाचे नाव',
+        spNotesLabel: 'सूचना / डॉक्टरांचा सल्ला',
+        spSubmitBtnText: 'स्पेशल ऑर्डर नोंदवा 🚀',
+        spFooterNote: 'आमचे फार्मासिस्ट औषध उपलब्ध होताच आपल्याला व्हॉट्सॲपवर कळवतील.',
+        orderBookedTitle: 'ऑर्डर यशस्वीरीत्या नोंदवली!',
+        orderBookedSub: 'आपल्या फार्मसीला आपली ऑर्डर मिळाली आहे.',
+        submitting: 'नोंदवत आहे...',
+      },
+      hi: {
+        currentLabel: 'हिंदी',
+        tabCatalog: 'दुकान और दवाइयां',
+        tabRefills: 'मेरी रिफिल्स (Rx)',
+        tabSpecial: 'स्पेशल ऑर्डर (शॉर्टेज)',
+        tabBills: 'मेरे बिल',
+        tabOrders: 'ऑर्डर ट्रैकिंग',
+        loginBtnText: 'मरीज़ लॉगिन',
+        dropRefills: 'मेरी दवा रिफिल्स',
+        dropSpecial: 'स्पेशल शॉर्टेज ऑर्डर',
+        dropBills: 'मेरे दुकान के बिल',
+        dropOrders: 'ऑर्डर इतिहास और स्थिति',
+        dropLogout: 'लॉग आउट',
+        cartBtnText: 'मेरी थैली',
+        searchPlaceholder: 'दवा, गोली या फॉर्मूले के नाम से खोजें (उदा. Telma, Metformin)...',
+        reorderRefill: 'दवा दोबारा मंगाएं',
+        refillAllDue: 'सभी देय रिफिल मंगाएं',
+        daysLeft: 'दिन शेष',
+        refillDue: 'रिफिल देय',
+        emptyRefills: 'इस नंबर के लिए कोई सक्रिय रिफिल दर्ज नहीं है। दुकान पर जाकर अपनी नियमित दवाएं दर्ज कराएं।',
+        emptyBills: 'इस मोबाइल नंबर के लिए अभी तक कोई बिल दर्ज नहीं है।',
+        emptyOrders: 'अभी तक कोई ऑर्डर नहीं दिया गया है।',
+        spTitle: 'खास दवा / शॉर्टेज दर्ज करें',
+        spSub: 'जो दवा उपलब्ध नहीं है या दुर्लभ है, उसे मंगाने के लिए यहां दर्ज करें',
+        spMedLabel: 'दवा का नाम *',
+        spQtyLabel: 'मात्रा (संख्या) *',
+        spPhoneLabel: 'मोबाइल नंबर *',
+        spNameLabel: 'मरीज़ का नाम',
+        spNotesLabel: 'निर्देश / डॉक्टर की सलाह',
+        spSubmitBtnText: 'स्पेशल ऑर्डर दर्ज करें 🚀',
+        spFooterNote: 'हमारे फार्मासिस्ट दवा आते ही आपको व्हाट्सएप पर सूचित करेंगे।',
+        orderBookedTitle: 'ऑर्डर सफलतापूर्वक दर्ज हुआ!',
+        orderBookedSub: 'आपकी फार्मेसी को आपका ऑर्डर प्राप्त हो गया है।',
+        submitting: 'दर्ज हो रहा है...',
+      },
+      en: {
+        currentLabel: 'English',
+        tabCatalog: 'Shop & Catalog',
+        tabRefills: 'My Refills (Rx)',
+        tabSpecial: 'Special Order (Shortage)',
+        tabBills: 'My Invoices & Bills',
+        tabOrders: 'Track Orders',
+        loginBtnText: 'Patient Login',
+        dropRefills: 'My Medicine Refills',
+        dropSpecial: 'Special Shortage Order',
+        dropBills: 'My Store Bills',
+        dropOrders: 'Order History & Status',
+        dropLogout: 'Sign Out',
+        cartBtnText: 'Cart',
+        searchPlaceholder: 'Search medicine name, salt / composition (e.g. Telma, Metformin)...',
+        reorderRefill: 'Reorder Refill',
+        refillAllDue: '1-Click Refill All Due',
+        daysLeft: 'days left',
+        refillDue: 'Refill Due',
+        emptyRefills: 'No active chronic refills registered for this number. Contact the pharmacy counter to register your monthly prescription.',
+        emptyBills: 'No past store bills found for this account.',
+        emptyOrders: 'No past web orders found.',
+        spTitle: 'Request Special / Shortage Medicine',
+        spSub: 'Order unavailable or rare medicines directly from our pharmacy',
+        spMedLabel: 'Medicine Name *',
+        spQtyLabel: 'Quantity *',
+        spPhoneLabel: 'Mobile Number *',
+        spNameLabel: 'Patient Name',
+        spNotesLabel: 'Notes / Doctor Instructions',
+        spSubmitBtnText: 'Submit Special Request 🚀',
+        spFooterNote: 'Our pharmacist will verify stock and contact you on WhatsApp once procured.',
+        orderBookedTitle: 'Order Queued Successfully!',
+        orderBookedSub: 'Your pharmacy counter has received your prescription order.',
+        submitting: 'Submitting...',
+      }
+    };
+
+    function toggleLangMenu() {
+      const menu = document.getElementById('langMenuDropdown');
+      if (menu) menu.classList.toggle('hidden');
+    }
+
+    function changePortalLanguage(lang) {
+      currentLang = lang || 'mr';
+      localStorage.setItem('portal_lang', currentLang);
+      const menu = document.getElementById('langMenuDropdown');
+      if (menu) menu.classList.add('hidden');
+      applyLanguage(currentLang);
+      renderRefills(customerRefills);
+      renderBills(customerBills);
+      renderOrders(customerOrders);
+    }
+
+    function applyLanguage(lang) {
+      const t = i18n[lang] || i18n.mr;
+      const label = document.getElementById('currentLangLabel');
+      if (label) label.innerText = t.currentLabel;
+
+      ['mr', 'hi', 'en'].forEach(l => {
+        const check = document.getElementById(`langCheck-${l}`);
+        if (check) {
+          if (l === lang) check.classList.remove('hidden');
+          else check.classList.add('hidden');
+        }
+      });
+
+      const map = {
+        'i18n-tabCatalog': t.tabCatalog,
+        'i18n-tabRefills': t.tabRefills,
+        'i18n-tabSpecial': t.tabSpecial,
+        'i18n-tabBills': t.tabBills,
+        'i18n-tabOrders': t.tabOrders,
+        'i18n-loginBtnText': t.loginBtnText,
+        'i18n-dropRefills': t.dropRefills,
+        'i18n-dropSpecial': t.dropSpecial,
+        'i18n-dropBills': t.dropBills,
+        'i18n-dropOrders': t.dropOrders,
+        'i18n-dropLogout': t.dropLogout,
+        'i18n-cartBtnText': t.cartBtnText,
+        'i18n-spTitle': t.spTitle,
+        'i18n-spSub': t.spSub,
+        'i18n-spMedLabel': t.spMedLabel,
+        'i18n-spQtyLabel': t.spQtyLabel,
+        'i18n-spPhoneLabel': t.spPhoneLabel,
+        'i18n-spNameLabel': t.spNameLabel,
+        'i18n-spNotesLabel': t.spNotesLabel,
+        'i18n-spSubmitBtnText': t.spSubmitBtnText,
+        'i18n-spFooterNote': t.spFooterNote,
+      };
+
+      for (const [id, val] of Object.entries(map)) {
+        const el = document.getElementById(id);
+        if (el) el.innerText = val;
+      }
+
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) searchInput.placeholder = t.searchPlaceholder;
+    }
+
+    function openSpecialOrderModal() {
+      if (customerSession) {
+        const pField = document.getElementById('spPhone');
+        const nField = document.getElementById('spName');
+        if (pField && customerSession.phone) pField.value = customerSession.phone;
+        if (nField && customerSession.name) nField.value = customerSession.name;
+      }
+      document.getElementById('specialOrderModal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeSpecialOrderModal() {
+      document.getElementById('specialOrderModal').classList.add('hidden');
+    }
+
+    async function submitSpecialOrder(e) {
+      if (e) e.preventDefault();
+      const medName = document.getElementById('spMedName').value.trim();
+      const qty = parseInt(document.getElementById('spQty').value || 1, 10);
+      const phone = document.getElementById('spPhone').value.trim().replace(/\D/g, '');
+      const name = document.getElementById('spName').value.trim();
+      const notes = document.getElementById('spNotes').value.trim();
+
+      if (!medName) return alert('Please enter medicine name');
+      if (phone.length < 10) return alert('Please enter a valid 10-digit mobile number');
+
+      const btn = document.getElementById('spSubmitBtn');
+      const t = i18n[currentLang] || i18n.mr;
+      btn.disabled = true;
+      document.getElementById('i18n-spSubmitBtnText').innerText = t.submitting;
+
+      try {
+        const res = await fetch('/api/catalog?action=special_order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customerName: name || customerSession?.name || 'Customer',
+            phone,
+            medicineName: medName,
+            qty,
+            notes,
+            storeId: activeStoreId,
+            preferredLanguage: currentLang,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          closeSpecialOrderModal();
+          document.getElementById('specialOrderForm').reset();
+          document.getElementById('successTitle').innerText = t.orderBookedTitle;
+          document.getElementById('successSub').innerText = t.orderBookedSub;
+          document.getElementById('successOrderId').innerText = `#${data.orderId}`;
+          document.getElementById('successOrderTotal').innerText = 'Counter Verification';
+          document.getElementById('successOrderStore').innerText = currentStoreInfo.name || 'Store';
+          document.getElementById('successModal').classList.remove('hidden');
+          lucide.createIcons();
+          if (customerSession?.phone) syncCustomerData(customerSession.phone);
+        } else {
+          alert(data.error || 'Failed to submit special order');
+        }
+      } catch (err) {
+        alert('Network connection error');
+      } finally {
+        btn.disabled = false;
+        document.getElementById('i18n-spSubmitBtnText').innerText = t.spSubmitBtnText;
+      }
+    }
+
     // ─── INITIALIZATION ──────────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', async () => {
       lucide.createIcons();
+      applyLanguage(currentLang);
 
       // Check URL parameters (e.g. ?store=PHARM-4JQ8&phone=9876543210)
       const urlParams = new URLSearchParams(window.location.search);
@@ -860,9 +1199,10 @@
     function renderRefills(refills) {
       const container = document.getElementById('refillsListContainer');
       const countBadge = document.getElementById('refillBadgeCount');
+      const t = i18n[currentLang] || i18n.mr;
 
       if (!refills.length) {
-        container.innerHTML = `<div class="col-span-full py-12 text-center text-slate-400 text-xs">No active chronic refills registered for this number. Contact the pharmacy counter to register your monthly prescription.</div>`;
+        container.innerHTML = `<div class="col-span-full py-12 text-center text-slate-400 text-xs">${t.emptyRefills}</div>`;
         countBadge.classList.add('hidden');
         return;
       }
@@ -875,7 +1215,7 @@
           <div class="space-y-2">
             <div class="flex items-center justify-between text-[11px]">
               <span class="px-2.5 py-0.5 rounded-full font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                ⏰ ${r.remainingDays !== undefined ? `${r.remainingDays} days left` : 'Refill Due'}
+                ⏰ ${r.remainingDays !== undefined ? `${r.remainingDays} ${t.daysLeft}` : t.refillDue}
               </span>
               <span class="text-slate-400 font-mono text-[10px]">Due: ${r.nextDueDate || 'Monthly'}</span>
             </div>
@@ -887,7 +1227,7 @@
             <span class="text-base font-extrabold text-brand-700 font-mono">₹${Number(r.price || 0).toFixed(2)}</span>
             <button onclick="requestRefill('${r.medicineName}', ${r.price})" class="px-3.5 py-2 bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5">
               <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-              <span>Reorder Refill</span>
+              <span>${t.reorderRefill}</span>
             </button>
           </div>
         </div>
@@ -914,12 +1254,14 @@
             storeId: activeStoreId,
             items: [{ name: medicineName, qty: 1, price }],
             website_url_check: hp,
+            preferredLanguage: currentLang,
           }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          document.getElementById('successTitle').innerText = 'Refill Queued Successfully!';
-          document.getElementById('successSub').innerText = 'Your pharmacy counter has received your prescription refill request.';
+          const t = i18n[currentLang] || i18n.mr;
+          document.getElementById('successTitle').innerText = t.orderBookedTitle;
+          document.getElementById('successSub').innerText = t.orderBookedSub;
           document.getElementById('successOrderId').innerText = `#${data.orderId}`;
           document.getElementById('successOrderTotal').innerText = `₹${price}`;
           document.getElementById('successOrderStore').innerText = currentStoreInfo.name || 'Store';
@@ -956,12 +1298,14 @@
             phone: customerSession.phone,
             storeId: activeStoreId,
             items: customerRefills.map(r => ({ name: r.medicineName, qty: 1, price: r.price })),
+            preferredLanguage: currentLang,
           }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          document.getElementById('successTitle').innerText = 'All Monthly Refills Queued!';
-          document.getElementById('successSub').innerText = 'Your pharmacy has received your full monthly supply request.';
+          const t = i18n[currentLang] || i18n.mr;
+          document.getElementById('successTitle').innerText = t.orderBookedTitle;
+          document.getElementById('successSub').innerText = t.orderBookedSub;
           document.getElementById('successOrderId').innerText = `#${data.orderId}`;
           document.getElementById('successOrderTotal').innerText = `₹${totalBill}`;
           document.getElementById('successOrderStore').innerText = currentStoreInfo.name || 'Store';
@@ -978,8 +1322,9 @@
     // ─── RENDERING BILLS ────────────────────────────────────────────────────────
     function renderBills(bills) {
       const container = document.getElementById('billsListContainer');
+      const t = i18n[currentLang] || i18n.mr;
       if (!bills.length) {
-        container.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">No store purchase invoices recorded yet for this mobile number.</div>`;
+        container.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">${t.emptyBills}</div>`;
         return;
       }
       container.innerHTML = bills.map(b => `
@@ -1008,8 +1353,9 @@
     // ─── RENDERING ORDERS ───────────────────────────────────────────────────────
     function renderOrders(orders) {
       const container = document.getElementById('ordersListContainer');
+      const t = i18n[currentLang] || i18n.mr;
       if (!orders.length) {
-        container.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">No past web orders. Place an order from the catalog to track live fulfillment.</div>`;
+        container.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">${t.emptyOrders}</div>`;
         return;
       }
       container.innerHTML = orders.map(o => `
@@ -1225,7 +1571,7 @@
         const res = await fetch('/api/catalog?action=order', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customerName, phone, address, orderType, items, storeId: activeStoreId, website_url_check: hp }),
+          body: JSON.stringify({ customerName, phone, address, orderType, items, storeId: activeStoreId, website_url_check: hp, preferredLanguage: currentLang }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
@@ -1234,8 +1580,9 @@
           renderProducts();
           closeCart();
 
-          document.getElementById('successTitle').innerText = 'Order Placed Successfully!';
-          document.getElementById('successSub').innerText = 'Your order has been queued directly into the store system.';
+          const t = i18n[currentLang] || i18n.mr;
+          document.getElementById('successTitle').innerText = t.orderBookedTitle;
+          document.getElementById('successSub').innerText = t.orderBookedSub;
           document.getElementById('successOrderId').innerText = `#${data.orderId}`;
           document.getElementById('successOrderTotal').innerText = `₹${data.order.totalAmount}`;
           document.getElementById('successOrderStore').innerText = currentStoreInfo.name || 'Store';
