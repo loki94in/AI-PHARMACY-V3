@@ -55,8 +55,10 @@ if (isMaxCompression) {
   process.env.ISCC_COMPRESSION = 'lzma2/fast';
 }
 
-// Check for remote publish (owner preference 2026-09-18: local by default unless BOTH "git" and "vercel" are specified)
-const isRemote   = (args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
+// Remote publishing is default whenever ADMIN_SECRET is available so running `npm run release` immediately notifies all client apps.
+// Pass `--local` if you explicitly want a local-only installer build without publishing.
+const isLocalExplicit = args.includes('--local');
+const isRemote = !isLocalExplicit && (Boolean(process.env.ADMIN_SECRET) || args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
 
 // ── Vercel / GitHub config ───────────────────────────────────────────────────
 const vercelServer = process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
@@ -149,7 +151,8 @@ if (isPromote) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── Auto-bump version (patch by default) on every release ───────────────────
-const shouldBump = !args.includes('--no-bump') && !args.includes('--skip-bump');
+// When skipping build, keep existing version on disk so it matches the compiled installer artifacts
+const shouldBump = !args.includes('--no-bump') && !args.includes('--skip-bump') && !skipBuild;
 let version;
 if (shouldBump) {
   const [major, minor, patch] = (pkg.version || '0.1.0').split('.').map(Number);
