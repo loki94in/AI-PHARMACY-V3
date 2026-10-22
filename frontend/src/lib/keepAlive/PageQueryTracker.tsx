@@ -77,10 +77,20 @@ export function PageQueryTracker({ pagePath, active }: Props) {
 
     const owned = pageOwnedQueryHashes.get(pagePath);
     if (owned?.size) {
+      let delay = 0;
       owned.forEach(hash => {
         const q = cache.get(hash);
         if (q && q.isStale() && q.state.fetchStatus !== 'fetching') {
-          void q.fetch(undefined, { cancelRefetch: false });
+          if (delay === 0) {
+            void q.fetch(undefined, { cancelRefetch: false });
+          } else {
+            setTimeout(() => {
+              if (q.isStale() && q.state.fetchStatus !== 'fetching') {
+                void q.fetch(undefined, { cancelRefetch: false });
+              }
+            }, delay);
+          }
+          delay += 25;
         }
       });
     }

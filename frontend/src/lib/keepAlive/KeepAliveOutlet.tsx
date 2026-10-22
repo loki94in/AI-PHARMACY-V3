@@ -31,7 +31,12 @@ const HIGH_PRIORITY_PATHS = new Set([
   '/purchases',
   '/manual-purchase',
   '/crm',
-  '/pharmarack-cart'
+  '/pharmarack-cart',
+  '/reports',
+  '/returns',
+  '/purchase-history',
+  '/dispatch',
+  '/phone-sales'
 ]);
 
 // Essential workhorse pages that should be pre-mounted in the DOM at boot for 0ms instant access

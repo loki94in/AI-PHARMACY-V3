@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star } from 'lucide-react';
-import { formatDisplayDate } from '../../utils/date';
+import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, ChevronRight, Folder, FolderOpen, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star } from 'lucide-react';
+import { formatDisplayDate, getTodayString } from '../../utils/date';
 import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult, type ReorderRecentItem } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
 import { findBestCartMatchForOrder } from '../../utils/orderFuzzyMatcher';
@@ -940,6 +940,142 @@ export default function PharmarackCart() {
   // Sent History: tick medicines (any orders), press the ONE Re-order button, finalize in a small popup (qty + distributor change).
   const [sentPopup, setSentPopup] = useState<{ rows: Array<{ key: string; item: LocalSentOrderItem; name: string; qty: number; storeId: number; storeName: string }> } | null>(null);
   const [sentSelection, setSentSelection] = useState<Record<string, boolean>>({});
+  const [sentDateSearchQuery, setSentDateSearchQuery] = useState<string>('');
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => new Set<string>());
+
+  // Group sentDates into:
+  // 1. Recent (Last 7 days): flat list, always expanded
+  // 2. Older history: grouped by month YYYY-MM, collapsed by default
+  const { recentDates, olderMonthGroups } = React.useMemo(() => {
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+    const filteredDates = sentDateSearchQuery.trim()
+      ? sentDates.filter(d => {
+          const q = sentDateSearchQuery.trim().toLowerCase();
+          if (d.toLowerCase().includes(q)) return true;
+          const dateObj = new Date(d);
+          if (!isNaN(dateObj.getTime())) {
+            const formatted = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' }).toLowerCase();
+            if (formatted.includes(q)) return true;
+          }
+          return false;
+        })
+      : sentDates;
+
+    const recent: string[] = [];
+    const olderByMonth = new Map<string, { monthKey: string; monthLabel: string; dates: string[] }>();
+
+    filteredDates.forEach(d => {
+      const parts = d.split('-');
+      let dateMidnight = 0;
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        dateMidnight = new Date(y, m, day).getTime();
+      } else {
+        dateMidnight = new Date(d).getTime();
+      }
+
+      const diff = todayMidnight - dateMidnight;
+      // Within last 7 days (including today and future date skew)
+      if (diff <= SEVEN_DAYS_MS && diff >= -86400000) {
+        recent.push(d);
+      } else {
+        const monthKey = d.slice(0, 7); // YYYY-MM
+        if (!olderByMonth.has(monthKey)) {
+          let monthLabel = monthKey;
+          if (parts.length >= 2) {
+            const monthDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
+            if (!isNaN(monthDate.getTime())) {
+              monthLabel = monthDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+            }
+          }
+          olderByMonth.set(monthKey, {
+            monthKey,
+            monthLabel,
+            dates: []
+          });
+        }
+        olderByMonth.get(monthKey)!.dates.push(d);
+      }
+    });
+
+    const monthGroups = Array.from(olderByMonth.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+    return { recentDates: recent, olderMonthGroups: monthGroups };
+  }, [sentDates, sentDateSearchQuery]);
+
+  // Ensure the month of the selectedSentDate is open if it falls in olderMonthGroups
+  useEffect(() => {
+    if (!selectedSentDate) return;
+    const monthKey = selectedSentDate.slice(0, 7);
+    if (olderMonthGroups.some(g => g.monthKey === monthKey)) {
+      setExpandedMonths(prev => {
+        if (prev.has(monthKey)) return prev;
+        const next = new Set(prev);
+        next.add(monthKey);
+        return next;
+      });
+    }
+  }, [selectedSentDate, olderMonthGroups]);
+
+  // Auto-expand all matching month groups when searching
+  useEffect(() => {
+    if (sentDateSearchQuery.trim()) {
+      setExpandedMonths(new Set(olderMonthGroups.map(g => g.monthKey)));
+    }
+  }, [sentDateSearchQuery, olderMonthGroups]);
+
+  const toggleMonth = (monthKey: string) => {
+    setExpandedMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(monthKey)) {
+        next.delete(monthKey);
+      } else {
+        next.add(monthKey);
+      }
+      return next;
+    });
+  };
+
+  const renderSentDateButton = (d: string, isIndented = false) => {
+    const isToday = d === getTodayString();
+    const isSelected = d === selectedSentDate;
+    const dateObj = new Date(d);
+    const formattedDisplay = isNaN(dateObj.getTime())
+      ? d
+      : dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' });
+
+    return (
+      <button
+        key={d}
+        type="button"
+        onClick={() => handleSelectSentDate(d)}
+        className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-2 border ${
+          isSelected
+            ? 'bg-primary/15 border-primary/40 text-text shadow-xs shadow-primary/5'
+            : 'bg-bg2/50 border-glass-border/40 text-muted hover:text-text hover:bg-bg2/90'
+        } ${isIndented ? 'text-xs' : ''}`}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Clock size={13} className={isSelected ? 'text-primary shrink-0' : 'text-muted/60 shrink-0'} />
+          <div className="min-w-0">
+            <div className={`text-xs font-bold truncate ${isSelected ? 'text-text font-black' : 'text-text/85'}`}>
+              {formattedDisplay}
+            </div>
+            <div className="text-[9px] text-muted font-mono">{d}</div>
+          </div>
+        </div>
+        {isToday && (
+          <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+            Today
+          </span>
+        )}
+      </button>
+    );
+  };
 
   // Switch Supplier Modal State
   const [switchModalTarget, setSwitchModalTarget] = useState<{ item: CartLineItem; dist: Distributor } | null>(null);
@@ -4487,47 +4623,120 @@ export default function PharmarackCart() {
               </span>
             </div>
 
+            {/* Quick Filter Search Bar */}
+            {sentDates.length > 5 && (
+              <div className="p-2.5 border-b border-glass-border/30 bg-bg2/20 shrink-0">
+                <div className="relative">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+                  <input
+                    type="text"
+                    value={sentDateSearchQuery}
+                    onChange={e => setSentDateSearchQuery(e.target.value)}
+                    placeholder="Filter dates (e.g. Oct, 21)..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs bg-bg border border-glass-border/60 rounded-xl text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary/60 transition-all"
+                  />
+                  {sentDateSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSentDateSearchQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-md cursor-pointer"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Dates List */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
               {sentDates.length === 0 ? (
                 <div className="text-center py-10 text-xs text-muted animate-pulse">
                   Loading history dates…
                 </div>
+              ) : recentDates.length === 0 && olderMonthGroups.length === 0 ? (
+                <div className="text-center py-10 text-xs text-muted italic">
+                  No dates found matching "{sentDateSearchQuery}".
+                </div>
               ) : (
-                sentDates.map(d => {
-                  const isToday = d === new Date().toISOString().split('T')[0];
-                  const isSelected = d === selectedSentDate;
-                  const dateObj = new Date(d);
-                  const formattedDisplay = isNaN(dateObj.getTime())
-                    ? d
-                    : dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' });
-
-                  return (
-                    <button
-                      key={d}
-                      onClick={() => handleSelectSentDate(d)}
-                      className={`w-full text-left p-3 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-2 border ${isSelected
-                        ? 'bg-primary/15 border-primary/40 text-text shadow-md shadow-primary/5'
-                        : 'bg-white/[0.02] border-glass-border/30 text-muted hover:text-text hover:bg-white/[0.05]'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Clock size={14} className={isSelected ? "text-primary shrink-0" : "text-muted/60 shrink-0"} />
-                        <div className="min-w-0">
-                          <div className={`text-xs font-bold truncate ${isSelected ? 'text-text' : 'text-text/80'}`}>
-                            {formattedDisplay}
-                          </div>
-                          <div className="text-[9px] text-muted font-mono">{d}</div>
-                        </div>
-                      </div>
-                      {isToday && (
-                        <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
-                          Today
+                <>
+                  {/* Recent (Last 7 Days) Section - Always Expanded */}
+                  {recentDates.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between px-1 pb-1">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                          <Clock size={11} className="text-primary" />
+                          Recent (Last 7 Days)
                         </span>
-                      )}
-                    </button>
-                  );
-                })
+                        <span className="text-[9px] font-mono font-bold text-muted px-1.5 py-0.2 rounded bg-bg3 border border-glass-border">
+                          {recentDates.length}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {recentDates.map(d => renderSentDateButton(d, false))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Older History (Monthly Collapsible Accordions) */}
+                  {olderMonthGroups.length > 0 && (
+                    <div className="space-y-2 pt-1 border-t border-glass-border/30">
+                      <div className="px-1 pb-0.5">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                          <Folder size={11} className="text-amber-500" />
+                          Older History
+                        </span>
+                      </div>
+
+                      {olderMonthGroups.map(group => {
+                        const isExpanded = expandedMonths.has(group.monthKey);
+                        const hasSelectedDate = group.dates.includes(selectedSentDate);
+
+                        return (
+                          <div
+                            key={group.monthKey}
+                            className={`rounded-2xl border transition-all ${
+                              hasSelectedDate
+                                ? 'border-primary/40 bg-bg2/40'
+                                : 'border-glass-border/50 bg-bg2/20 hover:border-glass-border'
+                            } overflow-hidden`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleMonth(group.monthKey)}
+                              className="w-full flex items-center justify-between p-2.5 text-xs font-bold text-text hover:bg-bg2/60 transition-colors cursor-pointer text-left"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isExpanded ? (
+                                  <ChevronDown size={14} className="text-primary shrink-0 transition-transform" />
+                                ) : (
+                                  <ChevronRight size={14} className="text-muted shrink-0 transition-transform" />
+                                )}
+                                {isExpanded ? (
+                                  <FolderOpen size={13} className="text-primary shrink-0" />
+                                ) : (
+                                  <Folder size={13} className="text-muted shrink-0" />
+                                )}
+                                <span className="truncate text-xs">{group.monthLabel}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-bg3 text-muted border border-glass-border">
+                                  {group.dates.length} Days
+                                </span>
+                              </div>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="px-2 pb-2.5 pt-1 space-y-1.5 border-t border-glass-border/20 bg-bg/20">
+                                {group.dates.map(d => renderSentDateButton(d, true))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

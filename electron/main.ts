@@ -313,7 +313,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      backgroundThrottling: true, // Allow Chromium to sleep idle/hidden tabs and eliminate GPU overheating
+      backgroundThrottling: false, // Keep JavaScript event loop responsive across extended idle time (eliminates 1-2s wake lag)
     },
   });
 
