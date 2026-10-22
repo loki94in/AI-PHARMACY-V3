@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   X, Search, Plus, Minus, ClipboardList, ShoppingCart,
   RefreshCw, Check, AlertCircle, MessageCircle, RotateCcw,
-  Store, Tag, ArrowRight, CheckCircle2
+  Store, Tag, ArrowRight, CheckCircle2, Clock
 } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent, messageSendEvent } from '../services/events';
@@ -387,7 +387,7 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
             rate: selectedRate !== '' ? Number(selectedRate) : undefined,
             mrp: selectedMrp !== '' ? Number(selectedMrp) : undefined,
             scheme: selectedScheme,
-            distributor: selectedDistributor,
+            storeName: selectedDistributor,
             mapped: selectedMapped
           }]);
         } catch (_) {}

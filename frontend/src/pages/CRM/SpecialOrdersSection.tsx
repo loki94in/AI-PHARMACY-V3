@@ -178,7 +178,6 @@ export const SpecialOrdersSection: React.FC = () => {
   };
 
   // Modals
-  const [showAddModal, setShowAddModal] = useState(false);
   const [showDelayModal, setShowDelayModal] = useState(false);
 
   // Edit Request Form State
@@ -1482,7 +1481,12 @@ export const SpecialOrdersSection: React.FC = () => {
                   </div>
                 )}
               </div>
-          {/* Add Special Request Modal inside CRM */}
+            );
+          })
+        )}
+      </div>
+
+      {/* Add Special Request Modal inside CRM */}
       <SpecialOrderAddModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}

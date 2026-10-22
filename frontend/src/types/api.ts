@@ -198,6 +198,8 @@ export interface Patient {
   phone?: string;
   address?: string;
   notes?: string;
+  language?: string;
+  preferred_language?: string;
 }
 
 export interface Doctor {
