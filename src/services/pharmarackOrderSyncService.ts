@@ -956,44 +956,72 @@ export async function deduplicateSameStoreMultiOrderLines(db: any): Promise<numb
 
       if (rows.length < 2) continue;
 
-      const parsedRows = rows.map((r: any) => {
+      // 1. Resolve orphan rows (order_no IS NULL or empty) where official PO row already exists
+      const officialRows = rows.filter((r: any) => Boolean(r.order_no && String(r.order_no).trim()));
+      const orphanRows = rows.filter((r: any) => !r.order_no || !String(r.order_no).trim());
+
+      for (const orphan of orphanRows) {
+        let orphanItems: any[] = [];
+        try { orphanItems = JSON.parse(orphan.items_json || '[]'); } catch (_) { orphanItems = []; }
+
+        const matchingOfficial = officialRows.find((off: any) => {
+          let offItems: any[] = [];
+          try { offItems = JSON.parse(off.items_json || '[]'); } catch (_) { offItems = []; }
+          return offItems.length === 0 || offItems.length === orphanItems.length;
+        });
+
+        if (matchingOfficial) {
+          let offItems: any[] = [];
+          try { offItems = JSON.parse(matchingOfficial.items_json || '[]'); } catch (_) { offItems = []; }
+          if (offItems.length === 0 && orphanItems.length > 0) {
+            await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(orphanItems), matchingOfficial.id]);
+            matchingOfficial.items_json = JSON.stringify(orphanItems);
+          }
+          await db.run('DELETE FROM pharmarack_placed_orders WHERE id = ?', [orphan.id]);
+          fixedCount++;
+          console.log(`[PharmarackSync] Cleaned redundant orphan placed order #${orphan.id} in favor of official PO #${matchingOfficial.order_no}`);
+        }
+      }
+
+      // Re-fetch remaining rows for this store
+      const remainingRows = await db.all(`
+        SELECT id, order_no, items_json
+        FROM pharmarack_placed_orders
+        WHERE order_date = ? AND LOWER(TRIM(store_name)) = ?
+        ORDER BY id ASC
+      `, [group.order_date, group.store_norm]);
+
+      if (remainingRows.length < 2) continue;
+
+      const parsedRows = remainingRows.map((r: any) => {
         let items: any[] = [];
         try { items = JSON.parse(r.items_json || '[]'); } catch (_) { items = []; }
         return { ...r, items };
       });
 
-      for (let i = 0; i < parsedRows.length; i++) {
-        for (let j = 0; j < parsedRows.length; j++) {
-          if (i === j) continue;
-          const rowA = parsedRows[i];
-          const rowB = parsedRows[j];
-
-          // If rowA has more items than rowB, and rowB items appear in rowA:
-          if (rowA.items.length > rowB.items.length && rowB.items.length > 0) {
-            const bKeys = new Set(rowB.items.map((it: any) =>
-              String(it.productCode || it.productName || it.name || '').trim().toLowerCase()
-            ));
-
-            const hasOverlap = rowA.items.some((it: any) =>
-              bKeys.has(String(it.productCode || it.productName || it.name || '').trim().toLowerCase())
-            );
-
-            if (hasOverlap) {
-              const prunedItems = rowA.items.filter((it: any) =>
-                !bKeys.has(String(it.productCode || it.productName || it.name || '').trim().toLowerCase())
-              );
-
-              if (prunedItems.length > 0 && prunedItems.length < rowA.items.length) {
-                await db.run(
-                  'UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?',
-                  [JSON.stringify(prunedItems), rowA.id]
-                );
-                rowA.items = prunedItems;
-                fixedCount++;
-                console.log(`[PharmarackSync] Pruned ${bKeys.size} duplicate items from placed order #${rowA.id} (${rowA.order_no || 'in_app'}) belonging to #${rowB.id} (${rowB.order_no || 'in_app'})`);
-              }
-            }
+      // 2. Strict item deduplication across multiple distinct orders for the same store today
+      const seenItemKeys = new Set<string>();
+      for (const row of parsedRows) {
+        const uniqueItems = [];
+        let rowChanged = false;
+        for (const it of row.items) {
+          const key = String(it.productCode || it.productName || it.name || '').trim().toLowerCase();
+          if (!key) continue;
+          if (seenItemKeys.has(key)) {
+            rowChanged = true;
+            fixedCount++;
+            continue; // Duplicate medicine already in an earlier order today
           }
+          seenItemKeys.add(key);
+          uniqueItems.push(it);
+        }
+        if (rowChanged) {
+          await db.run(
+            'UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?',
+            [JSON.stringify(uniqueItems), row.id]
+          );
+          row.items = uniqueItems;
+          console.log(`[PharmarackSync] Pruned duplicate medicine items from placed order #${row.id} (${row.order_no || 'PO'})`);
         }
       }
     }

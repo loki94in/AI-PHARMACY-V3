@@ -155,7 +155,7 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
 
     const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
       db.all(
-        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+        `SELECT id, order_date, store_id, store_name, order_no, items_json, placed_at 
          FROM pharmarack_placed_orders 
          WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ?`,
         [todayStr, todayStr]
@@ -233,25 +233,46 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
       const ordersList: Array<{
         id: string | number;
         source: 'pharmarack' | 'purchase' | 'manual';
+        order_no?: string | null;
         order_time: string;
         items_count: number;
         items_preview: string[];
       }> = [];
 
       let totalItems = 0;
-      for (const po of matchingPlaced) {
+
+      // Filter out redundant orphan rows if an official PO row exists for this distributor
+      const hasOfficialRow = matchingPlaced.some((p: any) => Boolean(p.order_no && String(p.order_no).trim()));
+      const filteredPlaced = hasOfficialRow
+        ? matchingPlaced.filter((p: any) => Boolean(p.order_no && String(p.order_no).trim()))
+        : matchingPlaced;
+
+      const seenMedKeysInStore = new Set<string>();
+
+      for (const po of filteredPlaced) {
         let itemsArr: any[] = [];
         try {
           itemsArr = typeof po.items_json === 'string' ? JSON.parse(po.items_json) : (Array.isArray(po.items_json) ? po.items_json : []);
         } catch (_) {}
-        totalItems += itemsArr.length;
+
+        // Strict de-duplication: eliminate medicines that already appeared in an earlier order for this store today
+        const uniqueItems = itemsArr.filter((it: any) => {
+          const k = String(it.productCode || it.productName || it.name || '').trim().toLowerCase();
+          if (!k) return true;
+          if (seenMedKeysInStore.has(k)) return false;
+          seenMedKeysInStore.add(k);
+          return true;
+        });
+
+        totalItems += uniqueItems.length;
         const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
-        const previews = itemsArr.slice(0, 5).map((it: any) => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
+        const previews = uniqueItems.slice(0, 5).map((it: any) => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
         ordersList.push({
           id: `pharma_${po.id}`,
           source: 'pharmarack',
+          order_no: po.order_no || null,
           order_time: timeStr,
-          items_count: itemsArr.length,
+          items_count: uniqueItems.length,
           items_preview: previews
         });
       }
@@ -286,7 +307,9 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
         existing.order_count = (existing.order_count || 0) + (r.order_count || 0);
         existing.total_items_count = (existing.total_items_count || 0) + (r.total_items_count || 0);
         if (Array.isArray(r.orders_list) && r.orders_list.length > 0) {
-          existing.orders_list = [...(existing.orders_list || []), ...r.orders_list];
+          const existingIds = new Set((existing.orders_list || []).map((o: any) => o.id));
+          const newOrds = r.orders_list.filter((o: any) => !existingIds.has(o.id));
+          existing.orders_list = [...(existing.orders_list || []), ...newOrds];
         }
         if (Array.isArray(r.synced_order_nos) && r.synced_order_nos.length > 0) {
           existing.synced_order_nos = Array.from(new Set([...(existing.synced_order_nos || []), ...r.synced_order_nos]));
@@ -772,7 +795,7 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
 
       const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
         db.all(
-          `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+          `SELECT id, order_date, store_id, store_name, order_no, items_json, placed_at 
            FROM pharmarack_placed_orders 
            WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
            ORDER BY placed_at ASC`,
@@ -846,6 +869,7 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
         const ordersList: Array<{
           id: string | number;
           source: 'pharmarack' | 'purchase' | 'manual';
+          order_no?: string | null;
           order_time: string;
           items_count: number;
           items_preview: string[];
@@ -853,21 +877,39 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
 
         let totalItems = 0;
 
-        for (const po of matchingPlaced) {
+        // Filter out redundant orphan rows if an official PO row exists for this distributor
+        const hasOfficialRow = matchingPlaced.some((p: any) => Boolean(p.order_no && String(p.order_no).trim()));
+        const filteredPlaced = hasOfficialRow
+          ? matchingPlaced.filter((p: any) => Boolean(p.order_no && String(p.order_no).trim()))
+          : matchingPlaced;
+
+        const seenMedKeysInStore = new Set<string>();
+
+        for (const po of filteredPlaced) {
           let itemsArr: any[] = [];
           try {
             itemsArr = typeof po.items_json === 'string' ? JSON.parse(po.items_json) : (Array.isArray(po.items_json) ? po.items_json : []);
           } catch (_) {}
 
-          totalItems += itemsArr.length;
+          // Strict de-duplication: eliminate medicines that already appeared in an earlier order for this store today
+          const uniqueItems = itemsArr.filter((it: any) => {
+            const k = String(it.productCode || it.productName || it.name || '').trim().toLowerCase();
+            if (!k) return true;
+            if (seenMedKeysInStore.has(k)) return false;
+            seenMedKeysInStore.add(k);
+            return true;
+          });
+
+          totalItems += uniqueItems.length;
           const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
-          const previews = itemsArr.slice(0, 5).map(it => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
+          const previews = uniqueItems.slice(0, 5).map(it => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
 
           ordersList.push({
             id: `pharma_${po.id}`,
             source: 'pharmarack',
+            order_no: po.order_no || null,
             order_time: timeStr,
-            items_count: itemsArr.length,
+            items_count: uniqueItems.length,
             items_preview: previews
           });
         }

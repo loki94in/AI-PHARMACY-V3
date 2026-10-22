@@ -119,7 +119,8 @@ interface LocalWhatsAppSentMessage {
 }
 
 interface LocalDistributorOrderEntry {
-  id?: number;
+  id?: number | string;
+  order_no?: string | null;
   order_time?: string;
   items_count?: number;
   items_preview?: string[];
@@ -1950,7 +1951,7 @@ const Dispatch = () => {
                                       <div key={ord.id || oIdx} className="p-3 rounded-xl bg-bg border border-glass-border/70 space-y-2">
                                         <div className="flex items-center justify-between text-[11px] font-bold">
                                           <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                                            Order #{oIdx + 1}
+                                            {ord.order_no ? `PO #${ord.order_no}` : `Order #${oIdx + 1}`}
                                           </span>
                                           <span className="text-muted font-mono flex items-center gap-1">
                                             <Clock size={11} /> {ord.order_time || 'Today'}

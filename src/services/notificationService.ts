@@ -964,6 +964,11 @@ export class NotificationService {
         }
         const orderNoText = orderNos.map(n => `#${n}`).join(', ');
 
+        if ((isOrderAnnouncement || followUp) && !orderNoText) {
+          console.warn(`[DistributorReminder] Suppressing order announcement for ${reminder.distributor_name}: official PO number not yet confirmed.`);
+          return false;
+        }
+
         if (rawTemplate && String(rawTemplate).trim()) {
           const hasOrderPlaceholder = /\{order_no\}/.test(String(rawTemplate));
           message = String(rawTemplate)
