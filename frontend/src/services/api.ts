@@ -1256,6 +1256,7 @@ export const api = {
   checkDuplicateDistributorPhone: (phone: string, excludeId?: number | null, excludeName?: string) =>
     apiClient.get<{
       isDuplicate: boolean;
+      message?: string;
       phone?: string;
       matchedDistributor?: { id: number; name: string; phone: string } | null;
       matchedDeliveryBoy?: { id: number; name: string; phone: string } | null;

@@ -1774,7 +1774,7 @@ export default function PharmarackCart() {
             editingDistributor?.storeName || undefined
           );
           if (res.isDuplicate) {
-            setPhoneDuplicateWarning(res.message);
+            setPhoneDuplicateWarning(res.message || 'This phone number is already assigned.');
           } else {
             setPhoneDuplicateWarning(null);
           }
@@ -3104,8 +3104,9 @@ export default function PharmarackCart() {
           editingDistributor.storeName || undefined
         );
         if (dupCheck.isDuplicate) {
-          setPhoneDuplicateWarning(dupCheck.message);
-          setDuplicateConfirmNotice({ message: dupCheck.message, cleanPhone });
+          const warnMsg = dupCheck.message || 'This phone number is already assigned.';
+          setPhoneDuplicateWarning(warnMsg);
+          setDuplicateConfirmNotice({ message: warnMsg, cleanPhone });
           return;
         }
       } catch (err) {
