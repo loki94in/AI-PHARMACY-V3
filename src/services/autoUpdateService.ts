@@ -533,17 +533,15 @@ class AutoUpdateService {
     console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
     console.log(`[AutoUpdate]   SHA-256  : ${sha256 || '(not provided)'}`);
 
-    // Spawn Updater.bat detached — it will wait for this process to exit
-    const child = spawn('cmd.exe', [
-      '/c', updaterPath,
-      zipPath,
-      installDir,
-      this.lastResult.latestVersion,
-      sha256,
-      logPath,
-    ], {
+    // Spawn Updater.bat detached in a dedicated visible console progress window
+    const targetVersion = this.lastResult.latestVersion;
+    const windowTitle = `"AI Pharmacy OS — Updating to v${targetVersion}"`;
+    const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
+
+    const child = spawn('cmd.exe', ['/c', 'start', windowTitle, 'cmd.exe', '/c', fullCommand], {
       detached: true,
-      stdio:    'ignore',
+      stdio: 'ignore',
+      windowsHide: false,
     });
     child.unref();
 

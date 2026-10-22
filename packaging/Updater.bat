@@ -28,10 +28,19 @@ set "EXPECTED_SHA256=%~4"
 set "LOG_PATH=%~5"
 
 :: ── Defaults ───────────────────────────────────────────────
-if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & exit /b 1 )
-if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & exit /b 1 )
+if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & pause & exit /b 1 )
+if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & pause & exit /b 1 )
 if "%TARGET_VERSION%"==""   set "TARGET_VERSION=unknown"
 if "%LOG_PATH%"==""         set "LOG_PATH=%INSTALL_DIR%\logs\updater.log"
+
+title AI Pharmacy OS — Update Installer (v%TARGET_VERSION%)
+color 0B
+cls
+echo ==============================================================
+echo              AI Pharmacy OS — Update Installer
+echo              Upgrading to Version: v%TARGET_VERSION%
+echo ==============================================================
+echo.
 
 :: ── Ensure log dir exists ──────────────────────────────────
 for %%D in ("%LOG_PATH%") do if not exist "%%~dpD" mkdir "%%~dpD" 2>nul
@@ -54,10 +63,11 @@ if not exist "%STAGING_DIR%" mkdir "%STAGING_DIR%"
 if exist "%LOCK_PATH%" (
     call :LOG "WARNING: Existing update.lock found. Checking if stale..."
     set "LOCK_AGE_STALE=1"
-    :: powershell check: if file is < 30 min old, abort
     powershell -NoProfile -Command "$f='%LOCK_PATH%'; $age=(Get-Date)-(Get-Item $f).LastWriteTime; if($age.TotalMinutes -lt 30){exit 1}else{exit 0}" >nul 2>&1
     if !ERRORLEVEL!==1 (
+        echo [ERROR] Active update.lock found. Another update may be running.
         call :LOG "ERROR: Active update.lock found (< 30 min old). Another update may be running. Aborting."
+        pause
         exit /b 1
     )
     call :LOG "Stale lock detected (> 30 min). Removing and continuing."
@@ -69,6 +79,7 @@ echo {"pid":"%~$PID:0%","ts":"%DATE% %TIME%","targetVersion":"%TARGET_VERSION%",
 call :LOG "update.lock written."
 
 :: ── 2. Wait for PharmacyOS.exe to exit ────────────────────
+echo [1/4] Closing running application...
 call :LOG "Waiting for PharmacyOS.exe to exit..."
 set /a WAIT_COUNT=0
 :WAIT_LOOP
@@ -86,8 +97,10 @@ set /a WAIT_COUNT=0
     )
 :WAIT_DONE
 call :LOG "PharmacyOS.exe is no longer running."
+echo [1/4] Application closed successfully. [OK]
 
 :: ── 3. Verify SHA-256 ──────────────────────────────────────
+echo [2/4] Verifying update package integrity...
 if not "%EXPECTED_SHA256%"=="" (
     call :LOG "Verifying SHA-256 of update package..."
     for /f "usebackq delims=" %%H in (
@@ -95,6 +108,7 @@ if not "%EXPECTED_SHA256%"=="" (
     ) do set "ACTUAL_SHA256=%%H"
 
     if /i not "!ACTUAL_SHA256!"=="%EXPECTED_SHA256%" (
+        echo [ERROR] SHA-256 integrity verification failed!
         call :LOG "ERROR: SHA-256 mismatch!"
         call :LOG "  Expected: %EXPECTED_SHA256%"
         call :LOG "  Actual  : !ACTUAL_SHA256!"
@@ -102,39 +116,40 @@ if not "%EXPECTED_SHA256%"=="" (
         del /f /q "%ZIP_PATH%" >nul 2>&1
         call :CLEANUP_LOCK
         start "" "%INSTALL_DIR%\PharmacyOS.exe"
+        pause
         exit /b 1
     )
     call :LOG "SHA-256 verified OK."
 ) else (
     call :LOG "WARNING: No expected SHA-256 provided — skipping checksum verification."
 )
+echo [2/4] Integrity verified successfully. [OK]
 
 :: ── 4. Backup current install ──────────────────────────────
+echo [3/4] Creating safety backup of current installation...
 set "TIMESTAMP="
 for /f "tokens=2 delims==" %%T in ('wmic os get LocalDateTime /value 2^>nul ^| findstr LocalDateTime') do set "TIMESTAMP=%%T"
-:: Format: YYYYMMDDHHmmss
 set "TIMESTAMP=!TIMESTAMP:~0,14!"
 if "!TIMESTAMP!"=="" set "TIMESTAMP=%DATE:~-4%%DATE:~3,2%%DATE:~0,2%120000"
 set "BACKUP_DIR=%INSTALL_DIR%\backup\preupdate-!TIMESTAMP!"
 call :LOG "Creating pre-update backup at: !BACKUP_DIR!"
 
 mkdir "!BACKUP_DIR!" 2>nul
-:: Back up only the files that the update will replace
 if exist "%INSTALL_DIR%\PharmacyOS.exe" copy /Y "%INSTALL_DIR%\PharmacyOS.exe" "!BACKUP_DIR!\PharmacyOS.exe" >nul 2>&1
 if exist "%INSTALL_DIR%\sea-entry.cjs"  copy /Y "%INSTALL_DIR%\sea-entry.cjs"  "!BACKUP_DIR!\sea-entry.cjs"  >nul 2>&1
 if exist "%INSTALL_DIR%\Updater.bat"    copy /Y "%INSTALL_DIR%\Updater.bat"    "!BACKUP_DIR!\Updater.bat"    >nul 2>&1
 
-:: Verify backup has PharmacyOS.exe
 if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
+    echo [ERROR] Backup of PharmacyOS.exe failed!
     call :LOG "ERROR: Backup of PharmacyOS.exe failed."
     call :WRITE_FAILURE "EXECUTABLE_BACKUP_FAILED"
     call :CLEANUP_LOCK
     start "" "%INSTALL_DIR%\PharmacyOS.exe"
+    pause
     exit /b 1
 )
 call :LOG "Backup created successfully."
 
-:: Back up data/app.db as well (PRODUCTION.md §25)
 if exist "%INSTALL_DIR%\data\app.db" (
     call :LOG "Backing up data/app.db..."
     copy /Y "%INSTALL_DIR%\data\app.db" "!BACKUP_DIR!\app-preupdate-!TIMESTAMP!.db" >nul 2>&1
@@ -144,21 +159,46 @@ if exist "%INSTALL_DIR%\data\app.db" (
         call :LOG "data/app.db backup OK."
     )
 )
+echo [3/4] Safety backup completed. [OK]
 
 :: ── 5. Extract update ZIP ──────────────────────────────────
-call :LOG "Extracting update package..."
-powershell -NoProfile -Command "Expand-Archive -Path '%ZIP_PATH%' -DestinationPath '%INSTALL_DIR%' -Force" >nul 2>&1
+echo [4/4] Extracting and applying update files...
+call :LOG "Extracting update package with progress..."
+powershell -NoProfile -Command ^
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem; " ^
+    "$zip = [System.IO.Compression.ZipFile]::OpenRead('%ZIP_PATH%'); " ^
+    "$total = $zip.Entries.Count; $curr = 0; " ^
+    "foreach($entry in $zip.Entries) { " ^
+    "  $curr++; " ^
+    "  $dest = Join-Path '%INSTALL_DIR%' $entry.FullName; " ^
+    "  if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) { " ^
+    "    if (!(Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null } " ^
+    "  } else { " ^
+    "    $parent = Split-Path $dest; if (!(Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; " ^
+    "    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true); " ^
+    "  } " ^
+    "  if ($curr %% 15 -eq 0 -or $curr -eq $total) { " ^
+    "    $pct = [math]::Round(($curr / $total) * 100); " ^
+    "    Write-Host -NoNewline ('`r[4/4] Installing update: ' + $pct + '%% (' + $curr + '/' + $total + ' files)'); " ^
+    "  } " ^
+    "} " ^
+    "$zip.Dispose(); Write-Host ' [OK]';"
+
 if !ERRORLEVEL! NEQ 0 (
+    echo [ERROR] Extraction failed! Rolling back...
     call :LOG "ERROR: ZIP extraction failed (code !ERRORLEVEL!)."
     call :ROLLBACK "!BACKUP_DIR!" "FILE_REPLACEMENT_FAILED"
+    pause
     exit /b 1
 )
 call :LOG "Extraction complete."
 
 :: ── 6. Verify new PharmacyOS.exe ──────────────────────────
 if not exist "%INSTALL_DIR%\PharmacyOS.exe" (
+    echo [ERROR] PharmacyOS.exe missing after extraction! Rolling back...
     call :LOG "ERROR: PharmacyOS.exe missing after extraction."
     call :ROLLBACK "!BACKUP_DIR!" "FILE_REPLACEMENT_FAILED"
+    pause
     exit /b 1
 )
 call :LOG "PharmacyOS.exe verified after extraction."
@@ -176,6 +216,10 @@ call :LOG "Pruning older pre-update rollback backups (keeping latest 2)..."
 powershell -NoProfile -Command "$bRoot = Join-Path '%INSTALL_DIR%' 'backup'; if (Test-Path $bRoot) { Get-ChildItem -Path $bRoot -Directory -Filter 'preupdate-*' | Sort-Object CreationTime -Descending | Select-Object -Skip 2 | ForEach-Object { Remove-Item $_.FullName -Recurse -Force; Write-Host ('Pruned: ' + $_.Name) } }" >> "%LOG_PATH%" 2>&1
 
 :: ── 9. Start new version ──────────────────────────────────
+echo.
+echo ==============================================================
+echo  Update v%TARGET_VERSION% installed successfully! Restarting app...
+echo ==============================================================
 call :LOG "Starting new PharmacyOS.exe..."
 timeout /t 2 /nobreak >nul
 if exist "%INSTALL_DIR%\RUN-PharmacyOS-Silent.vbs" (

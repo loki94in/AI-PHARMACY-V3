@@ -1,69 +1,64 @@
-# Implementation Plan: Zero-Lag Idle Wake-Up & <1ms Page Switching (Low RAM/CPU)
+# Implementation Plan: End-to-End Update Download & Installation Progress
 
 ## 1. Problem & Root Cause
-When the application is left idle for 20–30 minutes:
-1. **Time-Based Cache Expiration (`staleTime: 2min`)**: TanStack Query in `frontend/src/lib/queryClient.ts` marks all cached queries as expired after 2 minutes. When the user opens or switches pages after 20–30 minutes, `PageQueryTracker.tsx` detects that all queries are stale and fires a simultaneous storm of 5–10 API requests, causing a 2–3s CPU spike and UI freeze.
-2. **Chromium Background Throttling**: In `electron/main.ts`, `backgroundThrottling: true` throttles the V8 JavaScript engine to 1 tick per minute after extended idle time, adding 1–2s of de-throttling latency upon user return.
-3. **Cold Re-Mounts for Operational Pages**: Secondary workhorse pages (`/reports`, `/returns`, `/purchase-history`, `/dispatch`) are not in `HIGH_PRIORITY_PATHS` in `KeepAliveOutlet.tsx`, causing them to unmount and suffer cold bundle loads and layout shifts upon return.
+1. **Unquoted Path Crash on Spaces**: In `src/services/autoUpdateService.ts`, `Updater.bat` was spawned via `cmd.exe /c updaterPath ...` without proper enclosing quotes. On standard installations with spaces (e.g. `G:\AI Pharmacy OS\Updater.bat`), `cmd.exe` failed with `'G:\AI' is not recognized as an internal or external command`. Because `stdio: 'ignore'` was set, the updater died silently.
+2. **Invisible Download Progress**: `UpdateBanner.tsx` was configured to stay completely hidden during downloads, only popping up once 100% finished. The user had no visual confirmation of whether the download started or how many MBs were left.
+3. **Invisible Installation Phase**: `Updater.bat` ran completely hidden (`stdio: 'ignore'`) without any window, progress bar, or extraction feedback.
 
 ---
 
 ## 2. Technical Architecture & File Changes
 
-1. **`frontend/src/lib/queryClient.ts`**:
-   - Change `staleTime` from `2 * 60_000` (2 minutes) to `Infinity`.
-   - In AI Pharmacy, data freshness is strictly event-driven via Server-Sent Events (SSE) and cache invalidation utilities (`invalidateAfterStockWrite`, `invalidateAfterPriceWrite`, `SSE_QUERY_MAP`).
-   - By eliminating artificial timer-based expiration, queries remain 100% fresh in memory if no database changes occurred during the idle period.
-   - Result: 0 HTTP requests on wake-up, 0 CPU spike, and instant <1ms cached page activation.
+1. **`src/services/autoUpdateService.ts`**:
+   - Fix process spawn quoting: format arguments so `cmd.exe` launches `Updater.bat` safely with paths containing spaces.
+   - Launch `Updater.bat` via `start "AI Pharmacy OS — Updater" cmd.exe /c ...` in a dedicated visible console window so the user sees live progress.
 
-2. **`frontend/src/lib/keepAlive/PageQueryTracker.tsx`**:
-   - Stagger dirty query refetches on page activation with micro-batching so that even if genuine background invalidations arrived during idle time, queries don't collide or lock SQLite simultaneously.
+2. **`packaging/Updater.bat`**:
+   - Modernize the updater window with clear progress titles and color formatting.
+   - Replace silent `Expand-Archive` with high-performance .NET zip extraction that prints live progress (`[3/4] Extracting update files... 78% (550/712)`).
+   - Display clear step-by-step milestones: `[1/4] Closing app`, `[2/4] Verifying integrity`, `[3/4] Extracting files`, `[4/4] Restarting app`.
 
-3. **`electron/main.ts`**:
-   - Set `backgroundThrottling: false` in `BrowserWindow.webPreferences`.
-   - Eliminates Chromium V8 timer freeze and wake-up lag.
-   - CPU remains <0.1% at idle because background workers are already gated by `activityTracker.isIdle()`.
-   - Adheres strictly to Guardrail E1 (`app.disableHardwareAcceleration()` and `disable-gpu-compositing` intact).
-
-4. **`frontend/src/lib/keepAlive/KeepAliveOutlet.tsx`**:
-   - Expand `HIGH_PRIORITY_PATHS` to include frequent operational workflows: `'/reports'`, `'/returns'`, `'/purchase-history'`, `'/dispatch'`.
-   - Retains state in DOM via `display: none` so navigating to these pages after idle is instantaneous (0ms).
+3. **`frontend/src/components/UpdateBanner.tsx`**:
+   - Listen to SSE `sse:update_progress` events to render a live download progress bar with percentage and MB transfer counter (`Downloading update v0.1.141: 45% (47 MB / 105 MB)`).
+   - Add a full-screen transition overlay when "Install Now" is clicked, informing the user that the updater window is taking over and the app will restart in ~10 seconds.
 
 ---
 
 ## 3. Step-by-Step Implementation Checklist
 
-- [x] **Step 1**: Update `frontend/src/lib/queryClient.ts` to use `staleTime: Infinity` (event-driven freshness).
-- [x] **Step 2**: Enhance `frontend/src/lib/keepAlive/PageQueryTracker.tsx` with sequential micro-staggered fetching on activation.
-- [x] **Step 3**: Update `electron/main.ts` to disable `backgroundThrottling` while preserving no-GPU contracts.
-- [x] **Step 4**: Expand `HIGH_PRIORITY_PATHS` in `frontend/src/lib/keepAlive/KeepAliveOutlet.tsx`.
+- [x] **Step 1**: Write implementation plan to `implementation.md`.
+- [x] **Step 2**: Enhance `packaging/Updater.bat` with visible styled console UI and live extraction progress.
+- [x] **Step 3**: Fix path quoting and visible window spawning in `src/services/autoUpdateService.ts`.
+- [x] **Step 4**: Update `frontend/src/components/UpdateBanner.tsx` with live download progress bar and installation transition modal.
 - [x] **Step 5**: Run TypeScript compilation check (`tsc --noEmit`).
 - [x] **Step 6**: Run `npm run guardrails` and verify 0 violations.
 - [x] **Step 7**: Run `node scripts/quick-update.mjs` to synchronize the knowledge graph.
+- [ ] **Step 8**: Commit changes and publish new release (`npm run release`).
 
 ---
 
 ## 4. Completed Tasks Log
 
-- **Task 1: Event-Driven Query Freshness in `frontend/src/lib/queryClient.ts`**:
-  - Replaced `staleTime: 2 * 60_000` with `staleTime: Infinity`.
-  - Ensures cached data in memory never expires merely from idle clock time. Data invalidation is now strictly event-driven via Server-Sent Events (SSE).
-  - Eliminates the 5–10 concurrent API call storm when returning to pages after 20–30 minutes of idle time.
+1. **Root Cause Diagnosis**:
+   - Analyzed failure on Windows paths with spaces (`G:\AI Pharmacy OS`). `cmd.exe /c` without proper quoting choked on `G:\AI`.
+   - Identified lack of download progress in UI because banner was hidden during active download.
+   - Identified lack of installation progress in `Updater.bat` because it was headless and used silent `Expand-Archive`.
 
-- **Task 2: Sequential Micro-Staggering in `frontend/src/lib/keepAlive/PageQueryTracker.tsx`**:
-  - Added a 25ms micro-stagger to dirty query fetches on page activation.
-  - Prevents SQLite lock contention and CPU spikes even when multiple queries were genuinely invalidated by backend events during background time.
+2. **Console UI & Live Extraction Progress (`packaging/Updater.bat`)**:
+   - Replaced silent extraction with .NET `[System.IO.Compression.ZipFileExtensions]` stream extraction reporting real-time percentage and file count: `[4/4] Installing update: 78% (550/712 files) [OK]`.
+   - Added milestone status headers `[1/4]` to `[4/4]` with cyan console styling (`color 0B`).
+   - Synced updated `Updater.bat` directly into `G:\AI Pharmacy OS\Updater.bat`.
 
-- **Task 3: Responsive Chromium V8 Event Loop in `electron/main.ts`**:
-  - Set `backgroundThrottling: false` in `BrowserWindow.webPreferences`.
-  - Prevents Chromium from degrading the timer resolution to 1 tick/minute during idle periods, eliminating the 1–2s wake-up unfreezing delay.
-  - Preserved owner's No-GPU contract (`app.disableHardwareAcceleration()` and `disable-gpu-compositing` intact).
+3. **Space-Safe Quoting & Dedicated Console Window (`src/services/autoUpdateService.ts`)**:
+   - Updated `installUpdate()` to wrap paths with `call "<updaterPath>"` inside `cmd.exe /c start "<title>" cmd.exe /c ...`.
+   - Set `windowsHide: false` so the updater window is explicitly brought to the foreground.
 
-- **Task 4: Expanded Keep-Alive Workhorse Routes in `frontend/src/lib/keepAlive/KeepAliveOutlet.tsx`**:
-  - Added `/reports`, `/returns`, `/purchase-history`, `/dispatch`, and `/phone-sales` to `HIGH_PRIORITY_PATHS`.
-  - These pages now stay preserved in the DOM (`display: none`) once visited, enabling instant 0ms switching without cold re-mounts or bundle re-parsing.
+4. **Live Download Progress & Transition Overlay (`frontend/src/components/UpdateBanner.tsx`)**:
+   - Subscribed to SSE `update_progress` events to render active download progress bar, percent indicator, and MB counter (`45 MB / 105 MB`).
+   - Added fullscreen transition modal when user clicks "Install Now" explaining that the updater is launching and the app will restart.
 
-- **Task 5: Verification & Knowledge Graph Synchronization**:
-  - Verified TypeScript compilation: `npx tsc -p frontend/tsconfig.app.json --noEmit` passed with exit code 0.
-  - Verified performance guardrails: `npm run guardrails` scanned 5 files and passed with 0 violations.
-  - Synchronized knowledge graph: `node scripts/quick-update.mjs` completed in 3.9s.
+5. **Validation & Verification**:
+   - Ran `npx tsc -p frontend/tsconfig.app.json --noEmit` -> Passed with 0 errors.
+   - Ran `npm run guardrails` (`node scripts/performance-guardrails.mjs`) -> Passed with 0 violations.
+   - Synchronized knowledge graph via `node scripts/quick-update.mjs`.
+
