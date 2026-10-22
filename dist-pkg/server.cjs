@@ -18075,6 +18075,10 @@ async function ensureMultiPharmacyAndSnapshotSchema(db2) {
     console.warn("[Schema v55] Staff user seed skipped:", err.message);
   }
   try {
+    await db2.run("UPDATE update_checks SET check_interval_days = 1 WHERE check_interval_days > 1");
+  } catch (_) {
+  }
+  try {
     await ensureColumns(db2, "sales_invoices", {
       customer_name_snapshot: "TEXT DEFAULT NULL",
       customer_phone_snapshot: "TEXT DEFAULT NULL",
@@ -21632,10 +21636,10 @@ async function ensureSchema(dbPath) {
       last_checked_at TEXT,
       last_known_version TEXT,
       current_version TEXT DEFAULT '1.0.0',
-      check_interval_days INTEGER NOT NULL DEFAULT 15
+      check_interval_days INTEGER NOT NULL DEFAULT 1
     );
     INSERT OR IGNORE INTO update_checks (id, current_version, check_interval_days)
-    VALUES (1, '1.0.0', 15);
+    VALUES (1, '1.0.0', 1);
   `);
     try {
       await db2.exec("ALTER TABLE app_license ADD COLUMN expires_at TEXT;");
@@ -60991,7 +60995,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.144";
+    APP_VERSION = "0.1.145";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -87143,10 +87147,10 @@ var init_autoUpdateService = __esm({
           } catch (_) {
           }
         })();
-        setTimeout(() => this.runCheck("auto"), BOOT_DELAY_MS);
+        setTimeout(() => this.runCheck("boot"), BOOT_DELAY_MS);
         this.intervalHandle = setInterval(async () => {
           if (!activityTracker.isIdle(30 * 60 * 1e3)) return;
-          await this.runCheck("auto");
+          await this.runCheck("interval");
         }, POLL_INTERVAL_MS);
       }
       stop() {
@@ -87168,7 +87172,7 @@ var init_autoUpdateService = __esm({
         try {
           const db2 = await dbManager.getConnection();
           const row = await db2.get("SELECT last_checked_at, check_interval_days FROM update_checks WHERE id = 1");
-          if (reason === "auto" && row?.last_checked_at) {
+          if ((reason === "interval" || reason === "auto") && row?.last_checked_at) {
             const lastMs = new Date(row.last_checked_at).getTime();
             const intervalDays = row.check_interval_days ?? 1;
             const intervalMs = intervalDays * 24 * 60 * 60 * 1e3;
