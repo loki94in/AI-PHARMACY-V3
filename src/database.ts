@@ -834,6 +834,11 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
     console.warn('[Schema v55] Staff user seed skipped:', err.message);
   }
 
+  // Update check interval normalization: transition legacy 15-day interval to 1-day
+  try {
+    await db.run('UPDATE update_checks SET check_interval_days = 1 WHERE check_interval_days > 1');
+  } catch (_) { }
+
   // 5. Immutable snapshot columns on sales_invoices, purchases, and returns
   try {
     await ensureColumns(db, 'sales_invoices', {
@@ -4578,10 +4583,10 @@ export async function ensureSchema(dbPath: string) {
       last_checked_at TEXT,
       last_known_version TEXT,
       current_version TEXT DEFAULT '1.0.0',
-      check_interval_days INTEGER NOT NULL DEFAULT 15
+      check_interval_days INTEGER NOT NULL DEFAULT 1
     );
     INSERT OR IGNORE INTO update_checks (id, current_version, check_interval_days)
-    VALUES (1, '1.0.0', 15);
+    VALUES (1, '1.0.0', 1);
   `);
 
     // Schema v60: Additive check for expires_at column on pre-existing app_license tables

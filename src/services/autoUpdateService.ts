@@ -244,13 +244,14 @@ class AutoUpdateService {
     })();
 
     // Delay first check so it doesn't compete with boot DB/schema work (§28)
-    setTimeout(() => this.runCheck('auto'), BOOT_DELAY_MS);
+    // Runs on EVERY boot so app restarts always detect new updates immediately
+    setTimeout(() => this.runCheck('boot'), BOOT_DELAY_MS);
 
     // Poll every 2h but only run the actual network check if 1 day has elapsed
     // AND the PC is idle (no check during active billing)
     this.intervalHandle = setInterval(async () => {
       if (!activityTracker.isIdle(30 * 60 * 1000)) return; // skip if active in last 30 min
-      await this.runCheck('auto');
+      await this.runCheck('interval');
     }, POLL_INTERVAL_MS);
   }
 
@@ -269,13 +270,14 @@ class AutoUpdateService {
     return this.lastResult;
   }
 
-  private async runCheck(reason: 'auto' | 'manual'): Promise<void> {
+  private async runCheck(reason: 'boot' | 'interval' | 'manual' | 'auto'): Promise<void> {
     try {
       const db = await dbManager.getConnection();
       const row = await db.get<any>('SELECT last_checked_at, check_interval_days FROM update_checks WHERE id = 1');
 
-      // Auto checks: skip if within the configured daily interval (default 1 day)
-      if (reason === 'auto' && row?.last_checked_at) {
+      // Periodic interval checks: skip if within the configured daily interval (default 1 day)
+      // 'boot' and 'manual' checks ALWAYS run regardless of last_checked_at so new releases are caught immediately
+      if ((reason === 'interval' || reason === 'auto') && row?.last_checked_at) {
         const lastMs      = new Date(row.last_checked_at).getTime();
         const intervalDays = row.check_interval_days ?? 1;
         const intervalMs  = intervalDays * 24 * 60 * 60 * 1000;

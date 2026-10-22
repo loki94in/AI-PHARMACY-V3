@@ -1,17 +1,55 @@
 import { kv, isKvConfigured } from './_db.js';
 
-const DEFAULT_LATEST_VERSION = '0.1.132';
-const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.132/AI-Pharmacy-OS-Portable-Setup-v0.1.132.exe';
-const DEFAULT_UPDATE_PACKAGE_URL = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.132/AI-Pharmacy-OS-Update-v0.1.132.zip';
-const DEFAULT_SHA256 = '74943b66245d5a84d9ef37bcc0230fa87733f28958d8d55853c554f874ecb4ed';
+const DEFAULT_LATEST_VERSION = '0.1.144';
+const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.144/AI-Pharmacy-OS-Portable-Setup-v0.1.144.exe';
+const DEFAULT_UPDATE_PACKAGE_URL = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.144/AI-Pharmacy-OS-Update-v0.1.144.zip';
+const DEFAULT_SHA256 = '56cc6909ed21a35703f19624a48a568499a45032303abb9c25ce4cbf64ffbdaa';
 const DEFAULT_CHANGELOG = `
-v0.1.132 — Production Release
-• Offline-safe license verification & background update delivery
-• Integrated mobile companion APK packaging
-• Performance optimizations and speed architecture
+v0.1.144 — Production Release
+• Production-stable installer & portable package
+• Auto background update delivery with zero-downtime staging
+• Multi-language catalog & refill portal with CRM synchronization
 `.trim();
 
 let memoryRelease = null;
+let githubCache = null;
+let lastGithubFetch = 0;
+
+async function fetchLatestGitHubRelease() {
+  const now = Date.now();
+  if (githubCache && (now - lastGithubFetch < 5 * 60 * 1000)) {
+    return githubCache;
+  }
+  try {
+    const res = await fetch('https://api.github.com/repos/loki94in/AI-PHARMACY-V3/releases/latest', {
+      headers: {
+        'User-Agent': 'AI-Pharmacy-Vercel-Updater/1.0',
+        Accept: 'application/vnd.github.v3+json',
+      },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const tag = (data.tag_name || '').replace(/^v/, '');
+    if (!tag) return null;
+
+    const installerAsset = data.assets?.find(a => a.name.endsWith('.exe'));
+    const updateZipAsset = data.assets?.find(a => a.name.startsWith('AI-Pharmacy-OS-Update-') && a.name.endsWith('.zip'));
+
+    githubCache = {
+      latestVersion: tag,
+      downloadUrl: installerAsset?.browser_download_url || `https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v${tag}/AI-Pharmacy-OS-Portable-Setup-v${tag}.exe`,
+      updatePackageUrl: updateZipAsset?.browser_download_url || `https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v${tag}/AI-Pharmacy-OS-Update-v${tag}.zip`,
+      changelog: data.body || `AI Pharmacy OS v${tag} Release`,
+      rolloutMode: 'ALL',
+      publishedAt: data.published_at,
+    };
+    lastGithubFetch = now;
+    return githubCache;
+  } catch (_) {
+    return null;
+  }
+}
 
 function compareVersions(a, b) {
   const pa = a.split('.').map(Number);
@@ -40,6 +78,16 @@ export default async function handler(req, res) {
       try {
         release = await kv.get('update_release');
       } catch (err) {}
+    }
+
+    // Resilient fallback: If no release in KV or KV version is older than latest GitHub release
+    const ghRelease = await fetchLatestGitHubRelease();
+    if (ghRelease && (!release || compareVersions(ghRelease.latestVersion, release.latestVersion) > 0)) {
+      release = {
+        ...(release || {}),
+        ...ghRelease,
+        sha256: release?.sha256 || DEFAULT_SHA256,
+      };
     }
 
     const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
@@ -150,6 +198,15 @@ export default async function handler(req, res) {
     let release = memoryRelease;
     if (!release && isKvConfigured) {
       try { release = await kv.get('update_release'); } catch (_) {}
+    }
+
+    const ghRelease = await fetchLatestGitHubRelease();
+    if (ghRelease && (!release || compareVersions(ghRelease.latestVersion, release.latestVersion) > 0)) {
+      release = {
+        ...(release || {}),
+        ...ghRelease,
+        sha256: release?.sha256 || DEFAULT_SHA256,
+      };
     }
 
     const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
