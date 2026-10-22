@@ -104,7 +104,10 @@ When a user clicks "Install & Restart" or "Install Now" on an update that is rea
   - *Completed*: Lowered wait loop from 20s to 2s, checking both `PharmacyOS.exe` and `PharmacyBackend.exe` and terminating them with `/F /T /IM`. Replaced all 7 blocking `pause` statements with `timeout /t 3 /nobreak >nul`.
 - [x] Task 3: Run `npm run guardrails` and verify TypeScript compilation and zero rule violations.
   - *Completed*: `tsc --noEmit` and performance guardrails scanner passed with 0 errors/violations.
-- [ ] Task 4: Commit and push changes to GitHub.
-- [ ] Task 5: Execute production release (`npm run release`) to publish `v0.1.146`.
-- [ ] Task 6: Verify remote update endpoint and run `node scripts/quick-update.mjs`.
+- [x] Task 4: Commit and push changes to GitHub.
+  - *Completed*: Committed `src/server.ts`, `packaging/Updater.bat`, and `implementation.md` with commit message `fix(updater): eliminate install freeze with instant window handoff and 2s process termination` and pushed to `main`.
+- [x] Task 5: Execute production release (`npm run release`) to publish `v0.1.146`.
+  - *Completed*: Ran `npm run release`. Generated single-executable application `PharmacyOS.exe`, compiled Inno Setup installer `AI-Pharmacy-OS-Portable-Setup-v0.1.146.exe` (983.6 MB), generated update archive `AI-Pharmacy-OS-Update-v0.1.146.zip` (105.4 MB), and uploaded all assets + companion APK to GitHub Release `v0.1.146` (ID: 421056301). Updated Vercel Upstash KV with SHA-256 `bb8860deb3e2754553ae98ad95afe5da09e4d9781052430623456ec8116cc41d`.
+- [x] Task 6: Verify remote update endpoint and run `node scripts/quick-update.mjs`.
+  - *Completed*: Queried `https://website-woad-seven-26.vercel.app/api/updates/check?version=0.1.145`. Verified live response returns `hasUpdate: true`, `latestVersion: "0.1.146"`, matching package URL and SHA-256. Updated knowledge graph via `node scripts/quick-update.mjs`.
 
