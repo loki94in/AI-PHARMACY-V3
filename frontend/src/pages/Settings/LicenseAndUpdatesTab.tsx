@@ -367,16 +367,22 @@ function SoftwareUpdateCard() {
 
   const handleInstallAndRestart = async () => {
     setInstalling(true);
+    const timeout = setTimeout(() => {
+      setInstalling(false);
+    }, 15000);
     try {
       const res  = await fetch('/api/system/apply-update', { method: 'POST' });
       const data = await res.json();
       if (!data.success) {
+        clearTimeout(timeout);
         toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
         setInstalling(false);
       }
-      // On success the backend kills the process — no need to reset state
-    } catch (_) {
-      // Backend terminates server during install — this catch is expected
+      // On success the backend kills the process
+    } catch (err: any) {
+      clearTimeout(timeout);
+      setInstalling(false);
+      toastEvent.trigger(err?.message || 'Update request failed.', 'error');
     }
   };
 

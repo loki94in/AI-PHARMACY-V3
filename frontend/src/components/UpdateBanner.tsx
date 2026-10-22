@@ -68,16 +68,24 @@ export default function UpdateBanner() {
 
   const handleInstallNow = async () => {
     setIsInstalling(true);
+    // Timeout safeguard: if the app has not restarted after 15 seconds, reset button
+    const timeout = setTimeout(() => {
+      setIsInstalling(false);
+    }, 15000);
+
     try {
       const res = await fetch('/api/system/apply-update', { method: 'POST' });
       const data = await res.json();
       if (!data.success) {
+        clearTimeout(timeout);
         toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
         setIsInstalling(false);
       }
-      // On success the backend terminates to start Updater.bat — no reset needed
-    } catch (_) {
-      // Backend terminates server during install — catch is expected
+      // On success the backend terminates to start Updater.bat
+    } catch (err: any) {
+      clearTimeout(timeout);
+      setIsInstalling(false);
+      toastEvent.trigger(err?.message || 'Update request failed.', 'error');
     }
   };
 

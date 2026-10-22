@@ -23,6 +23,20 @@ import { activityTracker } from '../utils/activityTracker.js';
 const BOOT_DELAY_MS    = 60_000;  // wait 60s after boot before first check
 const POLL_INTERVAL_MS = 2 * 60 * 60 * 1000; // poll every 2h (daily gate in runCheck)
 
+/** Compare two semver strings (e.g. "0.1.139" vs "0.1.135"). Returns > 0 if a > b, < 0 if a < b, 0 if equal. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
 // ── Update staging directory ─────────────────────────────────────────────────
 // PRODUCTION.md §21: download to {app}\updates\staging, NOT os.tmpdir()
 function getStagingDir(): string {
@@ -181,25 +195,49 @@ class AutoUpdateService {
         const stagingDir = getStagingDir();
         if (fs.existsSync(stagingDir)) {
           const files = fs.readdirSync(stagingDir).filter(f => f.startsWith('AI-Pharmacy-OS-Update-v') && f.endsWith('.zip'));
-          if (files.length > 0) {
-            const match = files[0].match(/v([0-9.]+)\.zip/);
-            if (match && match[1] && match[1] !== APP_VERSION) {
+          for (const file of files) {
+            const match = file.match(/v([0-9.]+)\.zip/);
+            const filePath = path.join(stagingDir, file);
+            if (match && match[1]) {
               const stagedVersion = match[1];
-              this.lastResult = {
-                hasUpdate: true,
-                latestVersion: stagedVersion,
-                readyToInstall: true,
-                downloading: false,
-              };
-              setTimeout(() => {
-                eventService.broadcast('update_available', {
-                  latestVersion:  stagedVersion,
+              // If staged version is older or equal to running APP_VERSION, purge it immediately
+              if (compareVersions(stagedVersion, APP_VERSION) <= 0) {
+                console.log(`[AutoUpdate] Purging obsolete staged update package: ${file} (current is v${APP_VERSION})`);
+                try { fs.unlinkSync(filePath); } catch (_) {}
+                continue;
+              }
+
+              // Only accept if strictly newer than currently running APP_VERSION
+              if (!this.lastResult && compareVersions(stagedVersion, APP_VERSION) > 0) {
+                this.lastResult = {
+                  hasUpdate: true,
+                  latestVersion: stagedVersion,
                   readyToInstall: true,
-                  downloading:    false,
-                  reason:         'boot_staged',
-                });
-              }, 3000);
+                  downloading: false,
+                };
+                setTimeout(() => {
+                  eventService.broadcast('update_available', {
+                    latestVersion:  stagedVersion,
+                    readyToInstall: true,
+                    downloading:    false,
+                    reason:         'boot_staged',
+                  });
+                }, 3000);
+              }
             }
+          }
+
+          // Clean up stale temporary download files older than 30 minutes
+          const tmpFiles = fs.readdirSync(stagingDir).filter(f => f.endsWith('.tmp'));
+          const now = Date.now();
+          for (const tmpFile of tmpFiles) {
+            try {
+              const tmpPath = path.join(stagingDir, tmpFile);
+              const stat = fs.statSync(tmpPath);
+              if (now - stat.mtimeMs > 30 * 60 * 1000) {
+                fs.unlinkSync(tmpPath);
+              }
+            } catch (_) {}
           }
         }
       } catch (_) {}
@@ -458,6 +496,18 @@ class AutoUpdateService {
   async applyUpdate(): Promise<{ success: boolean; message: string }> {
     if (!this.lastResult?.latestVersion) {
       throw new Error('No pending update found.');
+    }
+
+    const isSeaBinary = !process.execPath.endsWith('node.exe') &&
+                        !process.execPath.endsWith('node') &&
+                        !process.execPath.includes('tsx');
+    if (!isSeaBinary) {
+      throw new Error('Updates can only be applied from the installed application (PharmacyOS.exe), not from development mode.');
+    }
+
+    const { APP_VERSION } = await import('./licenseService.js');
+    if (this.lastResult?.latestVersion && compareVersions(this.lastResult.latestVersion, APP_VERSION) <= 0) {
+      throw new Error(`Cannot install update: version v${this.lastResult.latestVersion} is not newer than currently running v${APP_VERSION}.`);
     }
 
     const stagingDir = getStagingDir();
