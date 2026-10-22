@@ -28,8 +28,8 @@ set "EXPECTED_SHA256=%~4"
 set "LOG_PATH=%~5"
 
 :: ── Defaults ───────────────────────────────────────────────
-if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & pause & exit /b 1 )
-if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & pause & exit /b 1 )
+if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & timeout /t 3 /nobreak >nul & exit /b 1 )
+if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & timeout /t 3 /nobreak >nul & exit /b 1 )
 if "%TARGET_VERSION%"==""   set "TARGET_VERSION=unknown"
 if "%LOG_PATH%"==""         set "LOG_PATH=%INSTALL_DIR%\logs\updater.log"
 
@@ -67,7 +67,7 @@ if exist "%LOCK_PATH%" (
     if !ERRORLEVEL!==1 (
         echo [ERROR] Active update.lock found. Another update may be running.
         call :LOG "ERROR: Active update.lock found (< 30 min old). Another update may be running. Aborting."
-        pause
+        timeout /t 3 /nobreak >nul
         exit /b 1
     )
     call :LOG "Stale lock detected (> 30 min). Removing and continuing."
@@ -78,25 +78,31 @@ if exist "%LOCK_PATH%" (
 echo {"pid":"%~$PID:0%","ts":"%DATE% %TIME%","targetVersion":"%TARGET_VERSION%","operation":"update"} > "%LOCK_PATH%"
 call :LOG "update.lock written."
 
-:: ── 2. Wait for PharmacyOS.exe to exit ────────────────────
+:: ── 2. Wait for application processes to exit ──────────────
 echo [1/4] Closing running application...
-call :LOG "Waiting for PharmacyOS.exe to exit..."
+call :LOG "Waiting for PharmacyOS.exe and PharmacyBackend.exe to exit..."
 set /a WAIT_COUNT=0
 :WAIT_LOOP
+    set "APP_RUNNING=0"
     tasklist /FI "IMAGENAME eq PharmacyOS.exe" 2>nul | findstr /I "PharmacyOS.exe" >nul 2>&1
-    if !ERRORLEVEL!==0 (
+    if !ERRORLEVEL!==0 set "APP_RUNNING=1"
+    tasklist /FI "IMAGENAME eq PharmacyBackend.exe" 2>nul | findstr /I "PharmacyBackend.exe" >nul 2>&1
+    if !ERRORLEVEL!==0 set "APP_RUNNING=1"
+
+    if "!APP_RUNNING!"=="1" (
         set /a WAIT_COUNT+=1
-        if !WAIT_COUNT! GEQ 20 (
-            call :LOG "PharmacyOS.exe still running after 10s. Using taskkill as fallback..."
-            taskkill /F /IM PharmacyOS.exe >nul 2>&1
-            timeout /t 2 /nobreak >nul
+        if !WAIT_COUNT! GEQ 2 (
+            call :LOG "Force terminating application processes for update..."
+            taskkill /F /T /IM PharmacyOS.exe >nul 2>&1
+            taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1
+            timeout /t 1 /nobreak >nul
             goto :WAIT_DONE
         )
         timeout /t 1 /nobreak >nul
         goto :WAIT_LOOP
     )
 :WAIT_DONE
-call :LOG "PharmacyOS.exe is no longer running."
+call :LOG "Application processes are no longer running."
 echo [1/4] Application closed successfully. [OK]
 
 :: ── 3. Verify SHA-256 ──────────────────────────────────────
@@ -116,7 +122,7 @@ if not "%EXPECTED_SHA256%"=="" (
         del /f /q "%ZIP_PATH%" >nul 2>&1
         call :CLEANUP_LOCK
         start "" "%INSTALL_DIR%\PharmacyOS.exe"
-        pause
+        timeout /t 3 /nobreak >nul
         exit /b 1
     )
     call :LOG "SHA-256 verified OK."
@@ -145,7 +151,7 @@ if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
     call :WRITE_FAILURE "EXECUTABLE_BACKUP_FAILED"
     call :CLEANUP_LOCK
     start "" "%INSTALL_DIR%\PharmacyOS.exe"
-    pause
+    timeout /t 3 /nobreak >nul
     exit /b 1
 )
 call :LOG "Backup created successfully."
@@ -188,7 +194,7 @@ if !ERRORLEVEL! NEQ 0 (
     echo [ERROR] Extraction failed! Rolling back...
     call :LOG "ERROR: ZIP extraction failed (code !ERRORLEVEL!)."
     call :ROLLBACK "!BACKUP_DIR!" "FILE_REPLACEMENT_FAILED"
-    pause
+    timeout /t 3 /nobreak >nul
     exit /b 1
 )
 call :LOG "Extraction complete."
@@ -198,7 +204,7 @@ if not exist "%INSTALL_DIR%\PharmacyOS.exe" (
     echo [ERROR] PharmacyOS.exe missing after extraction! Rolling back...
     call :LOG "ERROR: PharmacyOS.exe missing after extraction."
     call :ROLLBACK "!BACKUP_DIR!" "FILE_REPLACEMENT_FAILED"
-    pause
+    timeout /t 3 /nobreak >nul
     exit /b 1
 )
 call :LOG "PharmacyOS.exe verified after extraction."

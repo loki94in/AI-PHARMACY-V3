@@ -1,112 +1,110 @@
-# Implementation Plan: Fix Update Detection Pipeline & Enable Instant Boot-Time Update Checks
+# Implementation Plan: Fix Update Installation Freeze/Hang & Execute Production Release (v0.1.146)
 
 ## 1. Root Cause Analysis
 
-Investigation revealed four interconnected factors that caused the app to fail to detect the new update:
+When a user clicks "Install & Restart" or "Install Now" on an update that is ready to install, the application appeared to freeze or hang. Investigation revealed four distinct causes:
 
-### Factor 1: Client-Side Boot Check Blocked by 15-Day Throttling Gate (Primary Client Bug)
-- In `src/database.ts` (line 4581):
-  ```sql
-  CREATE TABLE IF NOT EXISTS update_checks (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    last_checked_at TEXT,
-    last_known_version TEXT,
-    current_version TEXT DEFAULT '1.0.0',
-    check_interval_days INTEGER NOT NULL DEFAULT 15
-  );
+### Factor 1: Electron UI Window Not Closed on Backend Shutdown
+- When the frontend calls `POST /api/system/apply-update`, `autoUpdateService.applyUpdate()` spawns `packaging/Updater.bat` and schedules `gracefulShutdown('APPLY_UPDATE')` after 600ms.
+- In `src/server.ts`, `gracefulShutdown` calls `closeAppBrowser()`.
+- However, `closeAppBrowser()` in `src/utils/chromeBrowser.ts` specifically targets Chrome and Edge processes (`$_.Name -match 'chrome|msedge|GoogleChromePortable'`).
+- In packaged Electron desktop mode, the parent wrapper process is `PharmacyOS.exe`. Because it was not targeted by `closeAppBrowser()`, the Electron window remained open on the user's screen.
+- As the backend shut down, frontend network requests timed out, leaving the UI with a spinning/disabled button and looking frozen.
+
+### Factor 2: `Updater.bat` 20-Second Wait Loop
+- In `packaging/Updater.bat` lines 84–97:
+  ```bat
+  :WAIT_LOOP
+      tasklist /FI "IMAGENAME eq PharmacyOS.exe" ...
+      set /a WAIT_COUNT+=1
+      if !WAIT_COUNT! GEQ 20 (
+          call :LOG "PharmacyOS.exe still running after 10s. Using taskkill as fallback..."
+          taskkill /F /IM PharmacyOS.exe >nul 2>&1
+          timeout /t 2 /nobreak >nul
+          goto :WAIT_DONE
+      )
+      timeout /t 1 /nobreak >nul
+      goto :WAIT_LOOP
   ```
-  `check_interval_days` defaults to **15 days**.
-- In `src/services/autoUpdateService.ts`:
-  ```ts
-  // On boot (T+60s):
-  setTimeout(() => this.runCheck('auto'), BOOT_DELAY_MS);
+- Because `PharmacyOS.exe` was never terminated by the backend, `Updater.bat` waited **20 consecutive seconds** (with 1-second sleeps) before finally invoking `taskkill`. This caused a guaranteed 20+ second freeze delay before any update action occurred.
 
-  // In runCheck():
-  if (reason === 'auto' && row?.last_checked_at) {
-    const lastMs      = new Date(row.last_checked_at).getTime();
-    const intervalDays = row.check_interval_days ?? 1;
-    const intervalMs  = intervalDays * 24 * 60 * 60 * 1000;
-    if (Date.now() - lastMs < intervalMs) return; // <-- EXITS IMMEDIATELY
-  }
-  ```
-- **Consequence**: Whenever the app performed an initial update check, `last_checked_at` was recorded. On every subsequent launch, `runCheck('auto')` checked if 15 days had passed since `last_checked_at`. Because 15 days had not elapsed, the boot check was **completely aborted**! The app never queried the update server on restart.
+### Factor 3: Blocking `pause` Statements in `Updater.bat`
+- `packaging/Updater.bat` contained 7 `pause` statements on error/fallback branches (lines 31, 32, 70, 119, 148, 191, 201).
+- In automated execution, `pause` waits indefinitely for standard input ("Press any key to continue . . ."). If the console window is behind other windows or minimized, the installer remains completely frozen forever.
 
-### Factor 2: Lack of Distinction Between Boot Checks and Periodic Background Polling
-- When a user restarts the desktop application, they expect the app to immediately check if an update is available.
-- Currently, boot checks reuse `reason: 'auto'` alongside periodic 2-hour idle polling, subjecting restart checks to the same long interval gate.
-
-### Factor 3: Vercel Update Server Was Serving Stale Version 0.1.132
-- The Vercel endpoint `https://website-woad-seven-26.vercel.app/api/updates?action=check` was returning `latestVersion: "0.1.132"` with `DEFAULT_LATEST_VERSION = '0.1.132'`.
-- Even though GitHub had release `v0.1.144` published with binaries and update zip, the metadata had not been published to Vercel Upstash KV (`POST /api/updates?action=publish`).
-- Any client comparing its version against `0.1.132` was told `hasUpdate: false`.
-
-### Factor 4: Single Point of Failure in `website/api/updates.js` (No GitHub Fallback)
-- `website/api/updates.js` exclusively relied on KV; if KV was empty or unpopulated, it blindly fell back to the hardcoded `0.1.132` rather than querying GitHub's public Releases API (`/repos/loki94in/AI-PHARMACY-V3/releases/latest`).
+### Factor 4: `PharmacyBackend.exe` Not Checked in `Updater.bat`
+- `Updater.bat` only checked for `PharmacyOS.exe`, but not `PharmacyBackend.exe`. If the backend process was finishing database checkpointing when extraction started, open file handles could cause extraction or file replacement errors.
 
 ---
 
-## 2. Target Architecture & Proposed Changes
+## 2. Proposed Changes & Architecture
 
-### Component 1: Client Auto-Update Service (`src/services/autoUpdateService.ts`)
-1. **Differentiate Reasons**:
-   - `'boot'`: Runs at T+60s after application launch. **Always** contacts the update server regardless of `last_checked_at`, ensuring every restart detects new releases.
-   - `'interval'`: Runs every 2 hours in the background while the PC is idle. Throttled to at most once every 24 hours (`intervalDays = 1`).
-   - `'manual'`: Triggered by user from Settings → License & Updates tab ("Check Now"). Always runs immediately and broadcasts completion event.
-2. **Safe Exception Handling**:
-   - If the PC is offline or the server is temporarily unreachable, silently log and fail gracefully without interrupting pharmacy operations (as mandated by `PRODUCTION.md §13`).
+### Component 1: Immediate Electron Window Dismissal (`src/server.ts`)
+- In `gracefulShutdown(signal)`:
+  When `signal === 'APPLY_UPDATE'` and `process.platform === 'win32'`, immediately spawn a detached process:
+  ```ts
+  spawn('cmd.exe', ['/c', 'taskkill /F /T /IM PharmacyOS.exe'], { detached: true, stdio: 'ignore' }).unref();
+  ```
+- This terminates `PharmacyOS.exe` within 50ms of the user clicking "Install & Restart", immediately dismissing the window so the user sees seamless handoff to the updater console.
 
-### Component 2: Database Schema & Migration (`src/database.ts`)
-1. Change default `check_interval_days` from `15` to `1` in `update_checks` DDL.
-2. Add automatic schema upgrade in `ensureSchema` / migrations:
-   ```sql
-   UPDATE update_checks SET check_interval_days = 1 WHERE check_interval_days > 1;
-   ```
-   Ensures all existing pharmacy installations transition from the 15-day delay to a 1-day background interval.
+### Component 2: Instant Process Termination & Non-Blocking Loops in `packaging/Updater.bat`
+1. **Reduce Wait to 2 Seconds & Monitor Both Executables**:
+   - Check if either `PharmacyOS.exe` or `PharmacyBackend.exe` is running.
+   - If still running after 2 seconds (`WAIT_COUNT GEQ 2`), immediately force-terminate both:
+     ```bat
+     taskkill /F /T /IM PharmacyOS.exe >nul 2>&1
+     taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1
+     ```
+2. **Eliminate All `pause` Calls**:
+   - Replace every `pause` statement with `timeout /t 3 /nobreak >nul` so errors are logged, visible briefly, and execution cleanly exits or rolls back without hanging.
 
-### Component 3: Resilient Update Server (`website/api/updates.js`)
-1. Update `DEFAULT_LATEST_VERSION` to `0.1.144`.
-2. Add dynamic fallback to GitHub Releases API (`https://api.github.com/repos/loki94in/AI-PHARMACY-V3/releases/latest`) when KV is unpopulated or out of date, so releases uploaded to GitHub are never invisible to clients.
-
-### Component 4: Vercel KV Publish Sync
-1. Publish `v0.1.144` metadata to Vercel KV with verified SHA-256 (`56cc6909ed21a35703f19624a48a568499a45032303abb9c25ce4cbf64ffbdaa`) from `dist/installer/update-manifest.json`.
+### Component 3: Performance Guardrails & Release Execution
+1. Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`).
+2. Commit and push changes to GitHub.
+3. Run `npm run release` to automatically:
+   - Bump version to `v0.1.146` in `package.json`.
+   - Build client and node binaries.
+   - Bundle `dist/installer/AI-Pharmacy-OS-Update-v0.1.146.zip` with the new `packaging/Updater.bat`.
+   - Publish GitHub Release and update Vercel KV with SHA-256.
+4. Verify update detection endpoint `https://website-woad-seven-26.vercel.app/api/updates/check`.
+5. Run `node scripts/quick-update.mjs`.
 
 ---
 
 ## 3. Human-in-the-Loop Workflow (Rule 6)
 
-1. The app automatically detects new versions and downloads the 105 MB update package in the background without freezing or interrupting billing.
-2. Once downloaded and SHA-256 verified, the app displays a prominent top banner:
-   - **"Update v0.1.144 Ready — Install & Restart"**
-   - **"Remind Me Later"**
-3. A human pharmacist always maintains control:
-   - Clicking **"Install & Restart"** triggers the graceful shutdown and runs `Updater.bat`.
-   - Clicking **"Remind Me Later"** silences the banner for the active shift.
-   - Pharmacists can manually initiate checks or installs at any time from Settings → License & Updates.
+- The pharmacist clicks **"Install & Restart"** from the banner or Settings.
+- The UI window dismisses immediately without freeze or spinning hang.
+- The dedicated updater progress console appears, verifies checksum, creates a safety backup, extracts files, and automatically restarts into the updated version within seconds.
+- If anything fails, rollback executes automatically and restores the previous working version.
 
 ---
 
 ## 4. Verification Plan
 
-1. **Unit & Database Check**:
-   - Verify `update_checks` table has `check_interval_days = 1`.
-2. **Boot Check Verification**:
-   - Trigger `autoUpdateService.start()` simulation and verify that a boot check executes even when `last_checked_at` is set to the current minute.
-3. **Guardrails Audit**:
-   - Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`) to verify zero rule violations.
-4. **End-to-End API Test**:
-   - Query `/api/license/update-status` and `/api/license/check-update` to verify `hasUpdate: true`, `latestVersion: "0.1.144"`, and `readyToInstall` status.
+1. **Static Analysis & Guardrails**:
+   - `npm run guardrails` must pass with exit code 0.
+2. **Build & Release**:
+   - `npm run release` succeeds with installer, update zip, and mobile APK uploaded.
+3. **Endpoint Verification**:
+   - `https://website-woad-seven-26.vercel.app/api/updates/check?version=0.1.145` returns:
+     - `hasUpdate: true`
+     - `latestVersion: "0.1.146"`
+     - Valid `sha256` matching the packaged zip.
+4. **Knowledge Graph Sync**:
+   - `node scripts/quick-update.mjs` completes in <30s.
 
 ---
 
 ## 5. Tasks & Progress Tracking
 
-- [x] Task 1: Fix `src/services/autoUpdateService.ts` to implement separate `'boot'` check logic (bypassing interval throttle on every restart) and `'interval'` check logic (1-day throttle).
-  - *Completed*: Separated `reason: 'boot' | 'interval' | 'manual' | 'auto'`. Startup `setTimeout` now passes `'boot'` which skips the interval gate so every app restart checks immediately. Background interval polling enforces a 24-hour gate while idle.
-- [x] Task 2: Update `src/database.ts` schema and migration to set `check_interval_days = 1` for existing and new databases.
-  - *Completed*: Changed default `check_interval_days` from 15 to 1 in table DDL, and added migration in `ensureOrderTimingSchema` (`UPDATE update_checks SET check_interval_days = 1 WHERE check_interval_days > 1`) that runs on both fast-boot and full schema migration paths.
-- [x] Task 3: Enhance `website/api/updates.js` with GitHub Releases API fallback and update default version constants.
-  - *Completed*: Bumped `DEFAULT_LATEST_VERSION` to `0.1.144` with accurate SHA-256 and URLs. Added `fetchLatestGitHubRelease()` that queries GitHub Releases API when KV is unpopulated or out of date.
-- [x] Task 4: Publish verified `v0.1.144` release metadata (with matching SHA-256 checksum) to the Vercel update server.
-  - *Completed*: Sent authenticated `POST /api/updates?action=publish` to Vercel KV with verified SHA-256 (`56cc6909ed21a35703f19624a48a568499a45032303abb9c25ce4cbf64ffbdaa`). Verified `GET /api/updates/check` returns `latestVersion: "0.1.144"` with `hasUpdate: true`.
-- [x] Task 5: Verify via `npm run guardrails` and live API endpoints.
-  - *Completed*: Executed local update verification script confirming `checkForUpdate()` and `autoUpdateService.triggerCheck()` cleanly discover `0.1.144` and initiate background download. `npm run guardrails` passed with 0 violations. Updated knowledge graph via `node scripts/quick-update.mjs`.
+- [x] Task 1: Update `src/server.ts` to dismiss `PharmacyOS.exe` immediately during `APPLY_UPDATE` shutdown.
+  - *Completed*: Added immediate detached `taskkill /F /T /IM PharmacyOS.exe` call when `signal === 'APPLY_UPDATE'` on Windows so the UI window is dismissed within milliseconds instead of leaving a frozen screen.
+- [x] Task 2: Refactor `packaging/Updater.bat` to eliminate the 20-second wait loop, check both `PharmacyOS.exe` and `PharmacyBackend.exe`, and replace all blocking `pause` statements.
+  - *Completed*: Lowered wait loop from 20s to 2s, checking both `PharmacyOS.exe` and `PharmacyBackend.exe` and terminating them with `/F /T /IM`. Replaced all 7 blocking `pause` statements with `timeout /t 3 /nobreak >nul`.
+- [x] Task 3: Run `npm run guardrails` and verify TypeScript compilation and zero rule violations.
+  - *Completed*: `tsc --noEmit` and performance guardrails scanner passed with 0 errors/violations.
+- [ ] Task 4: Commit and push changes to GitHub.
+- [ ] Task 5: Execute production release (`npm run release`) to publish `v0.1.146`.
+- [ ] Task 6: Verify remote update endpoint and run `node scripts/quick-update.mjs`.
+

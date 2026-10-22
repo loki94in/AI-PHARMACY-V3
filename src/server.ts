@@ -1166,6 +1166,12 @@ async function gracefulShutdown(signal: string) {
   // 1. Immediately terminate the desktop app window so user sees window disappear without delay
   try {
     closeAppBrowser();
+    if (signal === 'APPLY_UPDATE' && process.platform === 'win32') {
+      try {
+        const { spawn } = await import('child_process');
+        spawn('cmd.exe', ['/c', 'taskkill /F /T /IM PharmacyOS.exe'], { detached: true, stdio: 'ignore' }).unref();
+      } catch (_) {}
+    }
   } catch (browserErr) {
     console.error('Error closing app browser window:', browserErr);
   }
