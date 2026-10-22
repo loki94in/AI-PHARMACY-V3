@@ -56,6 +56,18 @@ router.get('/machine-id', (_req, res) => {
   }
 });
 
+/** GET /api/license/update-status — query cached/staged update state on mount */
+router.get('/update-status', (_req, res) => {
+  const result = autoUpdateService.getStatus();
+  res.json({
+    hasUpdate: !!result?.hasUpdate,
+    latestVersion: result?.latestVersion || null,
+    readyToInstall: !!result?.readyToInstall,
+    downloading: !!result?.downloading,
+    changelog: result?.changelog || '',
+  });
+});
+
 /** POST /api/license/check-update — manual update check trigger */
 router.post('/check-update', async (_req, res) => {
   try {

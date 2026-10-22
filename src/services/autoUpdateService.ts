@@ -147,6 +147,32 @@ class AutoUpdateService {
             [APP_VERSION, APP_VERSION]
           );
         }
+
+        // Check if an update package is already fully staged on disk from previous session
+        const stagingDir = getStagingDir();
+        if (fs.existsSync(stagingDir)) {
+          const files = fs.readdirSync(stagingDir).filter(f => f.startsWith('AI-Pharmacy-OS-Update-v') && f.endsWith('.zip'));
+          if (files.length > 0) {
+            const match = files[0].match(/v([0-9.]+)\.zip/);
+            if (match && match[1] && match[1] !== APP_VERSION) {
+              const stagedVersion = match[1];
+              this.lastResult = {
+                hasUpdate: true,
+                latestVersion: stagedVersion,
+                readyToInstall: true,
+                downloading: false,
+              };
+              setTimeout(() => {
+                eventService.broadcast('update_available', {
+                  latestVersion:  stagedVersion,
+                  readyToInstall: true,
+                  downloading:    false,
+                  reason:         'boot_staged',
+                });
+              }, 3000);
+            }
+          }
+        }
       } catch (_) {}
     })();
 
@@ -163,6 +189,11 @@ class AutoUpdateService {
 
   stop(): void {
     if (this.intervalHandle) { clearInterval(this.intervalHandle); this.intervalHandle = null; }
+  }
+
+  /** Return last known update check result */
+  getStatus() {
+    return this.lastResult;
   }
 
   /** Manual trigger from Settings "Check Now" button. Always runs regardless of interval. */
@@ -216,15 +247,17 @@ class AutoUpdateService {
             reason,
           });
         } else if (result.updatePackageUrl && !this.isDownloading) {
-          eventService.broadcast('update_available', {
-            latestVersion:    result.latestVersion,
-            downloadUrl:      result.downloadUrl,
-            updatePackageUrl: result.updatePackageUrl,
-            changelog:        result.changelog,
-            downloading:      true,
-            readyToInstall:   false,
-            reason,
-          });
+          if (reason === 'manual') {
+            eventService.broadcast('update_available', {
+              latestVersion:    result.latestVersion,
+              downloadUrl:      result.downloadUrl,
+              updatePackageUrl: result.updatePackageUrl,
+              changelog:        result.changelog,
+              downloading:      true,
+              readyToInstall:   false,
+              reason,
+            });
+          }
 
           // Silently download the update ZIP in background (§29)
           this.isDownloading = true;
