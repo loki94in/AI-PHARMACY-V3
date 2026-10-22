@@ -2927,10 +2927,10 @@ router.post('/cart/place-official-orders', async (req, res) => {
     // Brief settling pause before launching headless checkout
     await new Promise(r => setTimeout(r, 1200));
 
-    // STEP 2: Execute official headless cart checkout on Pharmarack
-    // (pharmarackCheckoutService has 10-12s hydration wait, tokenized store matching, resilient clicks, and 10-12s network settling)
-    console.log('[PharmarackRoute] Step 2: Executing automated cart checkout with 10-12s buffers...');
-    const checkoutResult = await pharmarackCheckoutService.executeCartCheckout(targetStoreNames);
+    // STEP 2: Execute official cart checkout on Pharmarack via direct REST API
+    // (with single-flight lock, SaveOrderCartForRetailerManager SKipAndContinue, and resilient fallback)
+    console.log('[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...');
+    const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames);
     
     // Invalidate local cart caches so UI sees fresh cart
     invalidatePharmarackCartCache();

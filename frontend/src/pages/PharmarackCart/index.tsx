@@ -1389,6 +1389,7 @@ export default function PharmarackCart() {
   const [isSendingBatchWhatsApp, setIsSendingBatchWhatsApp] = useState(false);
   const isSendingBatchRef = useRef(false);
   const waitingForManualOrderSyncRef = useRef(false);
+  const pendingMissingContactDistributorsRef = useRef<Distributor[]>([]);
   const [sendingWaDistributorId, setSendingWaDistributorId] = useState<number | null>(null);
 
   // Persistent WhatsApp sent status map by storeId (preserves history across reloads & sessions, scoped to TODAY)
@@ -1765,6 +1766,7 @@ export default function PharmarackCart() {
     // Default select all available cart distributors
     setSelectedBatchStoreIds(new Set(distributors.map(d => d.storeId)));
     setIsValidatingBeforeSend(true);
+    let shouldOpenConfirm = false;
     try {
       // 1. Force a live round-trip fresh fetch from upstream Pharmarack (?fresh=true)
       await fetchCart(true);
@@ -1774,21 +1776,53 @@ export default function PharmarackCart() {
       // Brief settling pause to ensure state reconciles and paint settles cleanly
       await new Promise(r => setTimeout(r, 250));
 
+      const currentList = cachedDistributors.length > 0 ? cachedDistributors : distributors;
+
       // Pre-fill initial delivery boy assignment per distributor
       const initialMap: Record<number, number | null> = {};
-      distributors.forEach(d => {
+      currentList.forEach(d => {
         initialMap[d.storeId] = resolveInitialDeliveryBoyId(d, undefined, freshBoys);
       });
       setSelectedBatchDeliveryBoys(initialMap);
       setBulkApplyDeliveryBoyId('');
       // Refresh selected stores to include all post-refresh distributors
-      setSelectedBatchStoreIds(new Set(distributors.map(d => d.storeId)));
+      setSelectedBatchStoreIds(new Set(currentList.map(d => d.storeId)));
+
+      // Validate that EVERY distributor in the cart with items has a valid 10-digit phone
+      const unmapped = currentList.filter(d => (d.items || []).length > 0 && !isDistributorMapped(d));
+      if (unmapped.length > 0) {
+        pendingMissingContactDistributorsRef.current = unmapped;
+        const firstMissing = unmapped[0];
+        toastEvent.trigger(
+          `⚠️ Missing 10-digit contact for ${firstMissing.storeName} (${unmapped.length} distributor${unmapped.length > 1 ? 's' : ''} remaining). Please save mobile number before checkout.`,
+          'info'
+        );
+        handleOpenEditModal(firstMissing);
+        return;
+      }
+
+      shouldOpenConfirm = true;
     } catch (err) {
       console.warn('Pre-send live cart sync failed:', err);
+      const currentList = cachedDistributors.length > 0 ? cachedDistributors : distributors;
+      const unmapped = currentList.filter(d => (d.items || []).length > 0 && !isDistributorMapped(d));
+      if (unmapped.length > 0) {
+        pendingMissingContactDistributorsRef.current = unmapped;
+        const firstMissing = unmapped[0];
+        toastEvent.trigger(
+          `⚠️ Missing 10-digit contact for ${firstMissing.storeName} (${unmapped.length} distributor${unmapped.length > 1 ? 's' : ''} remaining). Please save mobile number before checkout.`,
+          'info'
+        );
+        handleOpenEditModal(firstMissing);
+        return;
+      }
+      shouldOpenConfirm = true;
     } finally {
       setIsValidatingBeforeSend(false);
-      // 2. Open confirmation modal with guaranteed up-to-date counts & distributor list
-      setShowConfirmBatchModal(true);
+      if (shouldOpenConfirm) {
+        // 2. Open confirmation modal with guaranteed up-to-date counts & distributor list
+        setShowConfirmBatchModal(true);
+      }
     }
   };
 
@@ -1802,7 +1836,13 @@ export default function PharmarackCart() {
   };
 
   // Universal Escape key dismissal for Pharmarack Cart modals
-  useModalEscape(!!editingDistributor, () => setEditingDistributor(null));
+  useModalEscape(!!editingDistributor, () => {
+    if (pendingMissingContactDistributorsRef.current.length > 0) {
+      pendingMissingContactDistributorsRef.current = [];
+      toastEvent.trigger('Batch order setup cancelled.', 'info');
+    }
+    setEditingDistributor(null);
+  });
   useModalEscape(!!switchModalTarget, () => setSwitchModalTarget(null));
   useModalEscape(!!reorderSameModalTarget, () => setReorderSameModalTarget(null));
   useModalEscape(!!purchaseHistoryModalTarget, () => setPurchaseHistoryModalTarget(null));
@@ -2804,11 +2844,16 @@ export default function PharmarackCart() {
       return;
     }
 
-    if (mapped.length === 0) {
+    if (unmapped.length > 0) {
       isSendingBatchRef.current = false;
       setIsSendingBatchWhatsApp(false);
-      toastEvent.trigger('No distributor phone numbers linked for selected stores. Please add phone numbers.', 'info');
-      if (unmapped.length > 0) handleOpenEditModal(unmapped[0]);
+      pendingMissingContactDistributorsRef.current = unmapped;
+      const firstMissing = unmapped[0];
+      toastEvent.trigger(
+        `⚠️ Missing 10-digit contact for ${firstMissing.storeName} (${unmapped.length} distributor${unmapped.length > 1 ? 's' : ''} remaining). Please save mobile number before placing orders.`,
+        'info'
+      );
+      handleOpenEditModal(firstMissing);
       return;
     }
 
@@ -3012,16 +3057,16 @@ export default function PharmarackCart() {
       cleanPhone = cleanPhone.slice(1);
     }
 
-    if (rawInput !== '') {
-      if (cleanPhone.length !== 10) {
-        toastEvent.trigger('Please enter a valid 10-digit phone number.', 'error');
-        setIsSavingContact(false);
-        return;
-      }
+    if (cleanPhone.length !== 10 || !isValidPhoneNumber(cleanPhone)) {
+      toastEvent.trigger('Please enter a valid 10-digit mobile number (starts with 6, 7, 8, or 9).', 'error');
+      setIsSavingContact(false);
+      return;
     }
 
+    const wasInBatchQueue = pendingMissingContactDistributorsRef.current.length > 0;
     const storeId = editingDistributor.storeId;
     const distName = editingDistributor.storeName;
+    const distSnapshot = editingDistributor;
 
     // 1. Immediately update UI state & close modal for instant zero-latency feedback
     setCustomDistributorPhones(prev => ({
@@ -3042,6 +3087,32 @@ export default function PharmarackCart() {
     toastEvent.trigger(`Saved WhatsApp contact for ${distName}`, 'success');
     setEditingDistributor(null);
     setIsSavingContact(false);
+
+    // If part of batch setup queue, advance sequentially or open final modal
+    if (wasInBatchQueue) {
+      const nextRemaining = pendingMissingContactDistributorsRef.current.filter(d => {
+        if (d.storeId === storeId) return false;
+        const curPhone = customDistributorPhones[d.storeId] || getDistributorPhoneNumber(d);
+        return !isValidPhoneNumber((curPhone || '').replace(/\D/g, ''));
+      });
+      pendingMissingContactDistributorsRef.current = nextRemaining;
+
+      if (nextRemaining.length > 0) {
+        const nextDist = nextRemaining[0];
+        toastEvent.trigger(
+          `✅ Saved for ${distName}. Next: Please save 10-digit contact for ${nextDist.storeName} (${nextRemaining.length} remaining).`,
+          'info'
+        );
+        setTimeout(() => {
+          handleOpenEditModal(nextDist);
+        }, 150);
+      } else {
+        toastEvent.trigger('✅ All distributor contacts saved! Opening final order confirmation...', 'success');
+        setTimeout(() => {
+          handleOpenConfirmBatchModal();
+        }, 200);
+      }
+    }
 
     // 2. Persist to database in background
     try {
@@ -3117,21 +3188,21 @@ export default function PharmarackCart() {
       // Dispatch refresh so topbar countdown & header pill update immediately
       window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
 
-      // 3. Auto-enqueue order WhatsApp directly to this newly added distributor only
-      if (cleanPhone && cleanPhone.replace(/\D/g, '').length >= 10 && editingDistributor.items && editingDistributor.items.length > 0) {
+      // 3. Auto-enqueue order WhatsApp directly to this newly added distributor only (skip if in batch setup queue)
+      if (!wasInBatchQueue && cleanPhone && cleanPhone.replace(/\D/g, '').length >= 10 && distSnapshot && distSnapshot.items && distSnapshot.items.length > 0) {
         try {
-          const itemsToSend = editingDistributor.items.filter(item => isItemIncludedInDispatch(item, editingDistributor));
+          const itemsToSend = distSnapshot.items.filter(item => isItemIncludedInDispatch(item, distSnapshot));
           if (itemsToSend.length > 0) {
             messageSendEvent.triggerSendProgress(distName, `Dispatching order to ${distName}...`, 10);
-            const msg = buildDistributorOrderMessage({ ...editingDistributor, storeName: distName });
+            const msg = buildDistributorOrderMessage({ ...distSnapshot, storeName: distName });
             await apiClient.post('/messaging/enqueue-single-distributor-order', {
-              storeId: editingDistributor.storeId,
+              storeId: distSnapshot.storeId,
               storeName: distName,
               phone: cleanPhone,
               message: msg,
               items: itemsToSend
             });
-            setSentWaStatusMap(prev => ({ ...prev, [editingDistributor.storeId]: 'queued' }));
+            setSentWaStatusMap(prev => ({ ...prev, [distSnapshot.storeId]: 'queued' }));
             toastEvent.trigger(`⚡ WhatsApp order automatically queued for ${distName}!`, 'success');
             whatsappQueueEvent.triggerUpdated();
             window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
@@ -3228,6 +3299,22 @@ export default function PharmarackCart() {
 
       // Dispatch refresh so topbar countdown & cache update
       window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+
+      // If batch setup queue was active, advance queue
+      if (pendingMissingContactDistributorsRef.current.length > 0) {
+        const nextRemaining = pendingMissingContactDistributorsRef.current.filter(d => {
+          if (d.storeId === storeId) return false;
+          const curPhone = customDistributorPhones[d.storeId] || getDistributorPhoneNumber(d);
+          return !isValidPhoneNumber((curPhone || '').replace(/\D/g, ''));
+        });
+        pendingMissingContactDistributorsRef.current = nextRemaining;
+        if (nextRemaining.length === 0) {
+          toastEvent.trigger('✅ All distributor contacts saved! Opening final order confirmation...', 'success');
+          setTimeout(() => {
+            handleOpenConfirmBatchModal();
+          }, 200);
+        }
+      }
     } catch (err) {
       console.error('Failed to persist distributor contact inline:', err);
       toastEvent.trigger('Failed to persist contact to database', 'error');
@@ -6888,6 +6975,10 @@ export default function PharmarackCart() {
           className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
+              if (pendingMissingContactDistributorsRef.current.length > 0) {
+                pendingMissingContactDistributorsRef.current = [];
+                toastEvent.trigger('Batch order setup cancelled.', 'info');
+              }
               setEditingDistributor(null);
               setIsSavingContact(false);
             }
@@ -6906,6 +6997,10 @@ export default function PharmarackCart() {
               <button
                 type="button"
                 onClick={() => {
+                  if (pendingMissingContactDistributorsRef.current.length > 0) {
+                    pendingMissingContactDistributorsRef.current = [];
+                    toastEvent.trigger('Batch order setup cancelled.', 'info');
+                  }
                   setEditingDistributor(null);
                   setIsSavingContact(false);
                 }}
@@ -6917,6 +7012,21 @@ export default function PharmarackCart() {
 
             {/* Modal Content */}
             <div className="p-6 space-y-4">
+              {pendingMissingContactDistributorsRef.current.length > 0 && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="p-1 rounded-lg bg-amber-500/20 text-amber-400 mt-0.5 shrink-0">
+                    <AlertTriangle size={14} />
+                  </div>
+                  <div className="text-[11px] leading-relaxed">
+                    <p className="font-bold text-amber-400">
+                      Step 1 of Setup: 10-Digit Contact Required
+                    </p>
+                    <p className="text-muted mt-0.5">
+                      Save a 10-digit mobile number for <strong className="text-text">{editingDistributor.storeName}</strong> ({pendingMissingContactDistributorsRef.current.length} store{pendingMissingContactDistributorsRef.current.length > 1 ? 's' : ''} remaining in checkout queue). Once all numbers are saved, the order confirmation modal will appear automatically.
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* Select Saved Directory Distributor or Create New */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -7081,6 +7191,10 @@ export default function PharmarackCart() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (pendingMissingContactDistributorsRef.current.length > 0) {
+                      pendingMissingContactDistributorsRef.current = [];
+                      toastEvent.trigger('Batch order setup cancelled.', 'info');
+                    }
                     setEditingDistributor(null);
                     setIsSavingContact(false);
                   }}

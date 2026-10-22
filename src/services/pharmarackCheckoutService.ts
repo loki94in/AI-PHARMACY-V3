@@ -74,6 +74,252 @@ export class PharmarackCheckoutService {
   }
 
   /**
+   * Places official orders on https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager
+   * using direct REST API authentication.
+   * Eliminates headless browser, DOM button hunting, profile lock conflicts, and UI timeouts.
+   */
+  public async placeOrdersViaApi(targetStoreNames?: string[]): Promise<CheckoutExecutionResult> {
+    if (isShutdownInProgress()) {
+      return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: 'Application shutdown in progress' };
+    }
+
+    const results: CheckoutResultItem[] = [];
+    try {
+      const db = await dbManager.getConnection();
+      const row = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token' LIMIT 1");
+      const token = row?.value;
+
+      if (!token || !token.trim()) {
+        return {
+          ok: false,
+          placedCount: 0,
+          failedCount: 0,
+          orders: [],
+          error: 'Pharmarack session token not found. Please log in via Settings.'
+        };
+      }
+
+      // Decode user ID from JWT
+      let userId = '';
+      try {
+        const payloadStr = Buffer.from(token.split('.')[1], 'base64').toString();
+        const jwtPayload = JSON.parse(payloadStr);
+        userId = jwtPayload.id ? String(jwtPayload.id) : '';
+      } catch (_) {}
+
+      // Fetch active cart details from Pharmarack API
+      const cartUrl = 'https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails';
+      const cartRes = await fetch(cartUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'devicetype': 'web',
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://retailers.pharmarack.com/',
+          'Origin': 'https://retailers.pharmarack.com'
+        },
+        signal: AbortSignal.timeout(30000)
+      });
+
+      if (cartRes.status === 401 || cartRes.status === 403) {
+        await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')").catch(() => {});
+        return {
+          ok: false,
+          placedCount: 0,
+          failedCount: 0,
+          orders: [],
+          error: 'Pharmarack session expired. Please re-authenticate via Settings > External Integrations.'
+        };
+      }
+
+      if (!cartRes.ok) {
+        throw new Error(`Pharmarack GetUserCartDetails returned status ${cartRes.status}`);
+      }
+
+      const cartData: any = await cartRes.json().catch(() => null);
+      let rawList: any[] = [];
+      if (cartData) {
+        if (Array.isArray(cartData)) rawList = cartData;
+        else {
+          const targetObj = cartData.data || cartData.Data || cartData;
+          if (Array.isArray(targetObj)) rawList = targetObj;
+          else if (typeof targetObj === 'object') {
+            const keysToTry = ['IList', 'ilist', 'StoreWiseCartDetails', 'storeWiseCartDetails', 'CartDetails', 'cartDetails', 'Stores', 'stores', 'Items', 'items'];
+            for (const k of keysToTry) {
+              if (Array.isArray(targetObj[k])) {
+                rawList = targetObj[k];
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (!rawList || rawList.length === 0) {
+        return {
+          ok: false,
+          placedCount: 0,
+          failedCount: 0,
+          orders: [],
+          error: 'Pharmarack cart is currently empty.'
+        };
+      }
+
+      // Group cart items by store
+      const storeMap = new Map<number, { storeId: number; storeName: string; items: any[] }>();
+      for (const item of rawList) {
+        const storeId = Number(item.StoreId || item.storeId || item.Storeid || item.StoreID || 0);
+        const storeName = String(item.StoreName || item.storeName || item.Store || 'Pharmarack Distributor').trim();
+        if (!storeId) continue;
+
+        if (!storeMap.has(storeId)) {
+          storeMap.set(storeId, { storeId, storeName, items: [] });
+        }
+        storeMap.get(storeId)!.items.push(item);
+      }
+
+      // Filter by targetStoreNames if provided
+      let storesToPlace = Array.from(storeMap.values());
+      if (targetStoreNames && targetStoreNames.length > 0) {
+        const targetNorms = targetStoreNames.map(s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ''));
+        storesToPlace = storesToPlace.filter(st => {
+          const norm = st.storeName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return targetNorms.some(t => t.includes(norm) || norm.includes(t));
+        });
+      }
+
+      if (storesToPlace.length === 0) {
+        return {
+          ok: false,
+          placedCount: 0,
+          failedCount: 0,
+          orders: [],
+          error: 'No matching cart distributors found to place.'
+        };
+      }
+
+      console.log(`[PharmarackCheckout] Preparing direct REST order placement for ${storesToPlace.length} distributor(s)...`);
+
+      // Construct payload according to SaveOrderCartForRetailerManager schema
+      const orderPayload = storesToPlace.map(st => {
+        const lineItems = st.items.map(it => {
+          const ptr = Number(it.PTR ?? it.ptr ?? it.HiddenPTR ?? it.NetRate ?? 0);
+          const qty = Number(it.Quantity ?? it.qty ?? it.quantity ?? 1);
+          return {
+            PTR: ptr,
+            ProductName: String(it.ProductName ?? it.productName ?? it.Name ?? it.name ?? ''),
+            ProductCode: String(it.ProductCode ?? it.productCode ?? ''),
+            Quantity: qty,
+            Free: Number(it.Free ?? it.free ?? 0),
+            Scheme: String(it.Scheme ?? it.scheme ?? ''),
+            SchemeType: String(it.SchemeType ?? it.schemeType ?? ''),
+            HiddenPTR: Number(it.HiddenPTR ?? it.hiddenPtr ?? ptr),
+            NetRate: Number(it.NetRate ?? it.netRate ?? ptr)
+          };
+        });
+
+        const storeAmount = lineItems.reduce((sum, it) => sum + (it.Quantity * it.PTR), 0);
+
+        return {
+          storeId: st.storeId,
+          OrderDeliveryModeText: "Delivery",
+          OrderRemarksText: "",
+          DeliveryPerson: "",
+          DeliveryPersonCode: "",
+          OrderSource: "MOVP",
+          SKipAndContinue: 1, // Crucial: skip unpriced/locked items automatically without UI popup blocking
+          OrderPlacedBy: userId,
+          Latitude: "",
+          Longitude: "",
+          BrowserName: "Web",
+          Version: "PR2",
+          OS: "Web",
+          MacAddress: "en_IN",
+          IpAddress: "",
+          StoreWiseAmount: storeAmount,
+          GSTAmount: 0,
+          items: lineItems
+        };
+      });
+
+      console.log('[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API...');
+      const saveOrderUrl = 'https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager';
+      const orderRes = await fetch(saveOrderUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'devicetype': 'web',
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://retailers.pharmarack.com/',
+          'Origin': 'https://retailers.pharmarack.com'
+        },
+        body: JSON.stringify(orderPayload),
+        signal: AbortSignal.timeout(30000)
+      });
+
+      if (!orderRes.ok) {
+        const errText = await orderRes.text().catch(() => '');
+        console.error(`[PharmarackCheckout] SaveOrderCartForRetailerManager failed with HTTP ${orderRes.status}:`, errText);
+        throw new Error(`Pharmarack SaveOrder API returned HTTP ${orderRes.status}: ${errText.slice(0, 100)}`);
+      }
+
+      const orderResData: any = await orderRes.json().catch(() => null);
+      console.log('[PharmarackCheckout] SaveOrderCartForRetailerManager response:', JSON.stringify(orderResData).slice(0, 300));
+
+      const displayOrders = orderResData?.data?.DisplayStoreOrder || orderResData?.DisplayStoreOrder || [];
+      const isSuccessMsg = String(orderResData?.data?.Message || orderResData?.Message || '').toLowerCase() === 'success';
+
+      if (Array.isArray(displayOrders) && displayOrders.length > 0) {
+        for (const disp of displayOrders) {
+          const matchedStore = storesToPlace.find(s => s.storeId === Number(disp.StoreId || disp.storeId));
+          const sName = disp.StoreName || matchedStore?.storeName || 'Pharmarack Distributor';
+          const ordNo = disp.OrderNo || disp.orderNo || disp.OrderId || '';
+          const status = (disp.Status?.toLowerCase() === 'success' || Boolean(ordNo)) ? 'placed' : 'failed';
+
+          results.push({
+            storeId: Number(disp.StoreId || disp.storeId || matchedStore?.storeId),
+            storeName: sName,
+            orderNo: ordNo ? String(ordNo) : undefined,
+            status,
+            error: status === 'failed' ? (disp.Message || 'Order rejected by distributor') : undefined
+          });
+        }
+      } else if (isSuccessMsg || orderResData?.code === 200) {
+        for (const st of storesToPlace) {
+          results.push({
+            storeId: st.storeId,
+            storeName: st.storeName,
+            status: 'placed'
+          });
+        }
+      }
+
+      const placedCount = results.filter(r => r.status === 'placed').length;
+      const failedCount = results.filter(r => r.status === 'failed').length;
+      const isOk = placedCount > 0;
+
+      // Trigger immediate order sync to pull finalized Order IDs into SQLite
+      syncPharmarackOrders().catch(e => console.warn('[PharmarackCheckout] Post-API sync warning:', e.message));
+
+      return {
+        ok: isOk,
+        placedCount,
+        failedCount,
+        orders: results,
+        error: isOk ? undefined : (orderResData?.message || orderResData?.data?.Message || 'Failed to confirm placed orders via Pharmarack API')
+      };
+    } catch (apiErr: any) {
+      console.warn('[PharmarackCheckout] Direct REST API checkout notice:', apiErr.message);
+      console.log('[PharmarackCheckout] Attempting fallback to browser checkout engine...');
+      return this.executeCartCheckout(targetStoreNames);
+    }
+  }
+
+  /**
    * Places official orders on https://retailers.pharmarack.com/cart using the authenticated session profile.
    * Single-flight execution prevents concurrent browser instances.
    */

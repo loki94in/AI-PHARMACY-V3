@@ -13,7 +13,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Allow Pharmacy Genius to scan medicine barcodes, QR codes, and prescriptions.",
         "NSPhotoLibraryUsageDescription": "Allow Pharmacy Genius to select medicine bill photos for OCR.",
-        "NSFaceIDUsageDescription": "Allow Pharmacy Genius to secure access using Face ID."
+        "NSFaceIDUsageDescription": "Allow Pharmacy Genius to secure access using Face ID.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
