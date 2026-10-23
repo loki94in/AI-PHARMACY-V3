@@ -714,7 +714,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             prSuggestions.sort((a, b) => {
               if (a.isErrorMessage || b.isErrorMessage) return 0;
 
-              // 1. Mapped Wall: Mapped ALWAYS before Unmapped (Non-mapped never at top, always at bottom)
+              // 1. Mapped Wall: Mapped ALWAYS before Unmapped
               const aMapped = Boolean(a.mapped);
               const bMapped = Boolean(b.mapped);
               if (aMapped !== bMapped) return aMapped ? -1 : 1;
@@ -727,25 +727,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
               if (aExact && !bExact) return -1;
               if (!aExact && bExact) return 1;
 
-              // 3. Stock Tier: Green (2) -> Yellow (1) -> Red (0) across any distributor
-              const aStock = getStockTier(a.stock);
-              const bStock = getStockTier(b.stock);
-              if (aStock !== bStock) return bStock - aStock;
-
-              // 4. In Active Live Cart (within the same stock tier)
-              const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);
-              const bInCart = Boolean(b.cartItemCount && b.cartItemCount > 0);
-              if (aInCart && !bInCart) return -1;
-              if (!aInCart && bInCart) return 1;
-              if (aInCart && bInCart) {
-                if ((b.cartItemCount || 0) !== (a.cartItemCount || 0)) {
-                  return (b.cartItemCount || 0) - (a.cartItemCount || 0);
-                }
-                if ((b.cartTotalAmount || 0) !== (a.cartTotalAmount || 0)) {
-                  return (b.cartTotalAmount || 0) - (a.cartTotalAmount || 0);
-                }
-              }
-
+              // 3. Preserve Pharmarack native upstream relevance ranking
               return 0;
             });
           }

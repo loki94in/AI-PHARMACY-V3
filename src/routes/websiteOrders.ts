@@ -643,13 +643,20 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
       console.warn('[WebsiteOrdersRoute] Non-fatal online_order_items insert note:', itemErr);
     }
 
-    // Resolve distributor storeId from locked special order or distributor_catalog
+    // Resolve distributor storeId from locked special order, medicine_distributor_links, or distributor_catalog
     let resolvedStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : 0;
-    if (!resolvedStoreId && order.pharmarack_distributor) {
+    let resolvedDistName = order.pharmarack_distributor || '';
+    const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+    let resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : (order.medicine_id ? Number(order.medicine_id) : 0);
+    let resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : '';
+    let resolvedRate = Number(order.pharmarack_rate) || 0;
+    let resolvedMrp = Number(order.pharmarack_mrp) || 0;
+
+    if (!resolvedStoreId && resolvedDistName) {
       try {
         const dRow = await db.get(
           `SELECT store_id FROM distributor_catalog WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?) LIMIT 1`,
-          [order.pharmarack_distributor.trim(), `%${order.pharmarack_distributor.trim()}%`]
+          [resolvedDistName.trim(), `%${resolvedDistName.trim()}%`]
         );
         if (dRow && dRow.store_id) {
           resolvedStoreId = Number(dRow.store_id);
@@ -657,27 +664,110 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
       } catch (_) {}
     }
 
-    const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
-    const resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : (order.medicine_id ? Number(order.medicine_id) : 0);
-    const resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : '';
+    if (!resolvedStoreId) {
+      const linkRow = await db.get(
+        `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+         FROM medicine_distributor_links 
+         WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?))
+         ORDER BY is_preferred DESC LIMIT 1`,
+        [resolvedProdName]
+      ).catch(() => null);
+
+      if (linkRow && linkRow.store_id) {
+        resolvedStoreId = Number(linkRow.store_id);
+        resolvedDistName = resolvedDistName || linkRow.distributor_name || '';
+        resolvedProdId = resolvedProdId || Number(linkRow.product_id) || 0;
+        resolvedProdCode = resolvedProdCode || String(linkRow.product_code || '');
+        resolvedRate = resolvedRate || Number(linkRow.rate) || 0;
+        resolvedMrp = resolvedMrp || Number(linkRow.mrp) || 0;
+      } else {
+        const catRow = await db.get(
+          `SELECT store_id, store_name, product_id, product_code, rate, mrp 
+           FROM distributor_catalog 
+           WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?))
+             AND store_id > 0
+           ORDER BY rate ASC LIMIT 1`,
+          [resolvedProdName, `%${resolvedProdName}%`]
+        ).catch(() => null);
+
+        if (catRow && catRow.store_id) {
+          resolvedStoreId = Number(catRow.store_id);
+          resolvedDistName = resolvedDistName || catRow.store_name || '';
+          resolvedProdId = resolvedProdId || Number(catRow.product_id) || 0;
+          resolvedProdCode = resolvedProdCode || String(catRow.product_code || '');
+          resolvedRate = resolvedRate || Number(catRow.rate) || 0;
+          resolvedMrp = resolvedMrp || Number(catRow.mrp) || 0;
+        }
+      }
+    }
 
     // Auto-add item to Pharmarack Live Cart
     try {
       const { addItemsToPharmarackCart } = await import('./pharmarack.js');
-      void addItemsToPharmarackCart([{
+      const cartResult = await addItemsToPharmarackCart([{
         productName: resolvedProdName,
         product: resolvedProdName,
         productId: resolvedProdId,
         productCode: resolvedProdCode,
         storeId: resolvedStoreId,
-        storeName: order.pharmarack_distributor || 'Standard Distributor',
+        storeName: resolvedDistName || 'Standard Distributor',
         qty: order.qty > 0 ? order.qty : 1,
-        rate: order.pharmarack_rate || 0,
-        mrp: order.pharmarack_mrp || 0,
+        rate: resolvedRate,
+        mrp: resolvedMrp,
         packaging: '1 strip',
-        mapped: order.pharmarack_mapped === 1
-      }]).catch((err: any) => console.warn('[WebsiteOrdersRoute] Live cart add error on payment confirm:', err?.message || err));
-    } catch (_) {}
+        mapped: resolvedStoreId > 0
+      }]).catch((err: any) => ({ success: false, error: err?.message || String(err), offline: false }));
+
+      if (cartResult.success && !(cartResult as any).offline) {
+        await db.run(
+          `UPDATE special_orders 
+           SET needs_live_cart_sync = 0,
+               status = 'In Live Cart',
+               delivery_status = 'in_live_cart',
+               pharmacy_verification_status = 'IN_LIVE_CART',
+               pharmarack_distributor = ?,
+               pharmarack_store_id = ?,
+               pharmarack_product_id = ?,
+               pharmarack_product_code = ?,
+               pharmarack_rate = ?,
+               pharmarack_mrp = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [resolvedDistName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, orderId]
+        ).catch(() => {});
+
+        await db.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'added_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+          [orderId, `Payment approved: "${resolvedProdName}" (Qty: ${order.qty || 1}) added to Live Cart (${resolvedDistName || 'Distributor'}).`]
+        ).catch(() => {});
+      } else {
+        await db.run(
+          `UPDATE special_orders 
+           SET needs_live_cart_sync = 1,
+               delivery_status = 'offline_queued',
+               pharmacy_verification_status = 'OFFLINE_QUEUED',
+               pharmarack_distributor = ?,
+               pharmarack_store_id = ?,
+               pharmarack_product_id = ?,
+               pharmarack_product_code = ?,
+               pharmarack_rate = ?,
+               pharmarack_mrp = ?,
+               cart_add_error = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [resolvedDistName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, cartResult.error || ((cartResult as any).offline ? 'Offline mode' : 'Pending login'), orderId]
+        ).catch(() => {});
+
+        await db.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'offline_queued_for_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+          [orderId, `Payment approved: "${resolvedProdName}" queued for Live Cart auto-sync upon connection.`]
+        ).catch(() => {});
+      }
+    } catch (liveErr) {
+      console.warn('[WebsiteOrdersRoute] Live cart add error on payment confirm:', liveErr);
+    }
 
     // Resolve store order code (e.g. SO-TMSA-7)
     const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
@@ -2039,6 +2129,22 @@ router.post('/orders/:orderId/refill', async (req, res) => {
   } catch (err: any) {
     console.error('[WebsiteOrdersRoute] Refill order creation error:', err);
     res.status(500).json({ error: 'Failed to create refill order: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// POST /api/website/sync-offline-cart — Trigger synchronization of offline-queued orders into Live Cart
+router.post('/sync-offline-cart', async (_req, res) => {
+  try {
+    const { startupSyncCoordinator } = await import('../services/startupSyncCoordinator.js');
+    const result = await startupSyncCoordinator.syncPendingLiveCartOrders();
+    res.json({
+      success: true,
+      message: `Offline Live Cart sync completed: ${result.synced}/${result.processed} order(s) placed into Live Cart.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Manual offline cart sync error:', err);
+    res.status(500).json({ error: 'Failed to sync offline cart: ' + (err.message || 'Unknown error') });
   }
 });
 

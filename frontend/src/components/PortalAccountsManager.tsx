@@ -3,7 +3,7 @@ import {
   Users, Key, Phone, Store, RefreshCw, Send, Plus, Search,
   CheckCircle2, AlertCircle, ShieldCheck, Copy, Check, Lock,
   MessageSquare, ToggleLeft, ToggleRight, Trash2, Globe, Clock, History, X,
-  FileText, ShoppingBag, Truck, Package, Trash
+  FileText, ShoppingBag, Truck, Package, Trash, ShoppingCart
 } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
@@ -432,6 +432,38 @@ export function PortalAccountsManager() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const [isSyncingOfflineCart, setIsSyncingOfflineCart] = useState(false);
+  const [actionInProgress, setActionInProgress] = useState<number | null>(null);
+
+  const handleSyncOfflineOrders = async () => {
+    setIsSyncingOfflineCart(true);
+    try {
+      const res = await apiClient.post('/website/sync-offline-cart').then(r => r.data);
+      toastEvent.trigger(res.message || 'Offline orders synced to Live Cart', 'success');
+      fetchOrders();
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to sync offline cart', 'error');
+    } finally {
+      setIsSyncingOfflineCart(false);
+    }
+  };
+
+  const handleApproveAndPushToLiveCart = async (orderId: number) => {
+    setActionInProgress(orderId);
+    try {
+      await apiClient.patch(`/website/orders/${orderId}/payment`, {
+        confirmed_by: 'Pharmacist',
+        payment_method: 'MANUAL'
+      });
+      toastEvent.trigger(`Order #${orderId} approved and forwarded to Live Cart!`, 'success');
+      fetchOrders();
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to approve order', 'error');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const filteredOrders = orders.filter(o => {
     if (ordersStatusFilter !== 'all' && (o.status || '').toLowerCase() !== ordersStatusFilter.toLowerCase()) return false;
     if (ordersSearch.trim()) {
@@ -801,6 +833,16 @@ export function PortalAccountsManager() {
             <option value="cancelled">Cancelled</option>
           </select>
         </div>
+
+        <button
+          onClick={handleSyncOfflineOrders}
+          disabled={isSyncingOfflineCart}
+          className="inline-flex items-center gap-1.5 px-3 py-2 bg-bg2 border border-border rounded-xl text-text text-xs font-semibold hover:border-primary hover:text-primary transition-colors disabled:opacity-50 shrink-0"
+          title="Sync orders queued while PC was offline directly into Pharmarack Live Cart"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isSyncingOfflineCart ? 'animate-spin text-primary' : 'text-muted'}`} />
+          <span>Sync Offline Cart</span>
+        </button>
       </div>
 
       {/* Orders Table */}
@@ -816,20 +858,22 @@ export function PortalAccountsManager() {
                 <th className="py-3 px-4">Payment</th>
                 <th className="py-3 px-4">Total</th>
                 <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Date & Time</th>
+                <th className="py-3 px-4">Live Cart & Procurement</th>
+                <th className="py-3 px-4">Date & Time</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
               {loadingOrders && orders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-muted">
+                  <td colSpan={10} className="text-center py-12 text-muted">
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                     <span>Loading orders...</span>
                   </td>
                 </tr>
               ) : filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-muted">
+                  <td colSpan={10} className="text-center py-12 text-muted">
                     No online or manual orders match the criteria. Click "+ Place Manual Order" to create one!
                   </td>
                 </tr>
@@ -905,11 +949,55 @@ export function PortalAccountsManager() {
                       </span>
                     </td>
 
-                    <td className="py-3 px-4 text-right text-muted text-[11px]">
+                    <td className="py-3 px-4">
+                      {ord.delivery_status === 'in_live_cart' || ord.status === 'In Live Cart' || ord.pharmacy_verification_status === 'IN_LIVE_CART' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600">
+                          <ShoppingCart className="w-3 h-3 text-emerald-500" />
+                          In Live Cart
+                          {ord.pharmarack_distributor ? ` (${ord.pharmarack_distributor})` : ''}
+                        </span>
+                      ) : ord.needs_live_cart_sync === 1 || ord.delivery_status === 'offline_queued' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600" title="Queued while offline; will sync automatically when online">
+                          <Clock className="w-3 h-3 text-amber-500" />
+                          Offline Queued
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-muted">
+                          {ord.pharmarack_distributor || 'Awaiting Approval'}
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-4 text-muted text-[11px]">
                       {ord.created_at ? new Date(ord.created_at).toLocaleDateString() : ord.date || '—'}
                       <span className="block text-[10px] opacity-75">
                         {ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                       </span>
+                    </td>
+
+                    <td className="py-3 px-4 text-right">
+                      {ord.delivery_status === 'in_live_cart' || ord.status === 'In Live Cart' || ord.pharmacy_verification_status === 'IN_LIVE_CART' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
+                          <Check className="w-3.5 h-3.5" />
+                          Ready in Cart
+                        </span>
+                      ) : ord.status !== 'Cancelled' && ord.status !== 'Delivered' && ord.status !== 'Completed' ? (
+                        <button
+                          onClick={() => handleApproveAndPushToLiveCart(ord.id)}
+                          disabled={actionInProgress === ord.id}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
+                          title="Human-in-the-loop: Verify payment & push medicine directly into distributor Live Cart"
+                        >
+                          {actionInProgress === ord.id ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-3 h-3" />
+                          )}
+                          Approve & Push to Cart
+                        </button>
+                      ) : (
+                        <span className="text-muted text-[11px]">—</span>
+                      )}
                     </td>
                   </tr>
                 ))

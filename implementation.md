@@ -1,53 +1,52 @@
-# Implementation Plan: Fix SQLite `no such column: preferred_language` in Special Orders
+# Implementation Plan: System-Wide Pharmarack Search Parity & Cleanup
 
 ## 1. Problem Statement & User Intent
-When creating special orders (either via Quick Order Modal or batch creation in `/api/orders`), the request fails with:
-`Failed to log order request: Failed to create special orders: SQLITE_ERROR: no such column: preferred_language`
-
-This completely blocks special order creation when WhatsApp notification dispatch is active.
+The user asked to check whether CRM and all other search boxes in the app also had search tampering or artificial re-sorting, and to remove any such tampering across the entire app ASAP so that every search box consistently matches the official Pharmarack website.
 
 ---
 
-## 2. Root Cause Analysis
-1. In `src/routes/orders.ts` (lines 216, 383, 800), `db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', ...)` was added in commit `f5e1836e`.
-2. However, the `preferred_language` column was never added to the `customers` table in `src/database.ts` (neither in `CREATE TABLE customers`, nor in `ensureColumns` on the fast-boot path, nor in the migration array).
-3. Because SQLite performs strict column checks, attempting to select `preferred_language` from `customers` causes an immediate `SQLITE_ERROR: no such column: preferred_language` exception.
-4. Because this query is run inside `router.post('/batch')` and `router.post('/')` without a `.catch()`, the exception bubbles up and causes the endpoint to fail with HTTP 500: `Failed to create special orders: SQLITE_ERROR: no such column: preferred_language`.
+## 2. Investigation & Audit Findings
+1. **CRM Page (`SpecialOrdersSection.tsx` & `RefillsSection.tsx`)**:
+   - Special orders in CRM use `SpecialOrderAddModal.tsx`.
+   - Medicine linking in CRM Refills uses `MedicineLinkModal.tsx`.
+   - Both components directly consume `api.searchPharmarack(q)` and render whatever the backend sends.
+   - Because we fixed `src/routes/pharmarack.ts` (raw query preservation + 84 mapped store scoping + no prefix hijacking + native rank preservation), **CRM is already benefiting from the clean backend search**.
+2. **Quick Order Popup (`QuickOrderModal.tsx` — Alt+Q)**:
+   - Found residual frontend re-sorting logic in `QuickOrderModal.tsx` (lines 730–748) that still performed `In Active Live Cart` boosting.
+   - This must be cleaned up to match `LiveCartSearchSection.tsx` so Quick Order also preserves Pharmarack's native rank without distortion.
+3. **Switch Supplier / Shortage Pickers in `PharmarackCart/index.tsx`**:
+   - Uses `api.searchPharmarack(query)` directly, already clean and faithful.
 
 ---
 
-## 3. Proposed Solution & Architecture (Following BACKEND SCHEMA SAFETY.md)
+## 3. Implementation Steps
 
-### A. Database Schema Update (`src/database.ts`)
-1. **Schema Version**: Bump `CURRENT_SCHEMA_VERSION` from 78 to 79.
-2. **Fast-Boot Path**: Add `preferred_language: "TEXT DEFAULT 'mr'"` to `ensureColumns(db, 'customers', ...)` in `ensureSchema()`.
-3. **Full DDL Table Definition**: Add `preferred_language TEXT DEFAULT 'mr'` to `CREATE TABLE IF NOT EXISTS customers`.
-4. **Migration Array**: Add `['customers', 'preferred_language', "ALTER TABLE customers ADD COLUMN preferred_language TEXT DEFAULT 'mr'"]` to the migration array in `ensureSchema()`.
+### Task 1: Audit & Clean Frontend Sorting in `QuickOrderModal.tsx`
+- Remove the `In Active Live Cart` and stock-tier sorting overrides in `QuickOrderModal.tsx`.
+- Preserve mapped-first and exact title prefix matching, then preserve Pharmarack's native upstream ranking.
 
-### B. Route Query Safety (`src/routes/orders.ts`)
-1. In `router.post('/batch')` (line 216), `router.post('/')` (line 383), and `router.post('/:id/resend-booking')` (line 800):
-   Change:
-   `await db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', ...)`
-   To:
-   `await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', ...).catch(() => null)`
-2. This ensures that language resolution never blocks order creation even in corner cases.
+### Task 2: Verification Across All Modals & Guardrails
+- Verify TypeScript compilation (`npm run build`).
+- Verify frontend client build (`npm run build:client`).
+- Run `npm run guardrails` (exit code 0).
+- Run `node scripts/quick-update.mjs` to keep knowledge graph synchronized.
 
 ---
 
-## 4. Verification Plan
-1. **TypeScript & Guardrails**:
-   - Run `npx tsc --noEmit` and `npm run guardrails` (exit code 0).
-2. **Database Schema Verification**:
-   - Run a node test script checking that `PRAGMA table_info(customers)` includes `preferred_language`.
-3. **Knowledge Graph**:
-   - Run `node scripts/quick-update.mjs`.
-
----
-
-## 5. Completed Tasks Log
-- [x] Task 1: Update `src/database.ts` with `preferred_language` on `customers` across all boot paths and bump schema version to 79.
-  - *Details*: Added `preferred_language TEXT DEFAULT 'mr'` to `CREATE TABLE IF NOT EXISTS customers`, added to `ensureColumns` on fast-boot path, registered in the schema migration array, and bumped `CURRENT_SCHEMA_VERSION` from 78 to 79. Also verified and migrated both `app.db` and `app.dev.db`.
-- [x] Task 2: Make customer language lookup resilient in `src/routes/orders.ts`.
-  - *Details*: Replaced rigid `SELECT preferred_language, language` with safe `SELECT * FROM customers WHERE phone LIKE ? LIMIT 1` with a `.catch(() => null)` fallback in `/api/orders/batch`, `/api/orders` (single), and `/api/orders/:id/resend-booking` so missing columns or lookup issues never block order transactions.
-- [x] Task 3: Verify with database schema test, run `npm run guardrails`, and update knowledge graph.
-  - *Details*: Confirmed `preferred_language` column exists in all database files, verified TypeScript compilation (`tsc --noEmit`), passed performance guardrails (`npm run guardrails` exit code 0), and synchronized knowledge graph via `node scripts/quick-update.mjs`.
+## 4. Completed Tasks Log
+- [x] Task 1: Audit & Clean Frontend Sorting in `QuickOrderModal.tsx` & `LiveCartSearchSection.tsx`
+  - Removed `In Active Live Cart` and stock-tier sorting overrides.
+  - Native Pharmarack ranking preserved 1:1.
+- [x] Task 2: Purge Legacy Disk Cache `data/search-cache.json` & In-Memory Prefix Match
+  - Wiped 137 KB stale cache containing old truncated/stripped queries.
+  - Removed dead `findPrefixMatch` in `searchCache.ts` to prevent prefix hijacking.
+  - Integrated `searchCache.clear()` and `search-cache.json` reset into `POST /api/utilities/clear-cache`.
+- [x] Task 3: Fix Switch Supplier & Live Cart Search Queries
+  - Fixed `LiveCartSearchSection.tsx` to stop stripping parenthetical query tokens.
+  - Fixed `PharmarackCart/index.tsx` `handleOpenSwitchModal` & `handleSearchSwitchCatalog` to parse direct array responses from `api.searchPharmarack`.
+  - Cleaned up `sanitizePharmarackQuery` in `src/services/intentKeywords.ts` to prevent word truncation, token stripping, or early break limits.
+- [x] Task 4: Complete System Verification & Guardrails
+  - `npm run build:client`: Passed (0 errors).
+  - `npx tsc --noEmit`: Passed (0 errors).
+  - `npm run guardrails`: Passed (0 violations, speed architecture intact).
+  - `node scripts/quick-update.mjs`: Synchronized knowledge graph (1325 nodes, 847 edges).

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Search, Loader2, Zap, Tag, Sparkles, Store, ShoppingCart, WifiOff, Package, AlertTriangle } from 'lucide-react';
 import { api } from '../services/api';
-import { loadDistributorPriority, priorityRankOf } from '../utils/pharmarackLinkCandidates';
+import { loadDistributorPriority } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
 import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
 
@@ -251,7 +251,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       return;
     }
 
-    const cleanQuery = product.replace(/\s*\([^)]*\)$/, '').trim();
+    const cleanQuery = product.trim();
 
     if (cleanQuery.length < 3) {
       setSuggestions([]);
@@ -345,20 +345,18 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
             });
           });
 
-          const distPrio = await loadDistributorPriority();
-          const lastDist = (lastAddedDistributorRef.current || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
           const cleanQ = cleanQuery.toLowerCase().trim();
 
           if (mergedList.length > 1) {
             mergedList.sort((a, b) => {
               if (a.isErrorMessage || b.isErrorMessage) return 0;
 
-              // 1. Mapped Wall
+              // 1. Mapped Wall: Mapped distributors before Unmapped (matching Pharmarack Mapped tab)
               const aMapped = Boolean(a.mapped);
               const bMapped = Boolean(b.mapped);
               if (aMapped !== bMapped) return aMapped ? -1 : 1;
 
-              // 2. Exact Title
+              // 2. Exact Title / Prefix match
               const aName = (a.medicine_name || a.shortName || '').toLowerCase().trim();
               const bName = (b.medicine_name || b.shortName || '').toLowerCase().trim();
               const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
@@ -366,54 +364,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
               if (aExact && !bExact) return -1;
               if (!aExact && bExact) return 1;
 
-              const qWords = cleanQ.split(/\s+/).filter(w => w.length >= 2);
-              if (qWords.length > 1) {
-                let aMatches = 0;
-                let bMatches = 0;
-                for (const w of qWords) {
-                  if (aName.includes(w)) aMatches++;
-                  if (bName.includes(w)) bMatches++;
-                }
-                if (aMatches !== bMatches) return bMatches - aMatches;
-              }
-
-              // 3. Stock Tier
-              const aStock = getStockTier(a.stock);
-              const bStock = getStockTier(b.stock);
-              if (aStock !== bStock) return bStock - aStock;
-
-              // 3b. Distributor Priority
-              const aPrio = priorityRankOf(a.distributor, distPrio);
-              const bPrio = priorityRankOf(b.distributor, distPrio);
-              if (aPrio !== bPrio) return aPrio - bPrio;
-
-              // 4. In Active Live Cart
-              const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);
-              const bInCart = Boolean(b.cartItemCount && b.cartItemCount > 0);
-              if (aInCart && !bInCart) return -1;
-              if (!aInCart && bInCart) return 1;
-              if (aInCart && bInCart) {
-                if ((b.cartItemCount || 0) !== (a.cartItemCount || 0)) {
-                  return (b.cartItemCount || 0) - (a.cartItemCount || 0);
-                }
-                if ((b.cartTotalAmount || 0) !== (a.cartTotalAmount || 0)) {
-                  return (b.cartTotalAmount || 0) - (a.cartTotalAmount || 0);
-                }
-              }
-
-              // 5. Recent Distributor
-              if (lastDist) {
-                const aMatch = (a.distributor || '').toLowerCase().includes(lastDist);
-                const bMatch = (b.distributor || '').toLowerCase().includes(lastDist);
-                if (aMatch && !bMatch) return -1;
-                if (!aMatch && bMatch) return 1;
-              }
-
-              // 6. Rate
-              if (a.rate && b.rate && a.rate !== b.rate) {
-                return a.rate - b.rate;
-              }
-
+              // 3. Preserve Pharmarack native upstream relevance ranking
               return 0;
             });
           }
@@ -511,8 +462,8 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
     }
   };
 
-  // Render top 30 items for ultra-light DOM tree & fast CPU rasterization
-  const visibleSuggestions = useMemo(() => suggestions.slice(0, 30), [suggestions]);
+  // Render top 60 items for clean DOM tree & fast CPU rasterization
+  const visibleSuggestions = useMemo(() => suggestions.slice(0, 60), [suggestions]);
 
   return (
     <div className="relative z-50 animate-in fade-in duration-200" ref={autocompleteRef}>

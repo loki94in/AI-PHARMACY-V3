@@ -1178,6 +1178,18 @@ router.post('/clear-cache', async (_req, res) => {
       }
     }
 
+    // 3. Clear in-memory & disk search cache
+    try {
+      const { searchCache } = await import('../services/searchCache.js');
+      searchCache.clear();
+      const searchCacheFile = path.join(dataDir, 'search-cache.json');
+      if (fs.existsSync(searchCacheFile)) {
+        fs.writeFileSync(searchCacheFile, '[]', 'utf-8');
+      }
+    } catch (scErr) {
+      console.warn('[Clear Cache] Failed to clear search cache:', scErr);
+    }
+
     res.json({ success: true, message: 'App cache cleared successfully.' });
   } catch (error: any) {
     console.error('Clear cache error:', error);

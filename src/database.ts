@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 79;
+const CURRENT_SCHEMA_VERSION = 80;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -628,6 +628,7 @@ async function ensureOrderTimingSchema(db: any) {
     pharmarack_product_code: 'TEXT DEFAULT NULL',
     pharmarack_store_id: 'INTEGER DEFAULT NULL',
     pharmarack_product_name: 'TEXT DEFAULT NULL',
+    needs_live_cart_sync: 'INTEGER DEFAULT 0',
   });
 
   await ensureColumns(db, 'patient_refills', {
@@ -2289,7 +2290,8 @@ export async function ensureSchema(dbPath: string) {
       payment_screenshot_path TEXT DEFAULT NULL,
       screenshot_amount REAL DEFAULT NULL,
       payment_method TEXT DEFAULT 'cash',
-      delivery_mode TEXT DEFAULT 'pickup'
+      delivery_mode TEXT DEFAULT 'pickup',
+      needs_live_cart_sync INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -2825,6 +2827,7 @@ export async function ensureSchema(dbPath: string) {
       ['patient_refills', 'reminder_mode', "ALTER TABLE patient_refills ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
       ['customers', 'reminder_mode', "ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
       ['customers', 'language_confirmed', "ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0"],
+      ['special_orders', 'needs_live_cart_sync', "ALTER TABLE special_orders ADD COLUMN needs_live_cart_sync INTEGER DEFAULT 0"],
     ];
 
     // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs

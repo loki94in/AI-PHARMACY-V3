@@ -16,7 +16,6 @@ import { syncDistributorPhoneAcrossTables, resolveDistributorContact } from '../
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
 import { pharmarackCatalogCache, scoreProductName } from '../services/pharmarackCatalogCache.js';
 import { startupSyncCoordinator } from '../services/startupSyncCoordinator.js';
-import { sanitizePharmarackQuery } from '../services/intentKeywords.js';
 import {
   findChromePath as findChromiumPath,
   copyProfileFolder as copyChromeProfileFolder,
@@ -300,6 +299,47 @@ export type PharmarackSearchOutcome =
   | { status: 'need_login'; isRefreshing?: boolean }
   | { status: 'connection_error' };
 
+// Cached mapped store IDs so searches scope to the retailer's mapped distributors, matching the official site
+let mappedStoreIdsCache: { ids: number[]; cachedAt: number } | null = null;
+async function getMappedStoreIds(): Promise<number[]> {
+  if (mappedStoreIdsCache && Date.now() - mappedStoreIdsCache.cachedAt < 15 * 60 * 1000 && mappedStoreIdsCache.ids.length > 0) {
+    return mappedStoreIdsCache.ids;
+  }
+  try {
+    const res = await fetchPharmarack('https://pharmretail-api.pharmarack.com/user/api/v2/store-list', {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000)
+    }).catch(() => null);
+    if (res && res.ok) {
+      const data: any = await res.json().catch(() => null);
+      const stores = data?.data?.Stores;
+      if (Array.isArray(stores)) {
+        const checkIsMapped = (s: any) => s.Ismapped === 1 || s.IsMapped === 1 || s.isMapped === true || s.isMapped === 1 || String(s.IsMapped) === '1' || String(s.Ismapped) === '1';
+        const mapped = stores.filter(checkIsMapped).map(s => Number(s.StoreId || s.storeId || s.Id || s.id)).filter(id => !isNaN(id) && id > 0);
+        if (mapped.length > 0) {
+          mappedStoreIdsCache = { ids: mapped, cachedAt: Date.now() };
+          return mapped;
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Fallback to locally known mapped stores from database if network call failed or cold
+  try {
+    const db = await dbManager.getConnection();
+    const rows: any[] = await db.all('SELECT DISTINCT store_id FROM distributor_catalog WHERE is_mapped = 1 AND store_id > 0').catch(() => []);
+    if (rows && rows.length > 0) {
+      const dbIds = rows.map(r => Number(r.store_id)).filter(id => !isNaN(id) && id > 0);
+      if (dbIds.length > 0) {
+        if (!mappedStoreIdsCache) mappedStoreIdsCache = { ids: dbIds, cachedAt: Date.now() };
+        return dbIds;
+      }
+    }
+  } catch (_) {}
+
+  return mappedStoreIdsCache?.ids || [];
+}
+
 // Shared search core — used by both the request path and background stale
 // revalidation. Caching behavior is unchanged: only non-empty results stored.
 export async function performPharmarackSearch(qRaw: string, storeId: number | null, isMapped: boolean): Promise<PharmarackSearchOutcome> {
@@ -324,25 +364,25 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       return { status: 'need_login' };
     }
 
+    // When searching all distributors on the mapped tab, scope to the retailer's mapped distributors (just like official website)
+    const mappedIds = (!hasStoreFilter && isMapped !== false) ? await getMappedStoreIds() : [];
+
     // Direct pass-through query to Pharmarack OpenSearch Engine (exact payload used by official site)
     const buildPayload = (keyword: string) => ({
       SearchKeyword: keyword,
-      StoreId: hasStoreFilter && isMapped ? [storeId] : [],
+      StoreId: hasStoreFilter && isMapped ? [storeId] : (mappedIds.length > 0 ? mappedIds : []),
       NonMappedStoreId: hasStoreFilter && !isMapped ? [storeId] : [],
       Count: 100,
       SkipCount: 0,
-      isMappedSearch: hasStoreFilter ? isMapped : null,
+      isMappedSearch: hasStoreFilter ? isMapped : (isMapped !== false ? true : null),
       IsStock: 2,
       IsScheme: 2,
       IsSort: 1,
       CartSource: 'MOVP'
     });
 
-    // 2-word core query derivation (Brand + Strength, e.g. "dolo 650mg tab 15's" -> "dolo 650")
-    // By searching the 2 core words, Pharmarack OpenSearch matches ALL distributors regardless of
-    // their varying nomenclature ("TAB", "STRIP", "15'S", etc.), achieving maximum stock discovery.
-    const coreTerm = sanitizePharmarackQuery(qRaw);
-    const primaryKeyword = (coreTerm && coreTerm.length >= 2) ? coreTerm : qRaw;
+    // Send the exact query typed by the user directly to Pharmarack OpenSearch without deleting numbers or strengths
+    const primaryKeyword = qRaw.trim();
 
     // After 5+ idle minutes the keep-alive socket/TLS to the search host is gone and the first call is slow.
     // Give that cold call room to finish instead of aborting at 3.5 s and fanning out three more cold requests.
@@ -438,9 +478,6 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       const results = rawResults;
 
       if (results.length > 0) {
-        for (const r of results) {
-          (r as any).matchScore = scoreProductName(qRaw, String(r.name || ''));
-        }
         results.sort((a: any, b: any) => {
           // Prioritize mapped distributors first (a business preference, not a match-quality signal)
           const aMapped = Boolean(a.mapped);
@@ -448,10 +485,8 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
           if (aMapped && !bMapped) return -1;
           if (!aMapped && bMapped) return 1;
 
-          if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
-          const nameA = String(a.name || '').toLowerCase();
-          const nameB = String(b.name || '').toLowerCase();
-          return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+          // Preserve upstream Pharmarack OpenSearch native ranking
+          return (a.pharmarackRank ?? 0) - (b.pharmarackRank ?? 0);
         });
 
         searchCache.set(qRaw, storeId, isMapped, results);
@@ -532,9 +567,6 @@ router.get('/search', async (req, res) => {
   // dropdown instantly (cold-boot resilience); a background single-flight
   // refresh replaces the entry for the next keystroke.
   let cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
-  if (!cachedHit) {
-    cachedHit = searchCache.findPrefixMatch(qRaw, storeId, isMapped);
-  }
   if (cachedHit) {
     if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
     return res.json(cachedHit.items);

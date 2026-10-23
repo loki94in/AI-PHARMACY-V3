@@ -43,44 +43,6 @@ export class SearchCache {
     return { items: entry.data, stale: Date.now() - entry.timestamp >= this.CACHE_TTL };
   }
 
-  /**
-   * Fast prefix/family match for instant local paint while typing
-   * (e.g. user typed "dolo 650", we have "dolo" cached; or user typed "dolo 6", we have "dolo 650").
-   */
-  public findPrefixMatch(query: string, storeId: number | null, isMapped: boolean): { items: any[]; stale: boolean } | null {
-    const q = query.toLowerCase().trim();
-    if (q.length < 3) return null;
-
-    this.cleanup();
-    const suffix = this.getCacheKeySuffix(storeId, isMapped);
-
-    // 1. Shorter prefix match: user typed longer query, check if subquery is cached
-    for (let len = q.length - 1; len >= 3; len--) {
-      const sub = q.substring(0, len);
-      const entry = this.cache.get(sub + suffix);
-      if (entry && Array.isArray(entry.data) && entry.data.length > 0) {
-        const filtered = entry.data.filter(item => {
-          const name = String(item.name || item.medicine_name || item.product_name || item.shortName || '').toLowerCase();
-          return name.includes(q);
-        });
-        if (filtered.length > 0) {
-          return { items: filtered, stale: true };
-        }
-      }
-    }
-
-    // 2. Longer superset match: check if any cached query starts with this query
-    for (const [key, entry] of this.cache.entries()) {
-      if (!key.endsWith(suffix)) continue;
-      const keyQuery = key.slice(0, key.length - suffix.length);
-      if (keyQuery.startsWith(q) && Array.isArray(entry.data) && entry.data.length > 0) {
-        return { items: entry.data, stale: true };
-      }
-    }
-
-    return null;
-  }
-
   public set(query: string, storeId: number | null, isMapped: boolean, data: any[]) {
     const q = query.toLowerCase().trim();
     if (!q) return;

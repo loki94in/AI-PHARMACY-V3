@@ -601,53 +601,16 @@ export function detectNonAllopathicKind(name: string): NonAllopathicKind | null 
 }
 
 /**
- * Sanitize raw medicine name down to the first 2-3 core words for Pharmarack catalog/live search.
- * Strips dosage forms (TAB, CAP, SYP, SUS, CREAM, INJ, etc.), packaging forms (STRIP, BOTTLE, BOX, PACK, TUBE),
- * measurement suffixes (MG, ML, GM, MCG), and pack size counts (15's, 150 tab, etc.) to ensure
- * maximum API hit rate and complete distributor stock discovery on Pharmarack.
+ * Clean raw medicine query for Pharmarack search:
+ * Normalizes punctuation and excessive whitespace while preserving 100% of the
+ * medicine name, brand tokens, numbers, and strengths without dropping words or truncating.
  */
 export function sanitizePharmarackQuery(rawName: string): string {
   if (!rawName) return '';
-  const cleaned = rawName
+  return rawName
     .replace(/[+/,._\-()\[\]#*']/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  const coreWords: string[] = [];
-
-  for (const w of words) {
-    const lower = w.toLowerCase();
-    if (DOSAGE_AND_PACKAGING_NOISE_TOKENS.has(lower)) {
-      continue;
-    }
-    // Skip trailing pack counts (e.g. "15's", "10s", "150", "15") when we already have brand + strength or 2 core words
-    if (/^\d+(?:'s|s|t|tab|tabs|cap|caps)?$/i.test(w) && coreWords.length >= 2) {
-      continue;
-    }
-    const unitMatch = w.match(/^(\d+(?:\.\d+)?)(mg|ml|gm|g|mcg|iu|%|tabs?|caps?)$/i);
-    if (unitMatch) {
-      coreWords.push(unitMatch[1]);
-    } else {
-      coreWords.push(w);
-    }
-
-    // When the 2nd word contains numeric strength (e.g. "dolo 650", "pan 40", "calpol 500"),
-    // that constitutes the complete Brand + Strength core: stop here to avoid pack size noise.
-    if (coreWords.length >= 2 && /\d/.test(coreWords[1])) {
-      break;
-    }
-
-    if (coreWords.length >= 3) {
-      break;
-    }
-  }
-
-  if (coreWords.length === 0) {
-    return words.slice(0, 2).join(' ');
-  }
-
-  return coreWords.slice(0, 3).join(' ');
 }
 
 // ─── Fuzzy Local Medicine Search ─────────────────────────────────────────────

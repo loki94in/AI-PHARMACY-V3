@@ -1404,7 +1404,7 @@ router.post('/customer/refill-order', async (req, res) => {
     const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
 
     // 2. Insert items into special_orders (tagged with customer_order_source = 'website')
-    const createdOrders: Array<{ id: number; product: string; qty: number; price: number; payment_qr_id?: string | null }> = [];
+    const createdOrders: Array<{ id: number; product: string; qty: number; price: number; payment_qr_id?: string | null; itemType?: string }> = [];
     const modeLabel = isDelivery ? 'Home Delivery' : 'In-Store Pickup';
     const orderType = isDelivery ? 'DELIVERY' : 'PICKUP';
     const deliveryStatus = isDelivery ? 'pending_dispatch' : 'counter_pickup';
@@ -1471,7 +1471,7 @@ router.post('/customer/refill-order', async (req, res) => {
         );
 
         const orderId = Number(result.lastID);
-        createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null });
+        createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null, itemType: item.itemType || 'refill' });
 
         // Record tracking event
         await db.run(
@@ -1485,6 +1485,142 @@ router.post('/customer/refill-order', async (req, res) => {
     } catch (txErr) {
       await db.run('ROLLBACK');
       throw txErr;
+    }
+
+    // 2.5 Automated Live Cart Addition for Refill Items (§11 Refill Procurement)
+    let liveCartAddedCount = 0;
+    let offlineQueuedCount = 0;
+    try {
+      const { addItemsToPharmarackCart } = await import('./pharmarack.js');
+      for (const ord of createdOrders) {
+        // Check if item is a regular refill
+        let isRefill = ord.itemType === 'refill';
+        if (!isRefill && custId) {
+          const refillRow = await db.get(
+            `SELECT id FROM patient_refills WHERE customer_id = ? AND LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) LIMIT 1`,
+            [custId, ord.product]
+          ).catch(() => null);
+          if (refillRow) isRefill = true;
+        }
+
+        if (isRefill) {
+          // Resolve distributor
+          let resolvedStoreId = 0;
+          let resolvedStoreName = '';
+          let resolvedProdId = 0;
+          let resolvedProdCode = '';
+          let resolvedRate = 0;
+          let resolvedMrp = 0;
+
+          const linkRow = await db.get(
+            `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+             FROM medicine_distributor_links 
+             WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) 
+             ORDER BY is_preferred DESC LIMIT 1`,
+            [ord.product]
+          ).catch(() => null);
+
+          if (linkRow && linkRow.store_id) {
+            resolvedStoreId = Number(linkRow.store_id);
+            resolvedStoreName = linkRow.distributor_name || '';
+            resolvedProdId = Number(linkRow.product_id) || 0;
+            resolvedProdCode = String(linkRow.product_code || '');
+            resolvedRate = Number(linkRow.rate) || 0;
+            resolvedMrp = Number(linkRow.mrp) || 0;
+          } else {
+            const catRow = await db.get(
+              `SELECT store_id, store_name, product_id, product_code, rate, mrp 
+               FROM distributor_catalog 
+               WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?)) 
+                 AND store_id > 0
+               ORDER BY rate ASC LIMIT 1`,
+              [ord.product, `%${ord.product}%`]
+            ).catch(() => null);
+
+            if (catRow && catRow.store_id) {
+              resolvedStoreId = Number(catRow.store_id);
+              resolvedStoreName = catRow.store_name || '';
+              resolvedProdId = Number(catRow.product_id) || 0;
+              resolvedProdCode = String(catRow.product_code || '');
+              resolvedRate = Number(catRow.rate) || 0;
+              resolvedMrp = Number(catRow.mrp) || 0;
+            }
+          }
+
+          const cartResult = await addItemsToPharmarackCart([{
+            productName: ord.product,
+            product: ord.product,
+            productId: resolvedProdId,
+            productCode: resolvedProdCode,
+            storeId: resolvedStoreId,
+            storeName: resolvedStoreName || 'Standard Distributor',
+            qty: ord.qty > 0 ? ord.qty : 1,
+            rate: resolvedRate,
+            mrp: resolvedMrp,
+            packaging: '1 strip',
+            mapped: resolvedStoreId > 0
+          }]).catch((err: any) => ({ success: false, error: err?.message || String(err), offline: false }));
+
+          if (cartResult.success && !(cartResult as any).offline) {
+            liveCartAddedCount++;
+            await db.run(
+              `UPDATE special_orders 
+               SET needs_live_cart_sync = 0,
+                   status = 'In Live Cart',
+                   delivery_status = 'in_live_cart',
+                   pharmacy_verification_status = 'IN_LIVE_CART',
+                   pharmarack_distributor = ?,
+                   pharmarack_store_id = ?,
+                   pharmarack_product_id = ?,
+                   pharmarack_product_code = ?,
+                   pharmarack_rate = ?,
+                   pharmarack_mrp = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+              [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, ord.id]
+            ).catch(() => {});
+
+            await db.run(
+              `INSERT OR REPLACE INTO online_order_items (
+                 order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+              [ord.id, ord.product, ord.product, ord.qty, ord.qty, resolvedMrp, resolvedRate, ord.qty * resolvedRate]
+            ).catch(() => {});
+
+            await db.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+               VALUES (?, 'added_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+              [ord.id, `Refill medicine "${ord.product}" (Qty: ${ord.qty}) auto-added to Pharmarack Live Cart (${resolvedStoreName || 'Distributor'}).`]
+            ).catch(() => {});
+          } else {
+            offlineQueuedCount++;
+            await db.run(
+              `UPDATE special_orders 
+               SET needs_live_cart_sync = 1,
+                   delivery_status = 'offline_queued',
+                   pharmacy_verification_status = 'OFFLINE_QUEUED',
+                   pharmarack_distributor = ?,
+                   pharmarack_store_id = ?,
+                   pharmarack_product_id = ?,
+                   pharmarack_product_code = ?,
+                   pharmarack_rate = ?,
+                   pharmarack_mrp = ?,
+                   cart_add_error = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+              [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, cartResult.error || ((cartResult as any).offline ? 'Offline mode' : 'Pending login'), ord.id]
+            ).catch(() => {});
+
+            await db.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+               VALUES (?, 'offline_queued_for_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+              [ord.id, `Refill medicine "${ord.product}" queued for Live Cart auto-sync upon connection.`]
+            ).catch(() => {});
+          }
+        }
+      }
+    } catch (cartErr) {
+      console.warn('[CustomerPortal] Auto-add to live cart warning:', cartErr);
     }
 
     // 3. Update customer's preferred store
@@ -1517,6 +1653,12 @@ router.post('/customer/refill-order', async (req, res) => {
       let confirmMsg = isDelivery
         ? `*Online Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for ordering at *${storeName}*.\n\n*Ordered Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n🚚 *Mode:* Home Delivery${deliveryTimingBlock}${scheduleReasonBlock}\n📍 *Address:* ${cleanAddress || 'As per records'}${storePhone}${returnNoteBlock}\n\n*Our team is packaging your order and will alert you upon dispatch!*`
         : `*Refill Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for placing your refill order at *${storeName}*.\n\n*Selected Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n📍 *Pickup Branch:* ${storeName}${storeAddress}${deliveryTimingBlock}${scheduleReasonBlock}${storePhone}${returnNoteBlock}\n\n*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+
+      if (liveCartAddedCount > 0) {
+        confirmMsg += `\n\n🛒 *Distributor Live Cart:* ${liveCartAddedCount} regular prescription item(s) automatically added to distributor Live Cart for procurement.`;
+      } else if (offlineQueuedCount > 0) {
+        confirmMsg += `\n\n🛒 *Procurement Status:* Regular items securely queued; will sync to distributor Live Cart automatically as connection establishes.`;
+      }
 
       if (allocatedQr) {
         const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);

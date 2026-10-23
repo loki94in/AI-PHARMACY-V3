@@ -4459,9 +4459,8 @@ export default function PharmarackCart() {
     setSwitchCatalogResults([]);
     try {
       const res = await api.searchPharmarack(item.productName);
-      if (res && res.success && Array.isArray(res.products)) {
-        setSwitchCatalogResults(res.products);
-      }
+      const items = Array.isArray(res) ? res : (res?.products || []);
+      setSwitchCatalogResults(items);
       if (!priceHistoryCache[item.productName]) {
         fetchPriceHistories([{ items: [item] } as Distributor]);
       }
@@ -4478,9 +4477,8 @@ export default function PharmarackCart() {
     setSwitchSearching(true);
     try {
       const res = await api.searchPharmarack(query);
-      if (res && res.success && Array.isArray(res.products)) {
-        setSwitchCatalogResults(res.products);
-      }
+      const items = Array.isArray(res) ? res : (res?.products || []);
+      setSwitchCatalogResults(items);
     } catch (err) {
       console.warn('Failed to search catalog for switch query:', err);
     } finally {
