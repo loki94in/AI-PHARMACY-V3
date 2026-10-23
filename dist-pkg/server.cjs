@@ -16041,7 +16041,7 @@ var init_pharmarackCheckoutService = __esm({
        * using direct REST API authentication.
        * Eliminates headless browser, DOM button hunting, profile lock conflicts, and UI timeouts.
        */
-      async placeOrdersViaApi(targetStoreNames) {
+      async placeOrdersViaApi(targetStoreNames, targetStoreIds) {
         if (isShutdownInProgress()) {
           return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "Application shutdown in progress" };
         }
@@ -16063,7 +16063,7 @@ var init_pharmarackCheckoutService = __esm({
           try {
             const payloadStr = Buffer.from(token.split(".")[1], "base64").toString();
             const jwtPayload = JSON.parse(payloadStr);
-            userId = jwtPayload.id ? String(jwtPayload.id) : "";
+            userId = jwtPayload.id || jwtPayload.UserId || jwtPayload.userId || jwtPayload.sub ? String(jwtPayload.id || jwtPayload.UserId || jwtPayload.userId || jwtPayload.sub) : "";
           } catch (_) {
           }
           const cartUrl = "https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails";
@@ -16095,24 +16095,25 @@ var init_pharmarackCheckoutService = __esm({
             throw new Error(`Pharmarack GetUserCartDetails returned status ${cartRes.status}`);
           }
           const cartData = await cartRes.json().catch(() => null);
-          let rawList = [];
+          let storeList = [];
           if (cartData) {
-            if (Array.isArray(cartData)) rawList = cartData;
-            else {
+            if (Array.isArray(cartData)) storeList = cartData;
+            else if (Array.isArray(cartData.IList)) storeList = cartData.IList;
+            else if (Array.isArray(cartData.ilist)) storeList = cartData.ilist;
+            else if (Array.isArray(cartData.data)) storeList = cartData.data;
+            else if (Array.isArray(cartData.Data)) storeList = cartData.Data;
+            else if (typeof cartData === "object") {
               const targetObj = cartData.data || cartData.Data || cartData;
-              if (Array.isArray(targetObj)) rawList = targetObj;
-              else if (typeof targetObj === "object") {
-                const keysToTry = ["IList", "ilist", "StoreWiseCartDetails", "storeWiseCartDetails", "CartDetails", "cartDetails", "Stores", "stores", "Items", "items"];
-                for (const k of keysToTry) {
-                  if (Array.isArray(targetObj[k])) {
-                    rawList = targetObj[k];
-                    break;
-                  }
+              const keysToTry = ["IList", "ilist", "StoreWiseCartDetails", "storeWiseCartDetails", "CartDetails", "cartDetails", "Stores", "stores", "Items", "items"];
+              for (const k of keysToTry) {
+                if (Array.isArray(targetObj[k])) {
+                  storeList = targetObj[k];
+                  break;
                 }
               }
             }
           }
-          if (!rawList || rawList.length === 0) {
+          if (!storeList || storeList.length === 0) {
             return {
               ok: false,
               placedCount: 0,
@@ -16122,17 +16123,29 @@ var init_pharmarackCheckoutService = __esm({
             };
           }
           const storeMap = /* @__PURE__ */ new Map();
-          for (const item of rawList) {
-            const storeId = Number(item.StoreId || item.storeId || item.Storeid || item.StoreID || 0);
-            const storeName = String(item.StoreName || item.storeName || item.Store || "Pharmarack Distributor").trim();
+          for (const entry of storeList) {
+            const storeId = Number(entry.StoreId || entry.storeId || entry.Storeid || entry.StoreID || 0);
+            const storeName = String(entry.StoreName || entry.storeName || entry.Store || "Pharmarack Distributor").trim();
+            const retailerId = Number(entry.RetailerId || entry.retailerId || 0);
             if (!storeId) continue;
-            if (!storeMap.has(storeId)) {
-              storeMap.set(storeId, { storeId, storeName, items: [] });
+            const rawItems = entry.lineItems || entry.LineItems || entry.CartItemList || entry.cartItemList || entry.items || entry.Items || entry.products || entry.Products || [];
+            if (Array.isArray(rawItems) && rawItems.length > 0) {
+              if (!storeMap.has(storeId)) {
+                storeMap.set(storeId, { storeId, storeName, retailerId, items: [] });
+              }
+              storeMap.get(storeId).items.push(...rawItems);
+            } else if (entry.ProductCode || entry.productCode || entry.ProductName || entry.productName) {
+              if (!storeMap.has(storeId)) {
+                storeMap.set(storeId, { storeId, storeName, retailerId, items: [] });
+              }
+              storeMap.get(storeId).items.push(entry);
             }
-            storeMap.get(storeId).items.push(item);
           }
           let storesToPlace = Array.from(storeMap.values());
-          if (targetStoreNames && targetStoreNames.length > 0) {
+          if (targetStoreIds && targetStoreIds.length > 0) {
+            const idSet = new Set(targetStoreIds.map(Number));
+            storesToPlace = storesToPlace.filter((st) => idSet.has(st.storeId));
+          } else if (targetStoreNames && targetStoreNames.length > 0) {
             const targetNorms = targetStoreNames.map((s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""));
             storesToPlace = storesToPlace.filter((st) => {
               const norm3 = st.storeName.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -16151,20 +16164,23 @@ var init_pharmarackCheckoutService = __esm({
           console.log(`[PharmarackCheckout] Preparing direct REST order placement for ${storesToPlace.length} distributor(s)...`);
           const orderPayload = storesToPlace.map((st) => {
             const lineItems = st.items.map((it) => {
-              const ptr = Number(it.PTR ?? it.ptr ?? it.HiddenPTR ?? it.NetRate ?? 0);
+              const rawPtr = Number(it.PTR ?? it.ptr ?? 0);
+              const hiddenPtr = Number(it.HiddenPTR ?? it.hiddenPtr ?? 0);
+              const netRate = Number(it.NetRate ?? it.netRate ?? 0);
+              const effectivePtr = rawPtr > 0 ? rawPtr : hiddenPtr > 0 ? hiddenPtr : netRate > 0 ? netRate : 0;
               const qty = Number(it.Quantity ?? it.qty ?? it.quantity ?? 1);
               return {
-                PTR: ptr,
-                ProductName: String(it.ProductName ?? it.productName ?? it.Name ?? it.name ?? ""),
-                ProductCode: String(it.ProductCode ?? it.productCode ?? ""),
+                PTR: effectivePtr,
+                ProductName: String(it.ProductName ?? it.productName ?? it.Name ?? it.name ?? "").trim(),
+                ProductCode: String(it.ProductCode ?? it.productCode ?? "").trim(),
                 Quantity: qty,
                 Free: Number(it.Free ?? it.free ?? 0),
                 Scheme: String(it.Scheme ?? it.scheme ?? ""),
                 SchemeType: String(it.SchemeType ?? it.schemeType ?? ""),
-                HiddenPTR: Number(it.HiddenPTR ?? it.hiddenPtr ?? ptr),
-                NetRate: Number(it.NetRate ?? it.netRate ?? ptr)
+                HiddenPTR: hiddenPtr > 0 ? hiddenPtr : effectivePtr,
+                NetRate: netRate > 0 ? netRate : effectivePtr
               };
-            });
+            }).filter((it) => it.ProductCode.length > 0 && it.Quantity > 0);
             const storeAmount = lineItems.reduce((sum, it) => sum + it.Quantity * it.PTR, 0);
             return {
               storeId: st.storeId,
@@ -16175,7 +16191,7 @@ var init_pharmarackCheckoutService = __esm({
               OrderSource: "MOVP",
               SKipAndContinue: 1,
               // Crucial: skip unpriced/locked items automatically without UI popup blocking
-              OrderPlacedBy: userId,
+              OrderPlacedBy: userId || String(st.retailerId || 0),
               Latitude: "",
               Longitude: "",
               BrowserName: "Web",
@@ -16187,8 +16203,17 @@ var init_pharmarackCheckoutService = __esm({
               GSTAmount: 0,
               items: lineItems
             };
-          });
-          console.log("[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API...");
+          }).filter((st) => st.items.length > 0);
+          if (orderPayload.length === 0) {
+            return {
+              ok: false,
+              placedCount: 0,
+              failedCount: 0,
+              orders: [],
+              error: "No valid products with product codes found in selected cart distributor(s)."
+            };
+          }
+          console.log(`[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API for ${orderPayload.length} store(s)...`);
           const saveOrderUrl = "https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager";
           const orderRes = await fetch(saveOrderUrl, {
             method: "POST",
@@ -16207,7 +16232,18 @@ var init_pharmarackCheckoutService = __esm({
           if (!orderRes.ok) {
             const errText = await orderRes.text().catch(() => "");
             console.error(`[PharmarackCheckout] SaveOrderCartForRetailerManager failed with HTTP ${orderRes.status}:`, errText);
-            throw new Error(`Pharmarack SaveOrder API returned HTTP ${orderRes.status}: ${errText.slice(0, 100)}`);
+            return {
+              ok: false,
+              placedCount: 0,
+              failedCount: storesToPlace.length,
+              orders: storesToPlace.map((st) => ({
+                storeId: st.storeId,
+                storeName: st.storeName,
+                status: "failed",
+                error: `Pharmarack API rejected order (HTTP ${orderRes.status}): ${errText.slice(0, 150)}`
+              })),
+              error: `Pharmarack order failed: ${errText.slice(0, 150) || "API error"}`
+            };
           }
           const orderResData = await orderRes.json().catch(() => null);
           console.log("[PharmarackCheckout] SaveOrderCartForRetailerManager response:", JSON.stringify(orderResData).slice(0, 300));
@@ -16227,7 +16263,7 @@ var init_pharmarackCheckoutService = __esm({
                 error: status === "failed" ? disp.Message || "Order rejected by distributor" : void 0
               });
             }
-          } else if (isSuccessMsg || orderResData?.code === 200) {
+          } else if (isSuccessMsg || orderResData?.code === 200 || orderResData?.StatusCode === 200) {
             for (const st of storesToPlace) {
               results.push({
                 storeId: st.storeId,
@@ -16248,9 +16284,14 @@ var init_pharmarackCheckoutService = __esm({
             error: isOk ? void 0 : orderResData?.message || orderResData?.data?.Message || "Failed to confirm placed orders via Pharmarack API"
           };
         } catch (apiErr) {
-          console.warn("[PharmarackCheckout] Direct REST API checkout notice:", apiErr.message);
-          console.log("[PharmarackCheckout] Attempting fallback to browser checkout engine...");
-          return this.executeCartCheckout(targetStoreNames);
+          console.warn("[PharmarackCheckout] Direct REST API checkout error:", apiErr.message);
+          return {
+            ok: false,
+            placedCount: 0,
+            failedCount: 1,
+            orders: [],
+            error: apiErr.message || "Direct REST order placement error"
+          };
         }
       }
       /**
@@ -30898,8 +30939,9 @@ async function addItemsToPharmarackCart(items) {
           if (existingQty > 0) break;
         }
       }
+      const isExplicitUpdate = Boolean(item.isUpdate || item.mode === "set" || item.setQty);
       const requestedQty = Number(item.qty || item.Quantity || 1);
-      const targetCartQty = existingQty > 0 ? existingQty + requestedQty : requestedQty;
+      const targetCartQty = isExplicitUpdate ? requestedQty : existingQty > 0 ? existingQty + requestedQty : requestedQty;
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,
@@ -30990,21 +31032,34 @@ async function addItemsToPharmarackCart(items) {
         let lastErr = null;
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            const endpoint = attempt === 2 && existingQty > 0 ? "https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail" : "https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail";
+            const shouldUseUpdate = isExplicitUpdate || existingQty > 0;
+            const endpoint = attempt === 1 && shouldUseUpdate || attempt === 2 && !shouldUseUpdate ? "https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail" : "https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail";
             const res = await fetchPharmarack(endpoint, {
               method: "POST",
               body: JSON.stringify(payload),
               signal: AbortSignal.timeout(3e4)
             });
-            if (!res.ok && endpoint.includes("AddUserProductCartDetail")) {
-              try {
-                const altRes = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail", {
-                  method: "POST",
-                  body: JSON.stringify(payload),
-                  signal: AbortSignal.timeout(3e4)
-                });
-                if (altRes.ok) return altRes;
-              } catch (_) {
+            if (!res.ok) {
+              if (endpoint.includes("AddUserProductCartDetail")) {
+                try {
+                  const altRes = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail", {
+                    method: "POST",
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(3e4)
+                  });
+                  if (altRes.ok) return altRes;
+                } catch (_) {
+                }
+              } else if (endpoint.includes("UpdateUserProductCartDetail")) {
+                try {
+                  const altRes = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
+                    method: "POST",
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(3e4)
+                  });
+                  if (altRes.ok) return altRes;
+                } catch (_) {
+                }
               }
             }
             return res;
@@ -32102,12 +32157,12 @@ var init_pharmarack = __esm({
       }
     });
     router.post("/cart/place-official-orders", async (req, res) => {
-      const { targetStoreNames, orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
+      const { targetStoreNames, targetStoreIds, orders, deliveryBoyPhone, deliveryBoyName, storeInfo, skipWhatsAppQueue } = req.body;
       try {
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
         const db2 = await dbManager.getConnection();
         const appPort = process.env.PORT || config.port;
-        if (orders && Array.isArray(orders) && orders.length > 0) {
+        if (!skipWhatsAppQueue && orders && Array.isArray(orders) && orders.length > 0) {
           try {
             await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
               method: "POST",
@@ -32129,44 +32184,66 @@ var init_pharmarack = __esm({
             console.warn("[PharmarackRoute] Failed to enqueue delivery boy summary pre-checkout:", queueErr);
           }
         }
-        await new Promise((r) => setTimeout(r, 1200));
         console.log("[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...");
-        const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames);
+        const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames, targetStoreIds);
         invalidatePharmarackCartCache();
-        let syncedToday = [];
-        const storesNeedingOrderNo = (orders || []).map((o) => (o.storeName || "").toLowerCase().trim());
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            await syncPharmarackOrders(true);
-          } catch (syncErr) {
-            console.warn(`[PharmarackRoute] Post-checkout order sync attempt ${attempt} notice:`, syncErr?.message || syncErr);
-          }
-          syncedToday = await db2.all(
-            `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
-            [today]
-          );
-          const hasAllStores = storesNeedingOrderNo.every(
-            (sName) => syncedToday.some((s) => {
-              const normS = (s.store_name || "").toLowerCase().trim();
-              return sName.includes(normS) || normS.includes(sName);
-            })
-          );
-          if (hasAllStores || attempt === 3) break;
-          await new Promise((r) => setTimeout(r, 2500));
-        }
         if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
           for (const ord of checkoutResult.orders) {
-            if (ord.status === "placed" && ord.orderNo) {
+            if (ord.status === "placed") {
               try {
-                await db2.run(
-                  `UPDATE pharmarack_placed_orders 
-               SET order_no = ? 
-               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '')`,
-                  [ord.orderNo, today, ord.storeName]
+                const existingRow = await db2.get(
+                  `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
+                  [today, ord.storeName]
                 );
+                if (existingRow) {
+                  if (ord.orderNo) {
+                    await db2.run(
+                      `UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?`,
+                      [ord.orderNo, existingRow.id]
+                    );
+                  }
+                } else {
+                  const matchedOrderObj = (orders || []).find((o) => (o.storeName || "").toLowerCase().trim() === (ord.storeName || "").toLowerCase().trim());
+                  const itemsJson = matchedOrderObj?.items ? JSON.stringify(matchedOrderObj.items) : "[]";
+                  await db2.run(
+                    `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, placed_at, order_no, delivery_boy_notified, distributor_notified)
+                 VALUES (?, ?, ?, ?, ?, ?, 0, 0)`,
+                    [today, ord.storeId || 0, ord.storeName, itemsJson, Date.now(), ord.orderNo || null]
+                  );
+                }
               } catch (_) {
               }
             }
+          }
+        }
+        let syncedToday = [];
+        const hasDirectOrders = checkoutResult.orders?.some((o) => o.status === "placed" && Boolean(o.orderNo));
+        if (hasDirectOrders || !orders || orders.length === 0) {
+          syncPharmarackOrders(true).catch((syncErr) => console.warn("[PharmarackRoute] Background order sync notice:", syncErr?.message || syncErr));
+          syncedToday = await db2.all(
+            `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+            [today]
+          ).catch(() => []);
+        } else {
+          const storesNeedingOrderNo = (orders || []).map((o) => (o.storeName || "").toLowerCase().trim());
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              await syncPharmarackOrders(true);
+            } catch (syncErr) {
+              console.warn(`[PharmarackRoute] Post-checkout order sync attempt ${attempt} notice:`, syncErr?.message || syncErr);
+            }
+            syncedToday = await db2.all(
+              `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+              [today]
+            );
+            const hasAllStores = storesNeedingOrderNo.every(
+              (sName) => syncedToday.some((s) => {
+                const normS = (s.store_name || "").toLowerCase().trim();
+                return sName.includes(normS) || normS.includes(sName);
+              })
+            );
+            if (hasAllStores || attempt === 2) break;
+            await new Promise((r) => setTimeout(r, 1500));
           }
         }
         if (orders && Array.isArray(orders) && orders.length > 0) {
@@ -60995,7 +61072,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.145";
+    APP_VERSION = "0.1.147";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -110873,6 +110950,13 @@ async function gracefulShutdown(signal) {
   shutdownWatchdog.unref();
   try {
     closeAppBrowser();
+    if (signal === "APPLY_UPDATE" && process.platform === "win32") {
+      try {
+        const { spawn: spawn6 } = await import("child_process");
+        spawn6("cmd.exe", ["/c", "taskkill /F /T /IM PharmacyOS.exe"], { detached: true, stdio: "ignore" }).unref();
+      } catch (_) {
+      }
+    }
   } catch (browserErr) {
     console.error("Error closing app browser window:", browserErr);
   }

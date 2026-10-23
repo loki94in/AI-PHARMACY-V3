@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Key, Phone, Store, RefreshCw, Send, Plus, Search,
   CheckCircle2, AlertCircle, ShieldCheck, Copy, Check, Lock,
-  MessageSquare, ToggleLeft, ToggleRight, Trash2, Globe, Clock, History, X
+  MessageSquare, ToggleLeft, ToggleRight, Trash2, Globe, Clock, History, X,
+  FileText, ShoppingBag, Truck, Package, Trash
 } from 'lucide-react';
-import { api } from '../services/api';
+import { api, apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../utils/phone';
+import { isOnlineOrder } from '../utils/onlineOrders';
 
 interface PortalAccount {
   id: number;
@@ -49,6 +51,192 @@ export function PortalAccountsManager() {
   const [searchQuery, setSearchQuery] = useState('');
   const [storeFilter, setStoreFilter] = useState<number | ''>('');
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+
+  // Sub-view toggle: 'accounts' | 'orders'
+  const [activeView, setActiveView] = useState<'accounts' | 'orders'>('accounts');
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [ordersSearch, setOrdersSearch] = useState('');
+  const [ordersStatusFilter, setOrdersStatusFilter] = useState<string>('all');
+
+  // Quick Manual Order Modal State
+  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [orderCustomer, setOrderCustomer] = useState<{ id?: number; name: string; phone: string; address?: string }>({
+    id: undefined,
+    name: '',
+    phone: '',
+    address: ''
+  });
+  const [orderItems, setOrderItems] = useState<Array<{ product: string; qty: number; price: number }>>([]);
+  const [orderDeliveryMode, setOrderDeliveryMode] = useState<'pickup' | 'delivery'>('pickup');
+  const [orderPaymentMode, setOrderPaymentMode] = useState<'COD' | 'UPI'>('COD');
+  const [orderNotes, setOrderNotes] = useState('');
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+
+  // Medicine live search inside order modal
+  const [medSearchInput, setMedSearchInput] = useState('');
+  const [medSearchResults, setMedSearchResults] = useState<any[]>([]);
+  const [isSearchingMeds, setIsSearchingMeds] = useState(false);
+
+  // Live portal base login URL cache
+  const [livePortalUrl, setLivePortalUrl] = useState<string>('');
+
+  useEffect(() => {
+    api.getLivePortalUrl().then(res => {
+      if (res.login_url) setLivePortalUrl(res.login_url);
+    }).catch(() => {});
+  }, []);
+
+  const handleOpenWebLogin = async (phone?: string) => {
+    try {
+      const res = await api.getLivePortalUrl(phone);
+      const targetUrl = res.login_url || (phone ? `/customer-login?phone=${phone}` : '/customer-login');
+      window.open(targetUrl, '_blank');
+    } catch (_) {
+      window.open(phone ? `/customer-login?phone=${phone}` : '/customer-login', '_blank');
+    }
+  };
+
+  const fetchOrders = useCallback(async () => {
+    setLoadingOrders(true);
+    try {
+      const res = await apiClient.get('/orders').then(r => r.data);
+      const filtered = (res || []).filter(isOnlineOrder);
+      setOrders(filtered);
+    } catch (err) {
+      console.warn('[PortalManager] Failed to fetch orders:', err);
+    } finally {
+      setLoadingOrders(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'orders') {
+      fetchOrders();
+    }
+  }, [activeView, fetchOrders]);
+
+  const handleOpenManualOrder = (acc?: PortalAccount) => {
+    if (acc) {
+      setOrderCustomer({
+        id: acc.customer_id,
+        name: acc.customer_name,
+        phone: acc.login_id,
+        address: acc.customer_address || ''
+      });
+    } else {
+      setOrderCustomer({
+        id: undefined,
+        name: '',
+        phone: '',
+        address: ''
+      });
+    }
+    setOrderItems([]);
+    setOrderDeliveryMode('pickup');
+    setOrderPaymentMode('COD');
+    setOrderNotes('');
+    setMedSearchInput('');
+    setMedSearchResults([]);
+    setIsOrderModalOpen(true);
+  };
+
+  useEffect(() => {
+    if (!medSearchInput || medSearchInput.trim().length < 2) {
+      setMedSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsSearchingMeds(true);
+      try {
+        const res = await api.searchMedicines(medSearchInput.trim(), 8);
+        setMedSearchResults(res.data || []);
+      } catch (_) {
+        setMedSearchResults([]);
+      } finally {
+        setIsSearchingMeds(false);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [medSearchInput]);
+
+  const handleAddMedicineToOrder = (med: any) => {
+    const existingIdx = orderItems.findIndex(it => it.product.toLowerCase() === med.name.toLowerCase());
+    if (existingIdx !== -1) {
+      const updated = [...orderItems];
+      updated[existingIdx].qty += 1;
+      setOrderItems(updated);
+    } else {
+      setOrderItems([...orderItems, {
+        product: med.name,
+        qty: 1,
+        price: Number(med.mrp || 0)
+      }]);
+    }
+    setMedSearchInput('');
+    setMedSearchResults([]);
+  };
+
+  const handleUpdateItemQty = (index: number, newQty: number) => {
+    if (newQty <= 0) {
+      setOrderItems(orderItems.filter((_, i) => i !== index));
+    } else {
+      const updated = [...orderItems];
+      updated[index].qty = newQty;
+      setOrderItems(updated);
+    }
+  };
+
+  const handleRemoveOrderItem = (index: number) => {
+    setOrderItems(orderItems.filter((_, i) => i !== index));
+  };
+
+  const handlePlaceManualOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPhone = sanitizePhoneInput(orderCustomer.phone);
+    if (!orderCustomer.name.trim() || !isValid10DigitPhone(cleanPhone)) {
+      toastEvent.trigger('Please enter customer name and valid 10-digit phone', 'error');
+      return;
+    }
+    if (orderItems.length === 0) {
+      toastEvent.trigger('Please add at least one medicine', 'error');
+      return;
+    }
+    setIsSubmittingOrder(true);
+    try {
+      const payload: any = {
+        customer_id: orderCustomer.id,
+        customer_name: orderCustomer.name.trim(),
+        customer_phone: cleanPhone,
+        store_id: 1,
+        items: orderItems.map(it => ({
+          product: it.product,
+          qty: it.qty,
+          price: it.price
+        })),
+        payment_method: orderPaymentMode,
+        delivery_mode: orderDeliveryMode,
+        delivery_address: orderDeliveryMode === 'delivery' ? orderCustomer.address?.trim() : undefined,
+        notes: orderNotes.trim() ? `[Manual Phone Order] ${orderNotes.trim()}` : '[Manual Phone Order]',
+        customer_order_source: 'manual_phone_order'
+      };
+
+      const res = await api.placeCustomerRefillOrder(payload);
+      if (res.success) {
+        toastEvent.trigger(`Manual order placed for ${orderCustomer.name}! WhatsApp confirmation queued.`, 'success');
+        setIsOrderModalOpen(false);
+        fetchOrders();
+        fetchAccounts();
+      } else {
+        toastEvent.trigger(res.message || 'Failed to place order', 'error');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || err.message || 'Failed to place order', 'error');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -119,6 +307,22 @@ export function PortalAccountsManager() {
   useEffect(() => {
     fetchAccounts();
   }, [fetchAccounts]);
+
+  // Bulk Sync All Patients Handler
+  const handleSyncAll = async () => {
+    setIsSyncingAll(true);
+    try {
+      const res = await api.syncAllPortalAccounts();
+      if (res.success) {
+        toastEvent.trigger(res.message || `Synced ${res.synced_count} patient web logins!`, 'success');
+        fetchAccounts();
+      }
+    } catch (err) {
+      toastEvent.trigger('Failed to sync patient portal accounts', 'error');
+    } finally {
+      setIsSyncingAll(false);
+    }
+  };
 
   // Generate / Create Account Handler
   const handleCreateAccount = async (e: React.FormEvent) => {
@@ -228,53 +432,133 @@ export function PortalAccountsManager() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const filteredOrders = orders.filter(o => {
+    if (ordersStatusFilter !== 'all' && (o.status || '').toLowerCase() !== ordersStatusFilter.toLowerCase()) return false;
+    if (ordersSearch.trim()) {
+      const q = ordersSearch.toLowerCase();
+      const matchName = (o.requester || o.customer_name || '').toLowerCase().includes(q);
+      const matchPhone = (o.phone || '').includes(q);
+      const matchProd = (o.product || '').toLowerCase().includes(q);
+      const matchNotes = (o.notes || '').toLowerCase().includes(q);
+      return matchName || matchPhone || matchProd || matchNotes;
+    }
+    return true;
+  });
+
   return (
     <div className="space-y-4">
       {/* Header Bar */}
-      <div className="bg-bg2 border border-border rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+      <div className="bg-bg2 border border-border rounded-2xl p-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 shadow-sm">
         <div>
           <h2 className="text-base font-bold text-text flex items-center gap-2">
             <Globe className="w-5 h-5 text-primary" />
-            <span>Customer Web Portal & Refill Logins</span>
+            <span>Web Logins & Customer Orders</span>
           </h2>
           <p className="text-xs text-muted">
-            Manage customer online accounts, 4-digit PINs, collection branches, and WhatsApp credentials
+            Manage customer web portal logins, 4-digit PINs, and place manual phone orders with WhatsApp tracking
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
           <button
-            onClick={fetchAccounts}
-            disabled={isLoading}
-            className="p-2.5 bg-bg border border-border rounded-xl text-text hover:bg-bg3 transition-colors text-xs font-semibold flex items-center gap-1.5"
-            title="Refresh list"
+            onClick={() => handleOpenManualOrder()}
+            className="px-3.5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-emerald-700 transition-all flex items-center gap-1.5"
+            title="Place a manual order for a customer on phone or in-person"
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <ShoppingBag className="w-4 h-4" />
+            <span>+ Place Manual Order</span>
           </button>
 
-          <a
-            href="/customer-login"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => handleOpenWebLogin()}
             className="px-3.5 py-2.5 bg-bg border border-border rounded-xl text-text hover:bg-bg3 transition-colors text-xs font-semibold flex items-center gap-1.5"
-            title="Open Customer Web Login in new tab"
+            title="Open Customer Web Login in default system browser"
           >
             <Globe className="w-4 h-4 text-primary" />
             <span className="hidden sm:inline">Open Web Login</span>
-          </a>
+          </button>
+
+          <button
+            onClick={handleSyncAll}
+            disabled={isSyncingAll || isLoading}
+            className="px-3.5 py-2.5 bg-bg border border-border rounded-xl text-text hover:bg-bg3 transition-colors text-xs font-semibold flex items-center gap-1.5"
+            title="Auto-generate unique web login PINs for all saved patients with 10-digit phone numbers"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin text-primary' : 'text-primary'}`} />
+            <span className="hidden sm:inline">{isSyncingAll ? 'Syncing...' : 'Sync All'}</span>
+          </button>
 
           <button
             onClick={() => setIsModalOpen(true)}
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-primary text-white rounded-xl text-xs font-bold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2"
+            className="px-3.5 py-2.5 bg-primary text-white rounded-xl text-xs font-bold shadow-md hover:opacity-95 transition-all flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
-            <span>+ Create Customer Web Login</span>
+            <span>+ Add Web Login</span>
+          </button>
+
+          <button
+            onClick={() => { activeView === 'accounts' ? fetchAccounts() : fetchOrders(); }}
+            disabled={isLoading || loadingOrders}
+            className="p-2.5 bg-bg border border-border rounded-xl text-text hover:bg-bg3 transition-colors text-xs font-semibold flex items-center"
+            title="Refresh list"
+          >
+            <RefreshCw className={`w-4 h-4 ${(isLoading || loadingOrders) ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center gap-3">
+      {/* Sub-View Tabs & Metrics */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-bg2 border border-border rounded-xl p-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveView('accounts')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeView === 'accounts'
+                ? 'bg-primary text-white shadow-sm'
+                : 'text-muted hover:text-text hover:bg-bg3'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Patient Accounts & PINs</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${activeView === 'accounts' ? 'bg-bg2 text-text' : 'bg-bg text-muted'}`}>
+              {accounts.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveView('orders')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeView === 'orders'
+                ? 'bg-primary text-white shadow-sm'
+                : 'text-muted hover:text-text hover:bg-bg3'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span>Live Online & Phone Orders</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${activeView === 'orders' ? 'bg-bg2 text-text' : 'bg-bg text-muted'}`}>
+              {orders.length}
+            </span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 text-xs text-muted px-2">
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <strong className="text-text">{accounts.filter(a => a.status === 'active').length}</strong> Active Accounts
+          </span>
+          <span>•</span>
+          <span className="flex items-center gap-1">
+            <Truck className="w-3.5 h-3.5 text-sky-500" />
+            <strong className="text-text">{orders.filter(o => o.delivery_status === 'pending_dispatch' || o.order_type === 'DELIVERY').length}</strong> Deliveries
+          </span>
+        </div>
+      </div>
+
+      {/* Sub-view Content: Accounts or Orders */}
+      {activeView === 'accounts' ? (
+        <>
+          {/* Filter & Search Bar */}
+          <div className="flex flex-col sm:flex-row items-center gap-3">
         <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
@@ -412,8 +696,17 @@ export function PortalAccountsManager() {
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
+                          onClick={() => handleOpenManualOrder(acc)}
+                          className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-colors flex items-center gap-1 font-bold text-[11px]"
+                          title={`Place Manual Order for ${acc.customer_name}`}
+                        >
+                          <ShoppingBag className="w-3.5 h-3.5" />
+                          <span className="hidden xl:inline">Order</span>
+                        </button>
+
+                        <button
                           onClick={() => {
-                            const url = `${window.location.origin}/customer-login?phone=${acc.login_id}`;
+                            const url = livePortalUrl ? `${livePortalUrl}?phone=${acc.login_id}` : `${window.location.origin}/customer-login?phone=${acc.login_id}`;
                             navigator.clipboard.writeText(url);
                             setCopiedId(acc.id);
                             toastEvent.trigger(`Login link copied for ${acc.customer_name}!`, 'success');
@@ -425,15 +718,13 @@ export function PortalAccountsManager() {
                           {copiedId === acc.id ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
                         </button>
 
-                        <a
-                          href={`/customer-login?phone=${acc.login_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          onClick={() => handleOpenWebLogin(acc.login_id)}
                           className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                          title="Open Customer Web Login for this account"
+                          title="Open Customer Web Login in default system browser"
                         >
                           <Globe className="w-4 h-4" />
-                        </a>
+                        </button>
 
                         <button
                           onClick={() => {
@@ -455,6 +746,16 @@ export function PortalAccountsManager() {
                           <MessageSquare className="w-4 h-4" />
                         </button>
 
+                        <a
+                          href={`/api/crm/portal-accounts/${acc.id}/guide-pdf`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 hover:bg-indigo-500/20 transition-colors"
+                          title="View / Download Portal Guide PDF"
+                        >
+                          <FileText className="w-4 h-4" />
+                        </a>
+
                         <button
                           onClick={() => handleToggleStatus(acc)}
                           className="p-1.5 rounded-lg bg-bg border border-border text-muted hover:text-text transition-colors"
@@ -471,6 +772,154 @@ export function PortalAccountsManager() {
           </table>
         </div>
       </div>
+    </>
+  ) : (
+    <>
+      {/* Orders Filter & Search Bar */}
+      <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="relative flex-1 w-full">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            type="text"
+            placeholder="Search orders by customer name, phone, or medicine..."
+            value={ordersSearch}
+            onChange={e => setOrdersSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-bg2 border border-border rounded-xl text-text text-xs focus:outline-none focus:border-primary placeholder:text-muted"
+          />
+        </div>
+
+        <div className="w-full sm:w-56">
+          <select
+            value={ordersStatusFilter}
+            onChange={e => setOrdersStatusFilter(e.target.value)}
+            className="w-full py-2 px-3 bg-bg2 border border-border rounded-xl text-text text-xs font-semibold focus:outline-none focus:border-primary"
+          >
+            <option value="all">All Order Statuses</option>
+            <option value="pending">Pending Processing</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="delivered">Delivered / Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Orders Table */}
+      <div className="bg-bg2 border border-border rounded-2xl overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-text border-collapse">
+            <thead>
+              <tr className="bg-bg border-b border-border text-muted uppercase font-bold tracking-wider text-[11px]">
+                <th className="py-3 px-4">Order # & Source</th>
+                <th className="py-3 px-4">Customer</th>
+                <th className="py-3 px-4">Ordered Medicine(s)</th>
+                <th className="py-3 px-4">Fulfillment</th>
+                <th className="py-3 px-4">Payment</th>
+                <th className="py-3 px-4">Total</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4 text-right">Date & Time</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60">
+              {loadingOrders && orders.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-12 text-muted">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
+                    <span>Loading orders...</span>
+                  </td>
+                </tr>
+              ) : filteredOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-12 text-muted">
+                    No online or manual orders match the criteria. Click "+ Place Manual Order" to create one!
+                  </td>
+                </tr>
+              ) : (
+                filteredOrders.map(ord => (
+                  <tr key={ord.id} className="hover:bg-bg/50 transition-colors">
+                    <td className="py-3 px-4">
+                      <span className="font-bold text-text block">#{ord.id}</span>
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        ord.customer_order_source === 'manual_phone_order'
+                          ? 'bg-purple-500/10 text-purple-600'
+                          : ord.customer_order_source === 'whatsapp'
+                          ? 'bg-emerald-500/10 text-emerald-600'
+                          : 'bg-sky-500/10 text-sky-600'
+                      }`}>
+                        {ord.customer_order_source === 'manual_phone_order' ? 'Manual Phone' : ord.customer_order_source === 'whatsapp' ? 'WhatsApp' : 'Web Portal'}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <span className="font-bold text-text block">{ord.requester || ord.customer_name || 'Customer'}</span>
+                      <span className="text-[11px] text-muted font-mono">{ord.phone || '—'}</span>
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <span className="font-bold text-text block">{ord.product || '—'}</span>
+                      <span className="text-[11px] text-muted">Qty: {ord.qty || 1}</span>
+                    </td>
+
+                    <td className="py-3 px-4">
+                      {ord.order_type === 'DELIVERY' || ord.delivery_status === 'pending_dispatch' ? (
+                        <span className="inline-flex items-center gap-1 font-semibold text-sky-600 text-[11px]">
+                          <Truck className="w-3.5 h-3.5" />
+                          Home Delivery
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-semibold text-text text-[11px]">
+                          <Store className="w-3.5 h-3.5 text-muted" />
+                          In-Store Pickup
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <span className="font-semibold text-text block text-[11px]">
+                        {ord.payment_status === 'PAID' ? 'Paid' : 'Unpaid'}
+                      </span>
+                      <span className="text-[10px] text-muted uppercase">
+                        {ord.payment_qr_id ? 'UPI QR' : 'Cash'}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-4 font-bold text-primary font-mono text-[12px]">
+                      ₹{Number(ord.total_amount || 0).toFixed(2)}
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        ord.status === 'Completed' || ord.status === 'Delivered'
+                          ? 'bg-emerald-500/10 text-emerald-600'
+                          : ord.status === 'Cancelled'
+                          ? 'bg-red-500/10 text-red-600'
+                          : 'bg-amber-500/10 text-amber-600'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          ord.status === 'Completed' || ord.status === 'Delivered'
+                            ? 'bg-emerald-500'
+                            : ord.status === 'Cancelled'
+                            ? 'bg-red-500'
+                            : 'bg-amber-500'
+                        }`} />
+                        {ord.status || 'Pending'}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-4 text-right text-muted text-[11px]">
+                      {ord.created_at ? new Date(ord.created_at).toLocaleDateString() : ord.date || '—'}
+                      <span className="block text-[10px] opacity-75">
+                        {ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  )}
 
       {/* Modal: Create / Generate Account */}
       {isModalOpen && (
@@ -781,6 +1230,265 @@ export function PortalAccountsManager() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      {/* Modal: Quick Manual Order */}
+      {isOrderModalOpen && (
+        <div className="fixed inset-0 z-global-modal bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-[95vw] max-w-lg p-6 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border pb-3 shrink-0">
+              <h3 className="text-base font-bold text-text flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-emerald-500" />
+                <span>Place Manual Customer Order</span>
+              </h3>
+              <button
+                onClick={() => setIsOrderModalOpen(false)}
+                className="text-muted hover:text-text p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handlePlaceManualOrder} className="flex-1 overflow-y-auto space-y-4 text-xs pr-1">
+              {/* Customer Details */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                    Customer Name *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Ramesh Patil"
+                    value={orderCustomer.name}
+                    onChange={e => setOrderCustomer({ ...orderCustomer, name: e.target.value })}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text focus:outline-none focus:border-primary font-medium"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                    Mobile Number *
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="10-digit mobile"
+                    value={orderCustomer.phone}
+                    onChange={e => setOrderCustomer({ ...orderCustomer, phone: e.target.value })}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text focus:outline-none focus:border-primary font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Delivery Mode Toggle */}
+              <div>
+                <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                  Fulfillment Mode
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOrderDeliveryMode('pickup')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                      orderDeliveryMode === 'pickup'
+                        ? 'bg-primary text-white border-primary shadow-sm'
+                        : 'bg-bg text-muted border-border hover:bg-bg3'
+                    }`}
+                  >
+                    <Store className="w-4 h-4" />
+                    <span>In-Store Pickup</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrderDeliveryMode('delivery')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                      orderDeliveryMode === 'delivery'
+                        ? 'bg-primary text-white border-primary shadow-sm'
+                        : 'bg-bg text-muted border-border hover:bg-bg3'
+                    }`}
+                  >
+                    <Truck className="w-4 h-4" />
+                    <span>Doorstep Delivery</span>
+                  </button>
+                </div>
+              </div>
+
+              {orderDeliveryMode === 'delivery' && (
+                <div>
+                  <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                    Delivery Address
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Enter complete delivery address with landmarks..."
+                    value={orderCustomer.address || ''}
+                    onChange={e => setOrderCustomer({ ...orderCustomer, address: e.target.value })}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text focus:outline-none focus:border-primary"
+                  />
+                </div>
+              )}
+
+              {/* Medicine Search & Add */}
+              <div>
+                <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                  Search & Add Medicines *
+                </label>
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input
+                    type="text"
+                    placeholder="Type medicine name to search catalog..."
+                    value={medSearchInput}
+                    onChange={e => setMedSearchInput(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 bg-bg border border-border rounded-xl text-text focus:outline-none focus:border-primary font-medium"
+                  />
+                  {isSearchingMeds && (
+                    <RefreshCw className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-muted" />
+                  )}
+                </div>
+
+                {/* Dropdown Results */}
+                {medSearchResults.length > 0 && (
+                  <div className="mt-1 border border-border rounded-xl bg-bg2 shadow-lg max-h-48 overflow-y-auto divide-y divide-border/60">
+                    {medSearchResults.map((med) => (
+                      <div
+                        key={med.id}
+                        onClick={() => handleAddMedicineToOrder(med)}
+                        className="p-2.5 hover:bg-bg3 cursor-pointer flex items-center justify-between transition-colors"
+                      >
+                        <div>
+                          <span className="font-bold text-text block">{med.name}</span>
+                          <span className="text-[10px] text-muted">
+                            {med.manufacturer || ''} {med.strength ? `• ${med.strength}` : ''} {med.dosage_form ? `• ${med.dosage_form}` : ''}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-primary block">₹{Number(med.mrp || 0).toFixed(2)}</span>
+                          <span className="text-[10px] text-emerald-600 font-semibold">+ Add</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Added Items List */}
+              <div>
+                <label className="block font-semibold text-text uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <span>Ordered Items ({orderItems.length})</span>
+                  {orderItems.length > 0 && (
+                    <span className="text-primary font-bold">
+                      Total: ₹{orderItems.reduce((acc, it) => acc + (it.price * it.qty), 0).toFixed(2)}
+                    </span>
+                  )}
+                </label>
+
+                {orderItems.length === 0 ? (
+                  <div className="p-4 border border-dashed border-border rounded-xl text-center text-muted">
+                    No medicines added yet. Use the search above to pick medicines.
+                  </div>
+                ) : (
+                  <div className="border border-border rounded-xl bg-bg divide-y divide-border/60 overflow-hidden">
+                    {orderItems.map((it, idx) => (
+                      <div key={idx} className="p-2.5 flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <span className="font-bold text-text block truncate">{it.product}</span>
+                          <span className="text-[10px] text-muted">₹{it.price.toFixed(2)} each</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center border border-border rounded-lg bg-bg2 overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateItemQty(idx, it.qty - 1)}
+                              className="px-2 py-1 text-muted hover:text-text hover:bg-bg3 font-bold"
+                            >
+                              -
+                            </button>
+                            <span className="px-2.5 py-1 text-text font-bold font-mono text-center min-w-[28px]">
+                              {it.qty}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateItemQty(idx, it.qty + 1)}
+                              className="px-2 py-1 text-muted hover:text-text hover:bg-bg3 font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <span className="font-bold text-text min-w-[60px] text-right">
+                            ₹{(it.price * it.qty).toFixed(2)}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveOrderItem(idx)}
+                            className="p-1 text-muted hover:text-red-500 transition-colors"
+                          >
+                            <Trash className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Payment Mode & Notes */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                    Payment Method
+                  </label>
+                  <select
+                    value={orderPaymentMode}
+                    onChange={e => setOrderPaymentMode(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text font-semibold focus:outline-none focus:border-primary"
+                  >
+                    <option value="COD">Cash on Delivery / Counter</option>
+                    <option value="UPI">UPI Digital Payment</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-text uppercase tracking-wider mb-1">
+                    Order Notes
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Urgent, Deliver after 6 PM"
+                    value={orderNotes}
+                    onChange={e => setOrderNotes(e.target.value)}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-text focus:outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-700 text-[11px] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span>
+                  Customer will automatically receive a WhatsApp receipt with order tracking & 4-digit PIN!
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsOrderModalOpen(false)}
+                  className="px-4 py-2 border border-border rounded-xl text-muted hover:text-text transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingOrder || orderItems.length === 0}
+                  className="px-5 py-2 bg-emerald-600 text-white rounded-xl font-bold shadow-md hover:bg-emerald-700 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSubmittingOrder ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShoppingBag className="w-4 h-4" />}
+                  <span>Place Order & Send WhatsApp</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

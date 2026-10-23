@@ -24,6 +24,7 @@ import {
   getDistributorPurchaseRanks, sendRefillCartSummary
 } from '../services/refillCartService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
+import { ensureCustomerPortalAccount } from './customerPortal.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 // const __dirname = path.dirname(__filename);
@@ -303,6 +304,9 @@ router.post('/', async (req, res) => {
     // Run a check immediately in case the medicine is already in stock!
     await checkAllRefills(db);
 
+    // Auto-create customer portal account with default PIN if not already existing
+    ensureCustomerPortalAccount(db, customerId, cleanPhone, cleanName, targetStoreId).catch(() => {});
+
     res.json({ success: true, message: 'Refill registered successfully', refillId, interval_days: intervalDays, next_refill_date: nextRefillStr });
   } catch (err) {
     console.error('Failed to register refill:', err);
@@ -370,6 +374,9 @@ const handlePatientProfileUpdate = async (req: express.Request, res: express.Res
     updateParams.push(origPhone, cleanPhone, customerId);
 
     await db.run(updateSql, updateParams);
+
+    // Ensure customer portal account exists for updated details
+    ensureCustomerPortalAccount(db, customerId, cleanPhone, cleanName).catch(() => {});
 
     // 3. Re-run check engine
     await checkAllRefills(db);

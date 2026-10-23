@@ -7,7 +7,7 @@ import {
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
   CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera, Upload,
   LayoutGrid, Eye, EyeOff, Image, ChevronLeft,
-  UserPlus, Sparkles, BadgeCheck, Truck, Lock, User
+  UserPlus, Sparkles, BadgeCheck, Truck, Lock, User, Calendar
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -92,7 +92,18 @@ export default function CustomerPortal() {
   );
 
   // ─── Portal Navigation Tab ──────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'catalog' | 'portal' | 'manager'>('catalog');
+  // Default to 'portal' (Refills & Patient Login) for all patients scanning invoice QR or clicking direct link
+  const [activeTab, setActiveTab] = useState<'catalog' | 'portal' | 'manager'>(() => {
+    try {
+      const search = typeof window !== 'undefined' ? (window.location.search || '') : '';
+      const params = new URLSearchParams(search);
+      if (params.get('tab') === 'catalog') return 'catalog';
+      if (params.get('tab') === 'manager') return 'manager';
+      return 'portal';
+    } catch (_) {
+      return 'portal';
+    }
+  });
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
   const [isPortalRxModalOpen, setIsPortalRxModalOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
@@ -1673,12 +1684,15 @@ export default function CustomerPortal() {
                   </div>
                 )}
 
-                {/* Section 1: Active Refills */}
+                {/* Section 1: Active Refill Timeline & Regular Prescriptions */}
                 <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
-                      <h3 className="text-base font-bold text-text">Your Regular Prescriptions</h3>
-                      <p className="text-xs text-muted">Select medicines and adjust quantities for your refill</p>
+                      <h3 className="text-base font-bold text-text flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-primary" />
+                        <span>Your Refill Timeline & Regular Prescriptions</span>
+                      </h3>
+                      <p className="text-xs text-muted">Track treatment course dates & book your scheduled refills early ahead of time</p>
                     </div>
                     {refills.length > 0 && (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1720,25 +1734,52 @@ export default function CustomerPortal() {
                         const price = r.sell_price || r.mrp || 0;
                         const activeOrder = getActiveOrderForMedicine(r.medicine_name);
 
+                        const daysDiff = r.next_refill_date
+                          ? Math.ceil((new Date(r.next_refill_date).getTime() - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24))
+                          : null;
+
                         return (
                           <div
                             key={r.id}
-                            className={`p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 ${isSelected
+                            className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isSelected
                                 ? 'bg-primary/5 border-primary/40 shadow-sm'
-                                : 'bg-bg border-border opacity-70 hover:opacity-100'
+                                : 'bg-bg border-border opacity-85 hover:opacity-100'
                               }`}
                           >
-                            <div className="flex items-center gap-3 cursor-pointer select-none" onClick={() => toggleItem(r.medicine_name, price, r.quantity_needed || 1)}>
-                              <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors ${isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-bg2'
+                            <div className="flex items-start sm:items-center gap-3 cursor-pointer select-none flex-1" onClick={() => toggleItem(r.medicine_name, price, r.quantity_needed || 1, 'refill')}>
+                              <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors shrink-0 mt-0.5 sm:mt-0 ${isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-bg2'
                                 }`}>
                                 {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                               </div>
-                              <div>
+                              <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm font-bold text-text block leading-snug">{r.medicine_name}</span>
                                   {r.status === 'paused' && (
                                     <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 font-bold">
                                       Paused
+                                    </span>
+                                  )}
+                                  {daysDiff !== null && (
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
+                                      daysDiff < 0
+                                        ? 'bg-rose-500/15 text-rose-500 border border-rose-500/30'
+                                        : daysDiff === 0
+                                        ? 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
+                                        : 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/30'
+                                    }`}>
+                                      <Clock className="w-2.5 h-2.5" />
+                                      <span>
+                                        {daysDiff < 0
+                                          ? `Overdue by ${Math.abs(daysDiff)}d`
+                                          : daysDiff === 0
+                                          ? 'Due Today'
+                                          : `Due in ${daysDiff}d`}
+                                      </span>
+                                    </span>
+                                  )}
+                                  {r.refill_interval_days && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-bg2 border border-border text-muted font-medium">
+                                      {r.refill_interval_days}d course
                                     </span>
                                   )}
                                   {activeOrder && (
@@ -1748,35 +1789,51 @@ export default function CustomerPortal() {
                                     </span>
                                   )}
                                 </div>
-                                <span className="text-xs text-muted">
-                                  {r.generic_name ? `${r.generic_name} • ` : ''}₹{price.toFixed(2)} / pack
+                                <div className="text-xs text-muted flex items-center gap-2 mt-0.5 flex-wrap">
+                                  {r.generic_name && <span>{r.generic_name}</span>}
+                                  <span>₹{price.toFixed(2)} / pack</span>
                                   {r.next_refill_date && (
-                                    <span className="ml-1.5 text-[11px] text-primary font-medium">
-                                      • Next Refill: {new Date(r.next_refill_date).toLocaleDateString()}
+                                    <span className="text-primary font-medium">
+                                      • Refill Due: {new Date(r.next_refill_date).toLocaleDateString()}
                                     </span>
                                   )}
-                                </span>
+                                </div>
                               </div>
                             </div>
 
-                            {isSelected && (
-                              <div className="flex items-center gap-2 bg-bg2 border border-border rounded-lg p-1">
+                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                              {!isSelected ? (
                                 <button
-                                  onClick={() => updateQuantity(r.medicine_name, -1)}
-                                  title={currentQty === 1 ? 'Remove from refill' : 'Decrease quantity'}
-                                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text hover:text-red-500 transition-colors cursor-pointer"
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleItem(r.medicine_name, price, r.quantity_needed || 1, 'refill');
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                                  title="Book this scheduled refill ahead of time"
                                 >
-                                  {currentQty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
+                                  <ShoppingBag className="w-3.5 h-3.5" />
+                                  <span>Book Refill Early</span>
                                 </button>
-                                <span className="text-xs font-bold w-6 text-center">{currentQty}</span>
-                                <button
-                                  onClick={() => updateQuantity(r.medicine_name, 1)}
-                                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                </button>
-                              </div>
-                            )}
+                              ) : (
+                                <div className="flex items-center gap-2 bg-bg2 border border-border rounded-lg p-1">
+                                  <button
+                                    onClick={() => updateQuantity(r.medicine_name, -1)}
+                                    title={currentQty === 1 ? 'Remove from refill' : 'Decrease quantity'}
+                                    className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text hover:text-red-500 transition-colors cursor-pointer"
+                                  >
+                                    {currentQty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
+                                  </button>
+                                  <span className="text-xs font-bold w-6 text-center">{currentQty}</span>
+                                  <button
+                                    onClick={() => updateQuantity(r.medicine_name, 1)}
+                                    className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}

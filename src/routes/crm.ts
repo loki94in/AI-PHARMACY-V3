@@ -17,6 +17,7 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 import { isValidCustomerName } from '../utils/nameNormalizer.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
+import { ensureCustomerPortalAccount } from './customerPortal.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 
@@ -188,6 +189,9 @@ router.post('/patients', async (req, res) => {
       [name, cleanPhone, address || '', notes || '', language || 'en']
     );
     const newPatient = await db.get('SELECT * FROM customers WHERE id = ?', result.lastID);
+    if (cleanPhone) {
+      ensureCustomerPortalAccount(db, result.lastID ? Number(result.lastID) : null, cleanPhone, name).catch(() => {});
+    }
     try {
       eventService.broadcast('customers_changed', { at: Date.now(), id: result.lastID, name });
     } catch (_) {}
@@ -231,6 +235,10 @@ router.put('/patients/:id', async (req, res) => {
         await db.run('UPDATE patient_refills SET patient_name = ? WHERE customer_id = ?', [name, id]);
         await db.run('UPDATE special_orders SET requester = ? WHERE customer_id = ?', [name, id]);
       }
+    }
+
+    if (cleanPhone) {
+      ensureCustomerPortalAccount(db, Number(id), cleanPhone, name).catch(() => {});
     }
 
     const updated = await db.get('SELECT * FROM customers WHERE id = ?', id);

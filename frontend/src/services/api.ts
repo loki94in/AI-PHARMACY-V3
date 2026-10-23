@@ -2172,6 +2172,8 @@ export const api = {
   // Customer Portal & Refill Management APIs
   getPortalAccounts: (params?: { search?: string; store_id?: number }) =>
     apiClient.get<{ success: boolean; count: number; accounts: Array<{ id: number; customer_id: number; login_id: string; pin_display?: string; preferred_store_id: number; preferred_store_name?: string; status: string; last_login_at?: string; total_login_count?: number; total_time_spent_seconds?: number; last_logout_at?: string; customer_name: string; customer_address?: string; active_refills_count: number; total_bills_count: number; created_at: string }> }>('/customer-portal/accounts', { params }).then(res => res.data),
+  syncAllPortalAccounts: () =>
+    apiClient.post<{ success: boolean; synced_count: number; total_accounts: number; message: string }>('/customer-portal/accounts/sync-all').then(res => res.data),
   getPortalAccountSessions: (accountId: number) =>
     apiClient.get<{ success: boolean; stats: { totalLogins: number; totalTimeSpentSeconds: number; lastLoginAt?: string; lastLogoutAt?: string; activeSessionsCount: number }; sessions: any[] }>(`/customer-portal/accounts/${accountId}/sessions`).then(res => res.data),
   generatePortalAccount: (data: { customer_id?: number; phone: string; name?: string; preferred_store_id?: number; custom_pin?: string; send_whatsapp?: boolean }) =>
@@ -2180,6 +2182,8 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; login_id: string; pin: string }>(`/customer-portal/accounts/${accountId}/send-credentials`).then(res => res.data),
   updatePortalAccount: (accountId: number, data: { status?: string; preferred_store_id?: number }) =>
     apiClient.put<{ success: boolean; message: string }>(`/customer-portal/accounts/${accountId}`, data).then(res => res.data),
+  getLivePortalUrl: (phone?: string) =>
+    apiClient.get<{ success: boolean; portal_url: string; login_url: string; phone: string | null }>('/customer-portal/live-url', { params: { phone } }).then(res => res.data),
   customerLogin: (data: { login_id: string; pin: string }) =>
     apiClient.post<{ success: boolean; token?: string; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/login', data).then(res => res.data),
   customerRegister: (data: { name: string; phone: string; address?: string; pin: string }) =>

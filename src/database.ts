@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 78;
+const CURRENT_SCHEMA_VERSION = 79;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -1064,7 +1064,8 @@ export async function ensureSchema(dbPath: string) {
 
         await ensureColumns(db, 'customers', {
           language: "TEXT DEFAULT 'en'",
-          language_confirmed: 'INTEGER DEFAULT 0'
+          language_confirmed: 'INTEGER DEFAULT 0',
+          preferred_language: "TEXT DEFAULT 'mr'"
         });
 
         await ensureColumns(db, 'special_orders', {
@@ -1999,6 +2000,7 @@ export async function ensureSchema(dbPath: string) {
       notes TEXT,
       language TEXT DEFAULT 'en',
       language_confirmed INTEGER DEFAULT 0,
+      preferred_language TEXT DEFAULT 'mr',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS customer_portal_accounts (
@@ -2674,6 +2676,7 @@ export async function ensureSchema(dbPath: string) {
       ['customers', 'created_at', 'ALTER TABLE customers ADD COLUMN created_at DATETIME'],
       ['customers', 'credit_due_date', 'ALTER TABLE customers ADD COLUMN credit_due_date TEXT'],
       ['customers', 'language', "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'en'"],
+      ['customers', 'preferred_language', "ALTER TABLE customers ADD COLUMN preferred_language TEXT DEFAULT 'mr'"],
       ['patient_refills', 'hold_for_stock', 'ALTER TABLE patient_refills ADD COLUMN hold_for_stock INTEGER DEFAULT 0'],
       ['patient_refills', 'is_active', 'ALTER TABLE patient_refills ADD COLUMN is_active INTEGER DEFAULT 1'],
       ['patient_refills', 'is_ready', 'ALTER TABLE patient_refills ADD COLUMN is_ready INTEGER DEFAULT 0'],

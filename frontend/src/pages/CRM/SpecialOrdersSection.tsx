@@ -1497,7 +1497,7 @@ export const SpecialOrdersSection: React.FC = () => {
       {/* Edit Special Request Modal */}
       {showEditModal && editingOrder && createPortal(
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in">
-          <div className="glass-panel w-[95vw] max-w-3xl h-[80vh] min-h-[500px] max-h-[760px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
+          <div className="glass-panel w-[95vw] max-w-4xl h-[85vh] min-h-[560px] max-h-[820px] flex flex-col bg-bg2 rounded-2xl border border-primary/20 shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden">
             <div className="p-4 border-b border-border flex justify-between items-center bg-bg3/50 shrink-0">
               <h3 className="font-bold text-sm text-text flex items-center gap-2">
                 <Pencil size={16} className="text-primary" />

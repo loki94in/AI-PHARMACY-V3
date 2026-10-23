@@ -1893,6 +1893,20 @@ export const RefillsSection: React.FC = () => {
                     );
                   })()}
 
+                  {/* Standalone Customer Portal Guide Slip */}
+                  {selectedPatient.patient_phone && (
+                    <a
+                      href={`/api/customer-portal/guide-pdf?phone=${selectedPatient.patient_phone}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
+                      title="Download / Print Customer Portal & Refill Guide PDF"
+                    >
+                      <FileText size={12} />
+                      <span>Guide Slip</span>
+                    </a>
+                  )}
+
                   {/* Overflow: advanced lifecycle actions */}
                   <div className="relative">
                     <button
@@ -1905,6 +1919,18 @@ export const RefillsSection: React.FC = () => {
                     </button>
                     {showMoreMenu && (
                       <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-1.5 min-w-[170px] flex flex-col gap-1 animate-in fade-in">
+                        {selectedPatient.patient_phone && (
+                          <a
+                            href={`/api/customer-portal/guide-pdf?phone=${selectedPatient.patient_phone}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => setShowMoreMenu(false)}
+                            className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-indigo-400 transition-colors flex items-center gap-2 cursor-pointer"
+                          >
+                            <FileText size={11} className="text-indigo-400" />
+                            <span>📄 Portal Guide Slip</span>
+                          </a>
+                        )}
                         <button
                           type="button"
                           disabled={snoozing}

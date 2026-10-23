@@ -261,7 +261,7 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
       }}
     >
       <div
-        className="glass-panel w-[95vw] max-w-lg bg-bg2 rounded-2xl border border-border p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 max-h-[90vh] flex flex-col overflow-hidden"
+        className="glass-panel w-[95vw] max-w-2xl bg-bg2 rounded-2xl border border-border p-5 shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-4 max-h-[90vh] flex flex-col overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}

@@ -14,6 +14,7 @@ import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { processPrescriptionAndNotifyPharmacy } from '../services/prescriptionIntelService.js';
 import { imageCompressionService } from '../services/imageCompressionService.js';
+import { ensureCustomerPortalAccount } from './customerPortal.js';
 
 const router = express.Router();
 
@@ -363,6 +364,10 @@ router.post('/orders', async (req, res) => {
       try {
         await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, 'website_order_confirmation', cleanName);
       } catch (_) {}
+    }
+
+    if (cleanPhone) {
+      ensureCustomerPortalAccount(db, customerId, cleanPhone, cleanName, targetStoreId).catch(() => {});
     }
 
     broadcastOrdersChanged();
@@ -1626,6 +1631,10 @@ router.post('/prescription-request', async (req, res) => {
     );
 
     const orderId = Number(result.lastID) || 0;
+
+    if (cleanPhone) {
+      ensureCustomerPortalAccount(db, null, cleanPhone, cleanName, targetStoreId).catch(() => {});
+    }
 
     // Log tracking event
     await db.run(

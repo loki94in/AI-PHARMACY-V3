@@ -1009,21 +1009,21 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
       }}
     >
       <div
-        className="glass-panel w-[95vw] max-w-3xl p-6 relative border border-glass-border shadow-[0_0_50px_rgba(59,130,246,0.2)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 rounded-3xl max-h-[90vh] overflow-y-auto"
+        className="glass-panel w-[95vw] max-w-6xl xl:max-w-7xl h-[85vh] min-h-[560px] max-h-[840px] p-4 md:p-5 relative border border-glass-border/60 shadow-[0_0_60px_rgba(59,130,246,0.25)] bg-bg2 text-text animate-in fade-in zoom-in-95 duration-200 flex flex-col overflow-hidden rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         
         {/* Close Button */}
         <button 
           onClick={handleClose}
-          className="absolute top-4 right-4 p-2 text-muted hover:text-text rounded-xl hover:bg-bg3 border border-transparent hover:border-glass-border transition-all duration-200"
+          className="absolute top-4 right-4 p-2 text-muted hover:text-text rounded-xl hover:bg-bg3 border border-transparent hover:border-glass-border transition-all duration-200 z-20"
           title="Close Modal (Esc)"
         >
           <X size={18} />
         </button>
 
         {/* Header Title Bar */}
-        <div className="flex items-center gap-3 mb-5 select-none">
+        <div className="flex items-center gap-3 mb-3 shrink-0 select-none">
           <div className="p-2.5 bg-primary/10 rounded-2xl text-primary border border-primary/20 shadow-sm flex items-center justify-center">
             <ClipboardPlus size={22} />
           </div>
@@ -1082,10 +1082,10 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
         </div>
 
         {/* Form Grid */}
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden">
           {/* Restored Draft Notice Banner */}
           {hasQuickOrderDraft && (
-            <div className="flex items-center justify-between p-2.5 px-3.5 rounded-2xl bg-primary/10 border border-primary/25 text-xs animate-in fade-in select-none">
+            <div className="flex items-center justify-between p-2 px-3 rounded-xl bg-primary/10 border border-primary/25 text-xs animate-in fade-in select-none shrink-0 mb-2">
               <div className="flex items-center gap-2 text-primary font-semibold">
                 <RotateCcw size={14} className="shrink-0" />
                 <span>
@@ -1103,10 +1103,10 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 overflow-hidden">
             
-            {/* Left Column: Input Form & Staging Controls (3/5 cols) */}
-            <div className="md:col-span-3 flex flex-col gap-3">
+            {/* Left Column: Input Form & Staging Controls (7/12 cols) */}
+            <div className="lg:col-span-7 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1 scrollbar-thin">
               
               {/* Search & Add Item Section */}
               <div className="space-y-3 p-4 bg-bg2/50 border border-glass-border rounded-3xl shadow-sm hover:shadow-md transition-all duration-300">
@@ -1523,8 +1523,8 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             </div>
 
 
-            {/* Right Column: Selected Items / Cart (2/5 cols) */}
-            <div className="md:col-span-2 border-t md:border-t-0 md:border-l border-glass-border pt-4 md:pt-0 md:pl-5 flex flex-col h-[280px] md:h-auto overflow-hidden">
+            {/* Right Column: Selected Items / Cart (5/12 cols) */}
+            <div className="lg:col-span-5 border-t lg:border-t-0 lg:border-l border-glass-border pt-3 lg:pt-0 lg:pl-5 flex flex-col min-h-0 h-full overflow-hidden">
               <div className="flex items-center justify-between mb-3 select-none flex-shrink-0">
                 <span className="font-semibold text-xs text-text uppercase tracking-wider flex items-center gap-1.5">
                   <ShoppingCart size={15} className="text-primary" /> Staged Items ({cart.length})
@@ -1533,14 +1533,14 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                   <button
                     type="button"
                     onClick={() => setCart([])}
-                    className="text-[10px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-red-500/10 transition-all"
+                    className="text-[10px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-red-500/10 transition-all cursor-pointer"
                   >
                     <Trash2 size={11} /> Clear All
                   </button>
                 )}
               </div>
 
-              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin max-h-[260px] md:max-h-none">
+              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin min-h-0">
                 {cart.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-center p-6 text-muted/65 italic text-xs select-none border border-dashed border-glass-border rounded-3xl bg-bg3/20">
                     <ShoppingCart size={32} className="text-muted/30 mb-2" />
@@ -1573,7 +1573,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                         <button
                           type="button"
                           onClick={() => handleRemoveCartItem(idx)}
-                          className="p-1.5 text-muted hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
+                          className="p-1.5 text-muted hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all cursor-pointer"
                           title="Remove item"
                         >
                           <Trash2 size={14} />
@@ -1588,7 +1588,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-3 border-t border-glass-border flex justify-between items-center gap-4">
+          <div className="pt-3 border-t border-glass-border flex justify-between items-center gap-4 shrink-0">
             <div className="text-[10px] text-muted font-mono font-semibold hidden md:flex items-center gap-1.5">
               <Layers size={12} className="text-primary" /> Total items to submit: {cart.length === 0 && product.trim() ? 1 : cart.length}
             </div>
@@ -1596,14 +1596,14 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
               <button
                 type="button"
                 onClick={handleClose}
-                className="flex-1 bg-bg3 hover:bg-bg2 border border-glass-border text-muted hover:text-text text-xs font-bold py-2.5 rounded-2xl transition-all flex items-center justify-center gap-1.5"
+                className="flex-1 bg-bg3 hover:bg-bg2 border border-glass-border text-muted hover:text-text text-xs font-bold py-2.5 rounded-2xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <X size={14} /> Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting || (cart.length === 0 && !product.trim())}
-                className="flex-1 bg-gradient-to-r from-primary to-purple-600 hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2.5 rounded-2xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex items-center justify-center gap-1.5 active:scale-95"
+                className="flex-1 bg-gradient-to-r from-primary to-purple-600 hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2.5 rounded-2xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
               >
                 {isSubmitting ? (
                   <>
@@ -1681,7 +1681,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
         )}
 
         {/* Footer info hints */}
-        <div className="mt-4 pt-3 border-t border-glass-border/30 flex justify-between text-[9px] text-muted/60 font-medium font-mono">
+        <div className="mt-2.5 pt-2 border-t border-glass-border/30 flex justify-between text-[9px] text-muted/60 font-medium font-mono shrink-0">
           <span className="flex items-center gap-1"><Clock size={10} /> [Esc] Close</span>
           <span className="flex items-center gap-1"><Zap size={10} /> [Alt + O] Toggle modal</span>
           <span className="flex items-center gap-1"><CheckCircle2 size={10} /> [Enter] Add / Submit</span>

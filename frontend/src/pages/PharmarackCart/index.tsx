@@ -767,7 +767,37 @@ let cachedPriceHistory: Record<string, LocalPriceHistoryRow[]> = initialPersiste
 let cachedLastFetched: Date | null = initialPersistedCache.distributors.length > 0 ? new Date() : null;
 let cachedSentDates: string[] = [];
 let cachedSelectedSentDate: string = '';
+const MAX_CACHED_SENT_DATES = 5;
+const cachedSentOrdersDates: string[] = [];
 const cachedSentOrdersMap: Record<string, LocalSentOrder[]> = {};
+
+function touchCachedSentOrders(dateStr: string) {
+  if (!dateStr || !cachedSentOrdersMap[dateStr]) return;
+  const idx = cachedSentOrdersDates.indexOf(dateStr);
+  if (idx !== -1) cachedSentOrdersDates.splice(idx, 1);
+  cachedSentOrdersDates.push(dateStr);
+}
+
+function setCachedSentOrders(dateStr: string, orders: LocalSentOrder[]) {
+  if (!dateStr) return;
+  cachedSentOrdersMap[dateStr] = orders;
+  const idx = cachedSentOrdersDates.indexOf(dateStr);
+  if (idx !== -1) cachedSentOrdersDates.splice(idx, 1);
+  cachedSentOrdersDates.push(dateStr);
+  while (cachedSentOrdersDates.length > MAX_CACHED_SENT_DATES) {
+    const oldestDate = cachedSentOrdersDates.shift();
+    if (oldestDate && oldestDate !== cachedSelectedSentDate) {
+      delete cachedSentOrdersMap[oldestDate];
+    }
+  }
+}
+
+function evictCachedSentOrders(dateStr: string) {
+  if (!dateStr) return;
+  delete cachedSentOrdersMap[dateStr];
+  const idx = cachedSentOrdersDates.indexOf(dateStr);
+  if (idx !== -1) cachedSentOrdersDates.splice(idx, 1);
+}
 
 // Module-level delete queue and pending keys to survive background navigation or page transitions
 let globalDeleteQueue: Array<{
@@ -1069,7 +1099,11 @@ export default function PharmarackCart() {
   const [selectedSentDate, setSelectedSentDate] = useState<string>(() => cachedSelectedSentDate || (cachedSentDates[0] || ''));
   const [sentOrders, setSentOrders] = useState<LocalSentOrder[]>(() => {
     const initDate = cachedSelectedSentDate || cachedSentDates[0];
-    return (initDate && cachedSentOrdersMap[initDate]) ? cachedSentOrdersMap[initDate] : [];
+    if (initDate && cachedSentOrdersMap[initDate]) {
+      touchCachedSentOrders(initDate);
+      return cachedSentOrdersMap[initDate];
+    }
+    return [];
   });
   const [sentOrdersLoading, setSentOrdersLoading] = useState<boolean>(false);
   const [readdingSentItems, setReaddingSentItems] = useState<boolean>(false);
@@ -1078,6 +1112,7 @@ export default function PharmarackCart() {
   const [sentSelection, setSentSelection] = useState<Record<string, boolean>>({});
   const [sentDateSearchQuery, setSentDateSearchQuery] = useState<string>('');
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => new Set<string>());
+  const userExpandedMonthsRef = useRef<Set<string>>(new Set<string>());
 
   // Group sentDates into:
   // 1. Recent (Last 7 days): flat list, always expanded
@@ -1143,24 +1178,12 @@ export default function PharmarackCart() {
     return { recentDates: recent, olderMonthGroups: monthGroups };
   }, [sentDates, sentDateSearchQuery]);
 
-  // Ensure the month of the selectedSentDate is open if it falls in olderMonthGroups
-  useEffect(() => {
-    if (!selectedSentDate) return;
-    const monthKey = selectedSentDate.slice(0, 7);
-    if (olderMonthGroups.some(g => g.monthKey === monthKey)) {
-      setExpandedMonths(prev => {
-        if (prev.has(monthKey)) return prev;
-        const next = new Set(prev);
-        next.add(monthKey);
-        return next;
-      });
-    }
-  }, [selectedSentDate, olderMonthGroups]);
-
-  // Auto-expand all matching month groups when searching
+  // Auto-expand all matching month groups when searching; restore user collapsed state when search cleared
   useEffect(() => {
     if (sentDateSearchQuery.trim()) {
       setExpandedMonths(new Set(olderMonthGroups.map(g => g.monthKey)));
+    } else {
+      setExpandedMonths(new Set(userExpandedMonthsRef.current));
     }
   }, [sentDateSearchQuery, olderMonthGroups]);
 
@@ -1169,8 +1192,10 @@ export default function PharmarackCart() {
       const next = new Set(prev);
       if (next.has(monthKey)) {
         next.delete(monthKey);
+        userExpandedMonthsRef.current.delete(monthKey);
       } else {
         next.add(monthKey);
+        userExpandedMonthsRef.current.add(monthKey);
       }
       return next;
     });
@@ -1301,9 +1326,9 @@ export default function PharmarackCart() {
       if (res && res.ok) {
         toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.newOrders} new recorded.`, 'success');
         const todayStr = getTodayDateKey();
-        delete cachedSentOrdersMap[todayStr];
+        evictCachedSentOrders(todayStr);
         if (selectedSentDate) {
-          delete cachedSentOrdersMap[selectedSentDate];
+          evictCachedSentOrders(selectedSentDate);
         }
         cachedSentDates = [];
         await loadSentDates();
@@ -1611,6 +1636,7 @@ export default function PharmarackCart() {
           setSelectedSentDate(targetDate);
           cachedSelectedSentDate = targetDate;
           if (cachedSentOrdersMap[targetDate]) {
+            touchCachedSentOrders(targetDate);
             setSentOrders(cachedSentOrdersMap[targetDate]);
           }
           loadSentOrdersForDate(targetDate);
@@ -1631,7 +1657,7 @@ export default function PharmarackCart() {
       if (res && res.success && Array.isArray(res.orders)) {
         const orders = res.orders as unknown as LocalSentOrder[];
         setSentOrders(orders);
-        cachedSentOrdersMap[dateStr] = orders;
+        setCachedSentOrders(dateStr, orders);
       }
     } catch (err) {
       console.error('Failed to load sent orders for date:', err);
@@ -1644,6 +1670,7 @@ export default function PharmarackCart() {
     setSelectedSentDate(dateStr);
     cachedSelectedSentDate = dateStr;
     if (cachedSentOrdersMap[dateStr]) {
+      touchCachedSentOrders(dateStr);
       setSentOrders(cachedSentOrdersMap[dateStr]);
     }
     loadSentOrdersForDate(dateStr);
@@ -1652,7 +1679,7 @@ export default function PharmarackCart() {
   useEffect(() => {
     if (currentTab === 'sent-history') {
       const todayStr = getTodayDateKey();
-      delete cachedSentOrdersMap[todayStr];
+      evictCachedSentOrders(todayStr);
       cachedSentDates = [];
       loadSentDates();
     }

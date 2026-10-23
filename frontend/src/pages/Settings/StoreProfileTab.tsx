@@ -27,6 +27,7 @@ export function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings:
     lowStockThreshold: rawSettings.low_stock_threshold || '10',
     expiryAlertDays: rawSettings.expiry_alert_days || '90',
     requireDoctorOnBill: rawSettings.require_doctor_on_bill !== 'false',
+    printPortalGuidePage: rawSettings.print_portal_guide_page !== '0' && rawSettings.enable_portal_guide_page !== '0',
   });
 
   const [saving, setSaving] = useState(false);
@@ -280,6 +281,8 @@ export function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings:
         low_stock_threshold: formData.lowStockThreshold,
         expiry_alert_days: formData.expiryAlertDays,
         require_doctor_on_bill: formData.requireDoctorOnBill ? 'true' : 'false',
+        print_portal_guide_page: formData.printPortalGuidePage ? '1' : '0',
+        enable_portal_guide_page: formData.printPortalGuidePage ? '1' : '0',
         stamp_pos_x: String(Math.round(stampPosX)),
         stamp_pos_y: String(Math.round(stampPosY)),
         stamp_scale: String(Math.round(stampScale)),
@@ -334,6 +337,8 @@ export function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings:
         low_stock_threshold: formData.lowStockThreshold,
         expiry_alert_days: formData.expiryAlertDays,
         require_doctor_on_bill: formData.requireDoctorOnBill ? 'true' : 'false',
+        print_portal_guide_page: formData.printPortalGuidePage ? '1' : '0',
+        enable_portal_guide_page: formData.printPortalGuidePage ? '1' : '0',
         stamp_pos_x: String(Math.round(stampPosX)),
         stamp_pos_y: String(Math.round(stampPosY)),
         stamp_scale: String(Math.round(stampScale)),
@@ -620,6 +625,19 @@ export function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings:
               />
               <label htmlFor="requireDoctorOnBill" className="text-xs font-semibold text-text cursor-pointer">
                 Require Doctor Name to save bills in POS (Default: Mandatory)
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3 pt-4">
+              <input
+                type="checkbox"
+                id="printPortalGuidePage"
+                checked={formData.printPortalGuidePage}
+                onChange={(e) => setFormData({ ...formData, printPortalGuidePage: e.target.checked })}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+              />
+              <label htmlFor="printPortalGuidePage" className="text-xs font-semibold text-text cursor-pointer">
+                Attach Patient Portal &amp; Refill Guide (Flyer) to PDF Bills (Default: OFF)
               </label>
             </div>
           </div>

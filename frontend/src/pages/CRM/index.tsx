@@ -27,7 +27,7 @@ const TABS = [
   { key: 'enquiries', label: 'Enquiries', icon: <MessageSquare size={15} /> },
   { key: 'special_orders', label: 'Special Requests', icon: <ClipboardList size={15} /> },
   { key: 'credit', label: 'Customer Credit', icon: <Users size={15} /> },
-  { key: 'portal_logins', label: 'Web Logins & PINs', icon: <Globe size={15} /> },
+  { key: 'portal_logins', label: 'Web Logins & Orders', icon: <Globe size={15} /> },
   { key: 'messages', label: 'Distributor Messages', icon: <Bell size={15} /> },
   { key: 'whatsapp', label: 'WhatsApp Business', icon: <MessageCircle size={15} /> },
 ];

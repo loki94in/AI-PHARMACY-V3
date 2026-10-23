@@ -14,12 +14,14 @@ import { orderScheduleService } from '../services/orderScheduleService.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { cloudflareTunnelService } from '../services/cloudflareTunnelService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
+import { getAppDataDir } from '../config/index.js';
+import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 
 const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function getLivePortalUrl(db: any, phone?: string): Promise<string> {
+export async function getLivePortalUrl(db: any, phone?: string): Promise<string> {
   let base: string | null = null;
   try {
     const tunnelStatus = await cloudflareTunnelService.getStatus();
@@ -59,6 +61,70 @@ export function generateRandomPin(): string {
 
 export function generateRandomOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * Automatically ensures an active customer_portal_accounts entry exists for any customer.
+ * Generates a default 4-digit PIN if none exists. Idempotent and thread-safe.
+ */
+export async function ensureCustomerPortalAccount(
+  db: any,
+  customerId: number | null,
+  phone: string | number,
+  name?: string,
+  preferredStoreId: number = 1
+): Promise<{ accountId: number; pin: string; isNew: boolean } | null> {
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone || cleanPhone.length !== 10) return null;
+
+  try {
+    let targetCustomerId = customerId ? parseInt(String(customerId), 10) : null;
+    const cleanName = formatCustomerName(name || 'Customer');
+
+    if (!targetCustomerId) {
+      const existingCust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+      if (existingCust) {
+        targetCustomerId = existingCust.id;
+      } else {
+        const custRes = await db.run(
+          'INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+          [cleanName, cleanPhone]
+        );
+        targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
+      }
+    }
+
+    const existingAccount = await db.get(
+      'SELECT id, pin_display FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ? LIMIT 1',
+      [targetCustomerId, cleanPhone]
+    );
+
+    if (existingAccount) {
+      if (targetCustomerId) {
+        await db.run(
+          'UPDATE customer_portal_accounts SET customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [targetCustomerId, existingAccount.id]
+        );
+      }
+      return { accountId: existingAccount.id, pin: existingAccount.pin_display || '1234', isNew: false };
+    }
+
+    const pin = generateRandomPin();
+    const pinHashed = hashPin(pin);
+    const storeId = parseInt(String(preferredStoreId), 10) || 1;
+
+    const accRes = await db.run(
+      `INSERT INTO customer_portal_accounts 
+       (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [targetCustomerId, cleanPhone, pinHashed, pin, storeId]
+    );
+
+    return { accountId: Number(accRes.lastID), pin, isNew: true };
+  } catch (err) {
+    console.warn('[CustomerPortal] ensureCustomerPortalAccount error:', err);
+    return null;
+  }
 }
 
 const SESSION_SECRET = process.env.CUSTOMER_PORTAL_SECRET || 'pharmacy_portal_session_secret_2026';
@@ -143,6 +209,24 @@ router.get('/accounts', async (req, res) => {
   }
 });
 
+// GET /api/customer-portal/live-url — Get the live public URL for customer portal and web login
+router.get('/live-url', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const phone = req.query.phone ? String(req.query.phone) : undefined;
+    const portalUrl = await getLivePortalUrl(db, phone);
+    const loginUrl = portalUrl.replace(/\/portal(\?|$)/, '/customer-login$1');
+    res.json({
+      success: true,
+      portal_url: portalUrl,
+      login_url: loginUrl,
+      phone: phone || null
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/crm/portal-accounts/:id/sessions — Inspect customer login/logout sessions
 router.get('/accounts/:id/sessions', async (req, res) => {
   try {
@@ -159,6 +243,63 @@ router.get('/accounts/:id/sessions', async (req, res) => {
   } catch (err: any) {
     console.error('[CustomerPortal] Fetch sessions error:', err);
     res.status(500).json({ error: 'Failed to fetch customer sessions' });
+  }
+});
+
+/**
+ * Bulk sync all existing saved customers with valid phone numbers into customer_portal_accounts.
+ * Each customer receives a unique random 4-digit PIN, stored in pin_display and hashed in pin_hash.
+ */
+export async function syncAllCustomersToPortal(db: any): Promise<{ syncedCount: number; totalAccounts: number }> {
+  const customers = await db.all(
+    `SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND TRIM(phone) != ''`
+  );
+
+  const existingAccounts = await db.all(`SELECT customer_id, login_id FROM customer_portal_accounts`);
+  const existingCustIds = new Set(existingAccounts.map((a: any) => a.customer_id).filter(Boolean));
+  const existingLogins = new Set(existingAccounts.map((a: any) => a.login_id).filter(Boolean));
+
+  let syncedCount = 0;
+  for (const cust of customers) {
+    const cleanPhone = normalizePhone(cust.phone);
+    if (!cleanPhone || cleanPhone.length !== 10) continue;
+    if (existingCustIds.has(cust.id) || existingLogins.has(cleanPhone)) continue;
+
+    const pin = generateRandomPin();
+    const pHash = hashPin(pin);
+
+    await db.run(
+      `INSERT INTO customer_portal_accounts 
+       (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, total_login_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, 'active', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [cust.id, cleanPhone, pHash, pin]
+    );
+    existingCustIds.add(cust.id);
+    existingLogins.add(cleanPhone);
+    syncedCount++;
+  }
+
+  const totalRow = await db.get('SELECT COUNT(*) as total FROM customer_portal_accounts WHERE status = "active"');
+  return {
+    syncedCount,
+    totalAccounts: totalRow?.total || 0
+  };
+}
+
+// POST /api/crm/portal-accounts/sync-all & /api/customer-portal/accounts/sync-all
+router.post('/accounts/sync-all', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const result = await syncAllCustomersToPortal(db);
+    res.json({
+      success: true,
+      synced_count: result.syncedCount,
+      total_accounts: result.totalAccounts,
+      message: `Successfully synced ${result.syncedCount} patient(s) with unique web login PINs!`
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Sync all error:', err);
+    res.status(500).json({ error: 'Failed to sync customer portal accounts' });
   }
 });
 
@@ -317,6 +458,64 @@ router.post('/accounts/:id/send-credentials', async (req, res) => {
   } catch (err: any) {
     console.error('[CustomerPortal] Resend credentials error:', err);
     res.status(500).json({ error: 'Failed to send credentials' });
+  }
+});
+
+// GET /api/crm/portal-accounts/:id/guide-pdf — Download standalone Guide PDF for a portal account
+router.get('/accounts/:id/guide-pdf', async (req, res) => {
+  const accountId = parseInt(req.params.id, 10);
+  if (isNaN(accountId)) return res.status(400).json({ error: 'Invalid account ID' });
+
+  try {
+    const db = await dbManager.getConnection();
+    const account = await db.get(
+      'SELECT login_id FROM customer_portal_accounts WHERE id = ?',
+      [accountId]
+    );
+    if (!account || !account.login_id) {
+      return res.status(404).json({ error: 'Portal account not found' });
+    }
+
+    const tempDir = getAppDataDir();
+    const outPath = path.join(tempDir, `portal_guide_${account.login_id}_${Date.now()}.pdf`);
+    await pdfInvoiceService.generateCustomerPortalGuidePdf(account.login_id, outPath);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Portal_Guide_${account.login_id}.pdf"`);
+    const stream = fs.createReadStream(outPath);
+    stream.pipe(res);
+    stream.on('end', () => {
+      fs.unlink(outPath, () => {});
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Guide PDF error:', err);
+    res.status(500).json({ error: 'Failed to generate guide PDF' });
+  }
+});
+
+// GET /api/customer-portal/guide-pdf — Download standalone Guide PDF by phone
+router.get('/guide-pdf', async (req, res) => {
+  const phone = (req.query.phone as string) || '';
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone || cleanPhone.length !== 10) {
+    return res.status(400).json({ error: 'Valid 10-digit phone number required' });
+  }
+
+  try {
+    const tempDir = getAppDataDir();
+    const outPath = path.join(tempDir, `portal_guide_${cleanPhone}_${Date.now()}.pdf`);
+    await pdfInvoiceService.generateCustomerPortalGuidePdf(cleanPhone, outPath);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Portal_Guide_${cleanPhone}.pdf"`);
+    const stream = fs.createReadStream(outPath);
+    stream.pipe(res);
+    stream.on('end', () => {
+      fs.unlink(outPath, () => {});
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Guide PDF by phone error:', err);
+    res.status(500).json({ error: 'Failed to generate guide PDF' });
   }
 });
 
@@ -1233,6 +1432,9 @@ router.post('/customer/refill-order', async (req, res) => {
         const qty = Number(item.qty || item.quantity_needed) || 1;
         const price = Number(item.price || item.sell_price || item.mrp || 0);
 
+        const rawSource = String(req.body.customer_order_source || req.body.source || 'website');
+        const orderSource = ['website', 'manual_phone_order', 'pharmacy_assisted'].includes(rawSource) ? rawSource : 'website';
+
         const result = await db.run(
           `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
@@ -1241,7 +1443,7 @@ router.post('/customer/refill-order', async (req, res) => {
             scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
             cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
             schedule_calculated_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, ?, ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             custId,
@@ -1251,6 +1453,7 @@ router.post('/customer/refill-order', async (req, res) => {
             qty,
             todayStr,
             fullNotes,
+            orderSource,
             deliveryStatus,
             allocatedQr?.id || null,
             orderType,

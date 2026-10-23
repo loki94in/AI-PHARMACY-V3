@@ -420,6 +420,20 @@ export const CustomerCreditSection: React.FC = () => {
                     <span>{creditNotOnWa ? 'Not on WhatsApp' : 'Send WhatsApp Reminder + QR'}</span>
                   </button>
 
+                  {/* Portal Guide Slip Button */}
+                  {selectedCustomer.phone && (
+                    <a
+                      href={`/api/customer-portal/guide-pdf?phone=${selectedCustomer.phone}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/30 hover:bg-indigo-500/20 text-xs font-bold transition-all flex items-center gap-1.5"
+                      title="Download or Print Customer Portal & Refill Guide PDF"
+                    >
+                      <FileText size={13} />
+                      <span>Portal Guide Slip</span>
+                    </a>
+                  )}
+
                   {/* Clear Credit Entry Button */}
                   <button
                     onClick={() => handleClearCredit(selectedCustomer.id, selectedCustomer.name || 'Customer')}

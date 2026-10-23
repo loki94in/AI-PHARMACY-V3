@@ -1,74 +1,53 @@
-# Implementation Plan: Fast Direct REST Order Placement with 1-Click Final Confirmation Popup (Pharmarack Cart)
+# Implementation Plan: Fix SQLite `no such column: preferred_language` in Special Orders
 
-## 1. Problem Statement & User Request
+## 1. Problem Statement & User Intent
+When creating special orders (either via Quick Order Modal or batch creation in `/api/orders`), the request fails with:
+`Failed to log order request: Failed to create special orders: SQLITE_ERROR: no such column: preferred_language`
 
-When the user attempts to place an order from the live Pharmarack Cart (`/live-cart`):
-1. **Long Delay & Failure**: The app previously took 30 to 60+ seconds and often failed with timeout or lock errors.
-2. **Payload Extraction Bug**: In `PharmarackCheckoutService.placeOrdersViaApi`, the service mapped distributor headers instead of unpacking the nested `lineItems` array from Pharmarack's `GetUserCartDetails` response. It transmitted blank product codes (`ProductCode: ""`, `ProductName: ""`, `PTR: 0`), causing Pharmarack's `SaveOrderCartForRetailerManager` to return HTTP 400 Bad Request.
-3. **Flaky Headless Browser Fallback**: Upon HTTP 400, the backend fell back to launching headless Chrome via Puppeteer. This caused profile lock collisions, high CPU usage on machines without GPUs, and 30-40 second timeouts hunting Angular DOM buttons.
-4. **UI Button Disconnect**: On distributor cards, the button titled "Send to Pharmarack" called `/cart/notify-manual`, which only sent a WhatsApp notification instead of placing the order on Pharmarack.
-5. **Desired Outcome**:
-   - Order placement must match the official website (`retailers.pharmarack.com`) speed (**~1 second**, direct REST API).
-   - Only **ONE clean confirmation popup** when finalizing the order in the app.
-   - When confirmed, the order places directly on Pharmarack, returns the official `OrderNo`, and removes placed items from the active cart.
+This completely blocks special order creation when WhatsApp notification dispatch is active.
 
 ---
 
-## 2. Root Cause & Architecture Solution
-
-### A. Backend Payload Correction (`src/services/pharmarackCheckoutService.ts`)
-- `GetUserCartDetails` returns an array of store objects in `IList`. Each store object contains:
-  - `StoreId`, `StoreName`, `RetailerId`
-  - `lineItems`: Array of medicine items with `ProductCode`, `ProductName`, `Quantity`, `PTR`, `HiddenPTR`, `NetRate`.
-- Fix:
-  - Properly unpack `store.lineItems || store.CartItemList || store.items`.
-  - Resolve effective PTR: `item.PTR > 0 ? item.PTR : (item.HiddenPTR > 0 ? item.HiddenPTR : item.NetRate)`.
-  - Filter out invalid/empty items before building `SaveOrderCartForRetailerManager` payload.
-  - Set `OrderPlacedBy` to `jwtPayload.id || store.RetailerId`.
-  - Eliminate the slow, flaky Puppeteer fallback; return the exact upstream response.
-
-### B. Backend Single & Batch Order Routing (`src/routes/pharmarack.ts`)
-- In `POST /cart/place-official-orders`:
-  - Accept both `targetStoreNames` and `targetStoreIds`.
-  - Filter and place orders specifically for targeted distributors.
-  - Invalidate cart cache immediately on success.
-  - Return confirmed `orderNo` and placed status.
-
-### C. Frontend Direct Place Order Flow (`frontend/src/pages/PharmarackCart/index.tsx`)
-- On each distributor card:
-  - Replace the misleading WhatsApp button with a primary **"Place Order on Pharmarack"** button.
-  - Add a dedicated, lightweight **`SingleOrderConfirmModal`**:
-    - Displays distributor name, item count, total order value (₹), and list of medicines.
-    - Displays minimum order limit compliance status.
-    - Single human-in-the-loop action: **"Confirm & Place Order"** (with inline spinner).
-  - On confirm:
-    - Calls `api.placeOfficialPharmarackOrders` for that distributor.
-    - Completes in ~1 second directly via REST.
-    - Shows success toast with official `OrderNo`.
-    - Automatically reloads the cart (`fetchCart(false)`) so placed items clear.
+## 2. Root Cause Analysis
+1. In `src/routes/orders.ts` (lines 216, 383, 800), `db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', ...)` was added in commit `f5e1836e`.
+2. However, the `preferred_language` column was never added to the `customers` table in `src/database.ts` (neither in `CREATE TABLE customers`, nor in `ensureColumns` on the fast-boot path, nor in the migration array).
+3. Because SQLite performs strict column checks, attempting to select `preferred_language` from `customers` causes an immediate `SQLITE_ERROR: no such column: preferred_language` exception.
+4. Because this query is run inside `router.post('/batch')` and `router.post('/')` without a `.catch()`, the exception bubbles up and causes the endpoint to fail with HTTP 500: `Failed to create special orders: SQLITE_ERROR: no such column: preferred_language`.
 
 ---
 
-## 3. Verification Plan
+## 3. Proposed Solution & Architecture (Following BACKEND SCHEMA SAFETY.md)
 
-1. **Direct REST Payload Test**:
-   - Verify payload sent to `SaveOrderCartForRetailerManager` contains valid `ProductCode`, `ProductName`, `Quantity`, and positive `PTR`.
-2. **Single Distributor 1-Click Order UI Test**:
-   - Click "Place Order on Pharmarack" on a distributor card.
-   - Verify only ONE confirmation popup opens showing the correct distributor name, item count, and total.
-   - Click "Cancel" -> modal closes without placing.
-   - Verify "Confirm & Place Order" triggers instant REST API execution and captures `OrderNo`.
-3. **Performance & Guardrails Check**:
-   - Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`).
+### A. Database Schema Update (`src/database.ts`)
+1. **Schema Version**: Bump `CURRENT_SCHEMA_VERSION` from 78 to 79.
+2. **Fast-Boot Path**: Add `preferred_language: "TEXT DEFAULT 'mr'"` to `ensureColumns(db, 'customers', ...)` in `ensureSchema()`.
+3. **Full DDL Table Definition**: Add `preferred_language TEXT DEFAULT 'mr'` to `CREATE TABLE IF NOT EXISTS customers`.
+4. **Migration Array**: Add `['customers', 'preferred_language', "ALTER TABLE customers ADD COLUMN preferred_language TEXT DEFAULT 'mr'"]` to the migration array in `ensureSchema()`.
+
+### B. Route Query Safety (`src/routes/orders.ts`)
+1. In `router.post('/batch')` (line 216), `router.post('/')` (line 383), and `router.post('/:id/resend-booking')` (line 800):
+   Change:
+   `await db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', ...)`
+   To:
+   `await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', ...).catch(() => null)`
+2. This ensures that language resolution never blocks order creation even in corner cases.
+
+---
+
+## 4. Verification Plan
+1. **TypeScript & Guardrails**:
+   - Run `npx tsc --noEmit` and `npm run guardrails` (exit code 0).
+2. **Database Schema Verification**:
+   - Run a node test script checking that `PRAGMA table_info(customers)` includes `preferred_language`.
+3. **Knowledge Graph**:
    - Run `node scripts/quick-update.mjs`.
 
 ---
 
-## 4. Tasks & Progress Tracking
-
-- [ ] Task 1: Fix payload item unpacking and field mapping in `src/services/pharmarackCheckoutService.ts`.
-- [ ] Task 2: Ensure `POST /cart/place-official-orders` in `src/routes/pharmarack.ts` supports targeted store IDs and fast return without Puppeteer freeze.
-- [ ] Task 3: Add `SingleOrderConfirmModal` and prominent "Place Order on Pharmarack" button to `frontend/src/pages/PharmarackCart/index.tsx`.
-- [ ] Task 4: Connect frontend `handlePlaceSinglePharmarackOrder` with instant cart refresh and toast feedback.
-- [ ] Task 5: Run `npm run guardrails` and verify zero errors/warnings.
-- [ ] Task 6: Run `node scripts/quick-update.mjs` to keep knowledge graph synchronized.
+## 5. Completed Tasks Log
+- [x] Task 1: Update `src/database.ts` with `preferred_language` on `customers` across all boot paths and bump schema version to 79.
+  - *Details*: Added `preferred_language TEXT DEFAULT 'mr'` to `CREATE TABLE IF NOT EXISTS customers`, added to `ensureColumns` on fast-boot path, registered in the schema migration array, and bumped `CURRENT_SCHEMA_VERSION` from 78 to 79. Also verified and migrated both `app.db` and `app.dev.db`.
+- [x] Task 2: Make customer language lookup resilient in `src/routes/orders.ts`.
+  - *Details*: Replaced rigid `SELECT preferred_language, language` with safe `SELECT * FROM customers WHERE phone LIKE ? LIMIT 1` with a `.catch(() => null)` fallback in `/api/orders/batch`, `/api/orders` (single), and `/api/orders/:id/resend-booking` so missing columns or lookup issues never block order transactions.
+- [x] Task 3: Verify with database schema test, run `npm run guardrails`, and update knowledge graph.
+  - *Details*: Confirmed `preferred_language` column exists in all database files, verified TypeScript compilation (`tsc --noEmit`), passed performance guardrails (`npm run guardrails` exit code 0), and synchronized knowledge graph via `node scripts/quick-update.mjs`.

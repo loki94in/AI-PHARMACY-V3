@@ -213,7 +213,7 @@ router.post('/batch', async (req, res) => {
       const medicalName = await getStoreMedicalNameAndPhone(db);
       const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: ₹${Number(advance_payment).toFixed(2)})` : '';
       
-      const custRow = await db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]);
+      const custRow = await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]).catch(() => null);
       const lang = req.body.language || custRow?.preferred_language || custRow?.language || 'mr';
       
       let itemsListStr = '';
@@ -380,7 +380,7 @@ router.post('/', async (req, res) => {
       const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: ₹${Number(advance_payment).toFixed(2)})` : '';
       const cleanReqName = formatCustomerName(requester);
       
-      const custRow = await db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]);
+      const custRow = await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]).catch(() => null);
       const lang = req.body.language || custRow?.preferred_language || custRow?.language || 'mr';
 
       let msg = '';
@@ -797,7 +797,7 @@ router.post('/:id/resend-booking', async (req, res) => {
     const cleanPhone = order.phone.replace(/\D/g, '');
     const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
     
-    const custRow = await db.get('SELECT preferred_language, language FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]);
+    const custRow = await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]).catch(() => null);
     const lang = order.language || custRow?.preferred_language || custRow?.language || 'mr';
     const medicalName = await getStoreMedicalNameAndPhone(db);
     const cleanReqName = formatCustomerName(order.requester);
