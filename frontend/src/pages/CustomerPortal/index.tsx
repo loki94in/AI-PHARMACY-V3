@@ -50,6 +50,7 @@ interface RefillItem {
   paused_at?: string;
   pause_reason?: string;
   resume_at?: string;
+  refill_interval_days?: number;
 }
 
 interface PastBill {

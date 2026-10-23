@@ -1232,6 +1232,8 @@ export function PortalAccountsManager() {
             </div>
           </div>
         </div>
+      )}
+
       {/* Modal: Quick Manual Order */}
       {isOrderModalOpen && (
         <div className="fixed inset-0 z-global-modal bg-black/50 flex items-center justify-center p-4">

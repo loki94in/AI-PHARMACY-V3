@@ -404,6 +404,7 @@ export function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings:
       lowStockThreshold: rawSettings.low_stock_threshold || '10',
       expiryAlertDays: rawSettings.expiry_alert_days || '90',
       requireDoctorOnBill: rawSettings.require_doctor_on_bill !== 'false',
+      printPortalGuidePage: rawSettings.print_portal_guide_page !== '0' && rawSettings.enable_portal_guide_page !== '0',
     });
     toastEvent.trigger('Store profile form reset to saved parameters', 'info');
   };
