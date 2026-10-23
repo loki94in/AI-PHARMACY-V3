@@ -2018,8 +2018,9 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         }
       }
 
+      const isExplicitUpdate = Boolean(item.isUpdate || item.mode === 'set' || item.setQty);
       const requestedQty = Number(item.qty || item.Quantity || 1);
-      const targetCartQty = existingQty > 0 ? (existingQty + requestedQty) : requestedQty;
+      const targetCartQty = isExplicitUpdate ? requestedQty : (existingQty > 0 ? (existingQty + requestedQty) : requestedQty);
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,
@@ -2104,7 +2105,8 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         let lastErr: any = null;
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            const endpoint = (attempt === 2 && existingQty > 0)
+            const shouldUseUpdate = isExplicitUpdate || existingQty > 0;
+            const endpoint = (attempt === 1 && shouldUseUpdate) || (attempt === 2 && !shouldUseUpdate)
               ? 'https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail'
               : 'https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail';
 
@@ -2114,16 +2116,27 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
               signal: AbortSignal.timeout(30000)
             });
 
-            // If AddUserProductCartDetail failed on upstream duplicate/scheme error, immediately attempt UpdateUserProductCartDetail
-            if (!res.ok && endpoint.includes('AddUserProductCartDetail')) {
-              try {
-                const altRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail', {
-                  method: 'POST',
-                  body: JSON.stringify(payload),
-                  signal: AbortSignal.timeout(30000)
-                });
-                if (altRes.ok) return altRes;
-              } catch (_) {}
+            // Symmetrical fallback: if Add fails on duplicate, try Update; if Update fails on missing, try Add
+            if (!res.ok) {
+              if (endpoint.includes('AddUserProductCartDetail')) {
+                try {
+                  const altRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(30000)
+                  });
+                  if (altRes.ok) return altRes;
+                } catch (_) {}
+              } else if (endpoint.includes('UpdateUserProductCartDetail')) {
+                try {
+                  const altRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(30000)
+                  });
+                  if (altRes.ok) return altRes;
+                } catch (_) {}
+              }
             }
             return res;
           } catch (err: any) {
@@ -2897,14 +2910,14 @@ router.post('/cart/notify-delivery-boys-batch', async (req, res) => {
 
 // Official Pharmarack Checkout Routes
 router.post('/cart/place-official-orders', async (req, res) => {
-  const { targetStoreNames, orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
+  const { targetStoreNames, targetStoreIds, orders, deliveryBoyPhone, deliveryBoyName, storeInfo, skipWhatsAppQueue } = req.body;
   try {
     const today = toLocalSqlDateTime(new Date()).slice(0, 10);
     const db = await dbManager.getConnection();
     const appPort = process.env.PORT || config.port;
 
-    // STEP 1: Enqueue clean delivery boy pickup list FIRST so delivery staff receives their route immediately
-    if (orders && Array.isArray(orders) && orders.length > 0) {
+    // STEP 1: Enqueue clean delivery boy pickup list FIRST if batch orders are provided
+    if (!skipWhatsAppQueue && orders && Array.isArray(orders) && orders.length > 0) {
       try {
         await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
           method: 'POST',
@@ -2924,57 +2937,77 @@ router.post('/cart/place-official-orders', async (req, res) => {
       }
     }
 
-    // Brief settling pause before launching headless checkout
-    await new Promise(r => setTimeout(r, 1200));
-
     // STEP 2: Execute official cart checkout on Pharmarack via direct REST API
-    // (with single-flight lock, SaveOrderCartForRetailerManager SKipAndContinue, and resilient fallback)
     console.log('[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...');
-    const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames);
+    const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames, targetStoreIds);
     
-    // Invalidate local cart caches so UI sees fresh cart
+    // Invalidate local cart caches so UI sees fresh cart immediately
     invalidatePharmarackCartCache();
-
-    // Trigger order sync immediately with force = true to pull official Order IDs from Pharmarack backend
-    let syncedToday: any[] = [];
-    const storesNeedingOrderNo = (orders || []).map((o: any) => (o.storeName || '').toLowerCase().trim());
-    
-    // Poll up to 3 times (with 2.5s pause) to allow Pharmarack's internal DisplayOrders database to index the newly placed orders
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await syncPharmarackOrders(true);
-      } catch (syncErr: any) {
-        console.warn(`[PharmarackRoute] Post-checkout order sync attempt ${attempt} notice:`, syncErr?.message || syncErr);
-      }
-
-      syncedToday = await db.all(
-        `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
-        [today]
-      );
-
-      const hasAllStores = storesNeedingOrderNo.every((sName: string) =>
-        syncedToday.some((s: any) => {
-          const normS = (s.store_name || '').toLowerCase().trim();
-          return sName.includes(normS) || normS.includes(sName);
-        })
-      );
-      if (hasAllStores || attempt === 3) break;
-      await new Promise(r => setTimeout(r, 2500));
-    }
 
     // Attach any confirmed order numbers directly to placed orders for today
     if (checkoutResult.orders && Array.isArray(checkoutResult.orders)) {
       for (const ord of checkoutResult.orders) {
-        if (ord.status === 'placed' && ord.orderNo) {
+        if (ord.status === 'placed') {
           try {
-            await db.run(
-              `UPDATE pharmarack_placed_orders 
-               SET order_no = ? 
-               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND (order_no IS NULL OR order_no = '')`,
-              [ord.orderNo, today, ord.storeName]
+            const existingRow = await db.get(
+              `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) LIMIT 1`,
+              [today, ord.storeName]
             );
+            if (existingRow) {
+              if (ord.orderNo) {
+                await db.run(
+                  `UPDATE pharmarack_placed_orders SET order_no = ? WHERE id = ?`,
+                  [ord.orderNo, existingRow.id]
+                );
+              }
+            } else {
+              const matchedOrderObj = (orders || []).find((o: any) => (o.storeName || '').toLowerCase().trim() === (ord.storeName || '').toLowerCase().trim());
+              const itemsJson = matchedOrderObj?.items ? JSON.stringify(matchedOrderObj.items) : '[]';
+              await db.run(
+                `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, placed_at, order_no, delivery_boy_notified, distributor_notified)
+                 VALUES (?, ?, ?, ?, ?, ?, 0, 0)`,
+                [today, ord.storeId || 0, ord.storeName, itemsJson, Date.now(), ord.orderNo || null]
+              );
+            }
           } catch (_) {}
         }
+      }
+    }
+
+    // Fast order sync check: if order numbers already confirmed by REST API, trigger background sync without delaying response
+    let syncedToday: any[] = [];
+    const hasDirectOrders = checkoutResult.orders?.some(o => o.status === 'placed' && Boolean(o.orderNo));
+
+    if (hasDirectOrders || !orders || orders.length === 0) {
+      // Fire-and-forget background sync so DisplayOrders stays in sync without adding 5-7s latency
+      syncPharmarackOrders(true).catch(syncErr => console.warn('[PharmarackRoute] Background order sync notice:', syncErr?.message || syncErr));
+      syncedToday = await db.all(
+        `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+        [today]
+      ).catch(() => []);
+    } else {
+      // For batch orders requiring external indexing
+      const storesNeedingOrderNo = (orders || []).map((o: any) => (o.storeName || '').toLowerCase().trim());
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          await syncPharmarackOrders(true);
+        } catch (syncErr: any) {
+          console.warn(`[PharmarackRoute] Post-checkout order sync attempt ${attempt} notice:`, syncErr?.message || syncErr);
+        }
+
+        syncedToday = await db.all(
+          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+          [today]
+        );
+
+        const hasAllStores = storesNeedingOrderNo.every((sName: string) =>
+          syncedToday.some((s: any) => {
+            const normS = (s.store_name || '').toLowerCase().trim();
+            return sName.includes(normS) || normS.includes(sName);
+          })
+        );
+        if (hasAllStores || attempt === 2) break;
+        await new Promise(r => setTimeout(r, 1500));
       }
     }
 

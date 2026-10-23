@@ -1488,6 +1488,8 @@ export const api = {
     packaging?: string;
     mapped?: boolean;
     medicineId?: number;
+    isUpdate?: boolean;
+    mode?: string;
   }>) => 
     apiClient.post('/pharmarack/cart/add', { items }).then(res => res.data),
   deletePharmarackCartItem: (data: {
@@ -1535,11 +1537,13 @@ export const api = {
   openOfficialPharmarackCartWindow: () => apiClient.post<{ ok: boolean; message: string }>('/pharmarack/cart/open-official-window').then(res => res.data),
   placeOfficialPharmarackOrders: (data: {
     targetStoreNames?: string[];
+    targetStoreIds?: number[];
     orders?: any[];
     deliveryBoyPhone?: string;
     deliveryBoyName?: string;
     storeInfo?: any;
     bypassShortfallCheck?: boolean;
+    skipWhatsAppQueue?: boolean;
   }) => apiClient.post<{
     success: boolean;
     placedCount: number;

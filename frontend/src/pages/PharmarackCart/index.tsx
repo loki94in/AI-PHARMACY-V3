@@ -18,6 +18,7 @@ import { useModalEscape } from '../../services/keyboardShortcuts';
 import { CartPurchaseHistoryModal } from './CartPurchaseHistoryModal';
 import { BatchDispatchModal } from './BatchDispatchModal';
 import { SingleDispatchModal } from './SingleDispatchModal';
+import { SingleOrderConfirmModal } from './SingleOrderConfirmModal';
 import { MedicineLinkModal } from '../../components/MedicineLinkModal';
 
 interface CartLineItem {
@@ -340,6 +341,141 @@ const SentSelectionPopup: React.FC<{
     </div>
   );
 };
+
+interface CartItemQtyEditorProps {
+  qty: number;
+  onCommit: (newQty: number) => void;
+  isUpdating: boolean;
+  disabled?: boolean;
+}
+
+const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, onCommit, isUpdating, disabled }) => {
+  const [localVal, setLocalVal] = useState<string>(() => String(qty || 1));
+  const [isFocused, setIsFocused] = useState<boolean>(false);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync from props only when user is NOT actively typing/focused
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalVal(String(qty || 1));
+    }
+  }, [qty, isFocused]);
+
+  // Clean up debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
+
+  const triggerCommit = (valStr: string) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    const parsed = parseInt(valStr.replace(/\D/g, ''), 10);
+    if (!isNaN(parsed) && parsed >= 1) {
+      if (parsed !== qty) {
+        onCommit(parsed);
+      }
+    } else {
+      // Revert if empty or invalid
+      setLocalVal(String(qty || 1));
+    }
+  };
+
+  const scheduleDebouncedCommit = (valStr: string) => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      triggerCommit(valStr);
+    }, 1200); // 1.2s safe debounce as requested by user
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    // Allow empty string so user can clear & retype, or allow only digits
+    const cleaned = raw.replace(/\D/g, '');
+    setLocalVal(cleaned);
+    scheduleDebouncedCommit(cleaned);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      triggerCommit(localVal);
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === 'Escape') {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      setLocalVal(String(qty || 1));
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    triggerCommit(localVal);
+  };
+
+  const handleStep = (delta: number) => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    const cur = parseInt(localVal.replace(/\D/g, ''), 10);
+    const base = isNaN(cur) || cur < 1 ? qty : cur;
+    const next = Math.max(1, base + delta);
+    setLocalVal(String(next));
+    onCommit(next);
+  };
+
+  return (
+    <div className="flex items-center justify-center gap-1 flex-nowrap shrink-0">
+      <button
+        type="button"
+        onClick={() => handleStep(-1)}
+        disabled={disabled || (qty <= 1 && (!localVal || Number(localVal) <= 1))}
+        className="w-5 h-5 rounded bg-bg3 border border-glass-border hover:bg-bg2 hover:text-text text-muted flex items-center justify-center font-bold text-xs disabled:opacity-40 transition-all shrink-0 cursor-pointer"
+        aria-label="Decrease quantity"
+        title="Decrease quantity"
+      >
+        -
+      </button>
+      <div className="relative">
+        <input
+          type="text"
+          pattern="[0-9]*"
+          value={localVal}
+          onFocus={(e) => {
+            setIsFocused(true);
+            e.target.select();
+          }}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          placeholder="1"
+          className={`w-10 text-center font-black text-text font-mono bg-bg border rounded py-0.5 text-xs focus:outline-none transition-colors shrink-0 ${
+            isUpdating ? 'border-primary/60 ring-1 ring-primary/20' : 'border-glass-border focus:border-primary'
+          }`}
+          aria-label="Medicine quantity"
+        />
+        {isUpdating && (
+          <span className="absolute -top-1 -right-1 flex h-2 w-2 pointer-events-none">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => handleStep(1)}
+        disabled={disabled}
+        className="w-5 h-5 rounded bg-bg3 border border-glass-border hover:bg-bg2 hover:text-text text-muted flex items-center justify-center font-bold text-xs disabled:opacity-40 transition-all shrink-0 cursor-pointer"
+        aria-label="Increase quantity"
+        title="Increase quantity"
+      >
+        +
+      </button>
+    </div>
+  );
+});
+CartItemQtyEditor.displayName = 'CartItemQtyEditor';
 
 interface LocalPriceHistoryRow {
   date?: string;
@@ -1897,6 +2033,9 @@ export default function PharmarackCart() {
   const [singleDispatchTarget, setSingleDispatchTarget] = useState<Distributor | null>(null);
   const [singleDispatchBoyId, setSingleDispatchBoyId] = useState<number | null>(null);
   const [singleDispatchOrderNo, setSingleDispatchOrderNo] = useState<string>('');
+  // Single Pharmarack order placement modal state
+  const [placeOrderTargetDist, setPlaceOrderTargetDist] = useState<Distributor | null>(null);
+  const [isPlacingSingleOrder, setIsPlacingSingleOrder] = useState<boolean>(false);
   // Debounced check for duplicate distributor phone numbers
   useEffect(() => {
     const clean = modalPhoneInput.replace(/\D/g, '');
@@ -2728,6 +2867,65 @@ export default function PharmarackCart() {
     msg += `📝 *Note:* Please send invoice bill (${fileFormat}) to ${email}.`;
 
     return msg.trim();
+  };
+
+  const handleOpenPlaceOrderModal = (dist: Distributor) => {
+    setPlaceOrderTargetDist(dist);
+  };
+
+  const handleConfirmPlaceSingleOrder = async () => {
+    if (!placeOrderTargetDist) return;
+    const dist = placeOrderTargetDist;
+    setIsPlacingSingleOrder(true);
+    try {
+      const itemsToOrder = dist.items.filter(item => isItemIncludedInDispatch(item, dist));
+      const finalItems = itemsToOrder.length > 0 ? itemsToOrder : dist.items;
+
+      toastEvent.trigger(`⚡ Placing official order for ${dist.storeName} on Pharmarack...`, 'info');
+
+      const res = await api.placeOfficialPharmarackOrders({
+        targetStoreNames: [dist.storeName],
+        targetStoreIds: [dist.storeId],
+        orders: [{
+          storeName: dist.storeName,
+          storeId: dist.storeId,
+          items: finalItems
+        }],
+        skipWhatsAppQueue: true
+      });
+
+      if (res && res.success) {
+        const placed = res.orders?.find(o => o.status === 'placed' && o.orderNo) || res.orders?.[0];
+        const orderNo = placed?.orderNo;
+
+        toastEvent.trigger(
+          orderNo
+            ? `✅ Official order placed on Pharmarack! Order ID: #${orderNo}`
+            : `✅ Official order placed on Pharmarack for ${dist.storeName}!`,
+          'success'
+        );
+
+        setPlaceOrderTargetDist(null);
+
+        // Instantly reload cart so placed distributor items clear from the screen
+        fetchCart(false);
+
+        // Update history in background
+        Promise.allSettled([
+          fetchPendingOrders(),
+          fetchLatestSentMap(),
+          loadSentDates()
+        ]).catch(() => {});
+      } else {
+        toastEvent.trigger(res?.error || res?.message || 'Failed to place order on Pharmarack', 'error');
+      }
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiError;
+      console.error('Failed to place single Pharmarack order:', err);
+      toastEvent.trigger(apiErr?.response?.data?.error || apiErr?.message || 'Failed to place order on Pharmarack', 'error');
+    } finally {
+      setIsPlacingSingleOrder(false);
+    }
   };
 
   const handleOpenSingleDispatchModal = (dist: Distributor) => {
@@ -3896,7 +4094,9 @@ export default function PharmarackCart() {
         rate: item.ptr,
         mrp: item.mrp,
         storeName: storeName,
-        mapped: true
+        mapped: true,
+        isUpdate: true,
+        mode: 'set'
       }];
 
       const res = await api.addPharmarackCart(payload);
@@ -6702,19 +6902,20 @@ export default function PharmarackCart() {
                                 <span>Send to Delivery Boy</span>
                               </button>
 
-                              {/* Button 2: Send to Pharmarack Order */}
+                              {/* Button 2: Place Order on Pharmarack (Single Finalization Popup) */}
                               <button
-                                onClick={() => handleSendManualNotification(dist)}
-                                disabled={sendingNotifId === dist.storeId}
-                                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-bg2 text-text border border-border hover:bg-bg3 disabled:opacity-50 text-[10px] font-bold transition-all active:scale-95 shadow-sm cursor-pointer"
-                                title="Send notification / place order in Pharmarack"
+                                type="button"
+                                onClick={() => handleOpenPlaceOrderModal(dist)}
+                                disabled={isPlacingSingleOrder && placeOrderTargetDist?.storeId === dist.storeId}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 font-extrabold text-[10px] transition-all active:scale-95 shadow-sm cursor-pointer disabled:opacity-50"
+                                title="Open order finalization popup and place order directly on Pharmarack (~1s)"
                               >
-                                {sendingNotifId === dist.storeId ? (
-                                  <span className="w-2.5 h-2.5 border border-muted/30 border-t-text rounded-full animate-spin" />
+                                {isPlacingSingleOrder && placeOrderTargetDist?.storeId === dist.storeId ? (
+                                  <span className="w-2.5 h-2.5 border border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
                                 ) : (
-                                  <Send size={10} />
+                                  <Zap size={11} className="text-emerald-400 fill-emerald-400/30" />
                                 )}
-                                <span>Send to Pharmarack</span>
+                                <span>Place Order</span>
                               </button>
 
                               {/* Button 2: WhatsApp Send & Resend Controls */}
@@ -7055,37 +7256,11 @@ export default function PharmarackCart() {
                                         )}
                                       </td>
                                       <td className="px-3 py-2.5 text-center min-w-[110px] whitespace-nowrap">
-                                        <div className="flex items-center justify-center gap-1 flex-nowrap shrink-0">
-                                          <button
-                                            type="button"
-                                            onClick={() => handleUpdateQty(item, item.qty - 1)}
-                                            disabled={updatingItemId === item.productCode || item.qty <= 1}
-                                            className="w-5 h-5 rounded bg-bg3 border border-glass-border hover:bg-bg2 hover:text-text text-muted flex items-center justify-center font-bold text-xs disabled:opacity-40 transition-all shrink-0"
-                                          >
-                                            -
-                                          </button>
-                                          <input
-                                            type="text"
-                                            pattern="[0-9]*"
-                                            value={item.qty}
-                                            onChange={(e) => {
-                                              const val = parseInt(e.target.value.replace(/\D/g, ''), 10);
-                                              if (!isNaN(val) && val >= 1) {
-                                                handleUpdateQty(item, val);
-                                              }
-                                            }}
-                                            disabled={updatingItemId === item.productCode}
-                                            className="w-10 text-center font-black text-text font-mono bg-bg border border-glass-border rounded py-0.5 text-xs focus:outline-none focus:border-primary disabled:opacity-50 shrink-0"
-                                          />
-                                          <button
-                                            type="button"
-                                            onClick={() => handleUpdateQty(item, item.qty + 1)}
-                                            disabled={updatingItemId === item.productCode}
-                                            className="w-5 h-5 rounded bg-bg3 border border-glass-border hover:bg-bg2 hover:text-text text-muted flex items-center justify-center font-bold text-xs disabled:opacity-40 transition-all shrink-0"
-                                          >
-                                            +
-                                          </button>
-                                        </div>
+                                        <CartItemQtyEditor
+                                          qty={item.qty}
+                                          onCommit={(newQty) => handleUpdateQty(item, newQty)}
+                                          isUpdating={updatingItemId === item.productCode}
+                                        />
                                       </td>
                                       <td className="px-3 py-2.5 text-right font-mono text-text text-[11px]">
                                         {item.ptr > 0 ? `₹${item.ptr.toFixed(2)}` : '—'}
@@ -7905,6 +8080,27 @@ export default function PharmarackCart() {
           setShowConfirmBatchModal(false);
           handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys, includeMedicineListInBatch, selectedIds);
         }}
+      />
+
+      {/* ── Confirm Single Pharmarack Order Placement Modal ── */}
+      <SingleOrderConfirmModal
+        target={placeOrderTargetDist}
+        onClose={() => !isPlacingSingleOrder && setPlaceOrderTargetDist(null)}
+        onConfirm={handleConfirmPlaceSingleOrder}
+        isPlacing={isPlacingSingleOrder}
+        isItemIncludedInDispatch={isItemIncludedInDispatch}
+        getDistributorCheckedTotal={getDistributorCheckedTotal}
+        limitIssues={placeOrderTargetDist ? getOrderLimitIssues(placeOrderTargetDist, isItemIncludedInDispatch) : []}
+        assignedBoyName={(() => {
+          if (!placeOrderTargetDist) return null;
+          const boyId = resolveInitialDeliveryBoyId(placeOrderTargetDist, distributorMappings, deliveryBoysList);
+          if (boyId === 0) return 'Admin / Store Owner';
+          if (boyId) {
+            const found = deliveryBoysList.find(b => b.id === boyId);
+            return found ? found.name : null;
+          }
+          return null;
+        })()}
       />
 
       {/* ── Confirm Single WhatsApp Order Dispatch Modal ── */}

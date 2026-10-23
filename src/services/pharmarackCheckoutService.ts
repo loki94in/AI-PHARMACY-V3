@@ -78,7 +78,7 @@ export class PharmarackCheckoutService {
    * using direct REST API authentication.
    * Eliminates headless browser, DOM button hunting, profile lock conflicts, and UI timeouts.
    */
-  public async placeOrdersViaApi(targetStoreNames?: string[]): Promise<CheckoutExecutionResult> {
+  public async placeOrdersViaApi(targetStoreNames?: string[], targetStoreIds?: number[]): Promise<CheckoutExecutionResult> {
     if (isShutdownInProgress()) {
       return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: 'Application shutdown in progress' };
     }
@@ -104,7 +104,7 @@ export class PharmarackCheckoutService {
       try {
         const payloadStr = Buffer.from(token.split('.')[1], 'base64').toString();
         const jwtPayload = JSON.parse(payloadStr);
-        userId = jwtPayload.id ? String(jwtPayload.id) : '';
+        userId = jwtPayload.id || jwtPayload.UserId || jwtPayload.userId || jwtPayload.sub ? String(jwtPayload.id || jwtPayload.UserId || jwtPayload.userId || jwtPayload.sub) : '';
       } catch (_) {}
 
       // Fetch active cart details from Pharmarack API
@@ -139,25 +139,26 @@ export class PharmarackCheckoutService {
       }
 
       const cartData: any = await cartRes.json().catch(() => null);
-      let rawList: any[] = [];
+      let storeList: any[] = [];
       if (cartData) {
-        if (Array.isArray(cartData)) rawList = cartData;
-        else {
+        if (Array.isArray(cartData)) storeList = cartData;
+        else if (Array.isArray(cartData.IList)) storeList = cartData.IList;
+        else if (Array.isArray(cartData.ilist)) storeList = cartData.ilist;
+        else if (Array.isArray(cartData.data)) storeList = cartData.data;
+        else if (Array.isArray(cartData.Data)) storeList = cartData.Data;
+        else if (typeof cartData === 'object') {
           const targetObj = cartData.data || cartData.Data || cartData;
-          if (Array.isArray(targetObj)) rawList = targetObj;
-          else if (typeof targetObj === 'object') {
-            const keysToTry = ['IList', 'ilist', 'StoreWiseCartDetails', 'storeWiseCartDetails', 'CartDetails', 'cartDetails', 'Stores', 'stores', 'Items', 'items'];
-            for (const k of keysToTry) {
-              if (Array.isArray(targetObj[k])) {
-                rawList = targetObj[k];
-                break;
-              }
+          const keysToTry = ['IList', 'ilist', 'StoreWiseCartDetails', 'storeWiseCartDetails', 'CartDetails', 'cartDetails', 'Stores', 'stores', 'Items', 'items'];
+          for (const k of keysToTry) {
+            if (Array.isArray(targetObj[k])) {
+              storeList = targetObj[k];
+              break;
             }
           }
         }
       }
 
-      if (!rawList || rawList.length === 0) {
+      if (!storeList || storeList.length === 0) {
         return {
           ok: false,
           placedCount: 0,
@@ -167,22 +168,36 @@ export class PharmarackCheckoutService {
         };
       }
 
-      // Group cart items by store
-      const storeMap = new Map<number, { storeId: number; storeName: string; items: any[] }>();
-      for (const item of rawList) {
-        const storeId = Number(item.StoreId || item.storeId || item.Storeid || item.StoreID || 0);
-        const storeName = String(item.StoreName || item.storeName || item.Store || 'Pharmarack Distributor').trim();
+      // Group cart items by store, correctly extracting nested items from store groupings
+      const storeMap = new Map<number, { storeId: number; storeName: string; retailerId?: number; items: any[] }>();
+      for (const entry of storeList) {
+        const storeId = Number(entry.StoreId || entry.storeId || entry.Storeid || entry.StoreID || 0);
+        const storeName = String(entry.StoreName || entry.storeName || entry.Store || 'Pharmarack Distributor').trim();
+        const retailerId = Number(entry.RetailerId || entry.retailerId || 0);
         if (!storeId) continue;
 
-        if (!storeMap.has(storeId)) {
-          storeMap.set(storeId, { storeId, storeName, items: [] });
+        const rawItems = entry.lineItems || entry.LineItems || entry.CartItemList || entry.cartItemList || 
+                         entry.items || entry.Items || entry.products || entry.Products || [];
+
+        if (Array.isArray(rawItems) && rawItems.length > 0) {
+          if (!storeMap.has(storeId)) {
+            storeMap.set(storeId, { storeId, storeName, retailerId, items: [] });
+          }
+          storeMap.get(storeId)!.items.push(...rawItems);
+        } else if (entry.ProductCode || entry.productCode || entry.ProductName || entry.productName) {
+          if (!storeMap.has(storeId)) {
+            storeMap.set(storeId, { storeId, storeName, retailerId, items: [] });
+          }
+          storeMap.get(storeId)!.items.push(entry);
         }
-        storeMap.get(storeId)!.items.push(item);
       }
 
-      // Filter by targetStoreNames if provided
+      // Filter by targetStoreIds or targetStoreNames if provided
       let storesToPlace = Array.from(storeMap.values());
-      if (targetStoreNames && targetStoreNames.length > 0) {
+      if (targetStoreIds && targetStoreIds.length > 0) {
+        const idSet = new Set(targetStoreIds.map(Number));
+        storesToPlace = storesToPlace.filter(st => idSet.has(st.storeId));
+      } else if (targetStoreNames && targetStoreNames.length > 0) {
         const targetNorms = targetStoreNames.map(s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ''));
         storesToPlace = storesToPlace.filter(st => {
           const norm = st.storeName.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -205,20 +220,23 @@ export class PharmarackCheckoutService {
       // Construct payload according to SaveOrderCartForRetailerManager schema
       const orderPayload = storesToPlace.map(st => {
         const lineItems = st.items.map(it => {
-          const ptr = Number(it.PTR ?? it.ptr ?? it.HiddenPTR ?? it.NetRate ?? 0);
+          const rawPtr = Number(it.PTR ?? it.ptr ?? 0);
+          const hiddenPtr = Number(it.HiddenPTR ?? it.hiddenPtr ?? 0);
+          const netRate = Number(it.NetRate ?? it.netRate ?? 0);
+          const effectivePtr = rawPtr > 0 ? rawPtr : (hiddenPtr > 0 ? hiddenPtr : (netRate > 0 ? netRate : 0));
           const qty = Number(it.Quantity ?? it.qty ?? it.quantity ?? 1);
           return {
-            PTR: ptr,
-            ProductName: String(it.ProductName ?? it.productName ?? it.Name ?? it.name ?? ''),
-            ProductCode: String(it.ProductCode ?? it.productCode ?? ''),
+            PTR: effectivePtr,
+            ProductName: String(it.ProductName ?? it.productName ?? it.Name ?? it.name ?? '').trim(),
+            ProductCode: String(it.ProductCode ?? it.productCode ?? '').trim(),
             Quantity: qty,
             Free: Number(it.Free ?? it.free ?? 0),
             Scheme: String(it.Scheme ?? it.scheme ?? ''),
             SchemeType: String(it.SchemeType ?? it.schemeType ?? ''),
-            HiddenPTR: Number(it.HiddenPTR ?? it.hiddenPtr ?? ptr),
-            NetRate: Number(it.NetRate ?? it.netRate ?? ptr)
+            HiddenPTR: hiddenPtr > 0 ? hiddenPtr : effectivePtr,
+            NetRate: netRate > 0 ? netRate : effectivePtr
           };
-        });
+        }).filter(it => it.ProductCode.length > 0 && it.Quantity > 0);
 
         const storeAmount = lineItems.reduce((sum, it) => sum + (it.Quantity * it.PTR), 0);
 
@@ -230,7 +248,7 @@ export class PharmarackCheckoutService {
           DeliveryPersonCode: "",
           OrderSource: "MOVP",
           SKipAndContinue: 1, // Crucial: skip unpriced/locked items automatically without UI popup blocking
-          OrderPlacedBy: userId,
+          OrderPlacedBy: userId || String(st.retailerId || 0),
           Latitude: "",
           Longitude: "",
           BrowserName: "Web",
@@ -242,9 +260,19 @@ export class PharmarackCheckoutService {
           GSTAmount: 0,
           items: lineItems
         };
-      });
+      }).filter(st => st.items.length > 0);
 
-      console.log('[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API...');
+      if (orderPayload.length === 0) {
+        return {
+          ok: false,
+          placedCount: 0,
+          failedCount: 0,
+          orders: [],
+          error: 'No valid products with product codes found in selected cart distributor(s).'
+        };
+      }
+
+      console.log(`[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API for ${orderPayload.length} store(s)...`);
       const saveOrderUrl = 'https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager';
       const orderRes = await fetch(saveOrderUrl, {
         method: 'POST',
@@ -264,7 +292,18 @@ export class PharmarackCheckoutService {
       if (!orderRes.ok) {
         const errText = await orderRes.text().catch(() => '');
         console.error(`[PharmarackCheckout] SaveOrderCartForRetailerManager failed with HTTP ${orderRes.status}:`, errText);
-        throw new Error(`Pharmarack SaveOrder API returned HTTP ${orderRes.status}: ${errText.slice(0, 100)}`);
+        return {
+          ok: false,
+          placedCount: 0,
+          failedCount: storesToPlace.length,
+          orders: storesToPlace.map(st => ({
+            storeId: st.storeId,
+            storeName: st.storeName,
+            status: 'failed',
+            error: `Pharmarack API rejected order (HTTP ${orderRes.status}): ${errText.slice(0, 150)}`
+          })),
+          error: `Pharmarack order failed: ${errText.slice(0, 150) || 'API error'}`
+        };
       }
 
       const orderResData: any = await orderRes.json().catch(() => null);
@@ -288,7 +327,7 @@ export class PharmarackCheckoutService {
             error: status === 'failed' ? (disp.Message || 'Order rejected by distributor') : undefined
           });
         }
-      } else if (isSuccessMsg || orderResData?.code === 200) {
+      } else if (isSuccessMsg || orderResData?.code === 200 || orderResData?.StatusCode === 200) {
         for (const st of storesToPlace) {
           results.push({
             storeId: st.storeId,
@@ -313,9 +352,14 @@ export class PharmarackCheckoutService {
         error: isOk ? undefined : (orderResData?.message || orderResData?.data?.Message || 'Failed to confirm placed orders via Pharmarack API')
       };
     } catch (apiErr: any) {
-      console.warn('[PharmarackCheckout] Direct REST API checkout notice:', apiErr.message);
-      console.log('[PharmarackCheckout] Attempting fallback to browser checkout engine...');
-      return this.executeCartCheckout(targetStoreNames);
+      console.warn('[PharmarackCheckout] Direct REST API checkout error:', apiErr.message);
+      return {
+        ok: false,
+        placedCount: 0,
+        failedCount: 1,
+        orders: [],
+        error: apiErr.message || 'Direct REST order placement error'
+      };
     }
   }
 
