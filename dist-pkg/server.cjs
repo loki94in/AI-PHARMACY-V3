@@ -14301,17 +14301,47 @@ async function syncDistributorPhoneAcrossTables(db2, params) {
       await db2.run(
         `UPDATE distributor_dispatch_reminders
          SET distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
+             distributor_id = COALESCE(distributor_id, ?),
              distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
          WHERE distributor_id = ? OR LOWER(TRIM(distributor_name)) = LOWER(TRIM(?))`,
         [
           effectivePhone || "",
           effectivePhone || "",
+          targetId,
           effectiveName.trim(),
           effectiveName.trim(),
           targetId,
           effectiveName.trim()
         ]
       );
+      if (effectivePhone) {
+        const normTarget = normalizeDistributorName2(effectiveName);
+        const cleanTargetNorm = (effectiveName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const normStoreParam = params.store_name ? normalizeDistributorName2(params.store_name) : "";
+        const cleanStoreParam = params.store_name ? params.store_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+        try {
+          const activeRems = await db2.all(
+            `SELECT id, distributor_name, distributor_id, distributor_phone 
+             FROM distributor_dispatch_reminders 
+             WHERE date >= DATE('now', '-7 days')`
+          );
+          for (const rem of activeRems) {
+            const remNorm = normalizeDistributorName2(rem.distributor_name);
+            const remClean = (rem.distributor_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            const isMatch = normTarget && remNorm && normTarget === remNorm || cleanTargetNorm && remClean && cleanTargetNorm === remClean || normStoreParam && remNorm && normStoreParam === remNorm || cleanStoreParam && remClean && cleanStoreParam === remClean || normTarget && remNorm && normTarget.length >= 4 && remNorm.length >= 4 && (normTarget.includes(remNorm) || remNorm.includes(normTarget)) || normStoreParam && remNorm && normStoreParam.length >= 4 && remNorm.length >= 4 && (normStoreParam.includes(remNorm) || remNorm.includes(normStoreParam));
+            if (isMatch) {
+              await db2.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
+                     distributor_id = COALESCE(distributor_id, ?)
+                 WHERE id = ?`,
+                [effectivePhone, effectivePhone, targetId, rem.id]
+              );
+            }
+          }
+        } catch (_) {
+        }
+      }
     }
     if (isTxOwner) {
       await db2.run("COMMIT");
@@ -14506,7 +14536,29 @@ async function getTodayDistributorRemindersFast(customDateStr) {
     }
     for (const r of todayReminders) {
       const normDistName = (r.distributor_name || "").toLowerCase().trim();
-      const phoneDigits = (r.distributor_phone || "").replace(/\D/g, "").slice(-10);
+      let phoneDigits = (r.distributor_phone || "").replace(/\D/g, "").slice(-10);
+      if (!phoneDigits || phoneDigits.length !== 10) {
+        const resolved = await resolveDistributorContact(db2, r.distributor_name);
+        if (resolved?.distributor_phone) {
+          const resolvedClean = resolved.distributor_phone.replace(/\D/g, "").slice(-10);
+          if (resolvedClean.length === 10) {
+            phoneDigits = resolvedClean;
+            r.distributor_phone = resolved.distributor_phone;
+            if (resolved.distributor_id && !r.distributor_id) {
+              r.distributor_id = resolved.distributor_id;
+            }
+            try {
+              await db2.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
+                 WHERE id = ?`,
+                [resolved.distributor_phone, resolved.distributor_id || null, r.id]
+              );
+            } catch (_) {
+            }
+          }
+        }
+      }
       const notif = notifMap.get(normDistName) || (phoneDigits ? notifMap.get(phoneDigits) : void 0);
       r.latest_notif_status = notif?.status || null;
       r.latest_notif_error = notif?.error || null;
@@ -15294,7 +15346,25 @@ async function checkAndSendAutoReminders() {
     const dueReminders = [];
     const missingPhone = [];
     for (const item of activeReminders) {
-      const p = (item.distributor_phone || item.master_phone || "").replace(/\D/g, "").slice(-10);
+      let p = (item.distributor_phone || item.master_phone || "").replace(/\D/g, "").slice(-10);
+      if (!p || p.length !== 10) {
+        const resolved = await resolveDistributorContact(db2, item.distributor_name);
+        if (resolved?.distributor_phone) {
+          const resolvedClean = resolved.distributor_phone.replace(/\D/g, "").slice(-10);
+          if (resolvedClean.length === 10) {
+            p = resolvedClean;
+            try {
+              await db2.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
+                 WHERE id = ?`,
+                [resolved.distributor_phone, resolved.distributor_id || null, item.id]
+              );
+            } catch (_) {
+            }
+          }
+        }
+      }
       if (!p || p.length !== 10) {
         missingPhone.push({ id: item.id, distributor_name: item.distributor_name });
         continue;
@@ -47021,9 +47091,31 @@ ${mrpLine}
             console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
             return { ok: false, reason: "not_found" };
           }
-          const recipientPhone = reminder.distributor_phone || reminder.dist_phone;
-          if (!recipientPhone || !String(recipientPhone).trim()) {
-            console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no phone number.`);
+          let recipientPhone = (reminder.distributor_phone || reminder.dist_phone || "").replace(/\D/g, "").slice(-10);
+          if (!recipientPhone || recipientPhone.length !== 10) {
+            const resolved = await resolveDistributorContact(db2, reminder.distributor_name);
+            if (resolved?.distributor_phone) {
+              const resolvedClean = resolved.distributor_phone.replace(/\D/g, "").slice(-10);
+              if (resolvedClean.length === 10) {
+                recipientPhone = resolvedClean;
+                try {
+                  await db2.run(
+                    `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = ?,
+                     distributor_id = COALESCE(distributor_id, ?)
+                 WHERE id = ?`,
+                    [resolved.distributor_phone, resolved.distributor_id || null, reminderId]
+                  );
+                  if (resolved.distributor_id && !reminder.distributor_id) {
+                    reminder.distributor_id = resolved.distributor_id;
+                  }
+                } catch (_) {
+                }
+              }
+            }
+          }
+          if (!recipientPhone || recipientPhone.length !== 10) {
+            console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no valid 10-digit phone number.`);
             return { ok: false, reason: "no_phone" };
           }
           const startOfDay = /* @__PURE__ */ new Date();
@@ -62819,7 +62911,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.153";
+    APP_VERSION = "0.1.154";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -82810,6 +82902,7 @@ var init_dispatch = __esm({
     init_storeContextService();
     init_phoneValidation();
     init_localTime();
+    init_distributorSyncHelper();
     router15 = import_express15.default.Router();
     router15.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -83418,10 +83511,11 @@ var init_dispatch = __esm({
           if (cleanPhone.length !== 10) {
             return res.status(400).json({ error: "Phone number must be exactly 10 digits" });
           }
-          await db2.run("UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE id = ?", [cleanPhone, id]);
-          if (reminder.distributor_id) {
-            await db2.run("UPDATE distributors SET phone = ? WHERE id = ?", [cleanPhone, reminder.distributor_id]);
-          }
+          await syncDistributorPhoneAcrossTables(db2, {
+            id: reminder.distributor_id || void 0,
+            name: reminder.distributor_name,
+            phone: cleanPhone
+          });
         }
         await db2.run("UPDATE distributor_dispatch_reminders SET status = 'Pending' WHERE id = ?", [id]);
         const result = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message, void 0, { userClicked: true });
