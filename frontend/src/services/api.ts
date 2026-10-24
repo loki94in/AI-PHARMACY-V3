@@ -752,6 +752,7 @@ export type DistributorReminderStatus = 'Pending' | 'Dispatched' | 'Collected';
 
 export interface SendReminderResponse {
   success: boolean;
+  ok?: boolean;
   action?: 'queued' | 'released' | 'resent';
   queue_id?: number | null;
   message?: string;

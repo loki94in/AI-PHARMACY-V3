@@ -197,7 +197,28 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
 
     for (const r of todayReminders) {
       const normDistName = (r.distributor_name || '').toLowerCase().trim();
-      const phoneDigits = (r.distributor_phone || '').replace(/\D/g, '').slice(-10);
+      let phoneDigits = (r.distributor_phone || '').replace(/\D/g, '').slice(-10);
+      if (!phoneDigits || phoneDigits.length !== 10) {
+        const resolved = await resolveDistributorContact(db, r.distributor_name);
+        if (resolved?.distributor_phone) {
+          const resolvedClean = resolved.distributor_phone.replace(/\D/g, '').slice(-10);
+          if (resolvedClean.length === 10) {
+            phoneDigits = resolvedClean;
+            r.distributor_phone = resolved.distributor_phone;
+            if (resolved.distributor_id && !r.distributor_id) {
+              r.distributor_id = resolved.distributor_id;
+            }
+            try {
+              await db.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
+                 WHERE id = ?`,
+                [resolved.distributor_phone, resolved.distributor_id || null, r.id]
+              );
+            } catch (_) {}
+          }
+        }
+      }
       const notif = notifMap.get(normDistName) || (phoneDigits ? notifMap.get(phoneDigits) : undefined);
       r.latest_notif_status = notif?.status || null;
       r.latest_notif_error = notif?.error || null;
@@ -1153,9 +1174,25 @@ export async function checkAndSendAutoReminders() {
 
     const dueReminders: Array<{ id: number; distributor_name: string; scheduledAtMs: number }> = [];
     const missingPhone: Array<{ id: number; distributor_name: string }> = [];
-
     for (const item of activeReminders) {
-      const p = (item.distributor_phone || item.master_phone || '').replace(/\D/g, '').slice(-10);
+      let p = (item.distributor_phone || item.master_phone || '').replace(/\D/g, '').slice(-10);
+      if (!p || p.length !== 10) {
+        const resolved = await resolveDistributorContact(db, item.distributor_name);
+        if (resolved?.distributor_phone) {
+          const resolvedClean = resolved.distributor_phone.replace(/\D/g, '').slice(-10);
+          if (resolvedClean.length === 10) {
+            p = resolvedClean;
+            try {
+              await db.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
+                 WHERE id = ?`,
+                [resolved.distributor_phone, resolved.distributor_id || null, item.id]
+              );
+            } catch (_) {}
+          }
+        }
+      }
       if (!p || p.length !== 10) {
         missingPhone.push({ id: item.id, distributor_name: item.distributor_name });
         continue;

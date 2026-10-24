@@ -418,10 +418,10 @@ const Dispatch = () => {
   const handleSendAfternoonDeliveryBoyDispatch = async () => {
     setIsSendingAfternoonDispatch(true);
     try {
-      messageSendEvent.triggerSendProgress('Delivery Staff Dispatch', 'Compiling afternoon collection summary...', 10);
-      whatsappQueueEvent.triggerUpdated();
       const res = await api.sendAfternoonDeliveryBoyDispatch();
       if (res && res.success) {
+        messageSendEvent.triggerSendProgress('Delivery Staff Dispatch', 'Compiling afternoon collection summary...', 10);
+        whatsappQueueEvent.triggerUpdated();
         showNotif(res.message || 'Afternoon dispatch summary sent to Delivery Staff via WhatsApp!');
         fetchDistributorReminders(true);
       } else {
@@ -463,6 +463,8 @@ const Dispatch = () => {
       // If item is currently held in 5-minute scheduled review hold, release immediately via queue
       if (targetItem?.pending_queue_id && !customMessageOverride) {
         await api.sendWhatsAppQueueItemNow(targetItem.pending_queue_id);
+        messageSendEvent.triggerSendProgress(distName, `Sending WhatsApp reminder to ${distName}...`, 10);
+        whatsappQueueEvent.triggerUpdated();
         showNotif(`Dispatch reminder for ${distName} released & sent immediately!`);
         await fetchDistributorReminders(true);
         return;
@@ -480,10 +482,12 @@ const Dispatch = () => {
         }
       }
 
-      messageSendEvent.triggerSendProgress(distName, `Sending WhatsApp reminder to ${distName}...`, 10);
-      whatsappQueueEvent.triggerUpdated();
-
       const res = await api.sendDistributorReminderNow(targetId, msgToSend);
+      if (res && (res.success || res.action)) {
+        messageSendEvent.triggerSendProgress(distName, `Sending WhatsApp reminder to ${distName}...`, 10);
+        whatsappQueueEvent.triggerUpdated();
+      }
+
       if (res?.action === 'released') {
         showNotif(`Released — sending to ${distName} now`);
       } else if (res?.action === 'resent') {
@@ -494,7 +498,8 @@ const Dispatch = () => {
       await fetchDistributorReminders(true);
     } catch (err) {
       const e = err as LocalApiError;
-      showNotif(e.message || 'Failed to send WhatsApp reminder', 'error');
+      const errMsg = e?.response?.data?.error || e?.message || 'Failed to send WhatsApp reminder';
+      showNotif(errMsg, 'error');
     } finally {
       setSendingReminderId(null);
     }
@@ -633,6 +638,7 @@ const Dispatch = () => {
         phone: finalPhone
       });
       setDistributorReminders(prev => prev.map(r => r.id === item.id ? { ...r, distributor_phone: finalPhone } : r));
+      fetchDistributorReminders(true);
       setEditingDistPhoneId(null);
       setPhoneDuplicateWarning(null);
       setDuplicateConfirmTarget(null);
@@ -640,7 +646,11 @@ const Dispatch = () => {
       // Only auto-dispatch reminder if status is Pending and has not been reminded yet today
       if (item.status === 'Pending' && !item.last_reminded_at) {
         try {
-          await api.sendDistributorReminderNow(item.id);
+          const sendRes = await api.sendDistributorReminderNow(item.id);
+          if (sendRes && (sendRes.success || sendRes.action)) {
+            messageSendEvent.triggerSendProgress(item.distributor_name, `Sending WhatsApp reminder to ${item.distributor_name}...`, 10);
+            whatsappQueueEvent.triggerUpdated();
+          }
           showNotif(`Phone saved & reminder dispatched to ${item.distributor_name}!`);
         } catch {
           showNotif(`Phone number saved for ${item.distributor_name}`);

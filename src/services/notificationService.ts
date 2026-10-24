@@ -889,9 +889,30 @@ export class NotificationService {
         return { ok: false, reason: 'not_found' };
       }
 
-      const recipientPhone = reminder.distributor_phone || reminder.dist_phone;
-      if (!recipientPhone || !String(recipientPhone).trim()) {
-        console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no phone number.`);
+      let recipientPhone = (reminder.distributor_phone || reminder.dist_phone || '').replace(/\D/g, '').slice(-10);
+      if (!recipientPhone || recipientPhone.length !== 10) {
+        const resolved = await resolveDistributorContact(db, reminder.distributor_name);
+        if (resolved?.distributor_phone) {
+          const resolvedClean = resolved.distributor_phone.replace(/\D/g, '').slice(-10);
+          if (resolvedClean.length === 10) {
+            recipientPhone = resolvedClean;
+            try {
+              await db.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = ?,
+                     distributor_id = COALESCE(distributor_id, ?)
+                 WHERE id = ?`,
+                [resolved.distributor_phone, resolved.distributor_id || null, reminderId]
+              );
+              if (resolved.distributor_id && !reminder.distributor_id) {
+                reminder.distributor_id = resolved.distributor_id;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+      if (!recipientPhone || recipientPhone.length !== 10) {
+        console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no valid 10-digit phone number.`);
         return { ok: false, reason: 'no_phone' };
       }
 

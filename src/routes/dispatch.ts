@@ -9,6 +9,7 @@ import { eventService } from '../services/eventService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
 import { toLocalSqlDateTime } from '../utils/localTime.js';
+import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper.js';
 
 const router = express.Router();
 
@@ -736,10 +737,11 @@ router.post('/distributor-reminders/:id/retry', async (req, res) => {
       if (cleanPhone.length !== 10) {
         return res.status(400).json({ error: 'Phone number must be exactly 10 digits' });
       }
-      await db.run('UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE id = ?', [cleanPhone, id]);
-      if (reminder.distributor_id) {
-        await db.run('UPDATE distributors SET phone = ? WHERE id = ?', [cleanPhone, reminder.distributor_id]);
-      }
+      await syncDistributorPhoneAcrossTables(db, {
+        id: reminder.distributor_id || undefined,
+        name: reminder.distributor_name,
+        phone: cleanPhone
+      });
     }
 
     // Reset status back to Pending for resend attempt

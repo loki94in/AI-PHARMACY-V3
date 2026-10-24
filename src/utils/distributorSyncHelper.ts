@@ -587,14 +587,49 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
       await db.run(
         `UPDATE distributor_dispatch_reminders
          SET distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
+             distributor_id = COALESCE(distributor_id, ?),
              distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
          WHERE distributor_id = ? OR LOWER(TRIM(distributor_name)) = LOWER(TRIM(?))`,
         [
           effectivePhone || '', effectivePhone || '',
+          targetId,
           effectiveName.trim(), effectiveName.trim(),
           targetId, effectiveName.trim()
         ]
       );
+
+      if (effectivePhone) {
+        const normTarget = normalizeDistributorName(effectiveName);
+        const cleanTargetNorm = (effectiveName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normStoreParam = params.store_name ? normalizeDistributorName(params.store_name) : '';
+        const cleanStoreParam = params.store_name ? params.store_name.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+        try {
+          const activeRems = await db.all(
+            `SELECT id, distributor_name, distributor_id, distributor_phone 
+             FROM distributor_dispatch_reminders 
+             WHERE date >= DATE('now', '-7 days')`
+          );
+          for (const rem of activeRems) {
+            const remNorm = normalizeDistributorName(rem.distributor_name);
+            const remClean = (rem.distributor_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const isMatch = (normTarget && remNorm && normTarget === remNorm) ||
+                            (cleanTargetNorm && remClean && cleanTargetNorm === remClean) ||
+                            (normStoreParam && remNorm && normStoreParam === remNorm) ||
+                            (cleanStoreParam && remClean && cleanStoreParam === remClean) ||
+                            (normTarget && remNorm && normTarget.length >= 4 && remNorm.length >= 4 && (normTarget.includes(remNorm) || remNorm.includes(normTarget))) ||
+                            (normStoreParam && remNorm && normStoreParam.length >= 4 && remNorm.length >= 4 && (normStoreParam.includes(remNorm) || remNorm.includes(normStoreParam)));
+            if (isMatch) {
+              await db.run(
+                `UPDATE distributor_dispatch_reminders 
+                 SET distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
+                     distributor_id = COALESCE(distributor_id, ?)
+                 WHERE id = ?`,
+                [effectivePhone, effectivePhone, targetId, rem.id]
+              );
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     if (isTxOwner) {
