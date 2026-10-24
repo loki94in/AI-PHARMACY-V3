@@ -1875,16 +1875,18 @@ async function reapSystemProfileOrphans(options) {
   if (process.platform !== "win32") return { killed: 0, freedMB: 0 };
   if (isShutdownInProgress()) return { killed: 0, freedMB: 0 };
   try {
-    const { isWhatsAppBusyOrRestoring: isWhatsAppBusyOrRestoring2, getWhatsAppBrowserPid: getWhatsAppBrowserPid2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+    const { isWhatsAppBusyOrRestoring: isWhatsAppBusyOrRestoring2, getWhatsAppBrowserPid: getWhatsAppBrowserPid2, getWhatsAppStatus: getWhatsAppStatus2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
     if (isWhatsAppBusyOrRestoring2()) {
       console.log("[ProcessGuardian] WhatsApp is actively initializing or syncing. Skipping orphan reap.");
       return { killed: 0, freedMB: 0 };
     }
+    const waStatus = await getWhatsAppStatus2().catch(() => null);
+    const isWhatsAppActive = Boolean(waStatus?.isReady || waStatus?.initializing);
     const protectedPids = getActiveHeadlessPids();
     const waPid = getWhatsAppBrowserPid2();
     if (waPid && waPid > 0) protectedPids.add(waPid);
     const { stdout } = await execAsync(
-      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe')\\" | Select-Object ProcessId, WorkingSetSize, CommandLine | ConvertTo-Json -Compress"`,
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe')\\" | Select-Object ProcessId, ParentProcessId, WorkingSetSize, CommandLine | ConvertTo-Json -Compress"`,
       { timeout: 4e3 }
     ).catch(() => ({ stdout: "" }));
     const trimmed = (stdout || "").trim();
@@ -1896,15 +1898,31 @@ async function reapSystemProfileOrphans(options) {
     } catch {
       return { killed: 0, freedMB: 0 };
     }
+    let addedChild = true;
+    while (addedChild) {
+      addedChild = false;
+      for (const item of parsed) {
+        const ppid = Number(item.ParentProcessId);
+        const pid = Number(item.ProcessId);
+        if (ppid && protectedPids.has(ppid) && pid && !protectedPids.has(pid)) {
+          protectedPids.add(pid);
+          addedChild = true;
+        }
+      }
+    }
     let killed = 0;
     let freedBytes = 0;
     const { dbManager: dbManager2 } = await Promise.resolve().then(() => (init_connection(), connection_exports));
     const db2 = await dbManager2.getConnection().catch(() => null);
     for (const item of parsed) {
       const pid = Number(item.ProcessId);
-      if (!pid || isNaN(pid) || protectedPids.has(pid)) continue;
+      const ppid = Number(item.ParentProcessId);
+      if (!pid || isNaN(pid) || protectedPids.has(pid) || ppid && protectedPids.has(ppid)) continue;
       const cmdLine = String(item.CommandLine || "");
       const lower = cmdLine.toLowerCase();
+      if (isWhatsAppActive && lower.includes(".wwebjs_auth")) {
+        continue;
+      }
       const isOurProfile = lower.includes("pharmarack_profile") || lower.includes("pharmarack_profile_temp_") || lower.includes(".wwebjs_auth");
       if (!isOurProfile) continue;
       const workingSet = Number(item.WorkingSetSize) || 0;
@@ -49972,6 +49990,7 @@ __export(whatsappClient_exports, {
   downloadMessageMediaReliably: () => downloadMessageMediaReliably,
   ensureSessionHealth: () => ensureSessionHealth,
   ensureWhatsAppReady: () => ensureWhatsAppReady,
+  executeWithWatchdog: () => executeWithWatchdog,
   forceReconnect: () => forceReconnect,
   getChatMessages: () => getChatMessages,
   getChats: () => getChats,
@@ -50101,7 +50120,22 @@ function safeRemoveDirectorySync(dirPath) {
 function isPuppeteerDetachedError(msg) {
   if (!msg) return false;
   const str = String(msg);
-  return str.includes("detached Frame") || str.includes("Navigating frame was detached") || str.includes("LifecycleWatcher") || str.includes("ECONNREFUSED") || str.includes("Execution context was destroyed") || str.includes("Session closed") || str.includes("Target closed") || str.includes("Protocol error") || str.includes("Page crashed") || str.includes("browser has disconnected") || str.includes("CdpFrame") || str.includes("CdpPage");
+  return str.includes("detached Frame") || str.includes("Navigating frame was detached") || str.includes("LifecycleWatcher") || str.includes("ECONNREFUSED") || str.includes("Execution context was destroyed") || str.includes("Session closed") || str.includes("Target closed") || str.includes("Protocol error") || str.includes("Page crashed") || str.includes("browser has disconnected") || str.includes("CdpFrame") || str.includes("CdpPage") || str.includes("callFunctionOn timed out") || str.includes("Runtime.callFunctionOn") || str.includes("browser page unresponsive") || str.includes("timed out after");
+}
+async function executeWithWatchdog(promise, ms, opName) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${opName} timed out after ${Math.round(ms / 1e3)}s (browser page unresponsive)`));
+        }, ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 function setLifecycleProgress(stage, progress, statusText, error) {
   currentLifecycleStage = stage;
@@ -51755,7 +51789,7 @@ async function sendMessage(to, mediaPath, caption, file) {
         try {
           await ensureSessionHealth().catch(() => {
           });
-          await doSend(clientInstance);
+          await executeWithWatchdog(doSend(clientInstance), 25e3, "WhatsApp message send");
           success = true;
         } catch (sendErr) {
           const errMsg = sendErr?.message || String(sendErr);
@@ -51765,7 +51799,7 @@ async function sendMessage(to, mediaPath, caption, file) {
           if (alternateChatId && alternateChatId !== primaryChatId) {
             console.log(`[WhatsApp Ground-Truth] Retrying send via alternate direct phone route ${alternateChatId} for ${cleanPhone}...`);
             try {
-              await doSend(clientInstance, alternateChatId, true);
+              await executeWithWatchdog(doSend(clientInstance, alternateChatId, true), 15e3, "WhatsApp alternate direct route send");
               console.log(`[WhatsApp Ground-Truth] Alternate direct route ${alternateChatId} send succeeded for ${cleanPhone}!`);
               recoveredViaAlt = true;
               success = true;
@@ -51775,7 +51809,7 @@ async function sendMessage(to, mediaPath, caption, file) {
           }
           if (!recoveredViaAlt) {
             if (isPuppeteerDetachedError(errMsg)) {
-              console.warn("[WhatsApp] Detached Frame or destroyed browser context detected during sendMessage. Invalidating stale client...");
+              console.warn("[WhatsApp] Detached Frame, timeout, or destroyed browser context detected during sendMessage. Invalidating stale client...");
               isReady = false;
               clientInstance = null;
               if (activeClient) {
@@ -51787,12 +51821,12 @@ async function sendMessage(to, mediaPath, caption, file) {
               try {
                 const freshClient = await initClient();
                 if (!freshClient) throw new Error("Re-initialization returned null client.");
-                await doSend(freshClient);
+                await executeWithWatchdog(doSend(freshClient), 25e3, "WhatsApp send retry after client reconnect");
                 console.log("[WhatsApp] Automatic re-initialization and message send retry succeeded!");
                 success = true;
               } catch (retryErr) {
                 console.error("[WhatsApp] Send retry after client auto-reconnect failed:", retryErr);
-                throw new Error("WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.");
+                throw new Error("WhatsApp connection lost (detached browser frame or unresponsive). Please scan the QR code in Settings to reconnect.");
               }
             } else if (errMsg.includes("Data passed to getter must include an id property") || errMsg.includes("it's how we memoize")) {
               console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
@@ -51837,7 +51871,7 @@ async function sendMessage(to, mediaPath, caption, file) {
                   }, `${cleanPhone}@c.us`);
                 }
                 await new Promise((r) => setTimeout(r, 600));
-                await doSend(clientInstance, `${cleanPhone}@c.us`, true);
+                await executeWithWatchdog(doSend(clientInstance, `${cleanPhone}@c.us`, true), 15e3, "WhatsApp Store hydration retry");
                 console.log(`[WhatsApp] Self-healing Store hydration and retry succeeded for ${cleanPhone}!`);
                 success = true;
               } catch (retryErr) {
@@ -53463,7 +53497,7 @@ ${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
           }
           try {
             const preBootPending = await db2.all(
-              "SELECT id, number, message, type, scheduled_at, created_at FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
+              "SELECT id, number, message, type, scheduled_at, created_at, status FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline', 'sending') AND created_at < ?",
               [SERVER_BOOT_TIME]
             );
             let recoveredCount = 0;
@@ -53487,7 +53521,8 @@ ${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
               } else {
                 const wasDueDuringOutage = item.scheduled_at && this.detectedOutageInterval && item.scheduled_at >= this.detectedOutageInterval.start - 6e4 && item.scheduled_at <= this.detectedOutageInterval.end + 6e4;
                 const isOverdueToday = item.scheduled_at && item.scheduled_at <= Date.now();
-                const reason = item.type === "admin_morning_briefing" ? "Morning briefing restored for immediate dispatch on startup" : wasDueDuringOutage ? "Recovered after PC/application outage during scheduled dispatch" : isOverdueToday ? "Recovered overdue reminder after app restart" : "Restored queue item after app restart / power cut";
+                const wasSending = item.status === "sending";
+                const reason = wasSending ? "Recovered interrupted in-flight send after app restart / power cut" : item.type === "admin_morning_briefing" ? "Morning briefing restored for immediate dispatch on startup" : wasDueDuringOutage ? "Recovered after PC/application outage during scheduled dispatch" : isOverdueToday ? "Recovered overdue reminder after app restart" : "Restored queue item after app restart / power cut";
                 console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = 'pending', error_message = ? WHERE id = ?",
@@ -53602,6 +53637,25 @@ ${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
           }
           await this.loadPacingConfig();
           const db2 = await dbManager.getConnection();
+          try {
+            const stalledRecovered = await db2.run(
+              `UPDATE whatsapp_send_queue 
+           SET status = 'failed_offline', 
+               retry_count = retry_count + 1,
+               error_message = 'Send attempt timed out or stalled (recovered by queue watchdog)'
+           WHERE status = 'sending'
+             AND (
+               (last_attempt_at IS NOT NULL AND last_attempt_at < datetime('now', '-60 seconds'))
+               OR (last_attempt_at IS NULL AND created_at < ? - 60000)
+             )`,
+              [Date.now()]
+            );
+            if (stalledRecovered && stalledRecovered.changes && stalledRecovered.changes > 0) {
+              console.warn(`[WhatsAppQueueWorker] Recovered ${stalledRecovered.changes} stalled 'sending' item(s) back to queue.`);
+              this.broadcastQueueState(true);
+            }
+          } catch (_) {
+          }
           while (true) {
             if (this.isPaused) break;
             const now = Date.now();
@@ -62911,7 +62965,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.154";
+    APP_VERSION = "0.1.155";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -93103,9 +93157,19 @@ var init_autoUpdateService = __esm({
           this.retryHandle = null;
         }
       }
-      /** Return last known update check result */
+      /** Return last known update check result with semver floor against running binary */
       getStatus() {
-        return this.lastResult;
+        if (!this.lastResult) return null;
+        const isNewer = this.lastResult.latestVersion ? compareVersions(this.lastResult.latestVersion, APP_VERSION) > 0 : false;
+        return {
+          ...this.lastResult,
+          latestVersion: isNewer ? this.lastResult.latestVersion : APP_VERSION,
+          hasUpdate: Boolean(this.lastResult.hasUpdate && isNewer),
+          currentVersion: APP_VERSION,
+          downloading: Boolean(this.isDownloading && isNewer),
+          downloadProgress: isNewer ? this.lastResult.downloadProgress ?? 0 : 0,
+          readyToInstall: Boolean(this.lastResult.readyToInstall && isNewer)
+        };
       }
       /** Return ISO string of last update check timestamp */
       getLastCheckedAt() {
@@ -93147,10 +93211,11 @@ var init_autoUpdateService = __esm({
           );
           this.lastResult = {
             ...result,
+            latestVersion: isNewer ? result.latestVersion : APP_VERSION,
             hasUpdate: trulyHasUpdate,
             currentVersion: APP_VERSION,
-            downloading: this.isDownloading,
-            downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
+            downloading: Boolean(this.isDownloading && isNewer),
+            downloadProgress: trulyHasUpdate ? this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0) : 0,
             readyToInstall: alreadyDownloaded,
             lastError: void 0
           };
@@ -93177,8 +93242,11 @@ var init_autoUpdateService = __esm({
             if (reason === "manual") {
               eventService.broadcast("update_check_complete", {
                 hasUpdate: false,
-                latestVersion: result.latestVersion || APP_VERSION,
+                latestVersion: APP_VERSION,
                 currentVersion: APP_VERSION,
+                downloading: false,
+                downloadProgress: 0,
+                readyToInstall: false,
                 reason
               });
             }
@@ -93281,6 +93349,7 @@ var init_autoUpdateService = __esm({
             }
             eventService.broadcast("update_progress", {
               latestVersion: version,
+              downloading: true,
               downloadProgress: percent,
               downloadedBytes: downloaded,
               totalBytes: total
@@ -97874,16 +97943,21 @@ var init_license = __esm({
     });
     router35.get("/update-status", (_req, res) => {
       const result = autoUpdateService.getStatus();
+      const rawLatest = result?.latestVersion;
+      const isNewer = rawLatest ? compareVersions(rawLatest, APP_VERSION) > 0 : false;
+      const effectiveLatest = isNewer ? rawLatest : APP_VERSION;
+      const isDownloading = Boolean(result?.downloading && isNewer);
+      const isReady2 = Boolean(result?.readyToInstall && isNewer);
       res.json({
-        hasUpdate: !!result?.hasUpdate,
-        latestVersion: result?.latestVersion || null,
-        currentVersion: result?.currentVersion || APP_VERSION,
-        readyToInstall: !!result?.readyToInstall,
-        downloading: !!result?.downloading,
-        downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0),
-        downloadUrl: result?.downloadUrl,
-        updatePackageUrl: result?.updatePackageUrl,
-        changelog: result?.changelog || "",
+        hasUpdate: Boolean(result?.hasUpdate && isNewer),
+        latestVersion: effectiveLatest,
+        currentVersion: APP_VERSION,
+        readyToInstall: isReady2,
+        downloading: isDownloading,
+        downloadProgress: isDownloading || isReady2 ? result?.downloadProgress ?? (isReady2 ? 100 : 0) : 0,
+        downloadUrl: isNewer ? result?.downloadUrl : null,
+        updatePackageUrl: isNewer ? result?.updatePackageUrl : null,
+        changelog: isNewer ? result?.changelog || "" : "",
         lastCheckedAt: autoUpdateService.getLastCheckedAt() || null,
         lastError: result?.lastError || null
       });
@@ -97906,24 +97980,32 @@ var init_license = __esm({
     router35.post("/check-update", async (_req, res) => {
       try {
         const result = await autoUpdateService.triggerCheck();
+        const rawLatest = result?.latestVersion;
+        const isNewer = rawLatest ? compareVersions(rawLatest, APP_VERSION) > 0 : false;
+        const effectiveLatest = isNewer ? rawLatest : APP_VERSION;
+        const isDownloading = Boolean(result?.downloading && isNewer);
+        const isReady2 = Boolean(result?.readyToInstall && isNewer);
         res.json({
-          hasUpdate: !!result?.hasUpdate,
-          currentVersion: result?.currentVersion || APP_VERSION,
-          latestVersion: result?.latestVersion || APP_VERSION,
-          downloadUrl: result?.downloadUrl,
-          updatePackageUrl: result?.updatePackageUrl,
-          sha256: result?.sha256,
-          changelog: result?.changelog,
-          readyToInstall: result?.readyToInstall,
-          downloading: result?.downloading,
-          downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0)
+          hasUpdate: Boolean(result?.hasUpdate && isNewer),
+          currentVersion: APP_VERSION,
+          latestVersion: effectiveLatest,
+          downloadUrl: isNewer ? result?.downloadUrl : null,
+          updatePackageUrl: isNewer ? result?.updatePackageUrl : null,
+          sha256: isNewer ? result?.sha256 : null,
+          changelog: isNewer ? result?.changelog : "",
+          readyToInstall: isReady2,
+          downloading: isDownloading,
+          downloadProgress: isDownloading || isReady2 ? result?.downloadProgress ?? (isReady2 ? 100 : 0) : 0
         });
       } catch (err) {
         res.status(500).json({
           error: err.message,
           hasUpdate: false,
           currentVersion: APP_VERSION,
-          latestVersion: APP_VERSION
+          latestVersion: APP_VERSION,
+          downloading: false,
+          downloadProgress: 0,
+          readyToInstall: false
         });
       }
     });
