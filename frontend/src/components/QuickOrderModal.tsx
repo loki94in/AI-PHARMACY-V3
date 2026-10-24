@@ -886,17 +886,25 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
           mapped: item.mapped
         }));
         const res = await api.addPharmarackCart(pharmarackItems);
-        if (res && res.success) {
+        if (res && res.success && !res.offline) {
           toastEvent.trigger(`Added ${items.length} medicine(s) to actual Pharmarack cart!`, 'success');
           window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        } else if (res?.offline || res?.reason === 'NO_TOKEN') {
+          toastEvent.trigger('Pharmarack session offline — item(s) NOT added to live cart', 'info');
         } else {
           toastEvent.trigger(`Requests logged, cart notice: ${res?.error || 'Manual cart add required'}`, 'info');
         }
       } catch (cartErr) {
         const e = cartErr as LocalApiError;
         console.warn('Failed to add batch items to actual Pharmarack cart:', cartErr);
-        const detailedError = e.response?.data?.details || e.response?.data?.error || e.message || 'Sync issue';
-        toastEvent.trigger(`Requests logged, Pharmarack cart notice: ${detailedError}`, 'info');
+        const resData = e.response?.data as any;
+        const isOffline = resData?.offline || resData?.reason === 'NO_TOKEN';
+        if (isOffline) {
+          toastEvent.trigger('Pharmarack session offline — item(s) NOT added to live cart', 'info');
+        } else {
+          const detailedError = resData?.details || resData?.error || e.message || 'Sync issue';
+          toastEvent.trigger(`Requests logged, Pharmarack cart notice: ${detailedError}`, 'info');
+        }
       }
     } catch (err) {
       const e = err as LocalApiError;

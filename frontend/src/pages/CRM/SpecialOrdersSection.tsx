@@ -364,7 +364,7 @@ export const SpecialOrdersSection: React.FC = () => {
         scheme: order.pharmarack_scheme || undefined,
         mapped: order.pharmarack_mapped === 1
       }]);
-      if (res && res.success) {
+      if (res && res.success && !res.offline) {
         toastEvent.trigger(`Added "${order.product}" to Pharmarack cart!`, 'success', '/crm');
         await api.updateOrder(order.id, { status: 'Ordered' });
 
@@ -382,11 +382,20 @@ export const SpecialOrdersSection: React.FC = () => {
 
         await loadOrders();
         window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      } else if (res?.offline || res?.reason === 'NO_TOKEN') {
+        toastEvent.trigger('Pharmarack session offline — item NOT added to live cart', 'error', '/crm');
       } else {
         toastEvent.trigger(res?.error || 'Failed to add item to cart', 'error', '/crm');
       }
     } catch (err) {
-      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to add to cart', 'error', '/crm');
+      const e = err as LocalApiError;
+      const resData = e.response?.data as any;
+      const isOffline = resData?.offline || resData?.reason === 'NO_TOKEN';
+      if (isOffline) {
+        toastEvent.trigger('Pharmarack session offline — item NOT added to live cart', 'error', '/crm');
+      } else {
+        toastEvent.trigger(resData?.error || 'Failed to add to cart', 'error', '/crm');
+      }
     } finally {
       setAddingCartId(null);
     }
@@ -433,18 +442,27 @@ export const SpecialOrdersSection: React.FC = () => {
         mapped: order.pharmarack_mapped === 1
       }));
       const res = await api.addPharmarackCart(payload);
-      if (res && res.success) {
+      if (res && res.success && !res.offline) {
         toastEvent.trigger(`Added ${itemsToAdd.length} item(s) to Pharmarack cart!`, 'success', '/crm');
         for (const o of itemsToAdd) {
           await api.updateOrder(o.id, { status: 'Ordered' }).catch(() => {});
         }
         await loadOrders();
         window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      } else if (res?.offline || res?.reason === 'NO_TOKEN') {
+        toastEvent.trigger('Pharmarack session offline — items NOT added to live cart', 'error', '/crm');
       } else {
         toastEvent.trigger(res?.error || 'Failed to add items to cart', 'error', '/crm');
       }
     } catch (err) {
-      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to add items to cart', 'error', '/crm');
+      const e = err as LocalApiError;
+      const resData = e.response?.data as any;
+      const isOffline = resData?.offline || resData?.reason === 'NO_TOKEN';
+      if (isOffline) {
+        toastEvent.trigger('Pharmarack session offline — items NOT added to live cart', 'error', '/crm');
+      } else {
+        toastEvent.trigger(resData?.error || 'Failed to add items to cart', 'error', '/crm');
+      }
     } finally {
       setAddingCartId(null);
     }

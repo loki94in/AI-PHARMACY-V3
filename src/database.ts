@@ -535,7 +535,9 @@ async function ensureRefillCartLinkSchema(db: any) {
     cart_store_name: 'TEXT DEFAULT NULL',
     cart_product_code: 'TEXT DEFAULT NULL',
     cart_product_name: 'TEXT DEFAULT NULL',
-    cart_qty: 'INTEGER DEFAULT NULL'
+    cart_qty: 'INTEGER DEFAULT NULL',
+    source: "TEXT DEFAULT 'counter'",
+    cart_status: "TEXT DEFAULT 'pending'"
   });
   await db.run(`
     CREATE TABLE IF NOT EXISTS pharmarack_distributor_products (
@@ -2112,6 +2114,8 @@ export async function ensureSchema(dbPath: string) {
       reminder_occurrence_date DATETIME DEFAULT NULL,
       patient_confirmed INTEGER DEFAULT 0,
       confirmed_at DATETIME DEFAULT NULL,
+      source TEXT DEFAULT 'counter',
+      cart_status TEXT DEFAULT 'pending',
       FOREIGN KEY(medicine_id) REFERENCES medicines(id),
       FOREIGN KEY(customer_id) REFERENCES customers(id)
     );
@@ -2695,6 +2699,8 @@ export async function ensureSchema(dbPath: string) {
       ['patient_refills', 'reminder_occurrence_date', 'ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL'],
       ['patient_refills', 'patient_confirmed', 'ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0'],
       ['patient_refills', 'confirmed_at', 'ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL'],
+      ['patient_refills', 'source', "ALTER TABLE patient_refills ADD COLUMN source TEXT DEFAULT 'counter'"],
+      ['patient_refills', 'cart_status', "ALTER TABLE patient_refills ADD COLUMN cart_status TEXT DEFAULT 'pending'"],
       ['special_orders', 'customer_id', 'ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL'],
       ['special_orders', 'date', 'ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
       ['special_orders', 'product', 'ALTER TABLE special_orders ADD COLUMN product TEXT'],

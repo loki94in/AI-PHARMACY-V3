@@ -150,8 +150,7 @@ else add to ONE linked in-stock product: already in cart → priority order (lin
 - `medicine_distributor_links` holds only what the pharmacist ticked, in priority order. Only MAPPED Pharmarack distributors are offered. Search results and offline catalog rows never become links.
 - Cancel, delete, and removing a medicine from the prescription remove exactly the recorded `cart_store_id + cart_product_code` line, in the background, and push the real result as a toast. Fulfill, fulfill-all, status completed and a POS refill sale clear `cart_product_code`. Skip does not.
 - **🔗 Link distributor** on each refill medicine opens `MedicineLinkModal`: the medicine and its links in priority order on the left, a Pharmarack search (3+ typed letters, any spelling) with a tick-list on the right. A newly ticked product is placed by purchase-bill count (`GET /api/refills/distributor-ranks`). ▲▼ and "Sort by most purchased" change the order. `PUT /api/refills/medicine-links/:medicineId` replaces the set, and `[]` unlinks. It never touches the cart.
-- Also shows on: CRM refill card chip `🛒 <distributor> ×qty` (`/refills/panel` → `cart_store_name`, `cart_qty`), and the link button's label (`/refills/panel` → `linked_distributors`).
-- No worker, cron or listener calls this. Cart writes happen only from the click.
+- Refill auto-cart policy: Counter refills remain click-only (user click in CRM / Quick Assist). Online-sourced refills (`source IN ('website', 'whatsapp')`) may be automatically processed by `startupSyncCoordinator.runRefillAutoCartCatchUp` when the store setting `refill_auto_cart_add` is enabled ('auto'). This is the SINGLE sanctioned worker path, running bounded (max 10), serialized, and non-concurrently upon live cart boot or cloud order pull.
 
 ---
 

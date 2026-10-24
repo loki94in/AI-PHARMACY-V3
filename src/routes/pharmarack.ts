@@ -43,7 +43,7 @@ function findChromePath() {
   return findChromiumPath({ includeEdge: true });
 }
 
-async function getPharmarackSettings() {
+export async function getPharmarackSettings() {
   const db = await dbManager.getConnection();
   const rows = await db.all("SELECT key, value FROM app_settings WHERE key LIKE 'pharmarack_%' OR key = 'combine_pharmarack_pharmacy_search'");
   const settings: Record<string, string> = {};
@@ -1719,6 +1719,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   success: boolean;
   mode?: string;
   offline?: boolean;
+  reason?: string;
   message?: string;
   error?: string;
   details?: string;
@@ -1732,14 +1733,13 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   const token = settings['pharmarack_session_token'] || '';
 
   if (!token) {
-    if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
-      return {
-        success: true,
-        offline: true,
-        message: 'Item saved to distributor cart (offline mode). Sync will occur when connected.'
-      };
-    }
-    return { success: false, error: 'Need to login to Pharmarack to add items to cart', code: 'NEED_LOGIN' };
+    return {
+      success: false,
+      offline: true,
+      reason: 'NO_TOKEN',
+      error: 'Pharmarack session offline — login or active token required',
+      message: 'Pharmarack session offline — item NOT added'
+    };
   }
 
   // Try to enrich each item's properties from the searchCache or on-the-fly search
@@ -2251,6 +2251,9 @@ router.post('/cart/add', async (req, res) => {
   try {
     const result = await addItemsToPharmarackCart(items);
     if (result.success) {
+      return res.json(result);
+    }
+    if (result.offline) {
       return res.json(result);
     }
     if (result.code === 'NEED_LOGIN') {

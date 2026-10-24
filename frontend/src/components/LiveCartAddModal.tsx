@@ -1271,22 +1271,31 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   // Detached upstream sync for one staged item — never blocks the form.
   const processBackgroundAdd = async (record: LocalPendingAdd) => {
     try {
-      await api.addPharmarackCart([record.payload]);
-      setPendingAddStatus(record.id, 'added');
-      // ponytail: chip already shows 'added' — no toast needed
-      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      const res = await api.addPharmarackCart([record.payload]);
+      if (res && res.success && !res.offline) {
+        setPendingAddStatus(record.id, 'added');
+        // ponytail: chip already shows 'added' — no toast needed
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
 
-      // Automatically update source order status if opened from pending requests or refills
-      if (record.sourceOrderId) {
-        try {
-          await api.updateOrder(record.sourceOrderId, { status: 'Ordered' });
-        } catch (e) {
-          console.warn('Failed to update source order status:', e);
+        // Automatically update source order status if opened from pending requests or refills
+        if (record.sourceOrderId) {
+          try {
+            await api.updateOrder(record.sourceOrderId, { status: 'Ordered' });
+          } catch (e) {
+            console.warn('Failed to update source order status:', e);
+          }
+          fetchPendingOrders().catch(() => {});
         }
-        fetchPendingOrders().catch(() => {});
-      }
-      if (record.hadSourceRefill) {
-        fetchPendingRefills().catch(() => {});
+        if (record.hadSourceRefill) {
+          fetchPendingRefills().catch(() => {});
+        }
+      } else {
+        setPendingAddStatus(record.id, 'failed');
+        if (res?.offline || res?.reason === 'NO_TOKEN') {
+          toastEvent.trigger('Pharmarack session offline — item NOT added', 'error');
+        } else {
+          toastEvent.trigger(`Live addition failed: ${res?.error || 'Could not add to cart'}`, 'error');
+        }
       }
 
       // Stays visible as "last medicine added" until the NEXT add replaces it (owner preference,
@@ -1294,9 +1303,15 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     } catch (cartErr: unknown) {
       console.error('Failed to add live cart item:', cartErr);
       const apiErr = cartErr as LocalApiError;
-      const detailedError = apiErr?.response?.data?.details || apiErr?.response?.data?.error || apiErr?.message || 'Unknown error';
+      const resData = apiErr?.response?.data as any;
+      const isOffline = resData?.offline || resData?.reason === 'NO_TOKEN';
       setPendingAddStatus(record.id, 'failed');
-      toastEvent.trigger(`Live addition failed: ${detailedError}`, 'error');
+      if (isOffline) {
+        toastEvent.trigger('Pharmarack session offline — item NOT added', 'error');
+      } else {
+        const detailedError = resData?.details || resData?.error || apiErr?.message || 'Unknown error';
+        toastEvent.trigger(`Live addition failed: ${detailedError}`, 'error');
+      }
     }
   };
 

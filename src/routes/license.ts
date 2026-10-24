@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { checkLicense, activateLicense, getMachineId, APP_VERSION } from '../services/licenseService.js';
 import { autoUpdateService } from '../services/autoUpdateService.js';
+import { getUpdateHistory } from '../services/updateHistoryService.js';
 
 const router = Router();
 
@@ -69,6 +70,8 @@ router.get('/update-status', (_req, res) => {
     downloadUrl: result?.downloadUrl,
     updatePackageUrl: result?.updatePackageUrl,
     changelog: result?.changelog || '',
+    lastCheckedAt: autoUpdateService.getLastCheckedAt() || null,
+    lastError: result?.lastError || null,
   });
 });
 
@@ -109,6 +112,22 @@ router.post('/check-update', async (_req, res) => {
       hasUpdate: false,
       currentVersion: APP_VERSION,
       latestVersion: APP_VERSION,
+    });
+  }
+});
+
+/** GET /api/license/update-history — list past releases from GitHub with changelogs */
+router.get('/update-history', async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const history = await getUpdateHistory(forceRefresh);
+    res.json(history);
+  } catch (err: any) {
+    res.status(500).json({
+      installed: APP_VERSION,
+      releases: [],
+      offline: true,
+      error: err?.message || 'Failed to fetch release history',
     });
   }
 });

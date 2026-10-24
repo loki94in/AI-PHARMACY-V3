@@ -97,6 +97,17 @@ router.get('/services-status', async (_req, res) => {
   }
 });
 
+// GET /api/system/resource-snapshot (Read-only live resource telemetry & Chromium census)
+router.get('/resource-snapshot', async (_req, res) => {
+  try {
+    const { getLiveHealthSnapshot } = await import('../systemHealthMonitor.js');
+    const data = getLiveHealthSnapshot();
+    res.json({ success: true, ...data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 // POST /api/system/refresh-services
 router.post('/refresh-services', async (_req, res) => {
@@ -104,6 +115,17 @@ router.post('/refresh-services', async (_req, res) => {
     // Trigger Pharmarack token check immediately
     tokenRefreshScheduler.triggerImmediateCheck().catch(() => {});
     res.json({ success: true, message: 'Service refresh triggered successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/system/sweep-zombies (User-clicked manual sweep of orphan Chromium processes)
+router.post('/sweep-zombies', async (_req, res) => {
+  try {
+    const { reapSystemProfileOrphans } = await import('../utils/chromeBrowser.js');
+    const result = await reapSystemProfileOrphans();
+    res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

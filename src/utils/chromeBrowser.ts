@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { spawn, execSync, exec, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { getAppDataDir } from '../config/index.js';
@@ -301,7 +302,10 @@ export function closeAppBrowser(): void {
 /**
  * Kill any orphan Chrome or Edge processes locking a specific profile folder.
  */
-export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_profile'): Promise<void> {
+export async function killOrphanChromeProcesses(
+  keyword: string = 'pharmarack_profile',
+  options?: { protectedPids?: number[]; dryRun?: boolean }
+): Promise<void> {
   if (process.platform !== 'win32') return;
   try {
     const resolvedPath = path.isAbsolute(keyword)
@@ -320,12 +324,18 @@ export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_pr
     });
 
     const stdout = execResult.stdout || '';
+    const protectedSet = new Set(options?.protectedPids || []);
     const pids = stdout
       .split(/\r?\n/)
       .map(line => line.trim())
       .filter(line => line && !line.toLowerCase().includes('processid'))
       .map(pid => parseInt(pid, 10))
-      .filter(pid => !isNaN(pid) && pid > 0);
+      .filter(pid => !isNaN(pid) && pid > 0 && !protectedSet.has(pid));
+
+    if (options?.dryRun) {
+      console.log(`[ProcessGuardian] Dry-run: found ${pids.length} lock-holding candidate(s) for ${keyword}: ${pids.join(', ')}`);
+      return;
+    }
 
     for (const pid of pids) {
       console.log(`[ProcessGuardian] Killing lock-holding Chrome process: ${pid}`);
@@ -342,6 +352,100 @@ export async function killOrphanChromeProcesses(keyword: string = 'pharmarack_pr
     }
   } catch (err: any) {
     console.error(`[ProcessGuardian] Failed to kill lock-holding Chrome processes for ${keyword}:`, err.message);
+  }
+}
+
+/**
+ * System-wide sweep of orphaned Chromium processes holding locks on our data profile folders.
+ * Excludes active registered sessions, WhatsApp browser instance, and Pharmarack in-flight browsers.
+ * Records all kills into action_logs.
+ */
+export async function reapSystemProfileOrphans(options?: { dryRun?: boolean }): Promise<{ killed: number; freedMB: number }> {
+  if (process.platform !== 'win32') return { killed: 0, freedMB: 0 };
+  if (isShutdownInProgress()) return { killed: 0, freedMB: 0 };
+
+  try {
+    const { isWhatsAppBusyOrRestoring, getWhatsAppBrowserPid } = await import('../whatsappClient.js');
+    if (isWhatsAppBusyOrRestoring()) {
+      console.log('[ProcessGuardian] WhatsApp is actively initializing or syncing. Skipping orphan reap.');
+      return { killed: 0, freedMB: 0 };
+    }
+
+    const protectedPids = getActiveHeadlessPids();
+    const waPid = getWhatsAppBrowserPid();
+    if (waPid && waPid > 0) protectedPids.add(waPid);
+
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe')\\" | Select-Object ProcessId, WorkingSetSize, CommandLine | ConvertTo-Json -Compress"`,
+      { timeout: 4000 }
+    ).catch(() => ({ stdout: '' }));
+
+    const trimmed = (stdout || '').trim();
+    if (!trimmed) return { killed: 0, freedMB: 0 };
+
+    let parsed: any[];
+    try {
+      const data = JSON.parse(trimmed);
+      parsed = Array.isArray(data) ? data : [data];
+    } catch {
+      return { killed: 0, freedMB: 0 };
+    }
+
+    let killed = 0;
+    let freedBytes = 0;
+    const { dbManager } = await import('../database/connection.js');
+    const db = await dbManager.getConnection().catch(() => null);
+
+    for (const item of parsed) {
+      const pid = Number(item.ProcessId);
+      if (!pid || isNaN(pid) || protectedPids.has(pid)) continue;
+
+      const cmdLine = String(item.CommandLine || '');
+      const lower = cmdLine.toLowerCase();
+
+      // Only sweep processes running our profile folders (never touch unrelated user Chrome)
+      const isOurProfile =
+        lower.includes('pharmarack_profile') ||
+        lower.includes('pharmarack_profile_temp_') ||
+        lower.includes('.wwebjs_auth');
+
+      if (!isOurProfile) continue;
+
+      const workingSet = Number(item.WorkingSetSize) || 0;
+      console.log(`[ProcessGuardian] Reaping zombie Chromium process: PID ${pid} (${Math.round(workingSet / (1024 * 1024))} MB)`);
+
+      if (!options?.dryRun) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (_) {
+          try {
+            await execAsync(`taskkill /F /PID ${pid}`);
+          } catch (_) {}
+        }
+
+        if (db) {
+          try {
+            await db.run(
+              `INSERT INTO action_logs (action, entity, entity_id, notes, timestamp)
+               VALUES ('reap_zombie', 'system_resource', ?, ?, datetime('now', 'localtime'))`,
+              [String(pid), JSON.stringify({ rssKB: Math.round(workingSet / 1024), cmd: cmdLine.slice(0, 120) })]
+            );
+          } catch (_) {}
+        }
+      }
+
+      killed++;
+      freedBytes += workingSet;
+    }
+
+    const freedMB = Math.round(freedBytes / (1024 * 1024));
+    if (killed > 0) {
+      console.log(`[ProcessGuardian] Zombie sweep complete: ${killed} process(es) reaped, ${freedMB} MB freed.`);
+    }
+    return { killed, freedMB };
+  } catch (err: any) {
+    console.error('[ProcessGuardian] Error in reapSystemProfileOrphans:', err?.message || err);
+    return { killed: 0, freedMB: 0 };
   }
 }
 
@@ -420,6 +524,43 @@ export function markShutdownInProgress(): void {
   shutdownInProgressFlag = true;
 }
 
+/** Demote a background process or browser to BELOW_NORMAL priority on Windows to protect CPU rendering */
+export function demoteProcessPriority(target: any): void {
+  if (process.platform !== 'win32') return;
+  try {
+    let pid: number | null = null;
+    if (typeof target === 'number' && target > 0) pid = target;
+    else if (target?.pid && typeof target.pid === 'number') pid = target.pid;
+    else if (typeof target?.process === 'function') {
+      const proc = target.process();
+      if (proc?.pid && typeof proc.pid === 'number') pid = proc.pid;
+    }
+    if (pid && (os.constants?.priority as any)?.PRIORITY_BELOW_NORMAL) {
+      os.setPriority(pid, (os.constants.priority as any).PRIORITY_BELOW_NORMAL);
+    }
+  } catch (_) {}
+}
+
+/** Get all PIDs of currently tracked active headless sessions */
+export function getActiveHeadlessPids(): Set<number> {
+  const pids = new Set<number>();
+  for (const session of activeHeadlessRegistry.values()) {
+    const t = session.target;
+    if (!t) continue;
+    if (typeof t === 'number' && t > 0) {
+      pids.add(t);
+    } else if (typeof t.pid === 'number' && t.pid > 0) {
+      pids.add(t.pid);
+    } else if (typeof t.process === 'function') {
+      try {
+        const proc = t.process();
+        if (proc && typeof proc.pid === 'number') pids.add(proc.pid);
+      } catch (_) {}
+    }
+  }
+  return pids;
+}
+
 /** Register a headless browser or spawned chrome process for clean shutdown tracking. */
 export function trackHeadless(target: any, tag: string): string {
   const id = `hl_${Date.now()}_${nextHeadlessId++}`;
@@ -429,6 +570,8 @@ export function trackHeadless(target: any, tag: string): string {
     target,
     startedAt: Date.now()
   });
+  // Priority Diet: Demote spawned background browser processes to BELOW_NORMAL
+  demoteProcessPriority(target);
   return id;
 }
 

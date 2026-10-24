@@ -6498,34 +6498,7 @@ function detectNonAllopathicKind(name) {
 }
 function sanitizePharmarackQuery(rawName) {
   if (!rawName) return "";
-  const cleaned = rawName.replace(/[+/,._\-()\[\]#*']/g, " ").replace(/\s+/g, " ").trim();
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  const coreWords = [];
-  for (const w of words) {
-    const lower = w.toLowerCase();
-    if (DOSAGE_AND_PACKAGING_NOISE_TOKENS.has(lower)) {
-      continue;
-    }
-    if (/^\d+(?:'s|s|t|tab|tabs|cap|caps)?$/i.test(w) && coreWords.length >= 2) {
-      continue;
-    }
-    const unitMatch = w.match(/^(\d+(?:\.\d+)?)(mg|ml|gm|g|mcg|iu|%|tabs?|caps?)$/i);
-    if (unitMatch) {
-      coreWords.push(unitMatch[1]);
-    } else {
-      coreWords.push(w);
-    }
-    if (coreWords.length >= 2 && /\d/.test(coreWords[1])) {
-      break;
-    }
-    if (coreWords.length >= 3) {
-      break;
-    }
-  }
-  if (coreWords.length === 0) {
-    return words.slice(0, 2).join(" ");
-  }
-  return coreWords.slice(0, 3).join(" ");
+  return rawName.replace(/[+/,._\-()\[\]#*']/g, " ").replace(/\s+/g, " ").trim();
 }
 function levenshtein2(a, b, maxDist = 3) {
   if (a === b) return 0;
@@ -13563,37 +13536,6 @@ var init_searchCache = __esm({
         if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) return null;
         return { items: entry.data, stale: Date.now() - entry.timestamp >= this.CACHE_TTL };
       }
-      /**
-       * Fast prefix/family match for instant local paint while typing
-       * (e.g. user typed "dolo 650", we have "dolo" cached; or user typed "dolo 6", we have "dolo 650").
-       */
-      findPrefixMatch(query, storeId, isMapped) {
-        const q = query.toLowerCase().trim();
-        if (q.length < 3) return null;
-        this.cleanup();
-        const suffix = this.getCacheKeySuffix(storeId, isMapped);
-        for (let len = q.length - 1; len >= 3; len--) {
-          const sub = q.substring(0, len);
-          const entry = this.cache.get(sub + suffix);
-          if (entry && Array.isArray(entry.data) && entry.data.length > 0) {
-            const filtered = entry.data.filter((item) => {
-              const name = String(item.name || item.medicine_name || item.product_name || item.shortName || "").toLowerCase();
-              return name.includes(q);
-            });
-            if (filtered.length > 0) {
-              return { items: filtered, stale: true };
-            }
-          }
-        }
-        for (const [key, entry] of this.cache.entries()) {
-          if (!key.endsWith(suffix)) continue;
-          const keyQuery = key.slice(0, key.length - suffix.length);
-          if (keyQuery.startsWith(q) && Array.isArray(entry.data) && entry.data.length > 0) {
-            return { items: entry.data, stale: true };
-          }
-        }
-        return null;
-      }
       set(query, storeId, isMapped, data) {
         const q = query.toLowerCase().trim();
         if (!q) return;
@@ -15404,6 +15346,10 @@ var init_distributorDispatchReminderWorker = __esm({
 });
 
 // src/services/startupSyncCoordinator.ts
+var startupSyncCoordinator_exports = {};
+__export(startupSyncCoordinator_exports, {
+  startupSyncCoordinator: () => startupSyncCoordinator
+});
 var StartupSyncCoordinator, startupSyncCoordinator;
 var init_startupSyncCoordinator = __esm({
   "src/services/startupSyncCoordinator.ts"() {
@@ -15437,6 +15383,145 @@ var init_startupSyncCoordinator = __esm({
           this.lastError = null;
           console.log(`[StartupSyncCoordinator] Pharmarack cart loaded successfully in ${Date.now() - this.startupTime}ms. Releasing scanners.`);
           this.releaseWaiters();
+          void this.syncPendingLiveCartOrders().catch((err) => {
+            console.warn("[StartupSyncCoordinator] Offline live cart sync warning:", err?.message || err);
+          });
+        }
+      }
+      /**
+       * Scans and syncs all orders that were queued while offline into the live cart.
+       */
+      async syncPendingLiveCartOrders() {
+        try {
+          const { dbManager: dbManager2 } = await Promise.resolve().then(() => (init_connection(), connection_exports));
+          const db2 = await dbManager2.getConnection();
+          const queuedOrders = await db2.all(
+            `SELECT * FROM special_orders 
+         WHERE needs_live_cart_sync = 1 
+           AND status NOT IN ('Cancelled', 'Delivered', 'Completed')
+         ORDER BY id ASC LIMIT 50`
+          );
+          if (!queuedOrders || queuedOrders.length === 0) {
+            return { processed: 0, synced: 0 };
+          }
+          console.log(`[StartupSyncCoordinator] Found ${queuedOrders.length} offline-queued order(s) needing Live Cart sync.`);
+          const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          let syncedCount = 0;
+          for (const ord of queuedOrders) {
+            const prodName = ord.pharmarack_product_name || ord.medicine_name || ord.product;
+            let storeId = ord.pharmarack_store_id ? Number(ord.pharmarack_store_id) : 0;
+            let distName = ord.pharmarack_distributor || "";
+            let prodId = ord.pharmarack_product_id ? Number(ord.pharmarack_product_id) : ord.medicine_id ? Number(ord.medicine_id) : 0;
+            let prodCode = ord.pharmarack_product_code ? String(ord.pharmarack_product_code) : "";
+            let rate = Number(ord.pharmarack_rate) || 0;
+            let mrp = Number(ord.pharmarack_mrp) || 0;
+            if (!storeId) {
+              const linkRow = await db2.get(
+                `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+             FROM medicine_distributor_links 
+             WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?))
+             ORDER BY is_preferred DESC LIMIT 1`,
+                [prodName]
+              ).catch(() => null);
+              if (linkRow && linkRow.store_id) {
+                storeId = Number(linkRow.store_id);
+                distName = distName || linkRow.distributor_name || "";
+                prodId = prodId || Number(linkRow.product_id) || 0;
+                prodCode = prodCode || String(linkRow.product_code || "");
+                rate = rate || Number(linkRow.rate) || 0;
+                mrp = mrp || Number(linkRow.mrp) || 0;
+              } else {
+                const catRow = await db2.get(
+                  `SELECT store_id, store_name, product_id, product_code, rate, mrp 
+               FROM distributor_catalog 
+               WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?)) 
+                 AND store_id > 0
+               ORDER BY rate ASC LIMIT 1`,
+                  [prodName, `%${prodName}%`]
+                ).catch(() => null);
+                if (catRow && catRow.store_id) {
+                  storeId = Number(catRow.store_id);
+                  distName = distName || catRow.store_name || "";
+                  prodId = prodId || Number(catRow.product_id) || 0;
+                  prodCode = prodCode || String(catRow.product_code || "");
+                  rate = rate || Number(catRow.rate) || 0;
+                  mrp = mrp || Number(catRow.mrp) || 0;
+                }
+              }
+            }
+            const cartRes = await addItemsToPharmarackCart2([{
+              productName: prodName,
+              product: prodName,
+              productId: prodId,
+              productCode: prodCode,
+              storeId,
+              storeName: distName || "Standard Distributor",
+              qty: ord.qty > 0 ? ord.qty : 1,
+              rate,
+              mrp,
+              packaging: "1 strip",
+              mapped: storeId > 0
+            }]).catch((err) => ({ success: false, error: err?.message || String(err), offline: false }));
+            if (cartRes.success && !cartRes.offline) {
+              syncedCount++;
+              await db2.run(
+                `UPDATE special_orders 
+             SET needs_live_cart_sync = 0,
+                 status = 'In Live Cart',
+                 delivery_status = 'in_live_cart',
+                 pharmacy_verification_status = 'IN_LIVE_CART',
+                 pharmarack_distributor = ?,
+                 pharmarack_store_id = ?,
+                 pharmarack_product_id = ?,
+                 pharmarack_product_code = ?,
+                 pharmarack_rate = ?,
+                 pharmarack_mrp = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+                [distName, storeId, prodId, prodCode, rate, mrp, ord.id]
+              ).catch(() => {
+              });
+              await db2.run(
+                `INSERT OR REPLACE INTO online_order_items (
+               order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+                [ord.id, prodName, prodName, ord.qty || 1, ord.qty || 1, mrp, rate, (ord.qty || 1) * rate]
+              ).catch(() => {
+              });
+              await db2.run(
+                `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+             VALUES (?, 'offline_synced_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+                [ord.id, `Offline order successfully synced to Live Cart (${distName || "Distributor"}).`]
+              ).catch(() => {
+              });
+              const cleanPhone = String(ord.phone || "").replace(/\D/g, "").slice(-10);
+              if (cleanPhone && cleanPhone.length === 10) {
+                try {
+                  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+                  const syncMsg = `\u{1F6D2} *Order Synced to Live Cart \u2014 AI Pharmacy*
+
+Hello *${ord.requester || "Customer"}*,
+Your queued medicine request for *${prodName}* (Qty: ${ord.qty || 1}) has been automatically synchronized and forwarded to our distributor Live Cart for procurement!
+
+We will update you as soon as stock arrives at the counter.`;
+                  await whatsappQueueWorker2.enqueue(`91${cleanPhone}`, syncMsg, "live_cart_sync_notification", ord.requester);
+                } catch (_) {
+                }
+              }
+            }
+          }
+          if (syncedCount > 0) {
+            try {
+              const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+              eventService2.broadcast("order_updated", { at: Date.now(), source: "offline_sync" });
+              eventService2.broadcast("live_cart_updated", { at: Date.now(), count: syncedCount });
+            } catch (_) {
+            }
+          }
+          return { processed: queuedOrders.length, synced: syncedCount };
+        } catch (e) {
+          console.warn("[StartupSyncCoordinator] syncPendingLiveCartOrders failure:", e?.message || e);
+          return { processed: 0, synced: 0 };
         }
       }
       /**
@@ -17931,7 +18016,8 @@ async function ensureOrderTimingSchema(db2) {
     pharmarack_product_id: "INTEGER DEFAULT NULL",
     pharmarack_product_code: "TEXT DEFAULT NULL",
     pharmarack_store_id: "INTEGER DEFAULT NULL",
-    pharmarack_product_name: "TEXT DEFAULT NULL"
+    pharmarack_product_name: "TEXT DEFAULT NULL",
+    needs_live_cart_sync: "INTEGER DEFAULT 0"
   });
   await ensureColumns(db2, "patient_refills", {
     paused_at: "DATETIME DEFAULT NULL",
@@ -19490,7 +19576,8 @@ async function ensureSchema(dbPath) {
       payment_screenshot_path TEXT DEFAULT NULL,
       screenshot_amount REAL DEFAULT NULL,
       payment_method TEXT DEFAULT 'cash',
-      delivery_mode TEXT DEFAULT 'pickup'
+      delivery_mode TEXT DEFAULT 'pickup',
+      needs_live_cart_sync INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -20027,7 +20114,8 @@ async function ensureSchema(dbPath) {
       ["return_items", "cd_value", "ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0"],
       ["patient_refills", "reminder_mode", "ALTER TABLE patient_refills ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
       ["customers", "reminder_mode", "ALTER TABLE customers ADD COLUMN reminder_mode TEXT DEFAULT 'manual'"],
-      ["customers", "language_confirmed", "ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0"]
+      ["customers", "language_confirmed", "ALTER TABLE customers ADD COLUMN language_confirmed INTEGER DEFAULT 0"],
+      ["special_orders", "needs_live_cart_sync", "ALTER TABLE special_orders ADD COLUMN needs_live_cart_sync INTEGER DEFAULT 0"]
     ];
     for (const [table, col, stmt] of alterStatements) {
       try {
@@ -21982,7 +22070,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 79;
+    CURRENT_SCHEMA_VERSION = 80;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -29884,6 +29972,43 @@ function sameProductName(a, b) {
   const tb = [...getCoreMedicineTokens(String(b || ""))].sort().join(" ");
   return ta.length > 0 && ta === tb;
 }
+async function getMappedStoreIds() {
+  if (mappedStoreIdsCache && Date.now() - mappedStoreIdsCache.cachedAt < 15 * 60 * 1e3 && mappedStoreIdsCache.ids.length > 0) {
+    return mappedStoreIdsCache.ids;
+  }
+  try {
+    const res = await fetchPharmarack("https://pharmretail-api.pharmarack.com/user/api/v2/store-list", {
+      method: "GET",
+      signal: AbortSignal.timeout(1e4)
+    }).catch(() => null);
+    if (res && res.ok) {
+      const data = await res.json().catch(() => null);
+      const stores = data?.data?.Stores;
+      if (Array.isArray(stores)) {
+        const checkIsMapped = (s) => s.Ismapped === 1 || s.IsMapped === 1 || s.isMapped === true || s.isMapped === 1 || String(s.IsMapped) === "1" || String(s.Ismapped) === "1";
+        const mapped = stores.filter(checkIsMapped).map((s) => Number(s.StoreId || s.storeId || s.Id || s.id)).filter((id) => !isNaN(id) && id > 0);
+        if (mapped.length > 0) {
+          mappedStoreIdsCache = { ids: mapped, cachedAt: Date.now() };
+          return mapped;
+        }
+      }
+    }
+  } catch (_) {
+  }
+  try {
+    const db2 = await dbManager.getConnection();
+    const rows = await db2.all("SELECT DISTINCT store_id FROM distributor_catalog WHERE is_mapped = 1 AND store_id > 0").catch(() => []);
+    if (rows && rows.length > 0) {
+      const dbIds = rows.map((r) => Number(r.store_id)).filter((id) => !isNaN(id) && id > 0);
+      if (dbIds.length > 0) {
+        if (!mappedStoreIdsCache) mappedStoreIdsCache = { ids: dbIds, cachedAt: Date.now() };
+        return dbIds;
+      }
+    }
+  } catch (_) {
+  }
+  return mappedStoreIdsCache?.ids || [];
+}
 async function performPharmarackSearch(qRaw, storeId, isMapped) {
   const hasStoreFilter = storeId !== null && !isNaN(storeId);
   let settings = {};
@@ -29903,20 +30028,20 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       }
       return { status: "need_login" };
     }
+    const mappedIds = !hasStoreFilter && isMapped !== false ? await getMappedStoreIds() : [];
     const buildPayload = (keyword) => ({
       SearchKeyword: keyword,
-      StoreId: hasStoreFilter && isMapped ? [storeId] : [],
+      StoreId: hasStoreFilter && isMapped ? [storeId] : mappedIds.length > 0 ? mappedIds : [],
       NonMappedStoreId: hasStoreFilter && !isMapped ? [storeId] : [],
       Count: 100,
       SkipCount: 0,
-      isMappedSearch: hasStoreFilter ? isMapped : null,
+      isMappedSearch: hasStoreFilter ? isMapped : isMapped !== false ? true : null,
       IsStock: 2,
       IsScheme: 2,
       IsSort: 1,
       CartSource: "MOVP"
     });
-    const coreTerm = sanitizePharmarackQuery(qRaw);
-    const primaryKeyword = coreTerm && coreTerm.length >= 2 ? coreTerm : qRaw;
+    const primaryKeyword = qRaw.trim();
     const searchCold = Date.now() - lastSearchOkAt > 5 * 60 * 1e3;
     const response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
       method: "POST",
@@ -29990,18 +30115,12 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       });
       const results = rawResults;
       if (results.length > 0) {
-        for (const r of results) {
-          r.matchScore = scoreProductName(qRaw, String(r.name || ""));
-        }
         results.sort((a, b) => {
           const aMapped = Boolean(a.mapped);
           const bMapped = Boolean(b.mapped);
           if (aMapped && !bMapped) return -1;
           if (!aMapped && bMapped) return 1;
-          if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
-          const nameA = String(a.name || "").toLowerCase();
-          const nameB = String(b.name || "").toLowerCase();
-          return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
+          return (a.pharmarackRank ?? 0) - (b.pharmarackRank ?? 0);
         });
         searchCache.set(qRaw, storeId, isMapped, results);
         return { status: "ok", items: results };
@@ -31627,7 +31746,7 @@ async function reconcilePaidAndFulfilledCartItems(distributors) {
   }
   return reconciledItems;
 }
-var import_express, import_path19, import_fs19, router, lastSearchOkAt, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
+var import_express, import_path19, import_fs19, router, lastSearchOkAt, mappedStoreIdsCache, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
@@ -31645,7 +31764,6 @@ var init_pharmarack = __esm({
     init_distributorDispatchReminderWorker();
     init_pharmarackCatalogCache();
     init_startupSyncCoordinator();
-    init_intentKeywords();
     init_chromeBrowser();
     init_marketClosureService();
     init_phoneValidation();
@@ -31656,6 +31774,7 @@ var init_pharmarack = __esm({
     init_orderNameMatcher();
     router = import_express.default.Router();
     lastSearchOkAt = 0;
+    mappedStoreIdsCache = null;
     searchRevalidations = /* @__PURE__ */ new Map();
     router.get("/search", async (req, res) => {
       const qRaw = (req.query.q || "").trim();
@@ -31665,9 +31784,6 @@ var init_pharmarack = __esm({
       const storeId = req.query.storeId ? Number(req.query.storeId) : null;
       const isMapped = req.query.isMapped === "true";
       let cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
-      if (!cachedHit) {
-        cachedHit = searchCache.findPrefixMatch(qRaw, storeId, isMapped);
-      }
       if (cachedHit) {
         if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
         return res.json(cachedHit.items);
@@ -61075,7 +61191,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.149";
+    APP_VERSION = "0.1.150";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -65022,7 +65138,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
               ]
             );
             const orderId = Number(result.lastID);
-            createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null });
+            createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null, itemType: item.itemType || "refill" });
             await db2.run(
               `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
@@ -65033,6 +65149,134 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         } catch (txErr) {
           await db2.run("ROLLBACK");
           throw txErr;
+        }
+        let liveCartAddedCount = 0;
+        let offlineQueuedCount = 0;
+        try {
+          const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          for (const ord of createdOrders) {
+            let isRefill = ord.itemType === "refill";
+            if (!isRefill && custId) {
+              const refillRow = await db2.get(
+                `SELECT id FROM patient_refills WHERE customer_id = ? AND LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) LIMIT 1`,
+                [custId, ord.product]
+              ).catch(() => null);
+              if (refillRow) isRefill = true;
+            }
+            if (isRefill) {
+              let resolvedStoreId = 0;
+              let resolvedStoreName = "";
+              let resolvedProdId = 0;
+              let resolvedProdCode = "";
+              let resolvedRate = 0;
+              let resolvedMrp = 0;
+              const linkRow = await db2.get(
+                `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+             FROM medicine_distributor_links 
+             WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) 
+             ORDER BY is_preferred DESC LIMIT 1`,
+                [ord.product]
+              ).catch(() => null);
+              if (linkRow && linkRow.store_id) {
+                resolvedStoreId = Number(linkRow.store_id);
+                resolvedStoreName = linkRow.distributor_name || "";
+                resolvedProdId = Number(linkRow.product_id) || 0;
+                resolvedProdCode = String(linkRow.product_code || "");
+                resolvedRate = Number(linkRow.rate) || 0;
+                resolvedMrp = Number(linkRow.mrp) || 0;
+              } else {
+                const catRow = await db2.get(
+                  `SELECT store_id, store_name, product_id, product_code, rate, mrp 
+               FROM distributor_catalog 
+               WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?)) 
+                 AND store_id > 0
+               ORDER BY rate ASC LIMIT 1`,
+                  [ord.product, `%${ord.product}%`]
+                ).catch(() => null);
+                if (catRow && catRow.store_id) {
+                  resolvedStoreId = Number(catRow.store_id);
+                  resolvedStoreName = catRow.store_name || "";
+                  resolvedProdId = Number(catRow.product_id) || 0;
+                  resolvedProdCode = String(catRow.product_code || "");
+                  resolvedRate = Number(catRow.rate) || 0;
+                  resolvedMrp = Number(catRow.mrp) || 0;
+                }
+              }
+              const cartResult = await addItemsToPharmarackCart2([{
+                productName: ord.product,
+                product: ord.product,
+                productId: resolvedProdId,
+                productCode: resolvedProdCode,
+                storeId: resolvedStoreId,
+                storeName: resolvedStoreName || "Standard Distributor",
+                qty: ord.qty > 0 ? ord.qty : 1,
+                rate: resolvedRate,
+                mrp: resolvedMrp,
+                packaging: "1 strip",
+                mapped: resolvedStoreId > 0
+              }]).catch((err) => ({ success: false, error: err?.message || String(err), offline: false }));
+              if (cartResult.success && !cartResult.offline) {
+                liveCartAddedCount++;
+                await db2.run(
+                  `UPDATE special_orders 
+               SET needs_live_cart_sync = 0,
+                   status = 'In Live Cart',
+                   delivery_status = 'in_live_cart',
+                   pharmacy_verification_status = 'IN_LIVE_CART',
+                   pharmarack_distributor = ?,
+                   pharmarack_store_id = ?,
+                   pharmarack_product_id = ?,
+                   pharmarack_product_code = ?,
+                   pharmarack_rate = ?,
+                   pharmarack_mrp = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+                  [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, ord.id]
+                ).catch(() => {
+                });
+                await db2.run(
+                  `INSERT OR REPLACE INTO online_order_items (
+                 order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+                  [ord.id, ord.product, ord.product, ord.qty, ord.qty, resolvedMrp, resolvedRate, ord.qty * resolvedRate]
+                ).catch(() => {
+                });
+                await db2.run(
+                  `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+               VALUES (?, 'added_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+                  [ord.id, `Refill medicine "${ord.product}" (Qty: ${ord.qty}) auto-added to Pharmarack Live Cart (${resolvedStoreName || "Distributor"}).`]
+                ).catch(() => {
+                });
+              } else {
+                offlineQueuedCount++;
+                await db2.run(
+                  `UPDATE special_orders 
+               SET needs_live_cart_sync = 1,
+                   delivery_status = 'offline_queued',
+                   pharmacy_verification_status = 'OFFLINE_QUEUED',
+                   pharmarack_distributor = ?,
+                   pharmarack_store_id = ?,
+                   pharmarack_product_id = ?,
+                   pharmarack_product_code = ?,
+                   pharmarack_rate = ?,
+                   pharmarack_mrp = ?,
+                   cart_add_error = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+                  [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, cartResult.error || (cartResult.offline ? "Offline mode" : "Pending login"), ord.id]
+                ).catch(() => {
+                });
+                await db2.run(
+                  `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+               VALUES (?, 'offline_queued_for_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+                  [ord.id, `Refill medicine "${ord.product}" queued for Live Cart auto-sync upon connection.`]
+                ).catch(() => {
+                });
+              }
+            }
+          }
+        } catch (cartErr) {
+          console.warn("[CustomerPortal] Auto-add to live cart warning:", cartErr);
         }
         if (custId) {
           await db2.run(
@@ -65082,6 +65326,15 @@ ${itemsSummary}
 \u{1F4CD} *Pickup Branch:* ${storeName}${storeAddress}${deliveryTimingBlock}${scheduleReasonBlock}${storePhone}${returnNoteBlock}
 
 *Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+          if (liveCartAddedCount > 0) {
+            confirmMsg += `
+
+\u{1F6D2} *Distributor Live Cart:* ${liveCartAddedCount} regular prescription item(s) automatically added to distributor Live Cart for procurement.`;
+          } else if (offlineQueuedCount > 0) {
+            confirmMsg += `
+
+\u{1F6D2} *Procurement Status:* Regular items securely queued; will sync to distributor Live Cart automatically as connection establishes.`;
+          }
           if (allocatedQr) {
             const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);
             confirmMsg += `
@@ -77067,6 +77320,16 @@ var init_utilities = __esm({
               console.warn(`[Clear Cache] Failed to clear directory ${d}:`, err);
             }
           }
+        }
+        try {
+          const { searchCache: searchCache2 } = await Promise.resolve().then(() => (init_searchCache(), searchCache_exports));
+          searchCache2.clear();
+          const searchCacheFile = import_path43.default.join(dataDir, "search-cache.json");
+          if (import_fs46.default.existsSync(searchCacheFile)) {
+            import_fs46.default.writeFileSync(searchCacheFile, "[]", "utf-8");
+          }
+        } catch (scErr) {
+          console.warn("[Clear Cache] Failed to clear search cache:", scErr);
         }
         res.json({ success: true, message: "App cache cleared successfully." });
       } catch (error) {
@@ -92697,11 +92960,17 @@ Thank you!
           console.warn("[WebsiteOrdersRoute] Non-fatal online_order_items insert note:", itemErr);
         }
         let resolvedStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : 0;
-        if (!resolvedStoreId && order.pharmarack_distributor) {
+        let resolvedDistName = order.pharmarack_distributor || "";
+        const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+        let resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : order.medicine_id ? Number(order.medicine_id) : 0;
+        let resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : "";
+        let resolvedRate = Number(order.pharmarack_rate) || 0;
+        let resolvedMrp = Number(order.pharmarack_mrp) || 0;
+        if (!resolvedStoreId && resolvedDistName) {
           try {
             const dRow = await db2.get(
               `SELECT store_id FROM distributor_catalog WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?) LIMIT 1`,
-              [order.pharmarack_distributor.trim(), `%${order.pharmarack_distributor.trim()}%`]
+              [resolvedDistName.trim(), `%${resolvedDistName.trim()}%`]
             );
             if (dRow && dRow.store_id) {
               resolvedStoreId = Number(dRow.store_id);
@@ -92709,25 +92978,106 @@ Thank you!
           } catch (_) {
           }
         }
-        const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
-        const resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : order.medicine_id ? Number(order.medicine_id) : 0;
-        const resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : "";
+        if (!resolvedStoreId) {
+          const linkRow = await db2.get(
+            `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+         FROM medicine_distributor_links 
+         WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?))
+         ORDER BY is_preferred DESC LIMIT 1`,
+            [resolvedProdName]
+          ).catch(() => null);
+          if (linkRow && linkRow.store_id) {
+            resolvedStoreId = Number(linkRow.store_id);
+            resolvedDistName = resolvedDistName || linkRow.distributor_name || "";
+            resolvedProdId = resolvedProdId || Number(linkRow.product_id) || 0;
+            resolvedProdCode = resolvedProdCode || String(linkRow.product_code || "");
+            resolvedRate = resolvedRate || Number(linkRow.rate) || 0;
+            resolvedMrp = resolvedMrp || Number(linkRow.mrp) || 0;
+          } else {
+            const catRow = await db2.get(
+              `SELECT store_id, store_name, product_id, product_code, rate, mrp 
+           FROM distributor_catalog 
+           WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?))
+             AND store_id > 0
+           ORDER BY rate ASC LIMIT 1`,
+              [resolvedProdName, `%${resolvedProdName}%`]
+            ).catch(() => null);
+            if (catRow && catRow.store_id) {
+              resolvedStoreId = Number(catRow.store_id);
+              resolvedDistName = resolvedDistName || catRow.store_name || "";
+              resolvedProdId = resolvedProdId || Number(catRow.product_id) || 0;
+              resolvedProdCode = resolvedProdCode || String(catRow.product_code || "");
+              resolvedRate = resolvedRate || Number(catRow.rate) || 0;
+              resolvedMrp = resolvedMrp || Number(catRow.mrp) || 0;
+            }
+          }
+        }
         try {
           const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-          void addItemsToPharmarackCart2([{
+          const cartResult = await addItemsToPharmarackCart2([{
             productName: resolvedProdName,
             product: resolvedProdName,
             productId: resolvedProdId,
             productCode: resolvedProdCode,
             storeId: resolvedStoreId,
-            storeName: order.pharmarack_distributor || "Standard Distributor",
+            storeName: resolvedDistName || "Standard Distributor",
             qty: order.qty > 0 ? order.qty : 1,
-            rate: order.pharmarack_rate || 0,
-            mrp: order.pharmarack_mrp || 0,
+            rate: resolvedRate,
+            mrp: resolvedMrp,
             packaging: "1 strip",
-            mapped: order.pharmarack_mapped === 1
-          }]).catch((err) => console.warn("[WebsiteOrdersRoute] Live cart add error on payment confirm:", err?.message || err));
-        } catch (_) {
+            mapped: resolvedStoreId > 0
+          }]).catch((err) => ({ success: false, error: err?.message || String(err), offline: false }));
+          if (cartResult.success && !cartResult.offline) {
+            await db2.run(
+              `UPDATE special_orders 
+           SET needs_live_cart_sync = 0,
+               status = 'In Live Cart',
+               delivery_status = 'in_live_cart',
+               pharmacy_verification_status = 'IN_LIVE_CART',
+               pharmarack_distributor = ?,
+               pharmarack_store_id = ?,
+               pharmarack_product_id = ?,
+               pharmarack_product_code = ?,
+               pharmarack_rate = ?,
+               pharmarack_mrp = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [resolvedDistName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, orderId]
+            ).catch(() => {
+            });
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'added_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+              [orderId, `Payment approved: "${resolvedProdName}" (Qty: ${order.qty || 1}) added to Live Cart (${resolvedDistName || "Distributor"}).`]
+            ).catch(() => {
+            });
+          } else {
+            await db2.run(
+              `UPDATE special_orders 
+           SET needs_live_cart_sync = 1,
+               delivery_status = 'offline_queued',
+               pharmacy_verification_status = 'OFFLINE_QUEUED',
+               pharmarack_distributor = ?,
+               pharmarack_store_id = ?,
+               pharmarack_product_id = ?,
+               pharmarack_product_code = ?,
+               pharmarack_rate = ?,
+               pharmarack_mrp = ?,
+               cart_add_error = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [resolvedDistName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, cartResult.error || (cartResult.offline ? "Offline mode" : "Pending login"), orderId]
+            ).catch(() => {
+            });
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'offline_queued_for_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+              [orderId, `Payment approved: "${resolvedProdName}" queued for Live Cart auto-sync upon connection.`]
+            ).catch(() => {
+            });
+          }
+        } catch (liveErr) {
+          console.warn("[WebsiteOrdersRoute] Live cart add error on payment confirm:", liveErr);
         }
         const { generateStoreSpecialOrderCode: generateStoreSpecialOrderCode2 } = await Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports));
         const soCode = await generateStoreSpecialOrderCode2(db2, order.store_id || 1, orderId).catch(() => `SO-TMSA-${orderId}`);
@@ -93881,6 +94231,20 @@ Please check counter availability and send me the price estimate and UPI payment
       } catch (err) {
         console.error("[WebsiteOrdersRoute] Refill order creation error:", err);
         res.status(500).json({ error: "Failed to create refill order: " + (err.message || "Unknown error") });
+      }
+    });
+    router30.post("/sync-offline-cart", async (_req, res) => {
+      try {
+        const { startupSyncCoordinator: startupSyncCoordinator2 } = await Promise.resolve().then(() => (init_startupSyncCoordinator(), startupSyncCoordinator_exports));
+        const result = await startupSyncCoordinator2.syncPendingLiveCartOrders();
+        res.json({
+          success: true,
+          message: `Offline Live Cart sync completed: ${result.synced}/${result.processed} order(s) placed into Live Cart.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Manual offline cart sync error:", err);
+        res.status(500).json({ error: "Failed to sync offline cart: " + (err.message || "Unknown error") });
       }
     });
     websiteOrders_default = router30;

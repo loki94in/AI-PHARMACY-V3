@@ -362,6 +362,20 @@ The resident headless Chrome (~250–400 MB steady RAM) now sleeps when idle ins
 
 ---
 
+## System Memory Protection & Process Priority Diet Contract (added 2026-10-23, bug P2-105)
+
+To prevent orphan headless Chromium processes from exhausting RAM and thrashing Windows into hard desktop freezes on 4-core / 12 GB RAM PCs:
+1. **System Health Monitor**: `src/systemHealthMonitor.ts` samples memory (`os.freemem`, `os.totalmem`), process RSS, V8 heap, and event-loop lag every 15s into an in-memory 120-tick circular buffer (~30 minutes history), recording single-line JSONL entries to `data/system_health.log` (capped at 2 MB with daily rotation and 14-day prune).
+2. **Chromium Census & Fingerprinting**: Win32 CIM/PowerShell queries inspect `chrome.exe` command lines, categorizing processes into WhatsApp, Pharmarack, Dev/Extensions, SwiftShader, and Unknown/Zombie. Live WhatsApp browser PIDs (`getWhatsAppBrowserPid()`) and active headless instances (`getActiveHeadlessPids()`) are strictly protected from termination.
+3. **Memory Pressure Ladder**: Sustained pressure (3 consecutive ticks with < 800 MB free RAM and > 400 MB zombie Chromium) triggers automated zombie sweeping (`reapSystemProfileOrphans()`) and a deduped warning toast (at most once every 30 minutes).
+4. **Sequential Heavy Restore Lane**: `src/utils/heavyRestoreLane.ts` (`runHeavyRestore`) enforces that WhatsApp session restore and Pharmarack session/token restores queue sequentially in a FIFO pipeline rather than launching concurrent headless browser spikes during boot.
+5. **Priority Diet**:
+   - In `electron/main.ts`, both Electron main and backend child start in `ABOVE_NORMAL_PRIORITY_CLASS` for boot snappiness, but automatically demote to `NORMAL_PRIORITY_CLASS` after a T+90s settling window.
+   - All background headless Chromium instances spawned via `trackHeadless()` in `src/utils/chromeBrowser.ts` are automatically assigned `BELOW_NORMAL_PRIORITY_CLASS` (0x00004000) so they never starve SwiftShader CPU rendering or desktop responsiveness.
+6. **Frontend Transparency**: Settings Data & Backups tab provides a truthful "System Health & Memory Protection" dashboard card with RAM meter bar, event loop drift, process breakdown, and manual zombie sweep action with zero frontend polling timers.
+
+---
+
 ## SPA Performance & Database Search Contract
 
 To prevent sluggish page switching, high network/CPU utilization, and laggy autocomplete dropdowns:

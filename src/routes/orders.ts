@@ -1038,7 +1038,7 @@ router.post('/:id/confirm-distributor', async (req, res) => {
       [soCode, `%${id}`]
     ).catch(() => {});
 
-    const isPaymentConfirmed = ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase());
+    const isPaymentConfirmed = ['PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED'].includes(String(order.payment_status || '').toUpperCase()) || Number(order.advance_payment || 0) > 0;
     const oldDistName = String(order.pharmarack_distributor || order.distributor_name || '').trim();
     const oldStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : null;
     const oldProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : null;
@@ -1046,46 +1046,63 @@ router.post('/:id/confirm-distributor', async (req, res) => {
     const distChanged = (oldDistName && oldDistName.toLowerCase() !== distName.toLowerCase()) ||
                         (oldStoreId && stId && oldStoreId !== stId);
 
-    // If distributor changed, automatically evict item from old distributor's cart and add to new distributor's cart
-    if (distChanged || isPaymentConfirmed) {
+    // If distributor changed, automatically evict item from old distributor's cart
+    if (distChanged && oldDistName) {
       try {
-        const { adjustSpecialOrderInLiveCart, addItemsToPharmarackCart } = await import('./pharmarack.js');
-        if (oldDistName && distChanged) {
-          await Promise.race([
-            adjustSpecialOrderInLiveCart({
-              product: oldProdName,
-              qty: order.qty || 1,
-              distributor: oldDistName,
-              productCode: oldProdCode,
-              storeId: oldStoreId,
-              exactOnly: true
-            }),
-            new Promise(r => setTimeout(r, 1500))
-          ]);
-        }
-        if (stId && distName) {
-          await addItemsToPharmarackCart([{
-            productName: prodName,
-            product: prodName,
-            productId: prodId,
-            productCode: prodCode || '',
-            storeId: stId,
-            storeName: distName,
+        const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+        await Promise.race([
+          adjustSpecialOrderInLiveCart({
+            product: oldProdName,
             qty: order.qty || 1,
-            rate: distRate,
-            mrp: distMrp,
-            packaging: '1 strip',
-            mapped: true
-          }]).catch(err => console.warn('[Orders] Error migrating item to new distributor cart:', err));
-        }
+            distributor: oldDistName,
+            productCode: oldProdCode,
+            storeId: oldStoreId,
+            exactOnly: true
+          }),
+          new Promise(r => setTimeout(r, 1500))
+        ]);
+      } catch (cartEvictErr) {
+        console.warn('[Orders] Could not auto-evict old cart item on distributor change:', cartEvictErr);
+      }
+    }
+
+    // Gate live cart add to payment-confirmed / advance-paid orders; otherwise stage needs_live_cart_sync = 1
+    if (isPaymentConfirmed && stId && distName) {
+      try {
+        const { addItemsToPharmarackCart } = await import('./pharmarack.js');
+        await addItemsToPharmarackCart([{
+          productName: prodName,
+          product: prodName,
+          productId: prodId,
+          productCode: prodCode || '',
+          storeId: stId,
+          storeName: distName,
+          qty: order.qty || 1,
+          rate: distRate,
+          mrp: distMrp,
+          packaging: '1 strip',
+          mapped: true
+        }]).catch(err => console.warn('[Orders] Error migrating item to new distributor cart:', err));
       } catch (cartMigrateErr) {
-        console.warn('[Orders] Could not auto-migrate cart on distributor change:', cartMigrateErr);
+        console.warn('[Orders] Could not auto-add cart on distributor change:', cartMigrateErr);
       }
 
       await db.run(
         `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
          VALUES (?, 'distributor_switched', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
         [id, `Distributor updated from "${oldDistName || 'None'}" to "${distName}". Live cart synced.`]
+      ).catch(() => {});
+    } else if (distChanged) {
+      // Payment not yet confirmed: stage for live cart addition post-payment
+      await db.run(
+        `UPDATE special_orders SET needs_live_cart_sync = 1 WHERE id = ?`,
+        [id]
+      ).catch(() => {});
+
+      await db.run(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'distributor_switched', ?, 'Staff Pharmacist', CURRENT_TIMESTAMP)`,
+        [id, `Distributor updated from "${oldDistName || 'None'}" to "${distName}". Live cart sync staged pending payment.`]
       ).catch(() => {});
     }
 

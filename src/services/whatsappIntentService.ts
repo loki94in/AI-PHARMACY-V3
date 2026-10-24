@@ -3095,7 +3095,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         if (refillIds.length > 0) {
           const placeholders = refillIds.map(() => '?').join(',');
           await db.run(
-            `UPDATE patient_refills SET patient_confirmed = 1, confirmed_at = datetime('now') WHERE id IN (${placeholders})`,
+            `UPDATE patient_refills SET patient_confirmed = 1, confirmed_at = datetime('now'), source = 'whatsapp', cart_status = 'pending' WHERE id IN (${placeholders})`,
             refillIds
           );
           const confirmedRefills = await db.all(
@@ -3126,7 +3126,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             try {
               const { processRefillCartItem } = await import('./refillCartService.js');
               for (const r of confirmedRefills) {
-                await processRefillCartItem(r.id, { qty: Math.max(1, Number(r.quantity_needed || 1)), dryRun: false }).catch(() => null);
+                const cartRes = await processRefillCartItem(r.id, { qty: Math.max(1, Number(r.quantity_needed || 1)), dryRun: false }).catch(() => null);
+                if (cartRes && (cartRes.status === 'added' || cartRes.status === 'in_cart')) {
+                  await db.run(`UPDATE patient_refills SET cart_status = 'added' WHERE id = ?`, [r.id]).catch(() => {});
+                }
               }
             } catch (_) {}
           }
@@ -5607,7 +5610,7 @@ export async function handleInbound(msg: any): Promise<void> {
 
           await db.run(
             `UPDATE patient_refills 
-             SET patient_confirmed = 1, confirmed_at = datetime('now')
+             SET patient_confirmed = 1, confirmed_at = datetime('now'), source = 'whatsapp', cart_status = 'pending'
              WHERE id IN (${placeholders})`,
             refillIds
           );
@@ -5662,6 +5665,9 @@ export async function handleInbound(msg: any): Promise<void> {
               const reqQty = Math.max(1, Number(r.quantity_needed || 1));
               try {
                 const cartRes = await processRefillCartItem(r.id, { qty: reqQty, dryRun: false });
+                if (cartRes && (cartRes.status === 'added' || cartRes.status === 'in_cart')) {
+                  await db.run(`UPDATE patient_refills SET cart_status = 'added' WHERE id = ?`, [r.id]).catch(() => {});
+                }
                 cartSummaryRows.push({
                   refillId: r.id,
                   medicineName: r.medicine_name,

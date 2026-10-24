@@ -467,6 +467,10 @@ export default async function handler(req, res) {
       };
     });
 
+    const paymentMethod = req.body?.paymentMethod || 'UPI';
+    const isCredit = paymentMethod === 'CREDIT';
+    const paymentStatus = isCredit ? 'UNPAID' : (paymentMethod === 'UPI' ? 'AWAITING_PAYMENT' : 'PENDING');
+
     const refillOrder = {
       orderId,
       customerName: (customerName || 'Patient').trim(),
@@ -477,6 +481,9 @@ export default async function handler(req, res) {
       items: processedItems,
       totalAmount: subtotal,
       status: 'Refill Requested',
+      paymentMethod,
+      isCredit,
+      payment_status: paymentStatus,
       isRefill: true,
       preferredLanguage: preferredLanguage || 'mr',
       source: 'Universal Patient Portal',
@@ -491,6 +498,9 @@ export default async function handler(req, res) {
         const targetStore = await kv.get(`store:${storeId}:info`) || await kv.get('catalog:store_info');
         if (targetStore?.whatsapp) storePhone = String(targetStore.whatsapp).replace(/\D/g, '');
         if (targetStore?.name) storeName = targetStore.name;
+
+        refillOrder.upi_id = targetStore?.upi_id || 'pharmacy@upi';
+        refillOrder.upi_uri = `upi://pay?pa=${refillOrder.upi_id}&pn=${encodeURIComponent(storeName)}&am=${subtotal}&cu=INR&tn=${encodeURIComponent('Refill ' + orderId)}`;
 
         await kv.set(`order:${orderId}`, refillOrder);
         await kv.lpush('orders:pending', orderId);
@@ -584,6 +594,49 @@ export default async function handler(req, res) {
     });
   }
 
+  // ================= 4c. CUSTOMER PAYMENT SELF-DECLARATION =================
+  if (action === 'payment_declared') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    const { orderId, phone, method, reference } = req.body || {};
+    if (!orderId) return res.status(400).json({ error: 'Order ID is required.' });
+
+    if (!isKvConfigured) {
+      return res.status(503).json({ error: 'Database not configured.' });
+    }
+
+    try {
+      const order = await kv.get(`order:${orderId}`);
+      if (!order) {
+        return res.status(404).json({ error: 'Order not found.' });
+      }
+
+      order.payment_declared = {
+        at: new Date().toISOString(),
+        method: method || 'UPI',
+        reference: reference || ''
+      };
+      order.payment_status = 'PENDING_VERIFICATION';
+      order.status = 'Awaiting Payment Verification';
+      order.statusUpdatedAt = new Date().toISOString();
+
+      await kv.set(`order:${orderId}`, order);
+
+      // Ensure it is in orders:pending queue for local POS to pull
+      const pendingIds = await kv.lrange('orders:pending', 0, 150) || [];
+      if (!pendingIds.includes(orderId)) {
+        await kv.lpush('orders:pending', orderId);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment declared successfully! The pharmacy has received your verification request.',
+        order
+      });
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to declare payment: ${err.message}` });
+    }
+  }
+
   // ================= 5. GENERAL CART ORDER PLACEMENT =================
   if (action === 'order') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -599,7 +652,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, orderId: generateId('ORD'), message: 'Order placed successfully!' });
     }
 
-    const { customerName, phone, address, orderType, items, notes, storeId, preferredLanguage, isSpecialOrder } = req.body || {};
+    const { customerName, phone, address, orderType, items, notes, storeId, preferredLanguage, isSpecialOrder, paymentMethod = 'UPI' } = req.body || {};
 
     if (!customerName || !phone) {
       return res.status(400).json({ error: 'Customer name and phone number are required.' });
@@ -637,6 +690,8 @@ export default async function handler(req, res) {
 
     const orderId = generateId('ORD');
     const createdAt = new Date().toISOString();
+    const isCredit = paymentMethod === 'CREDIT';
+    const paymentStatus = isCredit ? 'UNPAID' : (paymentMethod === 'UPI' ? 'AWAITING_PAYMENT' : 'PENDING');
 
     const order = {
       orderId,
@@ -651,6 +706,9 @@ export default async function handler(req, res) {
       deliveryFee: type === 'DELIVERY' && subtotal < 199 ? 30 : 0,
       totalAmount: subtotal + (type === 'DELIVERY' && subtotal < 199 ? 30 : 0),
       status: 'Pending',
+      paymentMethod,
+      isCredit,
+      payment_status: paymentStatus,
       storeId: storeId || 'PHARM-DEFAULT',
       source: 'Website 24/7 Cloud Shop',
       preferredLanguage: preferredLanguage || 'mr',
@@ -666,6 +724,9 @@ export default async function handler(req, res) {
         const storeInfo = await kv.get(`store:${storeId}:info`) || await kv.get('catalog:store_info');
         if (storeInfo?.whatsapp) storePhone = String(storeInfo.whatsapp).replace(/\D/g, '');
         if (storeInfo?.name) storeName = storeInfo.name;
+
+        order.upi_id = storeInfo?.upi_id || 'pharmacy@upi';
+        order.upi_uri = `upi://pay?pa=${order.upi_id}&pn=${encodeURIComponent(storeName)}&am=${order.totalAmount}&cu=INR&tn=${encodeURIComponent('Order ' + orderId)}`;
 
         await kv.set(`order:${orderId}`, order);
         await kv.lpush('orders:pending', orderId);
@@ -951,6 +1012,7 @@ export default async function handler(req, res) {
         }
 
         existing.status = newStatus;
+        if (req.body?.payment_status) existing.payment_status = req.body.payment_status;
         existing.statusUpdatedAt = new Date().toISOString();
         if (notes) existing.ownerNotes = notes;
 

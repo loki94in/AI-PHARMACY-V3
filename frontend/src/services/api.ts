@@ -2023,6 +2023,57 @@ export const api = {
     };
   }>('/system/services-status').then(res => res.data),
 
+  // System Resource & Memory Protection Telemetry (P2-105)
+  getResourceSnapshot: () => apiClient.get<{
+    success: boolean;
+    snapshot: {
+      ts: string;
+      freeMB: number;
+      totalMB: number;
+      backendRssMB: number;
+      backendHeapMB: number;
+      eventLagMs: number;
+      cpuDeltaPct: number;
+      chrome: {
+        zombieMB: number;
+        zombieCount: number;
+        activeCount: number;
+        list: Array<{
+          pid: number;
+          name: string;
+          rssKB: number;
+          profileMatch: 'pharmarack_profile' | '.wwebjs_auth' | 'temp' | 'other';
+          protected: boolean;
+          commandLine?: string;
+        }>;
+      };
+    } | null;
+    history: Array<{
+      ts: string;
+      freeMB: number;
+      totalMB: number;
+      backendRssMB: number;
+      backendHeapMB: number;
+      eventLagMs: number;
+      cpuDeltaPct: number;
+      chrome: {
+        zombieMB: number;
+        zombieCount: number;
+        activeCount: number;
+        list: Array<{
+          pid: number;
+          name: string;
+          rssKB: number;
+          profileMatch: 'pharmarack_profile' | '.wwebjs_auth' | 'temp' | 'other';
+          protected: boolean;
+          commandLine?: string;
+        }>;
+      };
+    }>;
+    bootPerf: Record<string, number>;
+  }>('/system/resource-snapshot').then(res => res.data),
+  sweepZombies: () => apiClient.post<{ success: boolean; killed: number; freedMB: number }>('/system/sweep-zombies').then(res => res.data),
+
   // Pharmarack Session Logs & Re-auth
   getSessionRefreshLogs: () => apiClient.get<{
     success: boolean;

@@ -769,6 +769,24 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
       console.warn('[WebsiteOrdersRoute] Live cart add error on payment confirm:', liveErr);
     }
 
+    // If order was received from 24/7 web portal, push status update to cloud
+    if (order.sync_id) {
+      try {
+        const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+        const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
+        fetch(`${CLOUD_SERVER_URL}/api/catalog?action=update_order_status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': ADMIN_SECRET },
+          body: JSON.stringify({
+            orderId: order.sync_id,
+            newStatus: 'In Live Cart',
+            payment_status: 'CONFIRMED',
+            notes: `Payment confirmed by Pharmacist (${confirmed_by}). Item added to procurement cart.`
+          })
+        }).catch(err => console.warn('[WebsiteOrdersRoute] Cloud order sync update failed:', err?.message || err));
+      } catch (_) {}
+    }
+
     // Resolve store order code (e.g. SO-TMSA-7)
     const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
     const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, orderId).catch(() => `SO-TMSA-${orderId}`);

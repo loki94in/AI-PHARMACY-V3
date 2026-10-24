@@ -6,7 +6,7 @@ import { useModalEscape, shortcutEvent } from '../../services/keyboardShortcuts'
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
-import { Database, Trash2, Save, RefreshCw, RotateCcw, Shield, ShieldCheck, AlertTriangle, X, Upload, Image as ImageIcon, Cloud } from 'lucide-react';
+import { Database, Trash2, Save, RefreshCw, RotateCcw, Shield, ShieldCheck, AlertTriangle, X, Upload, Image as ImageIcon, Cloud, Activity, Cpu, HardDrive, Terminal } from 'lucide-react';
 
 export function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: Record<string, string>; refetchSettings: () => void }) {
   const [backupFrequency, setBackupFrequency] = useState(rawSettings.backup_frequency || 'off');
@@ -25,6 +25,58 @@ export function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: 
   const [loadingStorageStats, setLoadingStorageStats] = useState(false);
   const [purgingStorage, setPurgingStorage] = useState(false);
   const [showPurgeConfirmModal, setShowPurgeConfirmModal] = useState(false);
+
+  // System Health & Memory Telemetry (P2-105)
+  const [healthData, setHealthData] = useState<{
+    snapshot: any;
+    history: any[];
+    bootPerf: Record<string, number>;
+  } | null>(null);
+  const [loadingHealth, setLoadingHealth] = useState(false);
+  const [sweepingZombies, setSweepingZombies] = useState(false);
+
+  const fetchHealthSnapshot = useCallback(async () => {
+    setLoadingHealth(true);
+    try {
+      const res = await api.getResourceSnapshot();
+      if (res?.success) {
+        setHealthData({
+          snapshot: res.snapshot,
+          history: res.history || [],
+          bootPerf: res.bootPerf || {},
+        });
+      }
+    } catch (err) {
+      console.warn('[Settings] Failed to fetch system health snapshot:', err);
+    } finally {
+      setLoadingHealth(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHealthSnapshot();
+  }, [fetchHealthSnapshot]);
+
+  const handleSweepZombies = async () => {
+    setSweepingZombies(true);
+    try {
+      const res = await api.sweepZombies();
+      if (res?.success) {
+        toastEvent.trigger(
+          res.killed > 0
+            ? `Zombie sweep complete: reaped ${res.killed} process(es) and freed ${res.freedMB} MB RAM.`
+            : 'Zero orphan processes found. Background Chromium instances are clean.',
+          res.killed > 0 ? 'success' : 'info'
+        );
+        fetchHealthSnapshot();
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Failed to sweep zombie processes: ' + (err?.message || err), 'error');
+    } finally {
+      setSweepingZombies(false);
+    }
+  };
+
   const queryClient = useQueryClient();
 
   // Universal Escape key dismissal for Backup & Reset modals
@@ -181,6 +233,192 @@ export function DataBackupsTab({ rawSettings, refetchSettings }: { rawSettings: 
               </div>
             </label>
           </div>
+        </div>
+      </div>
+
+      {/* System Health & Memory Protection Card (P2-105) */}
+      <div className="space-y-4 pt-2 border-t border-border">
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+            <Activity size={16} /> System Health & Memory Protection (24/7 Telemetry)
+          </h2>
+          <div className="flex items-center gap-2">
+            {healthData?.snapshot ? (
+              <span
+                className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${
+                  healthData.snapshot.freeMB >= 1500
+                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                    : healthData.snapshot.freeMB >= 800
+                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                    : 'bg-red-500/10 text-red-500 border-red-500/20'
+                }`}
+              >
+                {healthData.snapshot.freeMB >= 1500
+                  ? `● System Memory Healthy (${healthData.snapshot.freeMB} MB Free)`
+                  : healthData.snapshot.freeMB >= 800
+                  ? `▲ Moderate Memory Usage (${healthData.snapshot.freeMB} MB Free)`
+                  : `⚠️ Low System Memory (${healthData.snapshot.freeMB} MB Free)`}
+              </span>
+            ) : (
+              <span className="text-[11px] text-muted">Reading telemetry...</span>
+            )}
+            <button
+              type="button"
+              onClick={fetchHealthSnapshot}
+              disabled={loadingHealth}
+              className="p-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-muted hover:text-text cursor-pointer transition-all"
+              title="Refresh System Health Snapshot"
+            >
+              <RefreshCw size={13} className={loadingHealth ? 'animate-spin text-primary' : ''} />
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-bg3/20 border border-border rounded-xl p-4 space-y-4">
+          {healthData?.snapshot ? (
+            <>
+              {/* RAM Meter & Backend Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Host RAM Meter */}
+                <div className="p-3 bg-bg rounded-xl border border-border space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                      <HardDrive size={14} className="text-primary" /> Host Memory (12 GB Box)
+                    </span>
+                    <span className="text-xs font-mono font-bold text-text">
+                      {Math.round((healthData.snapshot.freeMB / (healthData.snapshot.totalMB || 12288)) * 100)}% Free
+                    </span>
+                  </div>
+                  {/* Progress Bar */}
+                  <div className="w-full bg-bg3 h-2 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-500 ${
+                        healthData.snapshot.freeMB >= 1500
+                          ? 'bg-emerald-500'
+                          : healthData.snapshot.freeMB >= 800
+                          ? 'bg-amber-500'
+                          : 'bg-red-500'
+                      }`}
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            0,
+                            100 - Math.round((healthData.snapshot.freeMB / (healthData.snapshot.totalMB || 12288)) * 100)
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[11px] text-muted">
+                    <span>Used: {healthData.snapshot.totalMB - healthData.snapshot.freeMB} MB</span>
+                    <span>Free: <strong className="text-text">{healthData.snapshot.freeMB} MB</strong></span>
+                    <span>Total: {healthData.snapshot.totalMB} MB</span>
+                  </div>
+                </div>
+
+                {/* Node.js Process Resources */}
+                <div className="p-3 bg-bg rounded-xl border border-border space-y-2">
+                  <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                    <Cpu size={14} className="text-primary" /> Backend Process & Event Loop
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                    <div>
+                      <span className="text-[11px] text-muted block">RSS Memory:</span>
+                      <strong className="text-text font-mono">{healthData.snapshot.backendRssMB} MB</strong>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-muted block">V8 Heap Used:</span>
+                      <strong className="text-text font-mono">{healthData.snapshot.backendHeapMB} MB</strong>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-muted block">Event Loop Drift:</span>
+                      <strong className="text-text font-mono">{healthData.snapshot.eventLagMs} ms</strong>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-muted block">Process CPU:</span>
+                      <strong className="text-text font-mono">{healthData.snapshot.cpuDeltaPct}%</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Chromium Census */}
+                <div className="p-3 bg-bg rounded-xl border border-border space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                      <Terminal size={14} className="text-primary" /> Chromium Process Census
+                    </span>
+                    {healthData.snapshot.chrome.zombieCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleSweepZombies}
+                        disabled={sweepingZombies}
+                        className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <Trash2 size={11} />
+                        <span>Sweep {healthData.snapshot.chrome.zombieCount} Zombie(s)</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                    <div>
+                      <span className="text-[11px] text-muted block">Active Sessions:</span>
+                      <strong className="text-emerald-500 font-mono font-bold">
+                        {healthData.snapshot.chrome.activeCount} protected
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-muted block">Zombies / Strays:</span>
+                      <strong
+                        className={`font-mono font-bold ${
+                          healthData.snapshot.chrome.zombieCount === 0 ? 'text-emerald-500' : 'text-amber-500'
+                        }`}
+                      >
+                        {healthData.snapshot.chrome.zombieCount} ({healthData.snapshot.chrome.zombieMB} MB)
+                      </strong>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted pt-1">
+                    {healthData.snapshot.chrome.zombieCount === 0
+                      ? '✓ No orphaned background browsers. WhatsApp client session active & safe.'
+                      : '⚠️ Detected orphaned Chromium process holding profile locks. Sweep or await 30m cron.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Boot Milestones & Telemetry Log Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="p-2.5 bg-bg/50 rounded-xl border border-border text-xs flex items-center justify-between">
+                  <div>
+                    <span className="font-bold text-text text-[11px] block">Boot Milestones (PERF):</span>
+                    <span className="text-[10px] text-muted">
+                      Schema: <strong className="text-text">{healthData.bootPerf?.schemaMs ?? '—'}ms</strong> · Cache Prewarm: <strong className="text-text">{healthData.bootPerf?.phase2Ms ?? '—'}ms</strong> · First Heartbeat: <strong className="text-text">{healthData.bootPerf?.firstHeartbeatMs ?? '—'}ms</strong> · WA Restore: <strong className="text-text">{healthData.bootPerf?.whatsappRestoreMs ?? '—'}ms</strong>
+                    </span>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-bg2 border border-border text-muted font-mono">
+                    Staged Boot
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-bg/50 rounded-xl border border-border text-xs flex items-center justify-between">
+                  <div>
+                    <span className="font-bold text-text text-[11px] block">Telemetry Log File:</span>
+                    <span className="text-[10px] text-muted">
+                      Logged to <code className="text-primary font-mono">data/logs/system-health.jsonl</code> (2 MB auto-rotation, 14-day prune).
+                    </span>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-bold">
+                    Active
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-6 text-xs text-muted">
+              <RefreshCw size={14} className="animate-spin text-primary mr-2" />
+              <span>Collecting host memory telemetry and process census...</span>
+            </div>
+          )}
         </div>
       </div>
 

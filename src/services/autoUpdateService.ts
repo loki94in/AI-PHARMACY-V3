@@ -104,6 +104,7 @@ function downloadFile(url: string, dest: string, onProgress?: (downloaded: numbe
 
           const fileStream = fs.createWriteStream(tempDest);
           res.on('data', (chunk: Buffer) => {
+            req.setTimeout(120_000);
             downloadedBytes += chunk.length;
             const now = Date.now();
             if (onProgress && (now - lastReport > 600 || downloadedBytes === totalBytes)) {
@@ -129,6 +130,9 @@ function downloadFile(url: string, dest: string, onProgress?: (downloaded: numbe
           });
         }
       );
+      req.setTimeout(120_000, () => {
+        req.destroy(new Error('DOWNLOAD_TIMEOUT: Connection stalled for 120s with no data'));
+      });
       req.on('error', (err) => {
         try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
         reject(new Error(`DOWNLOAD_FAILED: ${err.message}`));
@@ -155,6 +159,9 @@ function computeSha256(filePath: string): Promise<string> {
 class AutoUpdateService {
   private static instance: AutoUpdateService;
   private intervalHandle: NodeJS.Timeout | null = null;
+  private retryHandle: NodeJS.Timeout | null = null;
+  private hasRetriedDownload = false;
+  private lastCheckedAt?: string;
   private lastResult: {
     hasUpdate: boolean;
     currentVersion?: string;
@@ -166,6 +173,7 @@ class AutoUpdateService {
     downloading?: boolean;
     downloadProgress?: number;
     readyToInstall?: boolean;
+    lastError?: string;
   } | null = null;
   private isDownloading = false;
 
@@ -183,6 +191,11 @@ class AutoUpdateService {
     (async () => {
       try {
         const db = await dbManager.getConnection();
+        const checkRow = await db.get<{ last_checked_at?: string }>('SELECT last_checked_at FROM update_checks WHERE id = 1');
+        if (checkRow?.last_checked_at) {
+          this.lastCheckedAt = checkRow.last_checked_at;
+        }
+
         const { APP_VERSION } = await import('./licenseService.js');
         if (APP_VERSION && APP_VERSION !== '1.0.0') {
           await db.run(
@@ -257,11 +270,17 @@ class AutoUpdateService {
 
   stop(): void {
     if (this.intervalHandle) { clearInterval(this.intervalHandle); this.intervalHandle = null; }
+    if (this.retryHandle) { clearTimeout(this.retryHandle); this.retryHandle = null; }
   }
 
   /** Return last known update check result */
   getStatus() {
     return this.lastResult;
+  }
+
+  /** Return ISO string of last update check timestamp */
+  getLastCheckedAt(): string | undefined {
+    return this.lastCheckedAt;
   }
 
   /** Manual trigger from Settings "Check Now" button. Always runs regardless of interval. */
@@ -289,8 +308,13 @@ class AutoUpdateService {
       if (!result) {
         // UPDATE_SERVER_UNAVAILABLE — do not freeze, do not mark license invalid
         console.log('[AutoUpdate] UPDATE_SERVER_UNAVAILABLE (Offline) — update server unreachable. Continuing normally offline.');
+        if (this.lastResult) {
+          this.lastResult.lastError = 'Update server unreachable';
+        }
         return;
       }
+
+      this.lastCheckedAt = new Date().toISOString();
 
       const stagingDir   = getStagingDir();
       const zipFileName  = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
@@ -302,6 +326,7 @@ class AutoUpdateService {
         downloading: this.isDownloading,
         downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
         readyToInstall: alreadyDownloaded,
+        lastError: undefined,
       };
 
       if (result.hasUpdate) {
@@ -334,6 +359,9 @@ class AutoUpdateService {
     } catch (err) {
       // PRODUCTION.md §13: never freeze on update check failure
       console.warn('[AutoUpdate] Check failed (offline?):', (err as Error).message);
+      if (this.lastResult) {
+        this.lastResult.lastError = `Update check failed: ${(err as Error).message}`;
+      }
     }
   }
 
@@ -435,25 +463,43 @@ class AutoUpdateService {
           if (this.lastResult) {
             this.lastResult.downloading = false;
             this.lastResult.readyToInstall = false;
+            this.lastResult.lastError = 'Checksum mismatch — package discarded, retry scheduled';
           }
           eventService.broadcast('update_available', {
             latestVersion: version,
             changelog: changelog || '',
             readyToInstall: false,
             downloading: false,
-            error: 'Checksum mismatch. Please retry download.',
+            error: 'Checksum mismatch — package discarded, retry scheduled',
             reason,
           });
+
+          if (reason !== 'auto-retry' && !this.hasRetriedDownload) {
+            this.hasRetriedDownload = true;
+            console.log('[AutoUpdate] Scheduling single retry in 15 minutes due to checksum mismatch...');
+            this.retryHandle = setTimeout(() => {
+              this.retryHandle = null;
+              if (!this.isDownloading && this.lastResult?.hasUpdate && this.lastResult?.latestVersion) {
+                this.startBackgroundDownload(this.lastResult, 'auto-retry');
+              }
+            }, 15 * 60 * 1000);
+          }
           return;
         }
         console.log('[AutoUpdate] SHA-256 verified OK.');
       }
 
       this.isDownloading = false;
+      this.hasRetriedDownload = false;
+      if (this.retryHandle) {
+        clearTimeout(this.retryHandle);
+        this.retryHandle = null;
+      }
       if (this.lastResult) {
         this.lastResult.downloading    = false;
         this.lastResult.readyToInstall = true;
         this.lastResult.downloadProgress = 100;
+        this.lastResult.lastError = undefined;
       }
       console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
       eventService.broadcast('update_available', {
@@ -466,9 +512,11 @@ class AutoUpdateService {
       });
     } catch (err: any) {
       this.isDownloading = false;
+      const errorMsg = `Download failed: ${err.message}`;
       if (this.lastResult) {
         this.lastResult.downloading = false;
         this.lastResult.readyToInstall = false;
+        this.lastResult.lastError = errorMsg;
       }
       try { if (fs.existsSync(dest + '.tmp')) fs.unlinkSync(dest + '.tmp'); } catch (_) {}
       console.warn('[AutoUpdate] DOWNLOAD_FAILED:', err.message);
@@ -477,9 +525,20 @@ class AutoUpdateService {
         changelog: changelog || '',
         readyToInstall: false,
         downloading: false,
-        error: `Download failed: ${err.message}`,
+        error: errorMsg,
         reason,
       });
+
+      if (reason !== 'auto-retry' && !this.hasRetriedDownload) {
+        this.hasRetriedDownload = true;
+        console.log('[AutoUpdate] Scheduling single retry in 15 minutes due to download failure...');
+        this.retryHandle = setTimeout(() => {
+          this.retryHandle = null;
+          if (!this.isDownloading && this.lastResult?.hasUpdate && this.lastResult?.latestVersion) {
+            this.startBackgroundDownload(this.lastResult, 'auto-retry');
+          }
+        }, 15 * 60 * 1000);
+      }
     }
   }
 

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiClient, api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
-import { RefreshCw, Clock, Shield, ShieldCheck, AlertTriangle, CheckCircle2, Check, ArrowDownToLine, ExternalLink, Copy } from 'lucide-react';
+import { RefreshCw, Clock, Shield, ShieldCheck, AlertTriangle, CheckCircle2, Check, ArrowDownToLine, ExternalLink, Copy, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { useUpdateStatus, setUpdateStatus, type RawUpdateFrame } from '../../services/updateStatusStore';
 
 function LicenseManagementCard() {
   const [status, setStatus] = React.useState<{
@@ -242,71 +243,72 @@ function LicenseManagementCard() {
     </div>
   );
 }
+// ── Release History Types & Cache ─────────────────────────────────────────────
+interface ReleaseHistoryItem {
+  version: string;
+  name: string;
+  publishedAt: string;
+  changelog: string;
+  isNewerThanInstalled: boolean;
+}
+
+interface UpdateHistoryResponse {
+  installed: string;
+  releases: ReleaseHistoryItem[];
+  offline?: boolean;
+}
+
+let cachedReleaseHistory: UpdateHistoryResponse | null = null;
+let cachedReleaseHistoryTime = 0;
+
+function formatCheckTime(isoStr?: string): string | null {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return null;
+  }
+}
+
+function formatReleaseDate(isoStr?: string): string {
+  if (!isoStr) return '';
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch {
+    return '';
+  }
+}
 
 // ── Software Update Card ──────────────────────────────────────────────────────
-// Isolated component so its state doesn't re-render the entire Settings page
+// Isolated component driven by useUpdateStatus store so its state doesn't re-render entire Settings
 function SoftwareUpdateCard() {
+  const updateStatus = useUpdateStatus();
   const [checking, setChecking] = React.useState(false);
   const [installing, setInstalling] = React.useState(false);
   const [downloadStarting, setDownloadStarting] = React.useState(false);
-  const [downloadProgress, setDownloadProgress] = React.useState<{
-    percent: number;
-    transferredMB: number;
-    totalMB: number;
-    status: string;
-  } | null>(null);
-  const [installedVersion, setInstalledVersion] = React.useState<string>('0.1.27');
-  const [result, setResult] = React.useState<{
-    hasUpdate: boolean;
-    currentVersion?: string;
-    latestVersion?: string;
-    downloadUrl?: string;
-    changelog?: string;
-    downloading?: boolean;
-    readyToInstall?: boolean;
-    downloadProgress?: {
-      percent: number;
-      transferredMB: number;
-      totalMB: number;
-      status: string;
-    };
-  } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [lastChecked, setLastChecked] = React.useState<string | null>(null);
   const [postponed, setPostponed] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [historyLoading, setHistoryLoading] = React.useState(false);
+  const [historyData, setHistoryData] = React.useState<UpdateHistoryResponse | null>(null);
 
-  React.useEffect(() => {
-    apiClient.get('/license/version').then((res) => {
-      if (res.data?.version || res.data?.appVersion) {
-        setInstalledVersion(res.data.version || res.data.appVersion);
-      }
-    }).catch(() => {});
-
-    apiClient.get('/license/update-status').then((res) => {
-      const data = res.data;
-      if (data && (data.hasUpdate || data.readyToInstall || data.downloading)) {
-        if (data.currentVersion) setInstalledVersion(data.currentVersion);
-        setResult(data);
-        if (data.downloadProgress) {
-          setDownloadProgress(data.downloadProgress);
-        }
-      }
-    }).catch(() => {});
-  }, []);
+  const lastCheckedStr = formatCheckTime(updateStatus.lastCheckedAt);
 
   const handleCheckNow = async () => {
     setChecking(true);
     setError(null);
-    setResult(null);
     try {
-      const res = await apiClient.post('/license/check-update');
-      const data = res.data;
-      if (data?.currentVersion) setInstalledVersion(data.currentVersion);
-      setResult(data);
-      if (data?.downloadProgress) setDownloadProgress(data.downloadProgress);
-      setLastChecked(new Date().toLocaleTimeString());
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Could not reach update server. Check internet connection.');
+      const res = await apiClient.post<RawUpdateFrame>('/license/check-update');
+      if (res.data) {
+        setUpdateStatus(res.data);
+      }
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } }; message?: string };
+      setError(e?.response?.data?.error || e?.message || 'Could not reach update server. Check internet connection.');
     } finally {
       setChecking(false);
     }
@@ -317,53 +319,15 @@ function SoftwareUpdateCard() {
     setError(null);
     try {
       await apiClient.post('/license/start-download');
-      setResult((prev) => prev ? { ...prev, downloading: true, readyToInstall: false } : prev);
+      setUpdateStatus({ downloading: true, readyToInstall: false });
       toastEvent.trigger('Background update download started...', 'info');
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to start download.');
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } }; message?: string };
+      setError(e?.response?.data?.error || e?.message || 'Failed to start download.');
     } finally {
       setDownloadStarting(false);
     }
   };
-
-  React.useEffect(() => {
-    const updateHandler = (e: Event) => {
-      const raw  = (e as CustomEvent).detail;
-      const data = raw?.payload || raw;
-      if (!data?.latestVersion) return;
-      setResult((prev) => ({
-        hasUpdate:      true,
-        currentVersion: data.currentVersion || prev?.currentVersion || installedVersion,
-        latestVersion:  data.latestVersion,
-        downloadUrl:    data.downloadUrl || prev?.downloadUrl,
-        changelog:      data.changelog !== undefined ? data.changelog : (prev?.changelog || ''),
-        downloading:    !!data.downloading,
-        readyToInstall: !!data.readyToInstall,
-      }));
-    };
-
-    const progressHandler = (e: Event) => {
-      const raw = (e as CustomEvent).detail;
-      const data = raw?.payload || raw;
-      if (!data) return;
-      setDownloadProgress(data);
-      if (data.status === 'downloading') {
-        setResult((prev) => prev ? { ...prev, downloading: true, readyToInstall: false } : prev);
-      } else if (data.status === 'ready') {
-        setResult((prev) => prev ? { ...prev, downloading: false, readyToInstall: true } : prev);
-      } else if (data.status === 'error') {
-        setResult((prev) => prev ? { ...prev, downloading: false } : prev);
-        setError(data.error || 'Failed to download update.');
-      }
-    };
-
-    window.addEventListener('sse:update_available', updateHandler);
-    window.addEventListener('sse:update_progress', progressHandler);
-    return () => {
-      window.removeEventListener('sse:update_available', updateHandler);
-      window.removeEventListener('sse:update_progress', progressHandler);
-    };
-  }, [installedVersion]);
 
   const handleInstallAndRestart = async () => {
     setInstalling(true);
@@ -371,27 +335,60 @@ function SoftwareUpdateCard() {
       setInstalling(false);
     }, 15000);
     try {
-      const res  = await fetch('/api/system/apply-update', { method: 'POST' });
-      const data = await res.json();
+      const res = await fetch('/api/system/apply-update', { method: 'POST' });
+      const data = await res.json() as { success?: boolean; error?: string };
       if (!data.success) {
         clearTimeout(timeout);
         toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
         setInstalling(false);
       }
-      // On success the backend kills the process
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(timeout);
       setInstalling(false);
-      toastEvent.trigger(err?.message || 'Update request failed.', 'error');
+      toastEvent.trigger((err as Error)?.message || 'Update request failed.', 'error');
     }
   };
 
   const handlePostpone = () => {
-    if (result?.latestVersion) {
-      sessionStorage.setItem(`update_later_${result.latestVersion}`, 'true');
+    if (updateStatus.version) {
+      sessionStorage.setItem(`update_later_${updateStatus.version}`, 'true');
     }
     setPostponed(true);
-    toastEvent.trigger(`Update v${result?.latestVersion || ''} postponed. You can install anytime from here.`, 'info');
+    toastEvent.trigger(`Update v${updateStatus.version || ''} postponed. You can install anytime from here.`, 'info');
+  };
+
+  const loadHistory = async (force = false) => {
+    const now = Date.now();
+    if (!force && cachedReleaseHistory && (now - cachedReleaseHistoryTime < 10 * 60 * 1000)) {
+      setHistoryData(cachedReleaseHistory);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const url = force ? '/license/update-history?refresh=true' : '/license/update-history';
+      const res = await apiClient.get<UpdateHistoryResponse>(url);
+      if (res.data) {
+        cachedReleaseHistory = res.data;
+        cachedReleaseHistoryTime = now;
+        setHistoryData(res.data);
+      }
+    } catch {
+      setHistoryData({
+        installed: updateStatus.currentVersion,
+        releases: cachedReleaseHistory?.releases || [],
+        offline: true,
+      });
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const toggleHistory = () => {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (next && !historyData) {
+      void loadHistory(false);
+    }
   };
 
   return (
@@ -405,12 +402,12 @@ function SoftwareUpdateCard() {
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-text">Software Update</h3>
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
-                Installed: v{installedVersion}
+                Installed: v{updateStatus.currentVersion}
               </span>
             </div>
             <p className="text-[11px] text-muted mt-0.5">
-              AI Pharmacy OS — auto-checks every 15 days when internet is available
-              {lastChecked && <span className="ml-1">· Last checked {lastChecked}</span>}
+              AI Pharmacy OS — checks on every boot, then daily in the background (only while idle)
+              {lastCheckedStr && <span className="ml-1">· Last checked {lastCheckedStr}</span>}
             </p>
           </div>
         </div>
@@ -425,136 +422,227 @@ function SoftwareUpdateCard() {
         </button>
       </div>
 
-      {/* Result */}
-      {result && (
+      {/* Downloading State */}
+      {updateStatus.state === 'downloading' && (
+        <div className="space-y-2 p-3 rounded-xl bg-bg border border-border text-xs text-text">
+          <div className="flex justify-between items-center text-[11px] font-semibold text-primary flex-wrap gap-2">
+            <span className="flex items-center gap-1.5 font-bold">
+              <ArrowDownToLine size={13} className="animate-bounce" />
+              Downloading update v{updateStatus.version || ''} in background...
+            </span>
+            <span className="font-mono text-text">
+              {updateStatus.downloadedMB} MB / {updateStatus.totalMB > 0 ? updateStatus.totalMB : 105} MB ({updateStatus.percent}%)
+            </span>
+          </div>
+          <div className="w-full bg-border rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-primary h-full transition-all duration-300 rounded-full"
+              style={{ width: `${Math.min(100, Math.max(2, updateStatus.percent))}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-muted">
+            You can continue working normally. Once download completes and is verified, you will be prompted to install.
+          </p>
+        </div>
+      )}
+
+      {/* Ready State */}
+      {updateStatus.state === 'ready' && (
+        <div className="p-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-xs text-text space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="flex items-center gap-1.5 font-bold text-emerald-400">
+              <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+              Update v{updateStatus.version} has been downloaded &amp; verified. Ready to install!
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleInstallAndRestart}
+                disabled={installing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
+              >
+                <RefreshCw size={12} className={installing ? 'animate-spin' : ''} />
+                {installing ? 'Installing & restarting...' : 'Install & Restart Now'}
+              </button>
+              {!postponed && (
+                <button
+                  type="button"
+                  onClick={handlePostpone}
+                  className="px-2.5 py-1.5 bg-bg3 border border-border text-text rounded-lg text-xs font-semibold hover:bg-bg transition-colors cursor-pointer"
+                >
+                  Later
+                </button>
+              )}
+            </div>
+          </div>
+          {updateStatus.changelog && (
+            <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed border-t border-border pt-2 font-sans">
+              {updateStatus.changelog}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Error State */}
+      {(updateStatus.state === 'error' || error || updateStatus.lastError) && (
+        <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/5 text-xs text-text space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 text-red-500 font-semibold">
+              <AlertTriangle size={14} className="shrink-0" />
+              <span>{error || updateStatus.lastError || 'Update check or download failed.'}</span>
+            </div>
+            {updateStatus.hasUpdate && updateStatus.state !== 'downloading' && updateStatus.state !== 'ready' && (
+              <button
+                type="button"
+                onClick={handleStartBackgroundDownload}
+                disabled={downloadStarting}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-60"
+              >
+                <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
+                {downloadStarting ? 'Starting...' : 'Download Update (105 MB)'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Idle State with Update Available or Up to Date */}
+      {updateStatus.state === 'idle' && (
         <div className={`p-3 rounded-xl border text-xs ${
-          result.hasUpdate
+          updateStatus.hasUpdate
             ? 'bg-primary/5 border-primary/20 text-text'
             : 'bg-emerald-500/10 border-emerald-500/25 text-text'
         }`}>
-          {result.hasUpdate ? (
+          {updateStatus.hasUpdate ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="font-bold text-primary">
-                  🎉 Update available — v{result.latestVersion} (Current: v{result.currentVersion || installedVersion})
+                  🎉 Update available — v{updateStatus.version} (Current: v{updateStatus.currentVersion})
                 </span>
-                {result.readyToInstall ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleInstallAndRestart}
-                      disabled={installing}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
-                    >
-                      <RefreshCw size={12} className={installing ? 'animate-spin' : ''} />
-                      {installing ? 'Installing & restarting...' : 'Install & Restart Now'}
-                    </button>
-                    {!postponed && (
-                      <button
-                        type="button"
-                        onClick={handlePostpone}
-                        className="px-2.5 py-1.5 bg-bg3 border border-border text-text rounded-lg text-xs font-semibold hover:bg-bg transition-colors cursor-pointer"
-                      >
-                        Later
-                      </button>
-                    )}
-                  </div>
-                ) : result.downloading ? (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-xs font-bold">
-                    <ArrowDownToLine size={13} className="animate-bounce" />
-                    Downloading in background... {downloadProgress?.percent != null ? `${downloadProgress.percent}%` : ''}
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleStartBackgroundDownload}
-                    disabled={downloadStarting}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm shadow-primary/20 disabled:opacity-60"
-                  >
-                    <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
-                    {downloadStarting ? 'Starting...' : 'Download Update (105 MB)'}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleStartBackgroundDownload}
+                  disabled={downloadStarting}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm shadow-primary/20 disabled:opacity-60"
+                >
+                  <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
+                  {downloadStarting ? 'Starting...' : 'Download Update (105 MB)'}
+                </button>
               </div>
-
-              {/* Progress bar when downloading */}
-              {result.downloading && (
-                <div className="space-y-1.5 p-2.5 rounded-lg bg-bg border border-border">
-                  <div className="flex justify-between text-[11px] font-semibold text-primary">
-                    <span className="flex items-center gap-1">
-                      <ArrowDownToLine size={12} />
-                      Downloading OTA update package in background...
-                    </span>
-                    <span>{downloadProgress?.transferredMB || 0} MB / {downloadProgress?.totalMB || 105} MB ({downloadProgress?.percent || 0}%)</span>
-                  </div>
-                  <div className="w-full bg-border rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-primary h-full transition-all duration-300 rounded-full"
-                      style={{ width: `${downloadProgress?.percent || 0}%` }}
-                    />
-                  </div>
-                  <p className="text-[10px] text-muted">
-                    You can continue working normally. Once download completes and is verified, you will be prompted to install.
-                  </p>
-                </div>
-              )}
-
-              {/* Verified ready notice */}
-              {result.readyToInstall && (
-                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 font-semibold">
-                    <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
-                    Update v{result.latestVersion} has been downloaded &amp; verified. Ready to install!
-                  </span>
-                  {postponed && (
-                    <button
-                      type="button"
-                      onClick={handleInstallAndRestart}
-                      disabled={installing}
-                      className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-md text-[11px] font-bold hover:bg-emerald-700 transition-colors shrink-0 cursor-pointer"
-                    >
-                      <RefreshCw size={11} className={installing ? 'animate-spin' : ''} />
-                      Install Now
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {result.changelog && (
-                <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed border-t border-border pt-2">
-                  {result.changelog}
+              {updateStatus.changelog && (
+                <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed border-t border-border pt-2 font-sans">
+                  {updateStatus.changelog}
                 </p>
-              )}
-
-              {result.downloadUrl && (
-                <div className="pt-2 text-[10px] text-muted flex items-center gap-1 border-t border-border/50">
-                  <span>Need full offline standalone installer for other PCs?</span>
-                  <a
-                    href={result.downloadUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline inline-flex items-center gap-0.5 font-medium"
-                  >
-                    Download Setup (.exe, ~980 MB) <ExternalLink size={10} />
-                  </a>
-                </div>
               )}
             </div>
           ) : (
             <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
               <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-              You're up to date — Installed: v{result.currentVersion || result.latestVersion || installedVersion}
+              You're up to date — Installed: v{updateStatus.currentVersion}
             </span>
           )}
         </div>
       )}
 
-      {error && (
-        <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/5 text-xs text-red-500 flex items-center gap-2">
-          <AlertTriangle size={13} className="shrink-0" />
-          {error}
+      {/* Offline Standalone Installer Link if available */}
+      {updateStatus.downloadUrl && (
+        <div className="pt-2 text-[10px] text-muted flex items-center gap-1 border-t border-border/50">
+          <span>Need full offline standalone installer for other PCs?</span>
+          <a
+            href={updateStatus.downloadUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline inline-flex items-center gap-0.5 font-medium"
+          >
+            Download Setup (.exe, ~980 MB) <ExternalLink size={10} />
+          </a>
         </div>
       )}
+
+      {/* Collapsible Recent Releases History */}
+      <div className="border-t border-border pt-3">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={toggleHistory}
+            className="flex items-center gap-2 text-xs font-bold text-text hover:text-primary transition-colors cursor-pointer"
+          >
+            <History size={14} className="text-primary" />
+            <span>Recent Releases &amp; Changelogs</span>
+            {historyOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+
+          {historyOpen && (
+            <button
+              type="button"
+              onClick={() => void loadHistory(true)}
+              disabled={historyLoading}
+              className="text-[11px] text-muted hover:text-text flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              title="Refresh release history"
+            >
+              <RefreshCw size={11} className={historyLoading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+          )}
+        </div>
+
+        {historyOpen && (
+          <div className="mt-3 space-y-2">
+            {historyLoading && !historyData && (
+              <div className="p-3 text-center text-muted text-xs flex items-center justify-center gap-2">
+                <RefreshCw size={13} className="animate-spin text-primary" />
+                <span>Loading releases from GitHub...</span>
+              </div>
+            )}
+
+            {historyData?.offline && (
+              <div className="p-3 text-center text-muted text-xs italic bg-bg rounded-lg border border-border">
+                Release history unavailable while offline.
+              </div>
+            )}
+
+            {historyData && !historyData.offline && historyData.releases.length === 0 && (
+              <div className="p-3 text-center text-muted text-xs bg-bg rounded-lg border border-border">
+                No past releases recorded.
+              </div>
+            )}
+
+            {historyData?.releases.map((rel) => {
+              const isInstalled = rel.version === updateStatus.currentVersion;
+              return (
+                <div key={rel.version} className="p-3 rounded-xl bg-bg border border-border space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-text">v{rel.version}</span>
+                      {rel.name && rel.name !== `v${rel.version}` && (
+                        <span className="text-muted text-[11px]">({rel.name})</span>
+                      )}
+                      {isInstalled && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/15 text-primary border border-primary/30">
+                          Installed
+                        </span>
+                      )}
+                      {rel.isNewerThanInstalled && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-500 border border-amber-500/30">
+                          Newer
+                        </span>
+                      )}
+                    </div>
+                    {rel.publishedAt && (
+                      <span className="text-muted text-[11px]">{formatReleaseDate(rel.publishedAt)}</span>
+                    )}
+                  </div>
+                  {rel.changelog && (
+                    <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed font-sans pt-1">
+                      {rel.changelog}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

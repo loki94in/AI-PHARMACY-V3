@@ -224,6 +224,15 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
           }
         }
 
+        const paymentMethod = o.paymentMethod || (o.payment_declared ? 'UPI' : (o.isCredit ? 'CREDIT' : 'COUNTER_PICKUP'));
+        const paymentStatus = o.payment_declared
+          ? 'PENDING_VERIFICATION'
+          : (paymentMethod === 'CREDIT' ? 'UNPAID' : (o.payment_status || 'PENDING'));
+        const paymentNotes = o.payment_declared
+          ? ` [Payment Declared: ${o.payment_declared.method || 'UPI'}]`
+          : (paymentMethod === 'CREDIT' ? ' [Payment Method: CREDIT / PAY LATER]' : '');
+        const orderNotesWithPayment = `${fullNotes}${paymentNotes}`;
+
         if (isRefill) {
           // Check if patient has an active refill for any of these items
           if (matchedCustomerId) {
@@ -237,10 +246,23 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
               if (refill) {
                 await db.run(
                   `UPDATE patient_refills 
-                   SET next_refill_date = date('now'), updated_at = CURRENT_TIMESTAMP
+                   SET next_refill_date = date('now'), source = 'website', cart_status = 'pending', updated_at = CURRENT_TIMESTAMP
                    WHERE id = ?`,
                   [refill.id]
                 ).catch(() => {});
+              } else {
+                const med = await db.get(
+                  `SELECT id FROM medicines WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?) LIMIT 1`,
+                  [it.name, `%${it.name}%`]
+                );
+                if (med) {
+                  await db.run(
+                    `INSERT INTO patient_refills (
+                      customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, quantity_needed, next_refill_date, is_active, source, cart_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, date('now'), 1, 'website', 'pending')`,
+                    [matchedCustomerId, customerName, cleanPhone, med.id, 30, it.qty || 1]
+                  ).catch(() => {});
+                }
               }
             }
           }
@@ -248,13 +270,14 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
           await db.run(
             `INSERT INTO special_orders (
               store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              status, priority, customer_order_source, order_type, total_amount, sync_id,
+              payment_method, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               1,
               customerName,
               o.phone || '',
-              `[Website Refill Request #${o.orderId}] ${fullNotes}`,
+              `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}`,
               itemsSummary,
               itemsSummary,
               o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
@@ -264,19 +287,22 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
               'REFILL',
               o.totalAmount || 0,
               o.orderId,
+              paymentMethod,
+              paymentStatus
             ]
           );
         } else if (isSpecialOrder) {
           await db.run(
             `INSERT INTO special_orders (
               store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              status, priority, customer_order_source, order_type, total_amount, sync_id,
+              payment_method, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               1,
               customerName,
               o.phone || '',
-              `[Special Shortage Request #${o.orderId}] ${fullNotes}`,
+              `[Special Shortage Request #${o.orderId}] ${orderNotesWithPayment}`,
               itemsSummary,
               itemsSummary,
               o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
@@ -286,19 +312,22 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
               'SPECIAL_ORDER',
               o.totalAmount || 0,
               o.orderId,
+              paymentMethod,
+              paymentStatus
             ]
           );
         } else {
           await db.run(
             `INSERT INTO special_orders (
               store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              status, priority, customer_order_source, order_type, total_amount, sync_id,
+              payment_method, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               1,
               customerName,
               o.phone || '',
-              fullNotes,
+              orderNotesWithPayment,
               itemsSummary,
               itemsSummary,
               o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
@@ -308,6 +337,8 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
               o.orderType || 'DELIVERY',
               o.totalAmount || 0,
               o.orderId,
+              paymentMethod,
+              paymentStatus
             ]
           );
         }
@@ -338,6 +369,14 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
           link: '/crm?tab=special_orders'
         });
       } catch (_) {}
+
+      // Trigger catch-up cart add if online refills were received
+      try {
+        const { startupSyncCoordinator } = await import('./startupSyncCoordinator.js');
+        void startupSyncCoordinator.runRefillAutoCartCatchUp('cloud_pull');
+      } catch (err) {
+        console.warn('[CloudCatalogSync] runRefillAutoCartCatchUp error:', err);
+      }
     }
 
     return {

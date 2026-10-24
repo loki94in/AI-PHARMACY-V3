@@ -16,6 +16,7 @@ class StartupSyncCoordinator {
   private maxTimeoutMs: number = 15000;
   private resolveCallbacks: Array<() => void> = [];
   private timeoutHandle: NodeJS.Timeout | null = null;
+  private isRefillCatchUpRunning: boolean = false;
 
   constructor() {
     // Auto-release after safety timeout (15 seconds) so background scanning is never blocked forever
@@ -43,6 +44,11 @@ class StartupSyncCoordinator {
       // Trigger automatic sync of offline-queued orders
       void this.syncPendingLiveCartOrders().catch(err => {
         console.warn('[StartupSyncCoordinator] Offline live cart sync warning:', err?.message || err);
+      });
+
+      // Trigger automatic catch-up pass for online-sourced refills
+      void this.runRefillAutoCartCatchUp('boot_cart_loaded').catch(err => {
+        console.warn('[StartupSyncCoordinator] Refill auto cart catch-up warning:', err?.message || err);
       });
     }
   }
@@ -162,13 +168,20 @@ class StartupSyncCoordinator {
             [ord.id, `Offline order successfully synced to Live Cart (${distName || 'Distributor'}).`]
           ).catch(() => {});
 
-          // Notify customer via WhatsApp
+          // Stage customer notification in automation_notifications (STRICTLY STAGED, NEVER AUTO-SENT — Owner Decision D4)
           const cleanPhone = String(ord.phone || '').replace(/\D/g, '').slice(-10);
           if (cleanPhone && cleanPhone.length === 10) {
             try {
-              const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-              const syncMsg = `🛒 *Order Synced to Live Cart — AI Pharmacy*\n\nHello *${ord.requester || 'Customer'}*,\nYour queued medicine request for *${prodName}* (Qty: ${ord.qty || 1}) has been automatically synchronized and forwarded to our distributor Live Cart for procurement!\n\nWe will update you as soon as stock arrives at the counter.`;
-              await whatsappQueueWorker.enqueue(`91${cleanPhone}`, syncMsg, 'live_cart_sync_notification', ord.requester);
+              const { getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+              const storeLabel = (await getStoreMedicalName(db)) || 'AI Pharmacy';
+              const storePhone = await getStorePhone(db);
+              const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
+              const syncMsg = `🛒 *Order Synced to Live Cart — ${storeLabel}*\n\nHello *${ord.requester || 'Customer'}*,\nYour queued medicine request for *${prodName}* (Qty: ${ord.qty || 1}) has been synchronized and forwarded to our distributor Live Cart for procurement!\n\nWe will update you as soon as stock arrives at the counter.${phoneSuffix}`;
+              await db.run(
+                `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+                 VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
+                ['live_cart_sync_notification', ord.requester || 'Customer', cleanPhone, syncMsg, String(ord.id)]
+              ).catch(() => {});
             } catch (_) {}
           }
         }
@@ -186,6 +199,119 @@ class StartupSyncCoordinator {
     } catch (e: any) {
       console.warn('[StartupSyncCoordinator] syncPendingLiveCartOrders failure:', e?.message || e);
       return { processed: 0, synced: 0 };
+    }
+  }
+
+  /**
+   * Catches up online-sourced refills (website + whatsapp) into the live Pharmarack cart.
+   * Single-flight, bounded batch (max 10), serial execution, reuses processRefillCartItem exactly.
+   * Owner-approved exception to worker prohibitions (Phase B).
+   */
+  public async runRefillAutoCartCatchUp(triggerSource = 'event'): Promise<{ processed: number; added: number; failed: number }> {
+    if (this.isRefillCatchUpRunning) {
+      console.log(`[StartupSyncCoordinator] Refill catch-up pass already running (trigger=${triggerSource}). Skipping duplicate.`);
+      return { processed: 0, added: 0, failed: 0 };
+    }
+
+    this.isRefillCatchUpRunning = true;
+    try {
+      const { dbManager } = await import('../database/connection.js');
+      const db = await dbManager.getConnection();
+
+      const { getRefillAutoCartAddMode } = await import('./storeSettingsService.js');
+      const mode = await getRefillAutoCartAddMode(db);
+      if (mode !== 'auto') {
+        console.log(`[StartupSyncCoordinator] Refill auto cart-add is ${mode}. Skipping catch-up.`);
+        return { processed: 0, added: 0, failed: 0 };
+      }
+
+      const { getPharmarackSettings } = await import('../routes/pharmarack.js');
+      const prSettings = await getPharmarackSettings();
+      if (!prSettings['pharmarack_session_token']) {
+        console.log('[StartupSyncCoordinator] No active Pharmarack session token. Skipping refill auto cart catch-up.');
+        return { processed: 0, added: 0, failed: 0 };
+      }
+
+      // Query eligible pending online refills
+      const eligibleRefills = await db.all(
+        `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.patient_name, pr.source, pr.cart_status,
+                m.name AS medicine_name
+         FROM patient_refills pr
+         JOIN medicines m ON m.id = pr.medicine_id
+         WHERE LOWER(pr.source) IN ('website', 'whatsapp')
+           AND pr.is_active = 1
+           AND LOWER(pr.status) = 'pending'
+           AND (pr.cart_status IS NULL OR pr.cart_status NOT IN ('added', 'ready', 'in_cart'))
+         ORDER BY pr.id ASC
+         LIMIT 10`
+      );
+
+      if (!eligibleRefills || eligibleRefills.length === 0) {
+        return { processed: 0, added: 0, failed: 0 };
+      }
+
+      console.log(`[StartupSyncCoordinator] Running refill auto-add catch-up for ${eligibleRefills.length} online refill(s) (trigger=${triggerSource}).`);
+      const { processRefillCartItem } = await import('./refillCartService.js');
+      let addedCount = 0;
+      let failedCount = 0;
+
+      for (const item of eligibleRefills) {
+        try {
+          const res = await processRefillCartItem(item.id, { qty: item.quantity_needed || 1 });
+          await db.run(
+            `UPDATE patient_refills SET cart_status = ? WHERE id = ?`,
+            [res.status, item.id]
+          );
+
+          if (res.status === 'added' || res.status === 'in_cart') {
+            addedCount++;
+            // Mark any linked website_refill in special_orders as in_live_cart
+            await db.run(
+              `UPDATE special_orders 
+               SET needs_live_cart_sync = 0, status = 'In Live Cart', delivery_status = 'in_live_cart'
+               WHERE customer_order_source = 'website_refill' 
+                 AND (LOWER(product) = LOWER(?) OR LOWER(medicine_name) = LOWER(?))
+                 AND needs_live_cart_sync = 1`,
+              [item.medicine_name, item.medicine_name]
+            ).catch(() => {});
+          } else {
+            failedCount++;
+          }
+
+          // Small yield between items to protect CPU event loop on 4-core machine
+          await new Promise(r => setTimeout(r, 200));
+        } catch (itemErr: any) {
+          failedCount++;
+          console.warn(`[StartupSyncCoordinator] Refill #${item.id} auto-add error:`, itemErr?.message || itemErr);
+          await db.run(
+            `UPDATE patient_refills SET cart_status = 'failed' WHERE id = ?`,
+            [item.id]
+          ).catch(() => {});
+        }
+      }
+
+      if (addedCount > 0 || failedCount > 0) {
+        try {
+          const { eventService } = await import('./eventService.js');
+          eventService.broadcast('refill_updated', { source: 'auto_cart_catch_up', added: addedCount, failed: failedCount });
+          eventService.broadcast('cart_updated', { source: 'refill_auto_add' });
+
+          if (addedCount > 0) {
+            eventService.broadcast('toast_alert', {
+              type: 'success',
+              message: `🛒 ${addedCount} online refill(s) automatically added to live Pharmarack cart!`,
+              link: '/pharmarack-cart'
+            });
+          }
+        } catch (_) {}
+      }
+
+      return { processed: eligibleRefills.length, added: addedCount, failed: failedCount };
+    } catch (err: any) {
+      console.warn('[StartupSyncCoordinator] Refill catch-up failure:', err?.message || err);
+      return { processed: 0, added: 0, failed: 0 };
+    } finally {
+      this.isRefillCatchUpRunning = false;
     }
   }
 

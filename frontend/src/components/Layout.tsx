@@ -64,6 +64,7 @@ import {
   Send as SendIcon,
   Calendar,
   RotateCw,
+  ArrowDownToLine,
 } from 'lucide-react';
 
 
@@ -71,6 +72,7 @@ import { toastEvent, quickOrderEvent, liveCartAddEvent, refillEvent, whatsappQue
 import type { ToastEventDetail } from '../services/events';
 import type { WhatsAppReadinessState } from '../types/api';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, openRefillCartJob, startRefillCartJob } from '../services/refillCartJobs';
+import { useUpdateStatus } from '../services/updateStatusStore';
 // Lazy-loaded modals & popovers — prevents bundling heavy components into the main shell
 const QuickOrderModal = lazy(() => import('./QuickOrderModal').then(m => ({ default: m.QuickOrderModal })));
 const LiveCartAddModal = lazy(() => import('./LiveCartAddModal').then(m => ({ default: m.LiveCartAddModal })));
@@ -1986,6 +1988,7 @@ const Topbar = memo(({
 
   const cartJobs = React.useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
   const activeCartJob = cartJobs.find(j => isRefillJobRunning(j));
+  const updateStatus = useUpdateStatus();
 
   const activeHeaderItems = useMemo(() => {
     const items: Array<{
@@ -2047,6 +2050,65 @@ const Topbar = memo(({
         icon: isFlash
           ? <Check size={12} className="text-emerald-400 shrink-0" />
           : <RefreshCw size={12} className={`${startupAttention ? 'text-amber-400' : 'text-sky-400'} animate-spin shrink-0`} />
+      });
+    }
+
+    // 0.07. Software Update Progress / Status
+    if (updateStatus.state === 'downloading') {
+      items.push({
+        id: 'app-update',
+        type: 'notification',
+        title: `⏬ Update v${updateStatus.version || ''} — ${updateStatus.percent}%`,
+        subtitle: `${updateStatus.downloadedMB} of ${updateStatus.totalMB > 0 ? updateStatus.totalMB : 105} MB downloading in background`,
+        progress: updateStatus.percent,
+        badge: 'Downloading',
+        color: 'sky',
+        action: () => navigate('/settings?tab=license'),
+        actionLabel: 'Updates',
+        icon: <ArrowDownToLine size={12} className="text-sky-400 animate-bounce shrink-0" />
+      });
+    } else if (updateStatus.state === 'ready') {
+      items.push({
+        id: 'app-update',
+        type: 'notification',
+        title: `✅ Update v${updateStatus.version || ''} ready`,
+        subtitle: 'Downloaded & verified — install anytime',
+        badge: 'Install',
+        color: 'emerald',
+        action: () => navigate('/settings?tab=license'),
+        actionLabel: 'Updates',
+        icon: <Check size={12} className="text-emerald-400 shrink-0" />
+      });
+    } else if (updateStatus.state === 'error' || updateStatus.lastError) {
+      items.push({
+        id: 'app-update',
+        type: 'notification',
+        title: '⚠️ Update check failed',
+        subtitle: updateStatus.lastError || 'Could not complete update',
+        color: 'amber',
+        badge: 'Check',
+        action: () => navigate('/settings?tab=license'),
+        actionLabel: 'Updates',
+        icon: <AlertTriangle size={12} className="text-amber-400 shrink-0" />
+      });
+    } else if (updateStatus.state === 'idle' && updateStatus.lastCheckedAt) {
+      const timeStr = (() => {
+        try {
+          const d = new Date(updateStatus.lastCheckedAt);
+          return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch {
+          return '';
+        }
+      })();
+      items.push({
+        id: 'app-update',
+        type: 'notification',
+        title: `✅ App up to date (v${updateStatus.currentVersion})`,
+        subtitle: timeStr ? `Checked ${timeStr}` : 'Latest version running',
+        color: 'emerald',
+        action: () => navigate('/settings?tab=license'),
+        actionLabel: 'Updates',
+        icon: <Check size={12} className="text-emerald-400 shrink-0" />
       });
     }
 
@@ -2159,7 +2221,7 @@ const Topbar = memo(({
 
 
     return items;
-  }, [activeCartJob, activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate, startupPhase, startupServices, startupReady, startupAttention, startupGaveUp]);
+  }, [activeCartJob, activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate, startupPhase, startupServices, startupReady, startupAttention, startupGaveUp, updateStatus]);
 
 
   const [carouselIndex, setCarouselIndex] = useState(0);

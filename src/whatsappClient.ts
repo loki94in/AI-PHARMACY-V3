@@ -295,6 +295,22 @@ export function setLoginWindowActive(active: boolean): void {
 export function isWhatsAppLoginWindowActive(): boolean {
   return isLoginWindowActive;
 }
+
+export function getWhatsAppBrowserPid(): number | null {
+  try {
+    const c = clientInstance || activeClient;
+    const browser = (c as any)?.pupBrowser;
+    if (browser && typeof browser.process === 'function') {
+      const proc = browser.process();
+      if (proc && typeof proc.pid === 'number') return proc.pid;
+    }
+  } catch (_) {}
+  return null;
+}
+
+export function isWhatsAppBusyOrRestoring(): boolean {
+  return initializing || isSyncing || !!initPromise;
+}
 // Timestamp (ms) of the last getChats() failure — suppresses retries for 30 s
 let lastSyncFailureAt: number = 0;
 let lastSyncCooldownLoggedAt: number = 0;

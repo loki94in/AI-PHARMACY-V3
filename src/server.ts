@@ -694,7 +694,9 @@ server.on('error', (err: any) => {
       console.log('[Boot:Phase1] Initializing database schema, indexes, and WAL mode...');
       await ensureSchema(DB_PATH);
       schemaReady = true;
-      console.log(`[Boot:Phase1] Database schema ready in ${Math.round(performance.now() - phase1T0)}ms — API requests unblocked.`);
+      const schemaDuration = Math.round(performance.now() - phase1T0);
+      import('./systemHealthMonitor.js').then(m => m.recordBootMilestone('schemaMs', schemaDuration)).catch(() => {});
+      console.log(`[Boot:Phase1] Database schema ready in ${schemaDuration}ms — API requests unblocked.`);
       console.log(`[Boot:CoreReady] Core API and database ready in ${Math.round(performance.now() - BOOT_T0)}ms.`);
 
       // Route pre-warm now starts here (not at module load) so V8 compile work
@@ -743,7 +745,9 @@ server.on('error', (err: any) => {
         })
         .catch(err => console.warn('[Boot:Phase2] Master medicines CSV enrichment failed (non-fatal):', err?.message || err));
 
-      console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
+      const phase2Duration = Math.round(performance.now() - phase2T0);
+      import('./systemHealthMonitor.js').then(m => m.recordBootMilestone('phase2Ms', phase2Duration)).catch(() => {});
+      console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${phase2Duration}ms.`);
 
       // Pharmarack session validation starts at T+600ms — the cheap REST probe
       // (~300ms) proves the stored token immediately, making medicine search
@@ -765,17 +769,25 @@ server.on('error', (err: any) => {
           if (await isWhatsAppAutoConnectAllowed()) {
             console.log('[Boot:Phase2] Saved WhatsApp session found — performing 1-time boot session restore...');
             (async () => {
-              const wa = await import('./whatsappClient.js');
-              for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                  await wa.initClient({ isBoot: true });
+              const { runHeavyRestore } = await import('./utils/heavyRestoreLane.js');
+              await runHeavyRestore('whatsapp_boot_restore', async () => {
+                const waT0 = performance.now();
+                const wa = await import('./whatsappClient.js');
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                  try {
+                    await wa.initClient({ isBoot: true });
+                    if ((await wa.getWhatsAppStatus()).isReady) {
+                      const duration = Math.round(performance.now() - waT0);
+                      import('./systemHealthMonitor.js').then(m => m.recordBootMilestone('whatsappRestoreMs', duration)).catch(() => {});
+                      return;
+                    }
+                  } catch (err: any) {
+                    console.warn(`[Boot:Phase2] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
+                  }
+                  if (attempt < 3) await new Promise(r => setTimeout(r, 60_000));
                   if ((await wa.getWhatsAppStatus()).isReady) return;
-                } catch (err: any) {
-                  console.warn(`[Boot:Phase2] WhatsApp boot restore attempt ${attempt}/3 failed:`, err?.message || err);
                 }
-                if (attempt < 3) await new Promise(r => setTimeout(r, 60_000));
-                if ((await wa.getWhatsAppStatus()).isReady) return;
-              }
+              });
             })();
           } else {
             console.log('[Boot:Phase2] No saved WhatsApp session or disconnected — auto-stopping WhatsApp at boot. Connect manually in UI.');
@@ -911,6 +923,20 @@ server.on('error', (err: any) => {
           // Backup scheduler
           const { initBackupScheduler } = await import('./services/backupService.js');
           await initBackupScheduler().catch(err => { bootWorkerFailures++; console.error('[Boot:Phase3] Failed to init backup scheduler:', err); });
+
+          // System health monitor & memory telemetry (P2-105)
+          // Starts strictly at T+90s (after WhatsApp initial restore loop and heartbeat settle)
+          setTimeout(async () => {
+            try {
+              const { startSystemHealthMonitor } = await import('./systemHealthMonitor.js');
+              startSystemHealthMonitor();
+              const { reapSystemProfileOrphans } = await import('./utils/chromeBrowser.js');
+              // One-time boot zombie sweep catching any leftovers from prior crashes
+              await reapSystemProfileOrphans();
+            } catch (monErr) {
+              console.warn('[Boot:Phase3] System health monitor start failed:', monErr);
+            }
+          }, 90_000);
         } else {
           console.log('[Boot:Phase3] Background automation is disabled in Settings — skipping automatic startup workers.');
         }
@@ -1038,8 +1064,12 @@ server.on('error', (err: any) => {
 
       // One-line boot health summary, ~T+10s (covers the T+2/5/6/8s staggers).
       // Later failures (WhatsApp T+45s, cart warm-up) still log their own errors.
-      setTimeout(() => {
+      setTimeout(async () => {
         console.log(`[Boot] Progressive background staging complete at T+10s: ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
+        try {
+          const { getBootMilestones } = await import('./systemHealthMonitor.js');
+          console.log('[Boot:PERF] Staged boot milestones:', JSON.stringify(getBootMilestones()));
+        } catch (_) {}
       }, 10_000);
 
     } catch (err) {
@@ -1094,6 +1124,22 @@ async function setupCrons(db: any) {
         await tryDailySend();
       } catch (err) {
         console.error('[PharmarackBatch] 11AM cron error:', err);
+      }
+    });
+  });
+
+  // Periodic idle-gated zombie Chromium sweep every 30 minutes (P2-105)
+  // Reaps dead headless Chrome/Edge processes matching our app profiles while user is idle.
+  cron.schedule('*/30 * * * *', () => {
+    void runHeavyJob('zombie_process_sweep', async () => {
+      try {
+        const { activityTracker } = await import('./utils/activityTracker.js');
+        if (activityTracker.isIdle(10 * 60 * 1000)) {
+          const { reapSystemProfileOrphans } = await import('./utils/chromeBrowser.js');
+          await reapSystemProfileOrphans();
+        }
+      } catch (err) {
+        console.warn('[ProcessGuardian] Scheduled zombie sweep error:', err);
       }
     });
   });

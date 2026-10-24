@@ -33,6 +33,7 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   inventory_sync: [['inventory'], ['inventory-list'], ['compact-inventory'], ['pos-inventory'], ['investigation-list']],
   pharmarack_cart_changed: [['pharmarack-cart'], ['refills'], ['crm-refills']],
   live_cart_updated: [['pharmarack-cart'], ['refills'], ['crm-refills']],
+  cart_updated: [['pharmarack-cart'], ['refills'], ['crm-refills']],
   customers_changed: [['customers'], ['crm-customers'], ['pos-customers']],
   distributors_updated: [['distributors'], ['distributor-list'], ['master-distributors']],
   stores_updated: [['stores'], ['stores-list']],
@@ -68,6 +69,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   // Reuses the page's existing DOM event name — PharmarackCart, LiveCartAddModal
   // and Layout already listen for 'refresh-pharmarack-cart'.
   pharmarack_cart_changed: ['refresh-pharmarack-cart', 'refresh-refills'],
+  cart_updated: ['refresh-pharmarack-cart', 'refresh-refills'],
   pharmarack_orders_changed: ['refresh-sent-orders', 'refresh-pharmarack-cart'],
   dispatch_updated: ['sse-dispatch-updated'],
   email_new: ['sse-email-new'],
@@ -87,8 +89,9 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   google_verification_solved: ['sse-google-verification'],
   toast_alert: ['app-show-toast'],
   message_send_progress: ['app-message-send-progress'],
-  update_available: ['sse:update_available'],
-  update_check_complete: ['sse:update_check_complete'],
+  update_available: ['sse-update-available'],
+  update_progress: ['sse-update-progress'],
+  update_check_complete: ['sse-update-check-complete'],
 };
 
 // Chrome-owned queries rendered OUTSIDE KeepAliveOutlet pages (Layout /

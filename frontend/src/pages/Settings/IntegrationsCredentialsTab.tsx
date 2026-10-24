@@ -30,7 +30,10 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
   const [reorderWindowMonths, setReorderWindowMonths] = useState(rawSettings.pharmarack_reorder_window_months || '2');
   const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
   const [combinePharmarackSearch, setCombinePharmarackSearch] = useState(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
-  const [autoAddToLiveCart, setAutoAddToLiveCart] = useState(rawSettings.auto_add_to_live_cart !== 'false');
+  const [autoAddToLiveCart, setAutoAddToLiveCart] = useState(rawSettings.auto_add_to_live_cart === 'true' || rawSettings.auto_add_to_live_cart === '1');
+  const [refillAutoCartAdd, setRefillAutoCartAdd] = useState<'auto' | 'manual' | 'off'>(
+    rawSettings.refill_auto_cart_add === 'off' ? 'off' : rawSettings.refill_auto_cart_add === 'manual' ? 'manual' : 'auto'
+  );
   const [geminiApiKey, setGeminiApiKey] = useState(rawSettings.gemini_api_key || '');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [testingGemini, setTestingGemini] = useState(false);
@@ -199,7 +202,8 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
     setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
     setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
-    setAutoAddToLiveCart(rawSettings.auto_add_to_live_cart !== 'false');
+    setAutoAddToLiveCart(rawSettings.auto_add_to_live_cart === 'true' || rawSettings.auto_add_to_live_cart === '1');
+    setRefillAutoCartAdd(rawSettings.refill_auto_cart_add === 'off' ? 'off' : rawSettings.refill_auto_cart_add === 'manual' ? 'manual' : 'auto');
     setGeminiApiKey(rawSettings.gemini_api_key || '');
     setCfAutostart(rawSettings.cloudflare_tunnel_autostart === '1' || rawSettings.cloudflare_tunnel_autostart === 'true');
     setCfToken(rawSettings.cloudflare_tunnel_token || '');
@@ -267,7 +271,8 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
         pharmarack_mode: 'Live',
         pharmarack_reorder_window_months: reorderWindowMonths,
         combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false',
-        auto_add_to_live_cart: autoAddToLiveCart ? 'true' : 'false'
+        auto_add_to_live_cart: autoAddToLiveCart ? 'true' : 'false',
+        refill_auto_cart_add: refillAutoCartAdd
       };
       await apiClient.post('/settings/save', payload);
       toastEvent.trigger('Pharmarack B2B credentials and settings saved!', 'success');
@@ -286,7 +291,8 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
     setPharmarackPass(rawSettings.pharmarack_password || '');
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
     setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
-    setAutoAddToLiveCart(rawSettings.auto_add_to_live_cart !== 'false');
+    setAutoAddToLiveCart(rawSettings.auto_add_to_live_cart === 'true' || rawSettings.auto_add_to_live_cart === '1');
+    setRefillAutoCartAdd(rawSettings.refill_auto_cart_add === 'off' ? 'off' : rawSettings.refill_auto_cart_add === 'manual' ? 'manual' : 'auto');
     toastEvent.trigger('Pharmarack credentials reset to saved parameters', 'info');
   };
 
@@ -514,6 +520,17 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
       refetchSettings();
     } catch {
       toastEvent.trigger('Failed to update Auto Add to Live Cart setting', 'error');
+    }
+  };
+
+  const handleRefillAutoCartAddChange = async (val: 'auto' | 'manual' | 'off') => {
+    setRefillAutoCartAdd(val);
+    try {
+      await apiClient.post('/settings', { key: 'refill_auto_cart_add', value: val });
+      toastEvent.trigger(`Online refill auto cart-add set to "${val}"`, 'success');
+      refetchSettings();
+    } catch {
+      toastEvent.trigger('Failed to update Refill auto cart-add setting', 'error');
     }
   };
 
@@ -1156,6 +1173,30 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
               <label htmlFor="autoAddToLiveCartToggle" className="text-xs font-semibold text-text cursor-pointer">
                 {autoAddToLiveCart ? 'Enabled' : 'Disabled'}
               </label>
+            </div>
+          </div>
+
+          {/* Online Refill Auto Cart-Add Mode */}
+          <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
+            <div className="space-y-0.5">
+              <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                <RefreshCw size={14} className="text-primary" /> Online Refill Auto Cart-Add
+              </span>
+              <p className="text-[11px] text-muted max-w-xl">
+                Control automated live cart additions for online refills (Website &amp; WhatsApp). In Auto mode, pending online refills queue while the PC is off and automatically sync to distributor live cart when connected. Staff CRM refills remain manual click.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                id="refillAutoCartAddSelect"
+                value={refillAutoCartAdd}
+                onChange={(e) => handleRefillAutoCartAddChange(e.target.value as 'auto' | 'manual' | 'off')}
+                className="px-3 py-1.5 rounded-xl bg-bg border border-border text-text text-xs font-semibold focus:border-primary focus:outline-none cursor-pointer"
+              >
+                <option value="auto">Auto (Online Refills)</option>
+                <option value="manual">Manual (Staff Review)</option>
+                <option value="off">Off (Disabled)</option>
+              </select>
             </div>
           </div>
         </div>

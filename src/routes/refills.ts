@@ -314,6 +314,132 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Patient Rebook (added 2026-10-24): rebook a past order into patient_refills —
+// an extension of the CRM Refills writer node above. For every rebookable item
+// (a REAL master medicine_id — never invented, never name-guessed) it reuses
+// the patient's existing refill row (reactivating canceled/completed/fulfilled
+// ones) or inserts a new one with the same columns and defaults as POST /.
+// It writes NO cart line and NO inventory and sends NO message: the frontend
+// immediately runs the standard POST /:id/add-to-cart pipeline, so
+// patient_refills.cart_* keeps being written only by the verified cart source.
+// USER-CLICK ONLY — never call from a worker, cron or listener
+// (Pharmarack/user-click-only rules).
+router.post('/rebook', async (req, res) => {
+  const { patient_name, patient_phone, customer_id, items } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Pick at least one medicine to rebook' });
+  }
+  if (items.length > 12) {
+    return res.status(400).json({ error: 'A rebook can carry at most 12 medicines — run two steps for more' });
+  }
+  const phoneVal = validate10DigitPhone(patient_phone, { allowEmpty: false, requireMobile: true });
+  if (!phoneVal.isValid) {
+    return res.status(400).json({ error: phoneVal.error });
+  }
+
+  const targetStoreId: number = (req as { tenant?: { storeId?: number } }).tenant?.storeId || resolveStoreId(req) || 1;
+
+  let db;
+  try {
+    db = await dbManager.getConnection();
+
+    // Resolve (or create, exactly like POST /) the customer profile
+    const cleanPhone = phoneVal.cleanPhone;
+    const cleanName = formatCustomerName(patient_name || 'Customer');
+    let customerId = customer_id ? parseInt(String(customer_id), 10) : 0;
+    const cust0 = await db.get('SELECT id, language FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+    if (cust0) {
+      customerId = customerId || cust0.id;
+    } else if (!customerId && cleanName.toLowerCase() !== 'customer') {
+      const byName0 = await db.get('SELECT id, language FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [cleanName]);
+      if (byName0) {
+        customerId = byName0.id;
+      } else {
+        const custRes = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [cleanName, cleanPhone]);
+        customerId = Number(custRes.lastID || 0);
+      }
+    }
+    const customerLanguage = cust0?.language || 'en';
+
+    // Deduplicate rebookable items on the resolved master medicine id (largest
+    // quantity wins). Truthful skip list for anything unverifiable.
+    const seen = new Map<number, { medicine_id: number; name: string; quantity: number }>();
+    const skipped: Array<{ name: string; reason: string }> = [];
+    for (const raw of items) {
+      const displayName = String(raw?.name ?? '').trim();
+      const medicineId = parseInt(String(raw?.medicine_id ?? ''), 10);
+      if (!Number.isFinite(medicineId) || medicineId <= 0) {
+        skipped.push({ name: displayName || 'Medicine', reason: 'Not linked to the Master Database yet' });
+        continue;
+      }
+      const medRow = await db.get('SELECT id, name FROM medicines WHERE id = ?', [medicineId]);
+      if (!medRow) {
+        skipped.push({ name: displayName, reason: 'Master medicine not found' });
+        continue;
+      }
+      const qty = parseInt(String(raw?.quantity ?? raw?.qty ?? ''), 10);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        skipped.push({ name: medRow.name, reason: 'Quantity must be at least 1' });
+        continue;
+      }
+      const prev = seen.get(medicineId);
+      seen.set(medicineId, { medicine_id: medicineId, name: medRow.name, quantity: prev ? Math.max(prev.quantity, qty) : qty });
+    }
+
+    // Upsert one refill row per master medicine (mirrors POST / semantics:
+    // existing row found by medicine_id + phone/customer gets updated to
+    // is_active=1; only canceled/completed/fulfilled rows restart as pending —
+    // an already-active cycle status is preserved so a rebook never demotes
+    // an in-flight order).
+    const rebooked: Array<{ refill_id: number; created: boolean; reactivated: boolean; medicine_name: string; quantity: number }> = [];
+    const restartStatuses = new Set(['canceled', 'cancelled', 'completed', 'fulfilled']);
+    for (const item of seen.values()) {
+      const existing = await db.get(
+        `SELECT id, quantity_needed, refill_interval_days, status, is_active
+         FROM patient_refills
+         WHERE medicine_id = ? AND (patient_phone = ? OR (customer_id IS NOT NULL AND customer_id = ?))
+         ORDER BY id DESC LIMIT 1`,
+        [item.medicine_id, cleanPhone, customerId]
+      );
+      const intervalDays = existing?.refill_interval_days ? parseInt(String(existing.refill_interval_days), 10) || 30 : 30;
+      if (existing) {
+        const reactivated = restartStatuses.has(String(existing.status || '')) || existing.is_active !== 1;
+        await db.run(
+          `UPDATE patient_refills
+           SET is_active = 1,
+               quantity_needed = ?,
+               customer_id = COALESCE(customer_id, ?),
+               status = CASE WHEN status IN ('canceled','cancelled','completed','fulfilled') THEN 'pending' ELSE status END
+           WHERE id = ?`,
+          [item.quantity, customerId, existing.id]
+        );
+        rebooked.push({ refill_id: existing.id, created: false, reactivated, medicine_name: item.name, quantity: item.quantity });
+      } else {
+        const nextRefillDate = new Date();
+        nextRefillDate.setDate(nextRefillDate.getDate() + intervalDays);
+        const nextRefillStr = toLocalSqlDateTime(nextRefillDate);
+        const result = await db.run(
+          `INSERT INTO patient_refills (store_id, customer_id, patient_name, patient_phone, medicine_id, medicine_name, refill_interval_days, next_refill_date, status, quantity_needed, language, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)`,
+          [targetStoreId, customerId, cleanName, cleanPhone, item.medicine_id, item.name, intervalDays, nextRefillStr, item.quantity, customerLanguage]
+        );
+        rebooked.push({ refill_id: Number(result.lastID || 0), created: true, reactivated: false, medicine_name: item.name, quantity: item.quantity });
+      }
+    }
+
+    // Same immediate availability re-check a manual refill registration runs
+    if (rebooked.length > 0) {
+      await checkAllRefills(db);
+      eventService.broadcast('refill_updated', { at: Date.now(), source: 'rebook', count: rebooked.length });
+    }
+
+    res.json({ success: true, rebooked, skipped, customer_id: customerId });
+  } catch (err) {
+    console.error('Failed to rebook refill:', err);
+    res.status(500).json({ error: 'Failed to rebook — try again' });
+  }
+});
+
 // Update an existing patient's master profile / contact details (In-Place Cascade)
 const handlePatientProfileUpdate = async (req: express.Request, res: express.Response) => {
   const { customer_id, original_phone, patient_name, patient_phone, language = 'en', next_refill_date } = req.body;

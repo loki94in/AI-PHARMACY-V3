@@ -237,13 +237,22 @@ function startBackend(): ChildProcess {
     windowsHide: true,
   });
 
-  // Windows Process Priority: elevate backend process to Above Normal priority
+  // Windows Process Priority: elevate backend process to Above Normal priority during boot window
   if (process.platform === 'win32' && child.pid) {
     try {
       import('os').then((os) => {
         if (os.constants?.priority?.PRIORITY_ABOVE_NORMAL && child.pid) {
           os.setPriority(child.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
-          console.log(`[ElectronMain] Set backend child PID ${child.pid} priority to Above Normal.`);
+          console.log(`[ElectronMain] Set backend child PID ${child.pid} priority to Above Normal for boot.`);
+          // Priority Diet (P2-105): At T+90s, downgrade backend to NORMAL to prevent desktop starvation
+          setTimeout(() => {
+            try {
+              if (child.pid && os.constants?.priority?.PRIORITY_NORMAL) {
+                os.setPriority(child.pid, os.constants.priority.PRIORITY_NORMAL);
+                console.log(`[ElectronMain] Staged boot complete: lowered backend PID ${child.pid} priority to Normal.`);
+              }
+            } catch (_) {}
+          }, 90_000);
         }
       }).catch(() => {});
     } catch (_) {}
@@ -357,13 +366,22 @@ function createWindow() {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
-  // Elevate Electron main process priority on Windows
+  // Elevate Electron main process priority on Windows for fast initial window paint
   if (process.platform === 'win32') {
     try {
       import('os').then((os) => {
         if (os.constants?.priority?.PRIORITY_ABOVE_NORMAL) {
           os.setPriority(process.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
-          console.log('[ElectronMain] Set Electron main process priority to Above Normal.');
+          console.log('[ElectronMain] Set Electron main process priority to Above Normal for startup.');
+          // Priority Diet (P2-105): At T+90s, downgrade main to NORMAL
+          setTimeout(() => {
+            try {
+              if (os.constants?.priority?.PRIORITY_NORMAL) {
+                os.setPriority(process.pid, os.constants.priority.PRIORITY_NORMAL);
+                console.log('[ElectronMain] Staged boot complete: lowered Electron main priority to Normal.');
+              }
+            } catch (_) {}
+          }, 90_000);
         }
       }).catch(() => {});
     } catch (_) {}

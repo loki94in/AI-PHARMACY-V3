@@ -524,6 +524,31 @@ export async function isAutoAddToLiveCartEnabled(dbInstance?: any): Promise<bool
   }
 }
 
+export type RefillAutoCartAddMode = 'auto' | 'manual' | 'off';
+
+/**
+ * Returns refill auto-cart addition mode:
+ * - 'auto': Online-sourced refills (website + whatsapp) automatically added to live Pharmarack cart (Default)
+ * - 'manual': Refills require staff click in CRM / Quick Assist
+ * - 'off': Automated cart additions for refills completely disabled
+ */
+export async function getRefillAutoCartAddMode(dbInstance?: any): Promise<RefillAutoCartAddMode> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'refill_auto_cart_add'");
+    if (!row || row.value === null || row.value === undefined) {
+      return 'auto'; // Default AUTO
+    }
+    const val = String(row.value).trim().toLowerCase();
+    if (val === 'off' || val === '0' || val === 'false') return 'off';
+    if (val === 'manual') return 'manual';
+    return 'auto';
+  } catch (err) {
+    console.warn('[StoreSettings] Error checking refill_auto_cart_add:', err);
+    return 'auto'; // Safe default to auto
+  }
+}
+
 export interface DeliveryScheduleSlot {
   id: string;
   cutoffTime: string;      // e.g. "14:00" or "23:00"

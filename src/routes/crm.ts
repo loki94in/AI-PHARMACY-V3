@@ -48,6 +48,19 @@ async function syncLegacySpecialOrdersToCustomers(db: any) {
   specialOrdersSyncedToCustomers = true;
 }
 
+interface PatientOrderInvoiceRow {
+  id: number;
+  invoice_no: string | null;
+  date: string;
+  total_amount: number;
+  payment_status: string | null;
+  payment_medium: string | null;
+  doctor_name_snapshot?: string | null;
+  customer_name: string;
+  customer_phone: string;
+  items?: Array<{ id: number; quantity: number; qty: number; medicine_name: string; medicine_id: number | null }>;
+}
+
 const router = express.Router();
 
 // Get patients
@@ -422,6 +435,125 @@ router.get('/history-by-phone/:phone', async (req, res) => {
   } catch (error: any) {
     console.error('Failed to fetch history by phone:', error);
     res.status(500).json({ error: 'Failed to fetch history: ' + error.message });
+  }
+});
+
+// Patient Rebook & Order History (added 2026-10-24): ONE batched READ-ONLY
+// round-trip feeding the "Rebook last order & history" popup shared by the CRM
+// Refills and Special orders tabs. Returns refundfulfillment history, past
+// special orders (with resolvable master medicine ids), past invoices (items
+// carry inventory_master.medicine_id for rebooking) and live credit dues —
+// all read from the same tables every other reader shows. It NEVER creates
+// records and never sends messages; no worker/cron may call this. The actual
+// cart write is only ever done later by the user through the standard
+// verified refill add-to-cart pipeline (routes/refills.ts).
+router.get('/patient-order-history/:phone', async (req, res) => {
+  const phoneParam = (req.params.phone || '').trim();
+  try {
+    const db = await dbManager.getConnection();
+    const digitsOnly = phoneParam.replace(/\D/g, '').slice(-10);
+    if (digitsOnly.length !== 10) {
+      return res.status(400).json({ error: 'A valid 10-digit patient phone is required' });
+    }
+
+    // Every customer row tied to this phone (same duplicate-merge rule as /:id/history)
+    const customers = await db.all(
+      `SELECT id, name, phone, language, credit_enabled, credit_balance, credit_due_date
+       FROM customers
+       WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?
+       ORDER BY id ASC`,
+      [digitsOnly, `%${digitsOnly}`]
+    );
+    const matchedIds = customers.map((c: { id: number }) => c.id);
+    const placeholders = matchedIds.map(() => '?').join(',');
+    const idCond = placeholders ? ` OR customer_id IN (${placeholders})` : '';
+
+    // 1) Refill fulfillment history (mirrors GET /api/refills/patient/:identifier/history)
+    const refillFulfillments = await db.all(
+      `SELECT rf.id, rf.refill_id, rf.customer_id, rf.patient_name, rf.patient_phone,
+              rf.medicine_id, rf.quantity_fulfilled, rf.fulfilled_at, rf.invoice_id,
+              rf.invoice_no, rf.fulfilled_via, rf.notes,
+              COALESCE(m.name, rf.medicine_name, 'Prescribed Medicine') AS medicine_name,
+              si.invoice_no AS linked_invoice_no
+       FROM refill_fulfillments rf
+       LEFT JOIN medicines m ON rf.medicine_id = m.id
+       LEFT JOIN sales_invoices si ON rf.invoice_id = si.id
+       WHERE (0 = 1 ${idCond}
+          OR REPLACE(REPLACE(REPLACE(rf.patient_phone, ' ', ''), '-', ''), '+', '') LIKE ?)
+       ORDER BY rf.fulfilled_at DESC LIMIT 50`,
+      [...(placeholders ? matchedIds : []), `%${digitsOnly}`]
+    );
+
+    // 2) Past special orders — same store scope as the CRM tab list (GET /api/orders)
+    const targetStoreId = (req as { tenant?: { storeId?: number } }).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    const specialOrders = await db.all(
+      `SELECT id, customer_id, requester, phone, product, medicine_name, medicine_id, qty,
+              status, priority, notified, advance_payment, created_at, updated_at, date
+       FROM special_orders
+       WHERE (0 = 1 ${idCond}
+          OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?)
+         ${allStores ? '' : 'AND store_id = ?'}
+       ORDER BY created_at DESC, id DESC LIMIT 50`,
+      [...(placeholders ? matchedIds : []), `%${digitsOnly}`, ...(allStores ? [] : [targetStoreId])]
+    );
+
+    // 3) Past invoices with items (mirror of /history-by-phone; items carry the
+    //    master medicine id via inventory_master so the popup can rebook them)
+    let invoices: PatientOrderInvoiceRow[] = [];
+    if (placeholders && placeholders.length > 0) {
+      invoices = await db.all(
+        `SELECT si.id, si.invoice_no, si.date, si.total_amount, si.payment_status,
+                si.payment_medium, si.doctor_name_snapshot,
+                COALESCE(si.customer_name_snapshot, c.name, '') AS customer_name,
+                COALESCE(si.customer_phone_snapshot, c.phone, '') AS customer_phone
+         FROM sales_invoices si
+         LEFT JOIN customers c ON si.customer_id = c.id
+         WHERE si.customer_id IN (${placeholders})
+         ORDER BY si.date DESC LIMIT 30`,
+        matchedIds
+      );
+      for (const inv of invoices) {
+        inv.items = await db.all(
+          `SELECT sli.id, sli.quantity, sli.quantity AS qty,
+                  COALESCE(sli.medicine_name_snapshot, m.name, 'Medicine') AS medicine_name,
+                  im.medicine_id
+           FROM sale_items sli
+           LEFT JOIN inventory_master im ON im.id = sli.inventory_id
+           LEFT JOIN medicines m ON m.id = im.medicine_id
+           WHERE sli.invoice_id = ?`,
+          [inv.id]
+        );
+      }
+    }
+
+    // 4) Live credit dues — same definition as GET /api/sales/credit-dues
+    const creditDues = placeholders
+      ? await db.all(
+          `SELECT si.id AS invoice_id, si.invoice_no, si.total_amount, si.date, si.payment_status
+           FROM sales_invoices si
+           WHERE si.customer_id IN (${placeholders})
+             AND si.payment_status != 'PAID'
+             AND (si.payment_medium = 'CREDIT' OR si.payment_status IN ('UNPAID', 'PENDING'))
+           ORDER BY si.date ASC`,
+          matchedIds
+        )
+      : [];
+    const creditBalance = creditDues.reduce((sum, r) => sum + Number(r.total_amount || 0), 0);
+
+    const customer = customers.length > 0 ? customers[customers.length - 1] : null;
+    res.json({
+      customer,
+      refillFulfillments,
+      specialOrders,
+      invoices,
+      creditDues,
+      creditBalance
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    console.error('Failed to fetch patient order history:', error);
+    res.status(500).json({ error: 'Failed to fetch patient order history: ' + message });
   }
 });
 

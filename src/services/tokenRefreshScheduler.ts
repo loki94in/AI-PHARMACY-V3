@@ -344,6 +344,7 @@ export class TokenRefreshScheduler {
   public async runSessionHeartbeat(trigger: 'boot' | 'heartbeat' = 'heartbeat'): Promise<boolean> {
     if (this.heartbeatInFlight || this.isLoginWindowActive || isShutdownInProgress()) return false;
     this.heartbeatInFlight = true;
+    const heartbeatT0 = performance.now();
 
     let ok = false;
     let errorMsg: string | null = null;
@@ -468,16 +469,23 @@ export class TokenRefreshScheduler {
       // Signal boot-phase listeners (startup live-cart warm-up) that the first
       // keep-alive window settled — success, failure AND skip paths alike.
       this.releaseFirstRefreshCallbacks();
+      if (trigger === 'boot') {
+        const duration = Math.round(performance.now() - heartbeatT0);
+        import('../systemHealthMonitor.js').then(m => m.recordBootMilestone('firstHeartbeatMs', duration)).catch(() => {});
+      }
     }
     return ok;
   }
 
-  /** Single-flight mutex: overlapping callers (cron, 401 retry, catalog cache)
-   *  share ONE browser session restore instead of spawning concurrent Chromes. */
+  /** Single-flight mutex & heavyRestoreLane serialized: overlapping callers (cron, 401 retry, catalog cache)
+   *  share ONE browser session restore and NEVER collide with WhatsApp restore on 12 GB box. */
   public executeRefresh(): Promise<string | null> {
     if (isShutdownInProgress()) return Promise.resolve(null);
     if (this.refreshPromise) return this.refreshPromise;
-    this.refreshPromise = this.executeRefreshInternal().finally(() => {
+    this.refreshPromise = (async () => {
+      const { runHeavyRestore } = await import('../utils/heavyRestoreLane.js');
+      return runHeavyRestore('pharmarack_session_restore', () => this.executeRefreshInternal());
+    })().finally(() => {
       this.refreshPromise = null;
     });
     return this.refreshPromise;

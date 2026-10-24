@@ -48,6 +48,21 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 - Only REAL signals: Database = `/health/ready` (`isSystemReady`), Refills = the `refills` query succeeded, WhatsApp = services-status/readiness (ready or sleeping), Pharmarack = session connected AND the boot live cart loaded (`api.getStartupSyncStatus().cartLoaded`). A service that was never set up (no saved WhatsApp session, no Pharmarack session and no error) is left out so it can't show "waiting" forever; a real error shows ⚠️ amber. After 3 min the wording becomes "Taking longer than usual".
 - Display only: it never starts, wakes or reconnects WhatsApp/Pharmarack. The only polling is a bounded chained timeout (5 s, 15 s after 3 min, hard stop at 10 min, visible tab only, ends at first all-ready); do not widen it or turn it into an interval. The older 46 s / 110 s "cart sync pending" toast is unchanged.
 
+## Update Center & Update Status (added 2026-10-23, bug P2-104)
+
+- **Single Store**: `frontend/src/services/updateStatusStore.ts` is the single owner of update state (`useUpdateStatus()`, `useSyncExternalStore`). Zero duplicate `/license/update-status` fetches and no secondary `EventSource` connections.
+- **SSE Wiring**: Global SSE hook (`useGlobalSseInvalidation.ts`) maps `update_available`, `update_progress`, and `update_check_complete` to `sse-update-*` window events with parsed frames in `detail`. Do NOT delete these mappings.
+- **Header Ticker**: `Topbar` (`components/Layout.tsx`) derives the `'app-update'` item (priority 0.07) purely from the store. It shows live download progress with real MB/percent, verified ready status, or truthful failure reasons, and sleeps silently when no status is known. Clicking navigates to `/settings?tab=license`.
+- **Ready-Only Banner**: `UpdateBanner.tsx` displays only when `state === 'ready'` and is not dismissed via `update_later_<v>`. Progress display is owned entirely by the Topbar ticker to prevent duplicate banner spam.
+- **Settings Update Center**: `LicenseAndUpdatesTab.tsx`'s `SoftwareUpdateCard` provides the full Update Center: live downloading progress in MB/%, ready-to-install strip, manual "Check Now" triggering, and collapsible release history fetched lazily on first expand from `GET /license/update-history` with a 10-minute module TTL cache.
+
+## System Health & Memory Protection UI (added 2026-10-23, bug P2-105)
+
+- **Settings Integration**: `DataBackupsTab.tsx` features the "System Health & Memory Protection" dashboard card.
+- **No Periodic Polling**: In adherence to the Performance Guardrails, the card performs zero polling intervals. It loads data once on tab activation and provides a manual "Refresh Now" button.
+- **Truthful Telemetry**: Displays exact system free/total RAM, an interactive color-coded RAM gauge bar, backend Node.js RSS/heap/event-loop lag metrics, and a live census breakdown of all running `chrome.exe` processes (categorized into WhatsApp, Pharmarack, Dev/Extensions, SwiftShader, and Zombies).
+- **Manual Zombie Sweep**: Provides a "Sweep Zombie Processes" button that triggers `POST /api/system/sweep-zombies`. Active WhatsApp and active Pharmarack browser PIDs are strictly protected from sweep.
+
 ## Lint Debt Policy (added 2026-08)
 
 - Phase-1 rule categories (unused-vars, prefer-const, no-useless-assignment, no-useless-escape, no-empty) are **zero-tolerance**: `eslint.config.js` allows `allowEmptyCatch` and `^_`-prefixed ignored bindings by convention; never reintroduce raw violations. New code must not add `any` types (Phase-2 target) and must follow the Single Global SSE Connection + react-query-first fetch rules above (Phase-4 migration target).
