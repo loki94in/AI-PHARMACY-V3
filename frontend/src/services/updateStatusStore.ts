@@ -57,6 +57,20 @@ function publish(next: UpdateStatus): void {
   listeners.forEach(l => l());
 }
 
+/** Compare two semver strings (e.g. "0.1.154" vs "0.1.132"). Returns > 0 if a > b, < 0 if a < b, 0 if equal. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
 /**
  * Normalizes backend update payload / SSE frames into unified UpdateStatus.
  * Handles field name mappings:
@@ -66,8 +80,14 @@ function publish(next: UpdateStatus): void {
  *   totalBytes -> totalMB
  */
 export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatus): UpdateStatus {
-  const version = frame.latestVersion !== undefined ? frame.latestVersion : current.version;
+  const rawVersion = frame.latestVersion !== undefined ? frame.latestVersion : current.version;
   const currentVersion = frame.currentVersion || current.currentVersion;
+
+  // Semver verification: is rawVersion strictly newer than current running binary?
+  const isTargetNewer = Boolean(rawVersion && currentVersion && compareVersions(rawVersion, currentVersion) > 0);
+
+  // Never report a target version older than or equal to current running binary
+  const version = (rawVersion && !isTargetNewer) ? currentVersion : rawVersion;
   const changelog = frame.changelog !== undefined ? (frame.changelog || '') : current.changelog;
   const downloadUrl = frame.downloadUrl !== undefined ? frame.downloadUrl : current.downloadUrl;
   const updatePackageUrl = frame.updatePackageUrl !== undefined ? frame.updatePackageUrl : current.updatePackageUrl;
@@ -96,31 +116,30 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
     totalMB = Math.round((frame.totalBytes / 1048576) * 10) / 10;
   }
 
-  const hasUpdate = frame.hasUpdate !== undefined
-    ? frame.hasUpdate
-    : (current.hasUpdate || Boolean(version && currentVersion && version !== currentVersion));
+  // An update strictly requires a newer semver target and non-false hasUpdate flag
+  const hasUpdate = Boolean(isTargetNewer && (frame.hasUpdate !== false));
 
   let state: UpdateState = current.state;
 
   if (rawError) {
     state = 'error';
-  } else if (frame.readyToInstall) {
+  } else if (frame.readyToInstall && isTargetNewer) {
     state = 'ready';
     percent = 100;
-  } else if (frame.downloading) {
-    if (current.state !== 'ready' || frame.readyToInstall === false) {
-      state = 'downloading';
-    }
-  } else if (frame.downloadedBytes !== undefined || frame.downloadProgress !== undefined) {
-    if (current.state !== 'ready') {
-      state = 'downloading';
-    }
-  } else if (frame.hasUpdate === false) {
-    state = 'idle';
-  } else if (hasUpdate && !frame.downloading && !frame.readyToInstall && !rawError) {
-    if (state !== 'ready' && state !== 'downloading') {
+  } else if (frame.downloading && hasUpdate) {
+    state = 'downloading';
+  } else if (hasUpdate && typeof frame.downloadProgress === 'number' && (current.state === 'downloading' || frame.downloadProgress > 0)) {
+    state = 'downloading';
+  } else if (!hasUpdate || frame.downloading === false || frame.readyToInstall === false) {
+    if (current.state !== 'ready' || !isTargetNewer) {
       state = 'idle';
+      percent = 0;
+      downloadedMB = 0;
     }
+  } else {
+    state = 'idle';
+    percent = 0;
+    downloadedMB = 0;
   }
 
   return {

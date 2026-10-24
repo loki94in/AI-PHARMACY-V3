@@ -1,62 +1,64 @@
-# Implementation Plan — Universal Distributor WhatsApp Reminder Dispatch & Multi-Layer Phone Resolution
+# Implementation Plan — Fix WhatsApp Queue Deadlock, ProcessGuardian Chrome Kills & Distributor Phone Normalization
 
 ## 1. Goal
-Fix distributor WhatsApp dispatch reminders so that all active orders for the day reliably resolve 10-digit contact numbers from any table (`distributors`, `pharmarack_distributor_mappings`, `contacts`, or inline edits), dispatch WhatsApp reminders without `no_phone` failures, eliminate false-positive "success" UI animations, and prevent dropped reminders.
+Fix the distributor dispatch WhatsApp delivery failure where:
+1. `ProcessGuardian.reapSystemProfileOrphans` erroneously terminates WhatsApp's active Chromium renderer tab processes, causing `Runtime.callFunctionOn timed out` errors.
+2. `whatsappClient.sendMessage` hangs indefinitely without an outer watchdog timeout when Puppeteer's tab is killed, locking `whatsappQueueWorker.isProcessing = true` and stalling all pending distributor reminders.
+3. `whatsappQueueWorker` lacks a stuck-item watchdog to auto-heal items stuck in `status = 'sending'`.
+4. The Dispatch UI rejects distributor phone numbers with leading zeros (e.g. `09822012345`) or country code formatting instead of automatically normalizing to 10 digits.
 
 ---
 
 ## 2. Root Cause Summary
-1. **Narrow Sender Lookup:** `notificationService.sendDistributorDispatchReminder` and `distributorDispatchReminderWorker.checkAndSendAutoReminders` only checked `r.distributor_phone` or `d.phone` via strict `r.distributor_id = d.id`. When incoming orders arrived with alias store names (e.g., `ARNAV PHARMACEUTICALS INDIA... (SADASHIV PETH)` vs `ARNAV PHARMACEUTICAL`), `r.distributor_id` was `NULL` and `r.distributor_phone` was empty, causing reminders to be skipped.
-2. **Missing Fallback to Universal Resolver:** The sending paths never called `resolveDistributorContact(db, reminder.distributor_name)`, so saved numbers in `pharmarack_distributor_mappings` or fuzzy name matches were completely ignored during message dispatch.
-3. **Premature UI Progress Animation:** Clicking "Send Now" on the Dispatch page immediately fired `messageSendEvent.triggerSendProgress()` before waiting for the API response. Even when the server rejected the reminder with HTTP 400 (`no_phone`), the progress bar animated to 100% and showed "Completed".
-4. **Asymmetric Inline Phone Update:** Saving a phone number on the Dispatch page updated only exact name matches; reminders created with variant store names or null IDs remained blank.
+1. **False-Positive Chromium Reaping**: `reapSystemProfileOrphans` in `src/utils/chromeBrowser.ts` scans for `chrome.exe` processes matching `.wwebjs_auth`. It only added `getWhatsAppBrowserPid()` (the root process PID) to `protectedPids`. Chromium runs WhatsApp Web in a separate renderer child process (~410 MB). ProcessGuardian identified this child process as an orphan and taskkilled it (`PID 12392`).
+2. **Missing Watchdog Timeout in `sendMessage`**: When the Chromium renderer was terminated, Puppeteer's Chrome DevTools Protocol request hung waiting for a CDP response that never arrived. In `src/whatsappClient.ts`, `targetClient.sendMessage()` had no watchdog timeout, causing the Promise to hang indefinitely.
+3. **Queue Worker Deadlock**: Because `sendMessage` never resolved or rejected, `whatsappQueueWorker.processQueueInternal()` remained blocked in `this.isProcessing = true` and `currentSendingItemId: 1013`. All subsequent distributor reminders (such as queue item #1014 for Arnav Pharmaceuticals `9637256516`) were blocked in `"pending"`.
+4. **Rigid Phone Validation in Dispatch UI**: `handleSaveDistributorPhone` in `frontend/src/pages/Dispatch/index.tsx` rejected numbers where `cleanPhone.length !== 10 && !(cleanPhone.length === 12 && cleanPhone.startsWith('91'))`. Typing a standard 11-digit number with leading zero (`09...`) triggered a validation error instead of stripping the `0`.
 
 ---
 
 ## 3. Step-by-Step Implementation Steps
 
-### Step 1: Universal Resolver Integration in `notificationService.ts`
-- In `src/services/notificationService.ts:sendDistributorDispatchReminder`:
-  - When `recipientPhone` (`reminder.distributor_phone || reminder.dist_phone`) is missing or invalid:
-    - Invoke `await resolveDistributorContact(db, reminder.distributor_name)`.
-    - If a valid phone is found:
-      - Use that resolved phone for sending.
-      - Update `distributor_dispatch_reminders` row (`distributor_phone = ?`, and `distributor_id = ?` if previously null) to heal the row in SQLite.
-- Verification: Calling `sendDistributorDispatchReminder` for an unlinked reminder with a mapped store name successfully retrieves the phone and queues the message.
+### Step 1: Protect WhatsApp Process Tree in `src/utils/chromeBrowser.ts`
+- In `reapSystemProfileOrphans`:
+  - If WhatsApp is active or authenticated (`clientInstance` exists, `isReady` is true, or `hasSavedSession()`), exempt all `.wwebjs_auth` processes from being reaped.
+  - Query all child PIDs belonging to `getWhatsAppBrowserPid()` and add them to `protectedPids`.
+- **Verification**: `reapSystemProfileOrphans` never kills active WhatsApp tab renderers.
 
-### Step 2: Universal Resolver in Reminder Worker Auto-Send
-- In `src/services/distributorDispatchReminderWorker.ts:checkAndSendAutoReminders`:
-  - In the reminder loop, if `item.distributor_phone || item.master_phone` is blank, invoke `resolveDistributorContact(db, item.distributor_name)` before categorizing into `missingPhone`.
-  - If resolved, update the database row and include in `dueReminders`.
-- Verification: Reminders with variant names in `pharmarack_distributor_mappings` are included in the due queue instead of being skipped.
+### Step 2: Add Strict 25s Watchdog Timeout to `sendMessage` in `src/whatsappClient.ts`
+- Wrap `doSend(clientInstance!)` in a 25-second timeout Promise.
+- If Puppeteer/CDP hangs for more than 25 seconds, cleanly reject with an explicit timeout error so execution unblocks and errors are logged properly.
+- **Verification**: If a Chromium process becomes unresponsive, the Promise rejects after 25s instead of hanging indefinitely.
 
-### Step 3: Atomic Cross-Table Phone Sync & Alias Healing
-- In `src/utils/distributorSyncHelper.ts:syncDistributorPhoneAcrossTables`:
-  - Ensure updating a distributor's phone also updates all active `distributor_dispatch_reminders` matching either `distributor_id`, exact name, OR normalized name (`normalizeDistributorName`), backfilling any previously blank rows.
-- Verification: Editing a phone number on the Dispatch page instantly backfills all today's matching reminder rows.
+### Step 3: Add Stalled-Item Watchdog & Cleanup in `src/services/whatsappQueueWorker.ts`
+- Ensure `processQueueInternal()` always resets `this.isProcessing = false` and `this.currentSendingItemId = null` in a `finally` block.
+- Add pre-flight recovery for items stuck in `status = 'sending'` for $> 60$ seconds (recover them to `failed_offline` with an attempt log entry).
+- **Verification**: Deadlocks are broken automatically within 60 seconds.
 
-### Step 4: Truthful UI Progress Feedback in Dispatch Page
-- In `frontend/src/pages/Dispatch/index.tsx:handleSendReminderNow`:
-  - Remove the premature `messageSendEvent.triggerSendProgress()` call *before* `api.sendDistributorReminderNow`.
-  - Trigger `messageSendEvent.triggerSendProgress()` **only after** the response returns successfully (`res?.action` or `res?.success`).
-  - On error, show the truthful error notification and never display the false "sending / completed" progress card.
-- Verification: Clicking "Send Now" on a missing number immediately shows the error toast without triggering a progress card.
+### Step 4: Auto-Normalize Phone Numbers in `frontend/src/pages/Dispatch/index.tsx`
+- Update `handleSaveDistributorPhone` to use robust 10-digit normalization:
+  - If input starts with `0` and has 11 digits, slice off the `0`.
+  - If input starts with `91` and has 12 digits, slice off the `91`.
+  - Strip all non-digit characters.
+- Allow entering and saving `09822012345`, `+91 98220 12345`, or `9822012345` seamlessly.
+- **Verification**: All valid 10-digit formats save without validation errors and auto-dispatch.
 
 ### Step 5: Verification & Safety Gates
 - Run `npm run guardrails` (zero violations).
 - Run `node scripts/quick-update.mjs` (knowledge graph auto-update).
-- Verify database state and dispatch flows.
+- Verify queue processing unfreezes and dispatch reminders can be sent.
 
 ---
 
 ## 4. Completed Tasks Log
-- [x] Step 1: Update `notificationService.ts` with universal contact resolution and database backfill healing.
-  - *Completed via*: In `sendDistributorDispatchReminder`, added clean 10-digit validation and fallback to `resolveDistributorContact(db, reminder.distributor_name)`. When resolved, updates `distributor_dispatch_reminders` row (`distributor_phone` and `distributor_id`) and uses resolved number for WhatsApp queueing.
-- [x] Step 2: Update `distributorDispatchReminderWorker.ts` auto-send to resolve contacts via universal resolver.
-  - *Completed via*: In `checkAndSendAutoReminders`, resolved contacts before classifying into `missingPhone` and backfilled reminder rows. In `getTodayDistributorRemindersFast`, added proactive contact healing for reminders with missing phone numbers so Dispatch UI reflects resolved numbers immediately.
-- [x] Step 3: Update `distributorSyncHelper.ts` to heal normalized alias reminders on phone save.
-  - *Completed via*: In `syncDistributorPhoneAcrossTables`, enhanced alias matching to evaluate both distributor name and `params.store_name` across normalized and cleaned strings, backfilling all matching reminder rows for the last 7 days. In `routes/dispatch.ts:router.post('/distributor-reminders/:id/retry')`, replaced one-off row updates with `syncDistributorPhoneAcrossTables` to keep `distributors`, `pharmarack_distributor_mappings`, `contacts`, and `distributor_dispatch_reminders` atomically in sync.
-- [x] Step 4: Update `frontend/src/pages/Dispatch/index.tsx` for truthful progress feedback.
-  - *Completed via*: In `handleSendReminderNow` and `handleSendAfternoonDeliveryBoyDispatch`, moved `triggerSendProgress` and `whatsappQueueEvent.triggerUpdated` inside the verified success branch, preventing premature 100% "Completed" animations when server returns 400 (`no_phone`) or 500 errors. In `handleSaveDistributorPhone`, added progress card trigger upon successful auto-dispatch.
+- [x] Step 1: Protect WhatsApp Process Tree in `chromeBrowser.ts`.
+  - *Completed*: In `reapSystemProfileOrphans`, implemented multi-pass process tree propagation so all child, renderer, and GPU processes of `protectedPids` are protected. Added strict exemption for all `.wwebjs_auth` processes when WhatsApp is active or initializing.
+- [x] Step 2: Add 25s watchdog timeout in `whatsappClient.ts`.
+  - *Completed*: Added `executeWithWatchdog` wrapping all `doSend` calls with a 25-second timeout Promise race, preventing CDP hangs from blocking indefinitely. Updated `isPuppeteerDetachedError` with timeout patterns (`callFunctionOn timed out`, `Runtime.callFunctionOn`, etc.) to trigger automatic client teardown and reconnect.
+- [x] Step 3: Add stalled item watchdog in `whatsappQueueWorker.ts`.
+  - *Completed*: In `processQueueInternal`, added self-healing watchdog query recovering any item stuck in `status = 'sending'` for > 60 seconds to `failed_offline` with incremented retry count. Expanded startup recovery query to include `status IN ('pending', 'failed_offline', 'sending')`.
+- [x] Step 4: Auto-normalize phone input in `Dispatch/index.tsx`.
+  - *Completed*: In `handleSaveDistributorPhone`, normalized phone input by stripping leading `0` from 11-digit numbers and `91` from 12-digit numbers before 10-digit validation, allowing `09...`, `+91`, and standard 10-digit phone numbers to save and auto-dispatch smoothly.
 - [x] Step 5: Run tests and performance guardrails.
-  - *Completed via*: Executed `npm run guardrails` (`tsc --noEmit` and speed architecture guardrails: PASS, exit 0). Executed `node scripts/quick-update.mjs` (knowledge graph auto-update: 1345 nodes, exit 0).
+  - *Completed*: Ran `npm run guardrails` (`node scripts/performance-guardrails.mjs`), which confirmed 0 violations and verified TypeScript compilation (`tsc --noEmit`). Ran `npx tsc -p frontend/tsconfig.app.json --noEmit`, which passed with code 0. Recorded P2-118 in `SMALL_BUG_FIX_PLAN.md`.
+

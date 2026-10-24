@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { checkLicense, activateLicense, getMachineId, APP_VERSION } from '../services/licenseService.js';
-import { autoUpdateService } from '../services/autoUpdateService.js';
+import { autoUpdateService, compareVersions } from '../services/autoUpdateService.js';
 import { getUpdateHistory } from '../services/updateHistoryService.js';
 
 const router = Router();
@@ -60,16 +60,22 @@ router.get('/machine-id', (_req, res) => {
 /** GET /api/license/update-status — query cached/staged update state on mount */
 router.get('/update-status', (_req, res) => {
   const result = autoUpdateService.getStatus();
+  const rawLatest = result?.latestVersion;
+  const isNewer = rawLatest ? compareVersions(rawLatest, APP_VERSION) > 0 : false;
+  const effectiveLatest = isNewer ? rawLatest : APP_VERSION;
+  const isDownloading = Boolean(result?.downloading && isNewer);
+  const isReady = Boolean(result?.readyToInstall && isNewer);
+
   res.json({
-    hasUpdate: !!result?.hasUpdate,
-    latestVersion: result?.latestVersion || null,
-    currentVersion: result?.currentVersion || APP_VERSION,
-    readyToInstall: !!result?.readyToInstall,
-    downloading: !!result?.downloading,
-    downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0),
-    downloadUrl: result?.downloadUrl,
-    updatePackageUrl: result?.updatePackageUrl,
-    changelog: result?.changelog || '',
+    hasUpdate: Boolean(result?.hasUpdate && isNewer),
+    latestVersion: effectiveLatest,
+    currentVersion: APP_VERSION,
+    readyToInstall: isReady,
+    downloading: isDownloading,
+    downloadProgress: isDownloading || isReady ? (result?.downloadProgress ?? (isReady ? 100 : 0)) : 0,
+    downloadUrl: isNewer ? result?.downloadUrl : null,
+    updatePackageUrl: isNewer ? result?.updatePackageUrl : null,
+    changelog: isNewer ? (result?.changelog || '') : '',
     lastCheckedAt: autoUpdateService.getLastCheckedAt() || null,
     lastError: result?.lastError || null,
   });
@@ -96,17 +102,23 @@ router.post('/start-download', (_req, res) => {
 router.post('/check-update', async (_req, res) => {
   try {
     const result = await autoUpdateService.triggerCheck();
+    const rawLatest = result?.latestVersion;
+    const isNewer = rawLatest ? compareVersions(rawLatest, APP_VERSION) > 0 : false;
+    const effectiveLatest = isNewer ? rawLatest : APP_VERSION;
+    const isDownloading = Boolean(result?.downloading && isNewer);
+    const isReady = Boolean(result?.readyToInstall && isNewer);
+
     res.json({
-      hasUpdate: !!result?.hasUpdate,
-      currentVersion: (result as any)?.currentVersion || APP_VERSION,
-      latestVersion: result?.latestVersion || APP_VERSION,
-      downloadUrl: result?.downloadUrl,
-      updatePackageUrl: result?.updatePackageUrl,
-      sha256: result?.sha256,
-      changelog: result?.changelog,
-      readyToInstall: result?.readyToInstall,
-      downloading: result?.downloading,
-      downloadProgress: result?.downloadProgress ?? (result?.readyToInstall ? 100 : 0),
+      hasUpdate: Boolean(result?.hasUpdate && isNewer),
+      currentVersion: APP_VERSION,
+      latestVersion: effectiveLatest,
+      downloadUrl: isNewer ? result?.downloadUrl : null,
+      updatePackageUrl: isNewer ? result?.updatePackageUrl : null,
+      sha256: isNewer ? result?.sha256 : null,
+      changelog: isNewer ? result?.changelog : '',
+      readyToInstall: isReady,
+      downloading: isDownloading,
+      downloadProgress: isDownloading || isReady ? (result?.downloadProgress ?? (isReady ? 100 : 0)) : 0,
     });
   } catch (err: any) {
     res.status(500).json({
@@ -114,6 +126,9 @@ router.post('/check-update', async (_req, res) => {
       hasUpdate: false,
       currentVersion: APP_VERSION,
       latestVersion: APP_VERSION,
+      downloading: false,
+      downloadProgress: 0,
+      readyToInstall: false,
     });
   }
 });

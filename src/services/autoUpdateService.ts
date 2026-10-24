@@ -278,9 +278,19 @@ class AutoUpdateService {
     if (this.retryHandle) { clearTimeout(this.retryHandle); this.retryHandle = null; }
   }
 
-  /** Return last known update check result */
+  /** Return last known update check result with semver floor against running binary */
   getStatus() {
-    return this.lastResult;
+    if (!this.lastResult) return null;
+    const isNewer = this.lastResult.latestVersion ? compareVersions(this.lastResult.latestVersion, APP_VERSION) > 0 : false;
+    return {
+      ...this.lastResult,
+      latestVersion: isNewer ? this.lastResult.latestVersion : APP_VERSION,
+      hasUpdate: Boolean(this.lastResult.hasUpdate && isNewer),
+      currentVersion: APP_VERSION,
+      downloading: Boolean(this.isDownloading && isNewer),
+      downloadProgress: isNewer ? (this.lastResult.downloadProgress ?? 0) : 0,
+      readyToInstall: Boolean(this.lastResult.readyToInstall && isNewer),
+    };
   }
 
   /** Return ISO string of last update check timestamp */
@@ -339,10 +349,11 @@ class AutoUpdateService {
 
       this.lastResult = {
         ...result,
+        latestVersion: isNewer ? result.latestVersion : APP_VERSION,
         hasUpdate: trulyHasUpdate,
         currentVersion: APP_VERSION,
-        downloading: this.isDownloading,
-        downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
+        downloading: Boolean(this.isDownloading && isNewer),
+        downloadProgress: trulyHasUpdate ? (this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0)) : 0,
         readyToInstall: alreadyDownloaded,
         lastError: undefined,
       };
@@ -370,9 +381,12 @@ class AutoUpdateService {
         }
         if (reason === 'manual') {
           eventService.broadcast('update_check_complete', {
-            hasUpdate:     false,
-            latestVersion: result.latestVersion || APP_VERSION,
-            currentVersion: APP_VERSION,
+            hasUpdate:        false,
+            latestVersion:    APP_VERSION,
+            currentVersion:   APP_VERSION,
+            downloading:      false,
+            downloadProgress: 0,
+            readyToInstall:   false,
             reason,
           });
         }
@@ -497,6 +511,7 @@ class AutoUpdateService {
         }
         eventService.broadcast('update_progress', {
           latestVersion: version,
+          downloading: true,
           downloadProgress: percent,
           downloadedBytes: downloaded,
           totalBytes: total,

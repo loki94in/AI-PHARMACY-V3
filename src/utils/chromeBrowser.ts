@@ -365,18 +365,21 @@ export async function reapSystemProfileOrphans(options?: { dryRun?: boolean }): 
   if (isShutdownInProgress()) return { killed: 0, freedMB: 0 };
 
   try {
-    const { isWhatsAppBusyOrRestoring, getWhatsAppBrowserPid } = await import('../whatsappClient.js');
+    const { isWhatsAppBusyOrRestoring, getWhatsAppBrowserPid, getWhatsAppStatus } = await import('../whatsappClient.js');
     if (isWhatsAppBusyOrRestoring()) {
       console.log('[ProcessGuardian] WhatsApp is actively initializing or syncing. Skipping orphan reap.');
       return { killed: 0, freedMB: 0 };
     }
+
+    const waStatus = await getWhatsAppStatus().catch(() => null);
+    const isWhatsAppActive = Boolean(waStatus?.isReady || waStatus?.initializing);
 
     const protectedPids = getActiveHeadlessPids();
     const waPid = getWhatsAppBrowserPid();
     if (waPid && waPid > 0) protectedPids.add(waPid);
 
     const { stdout } = await execAsync(
-      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe')\\" | Select-Object ProcessId, WorkingSetSize, CommandLine | ConvertTo-Json -Compress"`,
+      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"(name='chrome.exe' or name='msedge.exe')\\" | Select-Object ProcessId, ParentProcessId, WorkingSetSize, CommandLine | ConvertTo-Json -Compress"`,
       { timeout: 4000 }
     ).catch(() => ({ stdout: '' }));
 
@@ -391,6 +394,20 @@ export async function reapSystemProfileOrphans(options?: { dryRun?: boolean }): 
       return { killed: 0, freedMB: 0 };
     }
 
+    // Protect all descendant processes belonging to any protected parent (e.g. Chrome renderers, GPU, and utility processes)
+    let addedChild = true;
+    while (addedChild) {
+      addedChild = false;
+      for (const item of parsed) {
+        const ppid = Number(item.ParentProcessId);
+        const pid = Number(item.ProcessId);
+        if (ppid && protectedPids.has(ppid) && pid && !protectedPids.has(pid)) {
+          protectedPids.add(pid);
+          addedChild = true;
+        }
+      }
+    }
+
     let killed = 0;
     let freedBytes = 0;
     const { dbManager } = await import('../database/connection.js');
@@ -398,10 +415,16 @@ export async function reapSystemProfileOrphans(options?: { dryRun?: boolean }): 
 
     for (const item of parsed) {
       const pid = Number(item.ProcessId);
-      if (!pid || isNaN(pid) || protectedPids.has(pid)) continue;
+      const ppid = Number(item.ParentProcessId);
+      if (!pid || isNaN(pid) || protectedPids.has(pid) || (ppid && protectedPids.has(ppid))) continue;
 
       const cmdLine = String(item.CommandLine || '');
       const lower = cmdLine.toLowerCase();
+
+      // If WhatsApp is active or initializing, NEVER kill any WhatsApp profile/auth processes
+      if (isWhatsAppActive && lower.includes('.wwebjs_auth')) {
+        continue;
+      }
 
       // Only sweep processes running our profile folders (never touch unrelated user Chrome)
       const isOurProfile =

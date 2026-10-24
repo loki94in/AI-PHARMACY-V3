@@ -167,8 +167,32 @@ export function isPuppeteerDetachedError(msg?: string): boolean {
     str.includes('Page crashed') ||
     str.includes('browser has disconnected') ||
     str.includes('CdpFrame') ||
-    str.includes('CdpPage')
+    str.includes('CdpPage') ||
+    str.includes('callFunctionOn timed out') ||
+    str.includes('Runtime.callFunctionOn') ||
+    str.includes('browser page unresponsive') ||
+    str.includes('timed out after')
   );
+}
+
+/**
+ * Watchdog timeout helper: wraps any Promise with an outer timeout rejection
+ * so CDP/Puppeteer hangs never deadlock callers indefinitely.
+ */
+export async function executeWithWatchdog<T>(promise: Promise<T>, ms: number, opName: string): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${opName} timed out after ${Math.round(ms / 1000)}s (browser page unresponsive)`));
+        }, ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // Catch and ignore Puppeteer/whatsapp-web.js internal detached frame and context
@@ -2219,7 +2243,7 @@ export async function sendMessage(
 
         try {
           await ensureSessionHealth().catch(() => {});
-          await doSend(clientInstance!);
+          await executeWithWatchdog(doSend(clientInstance!), 25000, 'WhatsApp message send');
           success = true;
         } catch (sendErr: any) {
           const errMsg = sendErr?.message || String(sendErr);
@@ -2231,7 +2255,7 @@ export async function sendMessage(
           if (alternateChatId && alternateChatId !== primaryChatId) {
             console.log(`[WhatsApp Ground-Truth] Retrying send via alternate direct phone route ${alternateChatId} for ${cleanPhone}...`);
             try {
-              await doSend(clientInstance!, alternateChatId, true);
+              await executeWithWatchdog(doSend(clientInstance!, alternateChatId, true), 15000, 'WhatsApp alternate direct route send');
               console.log(`[WhatsApp Ground-Truth] Alternate direct route ${alternateChatId} send succeeded for ${cleanPhone}!`);
               recoveredViaAlt = true;
               success = true;
@@ -2242,7 +2266,7 @@ export async function sendMessage(
 
           if (!recoveredViaAlt) {
             if (isPuppeteerDetachedError(errMsg)) {
-              console.warn('[WhatsApp] Detached Frame or destroyed browser context detected during sendMessage. Invalidating stale client...');
+              console.warn('[WhatsApp] Detached Frame, timeout, or destroyed browser context detected during sendMessage. Invalidating stale client...');
               isReady = false;
               clientInstance = null;
               if (activeClient) {
@@ -2254,12 +2278,12 @@ export async function sendMessage(
               try {
                 const freshClient = await initClient();
                 if (!freshClient) throw new Error('Re-initialization returned null client.');
-                await doSend(freshClient);
+                await executeWithWatchdog(doSend(freshClient), 25000, 'WhatsApp send retry after client reconnect');
                 console.log('[WhatsApp] Automatic re-initialization and message send retry succeeded!');
                 success = true;
               } catch (retryErr: any) {
                 console.error('[WhatsApp] Send retry after client auto-reconnect failed:', retryErr);
-                throw new Error('WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.');
+                throw new Error('WhatsApp connection lost (detached browser frame or unresponsive). Please scan the QR code in Settings to reconnect.');
               }
             } else if (errMsg.includes('Data passed to getter must include an id property') || errMsg.includes("it's how we memoize")) {
               console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
@@ -2301,7 +2325,7 @@ export async function sendMessage(
                 }
               await new Promise(r => setTimeout(r, 600));
               // Force plain @c.us JID + skip getNumberId so we don't re-resolve back to the broken @lid
-              await doSend(clientInstance!, `${cleanPhone}@c.us`, true);
+              await executeWithWatchdog(doSend(clientInstance!, `${cleanPhone}@c.us`, true), 15000, 'WhatsApp Store hydration retry');
               console.log(`[WhatsApp] Self-healing Store hydration and retry succeeded for ${cleanPhone}!`);
               success = true;
             } catch (retryErr: any) {

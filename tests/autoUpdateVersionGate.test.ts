@@ -70,4 +70,36 @@ describe('Auto-Update Client-Side Semver Gate (P2-107)', () => {
       expect(trulyHasUpdate).toBe(true);
     });
   });
+
+  describe('P2-111: Version Floor Clamping & Idle Progress Handling', () => {
+    it('clamps latestVersion to APP_VERSION when server answers an older release', () => {
+      const serverReportedVersion = '0.1.132';
+      const runningAppVersion = '0.1.154';
+
+      const isNewer = compareVersions(serverReportedVersion, runningAppVersion) > 0;
+      const effectiveLatest = isNewer ? serverReportedVersion : runningAppVersion;
+
+      expect(isNewer).toBe(false);
+      expect(effectiveLatest).toBe(runningAppVersion);
+    });
+
+    it('forces downloading to false and progress to 0 when version is older or equal', () => {
+      const serverPayload = {
+        hasUpdate: false,
+        latestVersion: '0.1.132',
+        downloading: false,
+        downloadProgress: 0,
+      };
+      const runningAppVersion = '0.1.154';
+
+      const isNewer = compareVersions(serverPayload.latestVersion, runningAppVersion) > 0;
+      const effectiveDownloading = Boolean(serverPayload.downloading && isNewer);
+      const effectiveProgress = isNewer ? serverPayload.downloadProgress : 0;
+      const effectiveHasUpdate = Boolean(serverPayload.hasUpdate && isNewer);
+
+      expect(effectiveDownloading).toBe(false);
+      expect(effectiveProgress).toBe(0);
+      expect(effectiveHasUpdate).toBe(false);
+    });
+  });
 });

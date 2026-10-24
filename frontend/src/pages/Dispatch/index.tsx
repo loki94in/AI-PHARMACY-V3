@@ -612,12 +612,18 @@ const Dispatch = () => {
   }, [distPhoneInput, editingDistPhoneId, distributorReminders]);
 
   const handleSaveDistributorPhone = async (item: LocalReminderRow, bypassDuplicateCheck = false) => {
-    const cleanPhone = distPhoneInput.replace(/\D/g, '');
-    if (cleanPhone && cleanPhone.length !== 10 && !(cleanPhone.length === 12 && cleanPhone.startsWith('91'))) {
+    let cleanPhone = distPhoneInput.replace(/\D/g, '');
+    if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) {
+      cleanPhone = cleanPhone.slice(1);
+    } else if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+      cleanPhone = cleanPhone.slice(2);
+    }
+
+    if (cleanPhone && cleanPhone.length !== 10) {
       showNotif('Please enter a valid 10-digit phone number', 'error');
       return;
     }
-    const finalPhone = cleanPhone.length === 12 && cleanPhone.startsWith('91') ? cleanPhone.slice(2) : cleanPhone;
+    const finalPhone = cleanPhone;
 
     // Human-in-the-loop: If duplicate detected and user hasn't explicitly confirmed sharing, open confirmation modal
     if (phoneDuplicateWarning?.isDuplicate && !bypassDuplicateCheck && finalPhone) {

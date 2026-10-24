@@ -1,11 +1,11 @@
 import { kv, isKvConfigured } from './_db.js';
 
-const DEFAULT_LATEST_VERSION = '0.1.151';
-const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.151/AI-Pharmacy-OS-Portable-Setup-v0.1.151.exe';
-const DEFAULT_UPDATE_PACKAGE_URL = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.151/AI-Pharmacy-OS-Update-v0.1.151.zip';
-const DEFAULT_SHA256 = '83fb1c2df1f577c58155756d27bcb8d7ad25120c9ad4f9a4786a12f26666e197';
+const DEFAULT_LATEST_VERSION = '0.1.154';
+const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.154/AI-Pharmacy-OS-Portable-Setup-v0.1.154.exe';
+const DEFAULT_UPDATE_PACKAGE_URL = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.154/AI-Pharmacy-OS-Update-v0.1.154.zip';
+const DEFAULT_SHA256 = 'c07fb6b4667c3133ca973bd38c83c02326511cc7d6b534ad1f96b2e4811cff5f';
 const DEFAULT_CHANGELOG = `
-v0.1.151 — Production Release
+v0.1.154 — Production Release
 • Production-stable installer & portable package
 • Auto background update delivery with zero-downtime staging
 • Refill Auto Cart-Add and Website Payment Verification
@@ -22,11 +22,15 @@ async function fetchLatestGitHubRelease() {
     return githubCache;
   }
   try {
+    const headers = {
+      'User-Agent': 'AI-Pharmacy-Vercel-Updater/1.0',
+      Accept: 'application/vnd.github.v3+json',
+    };
+    const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    if (ghToken) headers.Authorization = `Bearer ${ghToken}`;
+
     const res = await fetch('https://api.github.com/repos/loki94in/AI-PHARMACY-V3/releases/latest', {
-      headers: {
-        'User-Agent': 'AI-Pharmacy-Vercel-Updater/1.0',
-        Accept: 'application/vnd.github.v3+json',
-      },
+      headers,
       signal: AbortSignal.timeout(3500),
     });
     if (!res.ok) return githubCache || null;
@@ -64,8 +68,8 @@ async function fetchLatestGitHubRelease() {
 }
 
 function compareVersions(a, b) {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
+  const pa = (a || '').replace(/^v/, '').split('.').map(Number);
+  const pb = (b || '').replace(/^v/, '').split('.').map(Number);
   for (let i = 0; i < 3; i++) {
     if ((pa[i] || 0) > (pb[i] || 0)) return 1;
     if ((pa[i] || 0) < (pb[i] || 0)) return -1;
@@ -125,12 +129,13 @@ export default async function handler(req, res) {
 
     const hasNewerVersion = compareVersions(latestVersion, clientVersion) > 0;
     const hasUpdate = hasNewerVersion && isTargetEligible;
+    const reportedLatestVersion = hasNewerVersion ? latestVersion : clientVersion;
 
     res.setHeader('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=300');
 
     return res.status(200).json({
       hasUpdate,
-      latestVersion,
+      latestVersion: reportedLatestVersion,
       currentVersion: clientVersion,
       rolloutMode,
       isPilot: isTargetEligible && rolloutMode === 'PILOT',

@@ -802,7 +802,7 @@ class WhatsAppQueueWorker {
       //    preserving retry_count, and automatically trigger processing.
       try {
         const preBootPending = await db.all(
-          "SELECT id, number, message, type, scheduled_at, created_at FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
+          "SELECT id, number, message, type, scheduled_at, created_at, status FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline', 'sending') AND created_at < ?",
           [SERVER_BOOT_TIME]
         );
         let recoveredCount = 0;
@@ -828,11 +828,14 @@ class WhatsAppQueueWorker {
               item.scheduled_at >= (this.detectedOutageInterval.start - 60000) && 
               item.scheduled_at <= (this.detectedOutageInterval.end + 60000);
             const isOverdueToday = item.scheduled_at && item.scheduled_at <= Date.now();
-            const reason = item.type === 'admin_morning_briefing'
-              ? 'Morning briefing restored for immediate dispatch on startup'
-              : (wasDueDuringOutage 
-                ? 'Recovered after PC/application outage during scheduled dispatch'
-                : (isOverdueToday ? 'Recovered overdue reminder after app restart' : 'Restored queue item after app restart / power cut'));
+            const wasSending = (item as any).status === 'sending';
+            const reason = wasSending
+              ? 'Recovered interrupted in-flight send after app restart / power cut'
+              : (item.type === 'admin_morning_briefing'
+                ? 'Morning briefing restored for immediate dispatch on startup'
+                : (wasDueDuringOutage 
+                  ? 'Recovered after PC/application outage during scheduled dispatch'
+                  : (isOverdueToday ? 'Recovered overdue reminder after app restart' : 'Restored queue item after app restart / power cut')));
             
             console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
             await db.run(
@@ -971,6 +974,28 @@ class WhatsAppQueueWorker {
       }
       await this.loadPacingConfig();
       const db = await dbManager.getConnection();
+
+      // Self-Healing Stalled Item Watchdog:
+      // Any item stuck in 'sending' for > 60 seconds (due to unexpected process termination, crash, or hung CDP)
+      // is safely recovered to 'failed_offline' so it can be re-attempted or drained cleanly.
+      try {
+        const stalledRecovered = await db.run(
+          `UPDATE whatsapp_send_queue 
+           SET status = 'failed_offline', 
+               retry_count = retry_count + 1,
+               error_message = 'Send attempt timed out or stalled (recovered by queue watchdog)'
+           WHERE status = 'sending'
+             AND (
+               (last_attempt_at IS NOT NULL AND last_attempt_at < datetime('now', '-60 seconds'))
+               OR (last_attempt_at IS NULL AND created_at < ? - 60000)
+             )`,
+          [Date.now()]
+        );
+        if (stalledRecovered && (stalledRecovered as any).changes && (stalledRecovered as any).changes > 0) {
+          console.warn(`[WhatsAppQueueWorker] Recovered ${(stalledRecovered as any).changes} stalled 'sending' item(s) back to queue.`);
+          this.broadcastQueueState(true);
+        }
+      } catch (_) {}
 
       while (true) {
         if (this.isPaused) break;
