@@ -20,7 +20,8 @@ import {
   Layers,
   Search,
   ExternalLink,
-  X
+  X,
+  Cloud
 } from 'lucide-react';
 import { apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
@@ -45,6 +46,9 @@ export default function LiveCart() {
   const [finalizingOrder, setFinalizingOrder] = useState<number | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+
+  const [queueStatus, setQueueStatus] = useState<{ enabled: boolean; processedCount: number; pendingCount: number } | null>(null);
+  const [drainingQueue, setDrainingQueue] = useState(false);
 
   // Per-item editing state
   const [itemEdits, setItemEdits] = useState<Record<number, {
@@ -79,18 +83,53 @@ export default function LiveCart() {
     }
   }, [activeStoreId, searchParams]);
 
+  const fetchQueueStatus = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/pharmarack/cloud-cart-queue/status');
+      if (res.data?.success) {
+        setQueueStatus(res.data);
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleDrainQueue = async () => {
+    setDrainingQueue(true);
+    try {
+      const res = await apiClient.post('/pharmarack/cloud-cart-queue/drain');
+      if (res.data?.success) {
+        toastEvent.trigger(res.data.result?.message || 'Checked remote cart queue', 'success');
+        fetchQueueStatus();
+        fetchOrders(true);
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to sync queue', 'error');
+    } finally {
+      setDrainingQueue(false);
+    }
+  };
+
   useEffect(() => {
     fetchOrders();
+    fetchQueueStatus();
     const onInvalidate = () => fetchOrders(true);
+    const onQueueChange = () => {
+      fetchQueueStatus();
+      fetchOrders(true);
+    };
+
     window.addEventListener('cache-invalidate', onInvalidate);
     window.addEventListener('refresh-special-orders', onInvalidate);
     window.addEventListener('sse-website-order-created', onInvalidate);
+    window.addEventListener('sse-cart_queue_processed', onQueueChange);
+    window.addEventListener('sse-cart_queue_changed', onQueueChange);
     return () => {
       window.removeEventListener('cache-invalidate', onInvalidate);
       window.removeEventListener('refresh-special-orders', onInvalidate);
       window.removeEventListener('sse-website-order-created', onInvalidate);
+      window.removeEventListener('sse-cart_queue_processed', onQueueChange);
+      window.removeEventListener('sse-cart_queue_changed', onQueueChange);
     };
-  }, [fetchOrders]);
+  }, [fetchOrders, fetchQueueStatus]);
 
   const toggleExpand = (orderId: number) => {
     setExpandedOrders(prev => {
@@ -249,6 +288,22 @@ export default function LiveCart() {
         </div>
         <div className="flex items-center gap-2">
           <StoreSelector showPrefix />
+          {queueStatus?.enabled && (
+            <button
+              onClick={handleDrainQueue}
+              disabled={drainingQueue}
+              title="Remote cart queue from Owner Web Portal. Click to sync now."
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-muted text-xs hover:bg-bg2 transition-colors"
+            >
+              <Cloud size={13} className={drainingQueue ? 'animate-spin text-primary' : 'text-primary'} />
+              <span>Remote Queue</span>
+              {queueStatus.processedCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary text-white">
+                  {queueStatus.processedCount}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={() => navigate('/website-orders')}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-muted text-xs hover:bg-bg2 transition-colors"

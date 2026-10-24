@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>AI Pharmacy OS — Owner Remote Console</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+            },
+            darkBg: '#090d16',
+            cardBg: '#111827',
+            borderCol: '#1f2937',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body {
+      background-color: #090d16;
+      color: #f3f4f6;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow-x: hidden;
+    }
+    .glass-panel {
+      background: rgba(17, 24, 39, 0.88);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #374151; border-radius: 9999px; }
+    @media (max-width: 640px) {
+      input, select, textarea { font-size: 16px !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col custom-scroll pb-12">
+
+  <!-- ================= AUTH MODAL ================= -->
+  <div id="authModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+    <div class="glass-panel p-6 sm:p-8 rounded-2xl max-w-md w-full mx-auto shadow-2xl border border-emerald-500/25">
+      <div class="flex items-center gap-3.5 mb-6">
+        <div class="w-12 h-12 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+          <i data-lucide="shield-check" class="w-7 h-7"></i>
+        </div>
+        <div>
+          <h2 class="text-xl font-bold text-white tracking-tight">Owner Remote Console</h2>
+          <p class="text-xs text-gray-400">Add to Live Cart & manage CRM when PC is off</p>
+        </div>
+      </div>
+
+      <div id="authErrorMsg" class="hidden mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs"></div>
+
+      <form id="authForm" onsubmit="handleLogin(event)" class="space-y-4">
+        <div id="userPassSection">
+          <div class="mb-3">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Owner Username</label>
+            <input type="text" id="usernameInput" autocomplete="username" placeholder="owner"
+              class="w-full px-4 py-3 bg-gray-900/90 border border-gray-700 rounded-xl text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-white placeholder-gray-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Password</label>
+            <input type="password" id="passwordInput" autocomplete="current-password" placeholder="••••••••"
+              class="w-full px-4 py-3 bg-gray-900/90 border border-gray-700 rounded-xl text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-white placeholder-gray-500">
+          </div>
+        </div>
+
+        <div id="secretSection" class="hidden">
+          <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Admin Secret Key</label>
+          <input type="password" id="adminSecretInput" placeholder="Enter admin secret..."
+            class="w-full px-4 py-3 bg-gray-900/90 border border-gray-700 rounded-xl text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-white placeholder-gray-500">
+        </div>
+
+        <div class="flex items-center justify-between pt-1">
+          <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none">
+            <input type="checkbox" id="rememberMeCheckbox" checked class="w-4 h-4 rounded border-gray-700 text-emerald-600 focus:ring-emerald-500 bg-gray-900">
+            <span>Remember login</span>
+          </label>
+          <button type="button" onclick="toggleAuthMode()" id="toggleAuthBtn" class="text-xs text-emerald-400 hover:text-emerald-300 transition-colors">
+            Use Admin Secret
+          </button>
+        </div>
+
+        <button type="submit" id="loginSubmitBtn" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-emerald-900/30 transition-all flex items-center justify-center gap-2 mt-2">
+          <span>Authenticate</span>
+          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= TOP APP BAR ================= -->
+  <header class="glass-panel sticky top-0 z-30 border-b border-gray-800 px-4 sm:px-6 py-3.5 shadow-md">
+    <div class="max-w-6xl mx-auto flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 font-bold">
+          <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <h1 id="headerStoreName" class="font-extrabold text-sm sm:text-base text-white tracking-tight truncate">
+              Pune City Pharmacy
+            </h1>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+              OWNER PORTAL
+            </span>
+          </div>
+          <div class="flex items-center gap-1.5 text-xs text-gray-400">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span id="headerSyncStatus">Live Cart Auto-Sync Active</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <button onclick="handleLogout()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 transition-colors flex items-center gap-1.5">
+          <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline">Sign Out</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= MAIN CONTENT WRAPPER ================= -->
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 pt-5 w-full flex-1">
+
+    <!-- Store Notice Banner -->
+    <div class="mb-5 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5 text-xs text-emerald-300">
+        <i data-lucide="zap" class="w-4 h-4 shrink-0 text-emerald-400"></i>
+        <span><strong>Remote Direct Lane:</strong> Add items here anytime. If shop PC is running, it adds directly to Pharmarack. If PC is off, items queue in cloud and drain automatically upon PC boot.</span>
+      </div>
+    </div>
+
+    <!-- TAB NAVIGATION BAR -->
+    <div class="flex items-center border-b border-gray-800 mb-6 gap-2 overflow-x-auto no-scrollbar">
+      <button onclick="switchTab('cart')" id="tabBtn-cart" class="px-4 py-2.5 border-b-2 border-emerald-500 text-sm font-bold text-white flex items-center gap-2 transition-all">
+        <i data-lucide="plus-circle" class="w-4 h-4 text-emerald-400"></i>
+        <span>Add to Live Cart</span>
+      </button>
+      <button onclick="switchTab('queue')" id="tabBtn-queue" class="px-4 py-2.5 border-b-2 border-transparent text-sm font-semibold text-gray-400 hover:text-white flex items-center gap-2 transition-all">
+        <i data-lucide="list-ordered" class="w-4 h-4"></i>
+        <span>Pending Queue</span>
+        <span id="queueBadge" class="hidden px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500 text-white font-bold">0</span>
+      </button>
+      <button onclick="switchTab('refills')" id="tabBtn-refills" class="px-4 py-2.5 border-b-2 border-transparent text-sm font-semibold text-gray-400 hover:text-white flex items-center gap-2 transition-all">
+        <i data-lucide="repeat" class="w-4 h-4"></i>
+        <span>Patient Refills</span>
+      </button>
+      <button onclick="switchTab('orders')" id="tabBtn-orders" class="px-4 py-2.5 border-b-2 border-transparent text-sm font-semibold text-gray-400 hover:text-white flex items-center gap-2 transition-all">
+        <i data-lucide="package" class="w-4 h-4"></i>
+        <span>Online Orders</span>
+      </button>
+    </div>
+
+    <!-- ================= TAB 1: ADD TO LIVE CART ================= -->
+    <section id="tab-cart" class="space-y-4">
+      <div class="glass-panel p-4 rounded-xl">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div class="relative flex-1">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-3.5 text-gray-400"></i>
+            <input type="text" id="medSearchInput" oninput="handleSearch(this.value)" placeholder="Search medicines by name or generic composition..."
+              class="w-full pl-10 pr-4 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-sm focus:outline-none focus:border-emerald-500 text-white placeholder-gray-500">
+          </div>
+          <button onclick="loadCatalog()" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-xl text-xs font-semibold text-gray-300 flex items-center justify-center gap-1.5 shrink-0 transition-colors">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Medicine Grid -->
+      <div id="medicineGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div class="col-span-full py-12 text-center text-gray-500">
+          <i data-lucide="loader" class="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-500"></i>
+          <p class="text-sm">Loading synchronized medicines catalog...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= TAB 2: PENDING QUEUE ================= -->
+    <section id="tab-queue" class="hidden space-y-4">
+      <div class="glass-panel p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <h2 class="text-base font-bold text-white">Pending Cloud Cart Add Queue</h2>
+          <p class="text-xs text-gray-400">Items queued while shop PC was offline. Automatically drained on boot.</p>
+        </div>
+        <button onclick="loadQueue()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-semibold text-gray-300 flex items-center gap-1.5 transition-colors">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+        </button>
+      </div>
+
+      <div class="glass-panel rounded-xl overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-gray-900/80 text-xs font-bold uppercase tracking-wider text-gray-400 border-b border-gray-800">
+              <tr>
+                <th class="py-3 px-4">Medicine</th>
+                <th class="py-3 px-4">Qty</th>
+                <th class="py-3 px-4">Queued At</th>
+                <th class="py-3 px-4">Status</th>
+              </tr>
+            </thead>
+            <tbody id="queueTableBody" class="divide-y divide-gray-800/60">
+              <tr><td colspan="4" class="py-8 text-center text-gray-500">Loading queue...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= TAB 3: PATIENT REFILLS ================= -->
+    <section id="tab-refills" class="hidden space-y-4">
+      <div class="glass-panel p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <h2 class="text-base font-bold text-white">Active Chronic Care Patient Refills</h2>
+          <p class="text-xs text-gray-400">Synced patient refill records. Tap "Add to Live Cart" to prepare refill orders.</p>
+        </div>
+        <button onclick="loadRefills()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-semibold text-gray-300 flex items-center gap-1.5 transition-colors">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5" id="refillsList">
+        <div class="col-span-full py-8 text-center text-gray-500">Loading refill records...</div>
+      </div>
+    </section>
+
+    <!-- ================= TAB 4: ONLINE ORDERS ================= -->
+    <section id="tab-orders" class="hidden space-y-4">
+      <div class="glass-panel p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <h2 class="text-base font-bold text-white">Online Customer Orders & Refill Inquiries</h2>
+          <p class="text-xs text-gray-400">Incoming web orders from patients.</p>
+        </div>
+        <button onclick="loadOrders()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-semibold text-gray-300 flex items-center gap-1.5 transition-colors">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+        </button>
+      </div>
+
+      <div class="space-y-3" id="ordersList">
+        <div class="py-8 text-center text-gray-500">Loading orders...</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= TOAST NOTIFICATION CONTAINER ================= -->
+  <div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4"></div>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    let OWNER_TOKEN = localStorage.getItem('pharma_owner_token') || sessionStorage.getItem('pharma_owner_token') || '';
+    let ADMIN_SECRET = localStorage.getItem('pharma_owner_secret') || sessionStorage.getItem('pharma_owner_secret') || '';
+    let activeStoreId = 'PHARM-PUNE-MAIN';
+    let currentMedicines = [];
+    let isSecretMode = false;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      if (OWNER_TOKEN || ADMIN_SECRET) {
+        document.getElementById('authModal').classList.add('hidden');
+        initDashboard();
+      } else {
+        document.getElementById('authModal').classList.remove('hidden');
+      }
+    });
+
+    function showToast(msg, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      const isErr = type === 'error';
+      toast.className = `p-3 rounded-xl border text-xs font-medium shadow-xl flex items-center gap-2 pointer-events-auto transition-all ${isErr ? 'bg-rose-950/90 text-rose-200 border-rose-500/40' : 'bg-emerald-950/90 text-emerald-200 border-emerald-500/40'}`;
+      toast.innerHTML = `<i data-lucide="${isErr ? 'alert-triangle' : 'check-circle'}" class="w-4 h-4 shrink-0"></i><span>${msg}</span>`;
+      container.appendChild(toast);
+      lucide.createIcons();
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    function toggleAuthMode() {
+      isSecretMode = !isSecretMode;
+      const userPassSec = document.getElementById('userPassSection');
+      const secretSec = document.getElementById('secretSection');
+      const toggleBtn = document.getElementById('toggleAuthBtn');
+      if (isSecretMode) {
+        userPassSec.classList.add('hidden');
+        secretSec.classList.remove('hidden');
+        toggleBtn.textContent = 'Use Username & Password';
+      } else {
+        userPassSec.classList.remove('hidden');
+        secretSec.classList.add('hidden');
+        toggleBtn.textContent = 'Use Admin Secret';
+      }
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const errBox = document.getElementById('authErrorMsg');
+      errBox.classList.add('hidden');
+      const submitBtn = document.getElementById('loginSubmitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span>Authenticating...</span>`;
+
+      try {
+        let payload = {};
+        if (isSecretMode) {
+          const secret = document.getElementById('adminSecretInput').value.trim();
+          payload = { adminSecret: secret };
+        } else {
+          const username = document.getElementById('usernameInput').value.trim();
+          const password = document.getElementById('passwordInput').value;
+          payload = { username, password };
+        }
+
+        const res = await fetch('/api/catalog?action=owner_login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          OWNER_TOKEN = data.token || '';
+          if (isSecretMode) ADMIN_SECRET = payload.adminSecret;
+          const remember = document.getElementById('rememberMeCheckbox').checked;
+          const storage = remember ? localStorage : sessionStorage;
+          if (OWNER_TOKEN) storage.setItem('pharma_owner_token', OWNER_TOKEN);
+          if (ADMIN_SECRET) storage.setItem('pharma_owner_secret', ADMIN_SECRET);
+
+          if (data.activeStoreId) activeStoreId = data.activeStoreId;
+          document.getElementById('authModal').classList.add('hidden');
+          initDashboard();
+        } else {
+          errBox.textContent = data.error || 'Authentication failed. Please verify credentials.';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errBox.textContent = 'Network connection error: ' + err.message;
+        errBox.classList.remove('hidden');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<span>Authenticate</span><i data-lucide="arrow-right" class="w-4 h-4"></i>`;
+        lucide.createIcons();
+      }
+    }
+
+    function getAuthHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (OWNER_TOKEN) headers['Authorization'] = `Bearer ${OWNER_TOKEN}`;
+      if (ADMIN_SECRET) headers['x-admin-secret'] = ADMIN_SECRET;
+      return headers;
+    }
+
+    async function initDashboard() {
+      await loadCatalog();
+      await loadQueue();
+    }
+
+    async function loadCatalog() {
+      try {
+        const res = await fetch(`/api/catalog?action=list&storeId=${activeStoreId}`);
+        const data = await res.json();
+        currentMedicines = data.medicines || [];
+        if (data.storeInfo?.name) {
+          document.getElementById('headerStoreName').textContent = data.storeInfo.name;
+        }
+        renderMedicines(currentMedicines);
+      } catch (err) {
+        showToast('Error loading medicines: ' + err.message, 'error');
+      }
+    }
+
+    function handleSearch(q) {
+      const query = (q || '').toLowerCase().trim();
+      if (!query) {
+        renderMedicines(currentMedicines);
+        return;
+      }
+      const filtered = currentMedicines.filter(m =>
+        (m.name || '').toLowerCase().includes(query) ||
+        (m.composition || '').toLowerCase().includes(query) ||
+        (m.category || '').toLowerCase().includes(query)
+      );
+      renderMedicines(filtered);
+    }
+
+    function renderMedicines(meds) {
+      const grid = document.getElementById('medicineGrid');
+      if (meds.length === 0) {
+        grid.innerHTML = `<div class="col-span-full py-12 text-center text-gray-500">No medicines found matching query</div>`;
+        return;
+      }
+
+      grid.innerHTML = meds.map(m => {
+        const inStock = m.in_stock !== false;
+        return `
+          <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border border-gray-800 hover:border-gray-700 transition-all">
+            <div>
+              <div class="flex items-start justify-between gap-2 mb-1.5">
+                <h3 class="font-bold text-sm text-white">${m.name}</h3>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${inStock ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'} shrink-0">
+                  ${inStock ? 'In Stock' : 'Out of Stock'}
+                </span>
+              </div>
+              <p class="text-xs text-gray-400 mb-1">${m.composition || '—'}</p>
+              <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
+                <span>Pack: ${m.pack || 'Strip'}</span>
+                <span>•</span>
+                <span class="text-emerald-400 font-mono font-semibold">₹${m.sell_price || m.mrp}</span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 pt-2 border-t border-gray-800">
+              <div class="flex items-center border border-gray-700 rounded-lg bg-gray-900 overflow-hidden">
+                <button onclick="adjustQty('qty_${m.id}', -1)" class="px-2.5 py-1 text-gray-400 hover:text-white transition-colors">-</button>
+                <input type="number" id="qty_${m.id}" value="1" min="1" max="100" class="w-10 text-center bg-transparent text-xs text-white focus:outline-none">
+                <button onclick="adjustQty('qty_${m.id}', 1)" class="px-2.5 py-1 text-gray-400 hover:text-white transition-colors">+</button>
+              </div>
+              <button onclick="queueAddToCart(${m.id}, '${encodeURIComponent(m.name)}')" class="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-950">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add to Live Cart
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    function adjustQty(inputId, delta) {
+      const el = document.getElementById(inputId);
+      if (el) {
+        const val = Math.max(1, (parseInt(el.value, 10) || 1) + delta);
+        el.value = val;
+      }
+    }
+
+    async function queueAddToCart(medId, encodedName, customQty = null) {
+      const name = decodeURIComponent(encodedName);
+      const qty = customQty || parseInt(document.getElementById(`qty_${medId}`)?.value || 1, 10);
+
+      try {
+        const res = await fetch('/api/catalog?action=cart_queue_add', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            medicine_id: medId,
+            medicine_name: name,
+            qty,
+            storeId: activeStoreId,
+            source: 'owner_web_portal'
+          }),
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast(`🛒 Queued ${qty}x ${name} for Live Cart!`);
+          loadQueue();
+        } else {
+          showToast(data.error || 'Failed to queue item', 'error');
+        }
+      } catch (err) {
+        showToast('Error queueing item: ' + err.message, 'error');
+      }
+    }
+
+    async function loadQueue() {
+      try {
+        const res = await fetch(`/api/catalog?action=cart_queue_get&storeId=${activeStoreId}`, {
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        const items = data.items || [];
+        const badge = document.getElementById('queueBadge');
+        if (items.length > 0) {
+          badge.textContent = items.length;
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+        renderQueue(items);
+      } catch (err) {
+        console.warn('Queue load error:', err.message);
+      }
+    }
+
+    function renderQueue(items) {
+      const tbody = document.getElementById('queueTableBody');
+      if (items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-gray-500">No items currently waiting in cloud queue. Everything is synced!</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = items.map(it => `
+        <tr class="hover:bg-gray-800/40">
+          <td class="py-3 px-4 font-bold text-white">${it.medicine_name}</td>
+          <td class="py-3 px-4 font-mono text-emerald-400 font-bold">${it.qty}</td>
+          <td class="py-3 px-4 text-xs text-gray-400">${it.queued_at ? new Date(it.queued_at).toLocaleTimeString() : 'Recent'}</td>
+          <td class="py-3 px-4">
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Pending Sync
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadRefills() {
+      try {
+        const res = await fetch(`/api/catalog?action=owner_crm&storeId=${activeStoreId}`, {
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        renderRefills(data.refills || []);
+      } catch (err) {
+        showToast('Refills load error: ' + err.message, 'error');
+      }
+    }
+
+    function renderRefills(refills) {
+      const list = document.getElementById('refillsList');
+      if (refills.length === 0) {
+        list.innerHTML = `<div class="col-span-full py-8 text-center text-gray-500">No active chronic refills synced for this store</div>`;
+        return;
+      }
+
+      list.innerHTML = refills.map(r => `
+        <div class="glass-panel p-4 rounded-xl border border-gray-800 flex items-center justify-between gap-3">
+          <div>
+            <h4 class="font-bold text-white text-sm">${r.medicineName}</h4>
+            <p class="text-xs text-gray-400">Patient: ${r.patientName} (${r.phone || 'No phone'})</p>
+            <p class="text-xs text-emerald-400 font-semibold mt-0.5">Due: ${r.nextDueDate}</p>
+          </div>
+          <button onclick="queueAddToCart(null, '${encodeURIComponent(r.medicineName)}', ${r.qty || 1})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all shadow-md">
+            <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> Queue Refill
+          </button>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    async function loadOrders() {
+      try {
+        const res = await fetch(`/api/catalog?action=owner_orders&storeId=${activeStoreId}`, {
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        renderOrders(data.orders || []);
+      } catch (err) {
+        showToast('Orders load error: ' + err.message, 'error');
+      }
+    }
+
+    function renderOrders(orders) {
+      const list = document.getElementById('ordersList');
+      if (orders.length === 0) {
+        list.innerHTML = `<div class="py-8 text-center text-gray-500">No active online orders</div>`;
+        return;
+      }
+
+      list.innerHTML = orders.map(o => `
+        <div class="glass-panel p-4 rounded-xl border border-gray-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-white text-sm">#${o.id || o.orderId}</span>
+            <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300">₹${o.totalAmount || 0}</span>
+          </div>
+          <p class="text-xs text-gray-300 font-medium">${o.customerName} · ${o.phone}</p>
+          <div class="text-xs text-gray-400 border-t border-gray-800 pt-2 flex items-center justify-between">
+            <span>Status: <strong>${o.status}</strong></span>
+            ${o.phone ? `<a href="https://wa.me/${String(o.phone).replace(/\D/g, '')}" target="_blank" class="text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
+              <i data-lucide="message-square" class="w-3.5 h-3.5"></i> WhatsApp
+            </a>` : ''}
+          </div>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    function switchTab(tab) {
+      ['cart', 'queue', 'refills', 'orders'].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.add('hidden');
+        document.getElementById(`tabBtn-${t}`).className = 'px-4 py-2.5 border-b-2 border-transparent text-sm font-semibold text-gray-400 hover:text-white flex items-center gap-2 transition-all';
+      });
+
+      document.getElementById(`tab-${tab}`).classList.remove('hidden');
+      document.getElementById(`tabBtn-${tab}`).className = 'px-4 py-2.5 border-b-2 border-emerald-500 text-sm font-bold text-white flex items-center gap-2 transition-all';
+
+      if (tab === 'queue') loadQueue();
+      if (tab === 'refills') loadRefills();
+      if (tab === 'orders') loadOrders();
+      lucide.createIcons();
+    }
+
+    function handleLogout() {
+      localStorage.removeItem('pharma_owner_token');
+      sessionStorage.removeItem('pharma_owner_token');
+      localStorage.removeItem('pharma_owner_secret');
+      sessionStorage.removeItem('pharma_owner_secret');
+      location.reload();
+    }
+  </script>
+</body>
+</html>

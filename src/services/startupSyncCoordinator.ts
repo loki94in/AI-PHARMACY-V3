@@ -50,6 +50,16 @@ class StartupSyncCoordinator {
       void this.runRefillAutoCartCatchUp('boot_cart_loaded').catch(err => {
         console.warn('[StartupSyncCoordinator] Refill auto cart catch-up warning:', err?.message || err);
       });
+
+      // Trigger automatic drain of online cart queue from owner web portal
+      void (async () => {
+        try {
+          const { cartQueueSyncService } = await import('./cartQueueSyncService.js');
+          await cartQueueSyncService.drainCartAddQueue();
+        } catch (err: any) {
+          console.warn('[StartupSyncCoordinator] Cloud cart queue drain warning:', err?.message || err);
+        }
+      })();
     }
   }
 

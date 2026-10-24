@@ -5542,6 +5542,43 @@ router.post('/send-closure-notices', async (req, res) => {
   }
 });
 
+// GET /api/pharmarack/cloud-cart-queue/status
+router.get('/cloud-cart-queue/status', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const modeRow = await db.get("SELECT value FROM app_settings WHERE key = 'cloud_cart_queue_mode'");
+    const enabled = modeRow ? modeRow.value !== 'off' : true;
+
+    const stats = await db.get(`
+      SELECT 
+        COUNT(CASE WHEN processed_at IS NOT NULL THEN 1 END) as processed_count,
+        COUNT(CASE WHEN processed_at IS NULL THEN 1 END) as pending_count
+      FROM cloud_exec_ledger 
+      WHERE kind = 'cart_add'
+    `);
+
+    res.json({
+      success: true,
+      enabled,
+      processedCount: Number(stats?.processed_count || 0),
+      pendingCount: Number(stats?.pending_count || 0),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/pharmarack/cloud-cart-queue/drain
+router.post('/cloud-cart-queue/drain', async (req, res) => {
+  try {
+    const { cartQueueSyncService } = await import('../services/cartQueueSyncService.js');
+    const result = await cartQueueSyncService.drainCartAddQueue();
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
 
 

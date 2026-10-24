@@ -503,9 +503,11 @@ export function startCloudOrderSyncPoller(): void {
 
   // Subscribe to local database events for debounced auto-push
   import('./eventService.js').then(({ eventService }) => {
-    eventService.subscribe('refill_updated', () => scheduleCloudAutoPush('refill_updated'));
-    eventService.subscribe('order_created', () => scheduleCloudAutoPush('order_created'));
-    eventService.subscribe('sale_saved', () => scheduleCloudAutoPush('sale_saved'));
+    eventService.on('server_event', (event: { type: string; payload?: any }) => {
+      if (['refill_updated', 'order_created', 'sale_saved'].includes(event?.type)) {
+        scheduleCloudAutoPush(event.type);
+      }
+    });
   }).catch(() => {});
 
   // Quiet 60-second background poll - gated by activityTracker

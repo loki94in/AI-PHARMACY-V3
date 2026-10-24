@@ -315,8 +315,17 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 
 ### 30. Global Components & SPA Shell (`frontend/src/components/`)
 * **Core Components**:
-  - `Layout.tsx`: SPA master shell, sidebar navigation, keyboard shortcuts (Alt+O, Alt+L), modal event bus subscribers.
+  - `Layout.tsx`: SPA master shell, sidebar navigation, keyboard shortcuts (Alt+O, Alt+L), modal event bus subscribers. Handles remote owner gate inspection and portal sign-out.
   - `LiveCartAddModal.tsx`: Global Pharmarack live search and cart addition modal. Supports pre-filled search, quantity, and automatic source order/refill status updating.
   - `QuickOrderModal.tsx`: Rapid barcode / quick order entry modal.
   - `StagedReviewModal.tsx`: Review modal for approving parsed distributor OCR bills into active purchases.
   - `BackupCenterModal.tsx`: Backup creation and restoration center modal.
+
+---
+
+### 32. Owner Remote Gate & Portal Login (`/owner/login`)
+* **Component Path**: [pages/OwnerLogin/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/OwnerLogin/index.tsx)
+* **Authoritative Responsibilities**: Remote gateway protecting internal pharmacy surfaces when accessed outside the local shop counter (over Cloudflare Tunnel or LAN). Local counter desktop PC stays 100% login-free. Authenticated remote owners gain complete remote access to CRM, Live Cart, Refills, and Inventory.
+* **Authoritative Data Sources**: `POST /api/auth/login`, `GET /api/auth/session`, `GET /api/auth/me`.
+* **Database Tables**: `pharmacy_users` (`role = 'owner'`), `app_settings` (`remote_auth_mode`), `cloud_exec_ledger`.
+* **Cloud Companion**: `website/public/owner.html` and `website/api/catalog.js` (remote cart add queue and offline refill CRM).
