@@ -141,9 +141,18 @@ set "BACKUP_DIR=%INSTALL_DIR%\backup\preupdate-!TIMESTAMP!"
 call :LOG "Creating pre-update backup at: !BACKUP_DIR!"
 
 mkdir "!BACKUP_DIR!" 2>nul
-if exist "%INSTALL_DIR%\PharmacyOS.exe" copy /Y "%INSTALL_DIR%\PharmacyOS.exe" "!BACKUP_DIR!\PharmacyOS.exe" >nul 2>&1
-if exist "%INSTALL_DIR%\sea-entry.cjs"  copy /Y "%INSTALL_DIR%\sea-entry.cjs"  "!BACKUP_DIR!\sea-entry.cjs"  >nul 2>&1
-if exist "%INSTALL_DIR%\Updater.bat"    copy /Y "%INSTALL_DIR%\Updater.bat"    "!BACKUP_DIR!\Updater.bat"    >nul 2>&1
+if exist "%INSTALL_DIR%\PharmacyOS.exe"      copy /Y "%INSTALL_DIR%\PharmacyOS.exe"      "!BACKUP_DIR!\PharmacyOS.exe"      >nul 2>&1
+if exist "%INSTALL_DIR%\PharmacyBackend.exe" copy /Y "%INSTALL_DIR%\PharmacyBackend.exe" "!BACKUP_DIR!\PharmacyBackend.exe" >nul 2>&1
+if exist "%INSTALL_DIR%\dist-pkg" (
+    mkdir "!BACKUP_DIR!\dist-pkg" 2>nul
+    xcopy /E /Y /I "%INSTALL_DIR%\dist-pkg" "!BACKUP_DIR!\dist-pkg" >nul 2>&1
+)
+if exist "%INSTALL_DIR%\resources\app" (
+    mkdir "!BACKUP_DIR!\resources\app" 2>nul
+    xcopy /E /Y /I "%INSTALL_DIR%\resources\app" "!BACKUP_DIR!\resources\app" >nul 2>&1
+)
+if exist "%INSTALL_DIR%\sea-entry.cjs"       copy /Y "%INSTALL_DIR%\sea-entry.cjs"       "!BACKUP_DIR!\sea-entry.cjs"       >nul 2>&1
+if exist "%INSTALL_DIR%\Updater.bat"         copy /Y "%INSTALL_DIR%\Updater.bat"         "!BACKUP_DIR!\Updater.bat"         >nul 2>&1
 
 if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
     echo [ERROR] Backup of PharmacyOS.exe failed!
@@ -262,8 +271,20 @@ call :LOG "Rolling back to previous version from: !RBACK_DIR! (reason: !RBACK_RE
 if exist "!RBACK_DIR!\PharmacyOS.exe" (
     copy /Y "!RBACK_DIR!\PharmacyOS.exe" "%INSTALL_DIR%\PharmacyOS.exe" >nul 2>&1
 )
+if exist "!RBACK_DIR!\PharmacyBackend.exe" (
+    copy /Y "!RBACK_DIR!\PharmacyBackend.exe" "%INSTALL_DIR%\PharmacyBackend.exe" >nul 2>&1
+)
+if exist "!RBACK_DIR!\dist-pkg" (
+    xcopy /E /Y /I "!RBACK_DIR!\dist-pkg" "%INSTALL_DIR%\dist-pkg" >nul 2>&1
+)
+if exist "!RBACK_DIR!\resources\app" (
+    xcopy /E /Y /I "!RBACK_DIR!\resources\app" "%INSTALL_DIR%\resources\app" >nul 2>&1
+)
 if exist "!RBACK_DIR!\sea-entry.cjs" (
     copy /Y "!RBACK_DIR!\sea-entry.cjs" "%INSTALL_DIR%\sea-entry.cjs" >nul 2>&1
+)
+if exist "!RBACK_DIR!\Updater.bat" (
+    copy /Y "!RBACK_DIR!\Updater.bat" "%INSTALL_DIR%\Updater.bat" >nul 2>&1
 )
 call :WRITE_FAILURE "!RBACK_REASON!"
 echo {"version":"%TARGET_VERSION%","error":"!RBACK_REASON!","ts":"%DATE% %TIME%","rollback":"attempted"} > "%STAGING_DIR%\rollback.json"

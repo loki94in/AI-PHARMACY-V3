@@ -14,6 +14,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
 import { dbManager } from './database/connection.js';
 import { requestTransactionGuard } from './middleware/requestTransactionGuard.js';
+import { ownerRemoteGate } from './middleware/tenantAuth.js';
 import { ensureSchema } from './database.js';
 import { registerProcessGuardian } from './process/processGuardian.js';
 import { activityTracker } from './utils/activityTracker.js';
@@ -342,6 +343,10 @@ app.post('/api/system/cancel-shutdown', (_req, res) => {
   }
   res.json({ success: true, message: 'Pending shutdown cancelled.' });
 });
+
+// Remote owner access gate: protects all /api endpoints for remote/LAN/tunnel traffic
+// Local desktop traffic proceeds freely without disruption to single-store operations
+app.use('/api', ownerRemoteGate);
 
 // Client-initiated clean application exit: releases port, runs backup, and closes DB
 app.post('/api/system/shutdown', (req, res) => {

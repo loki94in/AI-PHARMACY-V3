@@ -30,4 +30,6 @@ export const pageImports: Record<string, () => Promise<{ default: ComponentType 
   '/customer/login': () => import('../pages/CustomerPortal'),
   '/my-bills': () => import('../pages/CustomerPortal'),
   '/customer-bills': () => import('../pages/CustomerPortal'),
+  '/owner/login': () => import('../pages/OwnerLogin'),
+  '/owner-login': () => import('../pages/OwnerLogin'),
 };

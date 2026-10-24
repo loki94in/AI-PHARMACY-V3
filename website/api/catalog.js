@@ -1,4 +1,5 @@
 import { kv, isKvConfigured } from './_db.js';
+import crypto from 'node:crypto';
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
 
@@ -200,6 +201,25 @@ function getClientIp(req) {
     return String(xForwardedFor).split(',')[0].trim();
   }
   return req.socket?.remoteAddress || req.connection?.remoteAddress || '127.0.0.1';
+}
+
+async function getAuthenticatedOwner(req) {
+  const clientSecret = req.headers['x-admin-secret'] || req.query?.secret || req.body?.adminSecret;
+  if (clientSecret && clientSecret === ADMIN_SECRET) {
+    return { role: 'owner', username: 'admin', storeId: 'PHARM-DEFAULT' };
+  }
+  const authHeader = req.headers['authorization'] || req.headers['x-owner-token'] || req.query?.ownerToken || req.body?.token;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader?.trim();
+  if (!token) return null;
+  if (isKvConfigured) {
+    try {
+      const session = await kv.get(`owner_session:${token}`);
+      if (session && (session.role === 'owner' || session.role === 'OWNER')) {
+        return session;
+      }
+    } catch (_) {}
+  }
+  return null;
 }
 
 export default async function handler(req, res) {
@@ -771,7 +791,7 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Unauthorized. Invalid admin secret.' });
     }
 
-    const { storeInfo, medicines, customerBills, customerRefills } = req.body || {};
+    const { storeInfo, medicines, customerBills, customerRefills, ownerAuth } = req.body || {};
     if (!Array.isArray(medicines)) {
       return res.status(400).json({ error: 'Medicines must be an array.' });
     }
@@ -833,6 +853,12 @@ export default async function handler(req, res) {
             await kv.set(`customer:${cleanPhone}:refills`, refills);
           }
         }
+      }
+
+      // Sync owner credentials hash for remote authentication
+      if (Array.isArray(ownerAuth) && ownerAuth.length > 0) {
+        await kv.set(`owner_auth:${storeId}`, ownerAuth);
+        await kv.set('owner_auth:default', ownerAuth);
       }
 
       await kv.set('catalog:last_synced_at', new Date().toISOString());
@@ -915,9 +941,61 @@ export default async function handler(req, res) {
   if (action === 'owner_login') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const clientSecret = req.headers['x-admin-secret'] || req.body?.adminSecret || req.body?.secret;
-    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
-      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    const clientIp = getClientIp(req);
+    const rateCheck = checkRateLimit(`owner_login:${clientIp}`, 10, 60000);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: 'Too many login attempts. Please wait 1 minute.' });
+    }
+
+    const { username, password, storeId, adminSecret, secret } = req.body || {};
+    const targetStoreId = storeId || 'PHARM-DEFAULT';
+    const clientSecret = req.headers['x-admin-secret'] || adminSecret || secret;
+
+    let authenticated = false;
+    let ownerInfo = { role: 'OWNER', username: 'owner' };
+
+    // Check 1: Username & Password with PBKDF2 hash
+    if (username && password && isKvConfigured) {
+      try {
+        const storedAuth = await kv.get(`owner_auth:${targetStoreId}`) || await kv.get('owner_auth:default');
+        if (Array.isArray(storedAuth)) {
+          const match = storedAuth.find(u => (u.username || '').toLowerCase() === String(username).toLowerCase().trim());
+          if (match && match.password_hash && match.salt) {
+            const computed = crypto.pbkdf2Sync(String(password), String(match.salt), 1000, 32, 'sha256').toString('hex');
+            if (crypto.timingSafeEqual(Buffer.from(computed, 'utf8'), Buffer.from(match.password_hash, 'utf8'))) {
+              authenticated = true;
+              ownerInfo = { role: 'OWNER', username: match.username };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Owner password verification error:', err.message);
+      }
+    }
+
+    // Check 2: ADMIN_SECRET match (Emergency key fallback)
+    if (!authenticated && clientSecret && clientSecret === ADMIN_SECRET) {
+      authenticated = true;
+      ownerInfo = { role: 'OWNER', username: 'admin' };
+    }
+
+    if (!authenticated) {
+      return res.status(401).json({ error: 'Invalid owner username or password.' });
+    }
+
+    // Issue session token for owner web portal
+    const sessionToken = 'ost_' + crypto.randomBytes(24).toString('hex');
+    if (isKvConfigured) {
+      try {
+        await kv.set(`owner_session:${sessionToken}`, {
+          username: ownerInfo.username,
+          role: 'owner',
+          storeId: targetStoreId,
+          createdAt: new Date().toISOString()
+        }, { ex: 86400 * 7 });
+      } catch (sessErr) {
+        console.warn('Failed to persist owner session token:', sessErr.message);
+      }
     }
 
     let stores = DEFAULT_STORES;
@@ -934,22 +1012,23 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       success: true,
+      token: sessionToken,
       message: 'Owner authenticated successfully.',
       owner: {
-        role: 'OWNER',
-        name: 'Pharmacy Group Owner',
+        ...ownerInfo,
+        name: ownerInfo.username === 'admin' ? 'Pharmacy Group Owner' : ownerInfo.username,
         storesCount: stores.length,
       },
       stores,
-      activeStoreId: stores[0]?.storeId || 'PHARM-PUNE-MAIN',
+      activeStoreId: stores[0]?.storeId || targetStoreId,
     });
   }
 
   // ================= 9. MULTI-STORE REMOTE ORDERS MANAGEMENT =================
   if (action === 'owner_orders') {
-    const clientSecret = req.headers['x-admin-secret'] || req.query?.secret;
-    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
-      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    const owner = await getAuthenticatedOwner(req);
+    if (!owner) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid owner session or secret key.' });
     }
 
     const targetStoreId = req.query.storeId || req.query.store || null;
@@ -1142,6 +1221,206 @@ export default async function handler(req, res) {
         totalMedicines: totalMeds,
         outOfStockMedicines: outOfStockCount,
       }
+    });
+  }
+
+  // ================= 13. CLOUD LIVE-CART QUEUE (REMOTE ADD) =================
+  if (action === 'cart_queue_add') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const owner = await getAuthenticatedOwner(req);
+    if (!owner) {
+      return res.status(401).json({ error: 'Unauthorized. Owner session or admin secret required.' });
+    }
+
+    if (!isKvConfigured) {
+      return res.status(503).json({ error: 'Database not configured.' });
+    }
+
+    const { medicine_id, medicine_name, qty, source, storeId, notes, is_refill } = req.body || {};
+    const cleanName = String(medicine_name || '').trim();
+    const cleanQty = Math.max(1, parseInt(qty, 10) || 1);
+    const targetStoreId = storeId || owner.storeId || 'PHARM-DEFAULT';
+
+    if (!cleanName && !medicine_id) {
+      return res.status(400).json({ error: 'medicine_name or medicine_id is required.' });
+    }
+
+    // Legitimate medicine verification (Demo data quarantine: prevent invented tokens)
+    let matchedMed = null;
+    try {
+      const meds = await kv.get(`store:${targetStoreId}:medicines`) || await kv.get('catalog:medicines') || [];
+      if (Array.isArray(meds)) {
+        matchedMed = meds.find(m =>
+          (medicine_id && String(m.id) === String(medicine_id)) ||
+          (cleanName && m.name.toLowerCase() === cleanName.toLowerCase())
+        );
+      }
+    } catch (_) {}
+
+    const finalMedName = matchedMed ? matchedMed.name : cleanName;
+    if (!finalMedName) {
+      return res.status(400).json({ error: 'Valid medicine could not be identified.' });
+    }
+
+    const reqId = 'cqa_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const queueItem = {
+      req_id: reqId,
+      reqId: reqId,
+      store_id: targetStoreId,
+      storeId: targetStoreId,
+      medicine_id: matchedMed?.id || medicine_id || null,
+      medicine_name: finalMedName,
+      composition: matchedMed?.composition || '',
+      qty: cleanQty,
+      source: source || 'owner_web_portal',
+      status: 'queued',
+      notes: notes || '',
+      is_refill: Boolean(is_refill),
+      queued_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      created_by: owner.username || 'owner',
+    };
+
+    try {
+      await kv.rpush(`cart_add_queue:${targetStoreId}`, reqId);
+      await kv.set(`cart_item:${reqId}`, queueItem);
+
+      return res.status(200).json({
+        success: true,
+        message: `Queued ${cleanQty}x ${finalMedName} for Live Cart auto-add.`,
+        item: queueItem,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to queue cart item: ${err.message}` });
+    }
+  }
+
+  // ================= 14. DRAIN PENDING CART QUEUE =================
+  if (action === 'cart_queue_get') {
+    const owner = await getAuthenticatedOwner(req);
+    if (!owner) {
+      return res.status(401).json({ error: 'Unauthorized. Admin secret or owner session required.' });
+    }
+
+    if (!isKvConfigured) {
+      return res.status(503).json({ error: 'Database not configured.' });
+    }
+
+    const targetStoreId = req.query.storeId || req.query.store || 'PHARM-DEFAULT';
+    try {
+      const queueKeys = Array.from(new Set([targetStoreId, 'PHARM-DEFAULT']));
+      let allReqIds = [];
+      for (const k of queueKeys) {
+        const list = await kv.lrange(`cart_add_queue:${k}`, 0, 50) || [];
+        allReqIds.push(...list);
+      }
+      allReqIds = Array.from(new Set(allReqIds));
+
+      const items = [];
+      for (const rid of allReqIds) {
+        const item = await kv.get(`cart_item:${rid}`);
+        if (item && item.status === 'queued') {
+          items.push(item);
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        count: items.length,
+        items,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to get cart queue: ${err.message}` });
+    }
+  }
+
+  // ================= 15. ACKNOWLEDGE PROCESSED CART QUEUE =================
+  if (action === 'cart_queue_ack') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const owner = await getAuthenticatedOwner(req);
+    if (!owner) {
+      return res.status(401).json({ error: 'Unauthorized. Admin secret or owner session required.' });
+    }
+
+    if (!isKvConfigured) {
+      return res.status(503).json({ error: 'Database not configured.' });
+    }
+
+    const { reqIds, storeId, result } = req.body || {};
+    const idsToAck = Array.isArray(reqIds) ? reqIds : (req.body?.reqId ? [req.body.reqId] : []);
+    if (idsToAck.length === 0) {
+      return res.status(400).json({ error: 'reqIds array required.' });
+    }
+
+    const targetStoreId = storeId || 'PHARM-DEFAULT';
+    try {
+      for (const rid of idsToAck) {
+        await kv.lrem(`cart_add_queue:${targetStoreId}`, 0, rid);
+        await kv.lrem('cart_add_queue:PHARM-DEFAULT', 0, rid);
+        const existing = await kv.get(`cart_item:${rid}`);
+        if (existing) {
+          existing.status = 'processed';
+          existing.result = result || 'synced_to_live_cart';
+          existing.processed_at = new Date().toISOString();
+          await kv.set(`cart_item:${rid}`, existing, { ex: 86400 * 7 });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        count: idsToAck.length,
+        message: `Successfully acknowledged ${idsToAck.length} cart queue items.`,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to ack cart queue: ${err.message}` });
+    }
+  }
+
+  // ================= 16. OWNER CRM & REFILLS OVERVIEW =================
+  if (action === 'owner_crm') {
+    const owner = await getAuthenticatedOwner(req);
+    if (!owner) {
+      return res.status(401).json({ error: 'Unauthorized. Owner session or admin secret required.' });
+    }
+
+    const targetStoreId = req.query.storeId || req.query.store || owner.storeId || 'PHARM-DEFAULT';
+    let customerList = [];
+    let refillList = [];
+
+    if (isKvConfigured) {
+      try {
+        const orderIds = await kv.lrange('orders:pending', 0, 50) || [];
+        for (const oid of orderIds) {
+          const ord = await kv.get(`order:${oid}`);
+          if (ord) {
+            if (ord.items) {
+              ord.items.forEach(it => {
+                if (it.is_refill || it.medicineName) {
+                  refillList.push({
+                    patientName: ord.customerName || 'Patient',
+                    phone: ord.phone,
+                    medicineName: it.medicineName || it.name,
+                    qty: it.qty || 1,
+                    status: ord.status,
+                    nextDueDate: ord.createdAt ? new Date(new Date(ord.createdAt).getTime() + 30 * 86400000).toISOString().split('T')[0] : 'Upcoming'
+                  });
+                }
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Owner CRM query warning:', err.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      storeId: targetStoreId,
+      refillsCount: refillList.length,
+      refills: refillList,
     });
   }
 

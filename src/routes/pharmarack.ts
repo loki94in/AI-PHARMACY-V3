@@ -1713,6 +1713,69 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
 }
 
 /**
+ * Normalizes and coalesces add-to-cart items according to the same-medicine merge rule:
+ * - Coalesces duplicate items in the batch into a single entry with summed quantity.
+ * - Compares with items currently in the active live cart (via productCode, or storeId + sameProductName).
+ * - When an item already exists in the live cart, computes targetCartQty = existingQty + requestedQty.
+ * - Enforces single line per medicine (never duplicated rows).
+ */
+export function normalizeCartAddRequest(items: any[], activeCart?: any): any[] {
+  if (!Array.isArray(items) || items.length === 0) return [];
+
+  const coalescedMap = new Map<string, any>();
+  for (const raw of items) {
+    if (!raw) continue;
+    const storePart = String(raw.storeId || 0);
+    const codePart = raw.productCode ? String(raw.productCode).toLowerCase().trim() : '';
+    const namePart = String(raw.productName || raw.product || raw.name || '').toLowerCase().trim();
+    const key = `${storePart}::${codePart || namePart}`;
+
+    if (coalescedMap.has(key)) {
+      const existing = coalescedMap.get(key);
+      const addQty = Number(raw.qty || raw.Quantity || 1);
+      existing.qty = (Number(existing.qty) || 1) + addQty;
+      if (!existing.productCode && raw.productCode) existing.productCode = raw.productCode;
+      if (!existing.productId && raw.productId) existing.productId = raw.productId;
+      if (!existing.storeName && raw.storeName) existing.storeName = raw.storeName;
+    } else {
+      coalescedMap.set(key, {
+        ...raw,
+        qty: Number(raw.qty || raw.Quantity || 1)
+      });
+    }
+  }
+
+  const result = Array.from(coalescedMap.values());
+
+  if (activeCart && Array.isArray(activeCart.distributors)) {
+    for (const item of result) {
+      let existingQty = 0;
+      for (const dist of activeCart.distributors) {
+        if (!item.storeId || Number(dist.storeId) === Number(item.storeId)) {
+          for (const it of dist.items || []) {
+            const itCode = String(it.productCode || it.ProductCode || '').toLowerCase().trim();
+            const itName = it.productName || it.ProductName || it.name;
+            const codeMatch = Boolean(item.productCode && itCode && itCode === String(item.productCode).toLowerCase().trim());
+            const nameMatch = sameProductName(itName, item.productName || item.product || item.name);
+            if (codeMatch || nameMatch) {
+              existingQty = Number(it.qty || it.Quantity || 0);
+              break;
+            }
+          }
+        }
+        if (existingQty > 0) break;
+      }
+      item.existingQty = existingQty;
+      const isExplicitUpdate = Boolean(item.isUpdate || item.mode === 'set' || item.setQty);
+      const requestedQty = Number(item.qty || 1);
+      item.targetCartQty = isExplicitUpdate ? requestedQty : (existingQty > 0 ? (existingQty + requestedQty) : requestedQty);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Add items to Pharmarack cart (callable both from internal services and HTTP endpoint).
  */
 export async function addItemsToPharmarackCart(items: any[]): Promise<{
@@ -2025,6 +2088,9 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
     activeCart = await loadLiveCartCore();
   } catch (_) {}
 
+  // Apply unified same-medicine merge normalization
+  items = normalizeCartAddRequest(items, activeCart);
+
   // Primary: Call the official AddUserProductCartDetail / UpdateUserProductCartDetail API
   try {
     for (const item of items) {
@@ -2035,24 +2101,10 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         break;
       }
 
-      let existingQty = 0;
-      if (activeCart && Array.isArray(activeCart.distributors)) {
-        for (const dist of activeCart.distributors) {
-          if (Number(dist.storeId) === Number(item.storeId)) {
-            for (const it of dist.items || []) {
-              if (String(it.productCode || it.ProductCode || '').toLowerCase() === String(item.productCode).toLowerCase()) {
-                existingQty = Number(it.qty || it.Quantity || 0);
-                break;
-              }
-            }
-          }
-          if (existingQty > 0) break;
-        }
-      }
-
+      const existingQty = item.existingQty || 0;
       const isExplicitUpdate = Boolean(item.isUpdate || item.mode === 'set' || item.setQty);
       const requestedQty = Number(item.qty || item.Quantity || 1);
-      const targetCartQty = isExplicitUpdate ? requestedQty : (existingQty > 0 ? (existingQty + requestedQty) : requestedQty);
+      const targetCartQty = item.targetCartQty || (isExplicitUpdate ? requestedQty : (existingQty > 0 ? (existingQty + requestedQty) : requestedQty));
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,

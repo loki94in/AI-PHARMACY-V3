@@ -10,20 +10,46 @@ export const apiClient = axios.create({
   },
 });
 
-// Request interceptor: attach store ID and portal token if present
+// Request interceptor: attach store ID, owner token, or portal token if present
 apiClient.interceptors.request.use((config) => {
   try {
     const activeStoreId = localStorage.getItem('active_store_id') || '1';
     if (config.headers) {
       config.headers['x-store-id'] = activeStoreId;
+      const ownerToken = localStorage.getItem('pharmacy_owner_token');
       const portalToken = localStorage.getItem('customer_portal_token');
-      if (portalToken && !config.headers['Authorization']) {
-        config.headers['Authorization'] = `Bearer ${portalToken}`;
+      const token = ownerToken || portalToken;
+      if (token && !config.headers['Authorization']) {
+        config.headers['Authorization'] = `Bearer ${token}`;
       }
     }
   } catch (_) {}
   return config;
 });
+
+// Response interceptor: handle 401 for remote owner sessions
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      const url = error.config?.url || '';
+      if (!url.includes('/auth/login') && !url.includes('/auth/session') && !url.includes('/customer-portal/login')) {
+        const isLocalHost = typeof window !== 'undefined' && (
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1'
+        );
+        if (!isLocalHost) {
+          localStorage.removeItem('pharmacy_owner_token');
+          if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/owner/login') && !window.location.pathname.startsWith('/portal')) {
+            const current = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = `/owner/login?next=${current}`;
+          }
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Response interceptor: automatically unpack standard API response envelope { success: true, data }
 export interface StandardApiResponse<T = any> {

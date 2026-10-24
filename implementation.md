@@ -1,108 +1,83 @@
-# Implementation Plan — Refill "Today List" Truth, Owner Message Combining & WhatsApp Queue Power-Cut Resilience
+# Implementation Plan — Owner Web Portal & Live-Cart Auto-Sync
 
-> **Status:** COMPLETED — Verified with tests & performance guardrails
-> Bugs:
-> - **P2-111** — Fix A: Owner "today list" purity (no completed patients in morning briefing, cart runs, or staged counts)
-> - **P2-112** — Fix B: Combine the owner's own WhatsApp messages into ONE send (daily briefing stays separate)
-> - **P2-113** — Fix C: WhatsApp queue power-cut resilience + truthful retry/attempt report
-
----
-
-## 1. Problem Statements & Root Cause
-
-1. **Completed patients still appearing in owner lists (P2-111)**:
-   - Briefing re-admits completed patients: refill preview was a 7-day forward window (`next_refill_date <= now + 7 days`) AND had an early re-admit clause (`today >= last_refill_date + MAX(7, interval) - 7 days`) which re-added completed patients the moment their next cycle was within 7 days.
-   - Staged reminders query in briefing and alert didn't re-check linked `patient_refills` status (completed/canceled).
-   - `purgePendingCustomerReminders` didn't clean staged rows when callers passed names/meds without `refillIds`.
-   - `processRefillCartItem` and `sendRefillCartSummary` lacked checks for completed status.
-
-2. **Owner receives separate WhatsApp sends (P2-112)**:
-   - ~19 internal admin messages (cart summaries, alerts, reports) were each queued as separate messages.
-   - Requirement: Combine them into one formatted digest with divider sections under a character/section cap, while keeping the ☀️ Morning Briefing strictly separate/standalone.
-
-3. **PC power cut ruins queue / no retry report (P2-113)**:
-   - Boot recovery in `whatsappQueueWorker.ts` converted all pending/failed_offline messages to `review_required` except for distributor reminders and briefing.
-   - No timestamps or structured attempts log was kept on items.
-   - UI lacked truthful attempt count and last attempt timestamp reporting.
+> **Status:** IN PROGRESS — Executing Phase 1
+> **Governing Blueprint:** `OWNER_WEB_PORTAL_IMPLEMENTATION_PLAN.md`
+> **Target:**
+> 1. Owner can log in remotely via Cloudflare Tunnel or LAN (`/owner/login`) and access full CRM, Live Cart, and Website Orders with zero desktop-app disruption (desktop local remains 100% login-free).
+> 2. Direct live-cart additions from remote portal when PC is ON.
+> 3. Automatic cloud sync for CRM/refills so data is never stale when PC is OFF.
+> 4. `cart_add_queue` pipeline on cloud: owner can queue medicines from phone when PC is OFF; auto-drained into Pharmarack Live Cart with merge logic when PC boots/syncs.
+> 5. Same-medicine merge rule locked across POS, CRM, Website Orders, and Cart Queue.
 
 ---
 
-## 2. Architecture & Blueprint
+## 1. Architecture & Blueprint Overview
 
-| Layer | File | Planned Changes |
+| Layer | File | Planned Work |
 |---|---|---|
-| `layer:data` | `src/database.ts` | Add `last_attempt_at TEXT` and `attempts_log TEXT` to `whatsapp_send_queue` across all 3 schema tiers (CREATE, fast-boot, and alter-statements). |
-| `layer:service` | `src/services/whatsappQueueWorker.ts` | 1. Boot recovery rewrite: restore all same-day items to pending, cross-check with permanent Sent Register.<br>2. Auto-kick worker after recovery.<br>3. Attempt recording: update `last_attempt_at` (local time) and append to `attempts_log` (capped at 10).<br>4. Central owner message merge inside `enqueue()`. |
-| `layer:service` | `src/services/refillService.ts` | 1. Narrow morning briefing refills to `next_refill_date <= today` (today/overdue only).<br>2. Remove early re-admit clause.<br>3. Staged query check active non-completed refills.<br>4. Fix purge call sites and staged purge filter. |
-| `layer:service` | `src/services/refillCartService.ts` | 1. Cart item guard: reject `completed` refills.<br>2. Summary filter: drop `completed`/`canceled` refills from sent summary. |
-| `layer:api` | `src/routes/refills.ts` | Verify status before adding to cart in `/:id/add-to-cart` and `/confirm-patient`. |
-| `layer:api` | `src/routes/whatsappQueue.ts` | Expose `last_attempt_at`, `attempts_log`, and today's summary in `GET /status`. |
-| `layer:presentation` | `frontend/src/services/api.ts` & `frontend/src/components/WhatsAppQueuePopover.tsx` | Show per-item attempt counts ("Tried N× · last HH:MM · error") and summary status strip. |
-| `layer:testing` | `tests/refillTodayListTruth.test.ts` | Automated regression test for A6. |
+| `layer:infrastructure` | `src/middleware/tenantAuth.ts` | Add `isLocalRequest()`, `ownerRemoteGate` middleware with endpoint whitelist. Verify local loopback bypass vs remote Bearer owner token. |
+| `layer:api` | `src/server.ts` | Mount `ownerRemoteGate` globally on `/api/*` ahead of protected routes. Preserve tunnel CORS and customer-portal access. |
+| `layer:api` | `src/routes/auth.ts` | Add `/api/auth/session` (mode: local/remote, authRequired), enforce owner-only role check for remote logins, in-memory IP rate limiter & lockout. |
+| `layer:presentation` | `frontend/src/pages/OwnerLogin/index.tsx` | New standalone Owner Login page using semantic Tailwind tokens (`bg-bg2`, `text-text`, `bg-primary`, etc.), Enter-to-submit, truthful errors. |
+| `layer:presentation` | `frontend/src/lib/pageImports.ts`, `frontend/src/App.tsx`, `frontend/src/components/Layout.tsx` | Register `/owner/login` route. Add RemoteSessionGuard / auth check; redirect unauthenticated remote requests from internal pages to `/owner/login?next=`. Allow authenticated owner full app layout. |
+| `layer:presentation` | `frontend/src/api/client.ts`, `frontend/src/services/api.ts` | Attach `pharmacy_owner_token` to Authorization header. On remote 401, redirect to `/owner/login`. |
+| `layer:presentation` | `frontend/src/pages/Settings/tabs/OnlineStoreTab.tsx` | Display Owner Portal URL, quick-link button, and active owner username. |
+| `layer:data` | `src/database.ts` | Add additive `cloud_exec_ledger` table in full DDL migration block and `ensureSchema` fast-boot path. Add `remote_auth_mode`, `cloud_sync_auto`, `cloud_cart_queue_mode` app_settings. |
+| `layer:service` | `src/services/cloudCatalogSyncService.ts` | Implement event-driven auto-push (debounced ≥5min, idle-gated) on refills/orders/sales. Remove hardcoded `'admin@pharmacy2026'` secret fallback. Push owner auth PBKDF2 hash to cloud. |
+| `layer:service` | `src/services/cartQueueSyncService.ts` (new) | Implement `drainCartAddQueue()`, single-flight FIFO batch processing, idempotency via `cloud_exec_ledger`, same-medicine merge rule, cloud acking. |
+| `layer:api` | `website/api/catalog.js` | Add `owner_login` verification, `cart_queue_add`, `cart_queue_get`, `cart_queue_ack` actions. Quarantine demo fallback data for owner flows. |
+| `layer:presentation` | `website/public/owner.html` | Cloud owner mobile console: login with store owner account, search synced catalog, view active refills/pending orders, queue add to live cart. |
+| `layer:service` | `src/services/startupSyncCoordinator.ts`, `src/server.ts` | Wire cart queue drain into 60s cloud poller and boot T+8s catch-up pipeline (`runRefillAutoCartCatchUp('cloud_cart_queue')`). |
+| `layer:service` | `src/routes/pharmarack.ts`, `frontend/src/pages/POS/index.tsx` | Extract & apply `normalizeCartAddRequest()` merge helper so multiple adds coalesce quantity into a single line. |
 
 ---
 
-## 3. Checklist & Execution Phases
+## 2. Checklist & Execution Phases
 
-- [x] **Phase 1 — Schema Upgrades (Fix C1)**
-  - [x] Add `last_attempt_at` and `attempts_log` to full DDL block in `src/database.ts`
-  - [x] Add `last_attempt_at` and `attempts_log` to fast-boot DDL in `src/database.ts`
-  - [x] Add `last_attempt_at` and `attempts_log` to `ensureSchema` alter statements in `src/database.ts`
-  - [x] Verify `npx tsc --noEmit`
+- [ ] **Phase 0 — Pre-flight Baseline**
+  - [x] Check git status and baseline performance guardrails (`npm run guardrails` exit 0).
+  - [x] Verify no regressions in existing codebase.
 
-- [x] **Phase 2 — Core WhatsApp Queue Engine (Fix C2, C3, C4, B1)**
-  - [x] Boot recovery rewrite in `whatsappQueueWorker.ts:cleanupOldSentItems`
-  - [x] Auto-trigger processing after any items recovered
-  - [x] Dispatch attempt tracking: update `last_attempt_at` & `attempts_log` on each attempt/failure
-  - [x] Implement central owner message combining in `whatsappQueueWorker.ts:enqueue`
-  - [x] Fix `notifyAdminStagedReminders` type from `'admin_morning_briefing'` to `'admin_staged_reminders'`
+- [ ] **Phase 1 — Owner Login Gate & Remote Full App**
+  - [ ] Implement `isLocalRequest()` and `ownerRemoteGate` middleware in `src/middleware/tenantAuth.ts`.
+  - [ ] Mount `ownerRemoteGate` in `src/server.ts` on `/api` with strict whitelist.
+  - [ ] Add `/api/auth/session` endpoint, remote owner-only role restriction, and in-memory rate limiter in `src/routes/auth.ts`.
+  - [ ] Create `frontend/src/pages/OwnerLogin/index.tsx` with semantic Tailwind styles.
+  - [ ] Register `/owner/login` in `frontend/src/lib/pageImports.ts` and `frontend/src/App.tsx`.
+  - [ ] Update `frontend/src/components/Layout.tsx` so remote authenticated owners have full access to CRM, Live Cart, Dashboard, etc., while unauthenticated remote requests redirect to `/owner/login`.
+  - [ ] Update `frontend/src/api/client.ts` and `frontend/src/services/api.ts` to attach `pharmacy_owner_token` and handle remote 401 redirects.
+  - [ ] Add Owner Portal status & quick-link card to Settings Online Store tab.
+  - [ ] Verify `npm run guardrails` passes.
 
-- [x] **Phase 3 — Owner-Surface Purity (Fix A)**
-  - [x] Fix A1: Narrow briefing refill query to `next_refill_date <= today`, drop early re-admit clause in `src/services/refillService.ts`
-  - [x] Fix A2: Guard `/refills/:id/add-to-cart` and `processRefillCartItem` against `completed`/`canceled` refills
-  - [x] Fix A3: Filter completed/canceled items in `sendRefillCartSummary`
-  - [x] Fix A4: Exclude completed/canceled/inactive refills from staged counts and alerts
-  - [x] Fix A5: Audit and enhance purge call sites so staged notifications are cancelled reliably
-  - [x] Fix A6: Add regression test `tests/refillTodayListTruth.test.ts`
+- [ ] **Phase 2 — Automatic Cloud Sync (PC-off data freshness)**
+  - [ ] Implement event-driven auto-push debouncing in `src/services/cloudCatalogSyncService.ts`.
+  - [ ] Enforce secret hygiene: remove hardcoded `'admin@pharmacy2026'` fallback.
+  - [ ] Add owner PBKDF2 auth hash sync to Redis (`owner_auth:<storeId>`).
+  - [ ] Quarantine demo/fallback data in `website/api/catalog.js` for owner flows.
+  - [ ] Verify `npm run guardrails` passes.
 
-- [x] **Phase 4 — Frontend Truth Report (Fix C5)**
-  - [x] Expose `last_attempt_at`, `attempts_log`, and `todaySummary` in `src/services/whatsappQueueWorker.ts:getWorkerState`
-  - [x] Update frontend types in `frontend/src/services/api.ts`
-  - [x] Update `frontend/src/components/WhatsAppQueuePopover.tsx` with attempt badges and today's summary strip
+- [ ] **Phase 3 — Cloud `cart_add_queue` & Local Drain Pipeline**
+  - [ ] Add `cloud_exec_ledger` table to `src/database.ts` (both DDL migration and `ensureSchema` fast-boot path).
+  - [ ] Add `cart_queue_add`, `cart_queue_get`, `cart_queue_ack`, and `owner_login` to `website/api/catalog.js`.
+  - [ ] Build `website/public/owner.html` cloud console for PC-off queuing & CRM viewing.
+  - [ ] Create `src/services/cartQueueSyncService.ts` to drain cloud queue with idempotency & Pharmarack mutex safety.
+  - [ ] Connect drain trigger to `startupSyncCoordinator.ts` and 60s poller in `src/server.ts`.
+  - [ ] Add live-cart queue status indicator & SSE reflection in `LiveCart/index.tsx`.
+  - [ ] Verify `npm run guardrails` passes.
 
-- [x] **Phase 5 — Verification & Register**
-  - [x] Run regression tests (`PASS tests/refillTodayListTruth.test.ts` — 9/9 pass)
-  - [x] Run `npm run guardrails` (TypeScript compile + rule engine exit 0)
-  - [x] Run `node scripts/quick-update.mjs`
-  - [x] Register P2-111, P2-112, P2-113 in `SMALL_BUG_FIX_PLAN.md`
+- [ ] **Phase 4 — Same-Medicine Merge Rule Lock**
+  - [ ] Create `normalizeCartAddRequest()` helper in `src/routes/pharmarack.ts`.
+  - [ ] Unify add-to-cart logic across POS, Quick Assist, CRM, Website Orders, and Cart Queue.
+  - [ ] Verify `npm run guardrails` passes.
+
+- [ ] **Phase 5 — Docs, Knowledge Graph & Verification**
+  - [ ] Update `docs/PROJECT_PAGE_AUDIT_DIRECTORY.md`.
+  - [ ] Complete `BACKEND SCHEMA SAFETY.md` Section 24 report for `cloud_exec_ledger`.
+  - [ ] Run `node scripts/quick-update.mjs` to synchronize architecture layers.
+  - [ ] Run final `npm run guardrails` to guarantee 0 violations.
 
 ---
 
-## 4. Execution Tasks & Completed Work Log
+## 3. Tasks & Completed Work Log
 
-1. **Schema Upgrades (`src/database.ts`, `src/services/whatsappQueueWorker.ts`)**:
-   - Added `last_attempt_at TEXT DEFAULT NULL` and `attempts_log TEXT DEFAULT NULL` across full DDL, fast-boot duplicate, alter checks, and worker ensureSchema.
-   - Extended TypeScript interfaces `QueueItem` and `QueueWorkerState`.
-
-2. **Core WhatsApp Queue Engine (`src/services/whatsappQueueWorker.ts`)**:
-   - Implemented `OWNER_DIGEST_TYPES` set and message combining logic in `enqueue()`: merges multiple owner messages into a single pending row separated by `\n\n──────────────\n` and `🔹 *Section N*` (cap: ≤ 8 sections, ≤ 5,000 characters).
-   - Strictly excluded `admin_morning_briefing` (☀️ Morning Briefing always sent standalone).
-   - Rewrote `cleanupOldSentItems()` for power-cut resilience: restores all unconfirmed same-day items to `pending`, cross-checks permanent Sent Register (`whatsappDeliveryRegister`) to prevent duplicate sends, and triggers processing immediately.
-   - Instrumented dispatch loop status updates to write `last_attempt_at` (local time) and `attempts_log` (JSON history) on all dispatch outcomes.
-   - Added `todaySummary` calculation (`sent`, `failed`, `pending`, `review_required`, `skipped`, `total`) to `getWorkerState()`.
-
-3. **Owner Surface Purity (`src/services/refillService.ts`, `src/services/refillCartService.ts`, `src/routes/refills.ts`)**:
-   - In `buildDailyOperationalBriefing`: Narrowed queries to `DATE(pr.next_refill_date) <= DATE('now', 'localtime')`, dropped early re-admit clause, updated headings to "Today & Overdue" (was "Next 7 Days"), and empty state to "No refills due today".
-   - In `refillCartService.ts`: Added guard in `processRefillCartItem` to reject completed/inactive refills, and filtered out completed refills in `sendRefillCartSummary`.
-   - In `refills.ts`: Added status check in `POST /confirm-patient` and `POST /send-staged-briefing` to filter out completed refills, and updated queue type to `admin_staged_reminders`.
-   - In `refillService.ts:purgePendingCustomerReminders`: Corrected query to check `message` in `automation_notifications` and cancel matching staged reminders.
-
-4. **Frontend Truth Reporting (`frontend/src/services/api.ts`, `frontend/src/components/WhatsAppQueuePopover.tsx`)**:
-   - Added `last_attempt_at`, `attempts_log` to `WhatsAppQueueItem` and `todaySummary` to `WhatsAppQueueStatus`.
-   - In `WhatsAppQueuePopover.tsx`: Added attempt badge ("Tried N× · last HH:MM"), attempt history log drawer in expanded view, and truthful today summary metric strip using semantic Tailwind tokens.
-
-5. **Testing & Performance Guardrails**:
-   - Created `tests/refillTodayListTruth.test.ts` covering P2-111, P2-112, and P2-113 (all 9 tests passing).
-   - Passed `npx tsc --noEmit` and `npx tsc -p frontend/tsconfig.app.json --noEmit` with 0 errors.
-   - Passed `npm run guardrails` with 0 violations (speed architecture intact).
-   - Registered P2-111, P2-112, P2-113 in `SMALL_BUG_FIX_PLAN.md`.
+*(Tasks will be logged here chronologically as each phase finishes)*

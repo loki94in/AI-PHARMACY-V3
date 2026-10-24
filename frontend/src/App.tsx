@@ -50,6 +50,7 @@ const WebsiteOrders = lazy(pageImports['/website-orders']);
 const OnlineCatalog = lazy(pageImports['/online-catalog']);
 const LiveCart = lazy(pageImports['/live-cart']);
 const CustomerPortal = lazy(pageImports['/portal']);
+const OwnerLogin = lazy(pageImports['/owner/login']);
 const ImageCorrectionRedirect: React.FC = () => {
   const [searchParams] = useSearchParams();
   const merged = new URLSearchParams(searchParams);
@@ -100,6 +101,8 @@ const pageRoutes: KeepAliveRoute[] = [
   { path: '/customer/login', element: <CustomerPortal /> },
   { path: '/my-bills', element: <CustomerPortal /> },
   { path: '/customer-bills', element: <CustomerPortal /> },
+  { path: '/owner/login', element: <OwnerLogin /> },
+  { path: '/owner-login', element: <OwnerLogin /> },
 ];
 
 // ──────────────────────────────────────────────
@@ -300,7 +303,7 @@ function App() {
     window.location.hostname.startsWith('192.168.') ||
     window.location.hostname.startsWith('10.') ||
     window.location.hostname.endsWith('.local')
-  );
+  const isOwnerAuthenticated = typeof window !== 'undefined' && !!localStorage.getItem('pharmacy_owner_token');
 
   return (
     <ErrorBoundary>
@@ -311,7 +314,8 @@ function App() {
             <Suspense fallback={<PageLoader />}>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<Navigate to={isLocalOrigin ? "/pos" : "/portal"} replace />} />
+                  <Route path="/" element={<Navigate to={isLocalOrigin ? "/pos" : (isOwnerAuthenticated ? "/crm" : "/portal")} replace />} />
+                  <Route path="/owner" element={<Navigate to="/owner/login" replace />} />
                   <Route path="/expiry" element={<Navigate to="/returns?tab=expiry" replace />} />
                   <Route path="/automation-center" element={<Navigate to="/crm?tab=messages" replace />} />
                   <Route path="/refills" element={<Navigate to="/crm?tab=refills" replace />} />

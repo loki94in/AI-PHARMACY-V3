@@ -151,13 +151,33 @@ if (isccExe && fs.existsSync(issPath)) {
     } catch (_) {}
   }
 
+  // Generate node_modules BOM stamp from package-lock.json and write stamp file
+  const crypto = require('crypto');
+  const lockFilePath = path.join(root, 'package-lock.json');
+  let nodeModulesStamp = 'default';
+  if (fs.existsSync(lockFilePath)) {
+    const lockContent = fs.readFileSync(lockFilePath);
+    nodeModulesStamp = crypto.createHash('sha256').update(lockContent).digest('hex').slice(0, 16);
+  }
+  const stampFileName = `.stamp_${nodeModulesStamp}`;
+  const nodeModulesDir = path.join(root, 'node_modules');
+  if (fs.existsSync(nodeModulesDir)) {
+    fs.writeFileSync(path.join(nodeModulesDir, stampFileName), JSON.stringify({
+      stamp: nodeModulesStamp,
+      createdAt: new Date().toISOString(),
+      version: APP_VERSION,
+    }, null, 2));
+    console.log(`[build-sea] node_modules BOM stamp: ${nodeModulesStamp} -> ${stampFileName}`);
+  }
+
   const compression = process.env.ISCC_COMPRESSION || 'lzma2/fast';
   console.log('[build-sea] Found Inno Setup compiler! Building standalone installer setup package...');
   console.log(`[build-sea] Injecting version: ${APP_VERSION} (from package.json)`);
+  console.log(`[build-sea] Injecting node_modules stamp: ${nodeModulesStamp}`);
   console.log(`[build-sea] Inno compression mode: ${compression}`);
   try {
-    // Pass version via /DMyAppVersion= and compression via /DCompression= so installer.iss never needs manual edits (PRODUCTION.md §6)
-    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} "${issPath}"`, { cwd: root, stdio: 'inherit' });
+    // Pass version via /DMyAppVersion=, compression via /DCompression=, and stamp via /DNodeModulesStamp=
+    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} /DNodeModulesStamp=${nodeModulesStamp} "${issPath}"`, { cwd: root, stdio: 'inherit' });
     console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v${APP_VERSION}.exe`);
   } catch (e) {
     console.error('[build-sea] Inno Setup compilation failed:', e.message);

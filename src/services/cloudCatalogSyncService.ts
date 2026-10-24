@@ -2,7 +2,22 @@ import { dbManager } from '../database/connection.js';
 import { getStoreMedicalName, getStorePhone, getStoreAddress, getStoreGoogleMapsUrl } from './storeSettingsService.js';
 
 const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
+
+export async function getAdminSecret(): Promise<string> {
+  if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== '') {
+    return process.env.ADMIN_SECRET.trim();
+  }
+  try {
+    const db = await dbManager.getConnection();
+    const row = await db.get(
+      "SELECT value FROM app_settings WHERE key = 'cloud_admin_secret' OR key = 'admin_secret'"
+    );
+    if (row?.value && row.value.trim() !== '') {
+      return row.value.trim();
+    }
+  } catch (_) {}
+  return '';
+}
 
 export interface CloudSyncResult {
   success: boolean;
@@ -132,14 +147,36 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
     }
   } catch (_) {}
 
+  // Gather owner authentication hashes for cloud remote login (no plaintext passwords ever leave the PC)
+  let ownerAuth: any[] = [];
+  try {
+    const ownerUsers = await db.all(
+      "SELECT id, username, password_hash, salt FROM pharmacy_users WHERE role = 'owner' AND is_active = 1"
+    );
+    ownerAuth = (ownerUsers || []).map((u: any) => ({
+      id: u.id,
+      username: u.username,
+      password_hash: u.password_hash,
+      salt: u.salt
+    }));
+  } catch (_) {}
+
+  const secret = await getAdminSecret();
+  if (!secret) {
+    return {
+      success: false,
+      message: 'Cloud sync not configured: ADMIN_SECRET is missing. Please configure ADMIN_SECRET in Settings or environment variables.'
+    };
+  }
+
   try {
     const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-secret': ADMIN_SECRET,
+        'x-admin-secret': secret,
       },
-      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills }),
+      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills, ownerAuth }),
     });
 
     const data: any = await res.json();
@@ -161,11 +198,16 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
  * Fetches pending orders placed by customers on the 24/7 Cloud Shop and imports them into local SQLite `special_orders`.
  */
 export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
+  const secret = await getAdminSecret();
+  if (!secret) {
+    return { success: false, message: 'Cloud sync not configured: ADMIN_SECRET is missing.' };
+  }
+
   const db = await dbManager.getConnection();
 
   try {
     const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
-      headers: { 'x-admin-secret': ADMIN_SECRET },
+      headers: { 'x-admin-secret': secret },
     });
 
     const data: any = await res.json();
@@ -352,7 +394,7 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-secret': ADMIN_SECRET,
+          'x-admin-secret': secret,
         },
         body: JSON.stringify({ orderIds: importedIds }),
       }).catch(err => console.warn('[CloudCatalogSync] order ack failed:', err?.message || err));
@@ -379,6 +421,14 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
       }
     }
 
+    // Drain queued online live-cart requests into Pharmarack
+    try {
+      const { cartQueueSyncService } = await import('./cartQueueSyncService.js');
+      await cartQueueSyncService.drainCartAddQueue();
+    } catch (qErr: any) {
+      console.warn('[CloudCatalogSync] cart queue drain error:', qErr.message);
+    }
+
     return {
       success: true,
       message: `Successfully imported ${newImportCount} new online order(s) into counter queue!`,
@@ -392,9 +442,52 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
 
 let pollerActive = false;
 let isPulling = false;
+let lastAutoPushAt = 0;
+let autoPushPending = false;
+let autoPushTimer: NodeJS.Timeout | null = null;
+const AUTO_PUSH_DEBOUNCE_MS = 5 * 60 * 1000; // 5 minutes minimum spacing
 
 /**
- * Initializes automatic background synchronization for 24/7 cloud orders.
+ * Event-driven auto-push debouncer:
+ * Triggers cloud catalog / CRM snapshot push after refills, sales, or orders update,
+ * debounced by at least 5 minutes and idle-gated to protect foreground speed.
+ */
+export function scheduleCloudAutoPush(trigger = 'event'): void {
+  const now = Date.now();
+  if (autoPushPending) return;
+
+  const delay = Math.max(0, AUTO_PUSH_DEBOUNCE_MS - (now - lastAutoPushAt));
+  autoPushPending = true;
+
+  if (autoPushTimer) clearTimeout(autoPushTimer);
+  autoPushTimer = setTimeout(async () => {
+    autoPushPending = false;
+    lastAutoPushAt = Date.now();
+    try {
+      const db = await dbManager.getConnection();
+      const autoSetting = await db.get("SELECT value FROM app_settings WHERE key = 'cloud_sync_auto'");
+      if (autoSetting && (autoSetting.value === '0' || autoSetting.value === 'false')) {
+        return; // Auto-sync turned off by user
+      }
+      const secret = await getAdminSecret();
+      if (!secret) return; // Unconfigured secret skips silently
+
+      const { activityTracker } = await import('../utils/activityTracker.js');
+      if (activityTracker.isIdle()) {
+        // Postpone push until user is active
+        lastAutoPushAt = Date.now() - (AUTO_PUSH_DEBOUNCE_MS - 60000);
+        return;
+      }
+
+      await pushLocalCatalogToCloud();
+    } catch (err: any) {
+      console.warn(`[CloudCatalogSync] Auto-push error (${trigger}):`, err?.message || err);
+    }
+  }, delay);
+}
+
+/**
+ * Initializes automatic background synchronization for 24/7 cloud orders and cart additions.
  * Staggered on startup with a quiet single-flight 60-second periodic poll.
  */
 export function startCloudOrderSyncPoller(): void {
@@ -407,6 +500,13 @@ export function startCloudOrderSyncPoller(): void {
       await pullCloudOrdersToLocal();
     } catch (_) {}
   }, 8000);
+
+  // Subscribe to local database events for debounced auto-push
+  import('./eventService.js').then(({ eventService }) => {
+    eventService.subscribe('refill_updated', () => scheduleCloudAutoPush('refill_updated'));
+    eventService.subscribe('order_created', () => scheduleCloudAutoPush('order_created'));
+    eventService.subscribe('sale_saved', () => scheduleCloudAutoPush('sale_saved'));
+  }).catch(() => {});
 
   // Quiet 60-second background poll - gated by activityTracker
   setInterval(async () => {

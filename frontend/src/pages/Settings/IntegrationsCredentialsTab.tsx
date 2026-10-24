@@ -138,6 +138,18 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
     }
   };
 
+  const [copiedOwnerLink, setCopiedOwnerLink] = useState(false);
+
+  const handleCopyOwnerLink = () => {
+    if (cfTunnelStatus?.url) {
+      const ownerUrl = `${cfTunnelStatus.url}/owner/login`;
+      navigator.clipboard.writeText(ownerUrl);
+      setCopiedOwnerLink(true);
+      toastEvent.trigger('Owner portal link copied to clipboard!', 'success');
+      setTimeout(() => setCopiedOwnerLink(false), 2000);
+    }
+  };
+
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1378,20 +1390,50 @@ export function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVis
                       <ExternalLink size={13} />
                       <span>Open Store</span>
                     </a>
+                    <a
+                      href={`${cfTunnelStatus.url}/owner/login`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 rounded-xl text-xs font-medium transition-all"
+                      title="Open Owner Web Portal"
+                    >
+                      <ExternalLink size={13} />
+                      <span>Open Owner Portal</span>
+                    </a>
                   </>
                 )}
               </div>
             </div>
 
             {cfTunnelStatus?.url && (
-              <div className="p-3 bg-bg border border-emerald-500/20 rounded-xl flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2 overflow-hidden">
-                  <span className="font-semibold text-text shrink-0">Live URL:</span>
-                  <span className="font-mono text-primary truncate select-all">{cfTunnelStatus.url}/portal</span>
+              <div className="space-y-2">
+                <div className="p-3 bg-bg border border-emerald-500/20 rounded-xl flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <span className="font-semibold text-text shrink-0">Store URL:</span>
+                    <span className="font-mono text-primary truncate select-all">{cfTunnelStatus.url}/portal</span>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                    Patient Store
+                  </span>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                  Encrypted HTTPS
-                </span>
+                <div className="p-3 bg-bg border border-primary/25 rounded-xl flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <span className="font-semibold text-text shrink-0">Owner Portal:</span>
+                    <span className="font-mono text-primary truncate select-all">{cfTunnelStatus.url}/owner/login</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleCopyOwnerLink}
+                      className="text-[10px] font-bold px-2 py-0.5 rounded bg-bg2 border border-border text-muted hover:text-text cursor-pointer transition-colors"
+                    >
+                      {copiedOwnerLink ? 'Copied' : 'Copy'}
+                    </button>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-primary/15 text-primary border border-primary/30">
+                      Owner Only
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
 

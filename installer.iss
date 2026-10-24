@@ -32,6 +32,9 @@
 #ifndef Compression
   #define Compression "lzma2/fast"
 #endif
+#ifndef NodeModulesStamp
+  #define NodeModulesStamp "default"
+#endif
 #define MyAppPublisher "AI Pharmacy Team"
 #define MyAppURL       ""
 #define MyAppExeName   "PharmacyOS.exe"
@@ -56,7 +59,8 @@ OutputDir=dist\installer
 OutputBaseFilename=AI-Pharmacy-OS-Portable-Setup-v{#MyAppVersion}
 
 Compression={#Compression}
-SolidCompression=yes
+; SolidCompression is disabled to allow per-file extraction and instant skipping of unchanged node_modules
+SolidCompression=no
 
 WizardStyle=modern
 DisableWelcomePage=no
@@ -109,8 +113,11 @@ Source: "sea-entry.cjs"; DestDir: "{app}"; Flags: ignoreversion
 ; Built web frontend (local images excluded — images are dynamically fetched online via web)
 Source: "frontend\dist\*"; DestDir: "{app}\frontend\dist"; Excludes: "products\*,products"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Full node_modules (SEA does not embed third-party packages; dev tools, duplicates, and non-Windows binaries excluded)
-Source: "node_modules\*"; DestDir: "{app}\node_modules"; Excludes: "electron\dist\*,electron\dist,onnxruntime-node\bin\napi-v6\darwin\*,onnxruntime-node\bin\napi-v6\darwin,onnxruntime-node\bin\napi-v6\linux\*,onnxruntime-node\bin\napi-v6\linux,.bin\*,electron-winstaller\*,typescript\*,playwright-core\*,@playwright\*,e2e\*,@e2e-dev\*,*.map,*.ts,*.md,LICENSE*,test\*,tests\*,__tests__\*,example\*,examples\*,*.obj,*.pdb,*.c,*.cc,*.cpp,*.h,*.hpp"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Node modules BOM stamp file
+Source: "node_modules\.stamp_{#NodeModulesStamp}"; DestDir: "{app}\node_modules"; Flags: ignoreversion skipifsourcedoesntexist; Check: ShouldInstallNodeModules
+
+; Full node_modules (SEA does not embed third-party packages; dev tools, duplicates, foreign arch binaries, and types excluded)
+Source: "node_modules\*"; DestDir: "{app}\node_modules"; Excludes: "electron\dist\*,electron\dist,onnxruntime-node\bin\napi-v6\darwin\*,onnxruntime-node\bin\napi-v6\darwin,onnxruntime-node\bin\napi-v6\linux\*,onnxruntime-node\bin\napi-v6\linux,.bin\*,electron-winstaller\*,typescript\*,playwright-core\*,@playwright\*,e2e\*,@e2e-dev\*,@types\*,@types,*.d.ts,*.map,*.ts,*.md,LICENSE*,test\*,tests\*,__tests__\*,example\*,examples\*,doc\*,docs\*,*.obj,*.pdb,*.c,*.cc,*.cpp,*.h,*.hpp,@esbuild\linux-*,@esbuild\darwin-*,@esbuild\android-*,@esbuild\freebsd-*,@esbuild\openbsd-*,@esbuild\sunos-*,@esbuild\win32-arm64,@swc\core-linux-*,@swc\core-darwin-*,@swc\core-freebsd-*,@swc\core-android-*,@swc\core-win32-arm64"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: ShouldInstallNodeModules
 
 ; Portable production env (auto-opens browser on first launch)
 Source: "packaging\portable.env"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist
@@ -204,6 +211,52 @@ Name: "{app}\updates\staging"; Permissions: users-full
 [Code]
 
 // Install path is always {localappdata}\AI Pharmacy OS — no GetDefaultInstallDir needed.
+
+function ShouldInstallNodeModules(): Boolean;
+var
+  AppDir: String;
+  StampFile: String;
+begin
+  AppDir := ExpandConstant('{app}');
+  StampFile := AppDir + '\node_modules\.stamp_{#NodeModulesStamp}';
+
+  // If node_modules folder is missing, or the stamp file does not exist, we must install node_modules
+  if (not DirExists(AppDir + '\node_modules')) or (not FileExists(StampFile)) then
+  begin
+    Log('[Setup] node_modules missing or stamp changed (.stamp_{#NodeModulesStamp} not found). Installing node_modules...');
+    Result := True;
+  end
+  else
+  begin
+    Log('[Setup] node_modules stamp matched (.stamp_{#NodeModulesStamp}). Skipping node_modules extraction (saved ~49,000 file writes!).');
+    Result := False;
+  end;
+end;
+
+procedure PruneOldNodeModulesStamps(AppDir: String);
+var
+  FindRec: TFindRec;
+  CurrentStampName: String;
+begin
+  CurrentStampName := '.stamp_{#NodeModulesStamp}';
+  if FindFirst(AppDir + '\node_modules\.stamp_*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+        begin
+          if FindRec.Name <> CurrentStampName then
+          begin
+            Log('[Setup] Removing old stamp: ' + FindRec.Name);
+            DeleteFile(AppDir + '\node_modules\' + FindRec.Name);
+          end;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
 
 function VCRedistFilePresent: Boolean;
 begin
@@ -395,6 +448,9 @@ begin
   if CurStep = ssPostInstall then
   begin
     AppDir := ExpandConstant('{app}');
+    // Clean up any obsolete node_modules stamp files
+    PruneOldNodeModulesStamps(AppDir);
+
     // Data always lives in {app}\data — already created by [Dirs] section
     EnvFilePath := AppDir + '\.env';
     if FileExists(EnvFilePath) then

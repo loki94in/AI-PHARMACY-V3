@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 80;
+const CURRENT_SCHEMA_VERSION = 81;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -920,6 +920,26 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
   }
 }
 
+/**
+ * Schema v81: Cloud execution ledger for durable at-least-once online cart additions & cloud sync.
+ * Governed by OWNER_WEB_PORTAL_IMPLEMENTATION_PLAN.md & BACKEND SCHEMA SAFETY.md.
+ */
+async function ensureCloudExecLedgerSchema(db: any) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS cloud_exec_ledger (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('cart_queue_add', 'refill_order', 'special_order', 'catalog_sync')),
+      payload_json TEXT,
+      received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      attempts INTEGER DEFAULT 0 CHECK (attempts >= 0),
+      processed_at DATETIME DEFAULT NULL,
+      result_text TEXT DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cloud_exec_ledger_kind ON cloud_exec_ledger(kind, processed_at);
+    CREATE INDEX IF NOT EXISTS idx_cloud_exec_ledger_processed ON cloud_exec_ledger(processed_at);
+  `);
+}
+
 // Number of ensureSchema() runs in flight. `dbManager.isBooting` must stay true until the LAST one
 // ends: with a plain boolean, the first overlapping run to finish cleared it while another was still
 // running, so that run's bill-date UPDATE on sales_invoices looked like a stock write and fired a
@@ -959,6 +979,9 @@ export async function ensureSchema(dbPath: string) {
     // Preserve & unify distributor dispatch reminder setting across updates
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) SELECT 'trigger_dispatch_reminder_enabled', value FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('trigger_dispatch_reminder_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('remote_auth_mode', 'owner_required')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_sync_auto', '1')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_cart_queue_mode', 'auto')");
 
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
     try {
@@ -1037,6 +1060,11 @@ export async function ensureSchema(dbPath: string) {
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+        } catch (_) { }
+
+        // Ensure cloud_exec_ledger exists on fast-boot (v81)
+        try {
+          await ensureCloudExecLedgerSchema(db);
         } catch (_) { }
 
         // Ensure multi-device & velocity metrics tables exist on fast-boot
@@ -4900,6 +4928,7 @@ export async function ensureSchema(dbPath: string) {
       await ensureOrderTimingSchema(db);
       await ensureRefillCartLinkSchema(db);
       await ensureMultiPharmacyAndSnapshotSchema(db);
+      await ensureCloudExecLedgerSchema(db);
       await normalizeBillDatesToLocalTime(db);
       await autoHealDistributorPhoneMappings(db);
       await autoHealRefillIntervalsAndTasks(db);

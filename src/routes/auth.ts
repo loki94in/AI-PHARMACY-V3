@@ -1,10 +1,74 @@
 import express from 'express';
 import crypto from 'crypto';
 import { dbManager } from '../database/connection.js';
-import { createStaffToken, tenantAuthMiddleware } from '../middleware/tenantAuth.js';
+import { createStaffToken, tenantAuthMiddleware, isLocalRequest, verifyStaffToken } from '../middleware/tenantAuth.js';
 import { storeContextService } from '../services/storeContextService.js';
 
 const router = express.Router();
+
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+  failedCount: number;
+  lockedUntil: number;
+}
+const loginRateLimits = new Map<string, RateLimitRecord>();
+
+function getClientIp(req: express.Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    return raw.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || req.ip || 'unknown';
+}
+
+function checkLoginRateLimit(ip: string): { allowed: boolean; message?: string } {
+  const now = Date.now();
+  const record = loginRateLimits.get(ip) || { count: 0, resetAt: now + 60000, failedCount: 0, lockedUntil: 0 };
+
+  if (now < record.lockedUntil) {
+    const minutesLeft = Math.ceil((record.lockedUntil - now) / 60000);
+    return {
+      allowed: false,
+      message: `Too many failed login attempts. Account temporarily locked for security. Please try again in ${minutesLeft} minute${minutesLeft > 1 ? 's' : ''}.`
+    };
+  }
+
+  if (now > record.resetAt) {
+    record.count = 0;
+    record.resetAt = now + 60000;
+  }
+
+  if (record.count >= 10) {
+    return {
+      allowed: false,
+      message: 'Too many login attempts. Please wait 1 minute before trying again.'
+    };
+  }
+
+  record.count++;
+  loginRateLimits.set(ip, record);
+  return { allowed: true };
+}
+
+function recordLoginFailure(ip: string) {
+  const now = Date.now();
+  const record = loginRateLimits.get(ip) || { count: 1, resetAt: now + 60000, failedCount: 0, lockedUntil: 0 };
+  record.failedCount++;
+  if (record.failedCount >= 5) {
+    record.lockedUntil = now + 15 * 60 * 1000; // 15-minute lockout
+  }
+  loginRateLimits.set(ip, record);
+}
+
+function recordLoginSuccess(ip: string) {
+  const record = loginRateLimits.get(ip);
+  if (record) {
+    record.failedCount = 0;
+    record.lockedUntil = 0;
+  }
+}
 
 function hashPassword(password: string, salt: string): string {
   return crypto.pbkdf2Sync(password, salt, 1000, 32, 'sha256').toString('hex');
@@ -19,9 +83,63 @@ function verifyPassword(password: string, expectedHash: string, salt: string): b
   }
 }
 
+// GET /api/auth/session — Inspect current local/remote session status
+router.get('/session', async (req, res) => {
+  try {
+    const isLocal = isLocalRequest(req);
+    const authHeader = req.headers.authorization || (req.headers['x-auth-token'] as string);
+    let token = '';
+
+    if (authHeader) {
+      token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+    } else if (typeof req.query?.token === 'string') {
+      token = (req.query.token as string).trim();
+    }
+
+    const verified = token ? verifyStaffToken(token) : null;
+    const mode = isLocal ? 'local' : 'remote';
+    const authRequired = !isLocal;
+    const authenticated = isLocal ? true : (verified !== null && verified.role === 'owner');
+
+    let ownerUsername = 'owner';
+    try {
+      const db = await dbManager.getConnection();
+      const ownerUser = await db.get("SELECT username FROM pharmacy_users WHERE role = 'owner' AND is_active = 1 LIMIT 1");
+      if (ownerUser?.username) ownerUsername = ownerUser.username;
+    } catch (_) {}
+
+    res.json({
+      mode,
+      authRequired,
+      authenticated,
+      user: verified ? {
+        id: verified.userId,
+        username: verified.username,
+        role: verified.role,
+        permissions: verified.permissions
+      } : (isLocal ? {
+        id: 1,
+        username: ownerUsername,
+        role: 'owner',
+        permissions: ['*']
+      } : null),
+      ownerUsername
+    });
+  } catch (err: any) {
+    console.error('[AuthRoute] Session inspection error:', err);
+    res.status(500).json({ error: 'Failed to inspect session' });
+  }
+});
+
 // POST /api/auth/login — Authenticate staff member
 router.post('/login', async (req, res) => {
   try {
+    const clientIp = getClientIp(req);
+    const rateCheck = checkLoginRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: rateCheck.message });
+    }
+
     const { username, password, store_id } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
@@ -34,8 +152,20 @@ router.post('/login', async (req, res) => {
     );
 
     if (!user || !verifyPassword(password, user.password_hash, user.salt)) {
+      recordLoginFailure(clientIp);
       return res.status(401).json({ error: 'Invalid username or password' });
     }
+
+    // Remote access constraint: only users with role='owner' are permitted remotely
+    const isLocal = isLocalRequest(req);
+    if (!isLocal && user.role !== 'owner') {
+      recordLoginFailure(clientIp);
+      return res.status(403).json({
+        error: 'Access denied: Remote web portal access is strictly restricted to the pharmacy owner account. Staff accounts must log in directly on the pharmacy PC.'
+      });
+    }
+
+    recordLoginSuccess(clientIp);
 
     // Fetch accessible stores for this user
     let accessibleStores: any[] = [];

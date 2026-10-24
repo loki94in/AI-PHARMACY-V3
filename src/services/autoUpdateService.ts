@@ -176,6 +176,8 @@ class AutoUpdateService {
     lastError?: string;
   } | null = null;
   private isDownloading = false;
+  private zipFailures = 0;
+  private currentDownloadingVersion?: string;
 
   static getInstance(): AutoUpdateService {
     if (!AutoUpdateService.instance) AutoUpdateService.instance = new AutoUpdateService();
@@ -207,9 +209,12 @@ class AutoUpdateService {
         // Check if an update package is already fully staged on disk from previous session
         const stagingDir = getStagingDir();
         if (fs.existsSync(stagingDir)) {
-          const files = fs.readdirSync(stagingDir).filter(f => f.startsWith('AI-Pharmacy-OS-Update-v') && f.endsWith('.zip'));
+          const files = fs.readdirSync(stagingDir).filter(f =>
+            (f.startsWith('AI-Pharmacy-OS-Update-v') && f.endsWith('.zip')) ||
+            (f.startsWith('AI-Pharmacy-OS-Portable-Setup-v') && f.endsWith('.exe'))
+          );
           for (const file of files) {
-            const match = file.match(/v([0-9.]+)\.zip/);
+            const match = file.match(/v([0-9.]+)\.(zip|exe)/);
             const filePath = path.join(stagingDir, file);
             if (match && match[1]) {
               const stagedVersion = match[1];
@@ -323,7 +328,14 @@ class AutoUpdateService {
       const stagingDir   = getStagingDir();
       const zipFileName  = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
       const zipPath      = zipFileName ? path.join(stagingDir, zipFileName) : null;
-      const alreadyDownloaded = (zipPath && trulyHasUpdate) ? fs.existsSync(zipPath) : false;
+      const exeFileName  = result.latestVersion ? `AI-Pharmacy-OS-Portable-Setup-v${result.latestVersion}.exe` : null;
+      const exePath      = exeFileName ? path.join(stagingDir, exeFileName) : null;
+      const alreadyDownloaded = Boolean(
+        trulyHasUpdate && (
+          (zipPath && fs.existsSync(zipPath)) ||
+          (exePath && fs.existsSync(exePath))
+        )
+      );
 
       this.lastResult = {
         ...result,
@@ -349,7 +361,7 @@ class AutoUpdateService {
             downloadProgress: 100,
             reason,
           });
-        } else if (result.updatePackageUrl && !this.isDownloading) {
+        } else if ((result.updatePackageUrl || result.downloadUrl) && !this.isDownloading) {
           this.startBackgroundDownload(this.lastResult, reason);
         }
       } else {
@@ -376,11 +388,14 @@ class AutoUpdateService {
   }
 
   /**
-   * Start downloading the 105 MB update package in the background.
+   * Start downloading the update package in the background.
+   * Priority ladder:
+   *   1. Small update ZIP (updatePackageUrl) — fast path (~1-2 min).
+   *   2. Full Setup EXE (downloadUrl) — last-resort fallback if ZIP missing or fails twice.
    */
   startBackgroundDownload(info?: any, reason = 'auto'): void {
     const target = info || this.lastResult;
-    if (!target || !target.hasUpdate || !target.latestVersion || !target.updatePackageUrl) {
+    if (!target || !target.hasUpdate || !target.latestVersion || (!target.updatePackageUrl && !target.downloadUrl)) {
       return;
     }
     // Client-side semver gate: never download packages for versions older than or equal to running binary
@@ -390,11 +405,18 @@ class AutoUpdateService {
     }
     if (this.isDownloading) return;
 
+    if (this.currentDownloadingVersion !== target.latestVersion) {
+      this.currentDownloadingVersion = target.latestVersion;
+      this.zipFailures = 0;
+    }
+
     const stagingDir = getStagingDir();
     const zipFileName = `AI-Pharmacy-OS-Update-v${target.latestVersion}.zip`;
     const zipPath = path.join(stagingDir, zipFileName);
+    const exeFileName = `AI-Pharmacy-OS-Portable-Setup-v${target.latestVersion}.exe`;
+    const exePath = path.join(stagingDir, exeFileName);
 
-    if (fs.existsSync(zipPath)) {
+    if (fs.existsSync(zipPath) || fs.existsSync(exePath)) {
       if (this.lastResult) {
         this.lastResult.readyToInstall = true;
         this.lastResult.downloading = false;
@@ -407,6 +429,17 @@ class AutoUpdateService {
         downloadProgress: 100,
         reason,
       });
+      return;
+    }
+
+    // Determine download mode: prefer ZIP, fall back to Setup EXE if ZIP missing or failed twice
+    const useZip = Boolean(target.updatePackageUrl && this.zipFailures < 2);
+    const downloadUrl = useZip ? target.updatePackageUrl : target.downloadUrl;
+    const destPath = useZip ? zipPath : exePath;
+    const expectedSha256 = useZip ? target.sha256 : undefined;
+
+    if (!downloadUrl) {
+      console.warn('[AutoUpdate] No valid download URL available for update.');
       return;
     }
 
@@ -431,11 +464,12 @@ class AutoUpdateService {
     });
 
     this.downloadUpdateSilently({
-      url: target.updatePackageUrl,
-      dest: zipPath,
+      url: downloadUrl,
+      dest: destPath,
       version: target.latestVersion,
-      sha256: target.sha256,
+      sha256: expectedSha256,
       changelog: target.changelog,
+      isZip: useZip,
       reason,
     });
   }
@@ -446,14 +480,16 @@ class AutoUpdateService {
     version: string;
     sha256?: string;
     changelog?: string;
+    isZip: boolean;
     reason?: string;
   }): Promise<void> {
-    const { url, dest, version, sha256: expectedSha256, changelog, reason = 'auto' } = opts;
+    const { url, dest, version, sha256: expectedSha256, changelog, isZip, reason = 'auto' } = opts;
     try {
       const stagingDir = getStagingDir();
       fs.mkdirSync(stagingDir, { recursive: true });
 
-      console.log(`[AutoUpdate] Silently downloading update v${version} (105 MB) to staging...`);
+      const pkgType = isZip ? 'update ZIP (fast path)' : 'full Setup EXE (fallback path)';
+      console.log(`[AutoUpdate] Silently downloading ${pkgType} for v${version} to staging...`);
       await downloadFile(url, dest, (downloaded, total) => {
         const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
         if (this.lastResult) {
@@ -467,30 +503,37 @@ class AutoUpdateService {
         });
       });
 
-      // SHA-256 verification (PRODUCTION.md §31)
-      if (expectedSha256) {
+      // SHA-256 verification (PRODUCTION.md §31) for ZIP packages
+      if (expectedSha256 && isZip) {
         console.log('[AutoUpdate] Verifying SHA-256...');
         const actualSha256 = await computeSha256(dest);
         if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
           console.error(`[AutoUpdate] CHECKSUM_MISMATCH — aborting. Expected: ${expectedSha256}, got: ${actualSha256}`);
           try { fs.unlinkSync(dest); } catch (_) {}
           this.isDownloading = false;
+          this.zipFailures++;
+
           if (this.lastResult) {
             this.lastResult.downloading = false;
             this.lastResult.readyToInstall = false;
-            this.lastResult.lastError = 'Checksum mismatch — package discarded, retry scheduled';
+            this.lastResult.lastError = this.zipFailures >= 2
+              ? 'ZIP checksum failed twice — falling back to Setup installer'
+              : 'Checksum mismatch — package discarded, retry scheduled';
           }
           eventService.broadcast('update_available', {
             latestVersion: version,
             changelog: changelog || '',
             readyToInstall: false,
             downloading: false,
-            error: 'Checksum mismatch — package discarded, retry scheduled',
+            error: this.lastResult?.lastError || 'Checksum mismatch',
             reason,
           });
 
-          if (reason !== 'auto-retry' && !this.hasRetriedDownload) {
-            this.hasRetriedDownload = true;
+          // Fall back to Setup EXE if ZIP failed twice, otherwise retry ZIP once after 15 min
+          if (this.zipFailures >= 2 && this.lastResult?.downloadUrl) {
+            console.log('[AutoUpdate] ZIP checksum failed twice. Switching immediately to Setup EXE fallback...');
+            this.startBackgroundDownload(this.lastResult, 'setup-fallback');
+          } else if (reason !== 'auto-retry') {
             console.log('[AutoUpdate] Scheduling single retry in 15 minutes due to checksum mismatch...');
             this.retryHandle = setTimeout(() => {
               this.retryHandle = null;
@@ -505,7 +548,6 @@ class AutoUpdateService {
       }
 
       this.isDownloading = false;
-      this.hasRetriedDownload = false;
       if (this.retryHandle) {
         clearTimeout(this.retryHandle);
         this.retryHandle = null;
@@ -527,6 +569,9 @@ class AutoUpdateService {
       });
     } catch (err: any) {
       this.isDownloading = false;
+      if (isZip) {
+        this.zipFailures++;
+      }
       const errorMsg = `Download failed: ${err.message}`;
       if (this.lastResult) {
         this.lastResult.downloading = false;
@@ -544,9 +589,11 @@ class AutoUpdateService {
         reason,
       });
 
-      if (reason !== 'auto-retry' && !this.hasRetriedDownload) {
-        this.hasRetriedDownload = true;
-        console.log('[AutoUpdate] Scheduling single retry in 15 minutes due to download failure...');
+      if (isZip && this.zipFailures >= 2 && this.lastResult?.downloadUrl) {
+        console.log('[AutoUpdate] ZIP download failed twice. Switching to Setup EXE fallback...');
+        this.startBackgroundDownload(this.lastResult, 'setup-fallback');
+      } else if (reason !== 'auto-retry') {
+        console.log('[AutoUpdate] Scheduling retry in 15 minutes due to download failure...');
         this.retryHandle = setTimeout(() => {
           this.retryHandle = null;
           if (!this.isDownloading && this.lastResult?.hasUpdate && this.lastResult?.latestVersion) {
@@ -559,13 +606,9 @@ class AutoUpdateService {
 
   /**
    * Apply the downloaded update.
-   * Spawns the dedicated Updater.bat which:
-   *   - waits for app to exit
-   *   - verifies SHA-256
-   *   - backs up install dir
-   *   - extracts update ZIP
-   *   - rolls back on failure
-   *   - starts new (or old) PharmacyOS.exe
+   * Priority:
+   *   1. If ZIP update exists: Spawns dedicated Updater.bat (safe in-place update with rollback)
+   *   2. If Setup EXE exists: Spawns the Setup installer (fallback)
    *
    * PRODUCTION.md §22, §23
    */
@@ -589,39 +632,56 @@ class AutoUpdateService {
     const stagingDir = getStagingDir();
     const zipFileName = `AI-Pharmacy-OS-Update-v${this.lastResult.latestVersion}.zip`;
     const zipPath     = path.join(stagingDir, zipFileName);
+    const exeFileName = `AI-Pharmacy-OS-Portable-Setup-v${this.lastResult.latestVersion}.exe`;
+    const exePath     = path.join(stagingDir, exeFileName);
 
-    if (!fs.existsSync(zipPath)) {
-      throw new Error('Update file has not finished downloading yet.');
+    if (fs.existsSync(zipPath)) {
+      const updaterPath = getUpdaterPath();
+      if (!fs.existsSync(updaterPath)) {
+        throw new Error(`Updater.bat not found at: ${updaterPath}`);
+      }
+
+      const installDir = path.dirname(process.execPath);
+      const logPath    = getLogPath();
+      const sha256     = this.lastResult.sha256 || '';
+
+      console.log('[AutoUpdate] Spawning dedicated Updater.bat (ZIP fast path)...');
+      console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
+      console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
+      console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
+      console.log(`[AutoUpdate]   SHA-256  : ${sha256 || '(not provided)'}`);
+
+      // Spawn Updater.bat detached in a dedicated visible console progress window
+      const targetVersion = this.lastResult.latestVersion;
+      const windowTitle = `"AI Pharmacy OS — Updating to v${targetVersion}"`;
+      const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
+
+      const child = spawn('cmd.exe', ['/c', 'start', windowTitle, 'cmd.exe', '/c', fullCommand], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false,
+      });
+      child.unref();
+
+      return { success: true, message: 'Installing update and restarting AI Pharmacy OS...' };
     }
 
-    const updaterPath = getUpdaterPath();
-    if (!fs.existsSync(updaterPath)) {
-      throw new Error(`Updater.bat not found at: ${updaterPath}`);
+    if (fs.existsSync(exePath)) {
+      console.log('[AutoUpdate] Spawning Setup installer (fallback path)...');
+      console.log(`[AutoUpdate]   EXE      : ${exePath}`);
+      console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
+
+      const child = spawn(exePath, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+
+      return { success: true, message: 'Installing update package via Setup and restarting...' };
     }
 
-    const installDir = path.dirname(process.execPath);
-    const logPath    = getLogPath();
-    const sha256     = this.lastResult.sha256 || '';
-
-    console.log('[AutoUpdate] Spawning dedicated Updater.bat...');
-    console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
-    console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
-    console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
-    console.log(`[AutoUpdate]   SHA-256  : ${sha256 || '(not provided)'}`);
-
-    // Spawn Updater.bat detached in a dedicated visible console progress window
-    const targetVersion = this.lastResult.latestVersion;
-    const windowTitle = `"AI Pharmacy OS — Updating to v${targetVersion}"`;
-    const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
-
-    const child = spawn('cmd.exe', ['/c', 'start', windowTitle, 'cmd.exe', '/c', fullCommand], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
-    });
-    child.unref();
-
-    return { success: true, message: 'Installing update and restarting AI Pharmacy OS...' };
+    throw new Error('Update file has not finished downloading yet.');
   }
 
   getLastResult() { return this.lastResult; }

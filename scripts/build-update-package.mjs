@@ -43,8 +43,9 @@ const UPDATE_SOURCES = [
 
 // frontend/dist directory (recursive)
 const frontendDist = path.join(root, 'frontend', 'dist');
+const resourcesAppDir = path.join(distDir, 'resources', 'app');
 
-function buildWithArchiver() {
+function buildWithArchiver(sources, manifestTempPath) {
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(zipOutPath);
     const hash = crypto.createHash('sha256');
@@ -61,9 +62,19 @@ function buildWithArchiver() {
     archive.on('data', chunk => hash.update(chunk));
     archive.pipe(output);
 
-    for (const { src, zipEntry } of UPDATE_SOURCES) {
+    for (const { src, zipEntry } of sources) {
       console.log(`[UpdatePackage]   + ${zipEntry}`);
       archive.file(src, { name: zipEntry });
+    }
+
+    if (manifestTempPath && fs.existsSync(manifestTempPath)) {
+      console.log(`[UpdatePackage]   + update-manifest.json`);
+      archive.file(manifestTempPath, { name: 'update-manifest.json' });
+    }
+
+    if (fs.existsSync(resourcesAppDir)) {
+      console.log(`[UpdatePackage]   + resources/app/**`);
+      archive.directory(resourcesAppDir, 'resources/app');
     }
 
     console.log(`[UpdatePackage]   + frontend/dist/**`);
@@ -82,28 +93,39 @@ function buildWithArchiver() {
   });
 }
 
-async function buildWithAdmZip() {
+async function buildWithAdmZip(sources, manifestTempPath) {
   const zip = new AdmZip();
-  for (const { src, zipEntry } of UPDATE_SOURCES) {
+  for (const { src, zipEntry } of sources) {
     console.log(`[UpdatePackage]   + ${zipEntry}`);
     zip.addLocalFile(src, '', zipEntry);
   }
 
-  function addDirToZip(dirPath, zipBasePath) {
+  if (manifestTempPath && fs.existsSync(manifestTempPath)) {
+    console.log(`[UpdatePackage]   + update-manifest.json`);
+    zip.addLocalFile(manifestTempPath, '', 'update-manifest.json');
+  }
+
+  function addDirToZip(dirPath, zipBasePath, excludeFilter) {
+    if (!fs.existsSync(dirPath)) return;
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
       const entryZipDir = zipBasePath || '';
       if (entry.isDirectory()) {
-        if (entry.name === 'products') continue;
-        addDirToZip(fullPath, `${entryZipDir}${entry.name}/`);
+        if (excludeFilter && excludeFilter(entry.name)) continue;
+        addDirToZip(fullPath, `${entryZipDir}${entry.name}/`, excludeFilter);
       } else {
         zip.addLocalFile(fullPath, entryZipDir, entry.name);
       }
     }
   }
 
-  addDirToZip(frontendDist, 'frontend/dist/');
+  if (fs.existsSync(resourcesAppDir)) {
+    console.log(`[UpdatePackage]   + resources/app/**`);
+    addDirToZip(resourcesAppDir, 'resources/app/');
+  }
+
+  addDirToZip(frontendDist, 'frontend/dist/', (name) => name === 'products');
   zip.writeZip(zipOutPath);
   return await computeSha256(zipOutPath);
 }
@@ -111,17 +133,69 @@ async function buildWithAdmZip() {
 export async function buildUpdatePackage() {
   console.log(`\n[UpdatePackage] Building update package for v${version}...`);
 
-  // Preflight checks
-  for (const { src, zipEntry } of UPDATE_SOURCES) {
-    if (!fs.existsSync(src)) {
-      throw new Error(`[UpdatePackage] Required file missing: ${src} (needed for ${zipEntry})`);
-    }
-  }
+  fs.mkdirSync(installerDir, { recursive: true });
+
   if (!fs.existsSync(frontendDist)) {
     throw new Error(`[UpdatePackage] frontend/dist not found at: ${frontendDist}`);
   }
 
-  fs.mkdirSync(installerDir, { recursive: true });
+  // Load previous manifest to determine differential bundling
+  let prevManifest = null;
+  if (fs.existsSync(manifestPath)) {
+    try {
+      prevManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    } catch (_) {}
+  }
+
+  const forceFull = Boolean(process.env.FORCE_FULL_UPDATE || process.argv.includes('--full-update'));
+  const fileManifest = {};
+  const updateSources = [
+    { src: path.join(root, 'sea-entry.cjs'), zipEntry: 'sea-entry.cjs' },
+    { src: path.join(root, 'packaging', 'Updater.bat'), zipEntry: 'Updater.bat' },
+  ];
+
+  // 1. Electron runtime executable (PharmacyOS.exe - 235 MB)
+  const pharmacyOsPath = path.join(distDir, 'PharmacyOS.exe');
+  if (fs.existsSync(pharmacyOsPath)) {
+    const osSha = await computeSha256(pharmacyOsPath);
+    const osSize = fs.statSync(pharmacyOsPath).size;
+    const prevSha = prevManifest?.files?.['PharmacyOS.exe']?.sha256;
+    const isUnchanged = prevSha && prevSha.toLowerCase() === osSha.toLowerCase();
+
+    if (isUnchanged && !forceFull) {
+      console.log(`[UpdatePackage] PharmacyOS.exe (${(osSize / (1024 * 1024)).toFixed(1)} MB) is UNCHANGED vs previous release. Omitted from ZIP (saving ~100MB download).`);
+      fileManifest['PharmacyOS.exe'] = { sha256: osSha, size: osSize, includedInZip: false };
+    } else {
+      console.log(`[UpdatePackage] Including PharmacyOS.exe (${(osSize / (1024 * 1024)).toFixed(1)} MB) in ZIP...`);
+      updateSources.push({ src: pharmacyOsPath, zipEntry: 'PharmacyOS.exe' });
+      fileManifest['PharmacyOS.exe'] = { sha256: osSha, size: osSize, includedInZip: true };
+    }
+  }
+
+  // 2. Node SEA backend executable (PharmacyBackend.exe)
+  const backendExePath = path.join(distDir, 'PharmacyBackend.exe');
+  if (fs.existsSync(backendExePath)) {
+    const backendSha = await computeSha256(backendExePath);
+    const backendSize = fs.statSync(backendExePath).size;
+    updateSources.push({ src: backendExePath, zipEntry: 'PharmacyBackend.exe' });
+    fileManifest['PharmacyBackend.exe'] = { sha256: backendSha, size: backendSize, includedInZip: true };
+  }
+
+  // 3. Bundled backend code (dist-pkg/server.cjs)
+  const serverCjsPath = path.join(root, 'dist-pkg', 'server.cjs');
+  if (fs.existsSync(serverCjsPath)) {
+    const serverSha = await computeSha256(serverCjsPath);
+    const serverSize = fs.statSync(serverCjsPath).size;
+    updateSources.push({ src: serverCjsPath, zipEntry: 'dist-pkg/server.cjs' });
+    fileManifest['dist-pkg/server.cjs'] = { sha256: serverSha, size: serverSize, includedInZip: true };
+  }
+
+  // Preflight check for core files
+  for (const { src, zipEntry } of updateSources) {
+    if (!fs.existsSync(src)) {
+      throw new Error(`[UpdatePackage] Required file missing: ${src} (needed for ${zipEntry})`);
+    }
+  }
 
   // Remove stale zip if exists
   if (fs.existsSync(zipOutPath)) {
@@ -129,26 +203,39 @@ export async function buildUpdatePackage() {
     console.log(`[UpdatePackage] Removed stale zip: ${zipName}`);
   }
 
+  // Write temporary manifest to include inside the ZIP
+  const tempManifestPath = path.join(installerDir, 'update-manifest.tmp.json');
+  const interimManifest = {
+    version,
+    zipName,
+    createdAt: new Date().toISOString(),
+    files: fileManifest,
+  };
+  fs.writeFileSync(tempManifestPath, JSON.stringify(interimManifest, null, 2) + '\n', 'utf8');
+
   let sha256;
   try {
     // Fast streaming zip creation with fused SHA-256
-    sha256 = await buildWithArchiver();
+    sha256 = await buildWithArchiver(updateSources, tempManifestPath);
     console.log(`[UpdatePackage] ZIP created (archiver stream): ${zipName}`);
   } catch (streamErr) {
     console.warn(`[UpdatePackage] Streaming zip failed (${streamErr.message}), falling back to AdmZip...`);
-    sha256 = await buildWithAdmZip();
+    sha256 = await buildWithAdmZip(updateSources, tempManifestPath);
     console.log(`[UpdatePackage] ZIP created (AdmZip fallback): ${zipName}`);
   }
 
+  try { fs.unlinkSync(tempManifestPath); } catch (_) {}
+
   console.log(`[UpdatePackage] SHA-256: ${sha256}`);
 
-  // Write manifest for release.mjs to consume
+  // Write final manifest for release.mjs and autoUpdateService to consume
   const manifest = {
     version,
     zipName,
     zipPath: zipOutPath,
     sha256,
     createdAt: new Date().toISOString(),
+    files: fileManifest,
   };
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   console.log(`[UpdatePackage] Manifest written: update-manifest.json`);

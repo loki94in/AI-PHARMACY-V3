@@ -145,9 +145,36 @@ interface LocalApiErrorShape {
 // Sidebar
 // ──────────────────────────────────────────────
 const ExitAppButton = () => {
+  const isLocalOrigin = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '0.0.0.0' ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.') ||
+    window.location.hostname.endsWith('.local')
+  );
+
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [shutdownSettled, setShutdownSettled] = useState(false);
+
+  const handleRemoteLogout = () => {
+    localStorage.removeItem('pharmacy_owner_token');
+    window.location.href = '/owner/login';
+  };
+
+  if (!isLocalOrigin) {
+    return (
+      <button
+        onClick={handleRemoteLogout}
+        className="w-full flex items-center gap-3 px-4 py-2 rounded-xl text-xs font-semibold text-amber-500/80 hover:text-white hover:bg-amber-600 transition-all cursor-pointer border border-amber-500/20"
+        title="Sign out of Owner Web Portal"
+      >
+        <LogOut size={16} />
+        <span>Sign Out (Portal)</span>
+      </button>
+    );
+  }
 
   const handleConfirmExit = async () => {
     setIsShuttingDown(true);
@@ -3023,6 +3050,7 @@ export const Layout = ({
   const location = useLocation();
   const queryClient = useQueryClient();
   const isPortalPage = ['/portal', '/refill-portal', '/customer-login', '/customer/login', '/my-bills', '/customer-bills'].includes(location.pathname);
+  const isOwnerLoginPage = ['/owner/login', '/owner-login'].includes(location.pathname);
   const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration', '/online-catalog'].includes(location.pathname);
   const isLocalOrigin = typeof window !== 'undefined' && (
     window.location.hostname === 'localhost' ||
@@ -3032,6 +3060,7 @@ export const Layout = ({
     window.location.hostname.startsWith('10.') ||
     window.location.hostname.endsWith('.local')
   );
+  const isOwnerAuthenticated = typeof window !== 'undefined' && !!localStorage.getItem('pharmacy_owner_token');
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
@@ -3600,8 +3629,19 @@ export const Layout = ({
     refetchRefills();
   }, [fetchStagedNotifications, refetchSpecialOrders, refetchRefills]);
 
-  if (!isLocalOrigin && !isPortalPage) {
-    return <Navigate to="/portal" replace />;
+  if (isOwnerLoginPage) {
+    return (
+      <div className="min-h-screen w-full bg-bg text-text flex flex-col overflow-y-auto">
+        <main className="flex-1 w-full flex flex-col min-h-0">
+          {children}
+        </main>
+      </div>
+    );
+  }
+
+  if (!isLocalOrigin && !isPortalPage && !isOwnerAuthenticated) {
+    const current = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/owner/login?next=${current}`} replace />;
   }
 
   if (isPortalPage) {

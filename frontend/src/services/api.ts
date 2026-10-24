@@ -56,9 +56,11 @@ apiClient.interceptors.request.use((config) => {
     if (config.headers) {
       config.headers['x-store-id'] = activeStoreId;
       if (!config.headers['Authorization'] && !config.headers['authorization']) {
+        const ownerToken = localStorage.getItem('pharmacy_owner_token');
         const portalToken = localStorage.getItem('customer_portal_token');
-        if (portalToken) {
-          config.headers['Authorization'] = `Bearer ${portalToken}`;
+        const token = ownerToken || portalToken;
+        if (token) {
+          config.headers['Authorization'] = `Bearer ${token}`;
         }
       }
     }
@@ -85,6 +87,24 @@ apiClient.interceptors.response.use(
     }
 
     const config = error.config;
+
+    // If 401 Unauthorized on a remote session, redirect to owner login
+    if (error.response?.status === 401) {
+      const url = config?.url || '';
+      if (!url.includes('/auth/login') && !url.includes('/auth/session') && !url.includes('/customer-portal/login')) {
+        const isLocalHost = typeof window !== 'undefined' && (
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1'
+        );
+        if (!isLocalHost) {
+          localStorage.removeItem('pharmacy_owner_token');
+          if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/owner/login') && !window.location.pathname.startsWith('/portal')) {
+            const current = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = `/owner/login?next=${current}`;
+          }
+        }
+      }
+    }
 
     // If 503 Service Initializing, retry with backoff. A truly fresh install
     // (no pre-existing DB, unlike a dev machine reusing one) can take longer
