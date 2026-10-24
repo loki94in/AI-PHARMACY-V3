@@ -348,10 +348,9 @@ function createWindow() {
   // the backend answers. A window re-created later (macOS 'activate') goes straight to the app.
   mainWindow.loadURL(backendReady ? BACKEND_URL : SPLASH_URL);
 
-  // Open external links and patient portal in system browser, not Electron
+  // Open external links in system browser, while keeping internal app and portal routes inside Electron
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const isCustomerPortal = url.includes('/customer-login') || url.includes('/portal') || url.includes('/refill-portal') || url.includes('/my-bills') || url.includes('/customer-bills');
-    if (!url.startsWith(BACKEND_URL) || isCustomerPortal) {
+    if (!url.startsWith(BACKEND_URL)) {
       shell.openExternal(url);
       return { action: 'deny' };
     }

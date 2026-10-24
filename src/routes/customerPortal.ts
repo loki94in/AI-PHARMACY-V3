@@ -25,15 +25,46 @@ export async function getLivePortalUrl(db: any, phone?: string): Promise<string>
   let base: string | null = null;
   try {
     const tunnelStatus = await cloudflareTunnelService.getStatus();
-    base = tunnelStatus.url;
+    if (tunnelStatus.isRunning && tunnelStatus.url) {
+      base = tunnelStatus.url;
+    }
+  } catch (_) {}
+
+  // If local tunnel is not running, check for configured cloud catalog/portal URL or custom domain
+  if (!base) {
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'cloud_catalog_url' OR key = 'cloudflare_tunnel_custom_domain'");
+    if (row?.value && typeof row.value === 'string' && row.value.trim() !== '') {
+      const val = row.value.trim();
+      base = (!val.startsWith('http://') && !val.startsWith('https://')) ? `https://${val}` : val;
+    }
+  }
+
+  // Universal 24/7 cloud fallback
+  if (!base) {
+    base = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+  }
+
+  const cleanBase = (base || '').replace(/\/+$/, '');
+  const query = phone ? `?phone=${phone}` : '';
+  const isCloudHost = cleanBase.includes('vercel.app') || cleanBase.includes('ai-pharmacy-os');
+  const path = isCloudHost ? '/shop' : '/portal';
+  return `${cleanBase}${path}${query}`;
+}
+
+export async function get247CloudPortalUrl(db: any, phone?: string): Promise<string> {
+  let base: string = '';
+  try {
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'cloud_catalog_url'");
+    if (row?.value && typeof row.value === 'string' && row.value.trim() !== '') {
+      base = row.value.trim();
+    }
   } catch (_) {}
   if (!base) {
-    const row = await db.get("SELECT value FROM app_settings WHERE key = 'cloudflare_tunnel_last_url'");
-    base = row?.value || '';
+    base = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
   }
-  const cleanBase = base ? base.replace(/\/+$/, '') : '';
+  const cleanBase = base.replace(/\/+$/, '');
   const query = phone ? `?phone=${phone}` : '';
-  return cleanBase ? `${cleanBase}/portal${query}` : `/portal${query}`;
+  return `${cleanBase}/shop${query}`;
 }
 
 export function normalizePhone(raw: string | number): string {
@@ -215,10 +246,14 @@ router.get('/live-url', async (req, res) => {
     const db = await dbManager.getConnection();
     const phone = req.query.phone ? String(req.query.phone) : undefined;
     const portalUrl = await getLivePortalUrl(db, phone);
-    const loginUrl = portalUrl.replace(/\/portal(\?|$)/, '/customer-login$1');
+    const cloudUrl = await get247CloudPortalUrl(db, phone);
+    const loginUrl = portalUrl.includes('vercel.app') || portalUrl.includes('/shop')
+      ? portalUrl
+      : portalUrl.replace(/\/portal(\?|$)/, '/customer-login$1');
     res.json({
       success: true,
       portal_url: portalUrl,
+      cloud_url: cloudUrl,
       login_url: loginUrl,
       phone: phone || null
     });
@@ -1195,7 +1230,10 @@ router.get('/customer/past-medicines', async (req, res) => {
       const refills = await db.all(
         `SELECT pr.id as refill_id, m.id as medicine_id, m.name as medicine_name,
                 pr.quantity_needed as qty, pr.refill_interval_days, pr.last_refill_date,
-                pr.next_refill_date, m.mrp, m.sell_price, s.name as store_name,
+                pr.next_refill_date,
+                COALESCE((SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0), (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id), m.mrp, 0) as mrp,
+                COALESCE((SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0), (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id), m.sell_price, m.mrp, 0) as sell_price,
+                s.name as store_name,
                 'refill' as item_type
          FROM patient_refills pr
          JOIN medicines m ON m.id = pr.medicine_id

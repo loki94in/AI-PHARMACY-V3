@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Users, Key, Phone, Store, RefreshCw, Send, Plus, Search,
   CheckCircle2, AlertCircle, ShieldCheck, Copy, Check, Lock,
@@ -79,22 +80,31 @@ export function PortalAccountsManager() {
   const [medSearchResults, setMedSearchResults] = useState<any[]>([]);
   const [isSearchingMeds, setIsSearchingMeds] = useState(false);
 
+  const navigate = useNavigate();
+
   // Live portal base login URL cache
   const [livePortalUrl, setLivePortalUrl] = useState<string>('');
+  const [cloudUrl, setCloudUrl] = useState<string>('');
 
   useEffect(() => {
     api.getLivePortalUrl().then(res => {
       if (res.login_url) setLivePortalUrl(res.login_url);
+      if (res.cloud_url) setCloudUrl(res.cloud_url);
     }).catch(() => {});
   }, []);
+
+  const handleOpenInAppLogin = (phone?: string) => {
+    const route = phone ? `/portal?phone=${phone}` : '/portal';
+    navigate(route);
+  };
 
   const handleOpenWebLogin = async (phone?: string) => {
     try {
       const res = await api.getLivePortalUrl(phone);
-      const targetUrl = res.login_url || (phone ? `/customer-login?phone=${phone}` : '/customer-login');
+      const targetUrl = res.cloud_url || res.login_url || (phone ? `/portal?phone=${phone}` : '/portal');
       window.open(targetUrl, '_blank');
     } catch (_) {
-      window.open(phone ? `/customer-login?phone=${phone}` : '/customer-login', '_blank');
+      window.open(phone ? `/portal?phone=${phone}` : '/portal', '_blank');
     }
   };
 
@@ -502,12 +512,38 @@ export function PortalAccountsManager() {
           </button>
 
           <button
-            onClick={() => handleOpenWebLogin()}
+            onClick={() => handleOpenInAppLogin()}
             className="px-3.5 py-2.5 bg-bg border border-border rounded-xl text-text hover:bg-bg3 transition-colors text-xs font-semibold flex items-center gap-1.5"
-            title="Open Customer Web Login in default system browser"
+            title="Open Customer Portal directly inside the application"
           >
             <Globe className="w-4 h-4 text-primary" />
-            <span className="hidden sm:inline">Open Web Login</span>
+            <span className="hidden sm:inline">Open Portal In-App</span>
+          </button>
+
+          {cloudUrl && (
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(cloudUrl);
+                toastEvent.trigger('📋 24/7 Cloud Website link copied!', 'success');
+              }}
+              className="px-3.5 py-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 rounded-xl hover:bg-emerald-500/20 transition-colors text-xs font-semibold flex items-center gap-1.5"
+              title="Copy 24/7 Cloud Website URL (patients can access anytime even when PC is off)"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">24/7 Cloud Link</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              const ownerTarget = cloudUrl ? `${cloudUrl.replace(/\/shop.*$/, '')}/owner` : 'https://ai-pharmacy-os.vercel.app/owner';
+              window.open(ownerTarget, '_blank');
+            }}
+            className="px-3.5 py-2.5 bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 rounded-xl hover:bg-purple-500/20 transition-colors text-xs font-semibold flex items-center gap-1.5"
+            title="Open Remote Owner Console to manage live cart and view CRM remotely"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-purple-500" />
+            <span className="hidden sm:inline">Owner Console</span>
           </button>
 
           <button
@@ -751,9 +787,9 @@ export function PortalAccountsManager() {
                         </button>
 
                         <button
-                          onClick={() => handleOpenWebLogin(acc.login_id)}
+                          onClick={() => handleOpenInAppLogin(acc.login_id)}
                           className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                          title="Open Customer Web Login in default system browser"
+                          title="Open Customer Portal directly in app"
                         >
                           <Globe className="w-4 h-4" />
                         </button>

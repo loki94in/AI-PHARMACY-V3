@@ -315,11 +315,18 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
       msg = `🔔 *READY MEDICINE COLLECTION REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour packed prescription is waiting and ready for collection at our pharmacy:\n\n${medList}\n\n📍 *Pickup Location:* ${storeLabel}${timingInfo}\n👉 *Please collect your medicine at your earliest convenience.*`;
     }
   } else {
+    let portalLink = '';
+    try {
+      const { getLivePortalUrl } = await import('../routes/customerPortal.js');
+      const portalUrl = await getLivePortalUrl(db, patientPhone);
+      if (portalUrl) portalLink = `\n🌐 *24/7 1-Click Refill Link:* ${portalUrl}`;
+    } catch (_) {}
+
     if (items.length === 1) {
-      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
+      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}${portalLink}`;
     } else {
       const medList = items.map(it => `• ${it.medicine_name} (Qty: ${it.quantity})`).join('\n');
-      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
+      msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription is due for refill:\n\n${medList}\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}${portalLink}`;
     }
   }
 

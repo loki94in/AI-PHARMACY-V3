@@ -24,7 +24,7 @@ import {
   getDistributorPurchaseRanks, sendRefillCartSummary
 } from '../services/refillCartService.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
-import { ensureCustomerPortalAccount } from './customerPortal.js';
+import { ensureCustomerPortalAccount, getLivePortalUrl } from './customerPortal.js';
 
 // const __filename = fileURLToPath(import.meta.url);
 // const __dirname = path.dirname(__filename);
@@ -102,7 +102,7 @@ export function buildRefillReminderMessage(
   lang: string = 'en',
   dueDateStr?: string,
   scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; closedLabel?: string },
-  opts?: { includeLanguageBanner?: boolean }
+  opts?: { includeLanguageBanner?: boolean; portalUrl?: string }
 ): string {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
@@ -125,7 +125,10 @@ export function buildRefillReminderMessage(
     if (isOffDayUpcoming) {
       timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
     }
-    const cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "1" या "REFILL" लिखकर उत्तर दें।*`;
+    let cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "1" या "REFILL" लिखकर उत्तर दें।*`;
+    if (opts?.portalUrl) {
+      cta += `\n🌐 *24/7 ऑनलाइन रिफ़िल लिंक:* ${opts.portalUrl}`;
+    }
     message = `🔔 *दवाई रिफ़िल रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी नियमित दवाई का रिफ़िल समय आ गया है:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else if (cleanLang === 'mr') {
     const medList = items
@@ -136,7 +139,10 @@ export function buildRefillReminderMessage(
     if (isOffDayUpcoming) {
       timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
     }
-    const cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "1" किंवा "REFILL" लिहून उत्तर द्या।*`;
+    let cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "1" किंवा "REFILL" लिहून उत्तर द्या।*`;
+    if (opts?.portalUrl) {
+      cta += `\n🌐 *24/7 ऑनलाइन रिफिल लिंक:* ${opts.portalUrl}`;
+    }
     message = `🔔 *औषध रिफिल स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपल्या नियमित औषधांची रिफिल करण्याची वेळ झाली आहे:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else {
     const medList = items
@@ -147,7 +153,10 @@ export function buildRefillReminderMessage(
     if (isOffDayUpcoming) {
       timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
     }
-    const cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "1" or "REFILL" to confirm.*\n*(Store open ${openT} – ${closeT})*`;
+    let cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "1" or "REFILL" to confirm.*\n*(Store open ${openT} – ${closeT})*`;
+    if (opts?.portalUrl) {
+      cta += `\n🌐 *24/7 1-Click Refill Link:* ${opts.portalUrl}`;
+    }
     message = `🔔 *MEDICINE REFILL REMINDER — ${pharmacyName}*\n\nDear ${pName},\nYour regular prescription is due for refill:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   }
 
@@ -2298,6 +2307,7 @@ router.post('/:id/send', async (req, res) => {
       quantity_needed: r.quantity_needed || 1
     }));
 
+    const portalUrl = await getLivePortalUrl(db, cleanDigits);
     const msg = anyReady
       ? buildRefillCollectionMessage(
           patientName,
@@ -2314,7 +2324,7 @@ router.post('/:id/send', async (req, res) => {
           lang,
           undefined,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
 
     let pdfPath: string | undefined = undefined;
@@ -2464,6 +2474,7 @@ router.post('/send-grouped', async (req, res) => {
     const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
+    const portalUrl = await getLivePortalUrl(db, cleanPhone);
     const msg = anyReady
       ? buildRefillCollectionMessage(
           patientName,
@@ -2480,7 +2491,7 @@ router.post('/send-grouped', async (req, res) => {
           lang,
           undefined,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
 
     const queueId = await whatsappQueueWorker.enqueue(
@@ -2599,6 +2610,7 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
 
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
+    const portalUrl = await getLivePortalUrl(db, cleanPhone);
     const msg = buildRefillReminderMessage(
       patientName,
       unsent.map(r => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
@@ -2606,7 +2618,7 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
       lang,
       tomorrowDateStr,
       refillSchedOpts,
-      { includeLanguageBanner: includeLangBanner }
+      { includeLanguageBanner: includeLangBanner, portalUrl }
     );
 
     const queueId = await whatsappQueueWorker.enqueue(
@@ -2711,6 +2723,7 @@ router.post('/send-reminder-now', async (req, res) => {
     const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
+    const portalUrl = await getLivePortalUrl(db, cleanPhone);
     const msg = anyReady
       ? buildRefillCollectionMessage(
           patientName,
@@ -2727,7 +2740,7 @@ router.post('/send-reminder-now', async (req, res) => {
           lang,
           refillDate,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
 
     const queueId = await whatsappQueueWorker.enqueue(

@@ -538,7 +538,8 @@ export default async function handler(req, res) {
       `*Fulfillment:* ${refillOrder.orderType === 'DELIVERY' ? '🛵 Home Delivery' : '🏪 Counter Pickup'}\n` +
       (deliveryAddress ? `*Delivery Address:* ${deliveryAddress}\n` : '') +
       `\n*Chronic Medicines to Refill:*\n${itemsText}\n\n` +
-      `*Total Refill Amount:* ₹${subtotal}\n\n` +
+      `*Estimated Total (Max MRP):* ₹${subtotal}\n\n` +
+      `📌 *Note:* Shown amount is an upper-bound estimate. Final bill will be verified and billed on the store POS terminal at collection based on exact batch MRP.\n\n` +
       `_Please prepare and dispatch my monthly medication!_`;
 
     const whatsappUrl = `https://wa.me/${storePhone}?text=${encodeURIComponent(waMsg)}`;
@@ -768,7 +769,8 @@ export default async function handler(req, res) {
       (order.address ? `*Address:* ${order.address}\n` : '') +
       (order.notes ? `*Doctor/Notes:* ${order.notes}\n` : '') +
       `\n*Prescribed Items:*\n${itemsListText}\n\n` +
-      `*Total Bill:* ₹${order.totalAmount}\n\n` +
+      `*Estimated Total (Max MRP):* ₹${order.totalAmount}\n\n` +
+      `📌 *Note:* Shown amount is an upper-bound estimate. Final bill will be calculated on the counter POS when collected based on exact batch MRP & store discounts.\n\n` +
       `_Please confirm dispatch availability!_`;
 
     const whatsappUrl = `https://wa.me/${storePhone}?text=${encodeURIComponent(waMsg)}`;

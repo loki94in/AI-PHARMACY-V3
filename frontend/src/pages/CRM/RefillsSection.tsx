@@ -1947,6 +1947,19 @@ export const RefillsSection: React.FC = () => {
                             <span>📄 Portal Guide Slip</span>
                           </a>
                         )}
+                        {selectedPatient.patient_phone && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMoreMenu(false);
+                              navigate(`/portal?phone=${selectedPatient.patient_phone}`);
+                            }}
+                            className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-bg3 rounded-lg text-emerald-500 transition-colors flex items-center gap-2 cursor-pointer"
+                          >
+                            <Globe size={11} className="text-emerald-500" />
+                            <span>🌐 Open Portal In-App</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={snoozing}

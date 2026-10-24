@@ -35,7 +35,20 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
   // Query medicines that are in stock or portal-visible
   const rows = await db.all(`
     SELECT m.id, m.name, m.generic_name as composition, m.manufacturer, m.category,
-           m.mrp, m.sell_price, m.packaging as pack,
+           COALESCE(
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+             m.mrp,
+             0
+           ) as mrp,
+           COALESCE(
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+             m.sell_price,
+             m.mrp,
+             0
+           ) as sell_price,
+           m.packaging as pack,
            COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
     FROM medicines m
     LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
@@ -122,7 +135,20 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
   try {
     const refills = await db.all(`
       SELECT pr.id, pr.refill_interval_days, pr.quantity_needed, pr.next_refill_date,
-             m.name as medicineName, m.packaging as pack, m.sell_price as price,
+             m.name as medicineName, m.packaging as pack,
+             COALESCE(
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+               m.sell_price,
+               m.mrp,
+               0
+             ) as price,
+             COALESCE(
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+               m.mrp,
+               0
+             ) as mrp,
              c.phone as customer_phone
       FROM patient_refills pr
       JOIN medicines m ON m.id = pr.medicine_id
