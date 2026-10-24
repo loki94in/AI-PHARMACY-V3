@@ -18,10 +18,6 @@ import { checkForUpdate, APP_VERSION } from './licenseService.js';
 import { eventService } from './eventService.js';
 import { activityTracker } from '../utils/activityTracker.js';
 
-// ── Timing constants ─────────────────────────────────────────────────────────
-// PRODUCTION.md §33: update check runs in background after startup
-const BOOT_DELAY_MS    = 60_000;  // wait 60s after boot before first check
-const POLL_INTERVAL_MS = 2 * 60 * 60 * 1000; // poll every 2h (daily gate in runCheck)
 
 /** Compare two semver strings (e.g. "0.1.139" vs "0.1.135"). Returns > 0 if a > b, < 0 if a < b, 0 if equal. */
 export function compareVersions(a: string, b: string): number {
@@ -261,16 +257,8 @@ class AutoUpdateService {
       } catch (_) {}
     })();
 
-    // Delay first check so it doesn't compete with boot DB/schema work (§28)
-    // Runs on EVERY boot so app restarts always detect new updates immediately
-    setTimeout(() => this.runCheck('boot'), BOOT_DELAY_MS);
-
-    // Poll every 2h but only run the actual network check if 1 day has elapsed
-    // AND the PC is idle (no check during active billing)
-    this.intervalHandle = setInterval(async () => {
-      if (!activityTracker.isIdle(30 * 60 * 1000)) return; // skip if active in last 30 min
-      await this.runCheck('interval');
-    }, POLL_INTERVAL_MS);
+    // Manual-only update mode: automatic boot check and periodic polling are disabled.
+    // Update checks run exclusively when triggered manually by the user via Settings > License & Updates.
   }
 
   stop(): void {

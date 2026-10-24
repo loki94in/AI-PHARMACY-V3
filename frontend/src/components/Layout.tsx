@@ -2080,7 +2080,7 @@ const Topbar = memo(({
       });
     }
 
-    // 0.07. Software Update Progress / Status
+    // 0.07. Software Update Progress / Status (only displayed when actively downloading or ready to install)
     if (updateStatus.state === 'downloading') {
       items.push({
         id: 'app-update',
@@ -2101,37 +2101,6 @@ const Topbar = memo(({
         title: `✅ Update v${updateStatus.version || ''} ready`,
         subtitle: 'Downloaded & verified — install anytime',
         badge: 'Install',
-        color: 'emerald',
-        action: () => navigate('/settings?tab=license'),
-        actionLabel: 'Updates',
-        icon: <Check size={12} className="text-emerald-400 shrink-0" />
-      });
-    } else if (updateStatus.state === 'error' || updateStatus.lastError) {
-      items.push({
-        id: 'app-update',
-        type: 'notification',
-        title: '⚠️ Update check failed',
-        subtitle: updateStatus.lastError || 'Could not complete update',
-        color: 'amber',
-        badge: 'Check',
-        action: () => navigate('/settings?tab=license'),
-        actionLabel: 'Updates',
-        icon: <AlertTriangle size={12} className="text-amber-400 shrink-0" />
-      });
-    } else if (updateStatus.state === 'idle' && updateStatus.lastCheckedAt) {
-      const timeStr = (() => {
-        try {
-          const d = new Date(updateStatus.lastCheckedAt);
-          return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } catch {
-          return '';
-        }
-      })();
-      items.push({
-        id: 'app-update',
-        type: 'notification',
-        title: `✅ App up to date (v${updateStatus.currentVersion})`,
-        subtitle: timeStr ? `Checked ${timeStr}` : 'Latest version running',
         color: 'emerald',
         action: () => navigate('/settings?tab=license'),
         actionLabel: 'Updates',

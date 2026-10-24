@@ -1211,7 +1211,14 @@ export const RefillsSection: React.FC = () => {
   // Filter calculation
   const filtered = data.filter(p => {
     const q = search.toLowerCase().trim();
-    const matchesSearch = !q || (p.patient_name?.toLowerCase().includes(q)) || (p.patient_phone?.includes(q));
+    const matchesMedicine = p.medicines?.some(m =>
+      (m.medicine_name && m.medicine_name.toLowerCase().includes(q)) ||
+      (m.batch_no && m.batch_no.toLowerCase().includes(q))
+    );
+    const matchesSearch = !q ||
+      (p.patient_name?.toLowerCase().includes(q)) ||
+      (p.patient_phone?.includes(q)) ||
+      Boolean(matchesMedicine);
     if (!matchesSearch) return false;
 
     const today = new Date();
@@ -1563,7 +1570,7 @@ export const RefillsSection: React.FC = () => {
               <Search size={13} className="absolute left-2.5 top-2.5 text-muted" />
               <input
                 type="text"
-                placeholder="Search patient, mobile or barcode..."
+                placeholder="Search patient, mobile, medicine or barcode..."
                 value={search}
                 onChange={e => {
                   const val = e.target.value;
@@ -1685,6 +1692,15 @@ export const RefillsSection: React.FC = () => {
                           <span>•</span>
                           <span>{medsCount} Med{medsCount !== 1 ? 's' : ''}</span>
                         </div>
+                        {(() => {
+                          const q = search.toLowerCase().trim();
+                          const matchedMed = q ? patient.medicines?.find(m => m.medicine_name?.toLowerCase().includes(q)) : null;
+                          return matchedMed ? (
+                            <div className="text-[10px] text-primary flex items-center gap-1 mt-0.5 truncate font-medium">
+                              <span>💊 {matchedMed.medicine_name}</span>
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                     </div>
 
