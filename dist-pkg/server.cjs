@@ -15494,6 +15494,206 @@ var init_distributorDispatchReminderWorker = __esm({
   }
 });
 
+// src/services/cartQueueSyncService.ts
+var cartQueueSyncService_exports = {};
+__export(cartQueueSyncService_exports, {
+  cartQueueSyncService: () => cartQueueSyncService
+});
+async function getAdminSecret() {
+  if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== "") {
+    return process.env.ADMIN_SECRET.trim();
+  }
+  try {
+    const db2 = await dbManager.getConnection();
+    const row = await db2.get(
+      "SELECT value FROM app_settings WHERE key = 'cloud_admin_secret' OR key = 'admin_secret'"
+    );
+    if (row?.value && row.value.trim() !== "") {
+      return row.value.trim();
+    }
+  } catch (_) {
+  }
+  return "";
+}
+var CLOUD_SERVER_URL, CartQueueSyncService, cartQueueSyncService;
+var init_cartQueueSyncService = __esm({
+  "src/services/cartQueueSyncService.ts"() {
+    "use strict";
+    init_connection();
+    init_pharmarack();
+    init_eventService();
+    CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
+    CartQueueSyncService = class _CartQueueSyncService {
+      static instance;
+      isDraining = false;
+      constructor() {
+      }
+      static getInstance() {
+        if (!_CartQueueSyncService.instance) {
+          _CartQueueSyncService.instance = new _CartQueueSyncService();
+        }
+        return _CartQueueSyncService.instance;
+      }
+      /**
+       * Pulls pending online live-cart requests and drains them into the shop's Pharmarack cart.
+       * Enforces single-flight concurrency, batch bounding (<=10), idempotency via cloud_exec_ledger,
+       * and the unified same-medicine merge rule.
+       */
+      async drainCartAddQueue() {
+        if (this.isDraining) {
+          return { success: true, count: 0, processed: 0, failed: 0, message: "Drain already in flight" };
+        }
+        const secret = await getAdminSecret();
+        if (!secret) {
+          return { success: false, count: 0, processed: 0, failed: 0, reason: "NO_SECRET", message: "Cloud ADMIN_SECRET not configured" };
+        }
+        const db2 = await dbManager.getConnection();
+        const queueMode = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_cart_queue_mode'");
+        if (queueMode && queueMode.value === "off") {
+          return { success: true, count: 0, processed: 0, failed: 0, reason: "DISABLED", message: "Cart queue drain disabled in settings" };
+        }
+        this.isDraining = true;
+        try {
+          const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog?action=cart_queue_get`, {
+            method: "GET",
+            headers: {
+              "x-admin-secret": secret
+            }
+          });
+          if (!res.ok) {
+            const errorText = await res.text().catch(() => "");
+            return { success: false, count: 0, processed: 0, failed: 0, message: `Cloud queue fetch failed: ${res.status} ${errorText}` };
+          }
+          const data = await res.json().catch(() => ({}));
+          const items = Array.isArray(data.items) ? data.items : [];
+          if (items.length === 0) {
+            return { success: true, count: 0, processed: 0, failed: 0, message: "Zero queued items in online cart" };
+          }
+          const batch = items.slice(0, 10);
+          const successfulReqIds = [];
+          let failedCount = 0;
+          for (const item of batch) {
+            const reqId = String(item.req_id || "").trim();
+            if (!reqId) continue;
+            const existing = await db2.get(
+              "SELECT id, processed_at, attempts FROM cloud_exec_ledger WHERE id = ?",
+              [reqId]
+            );
+            if (existing && existing.processed_at) {
+              successfulReqIds.push(reqId);
+              continue;
+            }
+            if (!existing) {
+              await db2.run(
+                `INSERT OR IGNORE INTO cloud_exec_ledger (id, kind, payload_json, received_at, attempts)
+             VALUES (?, 'cart_queue_add', ?, datetime('now'), 0)`,
+                [reqId, JSON.stringify(item)]
+              );
+            }
+            let storeId = Number(item.store_id || 0);
+            let storeName = item.store_name || "";
+            let productCode = item.product_code || "";
+            let productId = Number(item.product_id || 0);
+            let ptr = 0;
+            let productName = (item.medicine_name || "").trim();
+            if (!productCode || !storeId) {
+              const link = await db2.get(
+                `SELECT mdl.store_id, mdl.store_name, mdl.product_code, mdl.product_id, mdl.product_name, mdl.ptr
+             FROM medicine_distributor_links mdl
+             JOIN medicines m ON m.id = mdl.medicine_id
+             WHERE LOWER(m.name) = LOWER(?) OR LOWER(mdl.product_name) = LOWER(?)
+             LIMIT 1`,
+                [productName, productName]
+              );
+              if (link) {
+                storeId = Number(link.store_id || 0);
+                storeName = link.store_name || "";
+                productCode = link.product_code || "";
+                productId = Number(link.product_id || 0);
+                ptr = Number(link.ptr || 0);
+                if (link.product_name) productName = link.product_name;
+              }
+            }
+            const cartPayload = [{
+              storeId,
+              storeName,
+              productCode,
+              productId,
+              productName,
+              qty: Math.max(1, Math.min(99, Number(item.qty || 1))),
+              rate: ptr,
+              isUpdate: false
+            }];
+            const addResult = await addItemsToPharmarackCart(cartPayload);
+            if (addResult.success) {
+              successfulReqIds.push(reqId);
+            } else {
+              failedCount++;
+              const errorMsg = addResult.error || addResult.reason || addResult.message || "Cart add failed";
+              await db2.run(
+                `UPDATE cloud_exec_ledger 
+             SET attempts = attempts + 1, result_text = ? 
+             WHERE id = ?`,
+                [errorMsg, reqId]
+              );
+              console.warn(`[CartQueueSync] Item ${reqId} (${productName}) failed: ${errorMsg}`);
+            }
+          }
+          if (successfulReqIds.length > 0) {
+            try {
+              const ackRes = await fetch(`${CLOUD_SERVER_URL}/api/catalog?action=cart_queue_ack`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-admin-secret": secret
+                },
+                body: JSON.stringify({ reqIds: successfulReqIds })
+              });
+              if (ackRes.ok) {
+                for (const id of successfulReqIds) {
+                  await db2.run(
+                    `UPDATE cloud_exec_ledger 
+                 SET processed_at = datetime('now'), result_text = 'success' 
+                 WHERE id = ?`,
+                    [id]
+                  );
+                }
+                eventService.broadcast("cart_queue_processed", {
+                  count: successfulReqIds.length,
+                  reqIds: successfulReqIds
+                });
+                eventService.broadcast("cart_queue_changed", {});
+                eventService.broadcast("toast_alert", {
+                  type: "success",
+                  message: `\u{1F6D2} ${successfulReqIds.length} item(s) from online queue added to Live Cart!`,
+                  link: "/live-cart"
+                });
+              } else {
+                console.warn("[CartQueueSync] Cloud ACK returned non-200, items retained in ledger for next round.");
+              }
+            } catch (ackErr) {
+              console.warn("[CartQueueSync] Cloud ACK network error:", ackErr.message);
+            }
+          }
+          return {
+            success: true,
+            count: batch.length,
+            processed: successfulReqIds.length,
+            failed: failedCount,
+            message: `Processed ${successfulReqIds.length}/${batch.length} queued online cart items.`
+          };
+        } catch (err) {
+          console.error("[CartQueueSync] Drain error:", err);
+          return { success: false, count: 0, processed: 0, failed: 0, message: err.message };
+        } finally {
+          this.isDraining = false;
+        }
+      }
+    };
+    cartQueueSyncService = CartQueueSyncService.getInstance();
+  }
+});
+
 // src/services/whatsappLocalizer.ts
 var whatsappLocalizer_exports = {};
 __export(whatsappLocalizer_exports, {
@@ -15842,8 +16042,8 @@ async function processRefillCartItem(refillId, opts = {}) {
   const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
   const base = { refillId, medicineName, qty, linked: [], candidates: [] };
   const fail = (message, extra = {}) => ({ ...base, ...extra, status: "failed", message });
-  if (refill.is_active === 0 || ["canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
-    return fail("This refill is paused or cancelled.");
+  if (refill.is_active === 0 || ["completed", "canceled", "cancelled", "paused"].includes(String(refill.status || "").toLowerCase())) {
+    return fail("Refill is already completed or inactive.");
   }
   if (Array.isArray(opts.pick) && opts.pick.length > 0) {
     const picks = opts.pick.filter(isValidPick);
@@ -16127,7 +16327,7 @@ async function sendRefillCartSummary(patientName, rows) {
   const saved = /* @__PURE__ */ new Map();
   if (ids.length > 0) {
     const dbRows = await db2.all(
-      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => "?").join(",")})`,
+      `SELECT id, cart_store_name, cart_qty, cart_product_code, status, is_active FROM patient_refills WHERE id IN (${ids.map(() => "?").join(",")})`,
       ids
     );
     for (const r of dbRows) saved.set(Number(r.id), r);
@@ -16135,8 +16335,11 @@ async function sendRefillCartSummary(patientName, rows) {
   const byStore = /* @__PURE__ */ new Map();
   const needs = [];
   for (const r of rows) {
-    const name = String(r.medicineName || "Medicine");
     const db_ = saved.get(Number(r.refillId));
+    if (db_ && (db_.is_active === 0 || ["completed", "canceled", "cancelled"].includes(String(db_.status || "").toLowerCase()))) {
+      continue;
+    }
+    const name = String(r.medicineName || "Medicine");
     const confirmed = r.status === "added" && db_?.cart_product_code;
     if (confirmed || r.status === "in_cart") {
       const store = String((confirmed ? r.storeName || db_.cart_store_name : r.storeName) || "Distributor").trim();
@@ -16146,6 +16349,9 @@ async function sendRefillCartSummary(patientName, rows) {
     } else {
       needs.push(`\u2022 ${name} \u2014 ${r.message || r.status}`);
     }
+  }
+  if (byStore.size === 0 && needs.length === 0) {
+    return { queued: false, reason: "All items are completed or cancelled." };
   }
   const parts = [`\u{1F6D2} *Refill cart \u2014 ${patientName || "Patient"}*`];
   for (const [store, lines] of byStore) parts.push(`
@@ -16261,6 +16467,14 @@ var init_startupSyncCoordinator = __esm({
           void this.runRefillAutoCartCatchUp("boot_cart_loaded").catch((err) => {
             console.warn("[StartupSyncCoordinator] Refill auto cart catch-up warning:", err?.message || err);
           });
+          void (async () => {
+            try {
+              const { cartQueueSyncService: cartQueueSyncService2 } = await Promise.resolve().then(() => (init_cartQueueSyncService(), cartQueueSyncService_exports));
+              await cartQueueSyncService2.drainCartAddQueue();
+            } catch (err) {
+              console.warn("[StartupSyncCoordinator] Cloud cart queue drain warning:", err?.message || err);
+            }
+          })();
         }
       }
       /**
@@ -17106,6 +17320,63 @@ var init_pharmarackCheckoutService = __esm({
         return _PharmarackCheckoutService.instance;
       }
       /**
+       * Verifies ambiguous checkout outcomes against fresh synced orders and placed orders for today.
+       * If Pharmarack processed the cart but returned an alternate response shape or timed out,
+       * this truthfully reclassifies orders that exist on Pharmarack's server.
+       */
+      async verifyAmbiguousPlacement(db2, todayIso, storesToPlace, attemptStartMs, existingResults, fallbackError) {
+        try {
+          console.log(`[PharmarackCheckout] Running post-checkout order verification for ${storesToPlace.length} store(s)...`);
+          await syncPharmarackOrders(true);
+          const syncedOrders = await db2.all(
+            `SELECT order_no, store_name, store_id, first_seen_at FROM pharmarack_synced_orders
+         WHERE order_date = ? AND first_seen_at >= ?`,
+            [todayIso, attemptStartMs]
+          );
+          const reclassified = [];
+          const norm3 = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          for (const st of storesToPlace) {
+            const existing = existingResults.find((r) => r.storeId === st.storeId || norm3(r.storeName) === norm3(st.storeName));
+            if (existing && existing.status === "placed" && existing.orderNo) {
+              reclassified.push(existing);
+              continue;
+            }
+            const stNorm = norm3(st.storeName);
+            const matchedSync = syncedOrders.find((so) => {
+              if (st.storeId && so.store_id && Number(st.storeId) === Number(so.store_id)) return true;
+              const soNorm = norm3(so.store_name);
+              return stNorm.length > 2 && soNorm.length > 2 && (stNorm.includes(soNorm) || soNorm.includes(stNorm));
+            });
+            if (matchedSync && matchedSync.order_no) {
+              const placedCheck = await db2.get(
+                `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND order_no = ? LIMIT 1`,
+                [todayIso, matchedSync.order_no]
+              );
+              if (placedCheck) {
+                console.log(`[PharmarackCheckout] Ambiguous placement verified: ${st.storeName} -> Order #${matchedSync.order_no}`);
+                reclassified.push({
+                  storeId: st.storeId,
+                  storeName: st.storeName,
+                  status: "placed",
+                  orderNo: String(matchedSync.order_no)
+                });
+                continue;
+              }
+            }
+            reclassified.push(existing || {
+              storeId: st.storeId,
+              storeName: st.storeName,
+              status: "failed",
+              error: fallbackError || "Order placement unconfirmed"
+            });
+          }
+          return reclassified;
+        } catch (verifyErr) {
+          console.warn("[PharmarackCheckout] Ambiguous placement verification warning:", verifyErr?.message || verifyErr);
+          return existingResults;
+        }
+      }
+      /**
        * Places official orders on https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager
        * using direct REST API authentication.
        * Eliminates headless browser, DOM button hunting, profile lock conflicts, and UI timeouts.
@@ -17114,6 +17385,8 @@ var init_pharmarackCheckoutService = __esm({
         if (isShutdownInProgress()) {
           return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: "Application shutdown in progress" };
         }
+        let attemptStartMs = 0;
+        let storesToPlace = [];
         const results = [];
         try {
           const db2 = await dbManager.getConnection();
@@ -17210,7 +17483,7 @@ var init_pharmarackCheckoutService = __esm({
               storeMap.get(storeId).items.push(entry);
             }
           }
-          let storesToPlace = Array.from(storeMap.values());
+          storesToPlace = Array.from(storeMap.values());
           if (targetStoreIds && targetStoreIds.length > 0) {
             const idSet = new Set(targetStoreIds.map(Number));
             storesToPlace = storesToPlace.filter((st) => idSet.has(st.storeId));
@@ -17282,6 +17555,8 @@ var init_pharmarackCheckoutService = __esm({
               error: "No valid products with product codes found in selected cart distributor(s)."
             };
           }
+          attemptStartMs = Date.now();
+          const todayIso = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
           console.log(`[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API for ${orderPayload.length} store(s)...`);
           const saveOrderUrl = "https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager";
           const orderRes = await fetch(saveOrderUrl, {
@@ -17341,6 +17616,9 @@ var init_pharmarackCheckoutService = __esm({
               });
             }
           }
+          if (results.length === 0) {
+            results.push(...await this.verifyAmbiguousPlacement(db2, todayIso, storesToPlace, attemptStartMs, results));
+          }
           const placedCount = results.filter((r) => r.status === "placed").length;
           const failedCount = results.filter((r) => r.status === "failed").length;
           const isOk = placedCount > 0;
@@ -17354,11 +17632,37 @@ var init_pharmarackCheckoutService = __esm({
           };
         } catch (apiErr) {
           console.warn("[PharmarackCheckout] Direct REST API checkout error:", apiErr.message);
+          if (storesToPlace.length > 0 && attemptStartMs > 0) {
+            try {
+              const todayIso = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
+              const db2 = await dbManager.getConnection();
+              const recovered = await this.verifyAmbiguousPlacement(db2, todayIso, storesToPlace, attemptStartMs, [], apiErr.message);
+              const placedCount = recovered.filter((r) => r.status === "placed").length;
+              const failedCount = recovered.filter((r) => r.status === "failed").length;
+              if (placedCount > 0) {
+                console.log(`[PharmarackCheckout] Rescued ambiguous checkout error: verified ${placedCount} order(s) placed.`);
+                return {
+                  ok: true,
+                  placedCount,
+                  failedCount,
+                  orders: recovered,
+                  error: failedCount > 0 ? "Some orders placed, some failed" : void 0
+                };
+              }
+            } catch (rescueErr) {
+              console.warn("[PharmarackCheckout] Rescue verification error:", rescueErr?.message || rescueErr);
+            }
+          }
           return {
             ok: false,
             placedCount: 0,
-            failedCount: 1,
-            orders: [],
+            failedCount: storesToPlace.length || 1,
+            orders: (storesToPlace.length > 0 ? storesToPlace : [{ storeId: 0, storeName: "Unknown" }]).map((st) => ({
+              storeId: st.storeId,
+              storeName: st.storeName,
+              status: "failed",
+              error: apiErr.message || "Direct REST order placement error"
+            })),
             error: apiErr.message || "Direct REST order placement error"
           };
         }
@@ -19255,6 +19559,21 @@ async function ensureMultiPharmacyAndSnapshotSchema(db2) {
     console.warn("[Schema v55] action_logs audit column migration note:", err.message);
   }
 }
+async function ensureCloudExecLedgerSchema(db2) {
+  await db2.exec(`
+    CREATE TABLE IF NOT EXISTS cloud_exec_ledger (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('cart_queue_add', 'refill_order', 'special_order', 'catalog_sync')),
+      payload_json TEXT,
+      received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      attempts INTEGER DEFAULT 0 CHECK (attempts >= 0),
+      processed_at DATETIME DEFAULT NULL,
+      result_text TEXT DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cloud_exec_ledger_kind ON cloud_exec_ledger(kind, processed_at);
+    CREATE INDEX IF NOT EXISTS idx_cloud_exec_ledger_processed ON cloud_exec_ledger(processed_at);
+  `);
+}
 async function ensureSchema(dbPath) {
   ensureSchemaRuns++;
   dbManager.isBooting = true;
@@ -19281,6 +19600,9 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_bot_after_hours_text', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) SELECT 'trigger_dispatch_reminder_enabled', value FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('trigger_dispatch_reminder_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('remote_auth_mode', 'owner_required')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_sync_auto', '1')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_cart_queue_mode', 'auto')");
     try {
       const versionRow = await db2.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
       const migrationRow = await db2.get("SELECT MAX(version) as version FROM schema_migrations");
@@ -19354,6 +19676,10 @@ async function ensureSchema(dbPath) {
           await db2.run("CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)");
           await db2.run("CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)");
           await db2.run("CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)");
+        } catch (_) {
+        }
+        try {
+          await ensureCloudExecLedgerSchema(db2);
         } catch (_) {
         }
         await ensureColumns(db2, "automation_notifications", {
@@ -20737,7 +21063,9 @@ async function ensureSchema(dbPath) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       sent_at INTEGER DEFAULT NULL,
       acknowledged INTEGER DEFAULT 0,
-      resolved_at INTEGER DEFAULT NULL
+      resolved_at INTEGER DEFAULT NULL,
+      last_attempt_at TEXT DEFAULT NULL,
+      attempts_log TEXT DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_wa_send_queue_status ON whatsapp_send_queue (status);
 
@@ -22403,7 +22731,13 @@ async function ensureSchema(dbPath) {
       created_at INTEGER NOT NULL,
       sent_at INTEGER,
       error_message TEXT,
-      target_name TEXT
+      target_name TEXT,
+      scheduled_at INTEGER,
+      media_url TEXT,
+      file_json TEXT,
+      skip_dedupe INTEGER DEFAULT 0,
+      last_attempt_at TEXT,
+      attempts_log TEXT
     )
   `);
     try {
@@ -22435,6 +22769,12 @@ async function ensureSchema(dbPath) {
       }
       if (!colNames.includes("skip_dedupe")) {
         await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
+      }
+      if (!colNames.includes("last_attempt_at")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN last_attempt_at TEXT DEFAULT NULL");
+      }
+      if (!colNames.includes("attempts_log")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN attempts_log TEXT DEFAULT NULL");
       }
     } catch (colErr) {
       console.warn("[Database Schema] Column check warning for whatsapp_send_queue:", colErr);
@@ -23033,6 +23373,7 @@ async function ensureSchema(dbPath) {
       await ensureOrderTimingSchema(db2);
       await ensureRefillCartLinkSchema(db2);
       await ensureMultiPharmacyAndSnapshotSchema(db2);
+      await ensureCloudExecLedgerSchema(db2);
       await normalizeBillDatesToLocalTime(db2);
       await autoHealDistributorPhoneMappings(db2);
       await autoHealRefillIntervalsAndTasks(db2);
@@ -23060,7 +23401,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 80;
+    CURRENT_SCHEMA_VERSION = 81;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -29649,16 +29990,43 @@ async function purgePendingCustomerReminders(db2, options) {
       ).catch(() => {
       });
     }
-    if (last102 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
-      await db2.run(
-        `UPDATE automation_notifications 
-         SET status = 'cancelled', lifecycle_status = 'cancelled' 
-         WHERE recipient_phone LIKE ? 
-           AND status = 'staged' 
-           AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
-        [`%${last102}%`]
-      ).catch(() => {
-      });
+    if (last102) {
+      if (medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
+        await db2.run(
+          `UPDATE automation_notifications 
+           SET status = 'cancelled', lifecycle_status = 'cancelled' 
+           WHERE recipient_phone LIKE ? 
+             AND status = 'staged' 
+             AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+          [`%${last102}%`]
+        ).catch(() => {
+        });
+      } else if (medNames.length > 0) {
+        const stagedByPhone = await db2.all(
+          `SELECT id, message FROM automation_notifications
+           WHERE recipient_phone LIKE ? 
+             AND status = 'staged' 
+             AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+          [`%${last102}%`]
+        ).catch(() => []);
+        const stagedIdsToCancel = [];
+        for (const notif of stagedByPhone || []) {
+          const content = String(notif.message || "").toLowerCase();
+          if (medNames.some((m) => content.includes(m))) {
+            stagedIdsToCancel.push(notif.id);
+          }
+        }
+        if (stagedIdsToCancel.length > 0) {
+          const ph = stagedIdsToCancel.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE automation_notifications 
+             SET status = 'cancelled', lifecycle_status = 'cancelled' 
+             WHERE id IN (${ph})`,
+            stagedIdsToCancel
+          ).catch(() => {
+          });
+        }
+      }
     }
   } catch (err) {
     console.warn("[Refills] purgePendingCustomerReminders error:", err);
@@ -29702,10 +30070,9 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
-      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
-      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -29713,7 +30080,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
-            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
           )
       )
     GROUP BY pr.patient_name
@@ -29733,10 +30100,9 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
-      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
-      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -29744,7 +30110,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
-            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
           )
       )
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
@@ -29803,7 +30169,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
     LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
     WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
-  `).catch(() => []);
+      AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))`).catch(() => []);
   const autoStagedCount = stagedRows.filter((r) => r.reminder_mode === "auto").length;
   const manualStagedCount = stagedRows.filter((r) => r.reminder_mode !== "auto").length;
   const dueMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -29939,7 +30305,7 @@ ${pausedDetails}${extraPaused}`);
       list.push(row);
       patientGroups.set(row.patient_name, list);
     }
-    let t4Details = "\u2022 No refills due in next 7 days";
+    let t4Details = "\u2022 No refills due today";
     if (patientGroups.size > 0) {
       let pIdx = 1;
       const pBlocks = [];
@@ -29957,13 +30323,13 @@ ${medLines}`);
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
 
-\u{1F4CB} *REFILL PRESCRIPTIONS (Next 7 Days)*:
+\u{1F4CB} *REFILL PRESCRIPTIONS (Today & Overdue)*:
 ${t4Details}
 
 \u{1F4E6} *TODAY'S SPECIAL & ONLINE ORDERS*:
 ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
   } else if (templateKey === "compact") {
-    let t1Refills = "\u2022 No refills due in next 7 days";
+    let t1Refills = "\u2022 No refills due today";
     if (refillRows.length > 0) {
       t1Refills = refillRows.map((r, i) => {
         const stockStatus = r.out_of_stock_count === 0 ? "\u2705 In Stock" : r.in_stock_count === 0 ? "\u23F3 Hold for Stock" : "\u26A0\uFE0F Partial Stock";
@@ -29986,7 +30352,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
 
-\u{1F4CB} *1. REFILLS WORKLIST (Next 7 Days)*:
+\u{1F4CB} *1. REFILLS WORKLIST (Today & Overdue)*:
 ${t1Refills}
 
 \u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
@@ -30047,7 +30413,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
 
 \u{1F4CA} *Morning KPI Dashboard*:
-\u2022 \u{1F4CB} Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+\u2022 \u{1F4CB} Refills Due Today: *${totalRefillsDue} meds* (${refillRows.length} patient(s))
 \u2022 \u{1F4E6} Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
 \u2022 \u23F1\uFE0F 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
 \u2022 \u23F8\uFE0F Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
@@ -30088,6 +30454,7 @@ async function notifyAdminStagedReminders(db2) {
       LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
       LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
       WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+        AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))
     `);
     if (stagedRows.length === 0) return;
     const autoCount = stagedRows.filter((r) => r.patient_reminder_mode === "auto").length;
@@ -30101,7 +30468,7 @@ ${stagedRows.length} patient reminder(s) are staged and waiting for review:
 
 Review & dispatch in CRM \u2192 Refills or Quick Assist.`;
     const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    await whatsappQueueWorker2.enqueue(adminWhatsapp, msg, "admin_morning_briefing", "Admin / Store Owner");
+    await whatsappQueueWorker2.enqueue(adminWhatsapp, msg, "admin_staged_reminders", "Admin / Store Owner");
   } catch (err) {
     console.error("[RefillService] Failed to notify admin of staged reminders:", err);
   }
@@ -30724,6 +31091,7 @@ __export(pharmarack_exports, {
   invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
   isItemInStock: () => isItemInStock,
   loadLiveCartCore: () => loadLiveCartCore,
+  normalizeCartAddRequest: () => normalizeCartAddRequest,
   performPharmarackSearch: () => performPharmarackSearch,
   rankSpecialOrderDistributorCandidates: () => rankSpecialOrderDistributorCandidates,
   reconcilePaidAndFulfilledCartItems: () => reconcilePaidAndFulfilledCartItems,
@@ -31762,6 +32130,56 @@ async function autoSaveMedicineDistributorLinks(items) {
     console.warn("[AutoSaveLink] Failed to auto-save medicine distributor link:", err);
   }
 }
+function normalizeCartAddRequest(items, activeCart) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const coalescedMap = /* @__PURE__ */ new Map();
+  for (const raw of items) {
+    if (!raw) continue;
+    const storePart = String(raw.storeId || 0);
+    const codePart = raw.productCode ? String(raw.productCode).toLowerCase().trim() : "";
+    const namePart = String(raw.productName || raw.product || raw.name || "").toLowerCase().trim();
+    const key = `${storePart}::${codePart || namePart}`;
+    if (coalescedMap.has(key)) {
+      const existing = coalescedMap.get(key);
+      const addQty = Number(raw.qty || raw.Quantity || 1);
+      existing.qty = (Number(existing.qty) || 1) + addQty;
+      if (!existing.productCode && raw.productCode) existing.productCode = raw.productCode;
+      if (!existing.productId && raw.productId) existing.productId = raw.productId;
+      if (!existing.storeName && raw.storeName) existing.storeName = raw.storeName;
+    } else {
+      coalescedMap.set(key, {
+        ...raw,
+        qty: Number(raw.qty || raw.Quantity || 1)
+      });
+    }
+  }
+  const result = Array.from(coalescedMap.values());
+  if (activeCart && Array.isArray(activeCart.distributors)) {
+    for (const item of result) {
+      let existingQty = 0;
+      for (const dist of activeCart.distributors) {
+        if (!item.storeId || Number(dist.storeId) === Number(item.storeId)) {
+          for (const it of dist.items || []) {
+            const itCode = String(it.productCode || it.ProductCode || "").toLowerCase().trim();
+            const itName = it.productName || it.ProductName || it.name;
+            const codeMatch = Boolean(item.productCode && itCode && itCode === String(item.productCode).toLowerCase().trim());
+            const nameMatch = sameProductName(itName, item.productName || item.product || item.name);
+            if (codeMatch || nameMatch) {
+              existingQty = Number(it.qty || it.Quantity || 0);
+              break;
+            }
+          }
+        }
+        if (existingQty > 0) break;
+      }
+      item.existingQty = existingQty;
+      const isExplicitUpdate = Boolean(item.isUpdate || item.mode === "set" || item.setQty);
+      const requestedQty = Number(item.qty || 1);
+      item.targetCartQty = isExplicitUpdate ? requestedQty : existingQty > 0 ? existingQty + requestedQty : requestedQty;
+    }
+  }
+  return result;
+}
 async function addItemsToPharmarackCart(items) {
   if (!items || !Array.isArray(items) || items.length === 0) {
     return { success: false, error: "No items provided" };
@@ -32029,6 +32447,7 @@ async function addItemsToPharmarackCart(items) {
     activeCart = await loadLiveCartCore();
   } catch (_) {
   }
+  items = normalizeCartAddRequest(items, activeCart);
   try {
     for (const item of items) {
       failedItem = item;
@@ -32037,23 +32456,10 @@ async function addItemsToPharmarackCart(items) {
         cartSuccess = false;
         break;
       }
-      let existingQty = 0;
-      if (activeCart && Array.isArray(activeCart.distributors)) {
-        for (const dist of activeCart.distributors) {
-          if (Number(dist.storeId) === Number(item.storeId)) {
-            for (const it of dist.items || []) {
-              if (String(it.productCode || it.ProductCode || "").toLowerCase() === String(item.productCode).toLowerCase()) {
-                existingQty = Number(it.qty || it.Quantity || 0);
-                break;
-              }
-            }
-          }
-          if (existingQty > 0) break;
-        }
-      }
+      const existingQty = item.existingQty || 0;
       const isExplicitUpdate = Boolean(item.isUpdate || item.mode === "set" || item.setQty);
       const requestedQty = Number(item.qty || item.Quantity || 1);
-      const targetCartQty = isExplicitUpdate ? requestedQty : existingQty > 0 ? existingQty + requestedQty : requestedQty;
+      const targetCartQty = item.targetCartQty || (isExplicitUpdate ? requestedQty : existingQty > 0 ? existingQty + requestedQty : requestedQty);
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,
@@ -33357,6 +33763,23 @@ var init_pharmarack = __esm({
             if (hasAllStores || attempt === 2) break;
             await new Promise((r) => setTimeout(r, 1500));
           }
+          const stillMissing = storesNeedingOrderNo.some(
+            (sName) => !syncedToday.some((s) => {
+              const normS = (s.store_name || "").toLowerCase().trim();
+              return sName.includes(normS) || normS.includes(sName);
+            })
+          );
+          if (stillMissing) {
+            await new Promise((r) => setTimeout(r, 3e3));
+            try {
+              await syncPharmarackOrders(true);
+            } catch (_) {
+            }
+            syncedToday = await db2.all(
+              `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+              [today]
+            ).catch(() => syncedToday);
+          }
         }
         if (orders && Array.isArray(orders) && orders.length > 0) {
           const placedOrders = checkoutResult.orders?.filter((o) => o.status === "placed") || [];
@@ -33388,19 +33811,58 @@ var init_pharmarack = __esm({
             const distMsg = `\u{1F4E6} Pharmarack order #${resolvedOrderNo} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
             const cleanDistPhone = ord.phone.replace(/\D/g, "");
             if (cleanDistPhone && cleanDistPhone.length >= 10) {
-              const gracePeriodScheduledAt = Date.now() + 5 * 60 * 1e3;
+              const reminderScheduledAt = Date.now();
               try {
-                const queueId = await whatsappQueueWorker.enqueue(
-                  cleanDistPhone,
-                  distMsg.trim(),
-                  "distributor_dispatch_reminder",
-                  ord.storeName,
-                  gracePeriodScheduledAt,
-                  void 0,
-                  void 0,
-                  { skipDedupe: true }
+                const claim = await db2.run(
+                  `UPDATE pharmarack_synced_orders 
+               SET announced_at = CURRENT_TIMESTAMP, announce_result = 'announced_immediate' 
+               WHERE order_no = ? AND announced_at IS NULL`,
+                  [resolvedOrderNo]
                 );
-                console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) with 5-minute grace period hold (queue #${queueId})`);
+                if ((claim?.changes ?? 0) === 0) {
+                  console.log(`[PharmarackRoute] Step 4: Order #${resolvedOrderNo} already claimed/announced; skipping duplicate enqueue.`);
+                  continue;
+                }
+                const startOfDayMs = new Date((/* @__PURE__ */ new Date()).setHours(0, 0, 0, 0)).getTime();
+                const waiting = await db2.get(
+                  `SELECT id, message FROM whatsapp_send_queue
+               WHERE type = 'distributor_dispatch_reminder' AND status IN ('pending', 'failed_offline')
+                 AND LOWER(TRIM(target_name)) = LOWER(TRIM(?)) AND created_at >= ?
+               ORDER BY id DESC LIMIT 1`,
+                  [ord.storeName, startOfDayMs]
+                );
+                if (waiting) {
+                  const missing = !String(waiting.message).includes(`#${resolvedOrderNo}`);
+                  if (missing) {
+                    const merged = `\u{1F4E6} Pharmarack order #${resolvedOrderNo}
+${waiting.message}`;
+                    await db2.run("UPDATE whatsapp_send_queue SET message = ? WHERE id = ?", [merged, waiting.id]);
+                  }
+                  await db2.run(
+                    `UPDATE pharmarack_synced_orders SET announce_result = 'merged_into_waiting_reminder' WHERE order_no = ?`,
+                    [resolvedOrderNo]
+                  );
+                  console.log(`[PharmarackRoute] Step 4: Merged Order #${resolvedOrderNo} into waiting queue item #${waiting.id}`);
+                } else {
+                  try {
+                    const queueId = await whatsappQueueWorker.enqueue(
+                      cleanDistPhone,
+                      distMsg.trim(),
+                      "distributor_dispatch_reminder",
+                      ord.storeName,
+                      reminderScheduledAt
+                    );
+                    await whatsappQueueWorker.forceNext();
+                    console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) for immediate dispatch (queue #${queueId})`);
+                  } catch (enqueueErr) {
+                    await db2.run(
+                      `UPDATE pharmarack_synced_orders SET announced_at = NULL, announce_result = 'claim_failed' WHERE order_no = ?`,
+                      [resolvedOrderNo]
+                    ).catch(() => {
+                    });
+                    throw enqueueErr;
+                  }
+                }
                 const targetPlacedRow = await db2.get(
                   `SELECT id FROM pharmarack_placed_orders 
                WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) 
@@ -33447,12 +33909,6 @@ var init_pharmarack = __esm({
                     [ord.storeName, cleanDistPhone, today]
                   );
                 }
-                await db2.run(
-                  `UPDATE pharmarack_synced_orders 
-               SET announced_at = CURRENT_TIMESTAMP, announce_result = 'held_in_grace_period' 
-               WHERE order_no = ?`,
-                  [resolvedOrderNo]
-                );
                 await new Promise((r) => setTimeout(r, 1500));
               } catch (distMsgErr) {
                 console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);
@@ -33465,6 +33921,29 @@ var init_pharmarack = __esm({
           eventService.broadcast("whatsapp_queue_updated", {});
         } catch (_) {
         }
+        let liveCartRemaining = [];
+        let remainingCount = 0;
+        try {
+          const freshCart = await loadLiveCartCore();
+          const targetNames = (targetStoreNames || (orders || []).map((o) => o.storeName) || []).map((n) => String(n).toLowerCase().trim());
+          const targetIds = (targetStoreIds || (orders || []).map((o) => o.storeId) || []).map((id) => Number(id)).filter(Boolean);
+          for (const dist of freshCart.distributors || []) {
+            const dName = String(dist.storeName || "").toLowerCase().trim();
+            const dId = Number(dist.storeId);
+            const isTarget = targetIds.includes(dId) || targetNames.some((tn) => tn.length > 2 && (tn.includes(dName) || dName.includes(tn)));
+            if (isTarget && dist.items && dist.items.length > 0) {
+              liveCartRemaining.push({
+                storeId: dId,
+                storeName: dist.storeName,
+                remainingItemsCount: dist.items.length,
+                items: dist.items
+              });
+              remainingCount += dist.items.length;
+            }
+          }
+        } catch (cartReadErr) {
+          console.warn("[PharmarackRoute] Live cart post-checkout read notice:", cartReadErr?.message || cartReadErr);
+        }
         const isSuccess = checkoutResult.ok || syncedToday && syncedToday.length > 0 || checkoutResult.placedCount > 0;
         const placedTotal = checkoutResult.placedCount || (isSuccess ? syncedToday?.length || 1 : 0);
         res.json({
@@ -33473,6 +33952,9 @@ var init_pharmarack = __esm({
           failedCount: checkoutResult.failedCount,
           orders: checkoutResult.orders,
           syncedOrders: syncedToday,
+          remaining: liveCartRemaining,
+          remainingCount,
+          cartEmptyForTargets: remainingCount === 0,
           error: isSuccess ? null : checkoutResult.error,
           message: isSuccess ? `Successfully placed ${placedTotal} official order(s) on Pharmarack!` : checkoutResult.error || "Failed to place official orders on Pharmarack"
         });
@@ -33490,10 +33972,11 @@ var init_pharmarack = __esm({
         res.status(500).json({ ok: false, error: err.message || "Failed to open cart window" });
       }
     });
-    router.post("/cart/sync-post-checkout", async (_req, res) => {
+    router.post("/cart/sync-post-checkout", async (req, res) => {
       try {
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
-        await syncPharmarackOrders().catch(() => {
+        const { targetStoreNames, targetStoreIds } = req.body || {};
+        await syncPharmarackOrders(true).catch(() => {
         });
         invalidatePharmarackCartCache();
         const db2 = await dbManager.getConnection();
@@ -33501,12 +33984,41 @@ var init_pharmarack = __esm({
           `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
           [today]
         );
+        let remaining = [];
+        let remainingCount = 0;
+        try {
+          const freshCart = await loadLiveCartCore();
+          const targetNames = (targetStoreNames || []).map((n) => String(n).toLowerCase().trim());
+          const targetIds = (targetStoreIds || []).map((id) => Number(id)).filter(Boolean);
+          for (const dist of freshCart.distributors || []) {
+            const dName = String(dist.storeName || "").toLowerCase().trim();
+            const dId = Number(dist.storeId);
+            const isTarget = targetIds.length > 0 || targetNames.length > 0 ? targetIds.includes(dId) || targetNames.some((tn) => tn.length > 2 && (tn.includes(dName) || dName.includes(tn))) : true;
+            if (isTarget && dist.items && dist.items.length > 0) {
+              remaining.push({
+                storeId: dId,
+                storeName: dist.storeName,
+                remainingItemsCount: dist.items.length,
+                items: dist.items
+              });
+              remainingCount += dist.items.length;
+            }
+          }
+        } catch (_) {
+        }
         try {
           eventService.broadcast("pharmarack_orders_changed", { today });
           eventService.broadcast("pharmarack_cart_changed", {});
         } catch (_) {
         }
-        res.json({ success: true, count: syncedToday.length, orders: syncedToday });
+        res.json({
+          success: true,
+          count: syncedToday.length,
+          orders: syncedToday,
+          remaining,
+          remainingCount,
+          cartEmptyForTargets: remainingCount === 0
+        });
       } catch (err) {
         res.status(500).json({ success: false, error: err.message || "Post-checkout sync failed" });
       }
@@ -34064,6 +34576,97 @@ var init_pharmarack = __esm({
       } catch (err) {
         console.error("Error fetching Pharmarack sent orders:", err);
         res.status(500).json({ error: "Failed to fetch sent orders: " + err.message });
+      }
+    });
+    router.post("/sent-orders/:id/send-dispatch", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        return res.status(400).json({ error: "Valid sent order id is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let placedOrder = await db2.get("SELECT * FROM pharmarack_placed_orders WHERE id = ?", [id]);
+        let syncedOrder = null;
+        if (!placedOrder) {
+          syncedOrder = await db2.get("SELECT * FROM pharmarack_synced_orders WHERE id = ? OR pharmarack_order_id = ?", [id, id]);
+        }
+        if (!placedOrder && !syncedOrder) {
+          return res.status(404).json({ error: "Sent order record not found" });
+        }
+        const storeName = String(placedOrder?.store_name || syncedOrder?.store_name || "").trim();
+        if (!storeName) {
+          return res.status(400).json({ error: "Store name is missing for this order record" });
+        }
+        const orderDate = placedOrder?.order_date || syncedOrder?.order_date || toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
+        const rawOrderNo = placedOrder?.order_no || syncedOrder?.order_no || "";
+        const cleanOrderNo = String(rawOrderNo).trim().replace(/^#+/, "");
+        let distPhone = "";
+        let reminder = await db2.get(
+          `SELECT * FROM distributor_dispatch_reminders
+       WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?))
+       LIMIT 1`,
+          [orderDate, storeName]
+        );
+        if (reminder?.distributor_phone && String(reminder.distributor_phone).trim()) {
+          distPhone = String(reminder.distributor_phone).trim();
+        } else {
+          const mapping = await db2.get(
+            `SELECT d.phone FROM pharmarack_distributor_mappings m
+         JOIN distributors d ON m.distributor_id = d.id
+         WHERE LOWER(TRIM(m.store_name)) = LOWER(TRIM(?))
+         LIMIT 1`,
+            [storeName]
+          );
+          if (mapping?.phone && String(mapping.phone).trim()) {
+            distPhone = String(mapping.phone).trim();
+          } else {
+            const directDist = await db2.get(
+              `SELECT phone FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1`,
+              [storeName]
+            );
+            if (directDist?.phone && String(directDist.phone).trim()) {
+              distPhone = String(directDist.phone).trim();
+            }
+          }
+        }
+        const clean10Digits = distPhone.replace(/\D/g, "").slice(-10);
+        if (!clean10Digits || clean10Digits.length < 10) {
+          return res.status(400).json({ error: `No WhatsApp number saved for ${storeName} \u2014 add it in Distributors.` });
+        }
+        if (!reminder) {
+          const insResult = await db2.run(
+            `INSERT INTO distributor_dispatch_reminders 
+         (distributor_name, distributor_phone, date, status, auto_remind, order_source)
+         VALUES (?, ?, ?, 'Pending', 1, 'pharmarack')`,
+            [storeName, clean10Digits, orderDate]
+          );
+          reminder = { id: insResult.lastID, distributor_name: storeName, distributor_phone: clean10Digits, date: orderDate, status: "Pending" };
+        } else if (!reminder.distributor_phone) {
+          await db2.run("UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE id = ?", [clean10Digits, reminder.id]);
+          reminder.distributor_phone = clean10Digits;
+        }
+        const result = await notificationService.sendDistributorDispatchReminder(
+          reminder.id,
+          void 0,
+          void 0,
+          { userClicked: true, orderNos: cleanOrderNo ? [cleanOrderNo] : [] }
+        );
+        if (result.ok) {
+          const truthText = result.action === "released" ? `WhatsApp reminder for ${storeName} released & sending now` : result.action === "resent" ? `Earlier reminder went out today \u2014 re-sent to ${storeName}` : `Dispatch message for ${storeName} queued successfully`;
+          return res.json({
+            success: true,
+            action: result.action,
+            queue_id: result.queueId,
+            message: truthText
+          });
+        }
+        if (result.reason === "no_phone") {
+          return res.status(400).json({ error: `No WhatsApp number saved for ${storeName} \u2014 add it in Distributors.` });
+        }
+        return res.status(500).json({ error: `Failed to dispatch reminder to ${storeName}. Check phone number or connection.` });
+      } catch (err) {
+        console.error("Error in send-dispatch from sent orders:", err);
+        res.status(500).json({ error: err.message || "Failed to send dispatch message" });
       }
     });
     router.post("/sync-historical-orders", async (req, res) => {
@@ -35099,6 +35702,37 @@ var init_pharmarack = __esm({
           reason
         });
         res.json({ success: true, ...result });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router.get("/cloud-cart-queue/status", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const modeRow = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_cart_queue_mode'");
+        const enabled = modeRow ? modeRow.value !== "off" : true;
+        const stats = await db2.get(`
+      SELECT 
+        COUNT(CASE WHEN processed_at IS NOT NULL THEN 1 END) as processed_count,
+        COUNT(CASE WHEN processed_at IS NULL THEN 1 END) as pending_count
+      FROM cloud_exec_ledger 
+      WHERE kind = 'cart_add'
+    `);
+        res.json({
+          success: true,
+          enabled,
+          processedCount: Number(stats?.processed_count || 0),
+          pendingCount: Number(stats?.pending_count || 0)
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router.post("/cloud-cart-queue/drain", async (req, res) => {
+      try {
+        const { cartQueueSyncService: cartQueueSyncService2 } = await Promise.resolve().then(() => (init_cartQueueSyncService(), cartQueueSyncService_exports));
+        const result = await cartQueueSyncService2.drainCartAddQueue();
+        res.json({ success: true, result });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
@@ -46369,6 +47003,7 @@ ${mrpLine}
       async sendDistributorDispatchReminder(reminderId, customMessage, scheduledAt, opts) {
         const followUp = Boolean(opts?.followUp);
         const isOrderAnnouncement = Boolean(opts?.isOrderAnnouncement);
+        const userClicked = Boolean(opts?.userClicked);
         try {
           const db2 = await dbManager.getConnection();
           const reminder = await db2.get(
@@ -46380,16 +47015,16 @@ ${mrpLine}
           );
           if (!reminder) {
             console.warn(`[DistributorReminder] Reminder ID ${reminderId} not found.`);
-            return false;
+            return { ok: false, reason: "not_found" };
           }
-          if (reminder.status && reminder.status !== "Pending" && !customMessage && !followUp && !isOrderAnnouncement) {
+          if (reminder.status && reminder.status !== "Pending" && !customMessage && !followUp && !isOrderAnnouncement && !userClicked) {
             console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
-            return false;
+            return { ok: false, reason: "not_found" };
           }
           const recipientPhone = reminder.distributor_phone || reminder.dist_phone;
           if (!recipientPhone || !String(recipientPhone).trim()) {
             console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no phone number.`);
-            return false;
+            return { ok: false, reason: "no_phone" };
           }
           const startOfDay = /* @__PURE__ */ new Date();
           startOfDay.setHours(0, 0, 0, 0);
@@ -46401,12 +47036,20 @@ ${mrpLine}
            AND (target_name = ? OR number LIKE ?)
            AND created_at >= ?
            AND status NOT IN ('cancelled', 'failed_perm', 'skipped_invalid_phone', 'skipped_not_on_whatsapp')
-         LIMIT 1`,
+         ORDER BY id DESC LIMIT 1`,
             [reminder.distributor_name, `%${clean10Digits}%`, startOfDayMs]
           );
-          if (existingQueueItem && !customMessage && !followUp && !isOrderAnnouncement) {
-            console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
-            return true;
+          if (existingQueueItem) {
+            if (userClicked && (existingQueueItem.status === "pending" || existingQueueItem.status === "sending" || existingQueueItem.status === "failed_offline")) {
+              await db2.run("UPDATE whatsapp_send_queue SET scheduled_at = ? WHERE id = ?", [Date.now(), existingQueueItem.id]);
+              await whatsappQueueWorker.forceNext();
+              console.log(`[DistributorReminder] User-clicked send-now released existing queue item #${existingQueueItem.id} for ${reminder.distributor_name}`);
+              return { ok: true, action: "released", queueId: existingQueueItem.id };
+            }
+            if (!customMessage && !followUp && !isOrderAnnouncement && !userClicked) {
+              console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
+              return { ok: true, action: "queued", queueId: existingQueueItem.id };
+            }
           }
           let message = "";
           if (customMessage && String(customMessage).trim()) {
@@ -46456,7 +47099,7 @@ ${mrpLine}
             const orderNoText = orderNos.map((n) => `#${n}`).join(", ");
             if ((isOrderAnnouncement || followUp) && !orderNoText) {
               console.warn(`[DistributorReminder] Suppressing order announcement for ${reminder.distributor_name}: official PO number not yet confirmed.`);
-              return false;
+              return { ok: false, reason: "suppressed_no_order_no" };
             }
             if (rawTemplate && String(rawTemplate).trim()) {
               const hasOrderPlaceholder = /\{order_no\}/.test(String(rawTemplate));
@@ -46482,6 +47125,9 @@ ${message}`;
             void 0,
             { skipDedupe: true }
           );
+          if (userClicked) {
+            await whatsappQueueWorker.forceNext();
+          }
           await db2.run(
             `UPDATE distributor_dispatch_reminders SET last_reminded_at = CURRENT_TIMESTAMP WHERE id = ?`,
             [reminderId]
@@ -46493,10 +47139,14 @@ ${message}`;
          VALUES (?, ?, ?, ?, ?, ?)`,
             ["distributor_dispatch_reminder", reminder.distributor_name, recipientPhone, message, notifStatus, refId]
           );
-          return Boolean(queueId);
+          return {
+            ok: Boolean(queueId),
+            action: userClicked && existingQueueItem ? "resent" : "queued",
+            queueId
+          };
         } catch (err) {
           console.error(`[DistributorReminder] Error sending reminder for ID ${reminderId}:`, err.message);
-          return false;
+          return { ok: false };
         }
       }
       async _sendSingleBoySummary(db2, store, dateStr, boyPhone, boyName, reminders) {
@@ -47067,16 +47717,43 @@ ${waiting.message}`;
       row.status && row.status !== "Pending" || row.last_reminded_at && String(row.last_reminded_at).startsWith(today.iso)
     );
     const gracePeriodMs = Date.now() + 5 * 60 * 1e3;
+    const claimRes = await db2.run(
+      `UPDATE pharmarack_synced_orders 
+       SET announced_at = CURRENT_TIMESTAMP, announce_result = 'claim_pending_send'
+       WHERE order_no IN (${freshOnlyOrderNos.map(() => "?").join(",")}) AND announced_at IS NULL`,
+      freshOnlyOrderNos
+    );
+    const changes = claimRes?.changes ?? 0;
+    if (changes === 0) {
+      await settle(db2, freshOnlyOrderNos, "already_announced_earlier", true, { storeName, appAlreadySent, reason: "lost_atomic_claim" });
+      continue;
+    }
+    let claimedOrderNos = freshOnlyOrderNos;
+    if (changes < freshOnlyOrderNos.length) {
+      const claimedRows = await db2.all(
+        `SELECT order_no FROM pharmarack_synced_orders 
+         WHERE order_no IN (${freshOnlyOrderNos.map(() => "?").join(",")}) AND announce_result = 'claim_pending_send'`,
+        freshOnlyOrderNos
+      );
+      claimedOrderNos = claimedRows.map((r) => String(r.order_no));
+      const unclaimed = freshOnlyOrderNos.filter((n) => !claimedOrderNos.includes(n));
+      if (unclaimed.length > 0) {
+        await settle(db2, unclaimed, "already_announced_earlier", true, { storeName, appAlreadySent, reason: "lost_atomic_claim" });
+      }
+      if (claimedOrderNos.length === 0) continue;
+    }
     if (!alreadyReminded) {
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { isOrderAnnouncement: true, orderNos: freshOnlyOrderNos });
-      await settle(db2, freshOnlyOrderNos, sent ? "dispatch_reminder_queued" : "reminder_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
+      const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { isOrderAnnouncement: true, orderNos: claimedOrderNos });
+      const sent = sentRes.ok;
+      await settle(db2, claimedOrderNos, sent ? "dispatch_reminder_queued" : "reminder_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         directOrderRemindersToNotifyBoy.push(row);
       }
     } else {
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { followUp: true, orderNos: freshOnlyOrderNos });
-      await settle(db2, freshOnlyOrderNos, sent ? "follow_up_queued" : "follow_up_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
+      const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, void 0, gracePeriodMs, { followUp: true, orderNos: claimedOrderNos });
+      const sent = sentRes.ok;
+      await settle(db2, claimedOrderNos, sent ? "follow_up_queued" : "follow_up_not_sent", sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         lateReminders.push(row);
@@ -47167,7 +47844,8 @@ async function recoverTodayUnnotifiedOrders() {
           const reminders = await syncTodayActiveDistributors2();
           const row = reminders.find((r) => String(r.distributor_name || "").toLowerCase().trim() === String(so.store_name).toLowerCase().trim());
           if (row && row.id && row.id < 8e5) {
-            const sent = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { followUp: true, orderNos: [so.order_no] });
+            const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, void 0, void 0, { followUp: true, orderNos: [so.order_no] });
+            const sent = sentRes.ok;
             if (sent) {
               await db2.run("UPDATE pharmarack_synced_orders SET announced_at = ?, announce_result = ? WHERE order_no = ?", [Date.now(), "recovered_on_boot", so.order_no]);
               result.notifiedDistributors++;
@@ -52058,9 +52736,25 @@ ${medLines}`;
 // src/services/whatsappQueueWorker.ts
 var whatsappQueueWorker_exports = {};
 __export(whatsappQueueWorker_exports, {
+  OWNER_DIGEST_TYPES: () => OWNER_DIGEST_TYPES,
+  appendAttemptLog: () => appendAttemptLog,
   whatsappQueueWorker: () => whatsappQueueWorker
 });
-var SERVER_BOOT_TIME, WhatsAppQueueWorker, whatsappQueueWorker;
+function appendAttemptLog(existingJson, entry) {
+  try {
+    let arr = [];
+    if (existingJson) {
+      const parsed = JSON.parse(existingJson);
+      if (Array.isArray(parsed)) arr = parsed;
+    }
+    arr.push(entry);
+    if (arr.length > 10) arr = arr.slice(-10);
+    return JSON.stringify(arr);
+  } catch {
+    return JSON.stringify([entry]);
+  }
+}
+var OWNER_DIGEST_TYPES, SERVER_BOOT_TIME, WhatsAppQueueWorker, whatsappQueueWorker;
 var init_whatsappQueueWorker = __esm({
   "src/services/whatsappQueueWorker.ts"() {
     "use strict";
@@ -52069,6 +52763,23 @@ var init_whatsappQueueWorker = __esm({
     init_whatsappClient();
     init_whatsappDeliveryRegister();
     init_nonWaFallbackService();
+    init_localTime();
+    OWNER_DIGEST_TYPES = /* @__PURE__ */ new Set([
+      "admin_staged_reminders",
+      "refill_cart_summary",
+      "order_mail_check",
+      "invoice_arrival_alert",
+      "mail_arrival_alert",
+      "admin_missing_distributor_phones",
+      "bounce_alert",
+      "admin_escalation",
+      "monthly_report",
+      "ai_rx_briefing",
+      "queue_failure_admin_note",
+      "admin_shortage_reminder",
+      "admin_alert",
+      "owner_digest_combined"
+    ]);
     SERVER_BOOT_TIME = Date.now();
     WhatsAppQueueWorker = class {
       isProcessing = false;
@@ -52300,6 +53011,12 @@ var init_whatsappQueueWorker = __esm({
           if (!colNames.has("skip_dedupe")) {
             await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
           }
+          if (!colNames.has("last_attempt_at")) {
+            await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN last_attempt_at TEXT DEFAULT NULL");
+          }
+          if (!colNames.has("attempts_log")) {
+            await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN attempts_log TEXT DEFAULT NULL");
+          }
           const notifCols = await db2.all("PRAGMA table_info(automation_notifications)");
           const notifColNames = new Set(notifCols.map((c) => c.name));
           if (!notifColNames.has("acknowledged")) {
@@ -52491,6 +53208,70 @@ var init_whatsappQueueWorker = __esm({
           }
         }
         const fileJsonStr = file ? JSON.stringify(file) : null;
+        if (!mediaUrl && !fileJsonStr && OWNER_DIGEST_TYPES.has(type) && type !== "admin_morning_briefing") {
+          try {
+            const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+            const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2).catch(() => null);
+            const storePhoneRow = await db2.get("SELECT value FROM app_settings WHERE key = 'store_phone'").catch(() => null);
+            const adminDigits = adminWhatsapp ? normalizeWhatsAppPhone(adminWhatsapp).replace(/\D/g, "").slice(-10) : "";
+            const storeDigits = storePhoneRow?.value ? normalizeWhatsAppPhone(storePhoneRow.value).replace(/\D/g, "").slice(-10) : "";
+            const recipientDigits = cleanPhone.replace(/\D/g, "").slice(-10);
+            const isOwnerRecipient = Boolean(recipientDigits && (recipientDigits === adminDigits || storeDigits && recipientDigits === storeDigits));
+            if (isOwnerRecipient) {
+              const ownerPlaceholders = Array.from(OWNER_DIGEST_TYPES).map(() => "?").join(",");
+              const existingPendingOwnerRow = await db2.get(
+                `SELECT id, message, type, scheduled_at FROM whatsapp_send_queue
+             WHERE number = ? AND status = 'pending' 
+               AND type IN (${ownerPlaceholders})
+               AND type != 'admin_morning_briefing'
+               AND (media_url IS NULL OR media_url = '')
+               AND (file_json IS NULL OR file_json = '')
+               AND created_at >= ?
+               AND (scheduled_at IS NULL OR scheduled_at <= ?)
+             ORDER BY id DESC LIMIT 1`,
+                [cleanPhone, ...Array.from(OWNER_DIGEST_TYPES), startOfDayMs, now]
+              );
+              if (existingPendingOwnerRow) {
+                const SECTION_DIVIDER = "\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n";
+                const existingMsg = String(existingPendingOwnerRow.message || "").trim();
+                const existingSections = existingMsg.split(SECTION_DIVIDER);
+                const currentSectionCount = existingSections.length;
+                if (currentSectionCount < 8 && existingMsg.length + message.length + SECTION_DIVIDER.length + 50 <= 5e3) {
+                  const nextSectionNum = currentSectionCount + 1;
+                  const formattedNext = `\u{1F539} *Section ${nextSectionNum}*
+${message.trim()}`;
+                  let mergedBody = "";
+                  if (currentSectionCount === 1 && !existingMsg.startsWith("\u{1F539} *Section 1*")) {
+                    mergedBody = `\u{1F539} *Section 1*
+${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
+                  } else {
+                    mergedBody = `${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
+                  }
+                  const mergeUpdate = await db2.run(
+                    `UPDATE whatsapp_send_queue 
+                 SET message = ?, type = 'owner_digest_combined', target_name = ?
+                 WHERE id = ? AND status = 'pending'`,
+                    [mergedBody, "Admin / Store Owner", existingPendingOwnerRow.id]
+                  );
+                  if ((mergeUpdate?.changes ?? 0) > 0) {
+                    console.log(`[WhatsAppQueueWorker] Combined owner update into pending queue item #${existingPendingOwnerRow.id} (section ${nextSectionNum}/8).`);
+                    this.broadcastQueueState(true);
+                    try {
+                      eventService.broadcast("automation_hub_updated", { type: "merged", id: existingPendingOwnerRow.id, targetName: "Admin / Store Owner", automationType: "owner_digest_combined" });
+                    } catch (_) {
+                    }
+                    if (scheduledAt <= now) {
+                      this.triggerProcessing();
+                    }
+                    return existingPendingOwnerRow.id;
+                  }
+                }
+              }
+            }
+          } catch (mergeErr) {
+            console.warn("[WhatsAppQueueWorker] Owner message merge check failed, falling back to standalone enqueue:", mergeErr);
+          }
+        }
         const isDistributorOrder = type === "pharmarack_distributor_order" || type === "distributor_cart_order";
         if (!options?.skipDedupe && isDistributorOrder) {
           const fifteenMinsAgo = now - 15 * 60 * 1e3;
@@ -52593,7 +53374,7 @@ var init_whatsappQueueWorker = __esm({
               "SELECT id, number, message, type, scheduled_at, created_at FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
               [SERVER_BOOT_TIME]
             );
-            let recoveredDistributorCount = 0;
+            let recoveredCount = 0;
             for (const item of preBootPending || []) {
               const isDistributorReminder = item.type === "distributor_dispatch_reminder";
               const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
@@ -52611,10 +53392,10 @@ var init_whatsappQueueWorker = __esm({
                   [`queue_${item.id}`, String(item.id)]
                 ).catch(() => {
                 });
-              } else if (isDistributorReminder || item.type === "admin_morning_briefing") {
+              } else {
                 const wasDueDuringOutage = item.scheduled_at && this.detectedOutageInterval && item.scheduled_at >= this.detectedOutageInterval.start - 6e4 && item.scheduled_at <= this.detectedOutageInterval.end + 6e4;
                 const isOverdueToday = item.scheduled_at && item.scheduled_at <= Date.now();
-                const reason = item.type === "admin_morning_briefing" ? "Morning briefing restored for immediate dispatch on startup" : wasDueDuringOutage ? "Recovered after PC/application outage during scheduled dispatch" : isOverdueToday ? "Recovered overdue scheduled reminder after app restart" : "Restored scheduled reminder";
+                const reason = item.type === "admin_morning_briefing" ? "Morning briefing restored for immediate dispatch on startup" : wasDueDuringOutage ? "Recovered after PC/application outage during scheduled dispatch" : isOverdueToday ? "Recovered overdue reminder after app restart" : "Restored queue item after app restart / power cut";
                 console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = 'pending', error_message = ? WHERE id = ?",
@@ -52625,16 +53406,11 @@ var init_whatsappQueueWorker = __esm({
                   [reason, `queue_${item.id}`, String(item.id)]
                 ).catch(() => {
                 });
-                recoveredDistributorCount++;
-              } else {
-                await db2.run(
-                  "UPDATE whatsapp_send_queue SET status = 'review_required', error_message = 'App restarted/updated \u2014 held for review to prevent unintended dispatch' WHERE id = ?",
-                  [item.id]
-                );
+                recoveredCount++;
               }
             }
-            if (recoveredDistributorCount > 0) {
-              console.log(`[WhatsAppQueueWorker] Startup recovery: ${recoveredDistributorCount} scheduled distributor reminder(s) recovered, triggering queue worker processing...`);
+            if (recoveredCount > 0) {
+              console.log(`[WhatsAppQueueWorker] Startup recovery: ${recoveredCount} queue item(s) restored after restart, triggering queue worker processing...`);
               this.triggerProcessing();
             }
           } catch (_) {
@@ -52792,9 +53568,11 @@ var init_whatsappQueueWorker = __esm({
               if (deliveryCheck.delivered) {
                 console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
                 const resolvedSentAt = deliveryCheck.sentAt || Date.now();
+                const attemptTs = toLocalSqlDateTime();
+                const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "sent" });
                 await db2.run(
-                  "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-                  [resolvedSentAt, item.id]
+                  "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, last_attempt_at = ?, attempts_log = ?, error_message = NULL WHERE id = ?",
+                  [resolvedSentAt, attemptTs, newAttemptsLog, item.id]
                 );
                 await db2.run(
                   `UPDATE automation_notifications 
@@ -52827,10 +53605,11 @@ var init_whatsappQueueWorker = __esm({
             const rawItemDigits = resolvedLidDigits || (item.number || "").replace(/\D/g, "");
             const target10Digits = rawItemDigits.length === 12 && rawItemDigits.startsWith("91") ? rawItemDigits.slice(2) : rawItemDigits.length >= 10 ? rawItemDigits.slice(-10) : rawItemDigits;
             if (!isLidRecipient && (!target10Digits || target10Digits.length !== 10)) {
-              console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: invalid phone number "${item.number}" (requires 10 digits).`);
+              const attemptTs = toLocalSqlDateTime();
+              const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "skipped_invalid_phone", error: "Invalid phone number (requires 10 digits)" });
               await db2.run(
-                "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
-                [item.id]
+                "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', last_attempt_at = ?, attempts_log = ?, error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
+                [attemptTs, newAttemptsLog, item.id]
               );
               await db2.run(
                 `UPDATE automation_notifications 
@@ -52880,9 +53659,11 @@ var init_whatsappQueueWorker = __esm({
                 ).catch(() => []);
                 if (completedCallTask || !activeRefills || activeRefills.length === 0) {
                   console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 refill already fulfilled, call task completed, or reminder cancelled for ${target10Digits}.`);
+                  const attemptTs = toLocalSqlDateTime();
+                  const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "skipped_already_fulfilled", error: "Refill already fulfilled, call task completed, or reminder cancelled" });
                   await db2.run(
-                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, call task completed, or reminder cancelled' WHERE id = ?",
-                    [item.id]
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', last_attempt_at = ?, attempts_log = ?, error_message = 'Refill already fulfilled, call task completed, or reminder cancelled' WHERE id = ?",
+                    [attemptTs, newAttemptsLog, item.id]
                   );
                   await db2.run(
                     `UPDATE automation_notifications 
@@ -52915,9 +53696,11 @@ var init_whatsappQueueWorker = __esm({
                 ).catch(() => []);
                 if (completedOrderTask || !activeOrders || activeOrders.length === 0) {
                   console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped \u2014 special order already fulfilled, delivered, or call task completed for ${target10Digits}.`);
+                  const attemptTs = toLocalSqlDateTime();
+                  const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "skipped_already_fulfilled", error: "Order already fulfilled, delivered, or call task completed" });
                   await db2.run(
-                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled, delivered, or call task completed' WHERE id = ?",
-                    [item.id]
+                    "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', last_attempt_at = ?, attempts_log = ?, error_message = 'Order already fulfilled, delivered, or call task completed' WHERE id = ?",
+                    [attemptTs, newAttemptsLog, item.id]
                   );
                   await db2.run(
                     `UPDATE automation_notifications 
@@ -52935,9 +53718,11 @@ var init_whatsappQueueWorker = __esm({
               const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
               if (regStatus === "NOT_AVAILABLE") {
                 console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: recipient ${target10Digits} (${item.target_name || "unknown"}) is NOT registered on WhatsApp.`);
+                const attemptTs = toLocalSqlDateTime();
+                const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "skipped_not_on_whatsapp", error: "Number not registered on WhatsApp" });
                 await db2.run(
-                  "UPDATE whatsapp_send_queue SET status = 'skipped_not_on_whatsapp', error_message = 'Number not registered on WhatsApp' WHERE id = ?",
-                  [item.id]
+                  "UPDATE whatsapp_send_queue SET status = 'skipped_not_on_whatsapp', last_attempt_at = ?, attempts_log = ?, error_message = 'Number not registered on WhatsApp' WHERE id = ?",
+                  [attemptTs, newAttemptsLog, item.id]
                 );
                 await db2.run(
                   `UPDATE automation_notifications 
@@ -53028,9 +53813,11 @@ var init_whatsappQueueWorker = __esm({
                 console.warn(`[WhatsAppQueueWorker] Outbox verification note for #${item.id} (${item.number}): message sent via sendMessage, recorded in outbound history.`);
               }
               const sentAt = Date.now();
+              const attemptTs = toLocalSqlDateTime();
+              const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "sent" });
               await db2.run(
-                "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-                [sentAt, item.id]
+                "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, last_attempt_at = ?, attempts_log = ?, error_message = NULL WHERE id = ?",
+                [sentAt, attemptTs, newAttemptsLog, item.id]
               );
               await db2.run(
                 `UPDATE automation_notifications 
@@ -53087,9 +53874,11 @@ var init_whatsappQueueWorker = __esm({
               if (outboxMatch) {
                 const fallbackLast10 = item.number.replace(/\D/g, "").slice(-10);
                 const sentAt = Date.now();
+                const attemptTs = toLocalSqlDateTime();
+                const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: "sent" });
                 await db2.run(
-                  "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-                  [sentAt, item.id]
+                  "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, last_attempt_at = ?, attempts_log = ?, error_message = NULL WHERE id = ?",
+                  [sentAt, attemptTs, newAttemptsLog, item.id]
                 );
                 await db2.run(
                   `UPDATE automation_notifications 
@@ -53149,9 +53938,11 @@ var init_whatsappQueueWorker = __esm({
                 }
                 console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? " [retryable availability]" : "/3"}): ${errMsg}`);
                 const retryScheduledAt = newStatus === "failed_offline" ? now + 3e4 : item.scheduled_at;
+                const attemptTs = toLocalSqlDateTime();
+                const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: newStatus, error: errMsg });
                 await db2.run(
-                  "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ?, scheduled_at = ? WHERE id = ?",
-                  [newStatus, newRetryCount, errMsg, retryScheduledAt, item.id]
+                  "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ?, scheduled_at = ?, last_attempt_at = ?, attempts_log = ? WHERE id = ?",
+                  [newStatus, newRetryCount, errMsg, retryScheduledAt, attemptTs, newAttemptsLog, item.id]
                 );
                 await db2.run(
                   "UPDATE automation_notifications SET status = 'failed', error_message = ? WHERE reference_id = ? OR reference_id = ?",
@@ -53580,6 +54371,23 @@ var init_whatsappQueueWorker = __esm({
       FROM whatsapp_send_queue
       WHERE type NOT IN (${nonTxPlaceholders})
     `, [startOfTodayMs, ...nonTxList]);
+        const todaySummaryRow = await db2.get(`
+      SELECT 
+        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
+        SUM(CASE WHEN status IN ('failed_offline', 'failed_perm') THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'review_required' THEN 1 ELSE 0 END) as review_required,
+        SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END) as skipped
+      FROM whatsapp_send_queue
+      WHERE created_at >= ? AND type NOT IN (${nonTxPlaceholders})
+    `, [startOfTodayMs, ...nonTxList]);
+        const todaySummary = {
+          sent: Number(todaySummaryRow?.sent || 0),
+          failed: Number(todaySummaryRow?.failed || 0),
+          pending: Number(todaySummaryRow?.pending || 0),
+          review_required: Number(todaySummaryRow?.review_required || 0),
+          skipped: Number(todaySummaryRow?.skipped || 0)
+        };
         const queueItems = await db2.all(
           `SELECT * FROM whatsapp_send_queue 
        WHERE type NOT IN (${nonTxPlaceholders})
@@ -53700,6 +54508,7 @@ var init_whatsappQueueWorker = __esm({
           availabilityState: avail.state,
           lastHeartbeatAt: avail.lastHeartbeatAt,
           detectedOutage: avail.outageInterval,
+          todaySummary,
           recentItems
         };
       }
@@ -61548,6 +62357,183 @@ var init_requestTransactionGuard = __esm({
   }
 });
 
+// src/middleware/tenantAuth.ts
+function createStaffToken(data) {
+  const timestamp = Date.now();
+  const perms = (data.permissions || ["*"]).join(",");
+  const payload = `${data.userId}:${data.storeId}:${data.role}:${data.username}:${perms}:${timestamp}`;
+  const signature = import_crypto4.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+  return Buffer.from(`${payload}:${signature}`).toString("base64");
+}
+function verifyStaffToken(tokenStr) {
+  try {
+    if (!tokenStr) return null;
+    const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
+    const parts = decoded.split(":");
+    if (parts.length !== 7) return null;
+    const [userIdStr, storeIdStr, role, username, permsStr, timestampStr, signature] = parts;
+    const userId = parseInt(userIdStr, 10);
+    const storeId = parseInt(storeIdStr, 10);
+    const timestamp = parseInt(timestampStr, 10);
+    if (isNaN(userId) || isNaN(storeId) || isNaN(timestamp)) return null;
+    if (Date.now() - timestamp > TOKEN_TTL_MS) return null;
+    const payload = `${userIdStr}:${storeIdStr}:${role}:${username}:${permsStr}:${timestampStr}`;
+    const expectedSignature = import_crypto4.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+    if (import_crypto4.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+      return {
+        userId,
+        storeId,
+        username,
+        role,
+        permissions: permsStr ? permsStr.split(",") : ["*"]
+      };
+    }
+  } catch (_) {
+  }
+  return null;
+}
+function isLocalRequest(req) {
+  if (req.headers["cf-connecting-ip"] || req.headers["cf-ray"] || req.headers["cf-visitor"]) {
+    return false;
+  }
+  const forwardedHost = req.headers["x-forwarded-host"];
+  const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) || req.headers.host || "";
+  const hostname = host.split(":")[0].toLowerCase();
+  if (hostname.endsWith(".trycloudflare.com") || hostname.endsWith(".cloudflare.com")) {
+    return false;
+  }
+  const remoteIp = (req.socket?.remoteAddress || req.ip || "").toLowerCase();
+  const isLoopbackIp = remoteIp === "127.0.0.1" || remoteIp === "::1" || remoteIp === "::ffff:127.0.0.1";
+  const isLoopbackHost = hostname === "localhost" || hostname === "127.0.0.1";
+  return isLoopbackHost && isLoopbackIp;
+}
+async function getRemoteAuthMode() {
+  const now = Date.now();
+  if (cachedRemoteAuthMode !== null && now - lastRemoteAuthModeCheck < 1e4) {
+    return cachedRemoteAuthMode;
+  }
+  try {
+    const db2 = await dbManager.getConnection();
+    const row = await db2.get(`SELECT value FROM app_settings WHERE key = 'remote_auth_mode'`);
+    cachedRemoteAuthMode = (row?.value || "owner_required").trim();
+    lastRemoteAuthModeCheck = now;
+  } catch (_) {
+    cachedRemoteAuthMode = "owner_required";
+  }
+  return cachedRemoteAuthMode || "owner_required";
+}
+async function ownerRemoteGate(req, res, next) {
+  if (req.method === "OPTIONS") {
+    return next();
+  }
+  const path63 = req.path || req.url || "";
+  if (path63 === "/login" || path63 === "/auth/login" || path63 === "/api/auth/login" || path63 === "/session" || path63 === "/auth/session" || path63 === "/api/auth/session" || path63 === "/me" || path63 === "/auth/me" || path63 === "/api/auth/me" || path63 === "/health" || path63 === "/api/health" || path63.startsWith("/customer-portal") || path63.startsWith("/api/customer-portal")) {
+    return next();
+  }
+  if (isLocalRequest(req)) {
+    return next();
+  }
+  const mode = await getRemoteAuthMode();
+  if (mode === "local_only_fallback") {
+    return next();
+  }
+  const authHeader = req.headers.authorization || req.headers["x-auth-token"];
+  let token = "";
+  if (authHeader) {
+    token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
+  } else if (typeof req.query?.token === "string") {
+    token = req.query.token.trim();
+  }
+  if (!token) {
+    return res.status(401).json({
+      error: "Authentication required: Remote access requires a valid pharmacy owner login.",
+      authRequired: true
+    });
+  }
+  const verified = verifyStaffToken(token);
+  if (!verified) {
+    return res.status(401).json({
+      error: "Session expired or invalid: Please log in again.",
+      authRequired: true
+    });
+  }
+  if (verified.role !== "owner") {
+    return res.status(403).json({
+      error: "Access denied: Remote web portal access is strictly restricted to the pharmacy owner account."
+    });
+  }
+  req.tenant = verified;
+  next();
+}
+async function tenantAuthMiddleware(req, res, next) {
+  try {
+    if (req.tenant) {
+      return next();
+    }
+    const authHeader = req.headers.authorization || req.headers["x-auth-token"];
+    let token = "";
+    if (authHeader) {
+      token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
+    } else if (typeof req.query?.token === "string") {
+      token = req.query.token.trim();
+    }
+    if (token) {
+      const verified = verifyStaffToken(token);
+      if (verified) {
+        const requestedStoreId = resolveStoreId(req);
+        if (requestedStoreId && requestedStoreId !== verified.storeId) {
+          const db2 = await dbManager.getConnection();
+          const access = await db2.get(
+            `SELECT role, permissions_json FROM pharmacy_user_tenants 
+             WHERE user_id = ? AND store_id = ? AND is_active = 1`,
+            [verified.userId, requestedStoreId]
+          );
+          if (access || verified.role === "owner") {
+            let perms = verified.permissions;
+            if (access?.permissions_json) {
+              try {
+                perms = JSON.parse(access.permissions_json);
+              } catch (_) {
+              }
+            }
+            verified.storeId = requestedStoreId;
+            verified.role = access?.role || verified.role;
+            verified.permissions = perms;
+          }
+        }
+        req.tenant = verified;
+        return next();
+      }
+    }
+    const targetStoreId = resolveStoreId(req) || 1;
+    req.tenant = {
+      storeId: targetStoreId,
+      userId: 1,
+      username: "admin",
+      role: "owner",
+      permissions: ["*"],
+      isDesktopFallback: true
+    };
+    next();
+  } catch (err) {
+    console.error("[TenantAuthMiddleware] Error:", err);
+    res.status(500).json({ error: "Internal tenant authorization error" });
+  }
+}
+var import_crypto4, AUTH_SECRET, TOKEN_TTL_MS, cachedRemoteAuthMode, lastRemoteAuthModeCheck;
+var init_tenantAuth = __esm({
+  "src/middleware/tenantAuth.ts"() {
+    "use strict";
+    import_crypto4 = __toESM(require("crypto"), 1);
+    init_connection();
+    init_storeContextService();
+    AUTH_SECRET = process.env.STAFF_AUTH_SECRET || "ai_pharmacy_staff_auth_secret_2026";
+    TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    cachedRemoteAuthMode = null;
+    lastRemoteAuthModeCheck = 0;
+  }
+});
+
 // src/services/licenseService.ts
 var licenseService_exports = {};
 __export(licenseService_exports, {
@@ -61580,7 +62566,7 @@ function getMachineId() {
     if (m) winGuid = m[1].trim();
   } catch {
   }
-  return import_crypto4.default.createHash("sha256").update(`${mac}|${winGuid}`).digest("hex").substring(0, 32);
+  return import_crypto5.default.createHash("sha256").update(`${mac}|${winGuid}`).digest("hex").substring(0, 32);
 }
 async function checkLicense() {
   const db2 = await dbManager.getConnection();
@@ -61766,8 +62752,7 @@ async function activateLicense(licenseId, licenseKey) {
 async function checkForUpdate() {
   try {
     const db2 = await dbManager.getConnection();
-    const row = await db2.get("SELECT current_version FROM update_checks WHERE id = 1");
-    const currentVersion = row?.current_version || APP_VERSION;
+    const currentVersion = APP_VERSION;
     const licRow = await db2.get("SELECT license_id FROM app_license WHERE id = 1");
     const machineId = getMachineId();
     const resp = await import_axios2.default.get(`${LICENSE_SERVER}/api/updates/check`, {
@@ -61781,8 +62766,8 @@ async function checkForUpdate() {
     const latestVersion = resp.data.latestVersion || currentVersion;
     const now = (/* @__PURE__ */ new Date()).toISOString();
     await db2.run(
-      "UPDATE update_checks SET last_checked_at = ?, last_known_version = ? WHERE id = 1",
-      [now, latestVersion]
+      "UPDATE update_checks SET last_checked_at = ?, last_known_version = ?, current_version = ? WHERE id = 1",
+      [now, latestVersion, currentVersion]
     );
     return {
       hasUpdate: !!resp.data.hasUpdate,
@@ -61813,11 +62798,11 @@ async function reportCrashTelemetry(errorData) {
   } catch {
   }
 }
-var import_crypto4, import_fs34, import_path33, import_child_process5, import_os3, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
+var import_crypto5, import_fs34, import_path33, import_child_process5, import_os3, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
 var init_licenseService = __esm({
   "src/services/licenseService.ts"() {
     "use strict";
-    import_crypto4 = __toESM(require("crypto"), 1);
+    import_crypto5 = __toESM(require("crypto"), 1);
     import_fs34 = __toESM(require("fs"), 1);
     import_path33 = __toESM(require("path"), 1);
     import_child_process5 = require("child_process");
@@ -61834,7 +62819,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.151";
+    APP_VERSION = "0.1.153";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -63687,7 +64672,7 @@ function normalizePhone2(raw) {
 }
 function hashPin(pin) {
   const salt = "pharmacy_portal_salt_2026";
-  return import_crypto5.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto6.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
 }
 function generateRandomPin() {
   return Math.floor(1e3 + Math.random() * 9e3).toString();
@@ -63695,11 +64680,11 @@ function generateRandomPin() {
 function generateRandomOtp() {
   return Math.floor(1e5 + Math.random() * 9e5).toString();
 }
-var import_crypto5, SESSION_SECRET, CustomerAuthService, customerAuthService;
+var import_crypto6, SESSION_SECRET, CustomerAuthService, customerAuthService;
 var init_customerAuthService = __esm({
   "src/services/auth/customerAuthService.ts"() {
     "use strict";
-    import_crypto5 = __toESM(require("crypto"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_logger();
@@ -63712,7 +64697,7 @@ var init_customerAuthService = __esm({
        */
       async createSession(customerId, phone, channel = "portal", reqMetadata) {
         const payload = `${customerId}:${phone}:${Date.now()}`;
-        const signature = import_crypto5.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+        const signature = import_crypto6.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
         const token = Buffer.from(`${payload}:${signature}`).toString("base64");
         try {
           const db2 = await dbManager.getConnection();
@@ -63751,8 +64736,8 @@ var init_customerAuthService = __esm({
           const timestamp = parseInt(timestampStr, 10);
           if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
           const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
-          const expectedSignature = import_crypto5.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
-          if (import_crypto5.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+          const expectedSignature = import_crypto6.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
+          if (import_crypto6.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
             return { customerId, phone };
           }
         } catch (_) {
@@ -64062,10 +65047,28 @@ Valid for 10 minutes. Do not share this OTP with anyone.`;
 // src/services/cloudCatalogSyncService.ts
 var cloudCatalogSyncService_exports = {};
 __export(cloudCatalogSyncService_exports, {
+  getAdminSecret: () => getAdminSecret2,
   pullCloudOrdersToLocal: () => pullCloudOrdersToLocal,
   pushLocalCatalogToCloud: () => pushLocalCatalogToCloud,
+  scheduleCloudAutoPush: () => scheduleCloudAutoPush,
   startCloudOrderSyncPoller: () => startCloudOrderSyncPoller
 });
+async function getAdminSecret2() {
+  if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== "") {
+    return process.env.ADMIN_SECRET.trim();
+  }
+  try {
+    const db2 = await dbManager.getConnection();
+    const row = await db2.get(
+      "SELECT value FROM app_settings WHERE key = 'cloud_admin_secret' OR key = 'admin_secret'"
+    );
+    if (row?.value && row.value.trim() !== "") {
+      return row.value.trim();
+    }
+  } catch (_) {
+  }
+  return "";
+}
 async function pushLocalCatalogToCloud() {
   const db2 = await dbManager.getConnection();
   const rows = await db2.all(`
@@ -64173,14 +65176,34 @@ async function pushLocalCatalogToCloud() {
     }
   } catch (_) {
   }
+  let ownerAuth = [];
   try {
-    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/sync`, {
+    const ownerUsers = await db2.all(
+      "SELECT id, username, password_hash, salt FROM pharmacy_users WHERE role = 'owner' AND is_active = 1"
+    );
+    ownerAuth = (ownerUsers || []).map((u) => ({
+      id: u.id,
+      username: u.username,
+      password_hash: u.password_hash,
+      salt: u.salt
+    }));
+  } catch (_) {
+  }
+  const secret = await getAdminSecret2();
+  if (!secret) {
+    return {
+      success: false,
+      message: "Cloud sync not configured: ADMIN_SECRET is missing. Please configure ADMIN_SECRET in Settings or environment variables."
+    };
+  }
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL2}/api/catalog/sync`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-admin-secret": ADMIN_SECRET
+        "x-admin-secret": secret
       },
-      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills })
+      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills, ownerAuth })
     });
     const data = await res.json();
     if (res.ok && data.success) {
@@ -64197,10 +65220,14 @@ async function pushLocalCatalogToCloud() {
   }
 }
 async function pullCloudOrdersToLocal() {
+  const secret = await getAdminSecret2();
+  if (!secret) {
+    return { success: false, message: "Cloud sync not configured: ADMIN_SECRET is missing." };
+  }
   const db2 = await dbManager.getConnection();
   try {
-    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
-      headers: { "x-admin-secret": ADMIN_SECRET }
+    const res = await fetch(`${CLOUD_SERVER_URL2}/api/catalog/orders`, {
+      headers: { "x-admin-secret": secret }
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
@@ -64363,11 +65390,11 @@ async function pullCloudOrdersToLocal() {
       importedIds.push(o.orderId);
     }
     if (importedIds.length > 0) {
-      await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
+      await fetch(`${CLOUD_SERVER_URL2}/api/catalog/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-secret": ADMIN_SECRET
+          "x-admin-secret": secret
         },
         body: JSON.stringify({ orderIds: importedIds })
       }).catch((err) => console.warn("[CloudCatalogSync] order ack failed:", err?.message || err));
@@ -64391,6 +65418,12 @@ async function pullCloudOrdersToLocal() {
         console.warn("[CloudCatalogSync] runRefillAutoCartCatchUp error:", err);
       }
     }
+    try {
+      const { cartQueueSyncService: cartQueueSyncService2 } = await Promise.resolve().then(() => (init_cartQueueSyncService(), cartQueueSyncService_exports));
+      await cartQueueSyncService2.drainCartAddQueue();
+    } catch (qErr) {
+      console.warn("[CloudCatalogSync] cart queue drain error:", qErr.message);
+    }
     return {
       success: true,
       message: `Successfully imported ${newImportCount} new online order(s) into counter queue!`,
@@ -64401,6 +65434,34 @@ async function pullCloudOrdersToLocal() {
     return { success: false, message: err.message };
   }
 }
+function scheduleCloudAutoPush(trigger = "event") {
+  const now = Date.now();
+  if (autoPushPending) return;
+  const delay = Math.max(0, AUTO_PUSH_DEBOUNCE_MS - (now - lastAutoPushAt));
+  autoPushPending = true;
+  if (autoPushTimer) clearTimeout(autoPushTimer);
+  autoPushTimer = setTimeout(async () => {
+    autoPushPending = false;
+    lastAutoPushAt = Date.now();
+    try {
+      const db2 = await dbManager.getConnection();
+      const autoSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_sync_auto'");
+      if (autoSetting && (autoSetting.value === "0" || autoSetting.value === "false")) {
+        return;
+      }
+      const secret = await getAdminSecret2();
+      if (!secret) return;
+      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
+      if (activityTracker2.isIdle()) {
+        lastAutoPushAt = Date.now() - (AUTO_PUSH_DEBOUNCE_MS - 6e4);
+        return;
+      }
+      await pushLocalCatalogToCloud();
+    } catch (err) {
+      console.warn(`[CloudCatalogSync] Auto-push error (${trigger}):`, err?.message || err);
+    }
+  }, delay);
+}
 function startCloudOrderSyncPoller() {
   if (pollerActive) return;
   pollerActive = true;
@@ -64410,6 +65471,14 @@ function startCloudOrderSyncPoller() {
     } catch (_) {
     }
   }, 8e3);
+  Promise.resolve().then(() => (init_eventService(), eventService_exports)).then(({ eventService: eventService2 }) => {
+    eventService2.on("server_event", (event) => {
+      if (["refill_updated", "order_created", "sale_saved"].includes(event?.type)) {
+        scheduleCloudAutoPush(event.type);
+      }
+    });
+  }).catch(() => {
+  });
   setInterval(async () => {
     if (isPulling) return;
     try {
@@ -64423,16 +65492,19 @@ function startCloudOrderSyncPoller() {
     }
   }, 6e4);
 }
-var CLOUD_SERVER_URL, ADMIN_SECRET, pollerActive, isPulling;
+var CLOUD_SERVER_URL2, pollerActive, isPulling, lastAutoPushAt, autoPushPending, autoPushTimer, AUTO_PUSH_DEBOUNCE_MS;
 var init_cloudCatalogSyncService = __esm({
   "src/services/cloudCatalogSyncService.ts"() {
     "use strict";
     init_connection();
     init_storeSettingsService();
-    CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
-    ADMIN_SECRET = process.env.ADMIN_SECRET || "admin@pharmacy2026";
+    CLOUD_SERVER_URL2 = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
     pollerActive = false;
     isPulling = false;
+    lastAutoPushAt = 0;
+    autoPushPending = false;
+    autoPushTimer = null;
+    AUTO_PUSH_DEBOUNCE_MS = 5 * 60 * 1e3;
   }
 });
 
@@ -64480,7 +65552,7 @@ function normalizePhone(raw) {
 }
 function hashPin2(pin) {
   const salt = "pharmacy_portal_salt_2026";
-  return import_crypto6.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto7.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
 }
 function generateRandomPin2() {
   return Math.floor(1e3 + Math.random() * 9e3).toString();
@@ -64536,7 +65608,7 @@ async function ensureCustomerPortalAccount(db2, customerId, phone, name, preferr
 }
 function createCustomerToken(customerId, phone) {
   const payload = `${customerId}:${phone}:${Date.now()}`;
-  const signature = import_crypto6.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
+  const signature = import_crypto7.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 function verifyCustomerToken(tokenStr) {
@@ -64550,8 +65622,8 @@ function verifyCustomerToken(tokenStr) {
     const timestamp = parseInt(timestampStr, 10);
     if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
     const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
-    const expectedSignature = import_crypto6.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
-    if (import_crypto6.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    const expectedSignature = import_crypto7.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
+    if (import_crypto7.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
       return { customerId, phone };
     }
   } catch (_) {
@@ -64672,12 +65744,12 @@ function loadCatalogAndImages() {
   lastCacheLoad = now;
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
-var import_express6, import_crypto6, import_fs37, import_path36, router6, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var import_express6, import_crypto7, import_fs37, import_path36, router6, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
     import_express6 = __toESM(require("express"), 1);
-    import_crypto6 = __toESM(require("crypto"), 1);
+    import_crypto7 = __toESM(require("crypto"), 1);
     import_fs37 = __toESM(require("fs"), 1);
     import_path36 = __toESM(require("path"), 1);
     init_connection();
@@ -78251,11 +79323,11 @@ var init_scan = __esm({
 
 // src/utils/password.ts
 function hashPassword(password) {
-  const salt = import_crypto7.default.randomBytes(16).toString("hex");
+  const salt = import_crypto8.default.randomBytes(16).toString("hex");
   const iterations = 1e5;
   const keylen = 64;
   const digest = "sha512";
-  const hash = import_crypto7.default.pbkdf2Sync(password, salt, iterations, keylen, digest).toString("hex");
+  const hash = import_crypto8.default.pbkdf2Sync(password, salt, iterations, keylen, digest).toString("hex");
   return `pbkdf2:${iterations}:${salt}:${hash}`;
 }
 function verifyPassword(providedPass, storedPass) {
@@ -78267,22 +79339,22 @@ function verifyPassword(providedPass, storedPass) {
     const salt = parts[2];
     const storedHash = parts[3];
     if (isNaN(iterations) || !salt || !storedHash) return false;
-    const testHash = import_crypto7.default.pbkdf2Sync(providedPass, salt, iterations, 64, "sha512").toString("hex");
+    const testHash = import_crypto8.default.pbkdf2Sync(providedPass, salt, iterations, 64, "sha512").toString("hex");
     const bufA2 = Buffer.from(testHash, "hex");
     const bufB2 = Buffer.from(storedHash, "hex");
     if (bufA2.length !== bufB2.length) return false;
-    return import_crypto7.default.timingSafeEqual(bufA2, bufB2);
+    return import_crypto8.default.timingSafeEqual(bufA2, bufB2);
   }
   const bufA = Buffer.from(providedPass);
   const bufB = Buffer.from(storedPass);
   if (bufA.length !== bufB.length) return false;
-  return import_crypto7.default.timingSafeEqual(bufA, bufB);
+  return import_crypto8.default.timingSafeEqual(bufA, bufB);
 }
-var import_crypto7;
+var import_crypto8;
 var init_password = __esm({
   "src/utils/password.ts"() {
     "use strict";
-    import_crypto7 = __toESM(require("crypto"), 1);
+    import_crypto8 = __toESM(require("crypto"), 1);
   }
 });
 
@@ -78291,11 +79363,11 @@ var security_exports = {};
 __export(security_exports, {
   default: () => security_default
 });
-var import_crypto8, import_express11, router11, security_default;
+var import_crypto9, import_express11, router11, security_default;
 var init_security = __esm({
   "src/routes/security.ts"() {
     "use strict";
-    import_crypto8 = __toESM(require("crypto"), 1);
+    import_crypto9 = __toESM(require("crypto"), 1);
     import_express11 = __toESM(require("express"), 1);
     init_connection();
     init_password();
@@ -78337,7 +79409,7 @@ var init_security = __esm({
         let tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'license_session_token'");
         let sessionToken = tokenRow?.value;
         if (!sessionToken) {
-          sessionToken = import_crypto8.default.randomUUID();
+          sessionToken = import_crypto9.default.randomUUID();
           await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('license_session_token', ?)", [sessionToken]);
         }
         await db2.run(
@@ -82230,17 +83302,24 @@ var init_dispatch = __esm({
       const { id } = req.params;
       const { custom_message } = req.body || {};
       try {
-        const db2 = await dbManager.getConnection();
-        const enabledRow = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'");
-        if (enabledRow?.value === "false") {
-          return res.status(409).json({ error: "Distributor dispatch reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
+        const result = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message, void 0, { userClicked: true });
+        if (result.ok) {
+          const truthText = result.action === "released" ? "WhatsApp reminder released & sending now" : result.action === "resent" ? "WhatsApp reminder resent successfully" : "WhatsApp reminder queued successfully";
+          return res.json({ success: true, action: result.action, queue_id: result.queueId, message: truthText });
         }
-        const ok = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message);
-        if (ok) {
-          res.json({ success: true, message: "WhatsApp reminder sent successfully" });
-        } else {
-          res.status(500).json({ error: "Failed to send WhatsApp reminder. Check logs or distributor phone number." });
+        if (result.reason === "no_phone") {
+          const db2 = await dbManager.getConnection();
+          const rem = await db2.get("SELECT distributor_name FROM distributor_dispatch_reminders WHERE id = ?", [id]);
+          const distName = rem?.distributor_name || "distributor";
+          return res.status(400).json({ error: `No WhatsApp number saved for ${distName} \u2014 add it in Distributors.` });
         }
+        if (result.reason === "not_found") {
+          return res.status(404).json({ error: "Distributor reminder not found" });
+        }
+        if (result.reason === "suppressed_no_order_no") {
+          return res.status(400).json({ error: "Official PO number not confirmed yet \u2014 message not sent." });
+        }
+        return res.status(500).json({ error: "Failed to send WhatsApp reminder. Check logs or distributor phone number." });
       } catch (error) {
         console.error("Send now distributor reminder error:", error);
         res.status(500).json({ error: error.message || "Failed to send reminder" });
@@ -82345,9 +83424,9 @@ var init_dispatch = __esm({
           }
         }
         await db2.run("UPDATE distributor_dispatch_reminders SET status = 'Pending' WHERE id = ?", [id]);
-        const ok = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message);
-        if (ok) {
-          res.json({ success: true, message: "WhatsApp reminder resent successfully" });
+        const result = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message, void 0, { userClicked: true });
+        if (result.ok) {
+          res.json({ success: true, action: result.action, queue_id: result.queueId, message: "WhatsApp reminder resent successfully" });
         } else {
           res.status(500).json({ error: "Failed to resend WhatsApp reminder. Check phone number or connection." });
         }
@@ -88164,7 +89243,7 @@ var init_refills = __esm({
             pendingRefills = await db2.all(
               `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed
            FROM patient_refills pr LEFT JOIN medicines m ON m.id = pr.medicine_id
-           WHERE pr.id IN (${placeholders2}) AND pr.is_active = 1`,
+           WHERE pr.id IN (${placeholders2}) AND pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')`,
               numIds
             );
           }
@@ -89495,6 +90574,7 @@ var init_refills = __esm({
       LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
       WHERE an.type IN ('refill_collection', 'refill_reminder')
         AND an.status = 'staged'
+        AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))
     `);
         if (stagedRows.length === 0) {
           return res.json({ success: true, message: "No reminders currently staged." });
@@ -89515,7 +90595,7 @@ ${summaryLines}
 ` + (stagedRows.length > 8 ? `_...and ${stagedRows.length - 8} more in app_
 
 ` : "") + `\u{1F449} Review & approve staged messages in *CRM \u2192 Refills* or click *Send All Auto* in the app.`;
-        await whatsappQueueWorker.enqueue(adminWhatsapp, msg, "admin_morning_briefing", "Pharmacy Admin");
+        await whatsappQueueWorker.enqueue(adminWhatsapp, msg, "admin_staged_reminders", "Pharmacy Admin");
         res.json({ success: true, message: `Staged reminders briefing sent to store WhatsApp (${adminWhatsapp})` });
       } catch (err) {
         console.error("Failed to send staged briefing to admin:", err);
@@ -91804,14 +92884,14 @@ function downloadFile(url, dest, onProgress) {
 }
 function computeSha256(filePath) {
   return new Promise((resolve, reject) => {
-    const hash = import_crypto9.default.createHash("sha256");
+    const hash = import_crypto10.default.createHash("sha256");
     const stream = import_fs57.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("end", () => resolve(hash.digest("hex")));
     stream.on("error", reject);
   });
 }
-var import_fs57, import_path52, import_os5, import_https, import_http2, import_crypto9, import_child_process8, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+var import_fs57, import_path52, import_os5, import_https, import_http2, import_crypto10, import_child_process8, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
 var init_autoUpdateService = __esm({
   "src/services/autoUpdateService.ts"() {
     "use strict";
@@ -91820,7 +92900,7 @@ var init_autoUpdateService = __esm({
     import_os5 = __toESM(require("os"), 1);
     import_https = __toESM(require("https"), 1);
     import_http2 = __toESM(require("http"), 1);
-    import_crypto9 = __toESM(require("crypto"), 1);
+    import_crypto10 = __toESM(require("crypto"), 1);
     import_child_process8 = require("child_process");
     init_connection();
     init_licenseService();
@@ -91836,6 +92916,8 @@ var init_autoUpdateService = __esm({
       lastCheckedAt;
       lastResult = null;
       isDownloading = false;
+      zipFailures = 0;
+      currentDownloadingVersion;
       static getInstance() {
         if (!_AutoUpdateService.instance) _AutoUpdateService.instance = new _AutoUpdateService();
         return _AutoUpdateService.instance;
@@ -91861,9 +92943,11 @@ var init_autoUpdateService = __esm({
             }
             const stagingDir = getStagingDir();
             if (import_fs57.default.existsSync(stagingDir)) {
-              const files = import_fs57.default.readdirSync(stagingDir).filter((f) => f.startsWith("AI-Pharmacy-OS-Update-v") && f.endsWith(".zip"));
+              const files = import_fs57.default.readdirSync(stagingDir).filter(
+                (f) => f.startsWith("AI-Pharmacy-OS-Update-v") && f.endsWith(".zip") || f.startsWith("AI-Pharmacy-OS-Portable-Setup-v") && f.endsWith(".exe")
+              );
               for (const file of files) {
-                const match = file.match(/v([0-9.]+)\.zip/);
+                const match = file.match(/v([0-9.]+)\.(zip|exe)/);
                 const filePath = import_path52.default.join(stagingDir, file);
                 if (match && match[1]) {
                   const stagedVersion = match[1];
@@ -91957,18 +93041,26 @@ var init_autoUpdateService = __esm({
             return;
           }
           this.lastCheckedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const isNewer = result.latestVersion ? compareVersions(result.latestVersion, APP_VERSION) > 0 : false;
+          const trulyHasUpdate = Boolean(result.hasUpdate && isNewer);
           const stagingDir = getStagingDir();
           const zipFileName = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
           const zipPath = zipFileName ? import_path52.default.join(stagingDir, zipFileName) : null;
-          const alreadyDownloaded = zipPath ? import_fs57.default.existsSync(zipPath) : false;
+          const exeFileName = result.latestVersion ? `AI-Pharmacy-OS-Portable-Setup-v${result.latestVersion}.exe` : null;
+          const exePath = exeFileName ? import_path52.default.join(stagingDir, exeFileName) : null;
+          const alreadyDownloaded = Boolean(
+            trulyHasUpdate && (zipPath && import_fs57.default.existsSync(zipPath) || exePath && import_fs57.default.existsSync(exePath))
+          );
           this.lastResult = {
             ...result,
+            hasUpdate: trulyHasUpdate,
+            currentVersion: APP_VERSION,
             downloading: this.isDownloading,
             downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
             readyToInstall: alreadyDownloaded,
             lastError: void 0
           };
-          if (result.hasUpdate) {
+          if (trulyHasUpdate) {
             console.log(`[AutoUpdate] New version available: ${result.latestVersion}`);
             if (alreadyDownloaded) {
               eventService.broadcast("update_available", {
@@ -91981,18 +93073,22 @@ var init_autoUpdateService = __esm({
                 downloadProgress: 100,
                 reason
               });
-            } else if (result.updatePackageUrl && !this.isDownloading) {
-              this.startBackgroundDownload(result, reason);
+            } else if ((result.updatePackageUrl || result.downloadUrl) && !this.isDownloading) {
+              this.startBackgroundDownload(this.lastResult, reason);
             }
           } else {
+            if (result.hasUpdate && !isNewer) {
+              console.log(`[AutoUpdate] Server reported update v${result.latestVersion}, but app is already running v${APP_VERSION}. Skipping download.`);
+            }
             if (reason === "manual") {
               eventService.broadcast("update_check_complete", {
                 hasUpdate: false,
-                latestVersion: result.latestVersion,
+                latestVersion: result.latestVersion || APP_VERSION,
+                currentVersion: APP_VERSION,
                 reason
               });
             }
-            console.log(`[AutoUpdate] App is up to date (${result.latestVersion}).`);
+            console.log(`[AutoUpdate] App is up to date (v${APP_VERSION}).`);
           }
         } catch (err) {
           console.warn("[AutoUpdate] Check failed (offline?):", err.message);
@@ -92002,18 +93098,31 @@ var init_autoUpdateService = __esm({
         }
       }
       /**
-       * Start downloading the 105 MB update package in the background.
+       * Start downloading the update package in the background.
+       * Priority ladder:
+       *   1. Small update ZIP (updatePackageUrl) — fast path (~1-2 min).
+       *   2. Full Setup EXE (downloadUrl) — last-resort fallback if ZIP missing or fails twice.
        */
       startBackgroundDownload(info, reason = "auto") {
         const target = info || this.lastResult;
-        if (!target || !target.hasUpdate || !target.latestVersion || !target.updatePackageUrl) {
+        if (!target || !target.hasUpdate || !target.latestVersion || !target.updatePackageUrl && !target.downloadUrl) {
+          return;
+        }
+        if (compareVersions(target.latestVersion, APP_VERSION) <= 0) {
+          console.log(`[AutoUpdate] Skipping background download: target version v${target.latestVersion} is not newer than running v${APP_VERSION}.`);
           return;
         }
         if (this.isDownloading) return;
+        if (this.currentDownloadingVersion !== target.latestVersion) {
+          this.currentDownloadingVersion = target.latestVersion;
+          this.zipFailures = 0;
+        }
         const stagingDir = getStagingDir();
         const zipFileName = `AI-Pharmacy-OS-Update-v${target.latestVersion}.zip`;
         const zipPath = import_path52.default.join(stagingDir, zipFileName);
-        if (import_fs57.default.existsSync(zipPath)) {
+        const exeFileName = `AI-Pharmacy-OS-Portable-Setup-v${target.latestVersion}.exe`;
+        const exePath = import_path52.default.join(stagingDir, exeFileName);
+        if (import_fs57.default.existsSync(zipPath) || import_fs57.default.existsSync(exePath)) {
           if (this.lastResult) {
             this.lastResult.readyToInstall = true;
             this.lastResult.downloading = false;
@@ -92026,6 +93135,14 @@ var init_autoUpdateService = __esm({
             downloadProgress: 100,
             reason
           });
+          return;
+        }
+        const useZip = Boolean(target.updatePackageUrl && this.zipFailures < 2);
+        const downloadUrl = useZip ? target.updatePackageUrl : target.downloadUrl;
+        const destPath = useZip ? zipPath : exePath;
+        const expectedSha256 = useZip ? target.sha256 : void 0;
+        if (!downloadUrl) {
+          console.warn("[AutoUpdate] No valid download URL available for update.");
           return;
         }
         this.isDownloading = true;
@@ -92047,20 +93164,22 @@ var init_autoUpdateService = __esm({
           reason
         });
         this.downloadUpdateSilently({
-          url: target.updatePackageUrl,
-          dest: zipPath,
+          url: downloadUrl,
+          dest: destPath,
           version: target.latestVersion,
-          sha256: target.sha256,
+          sha256: expectedSha256,
           changelog: target.changelog,
+          isZip: useZip,
           reason
         });
       }
       async downloadUpdateSilently(opts) {
-        const { url, dest, version, sha256: expectedSha256, changelog, reason = "auto" } = opts;
+        const { url, dest, version, sha256: expectedSha256, changelog, isZip, reason = "auto" } = opts;
         try {
           const stagingDir = getStagingDir();
           import_fs57.default.mkdirSync(stagingDir, { recursive: true });
-          console.log(`[AutoUpdate] Silently downloading update v${version} (105 MB) to staging...`);
+          const pkgType = isZip ? "update ZIP (fast path)" : "full Setup EXE (fallback path)";
+          console.log(`[AutoUpdate] Silently downloading ${pkgType} for v${version} to staging...`);
           await downloadFile(url, dest, (downloaded, total) => {
             const percent = total > 0 ? Math.round(downloaded / total * 100) : 0;
             if (this.lastResult) {
@@ -92073,7 +93192,7 @@ var init_autoUpdateService = __esm({
               totalBytes: total
             });
           });
-          if (expectedSha256) {
+          if (expectedSha256 && isZip) {
             console.log("[AutoUpdate] Verifying SHA-256...");
             const actualSha256 = await computeSha256(dest);
             if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
@@ -92083,21 +93202,24 @@ var init_autoUpdateService = __esm({
               } catch (_) {
               }
               this.isDownloading = false;
+              this.zipFailures++;
               if (this.lastResult) {
                 this.lastResult.downloading = false;
                 this.lastResult.readyToInstall = false;
-                this.lastResult.lastError = "Checksum mismatch \u2014 package discarded, retry scheduled";
+                this.lastResult.lastError = this.zipFailures >= 2 ? "ZIP checksum failed twice \u2014 falling back to Setup installer" : "Checksum mismatch \u2014 package discarded, retry scheduled";
               }
               eventService.broadcast("update_available", {
                 latestVersion: version,
                 changelog: changelog || "",
                 readyToInstall: false,
                 downloading: false,
-                error: "Checksum mismatch \u2014 package discarded, retry scheduled",
+                error: this.lastResult?.lastError || "Checksum mismatch",
                 reason
               });
-              if (reason !== "auto-retry" && !this.hasRetriedDownload) {
-                this.hasRetriedDownload = true;
+              if (this.zipFailures >= 2 && this.lastResult?.downloadUrl) {
+                console.log("[AutoUpdate] ZIP checksum failed twice. Switching immediately to Setup EXE fallback...");
+                this.startBackgroundDownload(this.lastResult, "setup-fallback");
+              } else if (reason !== "auto-retry") {
                 console.log("[AutoUpdate] Scheduling single retry in 15 minutes due to checksum mismatch...");
                 this.retryHandle = setTimeout(() => {
                   this.retryHandle = null;
@@ -92111,7 +93233,6 @@ var init_autoUpdateService = __esm({
             console.log("[AutoUpdate] SHA-256 verified OK.");
           }
           this.isDownloading = false;
-          this.hasRetriedDownload = false;
           if (this.retryHandle) {
             clearTimeout(this.retryHandle);
             this.retryHandle = null;
@@ -92133,6 +93254,9 @@ var init_autoUpdateService = __esm({
           });
         } catch (err) {
           this.isDownloading = false;
+          if (isZip) {
+            this.zipFailures++;
+          }
           const errorMsg = `Download failed: ${err.message}`;
           if (this.lastResult) {
             this.lastResult.downloading = false;
@@ -92152,9 +93276,11 @@ var init_autoUpdateService = __esm({
             error: errorMsg,
             reason
           });
-          if (reason !== "auto-retry" && !this.hasRetriedDownload) {
-            this.hasRetriedDownload = true;
-            console.log("[AutoUpdate] Scheduling single retry in 15 minutes due to download failure...");
+          if (isZip && this.zipFailures >= 2 && this.lastResult?.downloadUrl) {
+            console.log("[AutoUpdate] ZIP download failed twice. Switching to Setup EXE fallback...");
+            this.startBackgroundDownload(this.lastResult, "setup-fallback");
+          } else if (reason !== "auto-retry") {
+            console.log("[AutoUpdate] Scheduling retry in 15 minutes due to download failure...");
             this.retryHandle = setTimeout(() => {
               this.retryHandle = null;
               if (!this.isDownloading && this.lastResult?.hasUpdate && this.lastResult?.latestVersion) {
@@ -92166,13 +93292,9 @@ var init_autoUpdateService = __esm({
       }
       /**
        * Apply the downloaded update.
-       * Spawns the dedicated Updater.bat which:
-       *   - waits for app to exit
-       *   - verifies SHA-256
-       *   - backs up install dir
-       *   - extracts update ZIP
-       *   - rolls back on failure
-       *   - starts new (or old) PharmacyOS.exe
+       * Priority:
+       *   1. If ZIP update exists: Spawns dedicated Updater.bat (safe in-place update with rollback)
+       *   2. If Setup EXE exists: Spawns the Setup installer (fallback)
        *
        * PRODUCTION.md §22, §23
        */
@@ -92191,31 +93313,45 @@ var init_autoUpdateService = __esm({
         const stagingDir = getStagingDir();
         const zipFileName = `AI-Pharmacy-OS-Update-v${this.lastResult.latestVersion}.zip`;
         const zipPath = import_path52.default.join(stagingDir, zipFileName);
-        if (!import_fs57.default.existsSync(zipPath)) {
-          throw new Error("Update file has not finished downloading yet.");
+        const exeFileName = `AI-Pharmacy-OS-Portable-Setup-v${this.lastResult.latestVersion}.exe`;
+        const exePath = import_path52.default.join(stagingDir, exeFileName);
+        if (import_fs57.default.existsSync(zipPath)) {
+          const updaterPath = getUpdaterPath();
+          if (!import_fs57.default.existsSync(updaterPath)) {
+            throw new Error(`Updater.bat not found at: ${updaterPath}`);
+          }
+          const installDir = import_path52.default.dirname(process.execPath);
+          const logPath = getLogPath();
+          const sha256 = this.lastResult.sha256 || "";
+          console.log("[AutoUpdate] Spawning dedicated Updater.bat (ZIP fast path)...");
+          console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
+          console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
+          console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
+          console.log(`[AutoUpdate]   SHA-256  : ${sha256 || "(not provided)"}`);
+          const targetVersion = this.lastResult.latestVersion;
+          const windowTitle = `"AI Pharmacy OS \u2014 Updating to v${targetVersion}"`;
+          const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
+          const child = (0, import_child_process8.spawn)("cmd.exe", ["/c", "start", windowTitle, "cmd.exe", "/c", fullCommand], {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: false
+          });
+          child.unref();
+          return { success: true, message: "Installing update and restarting AI Pharmacy OS..." };
         }
-        const updaterPath = getUpdaterPath();
-        if (!import_fs57.default.existsSync(updaterPath)) {
-          throw new Error(`Updater.bat not found at: ${updaterPath}`);
+        if (import_fs57.default.existsSync(exePath)) {
+          console.log("[AutoUpdate] Spawning Setup installer (fallback path)...");
+          console.log(`[AutoUpdate]   EXE      : ${exePath}`);
+          console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
+          const child = (0, import_child_process8.spawn)(exePath, ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: true
+          });
+          child.unref();
+          return { success: true, message: "Installing update package via Setup and restarting..." };
         }
-        const installDir = import_path52.default.dirname(process.execPath);
-        const logPath = getLogPath();
-        const sha256 = this.lastResult.sha256 || "";
-        console.log("[AutoUpdate] Spawning dedicated Updater.bat...");
-        console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
-        console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
-        console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
-        console.log(`[AutoUpdate]   SHA-256  : ${sha256 || "(not provided)"}`);
-        const targetVersion = this.lastResult.latestVersion;
-        const windowTitle = `"AI Pharmacy OS \u2014 Updating to v${targetVersion}"`;
-        const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
-        const child = (0, import_child_process8.spawn)("cmd.exe", ["/c", "start", windowTitle, "cmd.exe", "/c", fullCommand], {
-          detached: true,
-          stdio: "ignore",
-          windowsHide: false
-        });
-        child.unref();
-        return { success: true, message: "Installing update and restarting AI Pharmacy OS..." };
+        throw new Error("Update file has not finished downloading yet.");
       }
       getLastResult() {
         return this.lastResult;
@@ -92249,108 +93385,59 @@ var init_autoUpdateService = __esm({
   }
 });
 
-// src/middleware/tenantAuth.ts
-function createStaffToken(data) {
-  const timestamp = Date.now();
-  const perms = (data.permissions || ["*"]).join(",");
-  const payload = `${data.userId}:${data.storeId}:${data.role}:${data.username}:${perms}:${timestamp}`;
-  const signature = import_crypto10.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
-  return Buffer.from(`${payload}:${signature}`).toString("base64");
-}
-function verifyStaffToken(tokenStr) {
-  try {
-    if (!tokenStr) return null;
-    const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
-    const parts = decoded.split(":");
-    if (parts.length !== 7) return null;
-    const [userIdStr, storeIdStr, role, username, permsStr, timestampStr, signature] = parts;
-    const userId = parseInt(userIdStr, 10);
-    const storeId = parseInt(storeIdStr, 10);
-    const timestamp = parseInt(timestampStr, 10);
-    if (isNaN(userId) || isNaN(storeId) || isNaN(timestamp)) return null;
-    if (Date.now() - timestamp > TOKEN_TTL_MS) return null;
-    const payload = `${userIdStr}:${storeIdStr}:${role}:${username}:${permsStr}:${timestampStr}`;
-    const expectedSignature = import_crypto10.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
-    if (import_crypto10.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-      return {
-        userId,
-        storeId,
-        username,
-        role,
-        permissions: permsStr ? permsStr.split(",") : ["*"]
-      };
-    }
-  } catch (_) {
-  }
-  return null;
-}
-async function tenantAuthMiddleware(req, res, next) {
-  try {
-    const authHeader = req.headers.authorization || req.headers["x-auth-token"];
-    let token = "";
-    if (authHeader) {
-      token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
-    }
-    if (token) {
-      const verified = verifyStaffToken(token);
-      if (verified) {
-        const requestedStoreId = resolveStoreId(req);
-        if (requestedStoreId && requestedStoreId !== verified.storeId) {
-          const db2 = await dbManager.getConnection();
-          const access = await db2.get(
-            `SELECT role, permissions_json FROM pharmacy_user_tenants 
-             WHERE user_id = ? AND store_id = ? AND is_active = 1`,
-            [verified.userId, requestedStoreId]
-          );
-          if (access || verified.role === "owner") {
-            let perms = verified.permissions;
-            if (access?.permissions_json) {
-              try {
-                perms = JSON.parse(access.permissions_json);
-              } catch (_) {
-              }
-            }
-            verified.storeId = requestedStoreId;
-            verified.role = access?.role || verified.role;
-            verified.permissions = perms;
-          }
-        }
-        req.tenant = verified;
-        return next();
-      }
-    }
-    const targetStoreId = resolveStoreId(req) || 1;
-    req.tenant = {
-      storeId: targetStoreId,
-      userId: 1,
-      username: "admin",
-      role: "owner",
-      permissions: ["*"],
-      isDesktopFallback: true
-    };
-    next();
-  } catch (err) {
-    console.error("[TenantAuthMiddleware] Error:", err);
-    res.status(500).json({ error: "Internal tenant authorization error" });
-  }
-}
-var import_crypto10, AUTH_SECRET, TOKEN_TTL_MS;
-var init_tenantAuth = __esm({
-  "src/middleware/tenantAuth.ts"() {
-    "use strict";
-    import_crypto10 = __toESM(require("crypto"), 1);
-    init_connection();
-    init_storeContextService();
-    AUTH_SECRET = process.env.STAFF_AUTH_SECRET || "ai_pharmacy_staff_auth_secret_2026";
-    TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
-  }
-});
-
 // src/routes/auth.ts
 var auth_exports = {};
 __export(auth_exports, {
   default: () => auth_default
 });
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    return raw.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || req.ip || "unknown";
+}
+function checkLoginRateLimit(ip) {
+  const now = Date.now();
+  const record = loginRateLimits.get(ip) || { count: 0, resetAt: now + 6e4, failedCount: 0, lockedUntil: 0 };
+  if (now < record.lockedUntil) {
+    const minutesLeft = Math.ceil((record.lockedUntil - now) / 6e4);
+    return {
+      allowed: false,
+      message: `Too many failed login attempts. Account temporarily locked for security. Please try again in ${minutesLeft} minute${minutesLeft > 1 ? "s" : ""}.`
+    };
+  }
+  if (now > record.resetAt) {
+    record.count = 0;
+    record.resetAt = now + 6e4;
+  }
+  if (record.count >= 10) {
+    return {
+      allowed: false,
+      message: "Too many login attempts. Please wait 1 minute before trying again."
+    };
+  }
+  record.count++;
+  loginRateLimits.set(ip, record);
+  return { allowed: true };
+}
+function recordLoginFailure(ip) {
+  const now = Date.now();
+  const record = loginRateLimits.get(ip) || { count: 1, resetAt: now + 6e4, failedCount: 0, lockedUntil: 0 };
+  record.failedCount++;
+  if (record.failedCount >= 5) {
+    record.lockedUntil = now + 15 * 60 * 1e3;
+  }
+  loginRateLimits.set(ip, record);
+}
+function recordLoginSuccess(ip) {
+  const record = loginRateLimits.get(ip);
+  if (record) {
+    record.failedCount = 0;
+    record.lockedUntil = 0;
+  }
+}
 function hashPassword2(password, salt) {
   return import_crypto11.default.pbkdf2Sync(password, salt, 1e3, 32, "sha256").toString("hex");
 }
@@ -92362,7 +93449,7 @@ function verifyPassword2(password, expectedHash, salt) {
     return false;
   }
 }
-var import_express29, import_crypto11, router27, auth_default;
+var import_express29, import_crypto11, router27, loginRateLimits, auth_default;
 var init_auth = __esm({
   "src/routes/auth.ts"() {
     "use strict";
@@ -92372,8 +93459,57 @@ var init_auth = __esm({
     init_tenantAuth();
     init_storeContextService();
     router27 = import_express29.default.Router();
+    loginRateLimits = /* @__PURE__ */ new Map();
+    router27.get("/session", async (req, res) => {
+      try {
+        const isLocal = isLocalRequest(req);
+        const authHeader = req.headers.authorization || req.headers["x-auth-token"];
+        let token = "";
+        if (authHeader) {
+          token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
+        } else if (typeof req.query?.token === "string") {
+          token = req.query.token.trim();
+        }
+        const verified = token ? verifyStaffToken(token) : null;
+        const mode = isLocal ? "local" : "remote";
+        const authRequired = !isLocal;
+        const authenticated = isLocal ? true : verified !== null && verified.role === "owner";
+        let ownerUsername = "owner";
+        try {
+          const db2 = await dbManager.getConnection();
+          const ownerUser = await db2.get("SELECT username FROM pharmacy_users WHERE role = 'owner' AND is_active = 1 LIMIT 1");
+          if (ownerUser?.username) ownerUsername = ownerUser.username;
+        } catch (_) {
+        }
+        res.json({
+          mode,
+          authRequired,
+          authenticated,
+          user: verified ? {
+            id: verified.userId,
+            username: verified.username,
+            role: verified.role,
+            permissions: verified.permissions
+          } : isLocal ? {
+            id: 1,
+            username: ownerUsername,
+            role: "owner",
+            permissions: ["*"]
+          } : null,
+          ownerUsername
+        });
+      } catch (err) {
+        console.error("[AuthRoute] Session inspection error:", err);
+        res.status(500).json({ error: "Failed to inspect session" });
+      }
+    });
     router27.post("/login", async (req, res) => {
       try {
+        const clientIp = getClientIp(req);
+        const rateCheck = checkLoginRateLimit(clientIp);
+        if (!rateCheck.allowed) {
+          return res.status(429).json({ error: rateCheck.message });
+        }
         const { username, password, store_id } = req.body;
         if (!username || !password) {
           return res.status(400).json({ error: "Username and password are required" });
@@ -92384,8 +93520,17 @@ var init_auth = __esm({
           [username.trim()]
         );
         if (!user || !verifyPassword2(password, user.password_hash, user.salt)) {
+          recordLoginFailure(clientIp);
           return res.status(401).json({ error: "Invalid username or password" });
         }
+        const isLocal = isLocalRequest(req);
+        if (!isLocal && user.role !== "owner") {
+          recordLoginFailure(clientIp);
+          return res.status(403).json({
+            error: "Access denied: Remote web portal access is strictly restricted to the pharmacy owner account. Staff accounts must log in directly on the pharmacy PC."
+          });
+        }
+        recordLoginSuccess(clientIp);
         let accessibleStores = [];
         if (user.role === "owner") {
           accessibleStores = await storeContextService.listStores(db2);
@@ -94037,11 +95182,11 @@ Thank you!
         }
         if (order.sync_id) {
           try {
-            const CLOUD_SERVER_URL2 = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
-            const ADMIN_SECRET2 = process.env.ADMIN_SECRET || "admin@pharmacy2026";
-            fetch(`${CLOUD_SERVER_URL2}/api/catalog?action=update_order_status`, {
+            const CLOUD_SERVER_URL3 = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
+            const ADMIN_SECRET = process.env.ADMIN_SECRET || "admin@pharmacy2026";
+            fetch(`${CLOUD_SERVER_URL3}/api/catalog?action=update_order_status`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", "x-admin-secret": ADMIN_SECRET2 },
+              headers: { "Content-Type": "application/json", "x-admin-secret": ADMIN_SECRET },
               body: JSON.stringify({
                 orderId: order.sync_id,
                 newStatus: "In Live Cart",
@@ -96653,10 +97798,12 @@ var init_license = __esm({
       try {
         autoUpdateService.startBackgroundDownload(void 0, "manual");
         const result = autoUpdateService.getStatus();
+        const isDownloading = !!result?.downloading;
         res.json({
-          success: true,
-          downloading: true,
-          latestVersion: result?.latestVersion
+          success: isDownloading,
+          downloading: isDownloading,
+          latestVersion: result?.latestVersion,
+          message: isDownloading ? "Download started" : "No newer update to download"
         });
       } catch (err) {
         res.status(500).json({ error: err.message });
@@ -111460,9 +112607,9 @@ ${order.items || "Standard Pharmacy Order"}
           return res.status(404).json({ error: "Queue item not found" });
         }
         await db2.run("UPDATE whatsapp_send_queue SET scheduled_at = ? WHERE id = ?", [Date.now(), id]);
-        whatsappQueueWorker.triggerProcessing();
+        await whatsappQueueWorker.forceNext();
         eventService.broadcast("dispatch_updated", { at: Date.now(), source: "send_now", id });
-        res.json({ success: true, message: `Dispatched queue item #${id} immediately` });
+        res.json({ success: true, released: true, message: `Dispatched queue item #${id} immediately` });
       } catch (err) {
         console.error("Failed to release scheduled queue item:", err);
         res.status(500).json({ error: err?.message || "Failed to release queue item" });
@@ -113005,6 +114152,7 @@ var init_server = __esm({
     init_notFoundHandler();
     init_connection();
     init_requestTransactionGuard();
+    init_tenantAuth();
     init_database();
     init_processGuardian();
     init_activityTracker();
@@ -113175,6 +114323,7 @@ var init_server = __esm({
       }
       res.json({ success: true, message: "Pending shutdown cancelled." });
     });
+    app.use("/api", ownerRemoteGate);
     app.post("/api/system/shutdown", (req, res) => {
       const isTabClose = req.query.type === "tab_close";
       if (isTabClose) {
